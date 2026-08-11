@@ -1,14 +1,163 @@
-use std::{fs, sync::Arc};
-
-use crate::support::{ScriptedModel, TestCapabilityHost, test_agent, test_command};
-use renoa_core::{
-    CapabilityCall, CapabilityOutcome, CommandId, CommandInput, Message, ModelResponse, SurfaceRef,
+use std::{
+    fs,
+    sync::{Arc, Mutex},
 };
-use renoa_runtime::{Agent, AgentState, AgentStateError, Engine, EngineConfig};
+
+use crate::support::{ModelStep, ScriptedModel, TestCapabilityHost, test_agent, test_command};
+use renoa_core::{
+    BoxFuture, CapabilityCall, CapabilityOutcome, CommandId, CommandInput, Message, ModelResponse,
+    SurfaceRef,
+};
+use renoa_runtime::{
+    Agent, AgentEvent, AgentEventSink, AgentState, AgentStateError, Engine, EngineConfig,
+};
 use renoa_store_sqlite::SqliteRunStore;
 use serde_json::json;
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
+
+#[tokio::test]
+async fn event_sink_observes_a_complete_prompt_lifecycle() {
+    let workspace = tempdir().expect("temporary workspace must be created");
+    let model = Arc::new(ScriptedModel::new(vec![final_response("Done.")]));
+    let engine = Engine::new(
+        model,
+        Arc::new(TestCapabilityHost::new(workspace.path())),
+        Arc::new(
+            SqliteRunStore::open(workspace.path().join("renoa.db")).expect("run store must open"),
+        ),
+        EngineConfig::default(),
+    );
+    let events = Arc::new(RecordingEventSink::default());
+    let mut agent = Agent::new(engine, test_agent()).with_event_sink(events.clone());
+    let mut command = test_command();
+    command.input = CommandInput::Text {
+        text: "Do the work.".to_owned(),
+    };
+
+    agent
+        .prompt(command, CancellationToken::new())
+        .await
+        .expect("prompt must complete");
+
+    let user = Message::User {
+        text: "Do the work.".to_owned(),
+    };
+    let assistant = Message::Assistant {
+        text: "Done.".to_owned(),
+        capability_calls: Vec::new(),
+    };
+    assert_eq!(
+        events.events(),
+        vec![
+            AgentEvent::AgentStart,
+            AgentEvent::TurnStart,
+            AgentEvent::MessageStart {
+                message: user.clone(),
+            },
+            AgentEvent::MessageEnd { message: user },
+            AgentEvent::MessageStart {
+                message: assistant.clone(),
+            },
+            AgentEvent::MessageEnd { message: assistant },
+            AgentEvent::TurnEnd,
+            AgentEvent::AgentEnd,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn event_sink_observes_tool_execution_before_its_result_message() {
+    let workspace = tempdir().expect("temporary workspace must be created");
+    fs::write(workspace.path().join("tool.txt"), "tool output")
+        .expect("tool fixture must be written");
+    let call = CapabilityCall {
+        call_id: "read-tool".to_owned(),
+        name: "read_file".to_owned(),
+        arguments: json!({ "path": "tool.txt" }),
+    };
+    let outcome = CapabilityOutcome {
+        model_view: json!({ "content": "tool output" }),
+        is_error: false,
+    };
+    let model = Arc::new(ScriptedModel::new(vec![
+        ModelResponse {
+            text: String::new(),
+            capability_calls: vec![call.clone()],
+            truncated: false,
+        },
+        final_response("Tool finished."),
+    ]));
+    let engine = Engine::new(
+        model,
+        Arc::new(TestCapabilityHost::new(workspace.path())),
+        Arc::new(
+            SqliteRunStore::open(workspace.path().join("renoa.db")).expect("run store must open"),
+        ),
+        EngineConfig::default(),
+    );
+    let events = Arc::new(RecordingEventSink::default());
+    let mut agent = Agent::new(engine, test_agent()).with_event_sink(events.clone());
+
+    agent
+        .prompt(test_command(), CancellationToken::new())
+        .await
+        .expect("prompt must complete");
+
+    let expected = [
+        AgentEvent::ToolExecutionStart { call: call.clone() },
+        AgentEvent::ToolExecutionEnd {
+            call: call.clone(),
+            outcome: outcome.clone(),
+        },
+        AgentEvent::MessageStart {
+            message: Message::Capability {
+                call_id: call.call_id,
+                name: call.name,
+                outcome,
+            },
+        },
+    ];
+    assert!(
+        events
+            .events()
+            .windows(expected.len())
+            .any(|events| events == expected)
+    );
+}
+
+#[tokio::test]
+async fn event_sink_observes_lifecycle_end_after_model_failure() {
+    let workspace = tempdir().expect("temporary workspace must be created");
+    let model = Arc::new(ScriptedModel::from_steps(vec![ModelStep::Fail(
+        "provider failed".to_owned(),
+    )]));
+    let engine = Engine::new(
+        model,
+        Arc::new(TestCapabilityHost::new(workspace.path())),
+        Arc::new(
+            SqliteRunStore::open(workspace.path().join("renoa.db")).expect("run store must open"),
+        ),
+        EngineConfig::default(),
+    );
+    let events = Arc::new(RecordingEventSink::default());
+    let mut agent = Agent::new(engine, test_agent()).with_event_sink(events.clone());
+
+    let result = agent.prompt(test_command(), CancellationToken::new()).await;
+
+    assert!(matches!(result, Err(renoa_runtime::EngineError::Model(_))));
+    assert!(matches!(
+        events.events().as_slice(),
+        [
+            AgentEvent::AgentStart,
+            AgentEvent::TurnStart,
+            AgentEvent::MessageStart { .. },
+            AgentEvent::MessageEnd { .. },
+            AgentEvent::TurnEnd,
+            AgentEvent::AgentEnd,
+        ]
+    ));
+}
 
 #[tokio::test]
 async fn one_agent_carries_context_across_surface_prompts() {
@@ -202,5 +351,30 @@ fn final_response(text: &str) -> ModelResponse {
         text: text.to_owned(),
         capability_calls: Vec::new(),
         truncated: false,
+    }
+}
+
+#[derive(Default)]
+struct RecordingEventSink {
+    events: Mutex<Vec<AgentEvent>>,
+}
+
+impl RecordingEventSink {
+    fn events(&self) -> Vec<AgentEvent> {
+        self.events
+            .lock()
+            .expect("event sink lock must not be poisoned")
+            .clone()
+    }
+}
+
+impl AgentEventSink for RecordingEventSink {
+    fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.events
+                .lock()
+                .expect("event sink lock must not be poisoned")
+                .push(event);
+        })
     }
 }

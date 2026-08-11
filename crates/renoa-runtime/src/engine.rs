@@ -1,12 +1,18 @@
 use std::sync::Arc;
 
 use renoa_core::{
-    CapabilityHost, CapabilityOutcome, CapabilityRequest, CommandEnvelope, Message, ModelDriver,
-    ModelError, ModelRequest, ResolvedAgent, RunAdmission, RunEventKind, RunId, RunStore,
-    StoreError, TerminalState,
+    CapabilityHost, CommandEnvelope, Message, ModelDriver, ModelError, ModelRequest, ResolvedAgent,
+    RunAdmission, RunEventKind, RunId, RunStore, StoreError, TerminalState,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+
+use crate::{
+    AgentEvent, AgentEventSink,
+    events::{append_message, emit_event},
+};
+
+mod capabilities;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineConfig {
@@ -88,7 +94,7 @@ impl Engine {
         cancellation: CancellationToken,
     ) -> Result<AgentRunResult, EngineError> {
         let mut messages = Vec::new();
-        self.run_in_context(command, &agent, &mut messages, cancellation)
+        self.run_in_context(command, &agent, &mut messages, cancellation, None)
             .await
     }
 
@@ -98,6 +104,7 @@ impl Engine {
         agent: &ResolvedAgent,
         messages: &mut Vec<Message>,
         cancellation: CancellationToken,
+        event_sink: Option<&dyn AgentEventSink>,
     ) -> Result<AgentRunResult, EngineError> {
         let run_id = match self.store.admit_run(command.clone(), agent.clone()).await? {
             RunAdmission::Admitted(run_id) => run_id,
@@ -110,12 +117,20 @@ impl Engine {
             .into_iter()
             .filter(|capability| agent.capability_grants.contains(&capability.name))
             .collect::<Vec<_>>();
-        messages.push(Message::User {
+        if self.config.max_model_rounds > 0 {
+            emit_event(event_sink, AgentEvent::TurnStart).await;
+        }
+        let user_message = Message::User {
             text: command.input.text().to_owned(),
-        });
+        };
+        append_message(event_sink, messages, user_message).await;
 
         for round in 0..self.config.max_model_rounds {
+            if round > 0 {
+                emit_event(event_sink, AgentEvent::TurnStart).await;
+            }
             if cancellation.is_cancelled() {
+                emit_event(event_sink, AgentEvent::TurnEnd).await;
                 return self.terminal_error(run_id, EngineError::Cancelled).await;
             }
 
@@ -132,16 +147,19 @@ impl Engine {
             {
                 Ok(response) => response,
                 Err(error) => {
+                    emit_event(event_sink, AgentEvent::TurnEnd).await;
                     return self.terminal_error(run_id, error).await;
                 }
             };
 
-            messages.push(Message::Assistant {
+            let assistant_message = Message::Assistant {
                 text: response.text.clone(),
                 capability_calls: response.capability_calls.clone(),
-            });
+            };
+            append_message(event_sink, messages, assistant_message).await;
 
             if response.capability_calls.is_empty() {
+                emit_event(event_sink, AgentEvent::TurnEnd).await;
                 return self.complete_run(run_id, response.text, round + 1).await;
             }
 
@@ -152,20 +170,26 @@ impl Engine {
                     &response,
                     &capabilities,
                     cancellation.child_token(),
+                    event_sink,
                 )
                 .await
             {
                 Ok(outcomes) => outcomes,
-                Err(error) => return self.terminal_error(run_id, error).await,
+                Err(error) => {
+                    emit_event(event_sink, AgentEvent::TurnEnd).await;
+                    return self.terminal_error(run_id, error).await;
+                }
             };
 
             for (request, outcome) in outcomes {
-                messages.push(Message::Capability {
+                let capability_message = Message::Capability {
                     call_id: request.call.call_id,
                     name: request.call.name,
                     outcome,
-                });
+                };
+                append_message(event_sink, messages, capability_message).await;
             }
+            emit_event(event_sink, AgentEvent::TurnEnd).await;
 
             if cancellation.is_cancelled() {
                 return self.terminal_error(run_id, EngineError::Cancelled).await;
@@ -216,133 +240,6 @@ impl Engine {
             )
             .await?;
         Ok(response)
-    }
-
-    async fn capability_batch(
-        &self,
-        run_id: RunId,
-        command: &CommandEnvelope,
-        response: &renoa_core::ModelResponse,
-        capabilities: &[renoa_core::CapabilitySpec],
-        cancellation: CancellationToken,
-    ) -> Result<Vec<(CapabilityRequest, CapabilityOutcome)>, EngineError> {
-        if response.capability_calls.len() > self.config.max_capability_calls_per_response {
-            return Err(EngineError::CapabilityBatchTooLarge {
-                actual: response.capability_calls.len(),
-                limit: self.config.max_capability_calls_per_response,
-            });
-        }
-        let requests = response
-            .capability_calls
-            .iter()
-            .enumerate()
-            .map(|(ordinal, call)| {
-                let ordinal =
-                    u32::try_from(ordinal).map_err(|_| EngineError::CapabilityBatchTooLarge {
-                        actual: response.capability_calls.len(),
-                        limit: self.config.max_capability_calls_per_response,
-                    })?;
-                Ok(CapabilityRequest {
-                    run_id,
-                    target: command.target.clone(),
-                    ordinal,
-                    call: call.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>, EngineError>>()?;
-
-        self.store
-            .append_events(
-                run_id,
-                requests
-                    .iter()
-                    .map(|request| RunEventKind::CapabilityRequested {
-                        ordinal: request.ordinal,
-                        call: request.call.clone(),
-                    })
-                    .collect(),
-            )
-            .await?;
-        let outcomes = if response.truncated {
-            let mut outcomes = Vec::with_capacity(requests.len());
-            for request in requests {
-                let outcome = CapabilityOutcome::error(
-                    "capability call was not executed because the model response was truncated",
-                );
-                self.record_capability_completion(run_id, &request, &outcome)
-                    .await?;
-                outcomes.push((request, outcome));
-            }
-            outcomes
-        } else {
-            self.execute_capabilities(run_id, requests, capabilities, cancellation)
-                .await?
-        };
-        Ok(outcomes)
-    }
-
-    async fn execute_capabilities(
-        &self,
-        run_id: RunId,
-        requests: Vec<CapabilityRequest>,
-        capabilities: &[renoa_core::CapabilitySpec],
-        cancellation: CancellationToken,
-    ) -> Result<Vec<(CapabilityRequest, CapabilityOutcome)>, EngineError> {
-        let mut tasks = tokio::task::JoinSet::new();
-        let mut outcomes = Vec::with_capacity(requests.len());
-        for request in requests {
-            if !capabilities
-                .iter()
-                .any(|capability| capability.name == request.call.name)
-            {
-                let message = format!("capability `{}` is not granted", request.call.name);
-                let outcome = CapabilityOutcome::error(message);
-                self.record_capability_completion(run_id, &request, &outcome)
-                    .await?;
-                outcomes.push((request, outcome));
-                continue;
-            }
-            let host = Arc::clone(&self.capabilities);
-            let child_cancellation = cancellation.child_token();
-            tasks.spawn(async move {
-                let outcome = tokio::select! {
-                    () = child_cancellation.cancelled() => {
-                        CapabilityOutcome::error("capability execution was cancelled")
-                    }
-                    outcome = host.execute(request.clone(), child_cancellation.child_token()) => outcome,
-                };
-                (request, outcome)
-            });
-            let Some(result) = tasks.join_next().await else {
-                return Err(EngineError::CapabilityTask(
-                    "capability task disappeared before completion".to_owned(),
-                ));
-            };
-            let (request, outcome) =
-                result.map_err(|error| EngineError::CapabilityTask(error.to_string()))?;
-            self.record_capability_completion(run_id, &request, &outcome)
-                .await?;
-            outcomes.push((request, outcome));
-        }
-        Ok(outcomes)
-    }
-
-    async fn record_capability_completion(
-        &self,
-        run_id: RunId,
-        request: &CapabilityRequest,
-        outcome: &CapabilityOutcome,
-    ) -> Result<(), StoreError> {
-        self.store
-            .append_events(
-                run_id,
-                vec![RunEventKind::CapabilityCompleted {
-                    ordinal: request.ordinal,
-                    call_id: request.call.call_id.clone(),
-                    outcome: outcome.clone(),
-                }],
-            )
-            .await
     }
 
     async fn complete_run(

@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use renoa_core::{CommandEnvelope, Message, ResolvedAgent};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::{AgentRunResult, Engine, EngineError};
+use crate::{AgentEvent, AgentEventSink, AgentRunResult, Engine, EngineError, events::emit_event};
 
 #[derive(Serialize, Deserialize)]
 pub struct AgentState {
@@ -19,6 +21,7 @@ pub struct Agent {
     engine: Engine,
     definition: ResolvedAgent,
     state: AgentState,
+    event_sink: Option<Arc<dyn AgentEventSink>>,
 }
 
 impl Agent {
@@ -30,7 +33,15 @@ impl Agent {
             state: AgentState {
                 messages: Vec::new(),
             },
+            event_sink: None,
         }
+    }
+
+    /// Installs the host-owned sink for transient lifecycle events.
+    #[must_use]
+    pub fn with_event_sink(mut self, event_sink: Arc<dyn AgentEventSink>) -> Self {
+        self.event_sink = Some(event_sink);
+        self
     }
 
     /// Restores host-persisted conversation state.
@@ -55,6 +66,7 @@ impl Agent {
             engine,
             definition,
             state,
+            event_sink: None,
         })
     }
 
@@ -73,13 +85,19 @@ impl Agent {
         command: CommandEnvelope,
         cancellation: CancellationToken,
     ) -> Result<AgentRunResult, EngineError> {
-        self.engine
+        let event_sink = self.event_sink.clone();
+        emit_event(event_sink.as_deref(), AgentEvent::AgentStart).await;
+        let result = self
+            .engine
             .run_in_context(
                 command,
                 &self.definition,
                 &mut self.state.messages,
                 cancellation,
+                event_sink.as_deref(),
             )
-            .await
+            .await;
+        emit_event(event_sink.as_deref(), AgentEvent::AgentEnd).await;
+        result
     }
 }

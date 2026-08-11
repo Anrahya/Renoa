@@ -11,6 +11,8 @@ node without importing surface or network code.
 - `Engine` owns one bounded model-to-capability continuation loop and its
   durable per-command ledger.
 - `Agent` owns one conversation across many calls to `prompt`.
+- An optional `AgentEventSink` receives ordered lifecycle events and is awaited
+  before execution advances.
 - The host maps a task or local session to one `Agent`. It owns provider and
   capability configuration, authorization, scheduling, and durable state.
 - An RCP execution-node adapter is one possible host. Telegram, Android,
@@ -27,7 +29,9 @@ The current tests prove that:
 1. prompts from different surfaces can continue one conversation;
 2. a host can serialize the conversation, rebuild the Agent, reopen its run
    store, and continue with the restored context;
-3. restored state cannot replace the locally configured system instructions.
+3. restored state cannot replace the locally configured system instructions;
+4. a host observes agent, turn, complete-message, and tool execution events in
+   execution order, including lifecycle closure after a model failure.
 
 One `Agent` is exactly one conversation. A host must not share it between
 tasks or principals. System instructions come from the local `ResolvedAgent`
@@ -36,6 +40,10 @@ portable conversation state.
 
 `AgentState` is trusted host state. It is not an RCP payload and surfaces must
 not be allowed to replace it.
+
+Agent events are transient SDK notifications. They do not replace the durable
+run ledger or RCP task records. Complete messages are observable now; token
+deltas require a future streaming model boundary.
 
 ## Durability limit
 
@@ -48,7 +56,8 @@ or restore context for work that was never acknowledged.
 
 ## Next complete slice
 
-Add durable session identity and atomic state persistence, then map each RCP
-task to one serialized Agent execution lane. Streaming, context compaction,
-provider adapters, and an RPC binding come later, only when a consumer needs
-them.
+For the SDK, add a streaming model boundary and `MessageUpdate` events without
+changing the lifecycle contract. Before RCP can host the stateful Agent, add
+durable session identity and atomically persist terminal run state with the
+resulting conversation state. Context compaction, provider adapters, and an RPC
+binding follow real consumers rather than speculative contracts.
