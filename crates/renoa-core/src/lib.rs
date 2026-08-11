@@ -8,7 +8,7 @@ pub use agent::ResolvedAgent;
 pub use capability::{
     CapabilityCall, CapabilityHost, CapabilityOutcome, CapabilityRequest, CapabilitySpec,
 };
-pub use model::{Message, ModelDriver, ModelRequest, ModelResponse};
+pub use model::{Message, ModelDriver, ModelEvent, ModelEventStream, ModelRequest, ModelResponse};
 pub use ports::{BoxFuture, ModelError, StoreError};
 pub use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEventId as EventId, ExecutionId as RunId,

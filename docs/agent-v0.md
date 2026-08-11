@@ -31,7 +31,9 @@ The current tests prove that:
    store, and continue with the restored context;
 3. restored state cannot replace the locally configured system instructions;
 4. a host observes agent, turn, complete-message, and tool execution events in
-   execution order, including lifecycle closure after a model failure.
+   execution order, including lifecycle closure after a model failure;
+5. streamed text reaches the host before the completed assistant message, and
+   a failed or cancelled stream explicitly aborts its partial message.
 
 One `Agent` is exactly one conversation. A host must not share it between
 tasks or principals. System instructions come from the local `ResolvedAgent`
@@ -42,8 +44,11 @@ portable conversation state.
 not be allowed to replace it.
 
 Agent events are transient SDK notifications. They do not replace the durable
-run ledger or RCP task records. Complete messages are observable now; token
-deltas require a future streaming model boundary.
+run ledger or RCP task records. `MessageUpdate` carries streamed text while a
+model invocation is active. The completed model response remains authoritative:
+only it enters conversation state and the durable run ledger. A stream that
+fails or is cancelled emits `MessageAbort`; its partial text is not retained.
+RCP does not transport these token deltas in v0.
 
 ## Durability limit
 
@@ -56,8 +61,10 @@ or restore context for work that was never acknowledged.
 
 ## Next complete slice
 
-For the SDK, add a streaming model boundary and `MessageUpdate` events without
-changing the lifecycle contract. Before RCP can host the stateful Agent, add
-durable session identity and atomically persist terminal run state with the
+The next SDK decision is active-run control: whether `Agent` should own abort,
+steering, and queued follow-up behavior as Pi does, or leave that scheduling to
+its host. That boundary must be proven against the RCP node and desktop host
+before adding channels or queue state. Before RCP can host the stateful Agent,
+add durable session identity and atomically persist terminal run state with the
 resulting conversation state. Context compaction, provider adapters, and an RPC
 binding follow real consumers rather than speculative contracts.

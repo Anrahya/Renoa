@@ -1,14 +1,14 @@
 use std::time::{Duration, SystemTime};
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream};
 use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
     PeerIdentity, ServerMessage, TaskEvent, TaskEventKind, TaskId, TaskSpec,
 };
 use renoa_core::{
     BoxFuture, CapabilityHost, CapabilityOutcome, CapabilityRequest, CommandId, CommandInput,
-    Message as AgentMessage, ModelDriver, ModelError, ModelRequest, ModelResponse, PrincipalId,
-    ResolvedAgent, SurfaceRef, TargetRef,
+    Message as AgentMessage, ModelDriver, ModelEvent, ModelEventStream, ModelRequest,
+    ModelResponse, PrincipalId, ResolvedAgent, SurfaceRef, TargetRef,
 };
 use renoa_protocol::{ExecutionEvent, ExecutionEventKind};
 use tempfile::TempDir;
@@ -266,28 +266,31 @@ impl GatedModel {
 }
 
 impl ModelDriver for GatedModel {
-    fn generate(
+    fn stream(
         &self,
         request: ModelRequest,
         _cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<ModelResponse, ModelError>> {
+    ) -> ModelEventStream<'_> {
         assert!(matches!(
             request.messages.first(),
             Some(AgentMessage::System { text }) if text == TEST_INSTRUCTIONS
         ));
-        Box::pin(async move {
+        stream::once(async move {
             self.requested.add_permits(1);
             self.release
                 .acquire()
                 .await
                 .expect("release semaphore")
                 .forget();
-            Ok(ModelResponse {
-                text: "finished live".to_owned(),
-                capability_calls: Vec::new(),
-                truncated: false,
+            Ok(ModelEvent::Completed {
+                response: ModelResponse {
+                    text: "finished live".to_owned(),
+                    capability_calls: Vec::new(),
+                    truncated: false,
+                },
             })
         })
+        .boxed()
     }
 }
 

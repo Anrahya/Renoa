@@ -5,10 +5,12 @@ use std::{
     sync::Mutex,
 };
 
+use futures_util::{StreamExt, stream};
 use renoa_core::{
     BoxFuture, CapabilityCall, CapabilityHost, CapabilityOutcome, CapabilityRequest,
-    CapabilitySpec, CommandEnvelope, CommandId, CommandInput, ModelDriver, ModelError,
-    ModelRequest, ModelResponse, PrincipalId, ResolvedAgent, RunEventKind, SurfaceRef, TargetRef,
+    CapabilitySpec, CommandEnvelope, CommandId, CommandInput, ModelDriver, ModelError, ModelEvent,
+    ModelEventStream, ModelRequest, ModelResponse, PrincipalId, ResolvedAgent, RunEventKind,
+    SurfaceRef, TargetRef,
 };
 use serde_json::json;
 use tokio::sync::Notify;
@@ -17,6 +19,8 @@ use tokio_util::sync::CancellationToken;
 pub enum ModelStep {
     Respond(ModelResponse),
     Fail(String),
+    Events(Vec<Result<ModelEvent, ModelError>>),
+    EventsThenPending(Vec<Result<ModelEvent, ModelError>>),
     Pending,
 }
 
@@ -52,11 +56,11 @@ impl ScriptedModel {
 }
 
 impl ModelDriver for ScriptedModel {
-    fn generate(
+    fn stream(
         &self,
         request: ModelRequest,
         _cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<ModelResponse, ModelError>> {
+    ) -> ModelEventStream<'_> {
         self.requests
             .lock()
             .expect("scripted model request lock must not be poisoned")
@@ -68,13 +72,17 @@ impl ModelDriver for ScriptedModel {
             .expect("scripted model step lock must not be poisoned")
             .pop_front()
             .unwrap_or_else(|| ModelStep::Fail("scripted model ran out of steps".to_owned()));
-        Box::pin(async move {
-            match step {
-                ModelStep::Respond(response) => Ok(response),
-                ModelStep::Fail(error) => Err(ModelError::new(error)),
-                ModelStep::Pending => std::future::pending().await,
+        match step {
+            ModelStep::Respond(response) => {
+                stream::once(async { Ok(ModelEvent::Completed { response }) }).boxed()
             }
-        })
+            ModelStep::Fail(error) => stream::once(async { Err(ModelError::new(error)) }).boxed(),
+            ModelStep::Events(events) => stream::iter(events).boxed(),
+            ModelStep::EventsThenPending(events) => {
+                stream::iter(events).chain(stream::pending()).boxed()
+            }
+            ModelStep::Pending => stream::pending().boxed(),
+        }
     }
 }
 

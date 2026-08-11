@@ -7,6 +7,10 @@ pub enum AgentEvent {
     MessageStart {
         message: Message,
     },
+    MessageUpdate {
+        text_delta: String,
+    },
+    MessageAbort,
     MessageEnd {
         message: Message,
     },
@@ -37,13 +41,24 @@ pub(crate) async fn append_message(
     messages: &mut Vec<Message>,
     message: Message,
 ) {
-    emit_event(
-        sink,
-        AgentEvent::MessageStart {
-            message: message.clone(),
-        },
-    )
-    .await;
+    finish_message(sink, messages, message, false).await;
+}
+
+pub(crate) async fn finish_message(
+    sink: Option<&dyn AgentEventSink>,
+    messages: &mut Vec<Message>,
+    message: Message,
+    already_started: bool,
+) {
+    if !already_started {
+        emit_event(
+            sink,
+            AgentEvent::MessageStart {
+                message: message.clone(),
+            },
+        )
+        .await;
+    }
     messages.push(message.clone());
     emit_event(sink, AgentEvent::MessageEnd { message }).await;
 }

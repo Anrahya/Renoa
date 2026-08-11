@@ -1,18 +1,19 @@
 use std::sync::Arc;
 
 use renoa_core::{
-    CapabilityHost, CommandEnvelope, Message, ModelDriver, ModelError, ModelRequest, ResolvedAgent,
-    RunAdmission, RunEventKind, RunId, RunStore, StoreError, TerminalState,
+    CapabilityHost, CommandEnvelope, Message, ModelDriver, ModelError, ResolvedAgent, RunAdmission,
+    RunEventKind, RunId, RunStore, StoreError, TerminalState,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentEvent, AgentEventSink,
-    events::{append_message, emit_event},
+    events::{append_message, emit_event, finish_message},
 };
 
 mod capabilities;
+mod model;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineConfig {
@@ -134,29 +135,39 @@ impl Engine {
                 return self.terminal_error(run_id, EngineError::Cancelled).await;
             }
 
-            let response = match self
+            let model_step = match self
                 .model_step(
-                    run_id,
-                    round,
-                    &agent.instructions,
-                    messages,
-                    &capabilities,
+                    model::build_request(
+                        run_id,
+                        round,
+                        &agent.instructions,
+                        messages,
+                        &capabilities,
+                    ),
                     cancellation.child_token(),
+                    event_sink,
                 )
                 .await
             {
-                Ok(response) => response,
+                Ok(model_step) => model_step,
                 Err(error) => {
                     emit_event(event_sink, AgentEvent::TurnEnd).await;
                     return self.terminal_error(run_id, error).await;
                 }
             };
 
+            let response = model_step.response;
             let assistant_message = Message::Assistant {
                 text: response.text.clone(),
                 capability_calls: response.capability_calls.clone(),
             };
-            append_message(event_sink, messages, assistant_message).await;
+            finish_message(
+                event_sink,
+                messages,
+                assistant_message,
+                model_step.message_started,
+            )
+            .await;
 
             if response.capability_calls.is_empty() {
                 emit_event(event_sink, AgentEvent::TurnEnd).await;
@@ -201,45 +212,6 @@ impl Engine {
             EngineError::RoundLimit(self.config.max_model_rounds),
         )
         .await
-    }
-
-    async fn model_step(
-        &self,
-        run_id: RunId,
-        round: u32,
-        instructions: &str,
-        messages: &[Message],
-        capabilities: &[renoa_core::CapabilitySpec],
-        cancellation: CancellationToken,
-    ) -> Result<renoa_core::ModelResponse, EngineError> {
-        let mut model_messages = Vec::with_capacity(messages.len() + 1);
-        model_messages.push(Message::System {
-            text: instructions.to_owned(),
-        });
-        model_messages.extend_from_slice(messages);
-        let request = ModelRequest {
-            run_id,
-            round,
-            messages: model_messages,
-            capabilities: capabilities.to_vec(),
-        };
-        self.store
-            .append_events(run_id, vec![RunEventKind::ModelRequested { round }])
-            .await?;
-        let response = tokio::select! {
-            () = cancellation.cancelled() => return Err(EngineError::Cancelled),
-            result = self.model.generate(request, cancellation.child_token()) => result?,
-        };
-        self.store
-            .append_events(
-                run_id,
-                vec![RunEventKind::ModelResponded {
-                    round,
-                    response: response.clone(),
-                }],
-            )
-            .await?;
-        Ok(response)
     }
 
     async fn complete_run(

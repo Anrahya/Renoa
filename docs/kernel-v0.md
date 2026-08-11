@@ -61,7 +61,7 @@ future capability contract defines idempotency or reconciliation semantics.
 
 - Real provider APIs or provider authentication
 - Agent discovery, configuration parsing, or authorization policy resolution
-- Streaming model output
+- Durable replay of streamed model deltas
 - Context compaction and external memory
 - Human approval workflows
 - Sandboxed or remote execution

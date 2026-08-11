@@ -1,7 +1,8 @@
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::{BoxFuture, CapabilityCall, CapabilityOutcome, CapabilitySpec, ModelError, RunId};
+use crate::{CapabilityCall, CapabilityOutcome, CapabilitySpec, ModelError, RunId};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
@@ -40,14 +41,23 @@ pub struct ModelRequest {
     pub capabilities: Vec<CapabilitySpec>,
 }
 
-/// Performs one provider-neutral model invocation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModelEvent {
+    TextDelta { text: String },
+    Completed { response: ModelResponse },
+}
+
+pub type ModelEventStream<'a> = BoxStream<'a, Result<ModelEvent, ModelError>>;
+
+/// Streams one provider-neutral model invocation.
 ///
-/// Drivers translate the request at the provider boundary and must honor the
-/// cancellation token as promptly as their transport permits.
+/// On success, drivers emit zero or more deltas followed by one `Completed`
+/// event. They must honor the cancellation token as promptly as their
+/// transport permits.
 pub trait ModelDriver: Send + Sync {
-    fn generate(
+    fn stream(
         &self,
         request: ModelRequest,
         cancellation: CancellationToken,
-    ) -> BoxFuture<'_, Result<ModelResponse, ModelError>>;
+    ) -> ModelEventStream<'_>;
 }

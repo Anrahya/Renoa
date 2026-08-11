@@ -632,6 +632,7 @@ dependencies = [
 name = "renoa-core"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "renoa-protocol",
  "serde",
  "serde_json",
@@ -672,6 +673,7 @@ dependencies = [
 name = "renoa-runtime"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "renoa-core",
  "renoa-store-sqlite",
  "serde",

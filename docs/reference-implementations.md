@@ -15,18 +15,18 @@ projects are studied for established agent-runtime mechanics.
   `pi/packages/protocol`, and `pi/packages/server`
 - Adopted ideas: the minimal model-to-tool continuation loop, a stateful Agent
   around that reusable loop, awaited ordered lifecycle events, source-ordered
-  tool-result reinjection, and representing tool failures as model-visible
-  results. The continuity proof also follows Pi's explicit version handshake
-  and separation of authoritative stored state from transient connection
-  progress. Renoa keeps JSON for v0 instead of adopting Pi's CBOR framing. The
-  first external node uses Pi directly and projects only the durable event
-  intersection into RCP; Pi messages and provider events remain local. Its
-  local workspace adapter reuses Pi's packaged read, write, and edit tools and
-  adds a target binding and path-confinement check rather than reimplementing
-  Pi's file behavior. That tool configuration belongs to the Pi adapter, not
-  RCP. The node also consumes Pi's provider-owned OAuth/refresh contract through
-  its own durable credential store. Pi's CLI, TUI, and coding-agent package are
-  not dependencies.
+  tool-result reinjection, streamed partial messages with explicit aborts, and
+  representing tool failures as model-visible results. The continuity proof
+  also follows Pi's explicit version handshake and separation of authoritative
+  stored state from transient connection progress. Renoa keeps JSON for v0
+  instead of adopting Pi's CBOR framing. The first external node uses Pi
+  directly and projects only the durable event intersection into RCP; Pi
+  messages and provider events remain local. Its local workspace adapter reuses
+  Pi's packaged read, write, and edit tools and adds a target binding and
+  path-confinement check rather than reimplementing Pi's file behavior. That
+  tool configuration belongs to the Pi adapter, not RCP. The node also consumes
+  Pi's provider-owned OAuth/refresh contract through its own durable credential
+  store. Pi's CLI, TUI, and coding-agent package are not dependencies.
 
 ## OpenAI Codex CLI
 
