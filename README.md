@@ -20,6 +20,32 @@ enrolled devices, lists each principal's tasks, durably dispatches owned work,
 maintains one ordered journal for every surface, and replays missed events. This
 is not yet a stable public RCP wire implementation.
 
+Run the loopback coordinator as its own process with:
+
+```sh
+cargo run -p renoa-control --bin renoa-coordinator -- \
+  serve /absolute/path/to/control.sqlite 7818
+```
+
+The process always binds `127.0.0.1`, prints its JSON WebSocket endpoint after
+the database and listener are ready, and stops cleanly on `SIGINT` or
+`SIGTERM`. It intentionally has no public plaintext mode.
+
+Create a single-use surface enrollment from the trusted host with:
+
+```sh
+renoa-coordinator enroll-surface \
+  /absolute/path/to/control.sqlite <principal-uuid> <surface-name>
+```
+
+The JSON output contains a secret token that expires after five minutes. This
+command adds no remote administration endpoint; task and node provisioning
+still use the trusted `Coordinator` API.
+
+The first private VPS deployment uses systemd and Tailscale Serve without
+exposing the coordinator to the public internet. Its exact operational contract
+is in [deploy/README.md](deploy/README.md).
+
 The TypeScript client is in
 [clients/typescript](clients/typescript/README.md). It proves authentication,
 task discovery and authorization, durable replay cursors, live reattachment,
