@@ -1,0 +1,25 @@
+{
+  "name": "@renoa/pi-node",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0 OR MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "auth:xai": "pnpm run build && node dist/src/auth-xai.js",
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "start": "node dist/src/main.js",
+    "test": "pnpm run build && node --test dist/test/*.test.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.84.1",
+    "@earendil-works/pi-ai": "0.84.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2"
+  }
+}

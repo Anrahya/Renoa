@@ -1,0 +1,12 @@
+/target/
+/clients/typescript/dist/
+/nodes/pi/dist/
+node_modules/
+*.db
+*.db-shm
+*.db-wal
+
+# Upstream reference checkouts; source revisions are recorded in docs instead.
+/codex/
+/grok-build/
+/pi/

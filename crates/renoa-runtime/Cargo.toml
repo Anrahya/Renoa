@@ -1,0 +1,20 @@
+[package]
+name = "renoa-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+renoa-core = { path = "../renoa-core" }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+renoa-store-sqlite = { path = "../renoa-store-sqlite" }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
