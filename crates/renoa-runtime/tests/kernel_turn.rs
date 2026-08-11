@@ -1,3 +1,5 @@
+#[path = "kernel_turn/agent.rs"]
+mod agent;
 #[path = "kernel_turn/agent_resolution.rs"]
 mod agent_resolution;
 #[path = "kernel_turn/cancellation.rs"]

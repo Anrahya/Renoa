@@ -11,10 +11,12 @@ projects are studied for established agent-runtime mechanics.
   `53fa77ccd8a279eb87e92294ef3687b03ff80112`
 - License: MIT
 - Studied source: `pi/packages/agent/src/agent-loop.ts`,
+  `pi/packages/agent/src/agent.ts`,
   `pi/packages/protocol`, and `pi/packages/server`
-- Adopted ideas: the minimal model-to-tool continuation loop, source-ordered
-  tool-result reinjection, and representing tool failures as model-visible
-  results. The continuity proof also follows Pi's explicit version handshake
+- Adopted ideas: the minimal model-to-tool continuation loop, a stateful Agent
+  around that reusable loop, source-ordered tool-result reinjection, and
+  representing tool failures as model-visible results. The continuity proof
+  also follows Pi's explicit version handshake
   and separation of authoritative stored state from transient connection
   progress. Renoa keeps JSON for v0 instead of adopting Pi's CBOR framing. The
   first external node uses Pi directly and projects only the durable event

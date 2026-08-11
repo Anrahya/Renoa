@@ -78,6 +78,7 @@ decision record. The transport-independent behavior is in
 binding is in [docs/rcp-json-ws-v0.md](docs/rcp-json-ws-v0.md). See
 [docs/continuity-v0.md](docs/continuity-v0.md) for the current proof,
 [docs/identity-v0.md](docs/identity-v0.md) for device trust,
-[docs/kernel-v0.md](docs/kernel-v0.md) for the optional reference executor, and
+[docs/kernel-v0.md](docs/kernel-v0.md) for the optional reference executor,
+[docs/agent-v0.md](docs/agent-v0.md) for its stateful harness boundary, and
 [docs/reference-implementations.md](docs/reference-implementations.md) for the
 upstream designs being studied.

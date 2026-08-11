@@ -87,6 +87,18 @@ impl Engine {
         agent: ResolvedAgent,
         cancellation: CancellationToken,
     ) -> Result<AgentRunResult, EngineError> {
+        let mut messages = Vec::new();
+        self.run_in_context(command, &agent, &mut messages, cancellation)
+            .await
+    }
+
+    pub(crate) async fn run_in_context(
+        &self,
+        command: CommandEnvelope,
+        agent: &ResolvedAgent,
+        messages: &mut Vec<Message>,
+        cancellation: CancellationToken,
+    ) -> Result<AgentRunResult, EngineError> {
         let run_id = match self.store.admit_run(command.clone(), agent.clone()).await? {
             RunAdmission::Admitted(run_id) => run_id,
             RunAdmission::Existing(run_id) => return self.replay_completed(run_id).await,
@@ -98,14 +110,9 @@ impl Engine {
             .into_iter()
             .filter(|capability| agent.capability_grants.contains(&capability.name))
             .collect::<Vec<_>>();
-        let mut messages = vec![
-            Message::System {
-                text: agent.instructions,
-            },
-            Message::User {
-                text: command.input.text().to_owned(),
-            },
-        ];
+        messages.push(Message::User {
+            text: command.input.text().to_owned(),
+        });
 
         for round in 0..self.config.max_model_rounds {
             if cancellation.is_cancelled() {
@@ -116,7 +123,8 @@ impl Engine {
                 .model_step(
                     run_id,
                     round,
-                    &messages,
+                    &agent.instructions,
+                    messages,
                     &capabilities,
                     cancellation.child_token(),
                 )
@@ -175,14 +183,20 @@ impl Engine {
         &self,
         run_id: RunId,
         round: u32,
+        instructions: &str,
         messages: &[Message],
         capabilities: &[renoa_core::CapabilitySpec],
         cancellation: CancellationToken,
     ) -> Result<renoa_core::ModelResponse, EngineError> {
+        let mut model_messages = Vec::with_capacity(messages.len() + 1);
+        model_messages.push(Message::System {
+            text: instructions.to_owned(),
+        });
+        model_messages.extend_from_slice(messages);
         let request = ModelRequest {
             run_id,
             round,
-            messages: messages.to_vec(),
+            messages: model_messages,
             capabilities: capabilities.to_vec(),
         };
         self.store

@@ -674,6 +674,7 @@ version = "0.1.0"
 dependencies = [
  "renoa-core",
  "renoa-store-sqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

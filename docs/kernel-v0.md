@@ -10,6 +10,9 @@ The kernel executes an agent turn independently of the surface that submitted
 it and independently of the model provider that performs inference. A surface
 transports commands and events; it does not own the agent loop.
 
+The kernel's `Engine` remains the low-level loop. The stateful wrapper described
+in [agent-v0.md](agent-v0.md) carries one conversation across multiple turns.
+
 ## Walking-skeleton scenario
 
 The first acceptance scenario asks a scripted model to read a file, edit it,
@@ -59,7 +62,7 @@ future capability contract defines idempotency or reconciliation semantics.
 - Real provider APIs or provider authentication
 - Agent discovery, configuration parsing, or authorization policy resolution
 - Streaming model output
-- Conversation memory and compaction
+- Context compaction and external memory
 - Human approval workflows
 - Sandboxed or remote execution
 - Steering and queued follow-up messages
