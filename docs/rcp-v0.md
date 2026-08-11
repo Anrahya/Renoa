@@ -475,7 +475,7 @@ when surfaces, sockets, nodes, and agent harnesses change.
 
 ## Current implementation
 
-The current loopback implementation demonstrates:
+The current implementation demonstrates:
 
 - server-selected device identity and revocation;
 - task ownership checks;
@@ -540,7 +540,11 @@ The current loopback implementation demonstrates:
   SuperGrok device login whose renewable credential is durably rotated without
   adding provider data to RCP. A manual live proof exercised Grok's real model,
   Pi's edit tool, and token refresh; deterministic tests retain the external
-  model boundary.
+  model boundary;
+- a private VPS coordinator reached through Tailscale Serve, with trusted local
+  node and task provisioning. A Mac Pi node completed a real SuperGrok edit
+  while its TypeScript surface was disconnected; reconnect replayed the missed
+  ordered suffix, including exactly one completed terminal event.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 
@@ -555,6 +559,11 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    token deltas or a general streaming UI protocol.
 
 These are known proof boundaries, not hidden guarantees.
+
+None of these boundaries prevents a new harness from implementing the existing
+neutral execution delivery and event profile. Renoa's Rust agent can therefore
+proceed independently while later RCP work is driven by a real approval,
+multi-task, or public-network consumer.
 
 ## Implementation sequence
 

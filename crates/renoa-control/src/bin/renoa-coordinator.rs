@@ -8,8 +8,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use renoa_control::{Coordinator, EnrollmentToken, PeerIdentity};
-use renoa_protocol::{PrincipalId, SurfaceRef};
+use renoa_control::{Coordinator, EnrollmentToken, NodeId, PeerIdentity, TaskId, TaskSpec};
+use renoa_protocol::{PrincipalId, SurfaceRef, TargetRef};
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -17,7 +17,9 @@ use uuid::Uuid;
 
 const USAGE: &str = "usage:
   renoa-coordinator serve <database-path> <port>
-  renoa-coordinator enroll-surface <database-path> <principal-id> <surface>";
+  renoa-coordinator enroll-surface <database-path> <principal-id> <surface>
+  renoa-coordinator enroll-node <database-path> <node-id>
+  renoa-coordinator create-task <database-path> <task-id> <principal-id> <node-id> <target>";
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
 
 enum Operation {
@@ -29,6 +31,14 @@ enum Operation {
         database: PathBuf,
         principal_id: PrincipalId,
         surface: SurfaceRef,
+    },
+    EnrollNode {
+        database: PathBuf,
+        node_id: NodeId,
+    },
+    CreateTask {
+        database: PathBuf,
+        task: TaskSpec,
     },
 }
 
@@ -53,13 +63,8 @@ impl Operation {
                 Ok(Self::Serve { database, port })
             }
             Some("enroll-surface") => {
-                let principal_id = arguments
-                    .next()
-                    .and_then(|value| value.into_string().ok())
-                    .ok_or_else(|| USAGE.to_owned())?
-                    .parse::<Uuid>()
-                    .map(PrincipalId::from_uuid)
-                    .map_err(|_| "principal id must be a UUID".to_owned())?;
+                let principal_id =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
                 let surface = arguments
                     .next()
                     .and_then(|value| value.into_string().ok())
@@ -72,9 +77,47 @@ impl Operation {
                     surface,
                 })
             }
+            Some("enroll-node") => {
+                let node_id = NodeId::from_uuid(uuid_argument(&mut arguments, "node id")?);
+                no_more_arguments(arguments)?;
+                Ok(Self::EnrollNode { database, node_id })
+            }
+            Some("create-task") => {
+                let task_id = TaskId::from_uuid(uuid_argument(&mut arguments, "task id")?);
+                let principal_id =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
+                let node_id = NodeId::from_uuid(uuid_argument(&mut arguments, "node id")?);
+                let target = arguments
+                    .next()
+                    .and_then(|value| value.into_string().ok())
+                    .map(TargetRef::new)
+                    .ok_or_else(|| USAGE.to_owned())?;
+                no_more_arguments(arguments)?;
+                Ok(Self::CreateTask {
+                    database,
+                    task: TaskSpec {
+                        task_id,
+                        principal_id,
+                        node_id,
+                        target,
+                    },
+                })
+            }
             _ => Err(USAGE.to_owned()),
         }
     }
+}
+
+fn uuid_argument(
+    arguments: &mut impl Iterator<Item = OsString>,
+    name: &str,
+) -> Result<Uuid, String> {
+    arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(|| USAGE.to_owned())?
+        .parse()
+        .map_err(|_| format!("{name} must be a UUID"))
 }
 
 fn no_more_arguments(mut arguments: impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -112,7 +155,20 @@ async fn run() -> Result<(), String> {
             database,
             principal_id,
             surface,
-        } => create_surface_enrollment(database, principal_id, surface).await,
+        } => {
+            create_enrollment(
+                database,
+                PeerIdentity::Surface {
+                    principal_id,
+                    surface,
+                },
+            )
+            .await
+        }
+        Operation::EnrollNode { database, node_id } => {
+            create_enrollment(database, PeerIdentity::Node { node_id }).await
+        }
+        Operation::CreateTask { database, task } => create_task(database, task).await,
     }
 }
 
@@ -141,23 +197,21 @@ async fn serve(database: PathBuf, port: u16) -> Result<(), String> {
     }
 }
 
-async fn create_surface_enrollment(
-    database: PathBuf,
-    principal_id: PrincipalId,
-    surface: SurfaceRef,
-) -> Result<(), String> {
+async fn create_enrollment(database: PathBuf, peer: PeerIdentity) -> Result<(), String> {
     let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
     let token = coordinator
-        .create_enrollment(
-            PeerIdentity::Surface {
-                principal_id,
-                surface,
-            },
-            SystemTime::now() + ENROLLMENT_LIFETIME,
-        )
+        .create_enrollment(peer, SystemTime::now() + ENROLLMENT_LIFETIME)
         .await
         .map_err(|error| error.to_string())?;
     write_json(&EnrollmentCreated { token })
+}
+
+async fn create_task(database: PathBuf, task: TaskSpec) -> Result<(), String> {
+    Coordinator::open(database)
+        .map_err(|error| error.to_string())?
+        .create_task(task)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 fn write_json(value: &impl Serialize) -> Result<(), String> {

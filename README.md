@@ -39,8 +39,20 @@ renoa-coordinator enroll-surface \
 ```
 
 The JSON output contains a secret token that expires after five minutes. This
-command adds no remote administration endpoint; task and node provisioning
-still use the trusted `Coordinator` API.
+command adds no remote administration endpoint. Provision a node identity and
+one task binding from the same trusted host with:
+
+```sh
+renoa-coordinator enroll-node \
+  /absolute/path/to/control.sqlite <node-uuid>
+renoa-coordinator create-task \
+  /absolute/path/to/control.sqlite \
+  <task-uuid> <principal-uuid> <node-uuid> <target>
+```
+
+Node enrollment also emits a single-use five-minute token. `create-task`
+persists the exact operator-selected identities and emits nothing on success.
+These local bootstrap commands are not part of RCP's network operations.
 
 The first private VPS deployment uses systemd and Tailscale Serve without
 exposing the coordinator to the public internet. Its exact operational contract

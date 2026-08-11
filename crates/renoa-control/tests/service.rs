@@ -9,10 +9,18 @@ use std::{
 use std::{process::ExitStatus, thread, time::Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use renoa_control::{ClientMessage, Coordinator, EnrollmentToken, JSON_WS_VERSION, ServerMessage};
+use renoa_control::{
+    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION, ServerMessage,
+    TaskId, TaskSummary,
+};
+use renoa_protocol::{
+    CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
+};
 use serde::Deserialize;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use uuid::Uuid;
+
+type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[derive(Deserialize)]
 struct Ready {
@@ -28,9 +36,7 @@ struct CoordinatorProcess(Child);
 
 impl CoordinatorProcess {
     fn start(database: &Path) -> Self {
-        let binary = std::env::var_os("CARGO_BIN_EXE_renoa-coordinator")
-            .expect("Cargo did not build the renoa-coordinator binary");
-        let child = Command::new(binary)
+        let child = coordinator_command()
             .arg("serve")
             .arg(database)
             .arg("0")
@@ -78,60 +84,123 @@ impl Drop for CoordinatorProcess {
     }
 }
 
-#[tokio::test]
-async fn coordinator_executable_serves_the_existing_protocol() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let database = directory.path().join("control.db");
-    let enrollment = Command::new(
+fn coordinator_command() -> Command {
+    Command::new(
         std::env::var_os("CARGO_BIN_EXE_renoa-coordinator")
             .expect("Cargo did not build the renoa-coordinator binary"),
     )
-    .arg("enroll-surface")
-    .arg(&database)
-    .arg(Uuid::from_u128(1).to_string())
-    .arg("service_test")
-    .output()
-    .expect("run enrollment command");
+}
+
+fn create_surface_enrollment(database: &Path) -> EnrollmentToken {
+    enrollment_token(
+        coordinator_command()
+            .arg("enroll-surface")
+            .arg(database)
+            .arg(Uuid::from_u128(1).to_string())
+            .arg("service_test"),
+        "surface",
+    )
+}
+
+fn create_node_enrollment(database: &Path) -> EnrollmentToken {
+    enrollment_token(
+        coordinator_command()
+            .arg("enroll-node")
+            .arg(database)
+            .arg(Uuid::from_u128(2).to_string()),
+        "node",
+    )
+}
+
+fn enrollment_token(command: &mut Command, peer: &str) -> EnrollmentToken {
+    let output = command.output().expect("run enrollment command");
     assert!(
-        enrollment.status.success(),
-        "enrollment command failed: {}",
-        String::from_utf8_lossy(&enrollment.stderr)
+        output.status.success(),
+        "{peer} enrollment command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
     let EnrollmentCreated { token } =
-        serde_json::from_slice(&enrollment.stdout).expect("parse enrollment output");
+        serde_json::from_slice(&output.stdout).expect("parse enrollment output");
+    token
+}
+
+fn create_task(database: &Path) {
+    let output = coordinator_command()
+        .arg("create-task")
+        .arg(database)
+        .arg(Uuid::from_u128(3).to_string())
+        .arg(Uuid::from_u128(1).to_string())
+        .arg(Uuid::from_u128(2).to_string())
+        .arg("workspace:service-test")
+        .output()
+        .expect("run task creation command");
+    assert!(
+        output.status.success(),
+        "task creation command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty(), "task creation must be silent");
+}
+
+#[tokio::test]
+async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = directory.path().join("control.db");
+    let surface_token = create_surface_enrollment(&database);
+    let node_token = create_node_enrollment(&database);
+    create_task(&database);
 
     let mut process = CoordinatorProcess::start(&database);
     let ready = process.read_ready();
-    let (mut enrollment, _) = connect_async(&ready.endpoint)
-        .await
-        .expect("connect for enrollment");
-    send(
-        &mut enrollment,
-        &ClientMessage::Enroll {
-            version: JSON_WS_VERSION,
-            token,
-        },
-    )
-    .await;
-    let ServerMessage::Enrolled { credentials, .. } = receive(&mut enrollment).await else {
-        panic!("coordinator did not enroll the surface");
-    };
+    let surface_credentials = enroll(&ready.endpoint, surface_token).await;
+    let mut surface = authenticate(&ready.endpoint, surface_credentials).await;
+    let node_credentials = enroll(&ready.endpoint, node_token).await;
+    let mut node = authenticate(&ready.endpoint, node_credentials).await;
 
-    let (mut surface, _) = connect_async(&ready.endpoint)
-        .await
-        .expect("connect authenticated surface");
+    send(&mut surface, &ClientMessage::ListTasks { request_id: 1 }).await;
+    assert_eq!(
+        receive(&mut surface).await,
+        ServerMessage::TaskList {
+            request_id: 1,
+            tasks: vec![TaskSummary {
+                task_id: TaskId::from_uuid(Uuid::from_u128(3)),
+                target: TargetRef::new("workspace:service-test"),
+            }],
+        }
+    );
+
+    let command_id = CommandId::from_uuid(Uuid::from_u128(4));
+    let input = CommandInput::Text {
+        text: "continue".to_owned(),
+    };
     send(
         &mut surface,
-        &ClientMessage::Authenticate {
-            version: JSON_WS_VERSION,
-            credentials,
+        &ClientMessage::Submit {
+            request_id: 2,
+            task_id: TaskId::from_uuid(Uuid::from_u128(3)),
+            command_id,
+            input: input.clone(),
         },
     )
     .await;
     assert_eq!(
         receive(&mut surface).await,
-        ServerMessage::Authenticated {
-            version: JSON_WS_VERSION,
+        ServerMessage::CommandAccepted {
+            request_id: 2,
+            command_id,
+        }
+    );
+    assert_eq!(
+        receive(&mut node).await,
+        ServerMessage::Execute {
+            task_id: TaskId::from_uuid(Uuid::from_u128(3)),
+            command: CommandEnvelope {
+                command_id,
+                principal_id: PrincipalId::from_uuid(Uuid::from_u128(1)),
+                surface: SurfaceRef::new("service_test"),
+                target: TargetRef::new("workspace:service-test"),
+                input,
+            },
         }
     );
 }
@@ -148,12 +217,46 @@ fn coordinator_executable_stops_cleanly_on_termination() {
     assert!(process.terminate().success());
 }
 
-async fn send(
-    socket: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    message: &ClientMessage,
-) {
+async fn enroll(endpoint: &str, token: EnrollmentToken) -> DeviceCredentials {
+    let (mut socket, _) = connect_async(endpoint)
+        .await
+        .expect("connect for enrollment");
+    send(
+        &mut socket,
+        &ClientMessage::Enroll {
+            version: JSON_WS_VERSION,
+            token,
+        },
+    )
+    .await;
+    let ServerMessage::Enrolled { credentials, .. } = receive(&mut socket).await else {
+        panic!("coordinator did not enroll the peer");
+    };
+    credentials
+}
+
+async fn authenticate(endpoint: &str, credentials: DeviceCredentials) -> Socket {
+    let (mut socket, _) = connect_async(endpoint)
+        .await
+        .expect("connect authenticated peer");
+    send(
+        &mut socket,
+        &ClientMessage::Authenticate {
+            version: JSON_WS_VERSION,
+            credentials,
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut socket).await,
+        ServerMessage::Authenticated {
+            version: JSON_WS_VERSION,
+        }
+    );
+    socket
+}
+
+async fn send(socket: &mut Socket, message: &ClientMessage) {
     socket
         .send(Message::Text(
             serde_json::to_string(message)
@@ -164,11 +267,7 @@ async fn send(
         .expect("send client message");
 }
 
-async fn receive(
-    socket: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-) -> ServerMessage {
+async fn receive(socket: &mut Socket) -> ServerMessage {
     let message = socket
         .next()
         .await
