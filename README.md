@@ -10,15 +10,15 @@ temporarily perform work for that task through a replaceable harness such as
 Renoa's Rust kernel, Pi SDK, or a future adapter. Connections, surfaces, nodes,
 models, and harnesses may change without changing task identity.
 
-The repository currently contains a kernel-v0 reference executor, a live
-`renoa-node` bridge, a headless TypeScript surface client, a Pi SDK execution
-node, and a loopback-only continuity proof. Both execution bridges keep
-model execution independent of the coordinator socket, publish locally
-committed events while a turn is running, and resume from durable
-acknowledgement cursors after reconnecting. The coordinator authenticates
-enrolled devices, lists each principal's tasks, durably dispatches owned work,
-maintains one ordered journal for every surface, and replays missed events. This
-is not yet a stable public RCP wire implementation.
+The repository currently contains a standalone Rust Agent SDK, a kernel-v0
+reference executor, a live `renoa-node` bridge, a headless TypeScript surface
+client, a Pi SDK execution node, and a loopback-only continuity proof. Both
+execution bridges keep model execution independent of the coordinator socket,
+publish locally committed events while a turn is running, and resume from
+durable acknowledgement cursors after reconnecting. The coordinator
+authenticates enrolled devices, lists each principal's tasks, durably dispatches
+owned work, maintains one ordered journal for every surface, and replays missed
+events. This is not yet a stable public RCP wire implementation.
 
 Run the loopback coordinator as its own process with:
 
@@ -79,6 +79,6 @@ binding is in [docs/rcp-json-ws-v0.md](docs/rcp-json-ws-v0.md). See
 [docs/continuity-v0.md](docs/continuity-v0.md) for the current proof,
 [docs/identity-v0.md](docs/identity-v0.md) for device trust,
 [docs/kernel-v0.md](docs/kernel-v0.md) for the optional reference executor,
-[docs/agent-v0.md](docs/agent-v0.md) for its stateful harness boundary, and
+[docs/agent-v0.md](docs/agent-v0.md) for the standalone Rust Agent SDK boundary, and
 [docs/reference-implementations.md](docs/reference-implementations.md) for the
 upstream designs being studied.

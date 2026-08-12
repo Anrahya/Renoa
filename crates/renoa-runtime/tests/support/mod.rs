@@ -19,8 +19,6 @@ use tokio_util::sync::CancellationToken;
 pub enum ModelStep {
     Respond(ModelResponse),
     Fail(String),
-    Events(Vec<Result<ModelEvent, ModelError>>),
-    EventsThenPending(Vec<Result<ModelEvent, ModelError>>),
     Pending,
 }
 
@@ -77,10 +75,6 @@ impl ModelDriver for ScriptedModel {
                 stream::once(async { Ok(ModelEvent::Completed { response }) }).boxed()
             }
             ModelStep::Fail(error) => stream::once(async { Err(ModelError::new(error)) }).boxed(),
-            ModelStep::Events(events) => stream::iter(events).boxed(),
-            ModelStep::EventsThenPending(events) => {
-                stream::iter(events).chain(stream::pending()).boxed()
-            }
             ModelStep::Pending => stream::pending().boxed(),
         }
     }

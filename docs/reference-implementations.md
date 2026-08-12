@@ -12,17 +12,28 @@ projects are studied for established agent-runtime mechanics.
 - License: MIT
 - Studied source: `pi/packages/agent/src/agent-loop.ts`,
   `pi/packages/agent/src/agent.ts`,
+  `pi/packages/ai/src/types.ts`,
   `pi/packages/protocol`, and `pi/packages/server`
 - Adopted ideas: the minimal model-to-tool continuation loop, a stateful Agent
   around that reusable loop, awaited ordered lifecycle events, source-ordered
-  tool-result reinjection, streamed partial messages with explicit aborts, and
-  representing tool failures as model-visible results. The continuity proof
-  also follows Pi's explicit version handshake and separation of authoritative
-  stored state from transient connection progress. Renoa keeps JSON for v0
-  instead of adopting Pi's CBOR framing. The first external node uses Pi
-  directly and projects only the durable event intersection into RCP; Pi
-  messages and provider events remain local. Its local workspace adapter reuses
-  Pi's packaged read, write, and edit tools and adds a target binding and
+  content blocks and tool-result reinjection, block-indexed streamed text with
+  explicit aborts, representing tool failures as model-visible results,
+  successful stop reasons, normalized per-response token usage, continuation
+  from an existing transcript, distinct steering and follow-up queues, host
+  context projection, rich tool results and progress, and explicit parallel
+  tool scheduling. Renoa also retains opaque provider continuation metadata
+  rather than flattening it out of the portable transcript.
+  Renoa keeps pricing outside conversation state and treats omitted usage as
+  unknown instead of Pi's zero-filled value. Renoa's Rust SDK defaults tool
+  execution to sequential, and makes queues and progress channels bounded.
+  Queues remain reachable through a clonable control handle rather than copying
+  Pi's unbounded Agent-owned implementation. The continuity proof also follows
+  Pi's explicit version handshake and separation of authoritative stored state
+  from transient connection progress. Renoa keeps JSON for v0 instead of
+  adopting Pi's CBOR framing. The first external node uses Pi directly and
+  projects only the durable event intersection into RCP; Pi messages and
+  provider events remain local. Its local workspace adapter reuses Pi's
+  packaged read, write, and edit tools and adds a target binding and
   path-confinement check rather than reimplementing Pi's file behavior. That
   tool configuration belongs to the Pi adapter, not RCP. The node also consumes
   Pi's provider-owned OAuth/refresh contract through its own durable credential
@@ -52,9 +63,8 @@ projects are studied for established agent-runtime mechanics.
 - Adopted ideas: resolve a declarative agent before binding it to a run, keep
   sampling reliability outside the continuation loop, and treat local or
   remote capability execution as a host concern rather than a surface concern.
-- Deferred ideas: streaming tool progress, dangling-call recovery, and ACP as
-  a coding-surface adapter. These require runtime consumers before they belong
-  in the kernel.
+- Deferred ideas: dangling-call recovery and ACP as a coding-surface adapter.
+  These require runtime consumers before they belong in the kernel.
 
 No source file is copied wholesale. If Renoa later incorporates substantial
 upstream code, the relevant license notice and modification history will be

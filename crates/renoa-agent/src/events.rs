@@ -1,13 +1,14 @@
-use renoa_core::{BoxFuture, CapabilityCall, CapabilityOutcome, Message};
+use crate::{BoxFuture, Message, MessageRole, ToolCall, ToolOutput, ToolResult};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEvent {
     AgentStart,
     TurnStart,
     MessageStart {
-        message: Message,
+        role: MessageRole,
     },
     MessageUpdate {
+        content_index: usize,
         text_delta: String,
     },
     MessageAbort,
@@ -15,17 +16,20 @@ pub enum AgentEvent {
         message: Message,
     },
     ToolExecutionStart {
-        call: CapabilityCall,
+        call: ToolCall,
+    },
+    ToolExecutionUpdate {
+        call: ToolCall,
+        update: ToolOutput,
     },
     ToolExecutionEnd {
-        call: CapabilityCall,
-        outcome: CapabilityOutcome,
+        call: ToolCall,
+        result: ToolResult,
     },
     TurnEnd,
     AgentEnd,
 }
 
-/// Receives ordered, transient lifecycle events from an [`Agent`](crate::Agent).
 pub trait AgentEventSink: Send + Sync {
     fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()>;
 }
@@ -54,7 +58,7 @@ pub(crate) async fn finish_message(
         emit_event(
             sink,
             AgentEvent::MessageStart {
-                message: message.clone(),
+                role: message.role(),
             },
         )
         .await;

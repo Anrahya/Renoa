@@ -6,8 +6,6 @@ use renoa_core::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{AgentEvent, AgentEventSink, events::emit_event};
-
 use super::{Engine, EngineError};
 
 impl Engine {
@@ -18,7 +16,6 @@ impl Engine {
         response: &ModelResponse,
         capabilities: &[CapabilitySpec],
         cancellation: CancellationToken,
-        event_sink: Option<&dyn AgentEventSink>,
     ) -> Result<Vec<(CapabilityRequest, CapabilityOutcome)>, EngineError> {
         if response.capability_calls.len() > self.config.max_capability_calls_per_response {
             return Err(EngineError::CapabilityBatchTooLarge {
@@ -60,18 +57,16 @@ impl Engine {
         let outcomes = if response.truncated {
             let mut outcomes = Vec::with_capacity(requests.len());
             for request in requests {
-                emit_tool_start(event_sink, &request).await;
                 let outcome = CapabilityOutcome::error(
                     "capability call was not executed because the model response was truncated",
                 );
                 self.record_capability_completion(run_id, &request, &outcome)
                     .await?;
-                emit_tool_end(event_sink, &request, &outcome).await;
                 outcomes.push((request, outcome));
             }
             outcomes
         } else {
-            self.execute_capabilities(run_id, requests, capabilities, cancellation, event_sink)
+            self.execute_capabilities(run_id, requests, capabilities, cancellation)
                 .await?
         };
         Ok(outcomes)
@@ -83,12 +78,10 @@ impl Engine {
         requests: Vec<CapabilityRequest>,
         capabilities: &[CapabilitySpec],
         cancellation: CancellationToken,
-        event_sink: Option<&dyn AgentEventSink>,
     ) -> Result<Vec<(CapabilityRequest, CapabilityOutcome)>, EngineError> {
         let mut tasks = tokio::task::JoinSet::new();
         let mut outcomes = Vec::with_capacity(requests.len());
         for request in requests {
-            emit_tool_start(event_sink, &request).await;
             if !capabilities
                 .iter()
                 .any(|capability| capability.name == request.call.name)
@@ -97,7 +90,6 @@ impl Engine {
                 let outcome = CapabilityOutcome::error(message);
                 self.record_capability_completion(run_id, &request, &outcome)
                     .await?;
-                emit_tool_end(event_sink, &request, &outcome).await;
                 outcomes.push((request, outcome));
                 continue;
             }
@@ -121,7 +113,6 @@ impl Engine {
                 result.map_err(|error| EngineError::CapabilityTask(error.to_string()))?;
             self.record_capability_completion(run_id, &request, &outcome)
                 .await?;
-            emit_tool_end(event_sink, &request, &outcome).await;
             outcomes.push((request, outcome));
         }
         Ok(outcomes)
@@ -144,29 +135,4 @@ impl Engine {
             )
             .await
     }
-}
-
-async fn emit_tool_start(event_sink: Option<&dyn AgentEventSink>, request: &CapabilityRequest) {
-    emit_event(
-        event_sink,
-        AgentEvent::ToolExecutionStart {
-            call: request.call.clone(),
-        },
-    )
-    .await;
-}
-
-async fn emit_tool_end(
-    event_sink: Option<&dyn AgentEventSink>,
-    request: &CapabilityRequest,
-    outcome: &CapabilityOutcome,
-) {
-    emit_event(
-        event_sink,
-        AgentEvent::ToolExecutionEnd {
-            call: request.call.clone(),
-            outcome: outcome.clone(),
-        },
-    )
-    .await;
 }

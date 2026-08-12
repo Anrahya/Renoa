@@ -1,5 +1,5 @@
 [package]
-name = "renoa-runtime"
+name = "renoa-agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,15 +7,14 @@ rust-version.workspace = true
 
 [dependencies]
 futures-util.workspace = true
-renoa-core = { path = "../renoa-core" }
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { version = "1", features = ["macros", "sync"] }
 tokio-util.workspace = true
 
 [dev-dependencies]
-renoa-store-sqlite = { path = "../renoa-store-sqlite" }
-serde_json.workspace = true
-tempfile.workspace = true
+tokio = { version = "1", features = ["rt", "time"] }
 
 [lints]
 workspace = true

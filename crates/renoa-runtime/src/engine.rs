@@ -7,11 +7,6 @@ use renoa_core::{
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    AgentEvent, AgentEventSink,
-    events::{append_message, emit_event, finish_message},
-};
-
 mod capabilities;
 mod model;
 
@@ -95,18 +90,6 @@ impl Engine {
         cancellation: CancellationToken,
     ) -> Result<AgentRunResult, EngineError> {
         let mut messages = Vec::new();
-        self.run_in_context(command, &agent, &mut messages, cancellation, None)
-            .await
-    }
-
-    pub(crate) async fn run_in_context(
-        &self,
-        command: CommandEnvelope,
-        agent: &ResolvedAgent,
-        messages: &mut Vec<Message>,
-        cancellation: CancellationToken,
-        event_sink: Option<&dyn AgentEventSink>,
-    ) -> Result<AgentRunResult, EngineError> {
         let run_id = match self.store.admit_run(command.clone(), agent.clone()).await? {
             RunAdmission::Admitted(run_id) => run_id,
             RunAdmission::Existing(run_id) => return self.replay_completed(run_id).await,
@@ -118,59 +101,40 @@ impl Engine {
             .into_iter()
             .filter(|capability| agent.capability_grants.contains(&capability.name))
             .collect::<Vec<_>>();
-        if self.config.max_model_rounds > 0 {
-            emit_event(event_sink, AgentEvent::TurnStart).await;
-        }
-        let user_message = Message::User {
+        messages.push(Message::User {
             text: command.input.text().to_owned(),
-        };
-        append_message(event_sink, messages, user_message).await;
+        });
 
         for round in 0..self.config.max_model_rounds {
-            if round > 0 {
-                emit_event(event_sink, AgentEvent::TurnStart).await;
-            }
             if cancellation.is_cancelled() {
-                emit_event(event_sink, AgentEvent::TurnEnd).await;
                 return self.terminal_error(run_id, EngineError::Cancelled).await;
             }
 
-            let model_step = match self
+            let response = match self
                 .model_step(
                     model::build_request(
                         run_id,
                         round,
                         &agent.instructions,
-                        messages,
+                        &messages,
                         &capabilities,
                     ),
                     cancellation.child_token(),
-                    event_sink,
                 )
                 .await
             {
-                Ok(model_step) => model_step,
+                Ok(response) => response,
                 Err(error) => {
-                    emit_event(event_sink, AgentEvent::TurnEnd).await;
                     return self.terminal_error(run_id, error).await;
                 }
             };
 
-            let response = model_step.response;
-            let assistant_message = Message::Assistant {
+            messages.push(Message::Assistant {
                 text: response.text.clone(),
                 capability_calls: response.capability_calls.clone(),
-            };
-            finish_message(
-                event_sink,
-                messages,
-                assistant_message,
-                model_step.message_started,
-            )
-            .await;
+            });
 
             if response.capability_calls.is_empty() {
-                emit_event(event_sink, AgentEvent::TurnEnd).await;
                 return self.complete_run(run_id, response.text, round + 1).await;
             }
 
@@ -181,13 +145,11 @@ impl Engine {
                     &response,
                     &capabilities,
                     cancellation.child_token(),
-                    event_sink,
                 )
                 .await
             {
                 Ok(outcomes) => outcomes,
                 Err(error) => {
-                    emit_event(event_sink, AgentEvent::TurnEnd).await;
                     return self.terminal_error(run_id, error).await;
                 }
             };
@@ -198,9 +160,8 @@ impl Engine {
                     name: request.call.name,
                     outcome,
                 };
-                append_message(event_sink, messages, capability_message).await;
+                messages.push(capability_message);
             }
-            emit_event(event_sink, AgentEvent::TurnEnd).await;
 
             if cancellation.is_cancelled() {
                 return self.terminal_error(run_id, EngineError::Cancelled).await;

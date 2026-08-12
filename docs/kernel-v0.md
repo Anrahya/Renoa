@@ -10,8 +10,9 @@ The kernel executes an agent turn independently of the surface that submitted
 it and independently of the model provider that performs inference. A surface
 transports commands and events; it does not own the agent loop.
 
-The kernel's `Engine` remains the low-level loop. The stateful wrapper described
-in [agent-v0.md](agent-v0.md) carries one conversation across multiple turns.
+The kernel's `Engine` is a durable, command-scoped reference loop. The
+standalone SDK described in [agent-v0.md](agent-v0.md) is a separate harness;
+neither implementation is layered on the other.
 
 ## Walking-skeleton scenario
 

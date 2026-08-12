@@ -609,6 +609,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "renoa-agent"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "renoa-control"
 version = "0.1.0"
 dependencies = [
@@ -676,7 +688,6 @@ dependencies = [
  "futures-util",
  "renoa-core",
  "renoa-store-sqlite",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror",

@@ -4,14 +4,7 @@ use renoa_core::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{AgentEvent, AgentEventSink, events::emit_event};
-
 use super::{Engine, EngineError};
-
-pub(super) struct ModelStepResult {
-    pub(super) response: ModelResponse,
-    pub(super) message_started: bool,
-}
 
 pub(super) fn build_request(
     run_id: RunId,
@@ -38,8 +31,7 @@ impl Engine {
         &self,
         request: ModelRequest,
         cancellation: CancellationToken,
-        event_sink: Option<&dyn AgentEventSink>,
-    ) -> Result<ModelStepResult, EngineError> {
+    ) -> Result<ModelResponse, EngineError> {
         let run_id = request.run_id;
         let round = request.round;
         self.store
@@ -47,36 +39,16 @@ impl Engine {
             .await?;
 
         let mut events = self.model.stream(request, cancellation.child_token());
-        let mut message_started = false;
         loop {
             let event = tokio::select! {
                 biased;
-                () = cancellation.cancelled() => {
-                    abort_partial_message(event_sink, message_started).await;
-                    return Err(EngineError::Cancelled);
-                },
+                () = cancellation.cancelled() => return Err(EngineError::Cancelled),
                 event = events.next() => event,
             };
             match event {
-                Some(Ok(ModelEvent::TextDelta { text })) => {
-                    if !message_started {
-                        emit_event(
-                            event_sink,
-                            AgentEvent::MessageStart {
-                                message: Message::Assistant {
-                                    text: String::new(),
-                                    capability_calls: Vec::new(),
-                                },
-                            },
-                        )
-                        .await;
-                        message_started = true;
-                    }
-                    emit_event(event_sink, AgentEvent::MessageUpdate { text_delta: text }).await;
-                }
+                Some(Ok(ModelEvent::TextDelta { .. })) => {}
                 Some(Ok(ModelEvent::Completed { response })) => {
-                    if let Err(error) = self
-                        .store
+                    self.store
                         .append_events(
                             run_id,
                             vec![RunEventKind::ModelResponded {
@@ -84,22 +56,11 @@ impl Engine {
                                 response: response.clone(),
                             }],
                         )
-                        .await
-                    {
-                        abort_partial_message(event_sink, message_started).await;
-                        return Err(error.into());
-                    }
-                    return Ok(ModelStepResult {
-                        response,
-                        message_started,
-                    });
+                        .await?;
+                    return Ok(response);
                 }
-                Some(Err(error)) => {
-                    abort_partial_message(event_sink, message_started).await;
-                    return Err(error.into());
-                }
+                Some(Err(error)) => return Err(error.into()),
                 None => {
-                    abort_partial_message(event_sink, message_started).await;
                     return Err(renoa_core::ModelError::new(
                         "model stream ended without a completed response",
                     )
@@ -107,11 +68,5 @@ impl Engine {
                 }
             }
         }
-    }
-}
-
-async fn abort_partial_message(event_sink: Option<&dyn AgentEventSink>, message_started: bool) {
-    if message_started {
-        emit_event(event_sink, AgentEvent::MessageAbort).await;
     }
 }
