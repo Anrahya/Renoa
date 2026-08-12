@@ -2,8 +2,8 @@ use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentEvent, AgentEventSink, AssistantContent, Message, MessageRole, ModelEvent, ModelRequest,
-    ModelResponse, StopReason, TokenUsage,
+    AgentEvent, AgentEventSink, AssistantContent, ContentBlock, Message, MessageRole, ModelEvent,
+    ModelRequest, ModelResponse, StopReason, TokenUsage,
     events::{append_message, emit_event, finish_message},
 };
 
@@ -13,7 +13,7 @@ impl Agent {
     pub(super) async fn run(
         &mut self,
         prompt: Option<Message>,
-        mut pending_input: Vec<String>,
+        mut pending_input: Vec<Vec<ContentBlock>>,
         cancellation: CancellationToken,
         sink: Option<&dyn AgentEventSink>,
     ) -> Result<AgentRunResult, AgentError> {
@@ -72,11 +72,11 @@ impl Agent {
 
     async fn append_user_input(
         &mut self,
-        pending_input: &mut Vec<String>,
+        pending_input: &mut Vec<Vec<ContentBlock>>,
         sink: Option<&dyn AgentEventSink>,
     ) {
-        for text in pending_input.drain(..) {
-            append_message(sink, &mut self.state.messages, Message::user_text(text)).await;
+        for content in pending_input.drain(..) {
+            append_message(sink, &mut self.state.messages, Message::User { content }).await;
         }
     }
 
@@ -190,9 +190,9 @@ impl Agent {
                 event = stream.next() => event,
             };
             match event {
-                Some(Ok(ModelEvent::TextDelta {
+                Some(Ok(ModelEvent::ContentDelta {
                     content_index,
-                    text,
+                    delta,
                 })) => {
                     if !message_started {
                         emit_event(
@@ -208,7 +208,7 @@ impl Agent {
                         sink,
                         AgentEvent::MessageUpdate {
                             content_index,
-                            text_delta: text,
+                            delta,
                         },
                     )
                     .await;

@@ -15,8 +15,8 @@ pub use control::{AgentHandle, QueueError, QueueMode};
 pub use events::{AgentEvent, AgentEventSink};
 pub use message::{AssistantContent, AssistantMetadata, ContentBlock, Message, MessageRole};
 pub use model::{
-    Model, ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse, StopReason,
-    TokenUsage,
+    AssistantDelta, Model, ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse,
+    StopReason, TokenUsage,
 };
 pub use state::AgentState;
 pub use tool::{

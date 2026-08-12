@@ -1,4 +1,4 @@
-use crate::{BoxFuture, Message, MessageRole, ToolCall, ToolOutput, ToolResult};
+use crate::{AssistantDelta, BoxFuture, Message, MessageRole, ToolCall, ToolOutput, ToolResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEvent {
@@ -9,7 +9,7 @@ pub enum AgentEvent {
     },
     MessageUpdate {
         content_index: usize,
-        text_delta: String,
+        delta: AssistantDelta,
     },
     MessageAbort,
     MessageEnd {

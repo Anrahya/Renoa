@@ -52,12 +52,25 @@ pub struct ModelResponse {
     pub metadata: AssistantMetadata,
 }
 
+/// Provider-neutral transient output for one assistant content block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssistantDelta {
+    /// Visible assistant text.
+    Text { text: String },
+    /// Model reasoning that a host may render separately from visible text.
+    Reasoning { text: String },
+    /// Stable identity needed before incremental tool arguments can be rendered.
+    ToolCallStart { id: String, name: String },
+    /// One fragment of the tool call's JSON arguments.
+    ToolCallArguments { json_delta: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelEvent {
-    /// Text streamed for one position in the final assistant content array.
-    TextDelta {
+    /// Transient content for one position in the final assistant content array.
+    ContentDelta {
         content_index: usize,
-        text: String,
+        delta: AssistantDelta,
     },
     Completed {
         response: ModelResponse,

@@ -7,6 +7,8 @@ use thiserror::Error;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+use crate::ContentBlock;
+
 #[derive(Clone)]
 enum Activity {
     Idle,
@@ -46,7 +48,7 @@ impl AgentControl {
         self.queues.set_limit(limit)
     }
 
-    pub(crate) fn take_steering(&self, mode: QueueMode) -> Vec<String> {
+    pub(crate) fn take_steering(&self, mode: QueueMode) -> Vec<Vec<ContentBlock>> {
         self.queues.drain(QueueKind::Steering, mode)
     }
 
@@ -54,7 +56,7 @@ impl AgentControl {
         !self.queues.is_empty(QueueKind::Steering)
     }
 
-    pub(crate) fn take_follow_up(&self, mode: QueueMode) -> Vec<String> {
+    pub(crate) fn take_follow_up(&self, mode: QueueMode) -> Vec<Vec<ContentBlock>> {
         self.queues.drain(QueueKind::FollowUp, mode)
     }
 
@@ -101,7 +103,16 @@ impl AgentHandle {
     /// Returns [`QueueError::Full`] when the shared queue limit has been
     /// reached, or [`QueueError::Closed`] after the owning Agent is dropped.
     pub fn steer(&self, text: impl Into<String>) -> Result<(), QueueError> {
-        self.queues.push(QueueKind::Steering, text.into())
+        self.steer_content(vec![ContentBlock::text(text)])
+    }
+
+    /// Queues ordered text/image user content for the next model turn boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::steer`].
+    pub fn steer_content(&self, content: Vec<ContentBlock>) -> Result<(), QueueError> {
+        self.queues.push(QueueKind::Steering, content)
     }
 
     /// Queues user input to run after the agent would otherwise stop.
@@ -111,7 +122,16 @@ impl AgentHandle {
     /// Returns [`QueueError::Full`] when the shared queue limit has been
     /// reached, or [`QueueError::Closed`] after the owning Agent is dropped.
     pub fn follow_up(&self, text: impl Into<String>) -> Result<(), QueueError> {
-        self.queues.push(QueueKind::FollowUp, text.into())
+        self.follow_up_content(vec![ContentBlock::text(text)])
+    }
+
+    /// Queues ordered text/image user content after the agent would otherwise stop.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::follow_up`].
+    pub fn follow_up_content(&self, content: Vec<ContentBlock>) -> Result<(), QueueError> {
+        self.queues.push(QueueKind::FollowUp, content)
     }
 
     #[must_use]
@@ -176,8 +196,8 @@ struct PendingQueues {
 }
 
 struct QueueState {
-    steering: VecDeque<String>,
-    follow_ups: VecDeque<String>,
+    steering: VecDeque<Vec<ContentBlock>>,
+    follow_ups: VecDeque<Vec<ContentBlock>>,
     limit: usize,
     closed: bool,
 }
@@ -200,7 +220,7 @@ impl PendingQueues {
         }
     }
 
-    fn push(&self, kind: QueueKind, text: String) -> Result<(), QueueError> {
+    fn push(&self, kind: QueueKind, content: Vec<ContentBlock>) -> Result<(), QueueError> {
         let mut state = self
             .state
             .lock()
@@ -212,13 +232,13 @@ impl PendingQueues {
             return Err(QueueError::Full { limit: state.limit });
         }
         match kind {
-            QueueKind::Steering => state.steering.push_back(text),
-            QueueKind::FollowUp => state.follow_ups.push_back(text),
+            QueueKind::Steering => state.steering.push_back(content),
+            QueueKind::FollowUp => state.follow_ups.push_back(content),
         }
         Ok(())
     }
 
-    fn drain(&self, kind: QueueKind, mode: QueueMode) -> Vec<String> {
+    fn drain(&self, kind: QueueKind, mode: QueueMode) -> Vec<Vec<ContentBlock>> {
         let mut state = self
             .state
             .lock()

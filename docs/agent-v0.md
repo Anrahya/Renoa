@@ -22,8 +22,8 @@ RCP reference executor; neither crate wraps the other.
 - `AgentHandle` observes and aborts the active prompt without borrowing the
   `Agent`. It also accepts steering and follow-up input while the Agent is
   mutably borrowed by an active run.
-- `AgentEventSink` receives awaited lifecycle events for model text and tool
-  execution.
+- `AgentEventSink` receives awaited lifecycle events for structured model
+  output and tool execution.
 - `ContextProjector` lets a host choose the active transcript independently for
   every model request without rewriting authoritative Agent state.
 - `AgentState` contains the portable active transcript, not the authoritative
@@ -40,10 +40,10 @@ The tests prove that:
 
 1. ordered text/image user content reaches a provider-neutral `Model` with no
    Renoa protocol or storage dependency;
-2. ordered lifecycle events expose message roles and text deltas with their
-   content-block index, while only the completed model response enters
-   conversation state;
-3. failed partial streams emit `MessageAbort` and do not persist partial text;
+2. ordered lifecycle events expose text, reasoning, tool-call identity, and
+   JSON-argument deltas with their content-block index, while only the
+   completed model response enters conversation state;
+3. failed partial streams emit `MessageAbort` and do not persist partial output;
 4. an `AgentHandle` cancels an active prompt and remains busy until the final
    awaited `AgentEnd` listener settles;
 5. serialized conversation state resumes under host-supplied system
@@ -69,9 +69,9 @@ The tests prove that:
     batch have entered history, then takes priority over follow-ups;
 15. follow-ups run only when the Agent would otherwise stop, with configurable
     one-at-a-time or all-at-once draining;
-16. queued input is bounded, remains queued when a run reaches its turn limit,
-    is claimed atomically when resuming a completed assistant tail, and cannot
-    be invalidated by lowering its configured bound;
+16. queued text/image input is bounded, remains queued when a run reaches its
+    turn limit, is claimed atomically when resuming a completed assistant tail,
+    and cannot be invalidated by lowering its configured bound;
 17. `reset()` clears the transcript and queues while leaving the configured
     model and instructions usable for a fresh prompt;
 18. successful provider outcomes and normalized token usage survive state
@@ -101,12 +101,15 @@ and reasoning signatures, tool thought signatures, and namespaces when their
 provider requires those values on later requests. The SDK stores these values
 but does not interpret them.
 
-`ModelEvent::TextDelta` and `AgentEvent::MessageUpdate` carry a content index so
-consumers can keep simultaneous text blocks distinct. `MessageStart` carries
-only the role because terminal outcome and usage do not exist yet while a
-response is streaming. Streaming updates remain transient; the completed
-ordered message is authoritative and is the only assistant output written to
-`AgentState`.
+`ModelEvent::ContentDelta` and `AgentEvent::MessageUpdate` carry a content index
+so consumers can keep simultaneous blocks distinct. `AssistantDelta` separates
+visible text, reasoning, tool-call identity, and incremental JSON arguments.
+Tool identity has an explicit start delta because an argument fragment cannot
+identify its call; text and reasoning need no redundant start/end events.
+`MessageStart` carries only the role because terminal outcome and usage do not
+exist yet while a response is streaming. Streaming updates remain transient;
+the completed ordered message is authoritative and is the only assistant
+output written to `AgentState`.
 
 `AgentRunResult::output` is a convenience string formed by concatenating the
 final assistant response's visible text blocks in source order; reasoning is
@@ -163,10 +166,11 @@ Steering always drains before follow-ups. Each queue can drain one message or
 all available messages per boundary. Both queues share
 `AgentConfig::max_queued_messages`; the default is 64. Scheduling returns a
 typed error when that bound is full or the owning Agent has been dropped.
-Only user text can be queued, so a surface cannot inject fabricated assistant
-or tool history through the scheduling API. `Agent::set_config` rejects a new
-limit below the number of messages already accepted instead of silently
-discarding them or violating the advertised bound.
+Only ordered user `ContentBlock` values can be queued, so a surface can send
+text and images but cannot inject fabricated assistant or tool history through
+the scheduling API. Text-only convenience methods use this same path.
+`Agent::set_config` rejects a new limit below the number of messages already
+accepted instead of silently discarding them or violating the advertised bound.
 
 Queue contents are transient process state and are not part of `AgentState`.
 A durable host that accepts remote scheduling must journal that command before
@@ -208,7 +212,6 @@ selected `Model` adapter.
 
 ## Deferred extension points
 
-- live reasoning and tool-argument deltas beyond the current text stream;
 - custom host-only messages that need conversion before model requests;
 - generic pre/post-tool policy hooks;
 - graceful stop and mid-run model/tool replacement; and
