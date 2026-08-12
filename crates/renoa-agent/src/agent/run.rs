@@ -1,10 +1,10 @@
-use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentEvent, AgentEventSink, AssistantContent, ContentBlock, Message, MessageRole, ModelEvent,
-    ModelRequest, ModelResponse, StopReason, TokenUsage,
+    AgentEvent, AgentEventSink, AssistantContent, ContentBlock, Message, ModelRequest,
+    ModelResponse, SamplingError, SamplingResult, StopReason, TokenUsage,
     events::{append_message, emit_event, finish_message},
+    sample_model,
 };
 
 use super::{Agent, AgentError, AgentRunResult};
@@ -158,7 +158,7 @@ impl Agent {
         &self,
         cancellation: &CancellationToken,
         sink: Option<&dyn AgentEventSink>,
-    ) -> Result<ModelStep, AgentError> {
+    ) -> Result<SamplingResult, AgentError> {
         let messages = if let Some(projector) = &self.context_projector {
             let projection =
                 projector.project(self.state.messages.clone(), cancellation.child_token());
@@ -176,69 +176,23 @@ impl Agent {
             messages,
             tools: self.tools.iter().map(|tool| tool.spec().clone()).collect(),
         };
-        let mut stream = self.model.stream(request, cancellation.child_token());
-        let mut message_started = false;
-        loop {
-            let event = tokio::select! {
-                biased;
-                () = cancellation.cancelled() => {
-                    if message_started {
-                        emit_event(sink, AgentEvent::MessageAbort).await;
-                    }
-                    return Err(AgentError::Cancelled);
-                },
-                event = stream.next() => event,
-            };
-            match event {
-                Some(Ok(ModelEvent::ContentDelta {
-                    content_index,
-                    delta,
-                })) => {
-                    if !message_started {
-                        emit_event(
-                            sink,
-                            AgentEvent::MessageStart {
-                                role: MessageRole::Assistant,
-                            },
-                        )
-                        .await;
-                        message_started = true;
-                    }
-                    emit_event(
-                        sink,
-                        AgentEvent::MessageUpdate {
-                            content_index,
-                            delta,
-                        },
-                    )
-                    .await;
-                }
-                Some(Ok(ModelEvent::Completed { response })) => {
-                    return Ok(ModelStep {
-                        response,
-                        message_started,
-                    });
-                }
-                Some(Err(error)) => {
-                    if message_started {
-                        emit_event(sink, AgentEvent::MessageAbort).await;
-                    }
-                    return Err(error.into());
-                }
-                None => {
-                    if message_started {
-                        emit_event(sink, AgentEvent::MessageAbort).await;
-                    }
-                    return Err(AgentError::IncompleteModelStream);
-                }
-            }
-        }
+        sample_model(
+            self.model.as_ref(),
+            request,
+            cancellation.child_token(),
+            sink,
+        )
+        .await
+        .map_err(map_sampling_error)
     }
 }
 
-struct ModelStep {
-    response: ModelResponse,
-    message_started: bool,
+fn map_sampling_error(error: SamplingError) -> AgentError {
+    match error {
+        SamplingError::Cancelled => AgentError::Cancelled,
+        SamplingError::Model(error) => AgentError::Model(error),
+        SamplingError::IncompleteStream => AgentError::IncompleteModelStream,
+    }
 }
 
 struct CompletedTurn {

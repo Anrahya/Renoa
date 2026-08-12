@@ -14,8 +14,10 @@ RCP reference executor; neither crate wraps the other.
 
 - `Agent` owns conversation state, model continuation, tool dispatch, and run
   limits.
-- `Model` is the provider-adapter port. Provider authentication, retry policy,
-  and wire formats stay in adapters.
+- `Model` is the provider-adapter port. Provider authentication and wire
+  formats stay in adapters. One `Model::stream` invocation represents one
+  inference attempt; a retry that may create another response or charge stays
+  visible to the Agent's host or future durable harness.
 - `Tool` is the external capability port. The SDK advertises host-selected
   schemas and executes returned calls, but ships no filesystem, shell, search,
   or product tools.

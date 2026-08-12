@@ -638,6 +638,8 @@ assumption after context compaction:
 - Node-side task-to-harness provisioning, configuration revisions, and a
   durable registry for one node hosting multiple harness configurations
 - The product default for commands submitted while a node is offline
+- Coordinator command-position delivery for a harness that serializes many
+  admitted commands into one session
 - Execution generations and safe rebinding messages
 - Task-list pagination and live directory updates
 - Cancellation, steering, approval, and queued-follow-up semantics

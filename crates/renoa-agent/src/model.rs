@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{AssistantContent, AssistantMetadata, Message, ToolSpec};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelRequest {
     pub system_prompt: String,
     pub messages: Vec<Message>,

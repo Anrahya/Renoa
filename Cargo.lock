@@ -653,6 +653,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "renoa-harness"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "renoa-agent",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "renoa-node"
 version = "0.1.0"
 dependencies = [

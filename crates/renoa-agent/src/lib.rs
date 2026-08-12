@@ -6,6 +6,7 @@ mod control;
 mod events;
 mod message;
 mod model;
+mod sampling;
 mod state;
 mod tool;
 
@@ -18,6 +19,7 @@ pub use model::{
     AssistantDelta, Model, ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse,
     StopReason, TokenUsage,
 };
+pub use sampling::{SamplingError, SamplingResult, sample_model};
 pub use state::AgentState;
 pub use tool::{
     Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolResult, ToolSpec, ToolUpdates,
