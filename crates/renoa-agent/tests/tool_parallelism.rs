@@ -92,7 +92,7 @@ async fn one_sequential_tool_serializes_the_entire_batch() {
 }
 
 #[tokio::test]
-async fn parallel_cancellation_settles_every_call_in_source_order() {
+async fn parallel_cancellation_preserves_every_settled_result_in_source_order() {
     let first = tool_call("first", "blocking");
     let second = tool_call("second", "blocking");
     let model = Arc::new(ScriptedModel::new(vec![tool_response(vec![
@@ -124,7 +124,8 @@ async fn parallel_cancellation_settles_every_call_in_source_order() {
             panic!("tool result expected");
         };
         assert_eq!(result.call_id, call.id);
-        assert!(result.is_error);
+        assert_eq!(result.content, vec![ContentBlock::text("stopped")]);
+        assert!(!result.is_error);
     }
 }
 
@@ -200,7 +201,7 @@ impl Tool for CancellableTool {
         Box::pin(async move {
             updates.emit(tool_output("started")).await;
             cancellation.cancelled().await;
-            Ok(tool_output("unreachable"))
+            Ok(tool_output("stopped"))
         })
     }
 }

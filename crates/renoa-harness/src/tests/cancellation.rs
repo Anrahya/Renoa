@@ -405,6 +405,7 @@ fn tool_profile(model: Arc<dyn renoa_agent::Model>) -> RuntimeProfile {
     )
     .with_tools(
         vec![ToolBinding::new(
+            "bash-v1",
             Arc::new(NeverCalledTool::new()),
             ToolRecovery::NeverReplay,
         )],

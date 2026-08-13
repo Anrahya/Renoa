@@ -259,7 +259,9 @@ after the required transaction commits successfully. The store and operation
 state carry format versions; an unknown newer version fails closed. One
 explicit v1-to-v2 migration preserves model-only databases created before
 durable tools; v2-to-v3 adds cancellation requests without rebuilding tool
-state. Renoa has no generic migration framework.
+state; v3-to-v4 adds stable binding identities and fails closed for legacy
+in-flight tool work that cannot identify its implementation. Renoa has no
+generic migration framework.
 
 Every external request identity is bound to immutable content. An exact retry
 returns the existing admission; reuse with different content is a conflict.
@@ -327,7 +329,8 @@ the wakeup—are authoritative.
 One opaque runtime-profile revision is frozen when an operation activates. In
 the implemented standalone slice, the supplied profile resolves the model
 adapter and tool implementations while the harness durably freezes the system
-instructions, tool specifications, recovery declarations, and safety limits.
+instructions, stable tool-binding identities, tool specifications, recovery
+declarations, and safety limits.
 Recovery uses those saved values even if a host incorrectly reuses a revision
 with changed values. Configuration changes should still use a new revision and
 apply to the next operation; recovery fails closed if the saved model binding
@@ -367,7 +370,10 @@ refuses a batch above its frozen limit.
 
 Every tool intent stores the exact call and arguments, reserved result
 identity, effect ID, settlement token, and recovery class. The operation state
-holds the frozen runtime revision and exact advertised tool specification.
+holds the frozen runtime revision, stable host-supplied tool-binding identity,
+and exact advertised tool specification. Recovery accepts a tool only when all
+three match; a binding implementation change requires a new identity. Legacy
+tool work without an identity fails closed after migration.
 
 - `SafeToReplay` means repetition is safe even if the previous invocation
   completed or is still running unobserved.
@@ -608,7 +614,8 @@ implemented slices.
 ## Implementation order
 
 1. **Implemented:** the standalone model-only SQLite foundation shares the
-   one-attempt `sample_model` primitive with `renoa-agent`.
+   one-attempt `sample_model` primitive with `renoa-agent`; a pre-cancelled
+   attempt is rejected before the adapter is invoked.
 2. **Implemented:** durable sequential tools share one invocation primitive,
    freeze exact bindings, and recover through `SafeToReplay`, `NeverReplay`, or
    explicit abandonment.

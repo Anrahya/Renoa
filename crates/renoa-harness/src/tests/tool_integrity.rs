@@ -194,6 +194,8 @@ async fn a_changed_tool_binding_fails_before_intent_and_the_exact_binding_can_re
     );
     assert_eq!(changed_recovery.call_count(), 0);
 
+    assert_changed_binding_identity_fails(&harness, session_id).await;
+
     let exact = Arc::new(CountingTool::new(tool_spec("Read one file")));
     harness
         .run_next(
@@ -207,6 +209,30 @@ async fn a_changed_tool_binding_fails_before_intent_and_the_exact_binding_can_re
         .await
         .expect("resume exact frozen binding");
     assert_eq!(exact.calls(), vec![call]);
+}
+
+async fn assert_changed_binding_identity_fails(harness: &Harness, session_id: crate::SessionId) {
+    let changed = Arc::new(CountingTool::new(tool_spec("Read one file")));
+    let error = harness
+        .run_next(
+            session_id,
+            &profile_with_binding_id(
+                Arc::new(NeverCalledModel),
+                changed.clone(),
+                ToolRecovery::NeverReplay,
+                "read-file-v2",
+            ),
+        )
+        .await
+        .expect_err("changed binding identity must fail closed");
+    assert_eq!(
+        error,
+        HarnessError::ToolBindingUnavailable {
+            name: "read_file".to_owned(),
+            revision: "coding-v1".to_owned(),
+        }
+    );
+    assert_eq!(changed.call_count(), 0);
 }
 
 #[tokio::test]
@@ -364,6 +390,15 @@ fn profile(
     tool: Arc<dyn Tool>,
     recovery: ToolRecovery,
 ) -> RuntimeProfile {
+    profile_with_binding_id(model, tool, recovery, "read-file-v1")
+}
+
+fn profile_with_binding_id(
+    model: Arc<dyn renoa_agent::Model>,
+    tool: Arc<dyn Tool>,
+    recovery: ToolRecovery,
+    binding_id: &str,
+) -> RuntimeProfile {
     RuntimeProfile::new(
         "coding-v1",
         model,
@@ -371,7 +406,7 @@ fn profile(
         NonZeroU32::new(2).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool, recovery)],
+        vec![ToolBinding::new(binding_id, tool, recovery)],
         NonZeroU32::new(2).expect("non-zero tool-call limit"),
     )
     .expect("valid tools")

@@ -312,7 +312,7 @@ fn profile_with_recovery(
         NonZeroU32::new(3).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool, recovery)],
+        vec![ToolBinding::new("read-file-v1", tool, recovery)],
         NonZeroU32::new(4).expect("non-zero tool-call limit"),
     )
     .expect("valid tools")

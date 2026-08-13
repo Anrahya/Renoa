@@ -39,6 +39,9 @@ pub async fn sample_model(
     cancellation: CancellationToken,
     sink: Option<&dyn AgentEventSink>,
 ) -> Result<SamplingResult, SamplingError> {
+    if cancellation.is_cancelled() {
+        return Err(SamplingError::Cancelled);
+    }
     let mut stream = model.stream(request, cancellation.child_token());
     let mut message_started = false;
     loop {

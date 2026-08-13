@@ -175,7 +175,11 @@ async fn cancellation_waits_for_the_running_tool_and_skips_the_rest_of_its_batch
         NonZeroU32::new(2).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::NeverReplay)],
+        vec![ToolBinding::new(
+            "bash-v1",
+            tool.clone(),
+            ToolRecovery::NeverReplay,
+        )],
         NonZeroU32::new(2).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");
@@ -227,10 +231,7 @@ async fn cancellation_waits_for_the_running_tool_and_skips_the_rest_of_its_batch
         .collect::<Vec<_>>();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].call_id, first_call.id);
-    assert_eq!(
-        results[0].content,
-        vec![ContentBlock::text("Tool execution was cancelled.")]
-    );
+    assert_eq!(results[0].content, vec![ContentBlock::text("tool stopped")]);
     assert_eq!(results[1].call_id, second_call.id);
     assert_eq!(
         results[1].content,
@@ -267,7 +268,11 @@ async fn cancellation_after_driver_loss_never_replays_a_pending_tool() {
         NonZeroU32::new(2).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::SafeToReplay)],
+        vec![ToolBinding::new(
+            "bash-v1",
+            tool.clone(),
+            ToolRecovery::SafeToReplay,
+        )],
         NonZeroU32::new(2).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");
@@ -292,6 +297,7 @@ async fn cancellation_after_driver_loss_never_replays_a_pending_tool() {
     )
     .with_tools(
         vec![ToolBinding::new(
+            "bash-v1",
             Arc::new(NeverCalledTool::new()),
             ToolRecovery::SafeToReplay,
         )],

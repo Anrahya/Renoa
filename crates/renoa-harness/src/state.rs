@@ -4,7 +4,7 @@ use renoa_agent::{ContentBlock, Message, StopReason, TokenUsage, ToolSpec};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub(crate) const STORED_STATE_VERSION: u32 = 2;
+pub(crate) const STORED_STATE_VERSION: u32 = 3;
 
 macro_rules! harness_id {
     ($name:ident) => {
@@ -211,6 +211,8 @@ impl ToolRecovery {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FrozenTool {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) binding_id: Option<String>,
     pub(crate) spec: ToolSpec,
     pub(crate) recovery: ToolRecovery,
 }
@@ -273,6 +275,10 @@ impl StoredState {
 
     pub(crate) const fn state(&self) -> &StoredOperationState {
         &self.state
+    }
+
+    pub(crate) fn into_state(self) -> StoredOperationState {
+        self.state
     }
 
     pub(crate) const fn from_state(state: StoredOperationState) -> Self {

@@ -1,16 +1,20 @@
 use std::{num::NonZeroU32, sync::Arc};
 
-use renoa_agent::{ContentBlock, Message, ModelRequest};
+use renoa_agent::{
+    BoxFuture, ContentBlock, Message, ModelRequest, Tool, ToolCall, ToolError, ToolOutput,
+    ToolSpec, ToolUpdates,
+};
 use rusqlite::params;
 use tempfile::tempdir;
 use uuid::Uuid;
 
-use super::support::RecordingModel;
+use super::support::{NeverCalledModel, RecordingModel};
 use crate::{
-    Harness, OperationId, OperationRequest, OperationStatus, RequestId, RunNext, RuntimeProfile,
-    SessionId,
+    Harness, HarnessError, OperationId, OperationRequest, OperationStatus, RequestId, RunNext,
+    RuntimeProfile, SessionId, ToolBinding, ToolRecovery,
     schema::{initialize_v1_for_test, initialize_v2_for_test, open_connection},
 };
+use tokio_util::sync::CancellationToken;
 
 #[test]
 fn a_v2_database_adds_cancellation_storage_without_rebuilding_tools() {
@@ -25,9 +29,64 @@ fn a_v2_database_adds_cancellation_storage_without_rebuilding_tools() {
     drop(Harness::open(&database).expect("migrate v2 harness"));
 
     let connection = open_connection(&database).expect("reopen migrated database");
-    assert_eq!(pragma_version(&connection), 3);
+    assert_eq!(pragma_version(&connection), 4);
     assert!(tool_table_exists(&connection));
     assert!(cancellation_table_exists(&connection));
+}
+
+#[tokio::test]
+async fn a_v3_tool_operation_without_a_binding_identity_migrates_fail_closed() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("harness.sqlite3");
+    let session_id = SessionId::new();
+    let operation_id = OperationId::from_uuid(Uuid::new_v4());
+    let mut connection = open_connection(&database).expect("open v3 database");
+    initialize_v2_for_test(&mut connection).expect("initialize v2 schema");
+    connection
+        .execute_batch(
+            "CREATE TABLE cancellation_requests (
+                cancellation_id TEXT PRIMARY KEY NOT NULL,
+                session_id TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                FOREIGN KEY (session_id, operation_id)
+                    REFERENCES operations(session_id, operation_id)
+             ) STRICT;
+             CREATE INDEX cancellation_requests_operation
+                ON cancellation_requests(operation_id);
+             PRAGMA user_version = 3;",
+        )
+        .expect("upgrade fixture to v3");
+    insert_v3_planned_tool(&connection, session_id, operation_id);
+    drop(connection);
+
+    let tool = Arc::new(NeverExecutedTool::new());
+    let profile = RuntimeProfile::new(
+        "legacy-tools-v1",
+        Arc::new(NeverCalledModel),
+        "Be precise.",
+        NonZeroU32::new(2).expect("non-zero attempt limit"),
+    )
+    .with_tools(
+        vec![ToolBinding::new(
+            "read-file-v1",
+            tool,
+            ToolRecovery::NeverReplay,
+        )],
+        NonZeroU32::new(1).expect("non-zero tool-call limit"),
+    )
+    .expect("valid profile");
+    let harness = Harness::open(&database).expect("migrate v3 harness");
+
+    assert_eq!(
+        harness
+            .run_next(session_id, &profile)
+            .await
+            .expect_err("an unidentified legacy binding must not execute"),
+        HarnessError::ToolBindingUnavailable {
+            name: "read_file".to_owned(),
+            revision: "legacy-tools-v1".to_owned(),
+        }
+    );
 }
 
 #[tokio::test]
@@ -86,7 +145,7 @@ async fn a_v1_active_model_operation_migrates_and_recovers_its_exact_request() {
     drop(harness);
 
     let connection = open_connection(&database).expect("reopen migrated database");
-    assert_eq!(pragma_version(&connection), 3);
+    assert_eq!(pragma_version(&connection), 4);
     assert!(tool_table_exists(&connection));
     assert!(cancellation_table_exists(&connection));
 }
@@ -249,6 +308,124 @@ fn insert_v1_terminal_or_queued(
             ],
         )
         .expect("insert v1 operation");
+}
+
+fn insert_v3_planned_tool(
+    connection: &rusqlite::Connection,
+    session_id: SessionId,
+    operation_id: OperationId,
+) {
+    let batch_id = Uuid::new_v4();
+    let call = ToolCall {
+        id: "call-1".to_owned(),
+        name: "read_file".to_owned(),
+        arguments: serde_json::json!({"path": "src/lib.rs"}),
+        thought_signature: None,
+        namespace: None,
+    };
+    let state = serde_json::json!({
+        "format_version": 2,
+        "state": {
+            "phase": "need_tool",
+            "progress": {
+                "runtime": {
+                    "revision": "legacy-tools-v1",
+                    "system_prompt": "Be precise.",
+                    "max_model_attempts": 2,
+                    "max_tool_calls_per_step": 1,
+                    "tools": [{
+                        "spec": NeverExecutedTool::specification(),
+                        "recovery": "never_replay"
+                    }]
+                },
+                "model_attempts": 1
+            },
+            "batch": {
+                "batch_id": batch_id,
+                "next_index": 0,
+                "call_count": 1
+            }
+        }
+    });
+    let request = OperationRequest::new(RequestId::new(), vec![ContentBlock::text("inspect it")]);
+    connection
+        .execute(
+            "INSERT INTO sessions (
+                session_id, next_operation_position, active_operation_id,
+                next_entry_sequence, next_output_sequence
+             ) VALUES (?1, 1, NULL, 0, 0)",
+            [session_id.to_string()],
+        )
+        .expect("insert v3 session");
+    connection
+        .execute(
+            "INSERT INTO operations (
+                operation_id, session_id, request_id, position, request_json, state_json
+             ) VALUES (?1, ?2, ?3, 0, ?4, ?5)",
+            params![
+                operation_id.to_string(),
+                session_id.to_string(),
+                request.request_id().to_string(),
+                serde_json::to_string(&request).expect("serialize request"),
+                state.to_string(),
+            ],
+        )
+        .expect("insert v3 operation");
+    connection
+        .execute(
+            "INSERT INTO tool_calls (
+                operation_id, batch_id, source_index, result_entry_id, call_json,
+                status, recovery, effect_id, settlement_token
+             ) VALUES (?1, ?2, 0, ?3, ?4, 'planned', NULL, NULL, NULL)",
+            params![
+                operation_id.to_string(),
+                batch_id.to_string(),
+                Uuid::new_v4().to_string(),
+                serde_json::to_string(&call).expect("serialize tool call"),
+            ],
+        )
+        .expect("insert v3 tool call");
+    connection
+        .execute(
+            "UPDATE sessions SET active_operation_id = ?2 WHERE session_id = ?1",
+            params![session_id.to_string(), operation_id.to_string()],
+        )
+        .expect("activate v3 operation");
+}
+
+struct NeverExecutedTool {
+    spec: ToolSpec,
+}
+
+impl NeverExecutedTool {
+    fn new() -> Self {
+        Self {
+            spec: Self::specification(),
+        }
+    }
+
+    fn specification() -> ToolSpec {
+        ToolSpec {
+            name: "read_file".to_owned(),
+            description: "Read one file".to_owned(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }
+    }
+}
+
+impl Tool for NeverExecutedTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    fn execute(
+        &self,
+        _call: ToolCall,
+        _cancellation: CancellationToken,
+        _updates: ToolUpdates,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        panic!("a legacy tool without a binding identity must not execute")
+    }
 }
 
 fn pragma_version(connection: &rusqlite::Connection) -> u32 {

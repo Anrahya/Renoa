@@ -160,6 +160,7 @@ fn tool_profile(model: Arc<dyn renoa_agent::Model>) -> RuntimeProfile {
     )
     .with_tools(
         vec![ToolBinding::new(
+            "read-file-v1",
             Arc::new(NeverExecutedTool::new()),
             ToolRecovery::NeverReplay,
         )],

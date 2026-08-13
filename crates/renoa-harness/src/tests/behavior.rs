@@ -397,7 +397,7 @@ fn a_newer_schema_version_fails_closed() {
     let database = directory.path().join("harness.sqlite3");
     let connection = rusqlite::Connection::open(&database).expect("open SQLite database");
     connection
-        .pragma_update(None, "user_version", 4)
+        .pragma_update(None, "user_version", 5)
         .expect("set newer schema version");
     drop(connection);
 
@@ -406,8 +406,8 @@ fn a_newer_schema_version_fails_closed() {
             .err()
             .expect("newer schema must be rejected"),
         HarnessError::UnsupportedSchema {
-            found: 4,
-            supported: 3,
+            found: 5,
+            supported: 4,
         }
     );
 }

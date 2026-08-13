@@ -34,8 +34,8 @@ fn duplicate_tool_names_are_rejected_before_a_profile_can_run() {
     )
     .with_tools(
         vec![
-            ToolBinding::new(first, ToolRecovery::NeverReplay),
-            ToolBinding::new(second, ToolRecovery::SafeToReplay),
+            ToolBinding::new("bash-v1", first, ToolRecovery::NeverReplay),
+            ToolBinding::new("bash-v2", second, ToolRecovery::SafeToReplay),
         ],
         NonZeroU32::new(2).expect("non-zero tool-call limit"),
     );
@@ -43,6 +43,26 @@ fn duplicate_tool_names_are_rejected_before_a_profile_can_run() {
     assert!(matches!(
         result,
         Err(RuntimeProfileError::DuplicateToolName(name)) if name == "bash"
+    ));
+}
+
+#[test]
+fn an_empty_tool_binding_identity_is_rejected() {
+    let tool = Arc::new(FailingTool::new("bash", "unused"));
+    let result = RuntimeProfile::new(
+        "coding-v1",
+        Arc::new(ScriptedModel::new(Vec::<ModelResponse>::new())),
+        "Be precise.",
+        NonZeroU32::new(1).expect("non-zero attempt limit"),
+    )
+    .with_tools(
+        vec![ToolBinding::new("", tool, ToolRecovery::NeverReplay)],
+        NonZeroU32::new(1).expect("non-zero tool-call limit"),
+    );
+
+    assert!(matches!(
+        result,
+        Err(RuntimeProfileError::EmptyToolBindingId(name)) if name == "bash"
     ));
 }
 
@@ -79,7 +99,11 @@ async fn a_tool_error_becomes_one_result_and_the_model_can_recover() {
         NonZeroU32::new(2).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::NeverReplay)],
+        vec![ToolBinding::new(
+            "write-file-v1",
+            tool.clone(),
+            ToolRecovery::NeverReplay,
+        )],
         NonZeroU32::new(2).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");

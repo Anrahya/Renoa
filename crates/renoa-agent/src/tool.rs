@@ -143,12 +143,12 @@ pub async fn invoke_tool(
 
     let (updates, mut receiver) = ToolUpdates::channel();
     let mut execution = tool.execute(call.clone(), cancellation.child_token(), updates.clone());
-    let mut cancelled = false;
+    let mut cancellation_observed = false;
     let outcome = loop {
         tokio::select! {
             biased;
-            () = cancellation.cancelled(), if !cancelled => {
-                cancelled = true;
+            () = cancellation.cancelled(), if !cancellation_observed => {
+                cancellation_observed = true;
                 updates.close();
             },
             Some(update) = receiver.recv() => emit_event(
@@ -171,16 +171,15 @@ pub async fn invoke_tool(
         .await;
     }
 
-    match (cancelled, outcome) {
-        (true, _) => error_tool_result(&call, "Tool execution was cancelled."),
-        (false, Ok(output)) => ToolResult {
+    match outcome {
+        Ok(output) => ToolResult {
             call_id: call.id,
             name: call.name,
             content: output.content,
             details: output.details,
             is_error: false,
         },
-        (false, Err(error)) => error_tool_result(&call, &error.to_string()),
+        Err(error) => error_tool_result(&call, &error.to_string()),
     }
 }
 

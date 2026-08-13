@@ -46,8 +46,8 @@ The tests prove that:
    JSON-argument deltas with their content-block index, while only the
    completed model response enters conversation state;
 3. failed partial streams emit `MessageAbort` and do not persist partial output;
-4. an `AgentHandle` cancels an active prompt and remains busy until the final
-   awaited `AgentEnd` listener settles;
+4. an `AgentHandle` cancels an active prompt and remains busy until started
+   tools and the final awaited `AgentEnd` listener settle;
 5. serialized conversation state resumes under host-supplied system
    instructions, which are never serialized into that state;
 6. image blocks, signed text, reasoning, tool-call signatures, response IDs,
@@ -190,6 +190,16 @@ The future returned by `prompt()` or `resume()` must be driven to completion.
 An embedding should cancel through `AgentHandle::abort()` and keep polling the
 run until it settles; dropping an arbitrary Rust future does not provide the
 ordered shutdown guarantees of an Agent lifecycle.
+
+Cancellation is cooperative at the `Tool` boundary. Once cancellation is
+observed, the Agent stops accepting progress but continues polling every
+started tool until it resolves. A tool must observe its cancellation token and
+return only after work it owns has stopped; a process tool must kill and reap
+its process group. A tool that ignores cancellation can keep the run busy
+indefinitely. Renoa deliberately has no timeout that would declare cancellation
+complete while side effects may still be running. The tool's settled success
+or error remains authoritative; cancellation decides whether the Agent starts
+another call or model turn.
 
 ## Policy and durability
 

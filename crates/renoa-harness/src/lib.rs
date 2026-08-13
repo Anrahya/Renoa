@@ -297,6 +297,9 @@ impl RuntimeProfile {
         let mut names = HashSet::with_capacity(tools.len());
         for binding in &tools {
             let name = binding.tool.spec().name.as_str();
+            if binding.binding_id.is_empty() {
+                return Err(RuntimeProfileError::EmptyToolBindingId(name.to_owned()));
+            }
             if !names.insert(name) {
                 return Err(RuntimeProfileError::DuplicateToolName(name.to_owned()));
             }
@@ -316,6 +319,7 @@ impl RuntimeProfile {
                 .tools
                 .iter()
                 .map(|binding| FrozenTool {
+                    binding_id: Some(binding.binding_id.clone()),
                     spec: binding.tool.spec().clone(),
                     recovery: binding.recovery,
                 })
@@ -327,7 +331,9 @@ impl RuntimeProfile {
         self.tools
             .iter()
             .find(|binding| {
-                binding.tool.spec() == &frozen.spec && binding.recovery == frozen.recovery
+                frozen.binding_id.as_deref() == Some(binding.binding_id.as_str())
+                    && binding.tool.spec() == &frozen.spec
+                    && binding.recovery == frozen.recovery
             })
             .map(|binding| Arc::clone(&binding.tool))
             .ok_or_else(|| HarnessError::ToolBindingUnavailable {
@@ -339,14 +345,21 @@ impl RuntimeProfile {
 
 /// One tool implementation plus its crash-recovery declaration.
 pub struct ToolBinding {
+    binding_id: String,
     tool: Arc<dyn Tool>,
     recovery: ToolRecovery,
 }
 
 impl ToolBinding {
+    /// Binds one tool implementation to a stable host-managed identity.
+    /// Change `binding_id` whenever behavior that matters to recovery changes.
     #[must_use]
-    pub fn new(tool: Arc<dyn Tool>, recovery: ToolRecovery) -> Self {
-        Self { tool, recovery }
+    pub fn new(binding_id: impl Into<String>, tool: Arc<dyn Tool>, recovery: ToolRecovery) -> Self {
+        Self {
+            binding_id: binding_id.into(),
+            tool,
+            recovery,
+        }
     }
 }
 
@@ -355,6 +368,8 @@ impl ToolBinding {
 pub enum RuntimeProfileError {
     #[error("tool name `{0}` is configured more than once")]
     DuplicateToolName(String),
+    #[error("tool `{0}` has an empty binding identity")]
+    EmptyToolBindingId(String),
 }
 
 pub(crate) struct SessionRunLease {

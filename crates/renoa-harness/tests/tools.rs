@@ -63,7 +63,11 @@ async fn a_tool_result_is_committed_before_the_model_continues() {
         NonZeroU32::new(4).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::SafeToReplay)],
+        vec![ToolBinding::new(
+            "read-file-v1",
+            tool.clone(),
+            ToolRecovery::SafeToReplay,
+        )],
         NonZeroU32::new(8).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");
@@ -222,6 +226,7 @@ async fn an_unavailable_tool_becomes_a_model_visible_error_without_an_effect() {
     )
     .with_tools(
         vec![ToolBinding::new(
+            "available-v1",
             available.clone(),
             ToolRecovery::NeverReplay,
         )],
@@ -312,7 +317,11 @@ async fn a_length_truncated_tool_call_is_never_executed() {
         NonZeroU32::new(3).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::NeverReplay)],
+        vec![ToolBinding::new(
+            "write-file-v1",
+            tool.clone(),
+            ToolRecovery::NeverReplay,
+        )],
         NonZeroU32::new(4).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");
@@ -398,7 +407,11 @@ async fn a_tool_batch_executes_and_enters_context_in_source_order() {
         NonZeroU32::new(3).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::NeverReplay)],
+        vec![ToolBinding::new(
+            "read-file-v1",
+            tool.clone(),
+            ToolRecovery::NeverReplay,
+        )],
         NonZeroU32::new(4).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");

@@ -10,7 +10,7 @@ use crate::{
     state::{FailureKind, FrozenRuntime, OperationProgress, StoredOperationState, StoredState},
 };
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 const SCHEMA_V1: &str = "CREATE TABLE sessions (
         session_id TEXT PRIMARY KEY NOT NULL,
         next_operation_position INTEGER NOT NULL CHECK (next_operation_position >= 0),
@@ -131,7 +131,10 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), HarnessError
     if version <= 1 {
         migrate_v1_to_v2(&transaction)?;
     }
-    migrate_v2_to_v3(&transaction)?;
+    if version <= 2 {
+        migrate_v2_to_v3(&transaction)?;
+    }
+    migrate_v3_to_v4(&transaction)?;
     transaction
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(sqlite_error)?;
@@ -140,6 +143,48 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), HarnessError
 
 fn migrate_v2_to_v3(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
     transaction.execute_batch(SCHEMA_V3).map_err(sqlite_error)
+}
+
+fn migrate_v3_to_v4(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
+    let operations = {
+        let mut statement = transaction
+            .prepare("SELECT operation_id, state_json FROM operations")
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error)?
+    };
+    for (operation_id, old_json) in operations {
+        let version = serde_json::from_str::<StoredStateVersion>(&old_json)
+            .map_err(json_error)?
+            .format_version;
+        let new_json = match version {
+            1 => migrate_state_v1(transaction, &old_json)?,
+            2 => migrate_state_v2(&old_json)?,
+            crate::state::STORED_STATE_VERSION => continue,
+            unsupported => {
+                return Err(HarnessError::Corrupt(format!(
+                    "cannot migrate operation state version {unsupported}"
+                )));
+            }
+        };
+        let changed = transaction
+            .execute(
+                "UPDATE operations SET state_json = ?2
+                 WHERE operation_id = ?1 AND state_json = ?3",
+                params![operation_id, new_json, old_json],
+            )
+            .map_err(sqlite_error)?;
+        if changed != 1 {
+            return Err(HarnessError::Corrupt(
+                "operation-state migration compare-and-set failed".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -168,34 +213,18 @@ pub(crate) fn initialize_v2_for_test(connection: &mut Connection) -> Result<(), 
 }
 
 fn migrate_v1_to_v2(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
-    transaction.execute_batch(SCHEMA_V2).map_err(sqlite_error)?;
-    let operations = {
-        let mut statement = transaction
-            .prepare("SELECT operation_id, state_json FROM operations")
-            .map_err(sqlite_error)?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(sqlite_error)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error)?
-    };
-    for (operation_id, old_json) in operations {
-        let new_json = migrate_state_v1(transaction, &old_json)?;
-        let changed = transaction
-            .execute(
-                "UPDATE operations SET state_json = ?2
-                 WHERE operation_id = ?1 AND state_json = ?3",
-                params![operation_id, new_json, old_json],
-            )
-            .map_err(sqlite_error)?;
-        if changed != 1 {
-            return Err(HarnessError::Corrupt(
-                "v1 operation-state migration compare-and-set failed".to_owned(),
-            ));
-        }
+    transaction.execute_batch(SCHEMA_V2).map_err(sqlite_error)
+}
+
+fn migrate_state_v2(value: &str) -> Result<String, HarnessError> {
+    let old: StoredState = serde_json::from_str(value).map_err(json_error)?;
+    if old.format_version() != 2 {
+        return Err(HarnessError::Corrupt(format!(
+            "v2 database contains operation state version {}",
+            old.format_version()
+        )));
     }
-    Ok(())
+    serde_json::to_string(&StoredState::from_state(old.into_state())).map_err(json_error)
 }
 
 fn migrate_state_v1(transaction: &Transaction<'_>, value: &str) -> Result<String, HarnessError> {
@@ -295,6 +324,11 @@ struct StoredStateV1 {
 }
 
 #[derive(Deserialize)]
+struct StoredStateVersion {
+    format_version: u32,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 enum StoredOperationStateV1 {
     Queued,
@@ -363,7 +397,7 @@ mod tests {
         assert_eq!(pragma_text(&connection, "journal_mode"), "wal");
         assert_eq!(pragma_integer(&connection, "synchronous"), 2);
         assert_eq!(pragma_integer(&connection, "busy_timeout"), 5_000);
-        assert_eq!(pragma_integer(&connection, "user_version"), 3);
+        assert_eq!(pragma_integer(&connection, "user_version"), 4);
     }
 
     fn pragma_integer(connection: &rusqlite::Connection, name: &str) -> i64 {

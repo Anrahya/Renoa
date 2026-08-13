@@ -49,7 +49,11 @@ async fn exhausted_model_budget_fails_only_after_tool_results_are_complete() {
         NonZeroU32::new(1).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::SafeToReplay)],
+        vec![ToolBinding::new(
+            "read-file-v1",
+            tool.clone(),
+            ToolRecovery::SafeToReplay,
+        )],
         NonZeroU32::new(4).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");
@@ -123,7 +127,11 @@ async fn truncated_calls_repair_the_transcript_before_the_model_budget_failure()
         NonZeroU32::new(1).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::NeverReplay)],
+        vec![ToolBinding::new(
+            "write-file-v1",
+            tool.clone(),
+            ToolRecovery::NeverReplay,
+        )],
         NonZeroU32::new(2).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");
@@ -196,7 +204,11 @@ async fn an_oversized_tool_batch_fails_before_any_call_is_published_or_run() {
         NonZeroU32::new(2).expect("non-zero attempt limit"),
     )
     .with_tools(
-        vec![ToolBinding::new(tool.clone(), ToolRecovery::SafeToReplay)],
+        vec![ToolBinding::new(
+            "read-file-v1",
+            tool.clone(),
+            ToolRecovery::SafeToReplay,
+        )],
         NonZeroU32::new(1).expect("non-zero tool-call limit"),
     )
     .expect("valid tools");
