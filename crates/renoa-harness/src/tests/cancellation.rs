@@ -154,7 +154,7 @@ async fn cancellation_committed_before_model_settlement_wins() {
     assert!(matches!(
         harness
             .store
-            .settle_model(&lease, intent, response_with_usage())
+            .settle_model(&lease, *intent, response_with_usage())
             .await
             .expect("settle completed response after cancellation"),
         Settlement::Applied(OperationOutcome::Cancelled { .. })
@@ -211,7 +211,7 @@ async fn cancellation_committed_before_invalid_model_rejection_wins() {
     assert!(matches!(
         harness
             .store
-            .reject_model_response(&lease, intent, None, "invalid response".to_owned())
+            .reject_model_response(&lease, *intent, None, "invalid response".to_owned())
             .await
             .expect("reject invalid response after cancellation"),
         Settlement::Applied(OperationOutcome::Cancelled { .. })
@@ -265,7 +265,7 @@ async fn cancellation_committed_before_unavailable_tool_settlement_wins() {
     assert!(matches!(
         harness
             .store
-            .settle_model(&lease, intent, tool_response(call.clone()))
+            .settle_model(&lease, *intent, tool_response(call.clone()))
             .await
             .expect("commit unknown tool plan"),
         Settlement::Continue(_)
@@ -349,7 +349,7 @@ async fn cancellation_after_a_tool_completed_preserves_its_known_result() {
     };
     harness
         .store
-        .settle_model(&lease, model_intent, tool_response(call.clone()))
+        .settle_model(&lease, *model_intent, tool_response(call.clone()))
         .await
         .expect("commit tool plan");
     let planned = harness

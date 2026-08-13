@@ -280,10 +280,16 @@ fn load_model_usage(
     let mut statement = transaction
         .prepare(
             "SELECT a.operation_id, a.status, a.usage_json
-             FROM model_attempts AS a
+             FROM (
+                SELECT operation_id, status, usage_json, attempt_number, 0 AS kind
+                FROM model_attempts
+                UNION ALL
+                SELECT operation_id, status, usage_json, attempt_number, 1 AS kind
+                FROM compaction_attempts
+             ) AS a
              JOIN operations AS o ON o.operation_id = a.operation_id
              WHERE o.session_id = ?1
-             ORDER BY o.position, a.attempt_number",
+             ORDER BY o.position, a.kind, a.attempt_number",
         )
         .map_err(sqlite_error)?;
     let rows = statement

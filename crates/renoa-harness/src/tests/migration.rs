@@ -29,7 +29,7 @@ fn a_v2_database_adds_cancellation_storage_without_rebuilding_tools() {
     drop(Harness::open(&database).expect("migrate v2 harness"));
 
     let connection = open_connection(&database).expect("reopen migrated database");
-    assert_eq!(pragma_version(&connection), 4);
+    assert_eq!(pragma_version(&connection), 5);
     assert!(tool_table_exists(&connection));
     assert!(cancellation_table_exists(&connection));
 }
@@ -145,7 +145,7 @@ async fn a_v1_active_model_operation_migrates_and_recovers_its_exact_request() {
     drop(harness);
 
     let connection = open_connection(&database).expect("reopen migrated database");
-    assert_eq!(pragma_version(&connection), 4);
+    assert_eq!(pragma_version(&connection), 5);
     assert!(tool_table_exists(&connection));
     assert!(cancellation_table_exists(&connection));
 }

@@ -1,12 +1,44 @@
-use std::{fs, time::Duration};
+use std::{fs, num::NonZeroU32, time::Duration};
 
 use renoa_agent::{
-    AssistantContent, ContentBlock, ModelRequest, StopReason, TokenUsage, sample_model,
+    AssistantContent, ContentBlock, ModelErrorKind, ModelRequest, SamplingError, StopReason,
+    TokenUsage, sample_model,
 };
+use renoa_harness::ContextSizer;
 use renoa_local::PiModel;
 use tempfile::tempdir;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
+
+#[tokio::test]
+async fn pi_model_uses_a_smaller_provider_output_limit() {
+    let directory = tempdir().expect("temporary directory");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(
+        &bridge,
+        r"
+process.stdout.write(JSON.stringify({
+  ok: true,
+  response: { context_window_tokens: 100000, max_output_tokens: 8192 }
+}));
+",
+    )
+    .expect("write model bridge");
+
+    let model = PiModel::load(
+        &bridge,
+        "xai",
+        "grok-test",
+        &auth_store,
+        NonZeroU32::new(32_768).expect("non-zero host cap"),
+    )
+    .await
+    .expect("provider limit is a valid lower cap");
+
+    assert_eq!(model.max_output_tokens().get(), 8_192);
+}
 
 #[tokio::test]
 async fn pi_model_crosses_the_process_boundary_with_one_exact_request() {
@@ -19,8 +51,16 @@ async fn pi_model_crosses_the_process_boundary_with_one_exact_request() {
         r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const request = JSON.parse(input);
-if (request.system_prompt !== "Be precise." || request.messages[0].content[0].text !== "Hello") {
+if (process.env.RENOA_PI_ACTION === "describe") {
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    response: { context_window_tokens: 500000, max_output_tokens: 500000 }
+  }));
+} else if (process.env.RENOA_PI_ACTION !== "invoke") {
+  process.stdout.write(JSON.stringify({ ok: false, error: "unknown action" }));
+} else if (process.env.RENOA_PI_MAX_OUTPUT_TOKENS !== "32768") {
+  process.stdout.write(JSON.stringify({ ok: false, error: "output cap missing" }));
+} else if (JSON.parse(input).system_prompt !== "Be precise." || JSON.parse(input).messages[0].content[0].text !== "Hello") {
   process.stdout.write(JSON.stringify({ ok: false, error: "request changed" }));
 } else if (process.env.RENOA_PI_PROVIDER !== "xai" || process.env.RENOA_PI_MODEL !== "grok-test") {
   process.stdout.write(JSON.stringify({ ok: false, error: "model configuration missing" }));
@@ -38,8 +78,17 @@ if (request.system_prompt !== "Be precise." || request.messages[0].content[0].te
 "#,
     )
     .expect("write model bridge");
-    let model =
-        PiModel::new(&bridge, "xai", "grok-test", &auth_store).expect("configure Pi model adapter");
+    let model = PiModel::load(
+        &bridge,
+        "xai",
+        "grok-test",
+        &auth_store,
+        NonZeroU32::new(32_768).expect("non-zero output cap"),
+    )
+    .await
+    .expect("configure Pi model adapter");
+    assert_eq!(model.context_window_tokens().get(), 500_000);
+    assert_eq!(model.max_output_tokens().get(), 32_768);
 
     let sampled = sample_model(
         &model,
@@ -74,6 +123,18 @@ if (request.system_prompt !== "Be precise." || request.messages[0].content[0].te
         sampled.response.metadata.response_id.as_deref(),
         Some("response-1")
     );
+    let small = model.estimate_input_tokens(&ModelRequest {
+        system_prompt: "short".to_owned(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    });
+    let large = model.estimate_input_tokens(&ModelRequest {
+        system_prompt: "long ".repeat(1_000),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    });
+    assert!(small > 0);
+    assert!(large > small);
 }
 
 #[tokio::test]
@@ -91,6 +152,13 @@ async fn cancelling_a_pi_model_request_stops_its_bridge_process() {
 import {{ writeFileSync }} from "node:fs";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
+if (process.env.RENOA_PI_ACTION === "describe") {{
+  process.stdout.write(JSON.stringify({{
+    ok: true,
+    response: {{ context_window_tokens: 500000, max_output_tokens: 500000 }}
+  }}));
+  process.exit(0);
+}}
 JSON.parse(input);
 writeFileSync({}, "started");
 await new Promise(resolve => setTimeout(resolve, 800));
@@ -110,8 +178,15 @@ process.stdout.write(JSON.stringify({{
         ),
     )
     .expect("write model bridge");
-    let model =
-        PiModel::new(&bridge, "xai", "grok-test", &auth_store).expect("configure Pi model adapter");
+    let model = PiModel::load(
+        &bridge,
+        "xai",
+        "grok-test",
+        &auth_store,
+        NonZeroU32::new(32_768).expect("non-zero output cap"),
+    )
+    .await
+    .expect("configure Pi model adapter");
     let cancellation = CancellationToken::new();
     let sampling_cancellation = cancellation.clone();
     let sampling = tokio::spawn(async move {
@@ -149,4 +224,59 @@ process.stdout.write(JSON.stringify({{
     assert_eq!(error.to_string(), "model sampling was cancelled");
     sleep(Duration::from_secs(1)).await;
     assert!(!completed.exists(), "cancelled bridge kept running");
+}
+
+#[tokio::test]
+async fn pi_model_preserves_a_known_context_rejection() {
+    let directory = tempdir().expect("temporary directory");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(
+        &bridge,
+        r#"
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+if (process.env.RENOA_PI_ACTION === "describe") {
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    response: { context_window_tokens: 500000, max_output_tokens: 500000 }
+  }));
+} else {
+  JSON.parse(input);
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    error: "maximum prompt length is 500000 but request contains 500001 tokens",
+    error_kind: "context_window_exceeded"
+  }));
+}
+"#,
+    )
+    .expect("write model bridge");
+    let model = PiModel::load(
+        &bridge,
+        "xai",
+        "grok-test",
+        &auth_store,
+        NonZeroU32::new(32_768).expect("non-zero output cap"),
+    )
+    .await
+    .expect("configure Pi model adapter");
+
+    let result = sample_model(
+        &model,
+        ModelRequest {
+            system_prompt: "Be precise.".to_owned(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+        },
+        CancellationToken::new(),
+        None,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(SamplingError::Model(error))
+            if error.kind() == ModelErrorKind::ContextWindowExceeded
+    ));
 }

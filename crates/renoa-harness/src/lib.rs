@@ -13,8 +13,17 @@ use tokio_util::sync::CancellationToken;
 
 mod activation_store;
 mod cancellation_store;
+mod checkpoint;
+mod checkpoint_format;
+mod compaction;
+mod compaction_drive;
+mod compaction_planning;
+mod compaction_store;
+mod compaction_store_support;
+mod context_failure_store;
 mod database;
 mod drive;
+mod model_drive;
 mod projection;
 mod recovery_store;
 mod schema;
@@ -27,6 +36,8 @@ mod tool_recovery_store;
 mod tool_resolution_store;
 mod tool_store;
 
+use compaction::CompactionBinding;
+pub use compaction::{CompactionPolicy, CompactionPolicyError, ContextSizer};
 use database::DatabaseLease;
 pub use state::{
     Admission, CancellationId, ModelUsageSnapshot, OperationId, OperationOutcome, OperationRequest,
@@ -66,6 +77,8 @@ pub enum HarnessError {
     ToolBindingUnavailable { name: String, revision: String },
     #[error("context projection failed: {0}")]
     ContextProjection(#[source] ContextProjectionError),
+    #[error("runtime profile `{revision}` cannot resolve its frozen compaction binding")]
+    CompactionBindingUnavailable { revision: String },
     #[error("operation {0} has no unresolved tool outcome")]
     NoUnknownToolOutcome(OperationId),
     #[error("cancellation {cancellation_id} is already bound to operation {operation_id}")]
@@ -243,6 +256,10 @@ enum CrashPoint {
     ActivationCommitted,
     ModelIntentCommitted,
     ModelCompletedBeforeSettlement,
+    ContextOverflowCommitted,
+    CompactionIntentCommitted,
+    CompactionCompletedBeforeSettlement,
+    CompactionSettlementCommitted,
     ToolPlanCommitted,
     ToolIntentCommitted,
     ToolCompletedBeforeSettlement,
@@ -264,6 +281,7 @@ pub struct RuntimeProfile {
     system_prompt: String,
     max_model_attempts: NonZeroU32,
     context_projector: Option<Arc<dyn ContextProjector>>,
+    compaction: Option<CompactionBinding>,
     tools: Vec<ToolBinding>,
     max_tool_calls_per_step: u32,
 }
@@ -282,6 +300,7 @@ impl RuntimeProfile {
             system_prompt: system_prompt.into(),
             max_model_attempts,
             context_projector: None,
+            compaction: None,
             tools: Vec::new(),
             max_tool_calls_per_step: 0,
         }
@@ -294,6 +313,18 @@ impl RuntimeProfile {
     #[must_use]
     pub fn with_context_projector(mut self, projector: Arc<dyn ContextProjector>) -> Self {
         self.context_projector = Some(projector);
+        self
+    }
+
+    /// Enables durable context checkpoints with explicit model limits and an
+    /// effect-free request sizer.
+    #[must_use]
+    pub fn with_compaction(
+        mut self,
+        policy: CompactionPolicy,
+        sizer: Arc<dyn ContextSizer>,
+    ) -> Self {
+        self.compaction = Some(CompactionBinding { policy, sizer });
         self
     }
 
@@ -330,6 +361,10 @@ impl RuntimeProfile {
             system_prompt: self.system_prompt.clone(),
             max_model_attempts: self.max_model_attempts.get(),
             max_tool_calls_per_step: self.max_tool_calls_per_step,
+            compaction: self
+                .compaction
+                .as_ref()
+                .map(|binding| binding.policy.frozen()),
             tools: self
                 .tools
                 .iter()
@@ -340,6 +375,19 @@ impl RuntimeProfile {
                 })
                 .collect(),
         }
+    }
+
+    fn resolve_context_sizer(
+        &self,
+        frozen: crate::compaction::FrozenCompaction,
+    ) -> Result<Arc<dyn ContextSizer>, HarnessError> {
+        self.compaction
+            .as_ref()
+            .filter(|binding| binding.policy.frozen() == frozen)
+            .map(|binding| Arc::clone(&binding.sizer))
+            .ok_or_else(|| HarnessError::CompactionBindingUnavailable {
+                revision: self.revision.clone(),
+            })
     }
 
     fn resolve_tool(&self, frozen: &FrozenTool) -> Result<Arc<dyn Tool>, HarnessError> {

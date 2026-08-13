@@ -8,15 +8,15 @@ and orders operations, persists each model or tool intent before dispatch,
 settles complete results atomically, records uncertain effects honestly,
 durably cancels active standalone operations, and recovers from process
 interruption using SQLite. Runtime profiles can project immutable history into
-model context, and inspection exposes known usage without hiding missing or
-uncertain attempts.
+model context, create durable bounded checkpoints before context overflow, and
+inspection exposes known usage without hiding missing or uncertain attempts.
 
 `renoa-local` is the first product-path host. It combines that harness with Pi
 AI provider routing and external local read, edit, write, and process tools. It
 can complete and durably continue a coding conversation without adding those
 implementations or their policy to the harness core.
 
-RCP-bound admission, approvals, compaction, and host movement remain later
+RCP-bound admission, approvals, steering, and host movement remain later
 slices. Sections describing them constrain those slices; they do not claim
 that those behaviors exist today.
 
@@ -95,17 +95,19 @@ The harness owns:
 - immutable conversation history;
 - ordered operation admission and at most one active operation per session;
 - the active operation's complete current state;
-- context projection and later compaction;
+- context projection and durable compaction;
 - frozen runtime configuration for active work;
 - durable token usage and user-visible output; and
 - recovery after process interruption.
 
-A runtime profile may supply the Agent SDK's `ContextProjector`. Renoa passes
-it a copy of complete durable history before each new model intent. Projection
+A runtime profile may supply the Agent SDK's `ContextProjector`. Before a
+checkpoint exists, Renoa passes it a copy of complete durable history before
+each new model intent. Once a checkpoint is active, the harness first builds
+the checkpointed context view and passes that view to the projector. Projection
 does not rewrite history. A projection failure leaves the operation at the
 same retryable boundary, and durable cancellation prevents provider dispatch.
-The projector is host code and must not perform externally visible side
-effects; compaction summaries become separate durable harness effects instead.
+The projector is trusted host code and must not perform externally visible
+effects; compaction summaries are separate durable harness effects instead.
 Changing projector behavior requires a new runtime-profile revision.
 
 The harness does not own provider wire formats, credential storage, tool
@@ -251,7 +253,9 @@ records:
    reserved result identity, recovery class, and current effect identity.
 6. **Cancellation requests** — stable request identity and exact active
    operation target.
-7. **Output records** — append-only user-visible facts carrying their producing
+7. **Context checkpoints and attempts** — immutable prefix summaries plus each
+   exact persisted compactor request, settlement token, usage, and uncertainty.
+8. **Output records** — append-only user-visible facts carrying their producing
    operation, stable record IDs, and a gapless session-local sequence.
 
 RCP admission mode and task binding plus workspace binding are added only when
@@ -275,8 +279,9 @@ state carry format versions; an unknown newer version fails closed. One
 explicit v1-to-v2 migration preserves model-only databases created before
 durable tools; v2-to-v3 adds cancellation requests without rebuilding tool
 state; v3-to-v4 adds stable binding identities and fails closed for legacy
-in-flight tool work that cannot identify its implementation. Renoa has no
-generic migration framework.
+in-flight tool work that cannot identify its implementation; v4-to-v5 adds
+durable context checkpoints without changing queued command identity. Renoa
+has no generic migration framework.
 
 Every external request identity is bound to immutable content. An exact retry
 returns the existing admission; reuse with different content is a conflict.
@@ -291,6 +296,7 @@ The minimal conceptual phases are:
 ```text
 Queued
   -> NeedModel
+  -> CompactionPending -> NeedModel
   -> ModelPending
   -> NeedTool -> WaitingForApproval -> ToolPending
   -> NeedModel | Completed
@@ -508,14 +514,167 @@ identity, sequence, timestamp, and payload.
 ## Context and compaction
 
 The harness owns complete immutable conversation history. Model context is a
-derived projection. Without a projector, the full provider-compatible
-transcript is used. With one, projection runs before a new model intent and the
-exact resulting `ModelRequest` is committed before sampling. Recovery of a
-dispatched attempt reuses that request without rerunning projection.
+derived projection. Without a host projector, the active checkpoint view is
+used directly. With one, the host projector runs over that view before a new
+model intent. The exact resulting `ModelRequest` is committed before sampling.
+Recovery of a dispatched attempt reuses that request without rerunning either
+checkpoint construction or host projection.
 
-Compaction remains later work. It may add an immutable checkpoint and atomically
-select it for future context, but it never rewrites history or moves workspace
-state. No checkpoint pointer or compaction schema exists before that feature.
+Compaction is not deletion. It creates an immutable checkpoint that summarizes
+one contiguous prefix of the durable transcript and atomically selects it for
+future model context. The original entries remain inspectable and are the
+authority if a checkpoint is wrong. A checkpoint contains only its identity,
+its previous checkpoint, the last transcript sequence it covers, and its
+summary. It does not copy the retained tail.
+
+The provider-neutral context order is:
+
+```text
+frozen system instructions and tool specifications
+checkpoint summary, when one is active
+exact active-operation user request, when covered by the checkpoint
+complete transcript entries after the checkpoint
+host context projection
+```
+
+The active user request remains exact even when a checkpoint advances through
+part of its operation. An assistant tool-call message and every corresponding
+tool result form one indivisible cut group. The harness prefers completed
+operation boundaries, then completed tool groups within the active operation.
+It never exposes an orphan tool result or a tool call whose results were cut
+away.
+
+Mutable workspace facts, project instructions, running processes, plans, and
+similar host state are not facts in the summary format. A host that needs them
+reinjects a current snapshot through its projector. The generic harness does
+not learn coding-specific checkpoint fields.
+
+### Context budget
+
+A compaction-enabled runtime profile freezes an explicit model context window,
+reserved response space, post-compaction target, maximum checkpoint size, and
+bounded per-checkpoint retry count. It also supplies one deterministic,
+effect-free request sizer whose estimate cannot decrease when content is only
+added. This monotonic contract lets the harness find safe cut points without
+constructing every possible growing prefix. The harness has no provider or
+model table and no silent default context size.
+
+Before every model dispatch, including a continuation after tool results, the
+harness constructs and sizes the exact candidate request. It may dispatch only
+when:
+
+```text
+estimated input <= context window - reserved response space - safety margin
+```
+
+The target after compaction is materially lower than that dispatch boundary so
+one checkpoint creates useful headroom instead of causing another checkpoint
+on the next step. Concrete model values are host configuration and are tuned by
+evaluation rather than hard-coded into the kernel.
+
+If the sizer determines that the frozen instructions, tool specifications,
+host projection, and exact active user request cannot fit without historical
+entries, compaction cannot solve the request. The operation fails with an
+explicit context-capacity outcome before provider dispatch; Renoa does not
+silently truncate user intent. If an approximate sizer misses this case, a
+typed pre-inference provider rejection triggers the same check and the rejected
+request is never dispatched again unchanged.
+
+Token sizing is conservative but cannot be assumed exact for every provider.
+A model adapter may classify a provider rejection as definite context overflow
+only when it knows inference did not begin. That rejection is recorded as a
+completed attempt without fabricated usage, forces one durable compaction, and
+is never replayed unchanged. If output already started, the shared sampler
+downgrades the error to outcome-unknown. Unknown transport or stream failures
+remain outcome-unknown and never trigger a supposedly free retry from
+error-string guessing in the harness. A provider rejection of the compactor
+request itself fails once instead of replaying a known-oversized request.
+
+`renoa-local` resolves context and provider output limits from Pi's selected
+model at startup. It requests at most 32,768 output tokens, reserves that cap
+plus the larger of 8,192 tokens or two percent of the context window, targets
+60 percent of the remaining dispatch budget after compaction, allows a
+checkpoint up to the smaller of 16,384 tokens or one quarter of that target,
+and permits two summary attempts per checkpoint. Its deterministic estimator
+counts text and JSON at three UTF-8 bytes per token, adds message/tool framing,
+and assigns a bounded 4,096-token image estimate. These are host defaults, not
+kernel constants; explicit provider overflow remains the correctness fallback
+because no local heuristic is an exact provider tokenizer.
+
+Pi's own context guard normally reuses usage attached to historical assistant
+messages. A Renoa checkpoint can replace that original prefix, and Renoa's
+provider-neutral messages do not carry ordering timestamps that make the old
+usage safe to reuse. The Pi adapter therefore passes historical usage as zero
+to Pi while preserving the real usage in Renoa's durable telemetry; both Pi
+and the harness estimate the request that is actually sent.
+
+### Checkpoint construction
+
+The harness chooses a safe transcript prefix that leaves the configured recent
+tail and fits the compactor request. If all eligible history cannot fit into
+one compactor request, it advances through bounded prefix chunks and rebuilds
+the candidate request after each committed checkpoint. It never drops oldest
+input merely to make its own summary request fit.
+
+One unusually large tool result is represented to the compactor by separately
+labelled bounded head and tail text plus its omitted size and digest; the full
+durable result is unchanged. Images are represented by stable metadata rather
+than copied base64.
+If one indivisible exact user input cannot fit, the capacity rule above wins.
+
+The same frozen model initially performs compaction with no tools. Its system
+instruction treats the embedded transcript as untrusted data and requires one
+concise checkpoint with these sections:
+
+- goal and user intent;
+- hard constraints and preferences;
+- completed work;
+- current state and blockers;
+- decisions and their rationale;
+- exact working facts such as paths, symbols, commands, and errors; and
+- next action and unresolved questions.
+
+The summary omits full source files, superseded facts, hidden reasoning, and
+temporary environment state. A completed response is accepted only when it
+stops normally, contains no tool calls, has non-empty required sections, and
+fits the checkpoint budget. A length stop or malformed summary is a completed
+but rejected compaction attempt whose known usage remains observable.
+
+Provider-native compaction may later become an adapter capability after a
+second implementation proves the shared boundary. The durable transcript and
+portable checkpoint remain authoritative; opaque provider state does not enter
+the v0 harness schema.
+
+### Durable compaction effect
+
+Compaction uses the same persistence rule as every other external effect:
+
+1. construct and size the candidate context;
+2. choose one safe covered-through sequence;
+3. commit the exact summary request, prior checkpoint identity, reserved new
+   checkpoint identity, effect identity, settlement token, and frozen retry
+   state;
+4. invoke the model without tools;
+5. validate the complete response; and
+6. in one transaction, record usage, insert the immutable checkpoint, compare
+   and replace the expected active checkpoint, and return the operation to
+   `NeedModel`.
+
+The next loop rebuilds and resizes context. It may create another bounded
+checkpoint before committing the normal model intent.
+
+A crash after summary dispatch but before settlement has unknown billing and
+completion. Recovery records that uncertainty and may repeat the exact saved
+request only within its frozen budget. A stale effect or settlement token
+cannot activate a checkpoint. Cancellation records any known completed usage
+but does not activate a checkpoint for cancelled work. A rejected, failed, or
+cancelled compaction leaves the previous active checkpoint and full transcript
+unchanged.
+
+Compaction usage contributes to the operation's existing model-usage totals;
+the harness does not report internal model work as free. Summary quality is
+tested through continuation tasks, not by asserting that generated prose looks
+plausible.
 
 ## Host continuity
 
@@ -563,6 +722,17 @@ working during a coordinator outage.
     orchestration appropriate to in-memory and durable state respectively.
 17. Execution stays on one host until checkpointing, quiescence, and fenced
     rebinding are proven.
+18. Compaction creates immutable, replaceable projections and never rewrites
+    the authoritative transcript.
+19. A checkpoint preserves an exact active user request and structurally
+    complete recent model/tool groups outside its summary.
+20. Context is sized before every provider dispatch against frozen host-supplied
+    limits; locally detected irreducible requests fail before dispatch, and a
+    typed pre-inference overflow is never dispatched again unchanged.
+21. Checkpoint creation is a persisted model effect with honest usage,
+    uncertainty, cancellation, and stale-result handling.
+22. Product and workspace state are reinjected by the host rather than encoded
+    in the general checkpoint format.
 
 ## Stress-test contract
 
@@ -615,6 +785,33 @@ back real transaction may prove the indistinguishable pre-commit side.
   a fabricated cancellation; and
 - retrying an old cancellation cannot signal a newer active operation.
 
+### Compaction slice
+
+- the first request below the frozen boundary dispatches without compaction;
+- the first request above it commits a checkpoint before the normal model
+  intent and retains the exact active user request;
+- cut selection never separates assistant tool calls from their results;
+- one large active turn can checkpoint completed early tool groups while
+  retaining its recent suffix;
+- a compactor input too large for one request advances through bounded chunks
+  without deleting transcript entries;
+- a giant tool result is bounded only in the compactor view while inspection
+  returns its complete durable content;
+- crashes before intent, after intent, after dispatch, before checkpoint
+  settlement, and after settlement reopen to one explicit state;
+- a stale summary cannot replace a newer active checkpoint;
+- cancelled compaction records known usage but cannot activate its checkpoint;
+- malformed, tool-shaped, truncated, failed, and outcome-unknown summary
+  attempts consume the frozen retry budget honestly;
+- checkpoint plus recent-tail context remains provider-valid after restart;
+- repeated checkpoints carry the prior summary into the next update request;
+  contradiction and supersession quality remains part of the real-provider
+  continuation evaluation.
+
+A real long-running provider-backed coding continuation across at least three
+checkpoints remains the final quality evaluation; deterministic crash and
+continuation proofs do not substitute for it.
+
 ### RCP integration slice
 
 - deliberately reversed deliveries still activate in command order;
@@ -627,9 +824,9 @@ back real transaction may prove the indistinguishable pre-commit side.
 - output committed between snapshot and listener registration is still
   delivered exactly once in the reconstructed view.
 
-Approval, compaction, and executor migration gain their own race tests when
-each feature is implemented; they are not retroactive prerequisites for the
-implemented slices.
+Approval and executor migration gain their own race tests when each feature is
+implemented; they are not retroactive prerequisites for the implemented
+slices.
 
 ## Implementation order
 
@@ -649,8 +846,11 @@ implemented slices.
 6. **Implemented:** optional host context projection preserves full history,
    persists the exact projected request before dispatch, and keeps usage for
    failed and uncertain work observable without inventing zeroes.
-7. Add durable context compaction against the real local coding path. Add
-   steering only when a live consumer defines its ordering behavior.
+7. **Implemented:** durable context checkpoints use bounded incremental input,
+   exact effect persistence, cancellation, provider-overflow fallback, honest
+   usage, and deterministic repeated-continuation tests. The exact requested
+   real-provider evaluation remains pending model availability. Add steering
+   only when a live consumer defines its ordering behavior.
 8. Add cursor-based observation and the thin RCP/ACP adapters only after the
    local harness can complete real work safely.
 9. Design workspace checkpoints and host movement only after local continuity
@@ -687,7 +887,8 @@ lint, and workspace tests before the next begins.
 - The future idempotent-tool recovery contract and reconciliation UI.
 - Durable approval and steering operation shapes, plus the mapping from an RCP
   cancellation command to the implemented standalone cancellation identity.
-- Compaction policy and checkpoint format.
+- Product defaults beyond the implemented Pi-backed local host, and the
+  evidence threshold for enabling a future provider-native compaction adapter.
 - Workspace identity, snapshots, executor quiescence, and tool fencing.
 - Retention and deletion policy.
 
@@ -698,19 +899,23 @@ prove the invariant, and this document records the reason.
 
 No upstream source is incorporated. The design was informed by:
 
-- Pi `origin/main` at `c93ea6ccf0a398c293641e8001db06b8f7997c79`
-  (MIT): immutable entries, total current operation state, and
-  intent/effect/settlement recovery. Its redesign is unfinished and explicitly
-  excludes replication.
+- Pi `origin/main` at `581d75a89cea21e50d6a26df840352f94427f633`
+  (MIT): safe compaction cut points, exact retained tails, split-turn handling,
+  and structured summary updates. Its durable harness compaction remains
+  unfinished, so Renoa does not treat it as recovery evidence.
+- Pi AI `0.84.1` at `53fa77ccd8a279eb87e92294ef3687b03ff80112`
+  (MIT): the adapter consumes its model catalog and exported explicit-overflow
+  classifier. Renoa's durable state machine and request estimator are its own;
+  no Pi source is copied into the harness.
 - OpenAI Codex CLI `origin/main` at
-  `95aada11c4150e4ba28d6279c50f0995c1d93e5a` (Apache-2.0): ordered session
-  ownership, step snapshots, cancellation, tools, and reconnectable control.
-  Its history recovery does not safely resume uncertain side effects.
+  `357696c5e7127525a9259d3dcfa0574516b1fe84` (Apache-2.0): concise handoff
+  checkpoints, retained user anchors, mid-turn triggering, and a separate
+  provider-native compaction path. Renoa does not depend on that provider path.
 - Grok Build `origin/main` at
-  `be713136d2a69080743a3f6b3c72077057e5948f`, source revision
-  `d6937fe255dce4133c3d000a50f9cb94de12f06f` (Apache-2.0): separated sampling,
-  conversation, tools, workspace, and final tool results. Its current prompt
-  queue and parts of relay delivery do not meet RCP durability.
+  `e5fd4816d43260c15ba785f103990c1ed6cea230` (Apache-2.0): deterministic
+  reinjection of instructions, the latest request, recent history, and live
+  coding state plus validation of full-replacement summaries. Renoa keeps the
+  reinjection principle but not its coding-specific full-replacement engine.
 - Cursor's published cloud-agent, Remote Control, and My Machines design:
   separated conversation, agent execution, and workspace state. Renoa does not
   adopt its proprietary services, Temporal, or cloud-VM infrastructure.

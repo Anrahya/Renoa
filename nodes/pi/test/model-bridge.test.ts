@@ -8,7 +8,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 
-import { invokeModel } from "../src/model-bridge.js";
+import { ModelInvocationError, invokeModel } from "../src/model-bridge.js";
 
 test("the model bridge preserves Renoa input and returns a complete tool response", async () => {
   const faux = fauxProvider();
@@ -94,6 +94,14 @@ test("the model bridge preserves assistant and tool-result continuation context"
       assert.deepEqual(assistant.content, [
         { type: "toolCall", id: "read-1", name: "read_file", arguments: { path: "value.txt" } },
       ]);
+      assert.deepEqual(assistant.usage, {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      });
       const result = context.messages[2];
       assert.ok(result?.role === "toolResult");
       assert.equal(result.toolCallId, "read-1");
@@ -118,7 +126,7 @@ test("the model bridge preserves assistant and tool-result continuation context"
             },
           ],
           stop_reason: "tool_use",
-          usage: null,
+          usage: { input: 95_000, output: 5_000, cache_read: 0, cache_write: 0 },
           metadata: { api: "faux", provider: "faux", model: "faux-1" },
         },
         {
@@ -145,4 +153,53 @@ test("the model bridge preserves assistant and tool-result continuation context"
     { type: "reasoning", text: "checked", redacted: false },
     { type: "text", text: "Done." },
   ]);
+});
+
+test("an explicit provider context rejection is classified before inference", async () => {
+  const faux = fauxProvider({
+    models: [{ id: "faux-1", contextWindow: 100, maxTokens: 50 }],
+  });
+  faux.setResponses([
+    fauxAssistantMessage("", {
+      stopReason: "error",
+      errorMessage: "This model's maximum prompt length is 100 but the request contains 101 tokens",
+    }),
+  ]);
+
+  await assert.rejects(
+    invokeModel(
+      { system_prompt: "Too large.", messages: [], tools: [] },
+      {
+        model: faux.getModel(),
+        streamFn: faux.provider.streamSimple.bind(faux.provider),
+      },
+      32,
+    ),
+    (error: unknown) =>
+      error instanceof ModelInvocationError && error.kind === "context_window_exceeded",
+  );
+});
+
+test("an overflow-shaped error after generated output remains outcome-unknown", async () => {
+  const faux = fauxProvider({
+    models: [{ id: "faux-1", contextWindow: 100, maxTokens: 50 }],
+  });
+  faux.setResponses([
+    fauxAssistantMessage("partial output", {
+      stopReason: "error",
+      errorMessage: "This model's maximum prompt length is 100 but the request contains 101 tokens",
+    }),
+  ]);
+
+  await assert.rejects(
+    invokeModel(
+      { system_prompt: "Too large.", messages: [], tools: [] },
+      {
+        model: faux.getModel(),
+        streamFn: faux.provider.streamSimple.bind(faux.provider),
+      },
+      32,
+    ),
+    (error: unknown) => error instanceof ModelInvocationError && error.kind === undefined,
+  );
 });

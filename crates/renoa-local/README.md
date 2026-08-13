@@ -37,3 +37,11 @@ cargo run -p renoa-local -- \
 The command prints the stable session ID. Pass that ID instead of `new` to add
 the next turn to the same durable conversation. `Ctrl-C` requests ordered
 harness cancellation and waits for active model or process work to stop.
+
+At startup the Pi bridge resolves the selected model's context and output
+limits from Pi's model catalog and verifies authentication. The host caps model
+output at 32,768 tokens and enables durable context checkpoints with explicit
+headroom; no provider table is compiled into the Rust harness. The local token
+estimate is deliberately conservative but not treated as exact. An explicit
+pre-inference provider context rejection is persisted and forces compaction
+without replaying the rejected request.

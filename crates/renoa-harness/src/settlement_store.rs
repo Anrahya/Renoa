@@ -13,9 +13,9 @@ use crate::{
     store::{Store, blocking_transition},
     store_support::{
         MODEL_ATTEMPT_LIMIT_AFTER_TOOL_RESULTS, add_token_usage, advance_entry_cursor,
-        cancellation_requested, current_pending_state, finish_active_operation,
-        finish_cancelled_operation, finish_failed_operation, insert_output, load_cursors,
-        update_state,
+        cancellation_requested, complete_model_attempt, current_pending_state,
+        finish_active_operation, finish_cancelled_operation, finish_failed_operation,
+        insert_output, load_cursors, update_state,
     },
 };
 
@@ -68,25 +68,13 @@ impl Store {
                 transaction.commit().map_err(sqlite_error)?;
                 return Ok(settlement);
             }
-            let changed = transaction
-                .execute(
-                    "UPDATE model_attempts
-                     SET status = 'completed', request_json = NULL,
-                         usage_json = ?3, error = ?4
-                     WHERE effect_id = ?1 AND settlement_token = ?2 AND status = 'pending'",
-                    params![
-                        intent.effect_id.to_string(),
-                        intent.settlement_token.to_string(),
-                        serde_json::to_string(&usage).map_err(json_error)?,
-                        message,
-                    ],
-                )
-                .map_err(sqlite_error)?;
-            if changed != 1 {
-                return Err(HarnessError::Corrupt(
-                    "invalid model response compare-and-set failed".to_owned(),
-                ));
-            }
+            complete_model_attempt(
+                &transaction,
+                &intent,
+                usage,
+                Some(&message),
+                "invalid model response",
+            )?;
             let outcome = finish_failed_operation(&transaction, &intent, &old_state_json, message)?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(Settlement::Applied(outcome))
@@ -131,24 +119,13 @@ fn cancel_completed_model_response(
     usage: Option<TokenUsage>,
     error: Option<&str>,
 ) -> Result<Settlement, HarnessError> {
-    let changed = transaction
-        .execute(
-            "UPDATE model_attempts
-             SET status = 'completed', request_json = NULL, usage_json = ?3, error = ?4
-             WHERE effect_id = ?1 AND settlement_token = ?2 AND status = 'pending'",
-            params![
-                intent.effect_id.to_string(),
-                intent.settlement_token.to_string(),
-                serde_json::to_string(&usage).map_err(json_error)?,
-                error,
-            ],
-        )
-        .map_err(sqlite_error)?;
-    if changed != 1 {
-        return Err(HarnessError::Corrupt(
-            "cancelled model response compare-and-set failed".to_owned(),
-        ));
-    }
+    complete_model_attempt(
+        transaction,
+        intent,
+        usage,
+        error,
+        "cancelled model response",
+    )?;
     let outcome = finish_cancelled_operation(
         transaction,
         intent.session_id,
@@ -204,23 +181,7 @@ fn commit_model_response(
             ],
         )
         .map_err(sqlite_error)?;
-    let changed = transaction
-        .execute(
-            "UPDATE model_attempts
-             SET status = 'completed', request_json = NULL, usage_json = ?3
-             WHERE effect_id = ?1 AND settlement_token = ?2 AND status = 'pending'",
-            params![
-                intent.effect_id.to_string(),
-                intent.settlement_token.to_string(),
-                serde_json::to_string(&usage).map_err(json_error)?,
-            ],
-        )
-        .map_err(sqlite_error)?;
-    if changed != 1 {
-        return Err(HarnessError::Corrupt(
-            "model attempt settlement compare-and-set failed".to_owned(),
-        ));
-    }
+    complete_model_attempt(transaction, intent, usage, None, "model attempt settlement")?;
     Ok(CommittedResponse {
         calls,
         output,
@@ -431,8 +392,13 @@ fn aggregate_usage(
 ) -> Result<Option<TokenUsage>, HarnessError> {
     let mut statement = transaction
         .prepare(
-            "SELECT status, usage_json FROM model_attempts
-             WHERE operation_id = ?1 ORDER BY attempt_number",
+            "SELECT status, usage_json FROM (
+                SELECT status, usage_json, attempt_number, 0 AS kind
+                FROM model_attempts WHERE operation_id = ?1
+                UNION ALL
+                SELECT status, usage_json, attempt_number, 1 AS kind
+                FROM compaction_attempts WHERE operation_id = ?1
+             ) ORDER BY kind, attempt_number",
         )
         .map_err(sqlite_error)?;
     let rows = statement

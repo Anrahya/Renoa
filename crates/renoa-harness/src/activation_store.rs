@@ -63,6 +63,8 @@ impl Store {
                 progress: OperationProgress {
                     runtime,
                     model_attempts: 0,
+                    compaction_attempts: 0,
+                    force_compaction: false,
                 },
             });
             let state_json = serde_json::to_string(&state).map_err(json_error)?;
@@ -109,7 +111,7 @@ impl Store {
         &self,
         lease: &std::sync::Arc<SessionRunLease>,
         operation_id: OperationId,
-        projected_messages: Option<Vec<Message>>,
+        projected_request: Option<ModelRequest>,
     ) -> Result<ModelStart, HarnessError> {
         let database = self.database();
         let lease = std::sync::Arc::clone(lease);
@@ -144,8 +146,10 @@ impl Store {
                 transaction.commit().map_err(sqlite_error)?;
                 return Ok(ModelStart::Finished(outcome));
             }
-            let request =
-                build_model_request(&transaction, session_id, progress, projected_messages)?;
+            let request = match projected_request {
+                Some(request) => request,
+                None => build_model_request(&transaction, session_id, progress)?,
+            };
             let effect_id = Uuid::new_v4();
             let settlement_token = Uuid::new_v4();
             let assistant_entry_id = Uuid::new_v4();
@@ -161,6 +165,8 @@ impl Store {
             let progress = OperationProgress {
                 runtime: progress.runtime.clone(),
                 model_attempts: attempt_count,
+                compaction_attempts: progress.compaction_attempts,
+                force_compaction: progress.force_compaction,
             };
             let state = StoredState::from_state(StoredOperationState::ModelPending {
                 progress: progress.clone(),
@@ -191,7 +197,7 @@ impl Store {
                 &serde_json::to_string(&state).map_err(json_error)?,
             )?;
             transaction.commit().map_err(sqlite_error)?;
-            Ok(ModelStart::Invoke(ModelIntent {
+            Ok(ModelStart::Invoke(Box::new(ModelIntent {
                 session_id,
                 operation_id,
                 effect_id,
@@ -200,7 +206,7 @@ impl Store {
                 output_id,
                 progress,
                 request,
-            }))
+            })))
         })
         .await
     }
@@ -234,7 +240,9 @@ impl Store {
                     "context projection requires NeedModel state".to_owned(),
                 ));
             }
-            let messages = load_messages(&transaction, parse_session_id(&session_id)?)?;
+            let session_id = parse_session_id(&session_id)?;
+            let messages =
+                crate::checkpoint::load_context_view(&transaction, session_id, operation_id)?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(messages)
         })
@@ -262,14 +270,10 @@ fn build_model_request(
     transaction: &Transaction<'_>,
     session_id: SessionId,
     progress: &OperationProgress,
-    projected_messages: Option<Vec<Message>>,
 ) -> Result<ModelRequest, HarnessError> {
     Ok(ModelRequest {
         system_prompt: progress.runtime.system_prompt.clone(),
-        messages: match projected_messages {
-            Some(messages) => messages,
-            None => load_messages(transaction, session_id)?,
-        },
+        messages: load_messages(transaction, session_id)?,
         tools: progress
             .runtime
             .tools
@@ -321,6 +325,7 @@ fn load_next_queued(
             StoredOperationState::Completed | StoredOperationState::Failed { .. } => {}
             StoredOperationState::NeedModel { .. }
             | StoredOperationState::ModelPending { .. }
+            | StoredOperationState::CompactionPending { .. }
             | StoredOperationState::NeedTool { .. }
             | StoredOperationState::ToolPending { .. }
             | StoredOperationState::ToolOutcomeUnknown { .. } => {

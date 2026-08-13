@@ -27,6 +27,35 @@ pub(crate) fn add_token_usage(
     Ok(())
 }
 
+pub(crate) fn complete_model_attempt(
+    transaction: &Transaction<'_>,
+    intent: &ModelIntent,
+    usage: Option<TokenUsage>,
+    error: Option<&str>,
+    action: &str,
+) -> Result<(), HarnessError> {
+    let changed = transaction
+        .execute(
+            "UPDATE model_attempts
+             SET status = 'completed', request_json = NULL, usage_json = ?3, error = ?4
+             WHERE effect_id = ?1 AND settlement_token = ?2 AND status = 'pending'",
+            params![
+                intent.effect_id.to_string(),
+                intent.settlement_token.to_string(),
+                serde_json::to_string(&usage).map_err(json_error)?,
+                error,
+            ],
+        )
+        .map_err(sqlite_error)?;
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(HarnessError::Corrupt(format!(
+            "{action} compare-and-set failed"
+        )))
+    }
+}
+
 fn checked_usage_add(total: u64, value: u64) -> Result<u64, HarnessError> {
     total
         .checked_add(value)
@@ -108,6 +137,8 @@ pub(crate) fn insert_retry_intent(
         progress: OperationProgress {
             runtime: previous.progress.runtime.clone(),
             model_attempts: attempt_count,
+            compaction_attempts: previous.progress.compaction_attempts,
+            force_compaction: previous.progress.force_compaction,
         },
         effect_id,
         settlement_token,
@@ -130,6 +161,8 @@ pub(crate) fn insert_retry_intent(
         progress: OperationProgress {
             runtime: previous.progress.runtime.clone(),
             model_attempts: attempt_count,
+            compaction_attempts: previous.progress.compaction_attempts,
+            force_compaction: previous.progress.force_compaction,
         },
         request: serde_json::from_str::<ModelRequest>(request_json).map_err(json_error)?,
     })
@@ -141,19 +174,44 @@ pub(crate) fn finish_failed_operation(
     old_state_json: &str,
     message: String,
 ) -> Result<OperationOutcome, HarnessError> {
-    let (_, output_sequence) = load_cursors(transaction, intent.session_id)?;
+    finish_operation_failure(
+        transaction,
+        intent.session_id,
+        intent.operation_id,
+        intent.output_id,
+        old_state_json,
+        message,
+    )
+}
+
+pub(crate) fn finish_operation_failure(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+    operation_id: OperationId,
+    output_id: Uuid,
+    old_state_json: &str,
+    message: String,
+) -> Result<OperationOutcome, HarnessError> {
+    let (_, output_sequence) = load_cursors(transaction, session_id)?;
     let outcome = OperationOutcome::Failed { message };
-    insert_output(transaction, intent, output_sequence, &outcome)?;
+    insert_operation_output(
+        transaction,
+        session_id,
+        operation_id,
+        output_id,
+        output_sequence,
+        &outcome,
+    )?;
     let state = StoredState::from_state(StoredOperationState::Failed {
         kind: FailureKind::General,
     });
     update_state(
         transaction,
-        intent.operation_id,
+        operation_id,
         old_state_json,
         &serde_json::to_string(&state).map_err(json_error)?,
     )?;
-    finish_active_operation(transaction, intent.session_id, intent.operation_id, 0)?;
+    finish_active_operation(transaction, session_id, operation_id, 0)?;
     Ok(outcome)
 }
 
@@ -236,15 +294,33 @@ pub(crate) fn insert_output(
     sequence: i64,
     outcome: &OperationOutcome,
 ) -> Result<(), HarnessError> {
+    insert_operation_output(
+        transaction,
+        intent.session_id,
+        intent.operation_id,
+        intent.output_id,
+        sequence,
+        outcome,
+    )
+}
+
+fn insert_operation_output(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+    operation_id: OperationId,
+    output_id: Uuid,
+    sequence: i64,
+    outcome: &OperationOutcome,
+) -> Result<(), HarnessError> {
     transaction
         .execute(
             "INSERT INTO outputs (
                 output_id, session_id, operation_id, sequence, outcome_json
              ) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
-                intent.output_id.to_string(),
-                intent.session_id.to_string(),
-                intent.operation_id.to_string(),
+                output_id.to_string(),
+                session_id.to_string(),
+                operation_id.to_string(),
                 sequence,
                 serde_json::to_string(outcome).map_err(json_error)?,
             ],

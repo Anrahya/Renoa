@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use renoa_agent::{
-    AssistantContent, ModelRequest, ModelResponse, SamplingError, StopReason, Tool, ToolCall,
-    invoke_tool, sample_model,
-};
+use renoa_agent::{ModelRequest, Tool, ToolCall, invoke_tool};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -33,7 +30,7 @@ pub(crate) struct ModelIntent {
 }
 
 pub(crate) enum ModelStart {
-    Invoke(ModelIntent),
+    Invoke(Box<ModelIntent>),
     Finished(OperationOutcome),
 }
 
@@ -65,12 +62,12 @@ pub(crate) enum ToolStart {
 }
 
 pub(crate) enum PendingRecovery {
-    Retry(ModelIntent),
+    Retry(Box<ModelIntent>),
     Finished(OperationOutcome),
 }
 
 pub(crate) enum UncertainAttempt {
-    Retry(ModelIntent),
+    Retry(Box<ModelIntent>),
     Finished(OperationOutcome),
     Stale,
 }
@@ -92,7 +89,7 @@ pub(crate) enum ToolPendingRecovery {
     Blocked,
 }
 
-enum DriveStep {
+pub(crate) enum DriveStep {
     Continue(Box<StoredState>),
     Finished(OperationOutcome),
     Blocked,
@@ -136,8 +133,9 @@ async fn drive_active(
     loop {
         let step = match state.state().clone() {
             phase @ (StoredOperationState::NeedModel { .. }
-            | StoredOperationState::ModelPending { .. }) => {
-                drive_model_phase(
+            | StoredOperationState::ModelPending { .. }
+            | StoredOperationState::CompactionPending { .. }) => {
+                crate::model_drive::drive_model_phase(
                     store,
                     lease,
                     operation_id,
@@ -180,78 +178,6 @@ async fn drive_active(
             }
             DriveStep::Blocked => return Ok(RunNext::Blocked { operation_id }),
         }
-    }
-}
-
-async fn drive_model_phase(
-    store: &Store,
-    lease: &Arc<SessionRunLease>,
-    operation_id: OperationId,
-    phase: StoredOperationState,
-    profile: &RuntimeProfile,
-    #[cfg(test)] crash_point: Option<crate::CrashPoint>,
-) -> Result<DriveStep, HarnessError> {
-    let intent = match phase {
-        StoredOperationState::NeedModel { progress } => {
-            require_profile(&progress.runtime.revision, profile)?;
-            let projected_messages =
-                crate::projection::project_model_context(store, lease, operation_id, profile)
-                    .await?;
-            match store
-                .begin_model_attempt(lease, operation_id, projected_messages)
-                .await?
-            {
-                ModelStart::Invoke(intent) => intent,
-                ModelStart::Finished(outcome) => return Ok(DriveStep::Finished(outcome)),
-            }
-        }
-        StoredOperationState::ModelPending { progress, .. } => {
-            require_profile(&progress.runtime.revision, profile)?;
-            match store.recover_model_attempt(lease, operation_id).await? {
-                PendingRecovery::Retry(intent) => intent,
-                PendingRecovery::Finished(outcome) => return Ok(DriveStep::Finished(outcome)),
-            }
-        }
-        _ => {
-            return Err(HarnessError::Corrupt(
-                "model driver received a non-model phase".to_owned(),
-            ));
-        }
-    };
-    let settlement = run_model_effect(
-        store,
-        lease,
-        intent,
-        profile,
-        #[cfg(test)]
-        crash_point,
-    )
-    .await?;
-    model_settlement_step(
-        settlement,
-        #[cfg(test)]
-        crash_point,
-    )
-}
-
-fn model_settlement_step(
-    settlement: Settlement,
-    #[cfg(test)] crash_point: Option<crate::CrashPoint>,
-) -> Result<DriveStep, HarnessError> {
-    match settlement {
-        Settlement::Continue(next) => {
-            #[cfg(test)]
-            if matches!(next.state(), StoredOperationState::NeedTool { .. }) {
-                crash_if(crash_point, crate::CrashPoint::ToolPlanCommitted);
-            }
-            Ok(DriveStep::Continue(Box::new(next)))
-        }
-        Settlement::Applied(outcome) => {
-            #[cfg(test)]
-            crash_if(crash_point, crate::CrashPoint::SettlementCommitted);
-            Ok(DriveStep::Finished(outcome))
-        }
-        Settlement::Stale => Err(stale_model_result()),
     }
 }
 
@@ -401,64 +327,15 @@ fn tool_settlement_step(
     }
 }
 
-async fn run_model_effect(
-    store: &Store,
-    lease: &std::sync::Arc<SessionRunLease>,
-    mut intent: ModelIntent,
-    profile: &RuntimeProfile,
-    #[cfg(test)] crash_point: Option<crate::CrashPoint>,
-) -> Result<Settlement, HarnessError> {
-    loop {
-        #[cfg(test)]
-        crash_if(crash_point, crate::CrashPoint::ModelIntentCommitted);
-        let sampled = sample_model(
-            profile.model.as_ref(),
-            intent.request.clone(),
-            lease.cancellation(),
-            None,
-        )
-        .await;
-        match sampled {
-            Ok(sampled) => {
-                #[cfg(test)]
-                crash_if(
-                    crash_point,
-                    crate::CrashPoint::ModelCompletedBeforeSettlement,
-                );
-                if let Some(message) = model_response_rejection(&intent, &sampled.response) {
-                    return store
-                        .reject_model_response(lease, intent, sampled.response.usage, message)
-                        .await;
-                }
-                return store.settle_model(lease, intent, sampled.response).await;
-            }
-            Err(error) => {
-                let message = sampling_failure(&error);
-                match store
-                    .record_model_uncertainty(lease, intent, message)
-                    .await?
-                {
-                    UncertainAttempt::Retry(next) => intent = next,
-                    UncertainAttempt::Finished(outcome) => {
-                        return Ok(Settlement::Applied(outcome));
-                    }
-                    UncertainAttempt::Stale => return Err(stale_model_result()),
-                }
-            }
-        }
-    }
-}
-
-fn stale_model_result() -> HarnessError {
-    HarnessError::Corrupt("the sole session driver produced a stale model result".to_owned())
-}
-
 #[cfg(test)]
-fn crash_if(selected: Option<crate::CrashPoint>, reached: crate::CrashPoint) {
+pub(crate) fn crash_if(selected: Option<crate::CrashPoint>, reached: crate::CrashPoint) {
     assert_ne!(selected, Some(reached), "injected crash at {reached:?}");
 }
 
-fn require_profile(required: &str, profile: &RuntimeProfile) -> Result<(), HarnessError> {
+pub(crate) fn require_profile(
+    required: &str,
+    profile: &RuntimeProfile,
+) -> Result<(), HarnessError> {
     if required == profile.revision {
         Ok(())
     } else {
@@ -466,34 +343,5 @@ fn require_profile(required: &str, profile: &RuntimeProfile) -> Result<(), Harne
             required: required.to_owned(),
             provided: profile.revision.clone(),
         })
-    }
-}
-
-fn sampling_failure(error: &SamplingError) -> String {
-    match error {
-        SamplingError::Cancelled => "model sampling was cancelled".to_owned(),
-        SamplingError::Model(error) => format!("model invocation failed: {error}"),
-        SamplingError::IncompleteStream => {
-            "model stream ended without a completed response".to_owned()
-        }
-        _ => "model sampling failed for an unrecognized reason".to_owned(),
-    }
-}
-
-fn model_response_rejection(intent: &ModelIntent, response: &ModelResponse) -> Option<String> {
-    let tool_call_count = response
-        .content
-        .iter()
-        .filter(|content| matches!(content, AssistantContent::ToolCall { .. }))
-        .count();
-    if tool_call_count > intent.progress.runtime.max_tool_calls_per_step as usize {
-        Some(format!(
-            "model returned {tool_call_count} tool calls; the per-step limit is {}",
-            intent.progress.runtime.max_tool_calls_per_step
-        ))
-    } else if response.stop_reason == StopReason::ToolUse && tool_call_count == 0 {
-        Some("model ended for tool use without returning a tool call".to_owned())
-    } else {
-        None
     }
 }

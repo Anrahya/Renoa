@@ -50,6 +50,13 @@ fn the_headless_runner_completes_a_durable_coding_turn() {
 const BRIDGE: &str = r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
+if (process.env.RENOA_PI_ACTION === "describe") {
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    response: { context_window_tokens: 500000, max_output_tokens: 500000 }
+  }));
+  process.exit(0);
+}
 const request = JSON.parse(input);
 const results = request.messages.filter((message) => message.role === "tool");
 let content;

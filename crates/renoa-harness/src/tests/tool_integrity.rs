@@ -54,7 +54,7 @@ async fn a_stale_tool_settlement_cannot_commit_after_recovery_rotates_its_token(
     assert!(matches!(
         harness
             .store
-            .settle_model(&lease, model_intent, tool_response(call.clone()))
+            .settle_model(&lease, *model_intent, tool_response(call.clone()))
             .await
             .expect("commit tool plan"),
         Settlement::Continue(_)

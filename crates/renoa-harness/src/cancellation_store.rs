@@ -79,6 +79,7 @@ impl Store {
                     parse_state(&state_json)?.state(),
                     StoredOperationState::NeedModel { .. }
                         | StoredOperationState::ModelPending { .. }
+                        | StoredOperationState::CompactionPending { .. }
                         | StoredOperationState::NeedTool { .. }
                         | StoredOperationState::ToolPending { .. }
                 )

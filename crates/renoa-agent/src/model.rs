@@ -80,6 +80,7 @@ pub enum ModelEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("{message}")]
 pub struct ModelError {
+    kind: ModelErrorKind,
     message: String,
 }
 
@@ -87,9 +88,34 @@ impl ModelError {
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         Self {
+            kind: ModelErrorKind::OutcomeUnknown,
             message: message.into(),
         }
     }
+
+    /// Reports a provider rejection that is known to have happened before inference.
+    #[must_use]
+    pub fn context_window_exceeded(message: impl Into<String>) -> Self {
+        Self {
+            kind: ModelErrorKind::ContextWindowExceeded,
+            message: message.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> ModelErrorKind {
+        self.kind
+    }
+}
+
+/// What the caller can safely infer about a failed model invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ModelErrorKind {
+    /// The provider may have dispatched or generated the response.
+    OutcomeUnknown,
+    /// The provider rejected the request for exceeding its context window before inference.
+    ContextWindowExceeded,
 }
 
 pub type ModelEventStream<'a> = BoxStream<'a, Result<ModelEvent, ModelError>>;

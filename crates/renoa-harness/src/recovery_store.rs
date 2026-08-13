@@ -66,12 +66,12 @@ impl Store {
                         .to_owned(),
                 )?)
             } else {
-                PendingRecovery::Retry(insert_retry_intent(
+                PendingRecovery::Retry(Box::new(insert_retry_intent(
                     &transaction,
                     &previous,
                     &old_state_json,
                     &request_json,
-                )?)
+                )?))
             };
             transaction.commit().map_err(sqlite_error)?;
             Ok(recovery)
@@ -160,14 +160,14 @@ impl Store {
             }
             let result =
                 if intent.progress.model_attempts < intent.progress.runtime.max_model_attempts {
-                    UncertainAttempt::Retry(insert_retry_intent(
+                    UncertainAttempt::Retry(Box::new(insert_retry_intent(
                         &transaction,
                         &intent,
                         &old_state_json,
                         request_json.as_deref().ok_or_else(|| {
                             HarnessError::Corrupt("pending model request is missing".to_owned())
                         })?,
-                    )?)
+                    )?))
                 } else {
                     UncertainAttempt::Finished(finish_failed_operation(
                         &transaction,

@@ -88,7 +88,7 @@ async fn a_stale_attempt_cannot_settle_current_work() {
     assert!(matches!(
         harness
             .store
-            .settle_model(&lease, first, response_with_usage())
+            .settle_model(&lease, *first, response_with_usage())
             .await
             .expect("stale settlement is a no-op"),
         Settlement::Stale
@@ -101,7 +101,7 @@ async fn a_stale_attempt_cannot_settle_current_work() {
     assert!(matches!(
         harness
             .store
-            .settle_model(&lease, second, response_with_usage())
+            .settle_model(&lease, *second, response_with_usage())
             .await
             .expect("settle current attempt"),
         Settlement::Applied(_)
@@ -397,7 +397,7 @@ fn a_newer_schema_version_fails_closed() {
     let database = directory.path().join("harness.sqlite3");
     let connection = rusqlite::Connection::open(&database).expect("open SQLite database");
     connection
-        .pragma_update(None, "user_version", 5)
+        .pragma_update(None, "user_version", 6)
         .expect("set newer schema version");
     drop(connection);
 
@@ -406,8 +406,8 @@ fn a_newer_schema_version_fails_closed() {
             .err()
             .expect("newer schema must be rejected"),
         HarnessError::UnsupportedSchema {
-            found: 5,
-            supported: 4,
+            found: 6,
+            supported: 5,
         }
     );
 }

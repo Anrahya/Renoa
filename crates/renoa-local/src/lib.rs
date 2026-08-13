@@ -1,6 +1,7 @@
 //! Local model and workspace bindings for the Renoa harness.
 
 mod bash;
+mod pi_context;
 mod pi_model;
 mod workspace;
 

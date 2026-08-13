@@ -1,15 +1,26 @@
-use std::{env, error::Error, io, num::NonZeroU32, path::PathBuf, sync::Arc};
+use std::{
+    env,
+    error::Error,
+    io,
+    num::{NonZeroU32, NonZeroU64},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use renoa_agent::ContentBlock;
 use renoa_harness::{
-    CancellationId, Harness, OperationOutcome, OperationRequest, RequestId, RunNext,
-    RuntimeProfile, SessionId,
+    CancellationId, CompactionPolicy, Harness, OperationOutcome, OperationRequest, RequestId,
+    RunNext, RuntimeProfile, SessionId,
 };
 use renoa_local::{LocalWorkspace, PiModel};
 use uuid::Uuid;
 
 const MODEL_ATTEMPT_LIMIT: u32 = 32;
 const TOOL_CALL_LIMIT: u32 = 16;
+const MAX_OUTPUT_TOKENS: u32 = 32_768;
+const COMPACTION_ATTEMPT_LIMIT: u32 = 2;
+const MAX_CHECKPOINT_TOKENS: u64 = 16_384;
+const MIN_CONTEXT_SAFETY_TOKENS: u64 = 8_192;
 
 #[tokio::main]
 async fn main() {
@@ -33,22 +44,28 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let prompt = arguments[3..].join(" ");
     let provider = required_environment("RENOA_PI_PROVIDER")?;
     let model_id = required_environment("RENOA_PI_MODEL")?;
-    let model = Arc::new(PiModel::new(
-        required_environment("RENOA_PI_BRIDGE")?,
-        &provider,
-        &model_id,
-        required_environment("RENOA_PI_AUTH_STORE")?,
-    )?);
+    let model = Arc::new(
+        PiModel::load(
+            required_environment("RENOA_PI_BRIDGE")?,
+            &provider,
+            &model_id,
+            required_environment("RENOA_PI_AUTH_STORE")?,
+            NonZeroU32::new(MAX_OUTPUT_TOKENS).expect("output limit is non-zero"),
+        )
+        .await?,
+    );
+    let compaction = compaction_policy(&model)?;
     let profile = RuntimeProfile::new(
-        format!("pi/{provider}/{model_id}/local-tools-v1"),
-        model,
+        format!("pi/{provider}/{model_id}/local-tools-compaction-v1"),
+        model.clone(),
         required_environment("RENOA_PI_INSTRUCTIONS")?,
         NonZeroU32::new(MODEL_ATTEMPT_LIMIT).expect("model limit is non-zero"),
     )
     .with_tools(
         workspace.tool_bindings(),
         NonZeroU32::new(TOOL_CALL_LIMIT).expect("tool limit is non-zero"),
-    )?;
+    )?
+    .with_compaction(compaction, model);
     let harness = Arc::new(Harness::open(database)?);
     harness.create_standalone_session(session_id).await?;
     let admission = harness
@@ -75,6 +92,32 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     println!("session_id={session_id}");
     report(result)
+}
+
+fn compaction_policy(model: &PiModel) -> Result<CompactionPolicy, Box<dyn Error>> {
+    let context = model.context_window_tokens();
+    let safety = (context.get() / 50).max(MIN_CONTEXT_SAFETY_TOKENS);
+    let reserved = u64::from(model.max_output_tokens().get())
+        .checked_add(safety)
+        .ok_or_else(|| io::Error::other("context reserve overflowed u64"))?;
+    let dispatch = context
+        .get()
+        .checked_sub(reserved)
+        .ok_or_else(|| io::Error::other("model context is smaller than its output reserve"))?;
+    let target = dispatch
+        .checked_mul(3)
+        .and_then(|value| value.checked_div(5))
+        .and_then(NonZeroU64::new)
+        .ok_or_else(|| io::Error::other("post-compaction target is zero"))?;
+    let max_summary = NonZeroU64::new(MAX_CHECKPOINT_TOKENS.min(target.get() / 4))
+        .ok_or_else(|| io::Error::other("checkpoint budget is zero"))?;
+    Ok(CompactionPolicy::new(
+        context,
+        reserved,
+        target,
+        max_summary,
+        NonZeroU32::new(COMPACTION_ATTEMPT_LIMIT).expect("compaction attempt limit is non-zero"),
+    )?)
 }
 
 fn report(result: RunNext) -> Result<(), Box<dyn Error>> {

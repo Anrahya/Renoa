@@ -10,7 +10,7 @@ use crate::{
     state::{FailureKind, FrozenRuntime, OperationProgress, StoredOperationState, StoredState},
 };
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 const SCHEMA_V1: &str = "CREATE TABLE sessions (
         session_id TEXT PRIMARY KEY NOT NULL,
         next_operation_position INTEGER NOT NULL CHECK (next_operation_position >= 0),
@@ -108,6 +108,36 @@ const SCHEMA_V3: &str = "CREATE TABLE cancellation_requests (
      CREATE INDEX cancellation_requests_operation
         ON cancellation_requests(operation_id);";
 
+const SCHEMA_V5: &str = "CREATE TABLE context_checkpoints (
+        checkpoint_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+        previous_checkpoint_id TEXT REFERENCES context_checkpoints(checkpoint_id),
+        covered_through_sequence INTEGER NOT NULL CHECK (covered_through_sequence >= 0),
+        summary TEXT NOT NULL CHECK (length(summary) > 0),
+        UNIQUE (session_id, covered_through_sequence)
+     ) STRICT;
+
+     ALTER TABLE sessions ADD COLUMN active_checkpoint_id TEXT
+        REFERENCES context_checkpoints(checkpoint_id);
+
+     CREATE TABLE compaction_attempts (
+        effect_id TEXT PRIMARY KEY NOT NULL,
+        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+        attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+        settlement_token TEXT NOT NULL,
+        checkpoint_id TEXT NOT NULL,
+        previous_checkpoint_id TEXT,
+        covered_through_sequence INTEGER NOT NULL CHECK (covered_through_sequence >= 0),
+        status TEXT NOT NULL CHECK (
+            status IN ('pending', 'completed', 'outcome_unknown')
+        ),
+        request_json TEXT CHECK (
+            (status = 'pending') = (request_json IS NOT NULL)
+        ),
+        usage_json TEXT,
+        UNIQUE (operation_id, attempt_number)
+     ) STRICT;";
+
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), HarnessError> {
     let version = connection
         .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
@@ -134,7 +164,12 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), HarnessError
     if version <= 2 {
         migrate_v2_to_v3(&transaction)?;
     }
-    migrate_v3_to_v4(&transaction)?;
+    if version <= 3 {
+        migrate_v3_to_v4(&transaction)?;
+    }
+    if version <= 4 {
+        migrate_v4_to_v5(&transaction)?;
+    }
     transaction
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(sqlite_error)?;
@@ -146,6 +181,15 @@ fn migrate_v2_to_v3(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
 }
 
 fn migrate_v3_to_v4(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
+    migrate_operation_states(transaction)
+}
+
+fn migrate_v4_to_v5(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
+    migrate_operation_states(transaction)?;
+    transaction.execute_batch(SCHEMA_V5).map_err(sqlite_error)
+}
+
+fn migrate_operation_states(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
     let operations = {
         let mut statement = transaction
             .prepare("SELECT operation_id, state_json FROM operations")
@@ -164,6 +208,7 @@ fn migrate_v3_to_v4(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
         let new_json = match version {
             1 => migrate_state_v1(transaction, &old_json)?,
             2 => migrate_state_v2(&old_json)?,
+            3 => migrate_state_v3(&old_json)?,
             crate::state::STORED_STATE_VERSION => continue,
             unsupported => {
                 return Err(HarnessError::Corrupt(format!(
@@ -212,6 +257,20 @@ pub(crate) fn initialize_v2_for_test(connection: &mut Connection) -> Result<(), 
     transaction.commit().map_err(sqlite_error)
 }
 
+#[cfg(test)]
+pub(crate) fn initialize_v4_for_test(connection: &mut Connection) -> Result<(), HarnessError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sqlite_error)?;
+    transaction.execute_batch(SCHEMA_V1).map_err(sqlite_error)?;
+    transaction.execute_batch(SCHEMA_V2).map_err(sqlite_error)?;
+    transaction.execute_batch(SCHEMA_V3).map_err(sqlite_error)?;
+    transaction
+        .pragma_update(None, "user_version", 4)
+        .map_err(sqlite_error)?;
+    transaction.commit().map_err(sqlite_error)
+}
+
 fn migrate_v1_to_v2(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
     transaction.execute_batch(SCHEMA_V2).map_err(sqlite_error)
 }
@@ -221,6 +280,17 @@ fn migrate_state_v2(value: &str) -> Result<String, HarnessError> {
     if old.format_version() != 2 {
         return Err(HarnessError::Corrupt(format!(
             "v2 database contains operation state version {}",
+            old.format_version()
+        )));
+    }
+    serde_json::to_string(&StoredState::from_state(old.into_state())).map_err(json_error)
+}
+
+fn migrate_state_v3(value: &str) -> Result<String, HarnessError> {
+    let old: StoredState = serde_json::from_str(value).map_err(json_error)?;
+    if old.format_version() != 3 {
+        return Err(HarnessError::Corrupt(format!(
+            "v3 database contains operation state version {}",
             old.format_version()
         )));
     }
@@ -246,6 +316,8 @@ fn migrate_state_v1(transaction: &Transaction<'_>, value: &str) -> Result<String
             progress: OperationProgress {
                 runtime: model_only_runtime(runtime_revision, system_prompt, max_model_attempts),
                 model_attempts: attempt_count,
+                compaction_attempts: 0,
+                force_compaction: false,
             },
         },
         StoredOperationStateV1::ModelPending {
@@ -271,6 +343,8 @@ fn migrate_state_v1(transaction: &Transaction<'_>, value: &str) -> Result<String
                         max_model_attempts,
                     ),
                     model_attempts: attempt_count,
+                    compaction_attempts: 0,
+                    force_compaction: false,
                 },
                 effect_id,
                 settlement_token,
@@ -313,6 +387,7 @@ fn model_only_runtime(
         system_prompt,
         max_model_attempts,
         max_tool_calls_per_step: 0,
+        compaction: None,
         tools: Vec::new(),
     }
 }
@@ -397,7 +472,7 @@ mod tests {
         assert_eq!(pragma_text(&connection, "journal_mode"), "wal");
         assert_eq!(pragma_integer(&connection, "synchronous"), 2);
         assert_eq!(pragma_integer(&connection, "busy_timeout"), 5_000);
-        assert_eq!(pragma_integer(&connection, "user_version"), 4);
+        assert_eq!(pragma_integer(&connection, "user_version"), 5);
     }
 
     fn pragma_integer(connection: &rusqlite::Connection, name: &str) -> i64 {

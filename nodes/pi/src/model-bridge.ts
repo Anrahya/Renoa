@@ -4,6 +4,7 @@ import type {
   Message,
   Tool,
 } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 
 import type { ModelRuntime } from "./model-runtime.js";
 
@@ -101,12 +102,29 @@ type WireAssistantContent =
 
 type ModelBinding = Pick<ModelRuntime, "model" | "streamFn">;
 
+export type ModelInvocationErrorKind = "context_window_exceeded";
+
+export class ModelInvocationError extends Error {
+  readonly kind: ModelInvocationErrorKind | undefined;
+
+  constructor(message: string, kind?: ModelInvocationErrorKind) {
+    super(message);
+    this.name = "ModelInvocationError";
+    this.kind = kind;
+  }
+}
+
 export async function invokeModel(
   request: WireModelRequest,
   runtime: ModelBinding,
+  maxOutputTokens?: number,
 ): Promise<WireModelResponse> {
-  const stream = await runtime.streamFn(runtime.model, toContext(request));
-  return fromAssistant(await stream.result());
+  const stream = await runtime.streamFn(
+    runtime.model,
+    toContext(request),
+    maxOutputTokens === undefined ? undefined : { maxTokens: maxOutputTokens },
+  );
+  return fromAssistant(await stream.result(), runtime.model.contextWindow);
 }
 
 function toContext(request: WireModelRequest): Context {
@@ -134,7 +152,7 @@ function toMessage(message: WireMessage): Message {
         ...(message.metadata.response_id == null
           ? {}
           : { responseId: message.metadata.response_id }),
-        usage: toUsage(message.usage),
+        usage: emptyUsage(),
         stopReason: toPiStopReason(message.stop_reason),
         ...(message.metadata.raw_stop_reason == null
           ? {}
@@ -188,15 +206,15 @@ function toAssistantContent(content: WireAssistantContent) {
   }
 }
 
-function toUsage(usage: WireUsage | null): AssistantMessage["usage"] {
-  const normalized = usage ?? { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+function emptyUsage(): AssistantMessage["usage"] {
+  // Historical usage describes the original prefix, not a checkpointed replay.
+  // Zero forces Pi's context guard to estimate the request that is actually sent.
   return {
-    input: normalized.input,
-    output: normalized.output,
-    cacheRead: normalized.cache_read,
-    cacheWrite: normalized.cache_write,
-    totalTokens:
-      normalized.input + normalized.output + normalized.cache_read + normalized.cache_write,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
 }
@@ -228,9 +246,19 @@ function toTool(tool: WireTool): Tool {
   } as Tool;
 }
 
-function fromAssistant(message: AssistantMessage): WireModelResponse {
+function fromAssistant(message: AssistantMessage, contextWindow: number): WireModelResponse {
   if (message.stopReason === "error" || message.stopReason === "aborted") {
-    throw new Error(message.errorMessage ?? `model stopped with ${message.stopReason}`);
+    const kind =
+      message.stopReason === "error" &&
+      message.usage.output === 0 &&
+      message.content.every((content) => content.type === "text" && content.text.length === 0) &&
+      isContextOverflow(message, contextWindow)
+        ? "context_window_exceeded"
+        : undefined;
+    throw new ModelInvocationError(
+      message.errorMessage ?? `model stopped with ${message.stopReason}`,
+      kind,
+    );
   }
   if (message.stopReason === "pending" || message.stopReason === "deferred") {
     throw new Error(`model bridge does not support ${message.stopReason} responses`);

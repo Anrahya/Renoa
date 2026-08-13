@@ -4,7 +4,9 @@ use renoa_agent::{ContentBlock, Message, StopReason, TokenUsage, ToolSpec};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub(crate) const STORED_STATE_VERSION: u32 = 3;
+use crate::compaction::FrozenCompaction;
+
+pub(crate) const STORED_STATE_VERSION: u32 = 4;
 
 macro_rules! harness_id {
     ($name:ident) => {
@@ -238,6 +240,8 @@ pub(crate) struct FrozenRuntime {
     pub(crate) system_prompt: String,
     pub(crate) max_model_attempts: u32,
     pub(crate) max_tool_calls_per_step: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) compaction: Option<FrozenCompaction>,
     pub(crate) tools: Vec<FrozenTool>,
 }
 
@@ -245,6 +249,10 @@ pub(crate) struct FrozenRuntime {
 pub(crate) struct OperationProgress {
     pub(crate) runtime: FrozenRuntime,
     pub(crate) model_attempts: u32,
+    #[serde(default)]
+    pub(crate) compaction_attempts: u32,
+    #[serde(default)]
+    pub(crate) force_compaction: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +281,7 @@ impl StoredState {
             StoredOperationState::Queued => OperationStatus::Queued,
             StoredOperationState::NeedModel { .. }
             | StoredOperationState::ModelPending { .. }
+            | StoredOperationState::CompactionPending { .. }
             | StoredOperationState::NeedTool { .. }
             | StoredOperationState::ToolPending { .. } => OperationStatus::Running,
             StoredOperationState::ToolOutcomeUnknown { .. } => OperationStatus::OutcomeUnknown,
@@ -316,6 +325,13 @@ pub(crate) enum StoredOperationState {
         effect_id: Uuid,
         settlement_token: Uuid,
         assistant_entry_id: Uuid,
+        output_id: Uuid,
+    },
+    CompactionPending {
+        progress: OperationProgress,
+        effect_id: Uuid,
+        settlement_token: Uuid,
+        checkpoint_id: Uuid,
         output_id: Uuid,
     },
     NeedTool {
