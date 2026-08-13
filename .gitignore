@@ -8,5 +8,10 @@ node_modules/
 
 # Upstream reference checkouts; source revisions are recorded in docs instead.
 /codex/
+/deepseek-harness/
 /grok-build/
 /pi/
+
+# Renoa's T3 Code surface is maintained in its own upstream-tracking Git
+# checkout rather than copied into this repository's history.
+/t3code/
