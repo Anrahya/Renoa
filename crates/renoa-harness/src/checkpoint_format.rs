@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fmt::Write as _, io::Write};
+use std::{collections::VecDeque, io::Write};
 
 use renoa_agent::{AssistantContent, ContentBlock, Message, ModelRequest, ToolResult};
 use serde::Serialize;
@@ -26,12 +26,8 @@ pub(crate) fn summary_request(
     for entry in entries {
         let message =
             serde_json::to_string(&compact_message(&entry.message)?).map_err(json_error)?;
-        writeln!(
-            input,
-            "sequence={} operation={} message={message}",
-            entry.sequence, entry.operation_id,
-        )
-        .map_err(|_| HarnessError::Corrupt("cannot build compaction input".to_owned()))?;
+        input.push_str(&message);
+        input.push('\n');
     }
     input.push_str("</transcript>\n\n");
     input.push_str(
@@ -120,7 +116,7 @@ fn compact_tool_result(result: &ToolResult) -> Result<Value, HarnessError> {
         "images": images,
         "omitted_images": omitted_images,
         "details": details,
-        "result_sha256": sha256_json(result)?,
+        "tool_result_sha256": sha256_json(result)?,
     }))
 }
 
@@ -300,5 +296,41 @@ impl TextPreview {
             "tail": tail,
             "omitted_chars": self.total_chars.saturating_sub(retained),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use renoa_agent::Message;
+
+    use super::summary_request;
+    use crate::{OperationId, checkpoint::ContextEntry};
+
+    #[test]
+    fn compaction_input_keeps_content_order_without_internal_identifiers() {
+        let operation_id = OperationId::new();
+        let request = summary_request(
+            None,
+            &[
+                ContextEntry {
+                    operation_id,
+                    sequence: 41,
+                    message: Message::user_text("first durable fact"),
+                },
+                ContextEntry {
+                    operation_id,
+                    sequence: 42,
+                    message: Message::user_text("second durable fact"),
+                },
+            ],
+        )
+        .expect("build compaction request");
+        let encoded = serde_json::to_string(&request).expect("encode compaction request");
+
+        assert!(!encoded.contains(&operation_id.to_string()));
+        assert!(!encoded.contains("sequence="));
+        let first = encoded.find("first durable fact").expect("first fact");
+        let second = encoded.find("second durable fact").expect("second fact");
+        assert!(first < second, "compaction input changed transcript order");
     }
 }

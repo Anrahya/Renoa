@@ -6,6 +6,8 @@ projects are studied for established agent-runtime mechanics.
 ## Pi
 
 - Repository snapshot: `a96fb984d8c8b065fc5d193309fc812a882adee0`
+- Remote-catalog follow-up: `9d2ec7ffabe927bfad2214c1cee25b6632a78dcf`
+  (MIT)
 - Runtime packages: `@earendil-works/pi-agent-core@0.84.1` and
   `@earendil-works/pi-ai@0.84.1`, published from
   `53fa77ccd8a279eb87e92294ef3687b03ff80112`
@@ -13,6 +15,7 @@ projects are studied for established agent-runtime mechanics.
 - Studied source: `pi/packages/agent/src/agent-loop.ts`,
   `pi/packages/agent/src/agent.ts`,
   `pi/packages/ai/src/types.ts`,
+  `pi/packages/coding-agent/src/core/remote-catalog-provider.ts`,
   `pi/packages/protocol`, and `pi/packages/server`
 - Adopted ideas: the minimal model-to-tool continuation loop, a stateful Agent
   around that reusable loop, awaited ordered lifecycle events, source-ordered
@@ -43,7 +46,12 @@ projects are studied for established agent-runtime mechanics.
   Renoa's Rust harness remains the only conversation and tool loop.
   Renoa's durable projector also commits its exact model request before
   dispatch; Pi's in-memory `transformContext` does not provide that recovery
-  boundary.
+  boundary. For xAI models newer than the installed Pi AI package, the local
+  adapter uses Pi's official live-catalog endpoint but accepts only a selected
+  record with the expected provider, supported API, and trusted xAI base URL.
+  The Rust host pins that exact record across its Node subprocesses and puts its
+  SHA-256 identity in the runtime revision. Renoa did not copy Pi's catalog
+  provider or its persistence layer.
 
 ## OpenAI Codex CLI
 

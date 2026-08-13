@@ -73,7 +73,7 @@ impl ContextSizer for OneOperationPerChunk {
     fn estimate_input_tokens(&self, request: &ModelRequest) -> u64 {
         if request.system_prompt != "Be precise." {
             let input = encoded(request);
-            if input.matches("operation=").count() <= 2 {
+            if input.matches("\\\"role\\\"").count() <= 2 {
                 40
             } else {
                 90

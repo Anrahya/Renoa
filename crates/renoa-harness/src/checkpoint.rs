@@ -195,6 +195,18 @@ fn load_active_user_anchor(
     operation_id: OperationId,
     covered_through: u64,
 ) -> Result<Option<Message>, HarnessError> {
+    let anchor = load_operation_user_anchor(transaction, session_id, operation_id)?;
+    if anchor.sequence > covered_through {
+        return Ok(None);
+    }
+    Ok(Some(anchor.message))
+}
+
+pub(crate) fn load_operation_user_anchor(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+    operation_id: OperationId,
+) -> Result<ContextEntry, HarnessError> {
     let row = transaction
         .query_row(
             "SELECT sequence, message_json FROM conversation_entries
@@ -207,16 +219,17 @@ fn load_active_user_anchor(
         .ok_or_else(|| HarnessError::Corrupt("active operation has no user entry".to_owned()))?;
     let sequence = u64::try_from(row.0)
         .map_err(|_| HarnessError::Corrupt("user entry has a negative sequence".to_owned()))?;
-    if sequence > covered_through {
-        return Ok(None);
-    }
     let message: Message = serde_json::from_str(&row.1).map_err(json_error)?;
     if !matches!(message, Message::User { .. }) {
         return Err(HarnessError::Corrupt(
             "active operation does not start with a user message".to_owned(),
         ));
     }
-    Ok(Some(message))
+    Ok(ContextEntry {
+        operation_id,
+        sequence,
+        message,
+    })
 }
 
 fn parse_uuid(value: &str, field: &str) -> Result<Uuid, HarnessError> {

@@ -142,6 +142,7 @@ pub enum CompactionPolicyError {
 pub(crate) struct CompactionSource {
     pub(crate) progress: OperationProgress,
     pub(crate) checkpoint: Option<ActiveCheckpoint>,
+    pub(crate) active_user_anchor: ContextEntry,
     pub(crate) entries: Vec<ContextEntry>,
 }
 

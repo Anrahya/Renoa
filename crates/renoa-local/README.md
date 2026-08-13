@@ -24,7 +24,7 @@ Then configure one Pi model and run a turn:
 export RENOA_PI_BRIDGE='/absolute/path/to/nodes/pi/dist/src/model-bridge-main.js'
 export RENOA_PI_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
 export RENOA_PI_PROVIDER='xai' # or opencode-go
-export RENOA_PI_MODEL='grok-4.5'
+export RENOA_PI_MODEL='grok-4.6'
 export RENOA_PI_INSTRUCTIONS='You are a careful coding agent.'
 
 cargo run -p renoa-local -- \
@@ -39,9 +39,14 @@ the next turn to the same durable conversation. `Ctrl-C` requests ordered
 harness cancellation and waits for active model or process work to stop.
 
 At startup the Pi bridge resolves the selected model's context and output
-limits from Pi's model catalog and verifies authentication. The host caps model
-output at 32,768 tokens and enables durable context checkpoints with explicit
-headroom; no provider table is compiled into the Rust harness. The local token
-estimate is deliberately conservative but not treated as exact. An explicit
-pre-inference provider context rejection is persisted and forces compaction
-without replaying the rejected request.
+limits and verifies authentication. A packaged Pi model stays package-pinned;
+an xAI model absent from that package can be resolved from Pi's official live
+catalog. Renoa validates the provider, API, and xAI endpoint, then pins the
+exact model record and includes its SHA-256 identity in the runtime revision.
+An in-flight operation therefore fails closed instead of silently changing
+model behavior after restart. The host caps model output at 32,768 tokens and
+enables durable context checkpoints with explicit headroom; no provider table
+is compiled into the Rust harness. The local token estimate is deliberately
+conservative but not treated as exact. An explicit pre-inference provider
+context rejection is persisted and forces compaction without replaying the
+rejected request.

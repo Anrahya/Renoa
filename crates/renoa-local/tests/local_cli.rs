@@ -53,7 +53,12 @@ for await (const chunk of process.stdin) input += chunk;
 if (process.env.RENOA_PI_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
-    response: { context_window_tokens: 500000, max_output_tokens: 500000 }
+    response: {
+      context_window_tokens: 500000,
+      max_output_tokens: 500000,
+      model_spec: "{}",
+      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
   }));
   process.exit(0);
 }

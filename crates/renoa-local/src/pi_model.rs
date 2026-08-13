@@ -1,4 +1,5 @@
 use std::{
+    fmt::Write as _,
     io,
     num::{NonZeroU32, NonZeroU64},
     path::PathBuf,
@@ -8,6 +9,7 @@ use futures_util::{StreamExt, stream};
 use renoa_agent::{Model, ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse};
 use renoa_harness::ContextSizer;
 use serde::{Deserialize, de::DeserializeOwned};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
@@ -39,11 +41,16 @@ pub enum PiModelConfigError {
     ZeroContextWindow,
     #[error("Pi model reported a zero-token output limit")]
     ZeroProviderOutputLimit,
+    #[error("Pi model bridge returned an invalid model specification")]
+    InvalidModelSpec,
+    #[error("Pi model bridge returned an invalid model binding id")]
+    InvalidModelBindingId,
 }
 
 /// A provider adapter that invokes Pi AI for one exact Renoa model request.
 pub struct PiModel {
     config: PiBridgeConfig,
+    binding_id: String,
     context_window_tokens: NonZeroU64,
     max_output_tokens: NonZeroU32,
 }
@@ -54,6 +61,7 @@ struct PiBridgeConfig {
     provider: String,
     model: String,
     credential_store: PathBuf,
+    model_spec: Option<String>,
 }
 
 impl PiModel {
@@ -69,7 +77,7 @@ impl PiModel {
         credential_store: impl Into<PathBuf>,
         max_output_tokens: NonZeroU32,
     ) -> Result<Self, PiModelConfigError> {
-        let config = PiBridgeConfig::new(bridge, provider, model, credential_store)?;
+        let mut config = PiBridgeConfig::new(bridge, provider, model, credential_store)?;
         let description = describe_bridge(config.clone())
             .await
             .map_err(PiModelConfigError::ModelResolution)?;
@@ -81,8 +89,23 @@ impl PiModel {
             .map_or(max_output_tokens, |provider_output_limit| {
                 max_output_tokens.min(provider_output_limit)
             });
+        serde_json::from_str::<serde_json::Value>(&description.model_spec)
+            .ok()
+            .filter(serde_json::Value::is_object)
+            .ok_or(PiModelConfigError::InvalidModelSpec)?;
+        if description.model_binding_id.len() != 64
+            || !description
+                .model_binding_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || description.model_binding_id != sha256_hex(description.model_spec.as_bytes())
+        {
+            return Err(PiModelConfigError::InvalidModelBindingId);
+        }
+        config.model_spec = Some(description.model_spec);
         Ok(Self {
             config,
+            binding_id: description.model_binding_id,
             context_window_tokens,
             max_output_tokens,
         })
@@ -96,6 +119,11 @@ impl PiModel {
     #[must_use]
     pub const fn max_output_tokens(&self) -> NonZeroU32 {
         self.max_output_tokens
+    }
+
+    #[must_use]
+    pub fn binding_id(&self) -> &str {
+        &self.binding_id
     }
 }
 
@@ -128,6 +156,7 @@ impl PiBridgeConfig {
             provider,
             model,
             credential_store,
+            model_spec: None,
         })
     }
 }
@@ -195,17 +224,21 @@ async fn run_bridge(
 ) -> Result<Vec<u8>, ModelError> {
     let mut command = Command::new("node");
     command
+        .arg("--dns-result-order=ipv4first")
         .arg(config.bridge)
         .env("RENOA_PI_ACTION", action.as_str())
-        .env("RENOA_PI_PROVIDER", config.provider)
-        .env("RENOA_PI_MODEL", config.model)
-        .env("RENOA_PI_AUTH_STORE", config.credential_store)
+        .env("RENOA_PI_PROVIDER", &config.provider)
+        .env("RENOA_PI_MODEL", &config.model)
+        .env("RENOA_PI_AUTH_STORE", &config.credential_store)
         .kill_on_drop(true)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     if let Some(limit) = max_output_tokens {
         command.env("RENOA_PI_MAX_OUTPUT_TOKENS", limit.get().to_string());
+    }
+    if let Some(model_spec) = &config.model_spec {
+        command.env("RENOA_PI_MODEL_SPEC", model_spec);
     }
     let mut child = command
         .spawn()
@@ -270,6 +303,8 @@ enum BridgeErrorKind {
 struct PiModelDescription {
     context_window_tokens: u64,
     max_output_tokens: u64,
+    model_binding_id: String,
+    model_spec: String,
 }
 
 fn decode_response<T: DeserializeOwned>(encoded: &[u8]) -> Result<T, ModelError> {
@@ -349,4 +384,12 @@ async fn join_output(
 
 fn model_error(action: &str, error: impl std::fmt::Display) -> ModelError {
     ModelError::new(format!("cannot {action}: {error}"))
+}
+
+fn sha256_hex(value: &[u8]) -> String {
+    let mut encoded = String::with_capacity(64);
+    for byte in Sha256::digest(value) {
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
 }

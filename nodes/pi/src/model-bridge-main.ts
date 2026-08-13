@@ -14,7 +14,10 @@ interface BridgeResult {
 }
 
 async function main(): Promise<BridgeResult> {
-  const runtime = await loadModelRuntime(loadModelConfig(process.env));
+  const runtime = await loadModelRuntime({
+    ...loadModelConfig(process.env),
+    modelSpec: optionalJson(process.env.RENOA_PI_MODEL_SPEC),
+  });
   try {
     switch (requiredAction(process.env.RENOA_PI_ACTION)) {
       case "describe":
@@ -23,6 +26,8 @@ async function main(): Promise<BridgeResult> {
           response: {
             context_window_tokens: runtime.model.contextWindow,
             max_output_tokens: runtime.model.maxTokens,
+            model_binding_id: runtime.modelBindingId,
+            model_spec: runtime.modelSpec,
           },
         };
       case "invoke": {
@@ -39,6 +44,17 @@ async function main(): Promise<BridgeResult> {
     return failure(error);
   } finally {
     runtime.close();
+  }
+}
+
+function optionalJson(value: string | undefined): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    throw new Error("RENOA_PI_MODEL_SPEC must be valid JSON");
   }
 }
 

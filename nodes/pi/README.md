@@ -34,8 +34,13 @@ Configure the node with an xAI model after login:
 
 ```sh
 export RENOA_PI_PROVIDER='xai'
-export RENOA_PI_MODEL='grok-4.5'
+export RENOA_PI_MODEL='grok-4.6'
 ```
+
+Packaged Pi models remain package-pinned. If an xAI model is newer than the
+installed Pi package, Renoa resolves only that selected model from Pi's official
+live catalog and rejects records that change the provider, supported API, or
+xAI endpoint.
 
 ## Run with OpenCode Go
 

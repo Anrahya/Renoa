@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     HarnessError, OperationId, SessionRunLease,
-    checkpoint::{load_active_checkpoint, load_entries_after},
+    checkpoint::{load_active_checkpoint, load_entries_after, load_operation_user_anchor},
     compaction::{
         CompactionAttempt, CompactionIntent, CompactionPlan, CompactionRecovery, CompactionSource,
         CompactionStart,
@@ -55,6 +55,11 @@ impl Store {
             let source = CompactionSource {
                 progress: progress.clone(),
                 checkpoint,
+                active_user_anchor: load_operation_user_anchor(
+                    &transaction,
+                    session_id,
+                    operation_id,
+                )?,
                 entries,
             };
             transaction.commit().map_err(sqlite_error)?;

@@ -8,10 +8,10 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "auth:xai": "pnpm run build && node dist/src/auth-xai.js",
+    "auth:xai": "pnpm run build && node --dns-result-order=ipv4first dist/src/auth-xai.js",
     "build": "tsc",
     "check": "tsc --noEmit",
-    "start": "node dist/src/main.js",
+    "start": "node --dns-result-order=ipv4first dist/src/main.js",
     "test": "pnpm run build && node --test dist/test/*.test.js"
   },
   "dependencies": {

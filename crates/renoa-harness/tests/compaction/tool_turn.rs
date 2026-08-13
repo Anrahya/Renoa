@@ -1,6 +1,9 @@
 use std::{
     num::{NonZeroU32, NonZeroU64},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use futures_util::{StreamExt, stream};
@@ -18,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use super::{tool_support::RecordingTool, valid_summary};
 
 #[tokio::test]
-async fn compaction_inside_an_active_turn_keeps_the_user_anchor_and_whole_tool_group() {
+async fn repeated_compaction_inside_an_active_turn_keeps_its_original_user_anchor() {
     let directory = tempdir().expect("temporary directory");
     let model = Arc::new(ToolTurnModel::default());
     let tool_text = format!("HEAD:{}:TAIL", "x".repeat(100_000));
@@ -79,25 +82,28 @@ async fn compaction_inside_an_active_turn_keeps_the_user_anchor_and_whole_tool_g
         .expect("run tool operation");
 
     let requests = model.requests();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 5);
     assert_eq!(requests[0].messages, vec![Message::user_text("fix it")]);
     assert!(requests[1].tools.is_empty(), "compactor cannot call tools");
-    let compactor_input = serde_json::to_string(&requests[1]).expect("encode compactor input");
-    assert!(compactor_input.len() < 25_000);
-    assert!(compactor_input.contains("HEAD:"));
-    assert!(compactor_input.contains(":TAIL"));
-    assert!(compactor_input.contains("\\\"head\\\""));
-    assert!(compactor_input.contains("\\\"tail\\\""));
-    assert!(compactor_input.contains("omitted_chars"));
-    assert!(compactor_input.contains("result_sha256"));
-    assert_eq!(requests[2].messages.len(), 2);
-    assert_eq!(requests[2].messages[1], Message::user_text("fix it"));
-    let final_context = serde_json::to_string(&requests[2]).expect("encode final context");
+    assert!(requests[3].tools.is_empty(), "compactor cannot call tools");
+    for request in [&requests[1], &requests[3]] {
+        let compactor_input = serde_json::to_string(request).expect("encode compactor input");
+        assert!(compactor_input.len() < 25_000);
+        assert!(compactor_input.contains("HEAD:"));
+        assert!(compactor_input.contains(":TAIL"));
+        assert!(compactor_input.contains("\\\"head\\\""));
+        assert!(compactor_input.contains("\\\"tail\\\""));
+        assert!(compactor_input.contains("omitted_chars"));
+        assert!(compactor_input.contains("tool_result_sha256"));
+    }
+    assert_eq!(requests[4].messages.len(), 2);
+    assert_eq!(requests[4].messages[1], Message::user_text("fix it"));
+    let final_context = serde_json::to_string(&requests[4]).expect("encode final context");
     assert!(final_context.contains("CONTEXT CHECKPOINT"));
     assert!(!final_context.contains("HEAD:"));
 
     let snapshot = harness.inspect(session_id).await.expect("inspect session");
-    assert_eq!(snapshot.messages.len(), 4);
+    assert_eq!(snapshot.messages.len(), 6);
     assert!(matches!(snapshot.messages[1], Message::Assistant { .. }));
     assert!(matches!(
         &snapshot.messages[2],
@@ -105,6 +111,8 @@ async fn compaction_inside_an_active_turn_keeps_the_user_anchor_and_whole_tool_g
             if result.content == vec![ContentBlock::text(tool_text)]
     ));
     assert!(matches!(snapshot.messages[3], Message::Assistant { .. }));
+    assert!(matches!(snapshot.messages[4], Message::Tool { .. }));
+    assert!(matches!(snapshot.messages[5], Message::Assistant { .. }));
 }
 
 struct ToolTurnSizer;
@@ -113,14 +121,14 @@ impl ContextSizer for ToolTurnSizer {
     fn estimate_input_tokens(&self, request: &ModelRequest) -> u64 {
         if request.system_prompt != "Be precise." {
             40
-        } else if request.messages.iter().any(is_checkpoint) {
-            30
         } else if request
             .messages
             .iter()
             .any(|message| matches!(message, Message::Tool { .. }))
         {
             90
+        } else if request.messages.iter().any(is_checkpoint) {
+            30
         } else {
             10
         }
@@ -136,6 +144,7 @@ fn is_checkpoint(message: &Message) -> bool {
 #[derive(Default)]
 struct ToolTurnModel {
     requests: Mutex<Vec<ModelRequest>>,
+    normal_calls: AtomicUsize,
 }
 
 impl ToolTurnModel {
@@ -151,7 +160,6 @@ impl Model for ToolTurnModel {
         _cancellation: CancellationToken,
     ) -> ModelEventStream<'_> {
         let is_compaction = request.system_prompt != "Be precise.";
-        let has_checkpoint = request.messages.iter().any(is_checkpoint);
         self.requests.lock().expect("request lock").push(request);
         let response = if is_compaction {
             ModelResponse {
@@ -160,7 +168,7 @@ impl Model for ToolTurnModel {
                 usage: None,
                 metadata: AssistantMetadata::default(),
             }
-        } else if has_checkpoint {
+        } else if self.normal_calls.fetch_add(1, Ordering::Relaxed) == 2 {
             ModelResponse {
                 content: vec![AssistantContent::text("implemented")],
                 stop_reason: StopReason::Stop,
@@ -168,9 +176,10 @@ impl Model for ToolTurnModel {
                 metadata: AssistantMetadata::default(),
             }
         } else {
+            let call = self.normal_calls.load(Ordering::Relaxed);
             ModelResponse {
                 content: vec![AssistantContent::tool_call(ToolCall {
-                    id: "call-1".to_owned(),
+                    id: format!("call-{call}"),
                     name: "read_file".to_owned(),
                     arguments: serde_json::json!({"path": "src/lib.rs"}),
                     thought_signature: None,

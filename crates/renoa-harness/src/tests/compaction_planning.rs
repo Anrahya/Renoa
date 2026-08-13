@@ -29,6 +29,11 @@ fn planning_does_not_rebuild_every_possible_context_prefix() {
             force_compaction: false,
         },
         checkpoint: None,
+        active_user_anchor: ContextEntry {
+            operation_id: active_operation_id,
+            sequence: 128,
+            message: Message::user_text("active request"),
+        },
         entries: history(active_operation_id),
     };
     let sizer = CountingSizer::default();
@@ -98,7 +103,7 @@ impl ContextSizer for CountingSizer {
             u64::try_from(request.messages.len()).expect("message count fits u64")
         } else {
             let input = serde_json::to_string(request).expect("encode request");
-            u64::try_from(input.matches("sequence=").count()).expect("entry count fits u64")
+            u64::try_from(input.matches("\\\"role\\\"").count()).expect("entry count fits u64")
         }
     }
 }

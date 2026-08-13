@@ -4,11 +4,13 @@ use renoa_agent::{
     AssistantContent, ContentBlock, ModelErrorKind, ModelRequest, SamplingError, StopReason,
     TokenUsage, sample_model,
 };
-use renoa_harness::ContextSizer;
-use renoa_local::PiModel;
+use renoa_local::{PiModel, PiModelConfigError};
 use tempfile::tempdir;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
+
+const TEST_MODEL_BINDING_ID: &str =
+    "15fa2142926bbf4af032a8a733095d6127ca0a041e85ee583e25bc635821fd21";
 
 #[tokio::test]
 async fn pi_model_uses_a_smaller_provider_output_limit() {
@@ -18,12 +20,17 @@ async fn pi_model_uses_a_smaller_provider_output_limit() {
     fs::write(&auth_store, "").expect("create auth placeholder");
     fs::write(
         &bridge,
-        r"
+        r#"
 process.stdout.write(JSON.stringify({
   ok: true,
-  response: { context_window_tokens: 100000, max_output_tokens: 8192 }
+  response: {
+    context_window_tokens: 100000,
+    max_output_tokens: 8192,
+    model_spec: "{}",
+    model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  }
 }));
-",
+"#,
     )
     .expect("write model bridge");
 
@@ -41,6 +48,43 @@ process.stdout.write(JSON.stringify({
 }
 
 #[tokio::test]
+async fn pi_model_rejects_a_model_spec_with_the_wrong_binding_id() {
+    let directory = tempdir().expect("temporary directory");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(
+        &bridge,
+        r#"
+process.stdout.write(JSON.stringify({
+  ok: true,
+  response: {
+    context_window_tokens: 100000,
+    max_output_tokens: 8192,
+    model_spec: "{}",
+    model_binding_id: "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}));
+"#,
+    )
+    .expect("write model bridge");
+
+    let result = PiModel::load(
+        &bridge,
+        "xai",
+        "grok-test",
+        &auth_store,
+        NonZeroU32::new(32_768).expect("non-zero host cap"),
+    )
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(PiModelConfigError::InvalidModelBindingId)
+    ));
+}
+
+#[tokio::test]
 async fn pi_model_crosses_the_process_boundary_with_one_exact_request() {
     let directory = tempdir().expect("temporary directory");
     let bridge = directory.path().join("bridge.mjs");
@@ -54,10 +98,19 @@ for await (const chunk of process.stdin) input += chunk;
 if (process.env.RENOA_PI_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
-    response: { context_window_tokens: 500000, max_output_tokens: 500000 }
+    response: {
+      context_window_tokens: 500000,
+      max_output_tokens: 500000,
+      model_spec: "{\"id\":\"grok-test\"}",
+      model_binding_id: "15fa2142926bbf4af032a8a733095d6127ca0a041e85ee583e25bc635821fd21"
+    }
   }));
 } else if (process.env.RENOA_PI_ACTION !== "invoke") {
   process.stdout.write(JSON.stringify({ ok: false, error: "unknown action" }));
+} else if (!process.execArgv.includes("--dns-result-order=ipv4first")) {
+  process.stdout.write(JSON.stringify({ ok: false, error: "DNS address order missing" }));
+} else if (process.env.RENOA_PI_MODEL_SPEC !== "{\"id\":\"grok-test\"}") {
+  process.stdout.write(JSON.stringify({ ok: false, error: "model binding missing" }));
 } else if (process.env.RENOA_PI_MAX_OUTPUT_TOKENS !== "32768") {
   process.stdout.write(JSON.stringify({ ok: false, error: "output cap missing" }));
 } else if (JSON.parse(input).system_prompt !== "Be precise." || JSON.parse(input).messages[0].content[0].text !== "Hello") {
@@ -89,6 +142,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
     .expect("configure Pi model adapter");
     assert_eq!(model.context_window_tokens().get(), 500_000);
     assert_eq!(model.max_output_tokens().get(), 32_768);
+    assert_eq!(model.binding_id(), TEST_MODEL_BINDING_ID);
 
     let sampled = sample_model(
         &model,
@@ -123,18 +177,6 @@ if (process.env.RENOA_PI_ACTION === "describe") {
         sampled.response.metadata.response_id.as_deref(),
         Some("response-1")
     );
-    let small = model.estimate_input_tokens(&ModelRequest {
-        system_prompt: "short".to_owned(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    });
-    let large = model.estimate_input_tokens(&ModelRequest {
-        system_prompt: "long ".repeat(1_000),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    });
-    assert!(small > 0);
-    assert!(large > small);
 }
 
 #[tokio::test]
@@ -155,7 +197,12 @@ for await (const chunk of process.stdin) input += chunk;
 if (process.env.RENOA_PI_ACTION === "describe") {{
   process.stdout.write(JSON.stringify({{
     ok: true,
-    response: {{ context_window_tokens: 500000, max_output_tokens: 500000 }}
+    response: {{
+      context_window_tokens: 500000,
+      max_output_tokens: 500000,
+      model_spec: "{{}}",
+      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }}
   }}));
   process.exit(0);
 }}
@@ -240,7 +287,12 @@ for await (const chunk of process.stdin) input += chunk;
 if (process.env.RENOA_PI_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
-    response: { context_window_tokens: 500000, max_output_tokens: 500000 }
+    response: {
+      context_window_tokens: 500000,
+      max_output_tokens: 500000,
+      model_spec: "{}",
+      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
   }));
 } else {
   JSON.parse(input);

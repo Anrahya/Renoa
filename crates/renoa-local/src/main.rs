@@ -56,7 +56,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     );
     let compaction = compaction_policy(&model)?;
     let profile = RuntimeProfile::new(
-        format!("pi/{provider}/{model_id}/local-tools-compaction-v1"),
+        format!(
+            "pi/{provider}/{model_id}/{}/local-tools-compaction-v1",
+            model.binding_id()
+        ),
         model.clone(),
         required_environment("RENOA_PI_INSTRUCTIONS")?,
         NonZeroU32::new(MODEL_ATTEMPT_LIMIT).expect("model limit is non-zero"),

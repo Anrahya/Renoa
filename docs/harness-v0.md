@@ -848,9 +848,10 @@ slices.
    failed and uncertain work observable without inventing zeroes.
 7. **Implemented:** durable context checkpoints use bounded incremental input,
    exact effect persistence, cancellation, provider-overflow fallback, honest
-   usage, and deterministic repeated-continuation tests. The exact requested
-   real-provider evaluation remains pending model availability. Add steering
-   only when a live consumer defines its ordering behavior.
+   usage, and deterministic repeated-continuation tests. A real Grok 4.6 coding
+   run crossed eleven activated checkpoints while retaining exact constraints;
+   its resulting code passed thirteen tests. Add steering only when a live
+   consumer defines its ordering behavior.
 8. Add cursor-based observation and the thin RCP/ACP adapters only after the
    local harness can complete real work safely.
 9. Design workspace checkpoints and host movement only after local continuity
@@ -907,6 +908,22 @@ No upstream source is incorporated. The design was informed by:
   (MIT): the adapter consumes its model catalog and exported explicit-overflow
   classifier. Renoa's durable state machine and request estimator are its own;
   no Pi source is copied into the harness.
+- Pi `origin/main` at `9d2ec7ffabe927bfad2214c1cee25b6632a78dcf`
+  (MIT): the current coding agent overlays its packaged provider catalog from
+  Pi's official live catalog. Renoa uses that endpoint only to resolve a
+  selected missing xAI model, validates its identity, API, and destination, and
+  pins the exact record for the local runtime; no upstream source is copied.
+- A manual Grok 4.6 acceptance run on 2026-08-14 forced eleven activated
+  checkpoints through one durable local coding session. Every checkpoint kept
+  its seven-section contract, retained two exact hidden facts, discarded all
+  synthetic ballast, and preserved enough working state to produce a
+  dependency-free implementation with thirteen passing Node tests. The run was
+  deliberately stopped during a twelfth checkpoint after the artificial
+  7,000-token window had already exceeded the intended stress coverage. It
+  exposed the repeated active-turn anchor bug now covered by the deterministic
+  `repeated_compaction_inside_an_active_turn_keeps_its_original_user_anchor`
+  regression. The provider-specific acceptance driver was not retained as a
+  normal test.
 - OpenAI Codex CLI `origin/main` at
   `357696c5e7127525a9259d3dcfa0574516b1fe84` (Apache-2.0): concise handoff
   checkpoints, retained user anchors, mid-turn triggering, and a separate

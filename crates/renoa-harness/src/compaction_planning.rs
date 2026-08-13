@@ -193,11 +193,12 @@ fn tail_request(
 ) -> Result<ModelRequest, HarnessError> {
     let covered = source.entries[cut_index].sequence;
     let mut messages = Vec::new();
-    let anchor = source
-        .entries
-        .iter()
-        .find(|entry| entry.operation_id == active_operation_id)
-        .ok_or_else(|| HarnessError::Corrupt("active operation has no user entry".to_owned()))?;
+    let anchor = &source.active_user_anchor;
+    if anchor.operation_id != active_operation_id {
+        return Err(HarnessError::Corrupt(
+            "compaction source has the wrong active user anchor".to_owned(),
+        ));
+    }
     if !matches!(anchor.message, Message::User { .. }) {
         return Err(HarnessError::Corrupt(
             "active operation does not start with a user message".to_owned(),
