@@ -4,10 +4,12 @@ use rusqlite::Connection;
 
 use crate::{
     ControlError,
-    control_migrations::{migrate_v3_execution_events, remove_harness_configuration},
+    control_migrations::{
+        add_execution_command_causation, migrate_v3_execution_events, remove_harness_configuration,
+    },
 };
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -28,6 +30,9 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     }
     if (1..=4).contains(&version) {
         remove_harness_configuration(connection)?;
+    }
+    if (1..=5).contains(&version) {
+        add_execution_command_causation(connection)?;
     }
     connection
         .execute_batch(
@@ -82,7 +87,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
             CREATE INDEX IF NOT EXISTS task_events_task_sequence
                 ON task_events(task_id, sequence);
 
-            PRAGMA user_version = 5;",
+            PRAGMA user_version = 6;",
         )
         .map_err(sqlite_error)
 }

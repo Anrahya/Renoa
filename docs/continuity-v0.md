@@ -110,11 +110,15 @@ silently skipped.
 
 ## Transport
 
-The version 7 binding uses JSON messages over WebSocket on localhost. WebSocket
+The version 8 binding uses JSON messages over WebSocket on localhost. WebSocket
 supplies an ordered, bidirectional byte stream and works from Rust, TypeScript,
 browsers, and mobile clients. JSON keeps the contract inspectable while it is
 changing. Exact frames are documented in
 [rcp-json-ws-v0.md](rcp-json-ws-v0.md).
+
+Every durable execution task record also carries its causing command identity,
+so a reconnecting surface can rebuild concurrent or interleaved turns without
+guessing from journal adjacency.
 
 Transport choices are not task semantics. A later Telegram webhook, HTTP API,
 or ACP adapter can call the same coordinator operations without becoming part

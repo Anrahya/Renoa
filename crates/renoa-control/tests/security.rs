@@ -91,7 +91,7 @@ mod security_behaviors {
                 |row| row.get::<_, bool>(0),
             )
             .expect("inspect execution event stream table");
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         assert!(pending_table_exists);
         assert!(stream_table_exists);
     }
@@ -180,6 +180,7 @@ mod security_behaviors {
             serde_json::from_str::<serde_json::Value>(&kind_json).expect("parse migrated event"),
             serde_json::json!({
                 "type": "execution_event",
+                "commandId": "00000000-0000-0000-0000-000000000005",
                 "event": {
                     "eventId": "00000000-0000-0000-0000-000000000007",
                     "executionId": "00000000-0000-0000-0000-000000000008",

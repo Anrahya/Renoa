@@ -1,8 +1,93 @@
+use std::collections::HashMap;
+
 use renoa_protocol::CommandEnvelope;
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use crate::{ControlError, TaskEventKind};
+
+pub(crate) fn add_execution_command_causation(
+    connection: &mut Connection,
+) -> Result<(), ControlError> {
+    let transaction = connection.transaction().map_err(sqlite_error)?;
+    let events = {
+        let mut statement = transaction
+            .prepare("SELECT event_id, kind_json FROM task_events ORDER BY task_id, sequence")
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error)?
+    };
+    let mut execution_events = Vec::new();
+    for (event_id, kind_json) in events {
+        let mut kind: Value = serde_json::from_str(&kind_json)
+            .map_err(|error| ControlError::store(format!("invalid task event JSON: {error}")))?;
+        let kind_object = object(&mut kind, "task event")?;
+        if kind_object.get("type").and_then(Value::as_str) != Some("execution_event") {
+            continue;
+        }
+        execution_events.push((event_id, kind));
+    }
+    if !execution_events.is_empty() && !has_table(&transaction, "execution_event_streams")? {
+        return Err(ControlError::store(
+            "execution task events exist without durable execution command bindings",
+        ));
+    }
+    let execution_commands = if execution_events.is_empty() {
+        HashMap::new()
+    } else {
+        let mut statement = transaction
+            .prepare("SELECT execution_id, command_id FROM execution_event_streams")
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?;
+        rows.collect::<Result<HashMap<_, _>, _>>()
+            .map_err(sqlite_error)?
+    };
+    for (event_id, mut kind) in execution_events {
+        let kind_object = object(&mut kind, "task event")?;
+        let event = kind_object
+            .get_mut("event")
+            .ok_or_else(|| ControlError::store("execution task event is missing event"))?;
+        let execution_id = string_field(
+            object(event, "execution event")?,
+            "executionId",
+            "execution event",
+        )?;
+        let command_id = execution_commands.get(&execution_id).ok_or_else(|| {
+            ControlError::store(format!(
+                "execution task event {event_id} has no command binding for execution {execution_id}"
+            ))
+        })?;
+        if let Some(existing) = kind_object.get("commandId") {
+            if existing.as_str() != Some(command_id) {
+                return Err(ControlError::store(format!(
+                    "execution task event {event_id} has conflicting command causation"
+                )));
+            }
+            continue;
+        }
+        kind_object.insert("commandId".to_owned(), Value::String(command_id.clone()));
+        let migrated = serde_json::to_string(&kind)
+            .map_err(|error| ControlError::store(format!("task event encoding failed: {error}")))?;
+        transaction
+            .execute(
+                "UPDATE task_events SET kind_json = ?2 WHERE event_id = ?1",
+                params![event_id, migrated],
+            )
+            .map_err(sqlite_error)?;
+    }
+    transaction
+        .execute_batch("PRAGMA user_version = 6;")
+        .map_err(sqlite_error)?;
+    transaction.commit().map_err(sqlite_error)
+}
 
 pub(crate) fn remove_harness_configuration(
     connection: &mut Connection,
@@ -69,11 +154,13 @@ fn rewrite_command_events(connection: &Connection) -> Result<(), ControlError> {
         rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error)?
     };
     for (event_id, json) in rows {
-        let kind: TaskEventKind = serde_json::from_str(&json)
+        let value: Value = serde_json::from_str(&json)
             .map_err(|error| ControlError::store(format!("invalid task event JSON: {error}")))?;
-        if !matches!(kind, TaskEventKind::CommandSubmitted { .. }) {
+        if value.get("type").and_then(Value::as_str) != Some("command_submitted") {
             continue;
         }
+        let kind: TaskEventKind = serde_json::from_value(value)
+            .map_err(|error| ControlError::store(format!("invalid task event JSON: {error}")))?;
         let migrated = serde_json::to_string(&kind)
             .map_err(|error| ControlError::store(format!("task event encoding failed: {error}")))?;
         if migrated != json {
@@ -86,6 +173,18 @@ fn rewrite_command_events(connection: &Connection) -> Result<(), ControlError> {
         }
     }
     Ok(())
+}
+
+fn has_table(connection: &Connection, table: &str) -> Result<bool, ControlError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1
+            )",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error)
 }
 
 fn has_column(connection: &Connection, table: &str, expected: &str) -> Result<bool, ControlError> {

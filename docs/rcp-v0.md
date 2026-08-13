@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes the current device trust mechanism.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 7 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 8 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -99,6 +99,9 @@ These decisions define RCP and are not ordinary implementation details:
 15. An execution delivery contains continuity data only. System instructions,
     models, context policy, tools, capability policy, and provider credentials
     remain behind the node's harness adapter.
+16. Every durable execution task record names the stable command that caused
+    it. Surfaces must not infer execution causation from arrival order,
+    adjacency, or timestamps.
 
 ## Vocabulary
 
@@ -481,6 +484,7 @@ The current loopback implementation demonstrates:
 - task ownership checks;
 - owner-filtered task discovery with deterministic task ordering;
 - stable command and event identities;
+- stable command causation on every durable execution task record;
 - atomic command admission;
 - one coordinator-assigned task sequence;
 - gap-free replay followed by live delivery;
@@ -501,7 +505,7 @@ The current loopback implementation demonstrates:
   an abandoned open run;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 7 JSON/WebSocket shape with binding-level conformance
+- a documented version 8 JSON/WebSocket shape with binding-level conformance
   assertions;
 - exact admitted-command retries succeeding after the bound node goes offline;
 - rejection of replay cursors ahead of durable task history;
