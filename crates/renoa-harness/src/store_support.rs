@@ -1,4 +1,4 @@
-use renoa_agent::{Message, ModelRequest};
+use renoa_agent::{Message, ModelRequest, TokenUsage};
 use rusqlite::{OptionalExtension, Transaction, params};
 use uuid::Uuid;
 
@@ -15,6 +15,23 @@ use crate::{
 pub(crate) const MODEL_ATTEMPT_LIMIT_AFTER_TOOL_RESULTS: &str =
     "model attempt limit exhausted after tool results";
 pub(crate) const CANCELLED_BY_CALLER: &str = "operation was cancelled by the caller";
+
+pub(crate) fn add_token_usage(
+    total: &mut TokenUsage,
+    usage: TokenUsage,
+) -> Result<(), HarnessError> {
+    total.input = checked_usage_add(total.input, usage.input)?;
+    total.output = checked_usage_add(total.output, usage.output)?;
+    total.cache_read = checked_usage_add(total.cache_read, usage.cache_read)?;
+    total.cache_write = checked_usage_add(total.cache_write, usage.cache_write)?;
+    Ok(())
+}
+
+fn checked_usage_add(total: u64, value: u64) -> Result<u64, HarnessError> {
+    total
+        .checked_add(value)
+        .ok_or_else(|| HarnessError::Corrupt("model token usage overflowed u64".to_owned()))
+}
 
 pub(crate) fn cancellation_requested(
     transaction: &Transaction<'_>,

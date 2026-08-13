@@ -142,6 +142,21 @@ pub struct OperationSnapshot {
     pub operation_id: OperationId,
     pub position: u64,
     pub status: OperationStatus,
+    pub model_usage: ModelUsageSnapshot,
+}
+
+/// Provider-reported usage plus the uncertainty needed to interpret it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ModelUsageSnapshot {
+    /// Sum of every attempt that reported usage; `None` means none did.
+    pub known: Option<TokenUsage>,
+    /// Number of model effects whose intent was committed.
+    pub attempts: u32,
+    /// Attempts for which no provider usage was recorded.
+    pub attempts_without_usage: u32,
+    /// Attempts whose completion and billing outcome could not be proven.
+    pub outcome_unknown_attempts: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

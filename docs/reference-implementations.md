@@ -41,6 +41,9 @@ projects are studied for established agent-runtime mechanics.
   The standalone Rust coding host also calls Pi AI through a one-request local
   process adapter. Pi performs provider authentication and wire translation;
   Renoa's Rust harness remains the only conversation and tool loop.
+  Renoa's durable projector also commits its exact model request before
+  dispatch; Pi's in-memory `transformContext` does not provide that recovery
+  boundary.
 
 ## OpenAI Codex CLI
 

@@ -1,14 +1,15 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
+use renoa_agent::TokenUsage;
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::{
-    Admission, HarnessError, OperationId, OperationRequest, OperationSnapshot, OutputId,
-    OutputRecord, SessionId, SessionRunLease, SessionSnapshot,
+    Admission, HarnessError, ModelUsageSnapshot, OperationId, OperationRequest, OperationSnapshot,
+    OutputId, OutputRecord, SessionId, SessionRunLease, SessionSnapshot,
     database::DatabaseLease,
     schema::{initialize, json_error, sqlite_error},
     state::StoredState,
-    store_support::{load_messages, parse_state},
+    store_support::{add_token_usage, load_messages, parse_state},
 };
 
 pub(crate) struct Store {
@@ -240,6 +241,7 @@ fn load_operations(
     transaction: &Transaction<'_>,
     session_id: SessionId,
 ) -> Result<Vec<OperationSnapshot>, HarnessError> {
+    let mut usage = load_model_usage(transaction, session_id)?;
     let mut statement = transaction
         .prepare(
             "SELECT operation_id, position, state_json
@@ -263,9 +265,108 @@ fn load_operations(
             operation_id: parse_operation_id(&operation_id)?,
             position: from_sql_integer(position, "operation position")?,
             status: state.status(),
+            model_usage: usage
+                .remove(&operation_id)
+                .map_or_else(ModelUsageAccumulator::empty, ModelUsageAccumulator::finish),
         });
     }
     Ok(operations)
+}
+
+fn load_model_usage(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+) -> Result<HashMap<String, ModelUsageAccumulator>, HarnessError> {
+    let mut statement = transaction
+        .prepare(
+            "SELECT a.operation_id, a.status, a.usage_json
+             FROM model_attempts AS a
+             JOIN operations AS o ON o.operation_id = a.operation_id
+             WHERE o.session_id = ?1
+             ORDER BY o.position, a.attempt_number",
+        )
+        .map_err(sqlite_error)?;
+    let rows = statement
+        .query_map([session_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(sqlite_error)?;
+    let mut usage = HashMap::new();
+    for row in rows {
+        let (operation_id, status, usage_json) = row.map_err(sqlite_error)?;
+        usage
+            .entry(operation_id)
+            .or_insert_with(ModelUsageAccumulator::default)
+            .record(&status, usage_json.as_deref())?;
+    }
+    Ok(usage)
+}
+
+#[derive(Default)]
+struct ModelUsageAccumulator {
+    known: TokenUsage,
+    has_known_usage: bool,
+    attempts: u32,
+    attempts_without_usage: u32,
+    outcome_unknown_attempts: u32,
+}
+
+impl ModelUsageAccumulator {
+    fn record(&mut self, status: &str, usage_json: Option<&str>) -> Result<(), HarnessError> {
+        self.attempts = increment(self.attempts, "model attempt count")?;
+        match status {
+            "pending" | "completed" => {}
+            "outcome_unknown" => {
+                self.outcome_unknown_attempts =
+                    increment(self.outcome_unknown_attempts, "unknown model-attempt count")?;
+            }
+            _ => {
+                return Err(HarnessError::Corrupt(format!(
+                    "invalid model-attempt status `{status}`"
+                )));
+            }
+        }
+        let usage = usage_json
+            .map(|value| serde_json::from_str::<Option<TokenUsage>>(value).map_err(json_error))
+            .transpose()?
+            .flatten();
+        if let Some(usage) = usage {
+            add_token_usage(&mut self.known, usage)?;
+            self.has_known_usage = true;
+        } else {
+            self.attempts_without_usage =
+                increment(self.attempts_without_usage, "attempts-without-usage count")?;
+        }
+        Ok(())
+    }
+
+    const fn empty() -> ModelUsageSnapshot {
+        ModelUsageSnapshot {
+            known: None,
+            attempts: 0,
+            attempts_without_usage: 0,
+            outcome_unknown_attempts: 0,
+        }
+    }
+
+    fn finish(self) -> ModelUsageSnapshot {
+        ModelUsageSnapshot {
+            known: self.has_known_usage.then_some(self.known),
+            attempts: self.attempts,
+            attempts_without_usage: self.attempts_without_usage,
+            outcome_unknown_attempts: self.outcome_unknown_attempts,
+        }
+    }
+}
+
+fn increment(value: u32, field: &str) -> Result<u32, HarnessError> {
+    value
+        .checked_add(1)
+        .ok_or_else(|| HarnessError::Corrupt(format!("{field} overflowed u32")))
 }
 
 fn load_outputs(

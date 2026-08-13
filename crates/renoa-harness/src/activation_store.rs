@@ -1,4 +1,4 @@
-use renoa_agent::ModelRequest;
+use renoa_agent::{Message, ModelRequest};
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use uuid::Uuid;
 
@@ -109,6 +109,7 @@ impl Store {
         &self,
         lease: &std::sync::Arc<SessionRunLease>,
         operation_id: OperationId,
+        projected_messages: Option<Vec<Message>>,
     ) -> Result<ModelStart, HarnessError> {
         let database = self.database();
         let lease = std::sync::Arc::clone(lease);
@@ -143,7 +144,8 @@ impl Store {
                 transaction.commit().map_err(sqlite_error)?;
                 return Ok(ModelStart::Finished(outcome));
             }
-            let request = build_model_request(&transaction, session_id, progress)?;
+            let request =
+                build_model_request(&transaction, session_id, progress, projected_messages)?;
             let effect_id = Uuid::new_v4();
             let settlement_token = Uuid::new_v4();
             let assistant_entry_id = Uuid::new_v4();
@@ -202,6 +204,42 @@ impl Store {
         })
         .await
     }
+
+    pub(crate) async fn load_model_messages(
+        &self,
+        lease: &std::sync::Arc<SessionRunLease>,
+        operation_id: OperationId,
+    ) -> Result<Vec<Message>, HarnessError> {
+        let database = self.database();
+        let lease = std::sync::Arc::clone(lease);
+        blocking_transition(lease, move || {
+            let mut connection = database.connection()?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Deferred)
+                .map_err(sqlite_error)?;
+            let (session_id, state_json) = transaction
+                .query_row(
+                    "SELECT session_id, state_json FROM operations WHERE operation_id = ?1",
+                    [operation_id.to_string()],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+                .map_err(sqlite_error)?
+                .ok_or_else(|| HarnessError::Corrupt("active operation is missing".to_owned()))?;
+            if !matches!(
+                parse_state(&state_json)?.state(),
+                StoredOperationState::NeedModel { .. }
+            ) {
+                return Err(HarnessError::Corrupt(
+                    "context projection requires NeedModel state".to_owned(),
+                ));
+            }
+            let messages = load_messages(&transaction, parse_session_id(&session_id)?)?;
+            transaction.commit().map_err(sqlite_error)?;
+            Ok(messages)
+        })
+        .await
+    }
 }
 
 fn cancel_before_model_attempt(
@@ -224,10 +262,14 @@ fn build_model_request(
     transaction: &Transaction<'_>,
     session_id: SessionId,
     progress: &OperationProgress,
+    projected_messages: Option<Vec<Message>>,
 ) -> Result<ModelRequest, HarnessError> {
     Ok(ModelRequest {
         system_prompt: progress.runtime.system_prompt.clone(),
-        messages: load_messages(transaction, session_id)?,
+        messages: match projected_messages {
+            Some(messages) => messages,
+            None => load_messages(transaction, session_id)?,
+        },
         tools: progress
             .runtime
             .tools

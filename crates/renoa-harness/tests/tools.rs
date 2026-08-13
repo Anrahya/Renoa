@@ -155,12 +155,9 @@ async fn assert_persisted_transcript(
     tool_result: ToolResult,
 ) {
     let harness = Harness::open(database).expect("reopen harness");
+    let snapshot = harness.inspect(session_id).await.expect("inspect session");
     assert_eq!(
-        harness
-            .inspect(session_id)
-            .await
-            .expect("inspect session")
-            .messages,
+        snapshot.messages,
         vec![
             Message::user_text("fix it"),
             Message::Assistant {
@@ -180,6 +177,11 @@ async fn assert_persisted_transcript(
             },
         ]
     );
+    let observed = snapshot.operations[0].model_usage;
+    assert_eq!(observed.known, Some(usage(10, 5)));
+    assert_eq!(observed.attempts, 2);
+    assert_eq!(observed.attempts_without_usage, 0);
+    assert_eq!(observed.outcome_unknown_attempts, 0);
 }
 
 #[tokio::test]

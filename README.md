@@ -11,7 +11,8 @@ Renoa's Rust kernel, Pi SDK, or a future adapter. Connections, surfaces, nodes,
 models, and harnesses may change without changing task identity.
 
 The repository currently contains a standalone Rust Agent SDK, a durable
-standalone Rust harness with crash-safe sequential tools and cancellation, a
+standalone Rust harness with crash-safe sequential tools, cancellation,
+context projection, and truthful model-usage inspection, a
 kernel-v0 reference executor, a live `renoa-node`
 bridge, a headless TypeScript surface client, a Pi SDK execution node, and a
 loopback-only continuity proof. Both

@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use renoa_agent::{Model, Tool};
+use renoa_agent::{ContextProjectionError, ContextProjector, Model, Tool};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -15,6 +15,7 @@ mod activation_store;
 mod cancellation_store;
 mod database;
 mod drive;
+mod projection;
 mod recovery_store;
 mod schema;
 mod settlement_store;
@@ -28,9 +29,9 @@ mod tool_store;
 
 use database::DatabaseLease;
 pub use state::{
-    Admission, CancellationId, OperationId, OperationOutcome, OperationRequest, OperationSnapshot,
-    OperationStatus, OutputId, OutputRecord, RequestId, RunNext, SessionId, SessionSnapshot,
-    ToolRecovery,
+    Admission, CancellationId, ModelUsageSnapshot, OperationId, OperationOutcome, OperationRequest,
+    OperationSnapshot, OperationStatus, OutputId, OutputRecord, RequestId, RunNext, SessionId,
+    SessionSnapshot, ToolRecovery,
 };
 use state::{FrozenRuntime, FrozenTool};
 use store::Store;
@@ -63,6 +64,8 @@ pub enum HarnessError {
     RuntimeProfileUnavailable { required: String, provided: String },
     #[error("tool `{name}` is unavailable from runtime profile `{revision}`")]
     ToolBindingUnavailable { name: String, revision: String },
+    #[error("context projection failed: {0}")]
+    ContextProjection(#[source] ContextProjectionError),
     #[error("operation {0} has no unresolved tool outcome")]
     NoUnknownToolOutcome(OperationId),
     #[error("cancellation {cancellation_id} is already bound to operation {operation_id}")]
@@ -260,6 +263,7 @@ pub struct RuntimeProfile {
     model: Arc<dyn Model>,
     system_prompt: String,
     max_model_attempts: NonZeroU32,
+    context_projector: Option<Arc<dyn ContextProjector>>,
     tools: Vec<ToolBinding>,
     max_tool_calls_per_step: u32,
 }
@@ -277,9 +281,20 @@ impl RuntimeProfile {
             model,
             system_prompt: system_prompt.into(),
             max_model_attempts,
+            context_projector: None,
             tools: Vec::new(),
             max_tool_calls_per_step: 0,
         }
+    }
+
+    /// Projects immutable session history into each new model request without
+    /// rewriting the durable transcript. The projector must not perform
+    /// externally visible effects. Its exact output is persisted before model
+    /// dispatch, and changing its behavior requires a new profile revision.
+    #[must_use]
+    pub fn with_context_projector(mut self, projector: Arc<dyn ContextProjector>) -> Self {
+        self.context_projector = Some(projector);
+        self
     }
 
     /// Installs the tools available to this profile and freezes an explicit

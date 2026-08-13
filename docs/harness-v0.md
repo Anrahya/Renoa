@@ -7,7 +7,9 @@ standalone model-and-tool slice exists in `renoa-harness`: it durably admits
 and orders operations, persists each model or tool intent before dispatch,
 settles complete results atomically, records uncertain effects honestly,
 durably cancels active standalone operations, and recovers from process
-interruption using SQLite.
+interruption using SQLite. Runtime profiles can project immutable history into
+model context, and inspection exposes known usage without hiding missing or
+uncertain attempts.
 
 `renoa-local` is the first product-path host. It combines that harness with Pi
 AI provider routing and external local read, edit, write, and process tools. It
@@ -97,6 +99,14 @@ The harness owns:
 - frozen runtime configuration for active work;
 - durable token usage and user-visible output; and
 - recovery after process interruption.
+
+A runtime profile may supply the Agent SDK's `ContextProjector`. Renoa passes
+it a copy of complete durable history before each new model intent. Projection
+does not rewrite history. A projection failure leaves the operation at the
+same retryable boundary, and durable cancellation prevents provider dispatch.
+The projector is host code and must not perform externally visible side
+effects; compaction summaries become separate durable harness effects instead.
+Changing projector behavior requires a new runtime-profile revision.
 
 The harness does not own provider wire formats, credential storage, tool
 implementations, sandbox mechanisms, product permission decisions, surface
@@ -457,9 +467,12 @@ settle output. Dropping an execution future is not ordered cancellation.
 ## Observation and RCP publication
 
 The implemented standalone API exposes a diagnostic `inspect()` snapshot with
-the complete conversation, operation statuses, and one terminal durable output
-per finished operation. It does not yet expose cursor reads, a subscription,
-or transient streaming. `inspect()` is not the future RCP bridge API.
+the complete conversation, operation statuses, per-operation model usage, and
+one terminal durable output per finished operation. Usage reports the sum of
+known provider counts together with total attempts, attempts lacking usage,
+and attempts whose outcome is unknown; the latter counts may overlap. It does
+not turn unknown usage into zero. `inspect()` does not yet expose cursor reads,
+a subscription, or transient streaming and is not the future RCP bridge API.
 
 The RCP integration slice must add:
 
@@ -495,8 +508,10 @@ identity, sequence, timestamp, and payload.
 ## Context and compaction
 
 The harness owns complete immutable conversation history. Model context is a
-derived projection, and the exact active request is persisted before sampling.
-Initial implementation uses the full provider-compatible transcript.
+derived projection. Without a projector, the full provider-compatible
+transcript is used. With one, projection runs before a new model intent and the
+exact resulting `ModelRequest` is committed before sampling. Recovery of a
+dispatched attempt reuses that request without rerunning projection.
 
 Compaction remains later work. It may add an immutable checkpoint and atomically
 select it for future context, but it never rewrites history or moves workspace
@@ -631,11 +646,14 @@ implemented slices.
 5. **Implemented:** `renoa-local` proves the product boundary with Pi AI model
    routing plus external read, edit, write, and bash tools; it is an
    all-allowed personal host, not a hostile sandbox.
-6. Add context projection and compaction against the real local coding path.
-   Add steering only when a live consumer defines its ordering behavior.
-7. Add cursor-based observation and the thin RCP/ACP adapters only after the
+6. **Implemented:** optional host context projection preserves full history,
+   persists the exact projected request before dispatch, and keeps usage for
+   failed and uncertain work observable without inventing zeroes.
+7. Add durable context compaction against the real local coding path. Add
+   steering only when a live consumer defines its ordering behavior.
+8. Add cursor-based observation and the thin RCP/ACP adapters only after the
    local harness can complete real work safely.
-8. Design workspace checkpoints and host movement only after local continuity
+9. Design workspace checkpoints and host movement only after local continuity
    is reliable.
 
 Every slice removes any temporary path it replaces and passes formatting,

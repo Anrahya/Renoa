@@ -194,7 +194,13 @@ async fn drive_model_phase(
     let intent = match phase {
         StoredOperationState::NeedModel { progress } => {
             require_profile(&progress.runtime.revision, profile)?;
-            match store.begin_model_attempt(lease, operation_id).await? {
+            let projected_messages =
+                crate::projection::project_model_context(store, lease, operation_id, profile)
+                    .await?;
+            match store
+                .begin_model_attempt(lease, operation_id, projected_messages)
+                .await?
+            {
                 ModelStart::Invoke(intent) => intent,
                 ModelStart::Finished(outcome) => return Ok(DriveStep::Finished(outcome)),
             }

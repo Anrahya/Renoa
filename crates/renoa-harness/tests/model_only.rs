@@ -71,6 +71,8 @@ async fn admission_survives_a_lost_reply() {
     assert_eq!(snapshot.operations[0].operation_id, admitted.operation_id);
     assert_eq!(snapshot.operations[0].position, 0);
     assert_eq!(snapshot.operations[0].status, OperationStatus::Queued);
+    assert_eq!(snapshot.operations[0].model_usage.known, None);
+    assert_eq!(snapshot.operations[0].model_usage.attempts, 0);
 }
 
 #[tokio::test]

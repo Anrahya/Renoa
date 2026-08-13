@@ -70,7 +70,7 @@ async fn a_stale_attempt_cannot_settle_current_work() {
         .expect("active operation");
     let crate::drive::ModelStart::Invoke(first) = harness
         .store
-        .begin_model_attempt(&lease, active.operation_id)
+        .begin_model_attempt(&lease, active.operation_id, None)
         .await
         .expect("first intent")
     else {

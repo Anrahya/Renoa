@@ -12,9 +12,10 @@ use crate::{
     state::{StoredOperationState, StoredState, ToolBatch},
     store::{Store, blocking_transition},
     store_support::{
-        MODEL_ATTEMPT_LIMIT_AFTER_TOOL_RESULTS, advance_entry_cursor, cancellation_requested,
-        current_pending_state, finish_active_operation, finish_cancelled_operation,
-        finish_failed_operation, insert_output, load_cursors, update_state,
+        MODEL_ATTEMPT_LIMIT_AFTER_TOOL_RESULTS, add_token_usage, advance_entry_cursor,
+        cancellation_requested, current_pending_state, finish_active_operation,
+        finish_cancelled_operation, finish_failed_operation, insert_output, load_cursors,
+        update_state,
     },
 };
 
@@ -452,16 +453,7 @@ fn aggregate_usage(
         else {
             return Ok(None);
         };
-        total.input = checked_usage_add(total.input, usage.input)?;
-        total.output = checked_usage_add(total.output, usage.output)?;
-        total.cache_read = checked_usage_add(total.cache_read, usage.cache_read)?;
-        total.cache_write = checked_usage_add(total.cache_write, usage.cache_write)?;
+        add_token_usage(&mut total, usage)?;
     }
     Ok(Some(total))
-}
-
-fn checked_usage_add(total: u64, value: u64) -> Result<u64, HarnessError> {
-    total
-        .checked_add(value)
-        .ok_or_else(|| HarnessError::Corrupt("model token usage overflowed u64".to_owned()))
 }

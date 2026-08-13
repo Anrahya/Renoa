@@ -45,7 +45,7 @@ async fn a_stale_tool_settlement_cannot_commit_after_recovery_rotates_its_token(
         .expect("active operation");
     let crate::drive::ModelStart::Invoke(model_intent) = harness
         .store
-        .begin_model_attempt(&lease, admission.operation_id)
+        .begin_model_attempt(&lease, admission.operation_id, None)
         .await
         .expect("persist model intent")
     else {

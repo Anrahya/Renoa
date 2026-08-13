@@ -140,7 +140,7 @@ async fn cancellation_committed_before_model_settlement_wins() {
         .expect("active operation");
     let crate::drive::ModelStart::Invoke(intent) = harness
         .store
-        .begin_model_attempt(&lease, admission.operation_id)
+        .begin_model_attempt(&lease, admission.operation_id, None)
         .await
         .expect("persist model intent")
     else {
@@ -197,7 +197,7 @@ async fn cancellation_committed_before_invalid_model_rejection_wins() {
         .expect("active operation");
     let crate::drive::ModelStart::Invoke(intent) = harness
         .store
-        .begin_model_attempt(&lease, admission.operation_id)
+        .begin_model_attempt(&lease, admission.operation_id, None)
         .await
         .expect("persist model intent")
     else {
@@ -256,7 +256,7 @@ async fn cancellation_committed_before_unavailable_tool_settlement_wins() {
         .expect("active operation");
     let crate::drive::ModelStart::Invoke(intent) = harness
         .store
-        .begin_model_attempt(&lease, admission.operation_id)
+        .begin_model_attempt(&lease, admission.operation_id, None)
         .await
         .expect("persist model intent")
     else {
@@ -341,7 +341,7 @@ async fn cancellation_after_a_tool_completed_preserves_its_known_result() {
         .expect("active operation");
     let crate::drive::ModelStart::Invoke(model_intent) = harness
         .store
-        .begin_model_attempt(&lease, admission.operation_id)
+        .begin_model_attempt(&lease, admission.operation_id, None)
         .await
         .expect("persist model intent")
     else {
