@@ -1,10 +1,112 @@
 use std::path::Path;
 
-use rusqlite::{Connection, TransactionBehavior};
+use renoa_agent::ModelRequest;
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use serde::Deserialize;
+use uuid::Uuid;
 
-use crate::HarnessError;
+use crate::{
+    HarnessError,
+    state::{FailureKind, FrozenRuntime, OperationProgress, StoredOperationState, StoredState},
+};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_V1: &str = "CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY NOT NULL,
+        next_operation_position INTEGER NOT NULL CHECK (next_operation_position >= 0),
+        active_operation_id TEXT,
+        next_entry_sequence INTEGER NOT NULL CHECK (next_entry_sequence >= 0),
+        next_output_sequence INTEGER NOT NULL CHECK (next_output_sequence >= 0),
+        FOREIGN KEY (session_id, active_operation_id)
+            REFERENCES operations(session_id, operation_id)
+            DEFERRABLE INITIALLY DEFERRED
+     ) STRICT;
+
+     CREATE TABLE operations (
+        operation_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+        request_id TEXT NOT NULL,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        request_json TEXT NOT NULL,
+        state_json TEXT NOT NULL,
+        UNIQUE (session_id, request_id),
+        UNIQUE (session_id, position),
+        UNIQUE (session_id, operation_id)
+     ) STRICT;
+
+     CREATE TABLE conversation_entries (
+        entry_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+        operation_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 0),
+        message_json TEXT NOT NULL,
+        UNIQUE (session_id, sequence),
+        FOREIGN KEY (session_id, operation_id)
+            REFERENCES operations(session_id, operation_id)
+     ) STRICT;
+
+     CREATE TABLE model_attempts (
+        effect_id TEXT PRIMARY KEY NOT NULL,
+        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+        attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+        settlement_token TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('pending', 'completed', 'outcome_unknown')
+        ),
+        request_json TEXT CHECK (
+            (status = 'pending') = (request_json IS NOT NULL)
+        ),
+        usage_json TEXT,
+        error TEXT,
+        UNIQUE (operation_id, attempt_number)
+     ) STRICT;
+
+     CREATE TABLE outputs (
+        output_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+        operation_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL CHECK (sequence >= 0),
+        outcome_json TEXT NOT NULL,
+        UNIQUE (session_id, sequence),
+        UNIQUE (operation_id),
+        FOREIGN KEY (session_id, operation_id)
+            REFERENCES operations(session_id, operation_id)
+     ) STRICT;";
+
+const SCHEMA_V2: &str = "CREATE TABLE tool_calls (
+        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+        batch_id TEXT NOT NULL,
+        source_index INTEGER NOT NULL CHECK (source_index >= 0),
+        result_entry_id TEXT NOT NULL UNIQUE,
+        call_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('planned', 'pending', 'outcome_unknown')
+        ),
+        recovery TEXT CHECK (
+            recovery IN ('safe_to_replay', 'never_replay')
+        ),
+        effect_id TEXT UNIQUE,
+        settlement_token TEXT,
+        PRIMARY KEY (operation_id, batch_id, source_index),
+        CHECK (
+            (status = 'planned' AND recovery IS NULL
+                AND effect_id IS NULL AND settlement_token IS NULL)
+            OR
+            (status != 'planned' AND recovery IS NOT NULL
+                AND effect_id IS NOT NULL AND settlement_token IS NOT NULL)
+        )
+     ) STRICT;";
+
+const SCHEMA_V3: &str = "CREATE TABLE cancellation_requests (
+        cancellation_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        FOREIGN KEY (session_id, operation_id)
+            REFERENCES operations(session_id, operation_id)
+     ) STRICT;
+
+     CREATE INDEX cancellation_requests_operation
+        ON cancellation_requests(operation_id);";
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), HarnessError> {
     let version = connection
@@ -23,75 +125,196 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), HarnessError
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sqlite_error)?;
-    transaction
-        .execute_batch(
-            "CREATE TABLE sessions (
-                session_id TEXT PRIMARY KEY NOT NULL,
-                next_operation_position INTEGER NOT NULL CHECK (next_operation_position >= 0),
-                active_operation_id TEXT,
-                next_entry_sequence INTEGER NOT NULL CHECK (next_entry_sequence >= 0),
-                next_output_sequence INTEGER NOT NULL CHECK (next_output_sequence >= 0),
-                FOREIGN KEY (session_id, active_operation_id)
-                    REFERENCES operations(session_id, operation_id)
-                    DEFERRABLE INITIALLY DEFERRED
-             ) STRICT;
-
-             CREATE TABLE operations (
-                operation_id TEXT PRIMARY KEY NOT NULL,
-                session_id TEXT NOT NULL REFERENCES sessions(session_id),
-                request_id TEXT NOT NULL,
-                position INTEGER NOT NULL CHECK (position >= 0),
-                request_json TEXT NOT NULL,
-                state_json TEXT NOT NULL,
-                UNIQUE (session_id, request_id),
-                UNIQUE (session_id, position),
-                UNIQUE (session_id, operation_id)
-             ) STRICT;
-
-             CREATE TABLE conversation_entries (
-                entry_id TEXT PRIMARY KEY NOT NULL,
-                session_id TEXT NOT NULL REFERENCES sessions(session_id),
-                operation_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                message_json TEXT NOT NULL,
-                UNIQUE (session_id, sequence),
-                FOREIGN KEY (session_id, operation_id)
-                    REFERENCES operations(session_id, operation_id)
-             ) STRICT;
-
-             CREATE TABLE model_attempts (
-                effect_id TEXT PRIMARY KEY NOT NULL,
-                operation_id TEXT NOT NULL REFERENCES operations(operation_id),
-                attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
-                settlement_token TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (
-                    status IN ('pending', 'completed', 'outcome_unknown')
-                ),
-                request_json TEXT CHECK (
-                    (status = 'pending') = (request_json IS NOT NULL)
-                ),
-                usage_json TEXT,
-                error TEXT,
-                UNIQUE (operation_id, attempt_number)
-             ) STRICT;
-
-             CREATE TABLE outputs (
-                output_id TEXT PRIMARY KEY NOT NULL,
-                session_id TEXT NOT NULL REFERENCES sessions(session_id),
-                operation_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                outcome_json TEXT NOT NULL,
-                UNIQUE (session_id, sequence),
-                UNIQUE (operation_id),
-                FOREIGN KEY (session_id, operation_id)
-                    REFERENCES operations(session_id, operation_id)
-             ) STRICT;",
-        )
-        .map_err(sqlite_error)?;
+    if version == 0 {
+        transaction.execute_batch(SCHEMA_V1).map_err(sqlite_error)?;
+    }
+    if version <= 1 {
+        migrate_v1_to_v2(&transaction)?;
+    }
+    migrate_v2_to_v3(&transaction)?;
     transaction
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(sqlite_error)?;
     transaction.commit().map_err(sqlite_error)
+}
+
+fn migrate_v2_to_v3(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
+    transaction.execute_batch(SCHEMA_V3).map_err(sqlite_error)
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_v1_for_test(connection: &mut Connection) -> Result<(), HarnessError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sqlite_error)?;
+    transaction.execute_batch(SCHEMA_V1).map_err(sqlite_error)?;
+    transaction
+        .pragma_update(None, "user_version", 1)
+        .map_err(sqlite_error)?;
+    transaction.commit().map_err(sqlite_error)
+}
+
+#[cfg(test)]
+pub(crate) fn initialize_v2_for_test(connection: &mut Connection) -> Result<(), HarnessError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sqlite_error)?;
+    transaction.execute_batch(SCHEMA_V1).map_err(sqlite_error)?;
+    transaction.execute_batch(SCHEMA_V2).map_err(sqlite_error)?;
+    transaction
+        .pragma_update(None, "user_version", 2)
+        .map_err(sqlite_error)?;
+    transaction.commit().map_err(sqlite_error)
+}
+
+fn migrate_v1_to_v2(transaction: &Transaction<'_>) -> Result<(), HarnessError> {
+    transaction.execute_batch(SCHEMA_V2).map_err(sqlite_error)?;
+    let operations = {
+        let mut statement = transaction
+            .prepare("SELECT operation_id, state_json FROM operations")
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error)?
+    };
+    for (operation_id, old_json) in operations {
+        let new_json = migrate_state_v1(transaction, &old_json)?;
+        let changed = transaction
+            .execute(
+                "UPDATE operations SET state_json = ?2
+                 WHERE operation_id = ?1 AND state_json = ?3",
+                params![operation_id, new_json, old_json],
+            )
+            .map_err(sqlite_error)?;
+        if changed != 1 {
+            return Err(HarnessError::Corrupt(
+                "v1 operation-state migration compare-and-set failed".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn migrate_state_v1(transaction: &Transaction<'_>, value: &str) -> Result<String, HarnessError> {
+    let old: StoredStateV1 = serde_json::from_str(value).map_err(json_error)?;
+    if old.format_version != 1 {
+        return Err(HarnessError::Corrupt(format!(
+            "v1 database contains operation state version {}",
+            old.format_version
+        )));
+    }
+    let state = match old.state {
+        StoredOperationStateV1::Queued => StoredOperationState::Queued,
+        StoredOperationStateV1::NeedModel {
+            runtime_revision,
+            system_prompt,
+            max_model_attempts,
+            attempt_count,
+        } => StoredOperationState::NeedModel {
+            progress: OperationProgress {
+                runtime: model_only_runtime(runtime_revision, system_prompt, max_model_attempts),
+                model_attempts: attempt_count,
+            },
+        },
+        StoredOperationStateV1::ModelPending {
+            runtime_revision,
+            max_model_attempts,
+            attempt_count,
+            effect_id,
+            settlement_token,
+            assistant_entry_id,
+            output_id,
+        } => {
+            let request = load_pending_v1_request(transaction, effect_id)?;
+            if !request.tools.is_empty() {
+                return Err(HarnessError::Corrupt(
+                    "v1 model-only request unexpectedly advertises tools".to_owned(),
+                ));
+            }
+            StoredOperationState::ModelPending {
+                progress: OperationProgress {
+                    runtime: model_only_runtime(
+                        runtime_revision,
+                        request.system_prompt,
+                        max_model_attempts,
+                    ),
+                    model_attempts: attempt_count,
+                },
+                effect_id,
+                settlement_token,
+                assistant_entry_id,
+                output_id,
+            }
+        }
+        StoredOperationStateV1::Completed => StoredOperationState::Completed,
+        StoredOperationStateV1::Failed => StoredOperationState::Failed {
+            kind: FailureKind::General,
+        },
+    };
+    serde_json::to_string(&StoredState::from_state(state)).map_err(json_error)
+}
+
+fn load_pending_v1_request(
+    transaction: &Transaction<'_>,
+    effect_id: Uuid,
+) -> Result<ModelRequest, HarnessError> {
+    let request_json = transaction
+        .query_row(
+            "SELECT request_json FROM model_attempts
+             WHERE effect_id = ?1 AND status = 'pending'",
+            [effect_id.to_string()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sqlite_error)?
+        .ok_or_else(|| HarnessError::Corrupt("v1 pending model request is missing".to_owned()))?;
+    serde_json::from_str(&request_json).map_err(json_error)
+}
+
+fn model_only_runtime(
+    revision: String,
+    system_prompt: String,
+    max_model_attempts: u32,
+) -> FrozenRuntime {
+    FrozenRuntime {
+        revision,
+        system_prompt,
+        max_model_attempts,
+        max_tool_calls_per_step: 0,
+        tools: Vec::new(),
+    }
+}
+
+#[derive(Deserialize)]
+struct StoredStateV1 {
+    format_version: u32,
+    state: StoredOperationStateV1,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+enum StoredOperationStateV1 {
+    Queued,
+    NeedModel {
+        runtime_revision: String,
+        system_prompt: String,
+        max_model_attempts: u32,
+        attempt_count: u32,
+    },
+    ModelPending {
+        runtime_revision: String,
+        max_model_attempts: u32,
+        attempt_count: u32,
+        effect_id: Uuid,
+        settlement_token: Uuid,
+        assistant_entry_id: Uuid,
+        output_id: Uuid,
+    },
+    Completed,
+    Failed,
 }
 
 pub(crate) fn open_connection(path: &Path) -> Result<Connection, HarnessError> {
@@ -140,7 +363,7 @@ mod tests {
         assert_eq!(pragma_text(&connection, "journal_mode"), "wal");
         assert_eq!(pragma_integer(&connection, "synchronous"), 2);
         assert_eq!(pragma_integer(&connection, "busy_timeout"), 5_000);
-        assert_eq!(pragma_integer(&connection, "user_version"), 1);
+        assert_eq!(pragma_integer(&connection, "user_version"), 3);
     }
 
     fn pragma_integer(connection: &rusqlite::Connection, name: &str) -> i64 {

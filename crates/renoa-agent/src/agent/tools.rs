@@ -5,9 +5,11 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentEvent, AgentEventSink, ContentBlock, Message, Tool, ToolCall, ToolExecutionMode,
-    ToolOutput, ToolResult, ToolUpdates,
+    AgentEvent, AgentEventSink, BoxFuture, Message, Tool, ToolCall, ToolExecutionMode, ToolOutput,
+    ToolResult,
     events::{append_message, emit_event},
+    invoke_tool,
+    tool::error_tool_result,
 };
 
 use super::{Agent, AgentError};
@@ -181,41 +183,27 @@ async fn execute_tool(
     cancellation: CancellationToken,
     progress: mpsc::Sender<Progress>,
 ) -> (usize, ToolResult) {
-    let result = if cancellation.is_cancelled() {
-        error_tool_result(&call, "Tool execution was cancelled.")
-    } else if let Some(tool) = tool {
-        let (updates, mut update_receiver) = ToolUpdates::channel();
-        let mut execution = tool.execute(call.clone(), cancellation.child_token(), updates.clone());
-        let outcome = loop {
-            tokio::select! {
-                biased;
-                () = cancellation.cancelled() => break None,
-                Some(update) = update_receiver.recv() => {
-                    let _ = progress.send(Progress { index, update }).await;
-                }
-                outcome = &mut execution => break Some(outcome),
-            }
-        };
-        updates.close();
-        update_receiver.close();
-        while let Ok(update) = update_receiver.try_recv() {
-            let _ = progress.send(Progress { index, update }).await;
-        }
-        match outcome {
-            None => error_tool_result(&call, "Tool execution was cancelled."),
-            Some(Ok(output)) => ToolResult {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                content: output.content,
-                details: output.details,
-                is_error: false,
-            },
-            Some(Err(error)) => error_tool_result(&call, &error.to_string()),
-        }
-    } else {
-        error_tool_result(&call, &format!("Tool `{}` is not available.", call.name))
-    };
+    let progress = ProgressForwarder { index, progress };
+    let result = invoke_tool(tool.as_deref(), call, cancellation, Some(&progress)).await;
     (index, result)
+}
+
+struct ProgressForwarder {
+    index: usize,
+    progress: mpsc::Sender<Progress>,
+}
+
+impl AgentEventSink for ProgressForwarder {
+    fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
+        let AgentEvent::ToolExecutionUpdate { update, .. } = event else {
+            return Box::pin(std::future::ready(()));
+        };
+        let progress = self.progress.clone();
+        let index = self.index;
+        Box::pin(async move {
+            let _ = progress.send(Progress { index, update }).await;
+        })
+    }
 }
 
 async fn drain_progress(
@@ -241,14 +229,4 @@ async fn emit_progress(sink: Option<&dyn AgentEventSink>, call: &ToolCall, updat
 
 async fn emit_tool_end(sink: Option<&dyn AgentEventSink>, call: ToolCall, result: ToolResult) {
     emit_event(sink, AgentEvent::ToolExecutionEnd { call, result }).await;
-}
-
-fn error_tool_result(call: &ToolCall, message: &str) -> ToolResult {
-    ToolResult {
-        call_id: call.id.clone(),
-        name: call.name.clone(),
-        content: vec![ContentBlock::text(message)],
-        details: None,
-        is_error: true,
-    }
 }

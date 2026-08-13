@@ -8,7 +8,7 @@ use crate::{
     database::DatabaseLease,
     schema::{initialize, json_error, sqlite_error},
     state::StoredState,
-    store_support::load_messages,
+    store_support::{load_messages, parse_state},
 };
 
 pub(crate) struct Store {
@@ -62,6 +62,23 @@ impl Store {
             });
         }
         Ok(attempts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn count_tool_calls(
+        &self,
+        operation_id: OperationId,
+    ) -> Result<usize, HarnessError> {
+        let connection = self.database.connection()?;
+        let count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM tool_calls WHERE operation_id = ?1",
+                [operation_id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(sqlite_error)?;
+        usize::try_from(count)
+            .map_err(|_| HarnessError::Corrupt("tool-call count exceeds usize".to_owned()))
     }
 
     pub(crate) fn database(&self) -> Arc<DatabaseLease> {
@@ -241,13 +258,7 @@ fn load_operations(
     let mut operations = Vec::new();
     for row in rows {
         let (operation_id, position, state_json) = row.map_err(sqlite_error)?;
-        let state: StoredState = serde_json::from_str(&state_json).map_err(json_error)?;
-        if state.format_version() != 1 {
-            return Err(HarnessError::Corrupt(format!(
-                "unsupported operation state version {}",
-                state.format_version()
-            )));
-        }
+        let state = parse_state(&state_json)?;
         operations.push(OperationSnapshot {
             operation_id: parse_operation_id(&operation_id)?,
             position: from_sql_integer(position, "operation position")?,

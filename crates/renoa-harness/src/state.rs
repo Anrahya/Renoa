@@ -1,8 +1,10 @@
 use std::fmt;
 
-use renoa_agent::{ContentBlock, Message, StopReason, TokenUsage};
+use renoa_agent::{ContentBlock, Message, StopReason, TokenUsage, ToolSpec};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+pub(crate) const STORED_STATE_VERSION: u32 = 2;
 
 macro_rules! harness_id {
     ($name:ident) => {
@@ -32,6 +34,7 @@ macro_rules! harness_id {
 harness_id!(SessionId);
 harness_id!(OperationId);
 harness_id!(OutputId);
+harness_id!(CancellationId);
 
 #[allow(
     clippy::new_without_default,
@@ -47,6 +50,18 @@ impl SessionId {
 
 impl OperationId {
     pub(crate) fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+#[allow(
+    clippy::new_without_default,
+    reason = "identity creation should remain explicit at call sites"
+)]
+impl CancellationId {
+    /// Creates the stable identity of one cancellation request.
+    #[must_use]
+    pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 }
@@ -115,7 +130,9 @@ pub struct Admission {
 pub enum OperationStatus {
     Queued,
     Running,
+    OutcomeUnknown,
     Completed,
+    Cancelled,
     Failed,
 }
 
@@ -156,16 +173,68 @@ pub enum OperationOutcome {
     Failed {
         message: String,
     },
+    Cancelled {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RunNext {
     Idle,
+    Blocked {
+        operation_id: OperationId,
+    },
     Finished {
         operation_id: OperationId,
         outcome: OperationOutcome,
     },
+}
+
+/// Whether a pending tool effect may be repeated after its outcome is lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolRecovery {
+    SafeToReplay,
+    NeverReplay,
+}
+
+impl ToolRecovery {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::SafeToReplay => "safe_to_replay",
+            Self::NeverReplay => "never_replay",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FrozenTool {
+    pub(crate) spec: ToolSpec,
+    pub(crate) recovery: ToolRecovery,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FrozenRuntime {
+    pub(crate) revision: String,
+    pub(crate) system_prompt: String,
+    pub(crate) max_model_attempts: u32,
+    pub(crate) max_tool_calls_per_step: u32,
+    pub(crate) tools: Vec<FrozenTool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct OperationProgress {
+    pub(crate) runtime: FrozenRuntime,
+    pub(crate) model_attempts: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ToolBatch {
+    pub(crate) batch_id: Uuid,
+    pub(crate) next_index: u32,
+    pub(crate) call_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,7 +246,7 @@ pub(crate) struct StoredState {
 impl StoredState {
     pub(crate) const fn queued() -> Self {
         Self {
-            format_version: 1,
+            format_version: STORED_STATE_VERSION,
             state: StoredOperationState::Queued,
         }
     }
@@ -185,11 +254,16 @@ impl StoredState {
     pub(crate) fn status(&self) -> OperationStatus {
         match &self.state {
             StoredOperationState::Queued => OperationStatus::Queued,
-            StoredOperationState::NeedModel { .. } | StoredOperationState::ModelPending { .. } => {
-                OperationStatus::Running
-            }
+            StoredOperationState::NeedModel { .. }
+            | StoredOperationState::ModelPending { .. }
+            | StoredOperationState::NeedTool { .. }
+            | StoredOperationState::ToolPending { .. } => OperationStatus::Running,
+            StoredOperationState::ToolOutcomeUnknown { .. } => OperationStatus::OutcomeUnknown,
             StoredOperationState::Completed => OperationStatus::Completed,
-            StoredOperationState::Failed => OperationStatus::Failed,
+            StoredOperationState::Failed {
+                kind: FailureKind::Cancelled,
+            } => OperationStatus::Cancelled,
+            StoredOperationState::Failed { .. } => OperationStatus::Failed,
         }
     }
 
@@ -203,7 +277,7 @@ impl StoredState {
 
     pub(crate) const fn from_state(state: StoredOperationState) -> Self {
         Self {
-            format_version: 1,
+            format_version: STORED_STATE_VERSION,
             state,
         }
     }
@@ -214,20 +288,40 @@ impl StoredState {
 pub(crate) enum StoredOperationState {
     Queued,
     NeedModel {
-        runtime_revision: String,
-        system_prompt: String,
-        max_model_attempts: u32,
-        attempt_count: u32,
+        progress: OperationProgress,
     },
     ModelPending {
-        runtime_revision: String,
-        max_model_attempts: u32,
-        attempt_count: u32,
+        progress: OperationProgress,
         effect_id: Uuid,
         settlement_token: Uuid,
         assistant_entry_id: Uuid,
         output_id: Uuid,
     },
+    NeedTool {
+        progress: OperationProgress,
+        batch: ToolBatch,
+    },
+    ToolPending {
+        progress: OperationProgress,
+        batch: ToolBatch,
+        effect_id: Uuid,
+        settlement_token: Uuid,
+        recovery: ToolRecovery,
+    },
+    ToolOutcomeUnknown {
+        progress: OperationProgress,
+        batch: ToolBatch,
+    },
     Completed,
-    Failed,
+    Failed {
+        kind: FailureKind,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FailureKind {
+    General,
+    AbandonedUnknownTool,
+    Cancelled,
 }

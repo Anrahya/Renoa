@@ -1,16 +1,18 @@
 //! Durable ownership and recovery for Renoa agent sessions.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     num::NonZeroU32,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-use renoa_agent::Model;
+use renoa_agent::{Model, Tool};
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 mod activation_store;
+mod cancellation_store;
 mod database;
 mod drive;
 mod recovery_store;
@@ -19,12 +21,18 @@ mod settlement_store;
 mod state;
 mod store;
 mod store_support;
+mod tool_cancellation_store;
+mod tool_recovery_store;
+mod tool_resolution_store;
+mod tool_store;
 
 use database::DatabaseLease;
 pub use state::{
-    Admission, OperationId, OperationOutcome, OperationRequest, OperationSnapshot, OperationStatus,
-    OutputId, OutputRecord, RequestId, RunNext, SessionId, SessionSnapshot,
+    Admission, CancellationId, OperationId, OperationOutcome, OperationRequest, OperationSnapshot,
+    OperationStatus, OutputId, OutputRecord, RequestId, RunNext, SessionId, SessionSnapshot,
+    ToolRecovery,
 };
+use state::{FrozenRuntime, FrozenTool};
 use store::Store;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -53,12 +61,23 @@ pub enum HarnessError {
     Busy(SessionId),
     #[error("operation requires runtime profile `{required}`, but `{provided}` was supplied")]
     RuntimeProfileUnavailable { required: String, provided: String },
+    #[error("tool `{name}` is unavailable from runtime profile `{revision}`")]
+    ToolBindingUnavailable { name: String, revision: String },
+    #[error("operation {0} has no unresolved tool outcome")]
+    NoUnknownToolOutcome(OperationId),
+    #[error("cancellation {cancellation_id} is already bound to operation {operation_id}")]
+    CancellationConflict {
+        cancellation_id: CancellationId,
+        operation_id: OperationId,
+    },
+    #[error("operation {0} is not active and cancellable")]
+    OperationNotCancellable(OperationId),
 }
 
 /// The exclusive cooperating owner of one database in a trusted directory.
 pub struct Harness {
     store: Store,
-    running_sessions: Arc<Mutex<HashSet<SessionId>>>,
+    running_sessions: Arc<Mutex<HashMap<SessionId, RunningSession>>>,
     #[cfg(test)]
     crash_point: Option<CrashPoint>,
 }
@@ -74,7 +93,7 @@ impl Harness {
         let store = Store::open(DatabaseLease::acquire(path.as_ref())?)?;
         Ok(Self {
             store,
-            running_sessions: Arc::new(Mutex::new(HashSet::new())),
+            running_sessions: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
             crash_point: None,
         })
@@ -139,17 +158,78 @@ impl Harness {
         .await
     }
 
+    /// Fails one operation whose unsafe tool outcome cannot be recovered,
+    /// while committing error results for every unresolved call in its batch.
+    /// Exact retries return the already committed outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarnessError::NoUnknownToolOutcome`] when the target is not
+    /// paused on an unknown tool effect.
+    pub async fn abandon_unknown_tool(
+        &self,
+        session_id: SessionId,
+        operation_id: OperationId,
+    ) -> Result<OperationOutcome, HarnessError> {
+        let lease = self.begin_run(session_id)?;
+        self.store
+            .abandon_unknown_tool(&lease, session_id, operation_id)
+            .await
+    }
+
+    /// Durably requests cancellation of the active standalone operation.
+    /// Exact retries with the same cancellation identity are idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflict when the cancellation identity was previously bound
+    /// to another operation, or [`HarnessError::OperationNotCancellable`] when
+    /// the target is not the session's active runnable operation.
+    pub async fn request_standalone_cancellation(
+        &self,
+        session_id: SessionId,
+        operation_id: OperationId,
+        cancellation_id: CancellationId,
+    ) -> Result<(), HarnessError> {
+        let running = Arc::clone(&self.running_sessions);
+        self.store
+            .request_cancellation(session_id, operation_id, cancellation_id, move || {
+                let cancellation = running
+                    .lock()
+                    .map_err(|_| {
+                        HarnessError::Store("session ownership lock was poisoned".to_owned())
+                    })?
+                    .get(&session_id)
+                    .filter(|active| active.operation_id == Some(operation_id))
+                    .map(|active| active.cancellation.clone());
+                if let Some(cancellation) = cancellation {
+                    cancellation.cancel();
+                }
+                Ok(())
+            })
+            .await
+    }
+
     fn begin_run(&self, session_id: SessionId) -> Result<Arc<SessionRunLease>, HarnessError> {
         let mut running = self
             .running_sessions
             .lock()
             .map_err(|_| HarnessError::Store("session ownership lock was poisoned".to_owned()))?;
-        if !running.insert(session_id) {
+        if running.contains_key(&session_id) {
             return Err(HarnessError::Busy(session_id));
         }
+        let cancellation = CancellationToken::new();
+        running.insert(
+            session_id,
+            RunningSession {
+                operation_id: None,
+                cancellation: cancellation.clone(),
+            },
+        );
         Ok(Arc::new(SessionRunLease {
             running: Arc::clone(&self.running_sessions),
             session_id,
+            cancellation,
         }))
     }
 }
@@ -160,6 +240,10 @@ enum CrashPoint {
     ActivationCommitted,
     ModelIntentCommitted,
     ModelCompletedBeforeSettlement,
+    ToolPlanCommitted,
+    ToolIntentCommitted,
+    ToolCompletedBeforeSettlement,
+    ToolSettlementCommitted,
     SettlementCommitted,
 }
 
@@ -176,6 +260,8 @@ pub struct RuntimeProfile {
     model: Arc<dyn Model>,
     system_prompt: String,
     max_model_attempts: NonZeroU32,
+    tools: Vec<ToolBinding>,
+    max_tool_calls_per_step: u32,
 }
 
 impl RuntimeProfile {
@@ -191,13 +277,113 @@ impl RuntimeProfile {
             model,
             system_prompt: system_prompt.into(),
             max_model_attempts,
+            tools: Vec::new(),
+            max_tool_calls_per_step: 0,
         }
+    }
+
+    /// Installs the tools available to this profile and freezes an explicit
+    /// per-response tool-call limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeProfileError::DuplicateToolName`] when two bindings
+    /// advertise the same model-visible name.
+    pub fn with_tools(
+        mut self,
+        tools: Vec<ToolBinding>,
+        max_tool_calls_per_step: NonZeroU32,
+    ) -> Result<Self, RuntimeProfileError> {
+        let mut names = HashSet::with_capacity(tools.len());
+        for binding in &tools {
+            let name = binding.tool.spec().name.as_str();
+            if !names.insert(name) {
+                return Err(RuntimeProfileError::DuplicateToolName(name.to_owned()));
+            }
+        }
+        self.tools = tools;
+        self.max_tool_calls_per_step = max_tool_calls_per_step.get();
+        Ok(self)
+    }
+
+    fn frozen(&self) -> FrozenRuntime {
+        FrozenRuntime {
+            revision: self.revision.clone(),
+            system_prompt: self.system_prompt.clone(),
+            max_model_attempts: self.max_model_attempts.get(),
+            max_tool_calls_per_step: self.max_tool_calls_per_step,
+            tools: self
+                .tools
+                .iter()
+                .map(|binding| FrozenTool {
+                    spec: binding.tool.spec().clone(),
+                    recovery: binding.recovery,
+                })
+                .collect(),
+        }
+    }
+
+    fn resolve_tool(&self, frozen: &FrozenTool) -> Result<Arc<dyn Tool>, HarnessError> {
+        self.tools
+            .iter()
+            .find(|binding| {
+                binding.tool.spec() == &frozen.spec && binding.recovery == frozen.recovery
+            })
+            .map(|binding| Arc::clone(&binding.tool))
+            .ok_or_else(|| HarnessError::ToolBindingUnavailable {
+                name: frozen.spec.name.clone(),
+                revision: self.revision.clone(),
+            })
     }
 }
 
+/// One tool implementation plus its crash-recovery declaration.
+pub struct ToolBinding {
+    tool: Arc<dyn Tool>,
+    recovery: ToolRecovery,
+}
+
+impl ToolBinding {
+    #[must_use]
+    pub fn new(tool: Arc<dyn Tool>, recovery: ToolRecovery) -> Self {
+        Self { tool, recovery }
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RuntimeProfileError {
+    #[error("tool name `{0}` is configured more than once")]
+    DuplicateToolName(String),
+}
+
 pub(crate) struct SessionRunLease {
-    running: Arc<Mutex<HashSet<SessionId>>>,
+    running: Arc<Mutex<HashMap<SessionId, RunningSession>>>,
     session_id: SessionId,
+    cancellation: CancellationToken,
+}
+
+impl SessionRunLease {
+    pub(crate) fn cancellation(&self) -> CancellationToken {
+        self.cancellation.clone()
+    }
+
+    pub(crate) fn bind_operation(&self, operation_id: OperationId) -> Result<(), HarnessError> {
+        let mut running = self
+            .running
+            .lock()
+            .map_err(|_| HarnessError::Store("session ownership lock was poisoned".to_owned()))?;
+        let session = running.get_mut(&self.session_id).ok_or_else(|| {
+            HarnessError::Store("session ownership disappeared while running".to_owned())
+        })?;
+        session.operation_id = Some(operation_id);
+        Ok(())
+    }
+}
+
+struct RunningSession {
+    operation_id: Option<OperationId>,
+    cancellation: CancellationToken,
 }
 
 impl Drop for SessionRunLease {

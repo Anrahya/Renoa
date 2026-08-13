@@ -3,14 +3,15 @@
 ## Status and authority
 
 This document defines Renoa's durable agent-harness architecture. The
-standalone model-only slice exists in `renoa-harness`: it durably admits and
-orders operations, persists model intent before dispatch, settles complete
-responses atomically, records uncertain attempts honestly, and recovers from
-process interruption using SQLite.
+standalone model-and-tool slice exists in `renoa-harness`: it durably admits
+and orders operations, persists each model or tool intent before dispatch,
+settles complete results atomically, records uncertain effects honestly,
+durably cancels active standalone operations, and recovers from process
+interruption using SQLite.
 
-RCP-bound admission, tools, approvals, cancellation, compaction, and host
-movement remain later slices. Sections describing them constrain those slices;
-they do not claim that those behaviors exist today.
+RCP-bound admission, approvals, compaction, and host movement remain later
+slices. Sections describing them constrain those slices; they do not claim
+that those behaviors exist today.
 
 The adjacent documents have narrower authority:
 
@@ -105,10 +106,16 @@ credential use, and actual side effects. The node or embedding host owns secure
 credential storage and provisioning; model and tool adapters consume only the
 credentials they need.
 
-Tool-host registration also supplies a recovery class for the exact invocation
-before its intent is committed. The default is `NeverReplay`; the harness
-records and applies the classification but does not invent it from a tool name
-or arguments.
+Each tool binding supplies one conservative recovery class before an intent is
+committed. Renoa requires the host to choose it explicitly; there is no hidden
+default. A broad tool such as Bash must remain `NeverReplay` unless the entire
+binding is safe to repeat. Invocation-specific classification may be added only
+when a real tool can prove it from the exact call.
+
+The current standalone slice has one explicit mode: every registered tool is
+allowed, and an unregistered tool is unavailable. It has no approval request,
+policy callback, or hidden permission abstraction. Approval is added only when
+a real node policy and surface consume it.
 
 ### RCP and node bridge
 
@@ -184,13 +191,13 @@ the next operation, appends its user entry, freezes its runtime profile and
 safety limits, and records that a model step is needed. Thus prompt B cannot
 appear in model context before prompt A settles.
 
-Cancellation, approval resolution, and future steering are durable **control
-requests**, not queued operations. Each has its own stable identity and target.
-The session owner applies it to the targeted operation without placing it
-behind later user commands. Operation positions count only user commands;
-controls keep their own durable admission and applied status. A late control is
-resolved against its target rather than consuming or blocking an operation
-position. Exact control ordering remains deferred with those features.
+Cancellation is the first durable **control request**, not a queued operation.
+It has its own stable identity and target, and the session owner applies it
+without placing it behind later user commands. Its durable row proves admission;
+the targeted operation's state and output prove terminal application. Future
+approval resolution and steering follow the same control category only when
+implemented. Operation positions count only user commands. RCP ordering among
+different control types remains deferred to their integration slices.
 
 ## Command order
 
@@ -215,7 +222,7 @@ is retried. Admission quotas belong before coordinator acknowledgement.
 
 ## Durable data model
 
-The implemented model-only slice uses one SQLite backend with these logical
+The implemented standalone slice uses one SQLite backend with these logical
 records:
 
 1. **Sessions** — identity, admission and output cursors, and active operation.
@@ -225,11 +232,17 @@ records:
    content associated with an operation.
 4. **Model-attempt records** — attempt status, known token usage, uncertainty,
    and the exact request retained only while that attempt is recoverable.
-5. **Output records** — append-only user-visible facts carrying their producing
+5. **Tool-call records** — the unresolved source-ordered batch, exact call,
+   reserved result identity, recovery class, and current effect identity.
+6. **Cancellation requests** — stable request identity and exact active
+   operation target.
+7. **Output records** — append-only user-visible facts carrying their producing
    operation, stable record IDs, and a gapless session-local sequence.
 
-RCP admission mode and task binding, workspace/runtime binding, and tool-result
-entries are added only when their implementation slices consume them.
+RCP admission mode and task binding plus workspace binding are added only when
+their implementation slices consume them. Settled tool results are immutable
+conversation entries; transient tool-call records are deleted when their batch
+is completely resolved.
 
 These are responsibilities, not a permanent table count. There is no mutable
 conversation head in the linear v0 history; the latest entry is derived from
@@ -243,8 +256,10 @@ projection and RCP acknowledgement state outside the harness core.
 SQLite opens with foreign keys enabled, WAL journaling, `synchronous=FULL`, and
 a bounded busy timeout. Acknowledgements and external effects happen only
 after the required transaction commits successfully. The store and operation
-state carry format versions; an unknown newer version fails closed. No generic
-migration framework exists before a second version needs one.
+state carry format versions; an unknown newer version fails closed. One
+explicit v1-to-v2 migration preserves model-only databases created before
+durable tools; v2-to-v3 adds cancellation requests without rebuilding tool
+state. Renoa has no generic migration framework.
 
 Every external request identity is bound to immutable content. An exact retry
 returns the existing admission; reuse with different content is a conflict.
@@ -267,14 +282,16 @@ any active phase -> OutcomeUnknown
 any active phase -> Failed | Cancelled   (only after safe settlement)
 ```
 
-`WaitingForApproval` is reachable only before tool intent. It retains the exact
-tool continuation. Cancellation is a durable flag alongside the current phase,
-not a replacement phase that forgets the pending effect.
+`WaitingForApproval` is a future phase reachable only before tool intent. It
+will retain the exact tool continuation. Implemented cancellation is a durable
+request alongside the current phase, not a replacement phase that forgets a
+pending effect.
 
-The state persists logical model-step count, attempt count, tool-batch index,
-current tool index, and frozen limits so restart cannot reset a safety bound.
+The implemented state persists the model-attempt count, active tool-batch
+identity and cursor, and frozen limits so restart cannot reset a safety bound.
 Every model attempt and tool invocation has a harness-generated effect ID and
-settlement token.
+settlement token. A separate logical step number is not stored before an
+observer or policy consumes it.
 
 A result settles only if one transaction confirms that the same operation,
 phase, effect ID, and settlement token are still current. Any transition that
@@ -308,8 +325,9 @@ the wakeup—are authoritative.
 ## Model steps
 
 One opaque runtime-profile revision is frozen when an operation activates. In
-the model-only slice, the supplied profile resolves the model adapter while the
-harness durably freezes the system instructions and model-attempt limit.
+the implemented standalone slice, the supplied profile resolves the model
+adapter and tool implementations while the harness durably freezes the system
+instructions, tool specifications, recovery declarations, and safety limits.
 Recovery uses those saved values even if a host incorrectly reuses a revision
 with changed values. Configuration changes should still use a new revision and
 apply to the next operation; recovery fails closed if the saved model binding
@@ -340,15 +358,16 @@ attempt with new effect and result identities before dispatch. If retry is
 disabled or exhausted, it records the uncertain attempt and fails the
 operation. Renoa does not claim exactly-once billing.
 
-The model-only slice advertises no tools and validates the completed response
-before inserting it. A provider that nevertheless returns a tool call causes a
-durable failed operation; the invalid response is not inserted and cannot move
-the operation into an unsupported tool phase.
+A profile without tools advertises none and rejects a provider tool call before
+inserting it. A tool-enabled profile validates the complete response before
+settlement, commits the assistant response and full tool plan together, and
+refuses a batch above its frozen limit.
 
 ## Tool execution and transcript validity
 
-Every tool intent stores exact call, tool-binding revision, arguments, result
-identity, effect ID, and recovery class.
+Every tool intent stores the exact call and arguments, reserved result
+identity, effect ID, settlement token, and recovery class. The operation state
+holds the frozen runtime revision and exact advertised tool specification.
 
 - `SafeToReplay` means repetition is safe even if the previous invocation
   completed or is still running unobserved.
@@ -362,16 +381,20 @@ did not run.
 Recovery may repeat a pending `SafeToReplay` call using the exact saved binding
 and arguments. A pending `NeverReplay` call enters `OutcomeUnknown`; the
 session performs no further model or workspace effects until an explicit
-resolution. The tool slice includes one minimal `abandon unknown` control: it
-appends an honest error result saying that the pending call's outcome is
-unknown and it was not retried, appends cancelled-before-start results for the
-remaining calls in that batch, and fails the operation. It never guesses that
-the external effect failed. Richer reconciliation remains future work.
+resolution. The implemented tool slice includes one minimal `abandon unknown`
+control: it appends an honest error result saying that the pending call's
+outcome is unknown and it was not retried, appends skipped-without-execution
+results for the remaining calls in that batch, and fails the operation. It
+never guesses that the external effect failed. Richer reconciliation remains
+future work.
 
 A tool emits zero or more transient progress updates followed by exactly one
 final result. Durable harness v0 executes each model-produced batch
-sequentially. Parallel batches remain an in-memory Agent feature until crash
-tests prove independent recovery and source-ordered settlement.
+sequentially. Unknown tool names and tool failures become model-visible error
+results. Calls from a length-stopped response are never executed; the complete
+batch receives error results before any continuation. Parallel batches remain
+an in-memory Agent feature until crash tests prove independent recovery and
+source-ordered settlement.
 
 Before another model request or operation activates, every settled assistant
 tool call has exactly one durable result in source order, including denied,
@@ -385,27 +408,44 @@ output.
 
 ## Approval and cancellation
 
-These are later features, but their safety boundaries are fixed now.
+Approval remains a later feature. Cancellation is implemented for the active
+operation of a standalone session.
 
 An approval request is persisted before any surface sees it. It has a stable
 identity, and the first authorized resolution wins idempotently across devices.
 Approval occurs before tool intent and does not make an unsafe tool replayable.
-RCP transports the question and answer; node policy remains authoritative.
+RCP transports the question and answer; node policy remains authoritative. In
+the current all-allowed mode, registering a tool is the host's permission to
+run it and no approval state exists.
 
-Cancellation records a durable targeted request and signals the current model
-or tool. A terminal cancellation is allowed only after transcript validity is
-restored and the executor confirms that no local invocation can still run. A
-process tool must kill and reap its process group. If an unsafe external effect
-cannot be proven stopped, the operation remains `OutcomeUnknown`; it does not
-start the next operation after an arbitrary timeout.
+`request_standalone_cancellation` first commits a caller-stable cancellation ID
+bound to the exact active operation, then signals its in-process driver. Exact
+retries are idempotent, reuse against another target conflicts, and queued or
+already-terminal operations reject a new request. A cancellation committed
+before terminal settlement wins that race.
 
-When cancellation invalidates pending work, it rotates the saved settlement
-token. A late completion carrying the older token cannot settle output.
-Dropping an execution future is not ordered cancellation.
+Model cancellation retains no partial assistant message. A complete response
+that arrives after the request records known usage but does not enter the
+conversation. A cancelled or interrupted model attempt may still have incurred
+remote cost, so unknown usage remains unknown.
+
+Tool cancellation waits for the tool future to confirm that all work it owns
+has stopped; there is no timeout that starts the next operation early. A
+process tool must kill and reap its process group before returning. The current
+call retains its known final result—a cancellation result when it was
+stopped—and every unstarted call in its batch receives a source-ordered
+not-executed result before the operation terminates.
+If the harness process disappears while a tool is pending, it cannot prove the
+effect stopped: recovery records `OutcomeUnknown` even for a normally
+`SafeToReplay` binding and performs no replay.
+
+Each cancellation settlement consumes or invalidates the pending state under
+the existing effect ID and settlement token checks. A late completion cannot
+settle output. Dropping an execution future is not ordered cancellation.
 
 ## Observation and RCP publication
 
-The implemented model-only API exposes a diagnostic `inspect()` snapshot with
+The implemented standalone API exposes a diagnostic `inspect()` snapshot with
 the complete conversation, operation statuses, and one terminal durable output
 per finished operation. It does not yet expose cursor reads, a subscription,
 or transient streaming. `inspect()` is not the future RCP bridge API.
@@ -515,7 +555,7 @@ back real transaction may prove the indistinguishable pre-commit side.
 - retry uses a structurally identical provider-neutral `ModelRequest` and
   saved runtime revision, while a missing revision fails closed;
 - stale effect IDs or settlement tokens cannot settle current work;
-- restart preserves attempt, step, and safety-limit counters;
+- restart preserves attempt counts, tool-batch cursors, and safety limits;
 - an unexpected tool call fails closed without entering tool state; and
 - required SQLite durability settings are verified on the actual connection.
 
@@ -523,13 +563,31 @@ back real transaction may prove the indistinguishable pre-commit side.
 
 - every crash position around a tool intent and result is injected;
 - safe calls replay with exact saved input;
+- recovery skips settled calls and resumes the remaining batch in source order;
 - unsafe pending calls pause without starting later work;
 - abandoning an unknown unsafe call writes honest, source-ordered results and
   unblocks the session without replaying the effect;
-- unavailable tool revisions fail closed;
+- changed specifications, recovery declarations, and unavailable tool
+  revisions fail closed;
+- invalid persisted batch cursors fail before dispatch;
 - every settled call receives exactly one source-ordered result; and
-- cancelled or failed operations restore a provider-valid transcript before
-  later activation.
+- failed or explicitly abandoned operations restore a provider-valid
+  transcript before later activation.
+
+### Cancellation slice
+
+- the request commits before the live driver is signalled;
+- exact request retries are safe and one identity cannot target two operations;
+- queued and terminal operations reject new cancellation requests;
+- cancellation wins every model and tool settlement race when its transaction
+  commits first;
+- cancelling a model writes no partial assistant message and restart does not
+  redispatch it;
+- cancelling a tool waits for confirmed shutdown, never starts remaining batch
+  calls, and restores source-ordered transcript validity;
+- process loss with a pending tool remains `OutcomeUnknown` and never becomes
+  a fabricated cancellation; and
+- retrying an old cancellation cannot signal a newer active operation.
 
 ### RCP integration slice
 
@@ -543,21 +601,26 @@ back real transaction may prove the indistinguishable pre-commit side.
 - output committed between snapshot and listener registration is still
   delivered exactly once in the reconstructed view.
 
-Approval, cancellation, compaction, and executor migration gain their own race
-tests when each feature is implemented; they are not prerequisites for the
-model-only slice.
+Approval, compaction, and executor migration gain their own race tests when
+each feature is implemented; they are not retroactive prerequisites for the
+implemented slices.
 
 ## Implementation order
 
-1. **Implemented:** the standalone model-only SQLite harness exists and shares
-   the one-attempt `sample_model` primitive with `renoa-agent`.
-2. Extend RCP command delivery with consumed ordering data and connect the
-   model-only harness end to end through the node bridge.
-3. Add durable sequential tools with `SafeToReplay` and `NeverReplay` recovery.
-4. Add approval and cancellation as separate complete features.
-5. Add steering, compaction, and coding-tool packages only through real product
-   paths and tests.
-6. Design workspace checkpoints and host movement only after local continuity
+1. **Implemented:** the standalone model-only SQLite foundation shares the
+   one-attempt `sample_model` primitive with `renoa-agent`.
+2. **Implemented:** durable sequential tools share one invocation primitive,
+   freeze exact bindings, and recover through `SafeToReplay`, `NeverReplay`, or
+   explicit abandonment.
+3. **Implemented:** durable standalone cancellation uses a stable targeted
+   request, ordered model/tool shutdown, and terminal transcript repair.
+4. Add approval only with a real node policy and surface; the current registered
+   tool set is intentionally all-allowed.
+5. Add steering, context projection, compaction, and coding-tool packages only
+   through real product paths and tests.
+6. Add cursor-based observation and the thin RCP/ACP adapters only after the
+   local harness can complete real work safely.
+7. Design workspace checkpoints and host movement only after local continuity
    is reliable.
 
 Every slice removes any temporary path it replaces and passes formatting,
@@ -589,7 +652,8 @@ lint, and workspace tests before the next begins.
   is already retry-safe with a caller-stable session ID.
 - Cursor-based output reads for the future RCP bridge.
 - The future idempotent-tool recovery contract and reconciliation UI.
-- Durable approval, cancellation, and steering operation shapes.
+- Durable approval and steering operation shapes, plus the mapping from an RCP
+  cancellation command to the implemented standalone cancellation identity.
 - Compaction policy and checkpoint format.
 - Workspace identity, snapshots, executor quiescence, and tool fencing.
 - Retention and deletion policy.
@@ -601,7 +665,7 @@ prove the invariant, and this document records the reason.
 
 No upstream source is incorporated. The design was informed by:
 
-- Pi `origin/dev` at `cf0102b9ce79b18094537b44d045b2504a030322`
+- Pi `origin/main` at `c93ea6ccf0a398c293641e8001db06b8f7997c79`
   (MIT): immutable entries, total current operation state, and
   intent/effect/settlement recovery. Its redesign is unfinished and explicitly
   excludes replication.

@@ -23,6 +23,7 @@ pub use sampling::{SamplingError, SamplingResult, sample_model};
 pub use state::AgentState;
 pub use tool::{
     Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolResult, ToolSpec, ToolUpdates,
+    invoke_tool,
 };
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

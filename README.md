@@ -11,7 +11,8 @@ Renoa's Rust kernel, Pi SDK, or a future adapter. Connections, surfaces, nodes,
 models, and harnesses may change without changing task identity.
 
 The repository currently contains a standalone Rust Agent SDK, a durable
-model-only Rust harness, a kernel-v0 reference executor, a live `renoa-node`
+standalone Rust harness with crash-safe sequential tools and cancellation, a
+kernel-v0 reference executor, a live `renoa-node`
 bridge, a headless TypeScript surface client, a Pi SDK execution node, and a
 loopback-only continuity proof. Both
 execution bridges keep model execution independent of the coordinator socket,
@@ -81,7 +82,7 @@ binding is in [docs/rcp-json-ws-v0.md](docs/rcp-json-ws-v0.md). See
 [docs/identity-v0.md](docs/identity-v0.md) for device trust,
 [docs/kernel-v0.md](docs/kernel-v0.md) for the optional reference executor,
 [docs/agent-v0.md](docs/agent-v0.md) for the standalone Rust Agent SDK boundary,
-[docs/harness-v0.md](docs/harness-v0.md) for the standalone model-only harness
+[docs/harness-v0.md](docs/harness-v0.md) for the standalone durable harness
 and its remaining durable-harness architecture, and
 [docs/reference-implementations.md](docs/reference-implementations.md) for the
 upstream designs being studied.

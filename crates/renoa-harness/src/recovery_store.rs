@@ -8,8 +8,8 @@ use crate::{
     state::StoredOperationState,
     store::{Store, blocking_transition},
     store_support::{
-        current_pending_state, finish_failed_operation, insert_retry_intent, parse_session_id,
-        parse_state,
+        cancellation_requested, current_pending_state, finish_cancelled_operation,
+        finish_failed_operation, insert_retry_intent, parse_session_id, parse_state,
     },
 };
 
@@ -46,7 +46,18 @@ impl Store {
                 ));
             }
 
-            let recovery = if previous.attempt_count >= previous.max_model_attempts {
+            let recovery = if cancellation_requested(&transaction, operation_id)? {
+                PendingRecovery::Finished(finish_cancelled_operation(
+                    &transaction,
+                    previous.session_id,
+                    previous.operation_id,
+                    previous.output_id,
+                    &old_state_json,
+                    0,
+                )?)
+            } else if previous.progress.model_attempts
+                >= previous.progress.runtime.max_model_attempts
+            {
                 PendingRecovery::Finished(finish_failed_operation(
                     &transaction,
                     &previous,
@@ -84,22 +95,52 @@ impl Store {
             let Some(old_state_json) = current_pending_state(&transaction, &intent)? else {
                 return Ok(UncertainAttempt::Stale);
             };
-            let request_json = if intent.attempt_count < intent.max_model_attempts {
-                Some(
-                    transaction
-                        .query_row(
-                            "SELECT request_json FROM model_attempts WHERE effect_id = ?1",
-                            [intent.effect_id.to_string()],
-                            |row| row.get::<_, Option<String>>(0),
-                        )
-                        .map_err(sqlite_error)?
-                        .ok_or_else(|| {
-                            HarnessError::Corrupt("pending model request is missing".to_owned())
-                        })?,
-                )
-            } else {
-                None
-            };
+            if cancellation_requested(&transaction, intent.operation_id)? {
+                let changed = transaction
+                    .execute(
+                        "UPDATE model_attempts
+                         SET status = 'outcome_unknown', request_json = NULL, error = ?3
+                         WHERE effect_id = ?1 AND settlement_token = ?2 AND status = 'pending'",
+                        params![
+                            intent.effect_id.to_string(),
+                            intent.settlement_token.to_string(),
+                            &message,
+                        ],
+                    )
+                    .map_err(sqlite_error)?;
+                if changed != 1 {
+                    return Err(HarnessError::Corrupt(
+                        "cancelled model attempt compare-and-set failed".to_owned(),
+                    ));
+                }
+                let outcome = finish_cancelled_operation(
+                    &transaction,
+                    intent.session_id,
+                    intent.operation_id,
+                    intent.output_id,
+                    &old_state_json,
+                    0,
+                )?;
+                transaction.commit().map_err(sqlite_error)?;
+                return Ok(UncertainAttempt::Finished(outcome));
+            }
+            let request_json =
+                if intent.progress.model_attempts < intent.progress.runtime.max_model_attempts {
+                    Some(
+                        transaction
+                            .query_row(
+                                "SELECT request_json FROM model_attempts WHERE effect_id = ?1",
+                                [intent.effect_id.to_string()],
+                                |row| row.get::<_, Option<String>>(0),
+                            )
+                            .map_err(sqlite_error)?
+                            .ok_or_else(|| {
+                                HarnessError::Corrupt("pending model request is missing".to_owned())
+                            })?,
+                    )
+                } else {
+                    None
+                };
             let changed = transaction
                 .execute(
                     "UPDATE model_attempts
@@ -117,23 +158,24 @@ impl Store {
                     "uncertain model attempt compare-and-set failed".to_owned(),
                 ));
             }
-            let result = if intent.attempt_count < intent.max_model_attempts {
-                UncertainAttempt::Retry(insert_retry_intent(
-                    &transaction,
-                    &intent,
-                    &old_state_json,
-                    request_json.as_deref().ok_or_else(|| {
-                        HarnessError::Corrupt("pending model request is missing".to_owned())
-                    })?,
-                )?)
-            } else {
-                UncertainAttempt::Finished(finish_failed_operation(
-                    &transaction,
-                    &intent,
-                    &old_state_json,
-                    message,
-                )?)
-            };
+            let result =
+                if intent.progress.model_attempts < intent.progress.runtime.max_model_attempts {
+                    UncertainAttempt::Retry(insert_retry_intent(
+                        &transaction,
+                        &intent,
+                        &old_state_json,
+                        request_json.as_deref().ok_or_else(|| {
+                            HarnessError::Corrupt("pending model request is missing".to_owned())
+                        })?,
+                    )?)
+                } else {
+                    UncertainAttempt::Finished(finish_failed_operation(
+                        &transaction,
+                        &intent,
+                        &old_state_json,
+                        message,
+                    )?)
+                };
             transaction.commit().map_err(sqlite_error)?;
             Ok(result)
         })
@@ -156,9 +198,7 @@ fn load_pending_recovery(
         .ok_or_else(|| HarnessError::Corrupt("active operation is missing".to_owned()))?;
     let state = parse_state(&state_json)?;
     let StoredOperationState::ModelPending {
-        runtime_revision,
-        max_model_attempts,
-        attempt_count,
+        progress,
         effect_id,
         settlement_token,
         assistant_entry_id,
@@ -199,9 +239,7 @@ fn load_pending_recovery(
         settlement_token: *settlement_token,
         assistant_entry_id: *assistant_entry_id,
         output_id: *output_id,
-        runtime_revision: runtime_revision.clone(),
-        max_model_attempts: *max_model_attempts,
-        attempt_count: *attempt_count,
+        progress: progress.clone(),
         request: serde_json::from_str::<ModelRequest>(&request_json).map_err(json_error)?,
     };
     Ok((intent, state_json, request_json))

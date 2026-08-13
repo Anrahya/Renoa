@@ -6,8 +6,30 @@ use crate::{
     HarnessError, OperationId, OperationOutcome, SessionId,
     drive::ModelIntent,
     schema::{json_error, sqlite_error},
-    state::{StoredOperationState, StoredState},
+    state::{
+        FailureKind, OperationProgress, STORED_STATE_VERSION, StoredOperationState, StoredState,
+        ToolBatch,
+    },
 };
+
+pub(crate) const MODEL_ATTEMPT_LIMIT_AFTER_TOOL_RESULTS: &str =
+    "model attempt limit exhausted after tool results";
+pub(crate) const CANCELLED_BY_CALLER: &str = "operation was cancelled by the caller";
+
+pub(crate) fn cancellation_requested(
+    transaction: &Transaction<'_>,
+    operation_id: OperationId,
+) -> Result<bool, HarnessError> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM cancellation_requests WHERE operation_id = ?1
+             )",
+            [operation_id.to_string()],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(sqlite_error)
+}
 
 pub(crate) fn current_pending_state(
     transaction: &Transaction<'_>,
@@ -42,7 +64,8 @@ pub(crate) fn insert_retry_intent(
     request_json: &str,
 ) -> Result<ModelIntent, HarnessError> {
     let attempt_count = previous
-        .attempt_count
+        .progress
+        .model_attempts
         .checked_add(1)
         .ok_or_else(|| HarnessError::Corrupt("model attempt counter overflowed".to_owned()))?;
     let effect_id = Uuid::new_v4();
@@ -65,9 +88,10 @@ pub(crate) fn insert_retry_intent(
         )
         .map_err(sqlite_error)?;
     let state = StoredState::from_state(StoredOperationState::ModelPending {
-        runtime_revision: previous.runtime_revision.clone(),
-        max_model_attempts: previous.max_model_attempts,
-        attempt_count,
+        progress: OperationProgress {
+            runtime: previous.progress.runtime.clone(),
+            model_attempts: attempt_count,
+        },
         effect_id,
         settlement_token,
         assistant_entry_id,
@@ -86,9 +110,10 @@ pub(crate) fn insert_retry_intent(
         settlement_token,
         assistant_entry_id,
         output_id,
-        runtime_revision: previous.runtime_revision.clone(),
-        max_model_attempts: previous.max_model_attempts,
-        attempt_count,
+        progress: OperationProgress {
+            runtime: previous.progress.runtime.clone(),
+            model_attempts: attempt_count,
+        },
         request: serde_json::from_str::<ModelRequest>(request_json).map_err(json_error)?,
     })
 }
@@ -102,14 +127,55 @@ pub(crate) fn finish_failed_operation(
     let (_, output_sequence) = load_cursors(transaction, intent.session_id)?;
     let outcome = OperationOutcome::Failed { message };
     insert_output(transaction, intent, output_sequence, &outcome)?;
-    let state = StoredState::from_state(StoredOperationState::Failed);
+    let state = StoredState::from_state(StoredOperationState::Failed {
+        kind: FailureKind::General,
+    });
     update_state(
         transaction,
         intent.operation_id,
         old_state_json,
         &serde_json::to_string(&state).map_err(json_error)?,
     )?;
-    finish_session(transaction, intent, false)?;
+    finish_active_operation(transaction, intent.session_id, intent.operation_id, 0)?;
+    Ok(outcome)
+}
+
+pub(crate) fn finish_cancelled_operation(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+    operation_id: OperationId,
+    output_id: Uuid,
+    old_state_json: &str,
+    inserted_entries: i64,
+) -> Result<OperationOutcome, HarnessError> {
+    let (_, output_sequence) = load_cursors(transaction, session_id)?;
+    let outcome = OperationOutcome::Cancelled {
+        message: CANCELLED_BY_CALLER.to_owned(),
+    };
+    transaction
+        .execute(
+            "INSERT INTO outputs (
+                output_id, session_id, operation_id, sequence, outcome_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                output_id.to_string(),
+                session_id.to_string(),
+                operation_id.to_string(),
+                output_sequence,
+                serde_json::to_string(&outcome).map_err(json_error)?,
+            ],
+        )
+        .map_err(sqlite_error)?;
+    let state = StoredState::from_state(StoredOperationState::Failed {
+        kind: FailureKind::Cancelled,
+    });
+    update_state(
+        transaction,
+        operation_id,
+        old_state_json,
+        &serde_json::to_string(&state).map_err(json_error)?,
+    )?;
+    finish_active_operation(transaction, session_id, operation_id, inserted_entries)?;
     Ok(outcome)
 }
 
@@ -191,10 +257,32 @@ pub(crate) fn update_state(
     Ok(())
 }
 
-pub(crate) fn finish_session(
+pub(crate) fn advance_entry_cursor(
     transaction: &Transaction<'_>,
-    intent: &ModelIntent,
-    inserted_entry: bool,
+    session_id: SessionId,
+    operation_id: OperationId,
+    count: i64,
+) -> Result<(), HarnessError> {
+    let changed = transaction
+        .execute(
+            "UPDATE sessions SET next_entry_sequence = next_entry_sequence + ?3
+             WHERE session_id = ?1 AND active_operation_id = ?2",
+            params![session_id.to_string(), operation_id.to_string(), count],
+        )
+        .map_err(sqlite_error)?;
+    if changed != 1 {
+        return Err(HarnessError::Corrupt(
+            "active session entry-cursor compare-and-set failed".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn finish_active_operation(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+    operation_id: OperationId,
+    inserted_entries: i64,
 ) -> Result<(), HarnessError> {
     let changed = transaction
         .execute(
@@ -202,17 +290,39 @@ pub(crate) fn finish_session(
              SET active_operation_id = NULL,
                  next_entry_sequence = next_entry_sequence + ?3,
                  next_output_sequence = next_output_sequence + 1
-             WHERE session_id = ?1 AND active_operation_id = ?2",
+            WHERE session_id = ?1 AND active_operation_id = ?2",
             params![
-                intent.session_id.to_string(),
-                intent.operation_id.to_string(),
-                i64::from(inserted_entry),
+                session_id.to_string(),
+                operation_id.to_string(),
+                inserted_entries,
             ],
         )
         .map_err(sqlite_error)?;
     if changed != 1 {
         return Err(HarnessError::Corrupt(
-            "active session settlement compare-and-set failed".to_owned(),
+            "active session completion compare-and-set failed".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_tool_batch(
+    progress: &OperationProgress,
+    batch: ToolBatch,
+) -> Result<(), HarnessError> {
+    if batch.call_count == 0 {
+        return Err(HarnessError::Corrupt(
+            "active tool batch is empty".to_owned(),
+        ));
+    }
+    if batch.next_index >= batch.call_count {
+        return Err(HarnessError::Corrupt(
+            "tool batch cursor is outside the batch".to_owned(),
+        ));
+    }
+    if batch.call_count > progress.runtime.max_tool_calls_per_step {
+        return Err(HarnessError::Corrupt(
+            "tool batch exceeds its frozen call limit".to_owned(),
         ));
     }
     Ok(())
@@ -220,7 +330,7 @@ pub(crate) fn finish_session(
 
 pub(crate) fn parse_state(value: &str) -> Result<StoredState, HarnessError> {
     let state: StoredState = serde_json::from_str(value).map_err(json_error)?;
-    if state.format_version() != 1 {
+    if state.format_version() != STORED_STATE_VERSION {
         return Err(HarnessError::Corrupt(format!(
             "unsupported operation state version {}",
             state.format_version()
@@ -234,4 +344,10 @@ pub(crate) fn parse_session_id(value: &str) -> Result<SessionId, HarnessError> {
         .parse()
         .map(SessionId::from_uuid)
         .map_err(|error| HarnessError::Corrupt(format!("invalid session id: {error}")))
+}
+
+pub(crate) fn parse_uuid(value: &str, field: &str) -> Result<Uuid, HarnessError> {
+    value
+        .parse()
+        .map_err(|error| HarnessError::Corrupt(format!("invalid {field}: {error}")))
 }

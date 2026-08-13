@@ -56,17 +56,26 @@ async fn a_stale_attempt_cannot_settle_current_work() {
         )
         .await
         .expect("admit operation");
+    let activation_profile = RuntimeProfile::new(
+        "coding-v1",
+        Arc::new(NeverCalledModel),
+        "Be precise.",
+        NonZeroU32::new(2).expect("non-zero attempt limit"),
+    );
     let active = harness
         .store
-        .activate(&lease, session_id, "coding-v1", "Be precise.", 2)
+        .activate(&lease, session_id, activation_profile.frozen())
         .await
         .expect("activate")
         .expect("active operation");
-    let first = harness
+    let crate::drive::ModelStart::Invoke(first) = harness
         .store
         .begin_model_attempt(&lease, active.operation_id)
         .await
-        .expect("first intent");
+        .expect("first intent")
+    else {
+        panic!("uncancelled operation must create a model intent");
+    };
     let PendingRecovery::Retry(second) = harness
         .store
         .recover_model_attempt(&lease, active.operation_id)
@@ -388,7 +397,7 @@ fn a_newer_schema_version_fails_closed() {
     let database = directory.path().join("harness.sqlite3");
     let connection = rusqlite::Connection::open(&database).expect("open SQLite database");
     connection
-        .pragma_update(None, "user_version", 2)
+        .pragma_update(None, "user_version", 4)
         .expect("set newer schema version");
     drop(connection);
 
@@ -397,8 +406,8 @@ fn a_newer_schema_version_fails_closed() {
             .err()
             .expect("newer schema must be rejected"),
         HarnessError::UnsupportedSchema {
-            found: 2,
-            supported: 1,
+            found: 4,
+            supported: 3,
         }
     );
 }

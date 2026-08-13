@@ -1,5 +1,11 @@
 mod activation_recovery;
 mod behavior;
+mod cancellation;
+mod cancellation_delivery;
+mod migration;
 mod model_recovery;
 mod ownership;
 mod support;
+mod tool_abandonment;
+mod tool_integrity;
+mod tool_recovery;

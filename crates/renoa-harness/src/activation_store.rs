@@ -4,11 +4,14 @@ use uuid::Uuid;
 
 use crate::{
     HarnessError, OperationId, OperationRequest, SessionId, SessionRunLease,
-    drive::{ActiveOperation, ModelIntent},
+    drive::{ActiveOperation, ModelIntent, ModelStart},
     schema::{json_error, sqlite_error},
-    state::{StoredOperationState, StoredState},
+    state::{FrozenRuntime, OperationProgress, StoredOperationState, StoredState},
     store::{Store, blocking_transition, parse_operation_id},
-    store_support::{load_messages, parse_session_id, parse_state, update_state},
+    store_support::{
+        cancellation_requested, finish_cancelled_operation, load_messages, parse_session_id,
+        parse_state, update_state,
+    },
 };
 
 impl Store {
@@ -16,14 +19,10 @@ impl Store {
         &self,
         lease: &std::sync::Arc<SessionRunLease>,
         session_id: SessionId,
-        runtime_revision: &str,
-        system_prompt: &str,
-        max_model_attempts: u32,
+        runtime: FrozenRuntime,
     ) -> Result<Option<ActiveOperation>, HarnessError> {
         let database = self.database();
         let lease = std::sync::Arc::clone(lease);
-        let runtime_revision = runtime_revision.to_owned();
-        let system_prompt = system_prompt.to_owned();
         blocking_transition(lease, move || {
             let mut connection = database.connection()?;
             let transaction = connection
@@ -61,10 +60,10 @@ impl Store {
             let request: OperationRequest =
                 serde_json::from_str(&request_json).map_err(json_error)?;
             let state = StoredState::from_state(StoredOperationState::NeedModel {
-                runtime_revision,
-                system_prompt,
-                max_model_attempts,
-                attempt_count: 0,
+                progress: OperationProgress {
+                    runtime,
+                    model_attempts: 0,
+                },
             });
             let state_json = serde_json::to_string(&state).map_err(json_error)?;
             transaction
@@ -110,7 +109,7 @@ impl Store {
         &self,
         lease: &std::sync::Arc<SessionRunLease>,
         operation_id: OperationId,
-    ) -> Result<ModelIntent, HarnessError> {
+    ) -> Result<ModelStart, HarnessError> {
         let database = self.database();
         let lease = std::sync::Arc::clone(lease);
         blocking_transition(lease, move || {
@@ -129,33 +128,40 @@ impl Store {
                 .ok_or_else(|| HarnessError::Corrupt("active operation is missing".to_owned()))?;
             let session_id = parse_session_id(&session_id)?;
             let old_state = parse_state(&old_state_json)?;
-            let StoredOperationState::NeedModel {
-                runtime_revision,
-                system_prompt,
-                max_model_attempts,
-                attempt_count,
-            } = old_state.state()
-            else {
+            let StoredOperationState::NeedModel { progress } = old_state.state() else {
                 return Err(HarnessError::Corrupt(
                     "model intent requires NeedModel state".to_owned(),
                 ));
             };
-            let request = ModelRequest {
-                system_prompt: system_prompt.clone(),
-                messages: load_messages(&transaction, session_id)?,
-                tools: Vec::new(),
-            };
+            if cancellation_requested(&transaction, operation_id)? {
+                let outcome = cancel_before_model_attempt(
+                    &transaction,
+                    session_id,
+                    operation_id,
+                    &old_state_json,
+                )?;
+                transaction.commit().map_err(sqlite_error)?;
+                return Ok(ModelStart::Finished(outcome));
+            }
+            let request = build_model_request(&transaction, session_id, progress)?;
             let effect_id = Uuid::new_v4();
             let settlement_token = Uuid::new_v4();
             let assistant_entry_id = Uuid::new_v4();
             let output_id = Uuid::new_v4();
-            let attempt_count = attempt_count.checked_add(1).ok_or_else(|| {
+            let attempt_count = progress.model_attempts.checked_add(1).ok_or_else(|| {
                 HarnessError::Corrupt("model attempt counter overflowed".to_owned())
             })?;
+            if attempt_count > progress.runtime.max_model_attempts {
+                return Err(HarnessError::Corrupt(
+                    "model attempt limit was exceeded before dispatch".to_owned(),
+                ));
+            }
+            let progress = OperationProgress {
+                runtime: progress.runtime.clone(),
+                model_attempts: attempt_count,
+            };
             let state = StoredState::from_state(StoredOperationState::ModelPending {
-                runtime_revision: runtime_revision.clone(),
-                max_model_attempts: *max_model_attempts,
-                attempt_count,
+                progress: progress.clone(),
                 effect_id,
                 settlement_token,
                 assistant_entry_id,
@@ -170,7 +176,7 @@ impl Store {
                     params![
                         effect_id.to_string(),
                         operation_id.to_string(),
-                        i64::from(attempt_count),
+                        i64::from(progress.model_attempts),
                         settlement_token.to_string(),
                         serde_json::to_string(&request).map_err(json_error)?,
                     ],
@@ -183,21 +189,52 @@ impl Store {
                 &serde_json::to_string(&state).map_err(json_error)?,
             )?;
             transaction.commit().map_err(sqlite_error)?;
-            Ok(ModelIntent {
+            Ok(ModelStart::Invoke(ModelIntent {
                 session_id,
                 operation_id,
                 effect_id,
                 settlement_token,
                 assistant_entry_id,
                 output_id,
-                runtime_revision: runtime_revision.clone(),
-                max_model_attempts: *max_model_attempts,
-                attempt_count,
+                progress,
                 request,
-            })
+            }))
         })
         .await
     }
+}
+
+fn cancel_before_model_attempt(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+    operation_id: OperationId,
+    old_state_json: &str,
+) -> Result<crate::OperationOutcome, HarnessError> {
+    finish_cancelled_operation(
+        transaction,
+        session_id,
+        operation_id,
+        Uuid::new_v4(),
+        old_state_json,
+        0,
+    )
+}
+
+fn build_model_request(
+    transaction: &Transaction<'_>,
+    session_id: SessionId,
+    progress: &OperationProgress,
+) -> Result<ModelRequest, HarnessError> {
+    Ok(ModelRequest {
+        system_prompt: progress.runtime.system_prompt.clone(),
+        messages: load_messages(transaction, session_id)?,
+        tools: progress
+            .runtime
+            .tools
+            .iter()
+            .map(|tool| tool.spec.clone())
+            .collect(),
+    })
 }
 
 fn load_state(
@@ -239,8 +276,12 @@ fn load_next_queued(
         let row = row.map_err(sqlite_error)?;
         match parse_state(&row.2)?.state() {
             StoredOperationState::Queued => return Ok(Some(row)),
-            StoredOperationState::Completed | StoredOperationState::Failed => {}
-            StoredOperationState::NeedModel { .. } | StoredOperationState::ModelPending { .. } => {
+            StoredOperationState::Completed | StoredOperationState::Failed { .. } => {}
+            StoredOperationState::NeedModel { .. }
+            | StoredOperationState::ModelPending { .. }
+            | StoredOperationState::NeedTool { .. }
+            | StoredOperationState::ToolPending { .. }
+            | StoredOperationState::ToolOutcomeUnknown { .. } => {
                 return Err(HarnessError::Corrupt(
                     "inactive session contains a non-terminal active operation".to_owned(),
                 ));
