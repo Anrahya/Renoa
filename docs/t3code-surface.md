@@ -17,9 +17,9 @@ applicable third-party notices in distributed source and binaries.
 ## Repository layout
 
 The local `t3code/` directory is a separate Git checkout ignored by the Renoa
-core repository. Its `upstream` remote points to `pingdotgg/t3code`; Renoa work
-lives on a dedicated integration branch. A hosted Renoa fork can later become
-its `origin` without changing the core repository.
+core repository. Its `upstream` remote points to `pingdotgg/t3code`; its
+`origin` remote points to `Anrahya/t3code`; and Renoa work lives on the
+dedicated `renoa/main` integration branch.
 
 This separation keeps upstream history and merge ancestry intact. Do not copy
 the T3 tree into the Renoa core Git history.
