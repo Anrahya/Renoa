@@ -9,6 +9,11 @@ settles complete results atomically, records uncertain effects honestly,
 durably cancels active standalone operations, and recovers from process
 interruption using SQLite.
 
+`renoa-local` is the first product-path host. It combines that harness with Pi
+AI provider routing and external local read, edit, write, and process tools. It
+can complete and durably continue a coding conversation without adding those
+implementations or their policy to the harness core.
+
 RCP-bound admission, approvals, compaction, and host movement remain later
 slices. Sections describing them constrain those slices; they do not claim
 that those behaviors exist today.
@@ -623,11 +628,14 @@ implemented slices.
    request, ordered model/tool shutdown, and terminal transcript repair.
 4. Add approval only with a real node policy and surface; the current registered
    tool set is intentionally all-allowed.
-5. Add steering, context projection, compaction, and coding-tool packages only
-   through real product paths and tests.
-6. Add cursor-based observation and the thin RCP/ACP adapters only after the
+5. **Implemented:** `renoa-local` proves the product boundary with Pi AI model
+   routing plus external read, edit, write, and bash tools; it is an
+   all-allowed personal host, not a hostile sandbox.
+6. Add context projection and compaction against the real local coding path.
+   Add steering only when a live consumer defines its ordering behavior.
+7. Add cursor-based observation and the thin RCP/ACP adapters only after the
    local harness can complete real work safely.
-7. Design workspace checkpoints and host movement only after local continuity
+8. Design workspace checkpoints and host movement only after local continuity
    is reliable.
 
 Every slice removes any temporary path it replaces and passes formatting,

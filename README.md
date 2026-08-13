@@ -74,6 +74,12 @@ kernel consume the same neutral RCP execution delivery. SuperGrok device OAuth,
 credential refresh, filesystem paths, prompts, models, tools, and permission
 policy all stay outside RCP.
 
+The first standalone coding host is in
+[crates/renoa-local](crates/renoa-local/README.md). It runs the durable Rust
+harness with Pi AI provider routing and external local read, edit, write, and
+bash tools. It proves a real coding turn without coupling provider credentials,
+filesystem behavior, or process policy into `renoa-harness`.
+
 Start with [docs/rcp-v0.md](docs/rcp-v0.md), the canonical RCP architecture and
 decision record. The transport-independent behavior is in
 [docs/rcp-operations-v0.md](docs/rcp-operations-v0.md), and its first concrete

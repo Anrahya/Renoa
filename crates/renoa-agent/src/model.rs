@@ -43,7 +43,7 @@ impl TokenUsage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelResponse {
     pub content: Vec<AssistantContent>,
     pub stop_reason: StopReason,

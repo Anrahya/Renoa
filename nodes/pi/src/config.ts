@@ -17,10 +17,15 @@ export interface NodeConfig {
   readonly workspace?: WorkspaceConfig;
 }
 
+export interface PiModelConfig {
+  readonly modelId: string;
+  readonly provider: PiProvider;
+  readonly authStorePath: string;
+}
+
 export function loadConfig(environment: NodeJS.ProcessEnv): NodeConfig {
   const workspaceConfig = workspace(environment);
-  const provider = piProvider(environment);
-  const authStorePath = loadAuthStorePath(environment);
+  const model = loadModelConfig(environment);
   return {
     endpoint: required(environment, "RENOA_RCP_ENDPOINT"),
     credentials: {
@@ -28,12 +33,18 @@ export function loadConfig(environment: NodeJS.ProcessEnv): NodeConfig {
       credential: required(environment, "RENOA_RCP_CREDENTIAL"),
     },
     statePath: required(environment, "RENOA_NODE_STATE"),
-    modelId: required(environment, "RENOA_PI_MODEL"),
-    provider,
-    authStorePath,
+    ...model,
     instructions: required(environment, "RENOA_PI_INSTRUCTIONS"),
     target: required(environment, "RENOA_PI_TARGET"),
     ...(workspaceConfig === undefined ? {} : { workspace: workspaceConfig }),
+  };
+}
+
+export function loadModelConfig(environment: NodeJS.ProcessEnv): PiModelConfig {
+  return {
+    modelId: required(environment, "RENOA_PI_MODEL"),
+    provider: piProvider(environment),
+    authStorePath: loadAuthStorePath(environment),
   };
 }
 

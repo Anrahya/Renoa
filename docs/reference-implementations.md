@@ -38,6 +38,9 @@ projects are studied for established agent-runtime mechanics.
   tool configuration belongs to the Pi adapter, not RCP. The node also consumes
   Pi's provider-owned OAuth/refresh contract through its own durable credential
   store. Pi's CLI, TUI, and coding-agent package are not dependencies.
+  The standalone Rust coding host also calls Pi AI through a one-request local
+  process adapter. Pi performs provider authentication and wire translation;
+  Renoa's Rust harness remains the only conversation and tool loop.
 
 ## OpenAI Codex CLI
 
