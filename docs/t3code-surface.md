@@ -32,7 +32,7 @@ boundary first through T3's existing ACP provider seam:
 `T3 clients -> T3 server -> Renoa ACP driver -> ACP/stdio -> Renoa agent`
 
 This is the smallest path that proves process lifecycle, prompts, streaming,
-cancellation, permissions, and session state against the real Rust executable.
+cancellation, and session state against the real Rust executable.
 The frontend remains unaware of the agent implementation.
 
 RCP is a later, sibling integration for durable continuity:
@@ -51,14 +51,23 @@ Locked rules:
 - Stable mappings and identities must make RCP replay safe to apply more than
   once.
 
-The Renoa ACP driver should wait only for a minimal executable vertical slice
-from the Rust SDK. The rest of this surface can be prepared and validated now.
+The minimal Rust ACP executable now exists. T3's opt-in compatibility probe
+starts the real binary, negotiates protocol v1, and creates a session without
+prompting a model or depending on RCP.
+
+For local interactive testing, `pnpm dev:renoa` in `t3code/` verifies the
+current debug executable and harness artifacts, prepares an enabled Renoa
+provider in isolated gitignored `.t3` state, and launches the desktop app. This
+is development setup only; distributing the app still requires packaging the
+Rust executable and replacing the temporary environment-only harness
+configuration with a deliberate product configuration flow.
 
 The T3 side of that slice is now present and disabled by default. Its provider
 settings launch `renoa-agent acp` unless overridden. The adapter covers standard
 ACP new/load session, prompt streaming, stable prompt identity, cancellation,
-permissions, image attachments, resume, and T3's browser MCP handoff. It does
-not import Renoa Rust crates or RCP types.
+image attachments, reasoning/tool updates, and resume. It deliberately sends no
+MCP servers, exposes no approval flow, accepts only full-access mode and the
+backend-owned default model, and does not import Renoa Rust crates or RCP types.
 
 ## Audit findings
 
@@ -76,10 +85,10 @@ enter the desktop artifact and deleting them would create recurring merge work.
 Upstream PostHog analytics and automatic updates are disabled by default and
 require explicit configuration to run.
 
-The existing provider drivers remain temporarily load-bearing. Remove them only
-after the Renoa ACP executable completes the local prompt, stream, cancel, and
-resume lifecycle; until then they are the regression harness for the UI and
-provider seam.
+The existing provider drivers remain temporarily load-bearing as the upstream
+UI regression harness. Revisit their removal after the Renoa binary is packaged
+for the app and one interactive thread completes prompt, tool, cancel, and
+resume behavior through the shipped surface.
 
 The surface shell has low adaptation cost. One product-lifecycle prerequisite
 for a later RCP adapter remains and must not be hidden with a local guess:
@@ -102,12 +111,12 @@ chooses a task by list order, correlates an execution with the latest command,
 or bypasses RCP to create an agent session. Those shortcuts break durable task
 identity or replay correctness.
 
-Recommended sequence:
+Current sequence:
 
-1. Implement the Renoa ACP executable against the already-registered narrow T3
-   provider driver.
-2. Prove local new thread, prompt, stream, cancellation, permission, and resume
-   behavior end to end.
+1. The Renoa ACP executable and narrow T3 provider driver are implemented and
+   contract-probed.
+2. Prove one interactive local thread through prompt, tool streaming,
+   cancellation, and resume, then package the binary for distribution.
 3. Define a separate RCP surface adapter and node adapter around the same agent
    core.
 4. Add task admission and attachment only after routing and node-side
