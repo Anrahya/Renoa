@@ -27,7 +27,8 @@ process.stdout.write(JSON.stringify({
     context_window_tokens: 100000,
     max_output_tokens: 8192,
     model_spec: "{}",
-    model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    reasoning_level: "high"
   }
 }));
 "#,
@@ -39,6 +40,7 @@ process.stdout.write(JSON.stringify({
         "xai",
         "grok-test",
         &auth_store,
+        None,
         NonZeroU32::new(32_768).expect("non-zero host cap"),
     )
     .await
@@ -62,7 +64,8 @@ process.stdout.write(JSON.stringify({
     context_window_tokens: 100000,
     max_output_tokens: 8192,
     model_spec: "{}",
-    model_binding_id: "0000000000000000000000000000000000000000000000000000000000000000"
+    model_binding_id: "0000000000000000000000000000000000000000000000000000000000000000",
+    reasoning_level: "high"
   }
 }));
 "#,
@@ -74,6 +77,7 @@ process.stdout.write(JSON.stringify({
         "xai",
         "grok-test",
         &auth_store,
+        None,
         NonZeroU32::new(32_768).expect("non-zero host cap"),
     )
     .await;
@@ -102,10 +106,11 @@ if (process.env.RENOA_PI_ACTION === "describe") {
       context_window_tokens: 500000,
       max_output_tokens: 500000,
       model_spec: "{\"id\":\"grok-test\"}",
-      model_binding_id: "15fa2142926bbf4af032a8a733095d6127ca0a041e85ee583e25bc635821fd21"
+      model_binding_id: "15fa2142926bbf4af032a8a733095d6127ca0a041e85ee583e25bc635821fd21",
+      reasoning_level: "high"
     }
   }));
-} else if (process.env.RENOA_PI_ACTION !== "invoke") {
+} else if (process.env.RENOA_PI_ACTION !== "stream") {
   process.stdout.write(JSON.stringify({ ok: false, error: "unknown action" }));
 } else if (!process.execArgv.includes("--dns-result-order=ipv4first")) {
   process.stdout.write(JSON.stringify({ ok: false, error: "DNS address order missing" }));
@@ -136,6 +141,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
         "xai",
         "grok-test",
         &auth_store,
+        None,
         NonZeroU32::new(32_768).expect("non-zero output cap"),
     )
     .await
@@ -201,7 +207,8 @@ if (process.env.RENOA_PI_ACTION === "describe") {{
       context_window_tokens: 500000,
       max_output_tokens: 500000,
       model_spec: "{{}}",
-      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      reasoning_level: "high"
     }}
   }}));
   process.exit(0);
@@ -230,6 +237,7 @@ process.stdout.write(JSON.stringify({{
         "xai",
         "grok-test",
         &auth_store,
+        None,
         NonZeroU32::new(32_768).expect("non-zero output cap"),
     )
     .await
@@ -291,7 +299,8 @@ if (process.env.RENOA_PI_ACTION === "describe") {
       context_window_tokens: 500000,
       max_output_tokens: 500000,
       model_spec: "{}",
-      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      reasoning_level: "high"
     }
   }));
 } else {
@@ -310,6 +319,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
         "xai",
         "grok-test",
         &auth_store,
+        None,
         NonZeroU32::new(32_768).expect("non-zero output cap"),
     )
     .await

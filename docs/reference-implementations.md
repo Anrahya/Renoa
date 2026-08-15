@@ -77,8 +77,8 @@ projects are studied for established agent-runtime mechanics.
 - Adopted ideas: resolve a declarative agent before binding it to a run, keep
   sampling reliability outside the continuation loop, and treat local or
   remote capability execution as a host concern rather than a surface concern.
-- Deferred ideas: dangling-call recovery and ACP as a coding-surface adapter.
-  These require runtime consumers before they belong in the kernel.
+- Deferred idea: dangling-call recovery. It requires a runtime consumer before
+  it belongs in the kernel.
 
 No source file is copied wholesale. If Renoa later incorporates substantial
 upstream code, the relevant license notice and modification history will be
@@ -86,13 +86,15 @@ preserved with that code.
 
 ## Interoperability standards checked
 
-Last reviewed on 2026-08-08:
+Last reviewed on 2026-08-14:
 
-- [Agent Client Protocol](https://agentclientprotocol.com/) has stabilized
-  session resume and list operations. Its remote HTTP/WebSocket binding and v2
-  multi-client replay work remain under development. ACP is a useful coding
-  surface adapter, but its agent-owned session is not Renoa's authoritative task
-  journal or execution binding.
+- [Agent Client Protocol](https://agentclientprotocol.com/) stable wire version
+  1 is the coding-frontend boundary. Renoa uses
+  `agent-client-protocol@2.0.0` without unstable features, from Rust SDK commit
+  `07926d7f9468e149e4fb676ab531b410aa8143cb` (Apache-2.0). The crate release
+  number is not the wire version. Draft protocol v2, remote transports, and
+  multi-client replay are outside the first adapter. ACP does not replace
+  Renoa's durable harness or RCP continuity journal.
 - [AG-UI](https://docs.ag-ui.com/) provides transport-independent frontend
   events, snapshots, and deltas. It is a strong candidate for an RCP activity
   profile, but it does not define Renoa's device authority, complete cursor

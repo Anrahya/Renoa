@@ -477,16 +477,19 @@ the complete conversation, operation statuses, per-operation model usage, and
 one terminal durable output per finished operation. Usage reports the sum of
 known provider counts together with total attempts, attempts lacking usage,
 and attempts whose outcome is unknown; the latter counts may overlap. It does
-not turn unknown usage into zero. `inspect()` does not yet expose cursor reads,
-a subscription, or transient streaming and is not the future RCP bridge API.
+not turn unknown usage into zero. `inspect()` does not yet expose cursor reads
+or a subscription and is not the future RCP bridge API.
+`run_next_with_events()` forwards transient model and tool events to one local
+observer while the normal durable driver runs. Those events are not stored and
+cannot be used for recovery or missed-event replay.
 
 The RCP integration slice must add:
 
 1. an append-only durable output log whose records identify their operation and
    applicable effect and carry stable IDs, immutable content, and a replay
    cursor; and
-2. live token, reasoning, tool-argument, and progress deltas that may disappear
-   on process or connection failure.
+2. a reconnectable live-event handoff for token, reasoning, tool-argument, and
+   progress deltas that may disappear on process or connection failure.
 
 Snapshot plus subscription is one gap-free operation: subscribe before reading
 through a captured high-water mark, then discard buffered records at or below

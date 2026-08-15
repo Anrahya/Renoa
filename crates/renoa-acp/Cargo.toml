@@ -1,0 +1,28 @@
+[package]
+name = "renoa-acp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "renoa-agent"
+path = "src/main.rs"
+
+[dependencies]
+agent-client-protocol.workspace = true
+renoa-agent = { path = "../renoa-agent" }
+renoa-harness = { path = "../renoa-harness" }
+renoa-local = { path = "../renoa-local" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-std", "io-util"] }
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

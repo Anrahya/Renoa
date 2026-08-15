@@ -1,8 +1,10 @@
 import type {
   AssistantMessage,
+  AssistantMessageEvent,
   Context,
   Message,
   Tool,
+  ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
 import { isContextOverflow } from "@earendil-works/pi-ai";
 
@@ -84,6 +86,25 @@ export interface WireModelResponse {
   };
 }
 
+export type WireStreamRecord =
+  | {
+      readonly event: "content_delta";
+      readonly content_index: number;
+      readonly delta: WireStreamDelta;
+    }
+  | { readonly event: "completed"; readonly response: WireModelResponse }
+  | {
+      readonly event: "error";
+      readonly error: string;
+      readonly error_kind?: ModelInvocationErrorKind;
+    };
+
+type WireStreamDelta =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "reasoning"; readonly text: string }
+  | { readonly type: "tool_call_start"; readonly id: string; readonly name: string }
+  | { readonly type: "tool_call_arguments"; readonly json_delta: string };
+
 type WireAssistantContent =
   | { readonly type: "text"; readonly text: string; readonly signature?: string }
   | {
@@ -100,7 +121,9 @@ type WireAssistantContent =
       readonly thought_signature?: string;
     };
 
-type ModelBinding = Pick<ModelRuntime, "model" | "streamFn">;
+type ModelBinding = Pick<ModelRuntime, "model" | "streamFn"> & {
+  readonly reasoningLevel?: ModelThinkingLevel;
+};
 
 export type ModelInvocationErrorKind = "context_window_exceeded";
 
@@ -114,17 +137,81 @@ export class ModelInvocationError extends Error {
   }
 }
 
-export async function invokeModel(
+export async function streamModel(
   request: WireModelRequest,
   runtime: ModelBinding,
-  maxOutputTokens?: number,
-): Promise<WireModelResponse> {
-  const stream = await runtime.streamFn(
-    runtime.model,
-    toContext(request),
-    maxOutputTokens === undefined ? undefined : { maxTokens: maxOutputTokens },
-  );
-  return fromAssistant(await stream.result(), runtime.model.contextWindow);
+  maxOutputTokens: number | undefined,
+  emit: (record: WireStreamRecord) => void | Promise<void>,
+): Promise<void> {
+  const options = {
+    ...(maxOutputTokens === undefined ? {} : { maxTokens: maxOutputTokens }),
+    ...(runtime.reasoningLevel === undefined || runtime.reasoningLevel === "off"
+      ? {}
+      : { reasoning: runtime.reasoningLevel }),
+  };
+  const stream = await runtime.streamFn(runtime.model, toContext(request), options);
+  for await (const event of stream) {
+    const record = contentDelta(event);
+    if (record !== undefined) {
+      await emit(record);
+      continue;
+    }
+    if (event.type === "done") {
+      await emit({
+        event: "completed",
+        response: fromAssistant(event.message, runtime.model.contextWindow),
+      });
+      return;
+    }
+    if (event.type === "error") {
+      fromAssistant(event.error, runtime.model.contextWindow);
+      throw new Error("Pi returned an invalid successful error event");
+    }
+  }
+  throw new Error("Pi model stream closed without a terminal event");
+}
+
+function contentDelta(event: AssistantMessageEvent): WireStreamRecord | undefined {
+  switch (event.type) {
+    case "text_delta":
+      return {
+        event: "content_delta",
+        content_index: event.contentIndex,
+        delta: { type: "text", text: event.delta },
+      };
+    case "thinking_delta":
+      return {
+        event: "content_delta",
+        content_index: event.contentIndex,
+        delta: { type: "reasoning", text: event.delta },
+      };
+    case "toolcall_start": {
+      const block = event.partial.content[event.contentIndex];
+      if (block?.type !== "toolCall") {
+        throw new Error("Pi tool-call start is missing its partial tool call");
+      }
+      return {
+        event: "content_delta",
+        content_index: event.contentIndex,
+        delta: { type: "tool_call_start", id: block.id, name: block.name },
+      };
+    }
+    case "toolcall_delta":
+      return {
+        event: "content_delta",
+        content_index: event.contentIndex,
+        delta: { type: "tool_call_arguments", json_delta: event.delta },
+      };
+    case "start":
+    case "text_start":
+    case "text_end":
+    case "thinking_start":
+    case "thinking_end":
+    case "toolcall_end":
+    case "done":
+    case "error":
+      return undefined;
+  }
 }
 
 function toContext(request: WireModelRequest): Context {

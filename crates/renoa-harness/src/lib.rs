@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use renoa_agent::{ContextProjectionError, ContextProjector, Model, Tool};
+use renoa_agent::{AgentEventSink, ContextProjectionError, ContextProjector, Model, Tool};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -24,6 +24,7 @@ mod context_failure_store;
 mod database;
 mod drive;
 mod model_drive;
+mod output_store;
 mod projection;
 mod recovery_store;
 mod schema;
@@ -150,6 +151,19 @@ impl Harness {
         self.store.inspect(session_id).await
     }
 
+    /// Reads the durable terminal outcome for one operation, when present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarnessError::SessionNotFound`] or invalid-storage errors.
+    pub async fn settled_outcome(
+        &self,
+        session_id: SessionId,
+        operation_id: OperationId,
+    ) -> Result<Option<OperationOutcome>, HarnessError> {
+        self.store.settled_outcome(session_id, operation_id).await
+    }
+
     /// Runs or recovers the session's active operation, or claims its next
     /// queued operation. Exactly one driver may own a session at a time.
     ///
@@ -162,12 +176,38 @@ impl Harness {
         session_id: SessionId,
         profile: &RuntimeProfile,
     ) -> Result<RunNext, HarnessError> {
+        self.run_next_observed(session_id, profile, None).await
+    }
+
+    /// Runs one operation while forwarding transient model and tool events.
+    /// Events are not durable and are never used to decide recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed failures as [`Self::run_next`].
+    pub async fn run_next_with_events(
+        &self,
+        session_id: SessionId,
+        profile: &RuntimeProfile,
+        sink: &dyn AgentEventSink,
+    ) -> Result<RunNext, HarnessError> {
+        self.run_next_observed(session_id, profile, Some(sink))
+            .await
+    }
+
+    async fn run_next_observed(
+        &self,
+        session_id: SessionId,
+        profile: &RuntimeProfile,
+        sink: Option<&dyn AgentEventSink>,
+    ) -> Result<RunNext, HarnessError> {
         let lease = self.begin_run(session_id)?;
         drive::run_next(
             &self.store,
             &lease,
             session_id,
             profile,
+            sink,
             #[cfg(test)]
             self.crash_point,
         )
@@ -247,30 +287,6 @@ impl Harness {
             session_id,
             cancellation,
         }))
-    }
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CrashPoint {
-    ActivationCommitted,
-    ModelIntentCommitted,
-    ModelCompletedBeforeSettlement,
-    ContextOverflowCommitted,
-    CompactionIntentCommitted,
-    CompactionCompletedBeforeSettlement,
-    CompactionSettlementCommitted,
-    ToolPlanCommitted,
-    ToolIntentCommitted,
-    ToolCompletedBeforeSettlement,
-    ToolSettlementCommitted,
-    SettlementCommitted,
-}
-
-#[cfg(test)]
-impl Harness {
-    fn crash_at(&mut self, point: CrashPoint) {
-        self.crash_point = Some(point);
     }
 }
 
@@ -476,20 +492,6 @@ impl Drop for SessionRunLease {
 mod tests;
 
 #[cfg(test)]
-pub(crate) struct ModelAttemptDiagnostic {
-    pub(crate) status: String,
-    pub(crate) usage: Option<renoa_agent::TokenUsage>,
-    pub(crate) has_request: bool,
-    pub(crate) error: Option<String>,
-}
-
+mod test_diagnostics;
 #[cfg(test)]
-pub(crate) fn inspect_model_attempts(
-    harness: &Harness,
-    session_id: SessionId,
-) -> Vec<ModelAttemptDiagnostic> {
-    harness
-        .store
-        .inspect_model_attempts(session_id)
-        .expect("inspect model attempts")
-}
+pub(crate) use test_diagnostics::{CrashPoint, ModelAttemptDiagnostic, inspect_model_attempts};

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use renoa_agent::{ModelRequest, Tool, ToolCall, invoke_tool};
+use renoa_agent::{AgentEvent, AgentEventSink, ModelRequest, Tool, ToolCall, invoke_tool};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -100,6 +100,7 @@ pub(crate) async fn run_next(
     lease: &std::sync::Arc<SessionRunLease>,
     session_id: SessionId,
     profile: &RuntimeProfile,
+    sink: Option<&dyn AgentEventSink>,
     #[cfg(test)] crash_point: Option<crate::CrashPoint>,
 ) -> Result<RunNext, HarnessError> {
     let Some(active) = store.activate(lease, session_id, profile.frozen()).await? else {
@@ -115,6 +116,7 @@ pub(crate) async fn run_next(
         lease,
         active,
         profile,
+        sink,
         #[cfg(test)]
         crash_point,
     )
@@ -126,6 +128,7 @@ async fn drive_active(
     lease: &std::sync::Arc<SessionRunLease>,
     active: ActiveOperation,
     profile: &RuntimeProfile,
+    sink: Option<&dyn AgentEventSink>,
     #[cfg(test)] crash_point: Option<crate::CrashPoint>,
 ) -> Result<RunNext, HarnessError> {
     let operation_id = active.operation_id;
@@ -141,6 +144,7 @@ async fn drive_active(
                     operation_id,
                     phase,
                     profile,
+                    sink,
                     #[cfg(test)]
                     crash_point,
                 )
@@ -154,6 +158,7 @@ async fn drive_active(
                     operation_id,
                     phase,
                     profile,
+                    sink,
                     #[cfg(test)]
                     crash_point,
                 )
@@ -187,6 +192,7 @@ async fn drive_tool_phase(
     operation_id: OperationId,
     phase: StoredOperationState,
     profile: &RuntimeProfile,
+    sink: Option<&dyn AgentEventSink>,
     #[cfg(test)] crash_point: Option<crate::CrashPoint>,
 ) -> Result<DriveStep, HarnessError> {
     match phase {
@@ -197,6 +203,7 @@ async fn drive_tool_phase(
                 lease,
                 operation_id,
                 profile,
+                sink,
                 #[cfg(test)]
                 crash_point,
             )
@@ -212,6 +219,7 @@ async fn drive_tool_phase(
                         lease,
                         *intent,
                         tool,
+                        sink,
                         #[cfg(test)]
                         crash_point,
                     )
@@ -231,19 +239,32 @@ async fn drive_planned_tool(
     lease: &Arc<SessionRunLease>,
     operation_id: OperationId,
     profile: &RuntimeProfile,
+    sink: Option<&dyn AgentEventSink>,
     #[cfg(test)] crash_point: Option<crate::CrashPoint>,
 ) -> Result<DriveStep, HarnessError> {
     let planned = store.load_planned_tool(lease, operation_id).await?;
     let Some(frozen_tool) = planned.frozen_tool.as_ref() else {
-        let result = invoke_tool(None, planned.call.clone(), CancellationToken::new(), None).await;
+        let call = planned.call.clone();
+        emit_event(sink, AgentEvent::ToolExecutionStart { call: call.clone() }).await;
+        let result = invoke_tool(None, call.clone(), CancellationToken::new(), sink).await;
+        let observed = result.clone();
         let settlement = store
             .settle_unavailable_tool(lease, planned, result)
             .await?;
-        return tool_settlement_step(
+        let step = tool_settlement_step(
             settlement,
             #[cfg(test)]
             crash_point,
-        );
+        )?;
+        emit_event(
+            sink,
+            AgentEvent::ToolExecutionEnd {
+                call,
+                result: observed,
+            },
+        )
+        .await;
+        return Ok(step);
     };
     let tool = profile.resolve_tool(frozen_tool)?;
     let intent = match store.begin_tool_intent(lease, planned).await? {
@@ -257,6 +278,7 @@ async fn drive_planned_tool(
         lease,
         intent,
         tool,
+        sink,
         #[cfg(test)]
         crash_point,
     )
@@ -268,26 +290,45 @@ async fn execute_tool_intent(
     lease: &Arc<SessionRunLease>,
     intent: ToolIntent,
     tool: Arc<dyn Tool>,
+    sink: Option<&dyn AgentEventSink>,
     #[cfg(test)] crash_point: Option<crate::CrashPoint>,
 ) -> Result<DriveStep, HarnessError> {
+    let call = intent.call.clone();
+    emit_event(sink, AgentEvent::ToolExecutionStart { call: call.clone() }).await;
     let result = invoke_tool(
         Some(tool.as_ref()),
-        intent.call.clone(),
+        call.clone(),
         lease.cancellation(),
-        None,
+        sink,
     )
     .await;
+    let observed = result.clone();
     #[cfg(test)]
     crash_if(
         crash_point,
         crate::CrashPoint::ToolCompletedBeforeSettlement,
     );
     let settlement = store.settle_tool(lease, intent, result).await?;
-    tool_settlement_step(
+    let step = tool_settlement_step(
         settlement,
         #[cfg(test)]
         crash_point,
+    )?;
+    emit_event(
+        sink,
+        AgentEvent::ToolExecutionEnd {
+            call,
+            result: observed,
+        },
     )
+    .await;
+    Ok(step)
+}
+
+async fn emit_event(sink: Option<&dyn AgentEventSink>, event: AgentEvent) {
+    if let Some(sink) = sink {
+        sink.emit(event).await;
+    }
 }
 
 fn resolve_intent_tool(

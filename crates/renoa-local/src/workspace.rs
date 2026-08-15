@@ -10,6 +10,7 @@ use renoa_agent::{
 };
 use renoa_harness::{ToolBinding, ToolRecovery};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -29,6 +30,7 @@ pub enum LocalWorkspaceError {
 /// A canonical local directory exposed through a small coding-tool set.
 pub struct LocalWorkspace {
     root: Arc<PathBuf>,
+    binding_id: String,
 }
 
 impl LocalWorkspace {
@@ -43,8 +45,15 @@ impl LocalWorkspace {
             return Err(LocalWorkspaceError::NotDirectory(root));
         }
         Ok(Self {
+            binding_id: hex_sha256(root.as_os_str().as_encoded_bytes()),
             root: Arc::new(root),
         })
+    }
+
+    /// Stable identity of the canonical root frozen into runtime bindings.
+    #[must_use]
+    pub(crate) fn binding_id(&self) -> &str {
+        &self.binding_id
     }
 
     /// Creates the concrete tool bindings for one runtime profile.
@@ -52,27 +61,42 @@ impl LocalWorkspace {
     pub fn tool_bindings(&self) -> Vec<ToolBinding> {
         vec![
             ToolBinding::new(
-                "renoa-local/read-file-v1",
+                self.tool_binding_id("read-file-v1"),
                 Arc::new(ReadFile::new(Arc::clone(&self.root))),
                 ToolRecovery::SafeToReplay,
             ),
             ToolBinding::new(
-                "renoa-local/edit-file-v1",
+                self.tool_binding_id("edit-file-v1"),
                 Arc::new(EditFile::new(Arc::clone(&self.root))),
                 ToolRecovery::NeverReplay,
             ),
             ToolBinding::new(
-                "renoa-local/write-file-v1",
+                self.tool_binding_id("write-file-v1"),
                 Arc::new(WriteFile::new(Arc::clone(&self.root))),
                 ToolRecovery::NeverReplay,
             ),
             ToolBinding::new(
-                "renoa-local/bash-v1",
+                self.tool_binding_id("bash-v1"),
                 Arc::new(Bash::new(Arc::clone(&self.root))),
                 ToolRecovery::NeverReplay,
             ),
         ]
     }
+
+    fn tool_binding_id(&self, tool: &str) -> String {
+        format!("renoa-local/{tool}/{}", self.binding_id)
+    }
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::with_capacity(64), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to String cannot fail");
+            output
+        })
 }
 
 struct WriteFile {

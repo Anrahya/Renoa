@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use renoa_agent::{
-    AssistantContent, ModelErrorKind, ModelResponse, SamplingError, StopReason, sample_model,
+    AgentEventSink, AssistantContent, ModelErrorKind, ModelResponse, SamplingError, StopReason,
+    sample_model,
 };
 
 use crate::{
@@ -23,6 +24,7 @@ pub(crate) async fn drive_model_phase(
     operation_id: OperationId,
     phase: StoredOperationState,
     profile: &RuntimeProfile,
+    sink: Option<&dyn AgentEventSink>,
     #[cfg(test)] crash_point: Option<crate::CrashPoint>,
 ) -> Result<DriveStep, HarnessError> {
     let intent = match phase {
@@ -90,6 +92,7 @@ pub(crate) async fn drive_model_phase(
         lease,
         intent,
         profile,
+        sink,
         #[cfg(test)]
         crash_point,
     )
@@ -152,6 +155,7 @@ async fn run_model_effect(
     lease: &Arc<SessionRunLease>,
     mut intent: ModelIntent,
     profile: &RuntimeProfile,
+    sink: Option<&dyn AgentEventSink>,
     #[cfg(test)] crash_point: Option<crate::CrashPoint>,
 ) -> Result<Settlement, HarnessError> {
     loop {
@@ -161,7 +165,7 @@ async fn run_model_effect(
             profile.model.as_ref(),
             intent.request.clone(),
             lease.cancellation(),
-            None,
+            sink,
         )
         .await;
         match sampled {

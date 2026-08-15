@@ -37,10 +37,11 @@ export RENOA_PI_PROVIDER='xai'
 export RENOA_PI_MODEL='grok-4.6'
 ```
 
-Packaged Pi models remain package-pinned. If an xAI model is newer than the
-installed Pi package, Renoa resolves only that selected model from Pi's official
-live catalog and rejects records that change the provider, supported API, or
-xAI endpoint.
+Packaged Pi models remain the offline fallback. Renoa merges valid xAI entries
+from Pi's live catalog into the selectable model list and rejects records that
+change the provider, supported API, or xAI endpoint. The selected validated
+model specification is pinned for the runtime, so selection does not trigger a
+second catalog lookup.
 
 ## Run with OpenCode Go
 

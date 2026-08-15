@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { createModels, type Api, type Model, type Provider } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  getSupportedThinkingLevels,
+  type Api,
+  type Model,
+  type ModelThinkingLevel,
+  type Provider,
+} from "@earendil-works/pi-ai";
 import { opencodeGoProvider } from "@earendil-works/pi-ai/providers/opencode-go";
 import { xaiProvider } from "@earendil-works/pi-ai/providers/xai";
 
@@ -9,8 +16,8 @@ import type { PiProvider } from "./config.js";
 import { SqliteCredentialStore } from "./credentials.js";
 
 const DEFAULT_CATALOG_BASE_URL = "https://pi.dev";
-const CATALOG_TIMEOUT_MS = 10_000;
-const RETRYABLE_CATALOG_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const DISCOVERY_TIMEOUT_MS = 2_000;
+const RESOLUTION_TIMEOUT_MS = 10_000;
 
 export interface ModelRuntimeOptions {
   readonly provider: PiProvider;
@@ -18,14 +25,71 @@ export interface ModelRuntimeOptions {
   readonly authStorePath: string;
   readonly catalogBaseUrl?: string;
   readonly modelSpec?: unknown;
+  readonly reasoningLevel?: ModelThinkingLevel;
 }
 
 export interface ModelRuntime {
   readonly model: Model<Api>;
   readonly modelBindingId: string;
   readonly modelSpec: string;
+  readonly reasoningLevel: ModelThinkingLevel;
   readonly streamFn: StreamFn;
   close(): void;
+}
+
+export interface ModelCatalogEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly reasoning_levels: readonly string[];
+  readonly model_spec: Model<Api>;
+}
+
+export interface ModelCatalogOptions {
+  readonly provider: PiProvider;
+  readonly authStorePath: string;
+  readonly catalogBaseUrl?: string;
+}
+
+export async function loadModelCatalog(
+  options: ModelCatalogOptions,
+): Promise<readonly ModelCatalogEntry[]> {
+  const credentials = new SqliteCredentialStore(options.authStorePath);
+  try {
+    const models = createModels({ credentials });
+    const provider = createProvider(options.provider);
+    models.setProvider(provider);
+    if ((await models.checkAuth(options.provider)) === undefined) {
+      throw new Error(`${options.provider} credentials are not configured`);
+    }
+    const discovered = [...models.getModels(options.provider)];
+    if (options.provider === "xai") {
+      try {
+        for (const model of await loadRemoteModels(
+          options.provider,
+          options.catalogBaseUrl ?? DEFAULT_CATALOG_BASE_URL,
+        )) {
+          const existing = discovered.findIndex((candidate) => candidate.id === model.id);
+          if (existing === -1) {
+            discovered.push(model);
+          } else {
+            discovered[existing] = model;
+          }
+        }
+      } catch {
+        // The package-pinned catalog remains usable when live discovery is unavailable.
+      }
+    }
+    return discovered
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+      .map((model) => ({
+        id: model.id,
+        name: model.name,
+        reasoning_levels: getSupportedThinkingLevels(model),
+        model_spec: model,
+      }));
+  } finally {
+    credentials.close();
+  }
 }
 
 export async function loadModelRuntime(options: ModelRuntimeOptions): Promise<ModelRuntime> {
@@ -64,10 +128,12 @@ export async function loadModelRuntime(options: ModelRuntimeOptions): Promise<Mo
         `unknown ${options.provider} model ${options.modelId}; available models: ${available}`,
       );
     }
+    const reasoningLevel = resolveReasoningLevel(model, options.reasoningLevel);
     return {
       model,
       modelBindingId: modelBindingId(model),
       modelSpec: JSON.stringify(model),
+      reasoningLevel,
       streamFn: models.streamSimple.bind(models),
       close: () => credentials.close(),
     };
@@ -75,6 +141,20 @@ export async function loadModelRuntime(options: ModelRuntimeOptions): Promise<Mo
     credentials.close();
     throw error;
   }
+}
+
+function resolveReasoningLevel(
+  model: Model<Api>,
+  requested: ModelThinkingLevel | undefined,
+): ModelThinkingLevel {
+  const supported = getSupportedThinkingLevels(model);
+  if (requested !== undefined) {
+    if (!supported.includes(requested)) {
+      throw new Error(`${model.id} does not support ${requested} reasoning`);
+    }
+    return requested;
+  }
+  return supported.includes("high") ? "high" : (supported[0] ?? "off");
 }
 
 async function loadRemoteModel(
@@ -85,44 +165,49 @@ async function loadRemoteModel(
   if (provider !== "xai") {
     return undefined;
   }
+  const entries = await loadRemoteEntries(provider, catalogBaseUrl, RESOLUTION_TIMEOUT_MS);
+  const candidate = entries.find((entry) => entry.id === modelId);
+  return candidate === undefined ? undefined : validateXaiModel(candidate, modelId);
+}
+
+async function loadRemoteModels(
+  provider: PiProvider,
+  catalogBaseUrl: string,
+): Promise<Model<Api>[]> {
+  const entries = await loadRemoteEntries(provider, catalogBaseUrl, DISCOVERY_TIMEOUT_MS);
+  return entries.flatMap((entry) => {
+    try {
+      return [validateXaiModel(entry, String(entry.id))];
+    } catch {
+      return [];
+    }
+  });
+}
+
+async function loadRemoteEntries(
+  provider: PiProvider,
+  catalogBaseUrl: string,
+  timeoutMs: number,
+): Promise<Record<string, unknown>[]> {
   const endpoint = new URL(`/api/models/providers/${provider}`, catalogBaseUrl);
   let response: Response;
   try {
-    response = await fetchCatalog(endpoint);
+    response = await fetch(endpoint, {
+      headers: { accept: "application/json", "user-agent": "Renoa/0.1" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Pi model catalog request failed for ${provider}: ${detail}`);
   }
   if (response.status === 404 || response.status === 501) {
-    return undefined;
+    return [];
   }
   if (!response.ok) {
     throw new Error(`Pi model catalog request failed for ${provider}: ${response.status}`);
   }
-  const candidate = catalogEntries(await response.json()).find(
-    (entry): entry is Record<string, unknown> => isRecord(entry) && entry.id === modelId,
-  );
-  return candidate === undefined ? undefined : validateXaiModel(candidate, modelId);
-}
-
-async function fetchCatalog(endpoint: URL): Promise<Response> {
-  try {
-    const first = await catalogFetch(endpoint);
-    if (!RETRYABLE_CATALOG_STATUSES.has(first.status)) {
-      return first;
-    }
-    await first.body?.cancel();
-  } catch {
-    // One bounded retry covers a cold or transient discovery connection.
-  }
-  return catalogFetch(endpoint);
-}
-
-function catalogFetch(endpoint: URL): Promise<Response> {
-  return fetch(endpoint, {
-    headers: { accept: "application/json", "user-agent": "Renoa/0.1" },
-    signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
-  });
+  return catalogEntries(await response.json())
+    .filter((entry): entry is Record<string, unknown> => isRecord(entry));
 }
 
 function catalogEntries(value: unknown): readonly unknown[] {

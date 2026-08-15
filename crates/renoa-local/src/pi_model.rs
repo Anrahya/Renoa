@@ -5,8 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use futures_util::{StreamExt, stream};
-use renoa_agent::{Model, ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse};
+use renoa_agent::{Model, ModelError, ModelEventStream, ModelRequest};
 use renoa_harness::ContextSizer;
 use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
@@ -18,7 +17,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-const OUTPUT_LIMIT: usize = 16 * 1_024 * 1_024;
+use crate::pi_catalog::PiReasoningLevel;
+
+pub(crate) const OUTPUT_LIMIT: usize = 16 * 1_024 * 1_024;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -45,6 +46,8 @@ pub enum PiModelConfigError {
     InvalidModelSpec,
     #[error("Pi model bridge returned an invalid model binding id")]
     InvalidModelBindingId,
+    #[error("Pi model bridge returned an invalid model catalog")]
+    InvalidModelCatalog,
 }
 
 /// A provider adapter that invokes Pi AI for one exact Renoa model request.
@@ -53,15 +56,17 @@ pub struct PiModel {
     binding_id: String,
     context_window_tokens: NonZeroU64,
     max_output_tokens: NonZeroU32,
+    reasoning: PiReasoningLevel,
 }
 
 #[derive(Clone)]
-struct PiBridgeConfig {
+pub(crate) struct PiBridgeConfig {
     bridge: PathBuf,
     provider: String,
-    model: String,
+    model: Option<String>,
     credential_store: PathBuf,
     model_spec: Option<String>,
+    reasoning: Option<PiReasoningLevel>,
 }
 
 impl PiModel {
@@ -75,9 +80,38 @@ impl PiModel {
         provider: impl Into<String>,
         model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
+        reasoning: Option<PiReasoningLevel>,
         max_output_tokens: NonZeroU32,
     ) -> Result<Self, PiModelConfigError> {
-        let mut config = PiBridgeConfig::new(bridge, provider, model, credential_store)?;
+        Self::load_with_spec(
+            bridge,
+            provider,
+            model,
+            credential_store,
+            None,
+            reasoning,
+            max_output_tokens,
+        )
+        .await
+    }
+
+    pub(crate) async fn load_with_spec(
+        bridge: impl Into<PathBuf>,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        credential_store: impl Into<PathBuf>,
+        model_spec: Option<String>,
+        reasoning: Option<PiReasoningLevel>,
+        max_output_tokens: NonZeroU32,
+    ) -> Result<Self, PiModelConfigError> {
+        let mut config = PiBridgeConfig::new(
+            bridge,
+            provider,
+            model,
+            credential_store,
+            model_spec,
+            reasoning,
+        )?;
         let description = describe_bridge(config.clone())
             .await
             .map_err(PiModelConfigError::ModelResolution)?;
@@ -103,11 +137,13 @@ impl PiModel {
             return Err(PiModelConfigError::InvalidModelBindingId);
         }
         config.model_spec = Some(description.model_spec);
+        config.reasoning = Some(description.reasoning_level);
         Ok(Self {
             config,
             binding_id: description.model_binding_id,
             context_window_tokens,
             max_output_tokens,
+            reasoning: description.reasoning_level,
         })
     }
 
@@ -125,6 +161,11 @@ impl PiModel {
     pub fn binding_id(&self) -> &str {
         &self.binding_id
     }
+
+    #[must_use]
+    pub const fn reasoning(&self) -> PiReasoningLevel {
+        self.reasoning
+    }
 }
 
 impl PiBridgeConfig {
@@ -132,6 +173,30 @@ impl PiBridgeConfig {
         bridge: impl Into<PathBuf>,
         provider: impl Into<String>,
         model: impl Into<String>,
+        credential_store: impl Into<PathBuf>,
+        model_spec: Option<String>,
+        reasoning: Option<PiReasoningLevel>,
+    ) -> Result<Self, PiModelConfigError> {
+        let mut config = Self::for_provider(bridge, provider, credential_store)?;
+        let model = model.into();
+        if model.is_empty() {
+            return Err(PiModelConfigError::EmptyModel);
+        }
+        config.model = Some(model);
+        if let Some(model_spec) = model_spec {
+            serde_json::from_str::<serde_json::Value>(&model_spec)
+                .ok()
+                .filter(serde_json::Value::is_object)
+                .ok_or(PiModelConfigError::InvalidModelSpec)?;
+            config.model_spec = Some(model_spec);
+        }
+        config.reasoning = reasoning;
+        Ok(config)
+    }
+
+    pub(crate) fn for_provider(
+        bridge: impl Into<PathBuf>,
+        provider: impl Into<String>,
         credential_store: impl Into<PathBuf>,
     ) -> Result<Self, PiModelConfigError> {
         let bridge = std::fs::canonicalize(bridge.into()).map_err(PiModelConfigError::Bridge)?;
@@ -147,17 +212,41 @@ impl PiBridgeConfig {
         if provider != "xai" && provider != "opencode-go" {
             return Err(PiModelConfigError::UnsupportedProvider(provider));
         }
-        let model = model.into();
-        if model.is_empty() {
-            return Err(PiModelConfigError::EmptyModel);
-        }
         Ok(Self {
             bridge,
             provider,
-            model,
+            model: None,
             credential_store,
             model_spec: None,
+            reasoning: None,
         })
+    }
+
+    pub(crate) fn command(&self, action: &str, max_output_tokens: Option<NonZeroU32>) -> Command {
+        let mut command = Command::new("node");
+        command
+            .arg("--dns-result-order=ipv4first")
+            .arg(&self.bridge)
+            .env("RENOA_PI_ACTION", action)
+            .env("RENOA_PI_PROVIDER", &self.provider)
+            .env("RENOA_PI_AUTH_STORE", &self.credential_store)
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        if let Some(model) = &self.model {
+            command.env("RENOA_PI_MODEL", model);
+        }
+        if let Some(limit) = max_output_tokens {
+            command.env("RENOA_PI_MAX_OUTPUT_TOKENS", limit.get().to_string());
+        }
+        if let Some(model_spec) = &self.model_spec {
+            command.env("RENOA_PI_MODEL_SPEC", model_spec);
+        }
+        if let Some(reasoning) = self.reasoning {
+            command.env("RENOA_PI_REASONING", reasoning.as_str());
+        }
+        command
     }
 }
 
@@ -167,14 +256,12 @@ impl Model for PiModel {
         request: ModelRequest,
         cancellation: CancellationToken,
     ) -> ModelEventStream<'_> {
-        let config = self.config.clone();
-        let max_output_tokens = self.max_output_tokens;
-        stream::once(async move {
-            invoke_bridge(config, max_output_tokens, request, cancellation)
-                .await
-                .map(|response| ModelEvent::Completed { response })
-        })
-        .boxed()
+        crate::pi_stream::stream_model(
+            self.config.clone(),
+            self.max_output_tokens,
+            &request,
+            cancellation,
+        )
     }
 }
 
@@ -184,29 +271,10 @@ impl ContextSizer for PiModel {
     }
 }
 
-async fn invoke_bridge(
-    config: PiBridgeConfig,
-    max_output_tokens: NonZeroU32,
-    request: ModelRequest,
-    cancellation: CancellationToken,
-) -> Result<ModelResponse, ModelError> {
-    let input = serde_json::to_vec(&request)
-        .map_err(|error| model_error("encode Pi model request", error))?;
-    let output = run_bridge(
-        config,
-        BridgeAction::Invoke,
-        Some(max_output_tokens),
-        input,
-        cancellation,
-    )
-    .await?;
-    decode_response(&output)
-}
-
 async fn describe_bridge(config: PiBridgeConfig) -> Result<PiModelDescription, ModelError> {
     let output = run_bridge(
         config,
-        BridgeAction::Describe,
+        "describe",
         None,
         Vec::new(),
         CancellationToken::new(),
@@ -215,32 +283,15 @@ async fn describe_bridge(config: PiBridgeConfig) -> Result<PiModelDescription, M
     decode_response(&output)
 }
 
-async fn run_bridge(
+pub(crate) async fn run_bridge(
     config: PiBridgeConfig,
-    action: BridgeAction,
+    action: &str,
     max_output_tokens: Option<NonZeroU32>,
     input: Vec<u8>,
     cancellation: CancellationToken,
 ) -> Result<Vec<u8>, ModelError> {
-    let mut command = Command::new("node");
-    command
-        .arg("--dns-result-order=ipv4first")
-        .arg(config.bridge)
-        .env("RENOA_PI_ACTION", action.as_str())
-        .env("RENOA_PI_PROVIDER", &config.provider)
-        .env("RENOA_PI_MODEL", &config.model)
-        .env("RENOA_PI_AUTH_STORE", &config.credential_store)
-        .kill_on_drop(true)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    if let Some(limit) = max_output_tokens {
-        command.env("RENOA_PI_MAX_OUTPUT_TOKENS", limit.get().to_string());
-    }
-    if let Some(model_spec) = &config.model_spec {
-        command.env("RENOA_PI_MODEL_SPEC", model_spec);
-    }
-    let mut child = command
+    let mut child = config
+        .command(action, max_output_tokens)
         .spawn()
         .map_err(|error| model_error("start Pi model bridge", error))?;
     let mut stdin = child
@@ -305,9 +356,10 @@ struct PiModelDescription {
     max_output_tokens: u64,
     model_binding_id: String,
     model_spec: String,
+    reasoning_level: PiReasoningLevel,
 }
 
-fn decode_response<T: DeserializeOwned>(encoded: &[u8]) -> Result<T, ModelError> {
+pub(crate) fn decode_response<T: DeserializeOwned>(encoded: &[u8]) -> Result<T, ModelError> {
     let envelope: BridgeEnvelope<T> = serde_json::from_slice(encoded)
         .map_err(|error| model_error("decode Pi model response", error))?;
     match (
@@ -327,31 +379,17 @@ fn decode_response<T: DeserializeOwned>(encoded: &[u8]) -> Result<T, ModelError>
     }
 }
 
-enum BridgeAction {
-    Describe,
-    Invoke,
-}
-
-impl BridgeAction {
-    const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Describe => "describe",
-            Self::Invoke => "invoke",
-        }
-    }
-}
-
 enum ProcessExit {
     Cancelled,
     Finished(std::process::ExitStatus),
 }
 
-struct CapturedOutput {
-    bytes: Vec<u8>,
-    truncated: bool,
+pub(crate) struct CapturedOutput {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) truncated: bool,
 }
 
-fn drain(
+pub(crate) fn drain(
     mut reader: impl AsyncRead + Unpin + Send + 'static,
 ) -> JoinHandle<io::Result<CapturedOutput>> {
     tokio::spawn(async move {
@@ -372,7 +410,7 @@ fn drain(
     })
 }
 
-async fn join_output(
+pub(crate) async fn join_output(
     output: JoinHandle<io::Result<CapturedOutput>>,
     name: &str,
 ) -> Result<CapturedOutput, ModelError> {
@@ -382,7 +420,7 @@ async fn join_output(
         .map_err(|error| model_error(&format!("read Pi model {name}"), error))
 }
 
-fn model_error(action: &str, error: impl std::fmt::Display) -> ModelError {
+pub(crate) fn model_error(action: &str, error: impl std::fmt::Display) -> ModelError {
     ModelError::new(format!("cannot {action}: {error}"))
 }
 

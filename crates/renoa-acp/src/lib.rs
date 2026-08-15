@@ -1,0 +1,21 @@
+//! ACP v1 adapter for the durable Renoa coding harness.
+
+mod config;
+mod error;
+mod events;
+mod prompt;
+mod selection;
+mod server;
+mod session;
+
+pub use config::Config;
+pub use error::ServerError;
+
+/// Serves stable ACP v1 as newline-delimited JSON-RPC over standard I/O.
+///
+/// # Errors
+///
+/// Returns an error when configuration or the ACP transport fails.
+pub async fn serve_stdio(config: Config) -> Result<(), ServerError> {
+    server::serve_stdio(config).await
+}

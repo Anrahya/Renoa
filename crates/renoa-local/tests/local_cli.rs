@@ -57,7 +57,8 @@ if (process.env.RENOA_PI_ACTION === "describe") {
       context_window_tokens: 500000,
       max_output_tokens: 500000,
       model_spec: "{}",
-      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      reasoning_level: "high"
     }
   }));
   process.exit(0);

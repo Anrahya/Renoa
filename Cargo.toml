@@ -9,6 +9,7 @@ license = "Apache-2.0 OR MIT"
 rust-version = "1.95"
 
 [workspace.dependencies]
+agent-client-protocol = "2.0.0"
 axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.33"
 getrandom = "0.4.3"

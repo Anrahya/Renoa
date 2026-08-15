@@ -23,6 +23,8 @@ export interface PiModelConfig {
   readonly authStorePath: string;
 }
 
+export type PiProviderConfig = Omit<PiModelConfig, "modelId">;
+
 export function loadConfig(environment: NodeJS.ProcessEnv): NodeConfig {
   const workspaceConfig = workspace(environment);
   const model = loadModelConfig(environment);
@@ -41,8 +43,15 @@ export function loadConfig(environment: NodeJS.ProcessEnv): NodeConfig {
 }
 
 export function loadModelConfig(environment: NodeJS.ProcessEnv): PiModelConfig {
+  const provider = loadProviderConfig(environment);
   return {
     modelId: required(environment, "RENOA_PI_MODEL"),
+    ...provider,
+  };
+}
+
+export function loadProviderConfig(environment: NodeJS.ProcessEnv): PiProviderConfig {
+  return {
     provider: piProvider(environment),
     authStorePath: loadAuthStorePath(environment),
   };

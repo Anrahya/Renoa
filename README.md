@@ -13,7 +13,8 @@ models, and harnesses may change without changing task identity.
 The repository currently contains a standalone Rust Agent SDK, a durable
 standalone Rust harness with crash-safe sequential tools, cancellation,
 context projection, durable bounded compaction, provider-overflow recovery,
-and truthful model-usage inspection, a
+and truthful model-usage inspection, a stable ACP v1 adapter for local coding
+frontends, a
 kernel-v0 reference executor, a live `renoa-node`
 bridge, a headless TypeScript surface client, a Pi SDK execution node, and a
 loopback-only continuity proof. Both
@@ -82,6 +83,12 @@ harness with Pi AI provider routing and external local read, edit, write, and
 bash tools. It proves a real coding turn without coupling provider credentials,
 filesystem behavior, or process policy into `renoa-harness`.
 
+The ACP adapter is in [crates/renoa-acp](crates/renoa-acp). A coding frontend
+launches `renoa-agent acp`; the adapter creates or reloads the same durable
+harness session, exposes standard ACP model and reasoning selectors, streams
+model and tool progress, and cancels active work. Its exact supported surface and deliberate limits are in
+[docs/acp-v1.md](docs/acp-v1.md). ACP stays outside both the harness and RCP.
+
 Start with [docs/rcp-v0.md](docs/rcp-v0.md), the canonical RCP architecture and
 decision record. The transport-independent behavior is in
 [docs/rcp-operations-v0.md](docs/rcp-operations-v0.md), and its first concrete
@@ -91,6 +98,7 @@ binding is in [docs/rcp-json-ws-v0.md](docs/rcp-json-ws-v0.md). See
 [docs/kernel-v0.md](docs/kernel-v0.md) for the optional reference executor,
 [docs/agent-v0.md](docs/agent-v0.md) for the standalone Rust Agent SDK boundary,
 [docs/harness-v0.md](docs/harness-v0.md) for the standalone durable harness
-and its remaining durable-harness architecture, and
+and its remaining durable-harness architecture,
+[docs/acp-v1.md](docs/acp-v1.md) for the local coding-frontend adapter, and
 [docs/reference-implementations.md](docs/reference-implementations.md) for the
 upstream designs being studied.

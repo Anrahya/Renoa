@@ -1,50 +1,73 @@
-import { loadModelConfig } from "./config.js";
+import { loadModelConfig, loadProviderConfig } from "./config.js";
 import {
   ModelInvocationError,
-  invokeModel,
+  streamModel,
   type WireModelRequest,
+  type WireStreamRecord,
 } from "./model-bridge.js";
-import { loadModelRuntime } from "./model-runtime.js";
+import { loadModelCatalog, loadModelRuntime } from "./model-runtime.js";
 
-interface BridgeResult {
-  readonly ok: boolean;
-  readonly response?: unknown;
-  readonly error?: string;
-  readonly error_kind?: "context_window_exceeded";
+interface DescriptionResult {
+  readonly ok: true;
+  readonly response: unknown;
 }
 
-async function main(): Promise<BridgeResult> {
+async function main(): Promise<void> {
+  const action = requiredAction(process.env.RENOA_PI_ACTION);
+  if (action === "catalog") {
+    await writeRecord({
+      ok: true,
+      response: { models: await loadModelCatalog(loadProviderConfig(process.env)) },
+    });
+    return;
+  }
+  const reasoningLevel = optionalReasoning(process.env.RENOA_PI_REASONING);
   const runtime = await loadModelRuntime({
     ...loadModelConfig(process.env),
     modelSpec: optionalJson(process.env.RENOA_PI_MODEL_SPEC),
+    ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
   });
   try {
-    switch (requiredAction(process.env.RENOA_PI_ACTION)) {
+    switch (action) {
       case "describe":
-        return {
+        await writeRecord({
           ok: true,
           response: {
             context_window_tokens: runtime.model.contextWindow,
             max_output_tokens: runtime.model.maxTokens,
             model_binding_id: runtime.modelBindingId,
             model_spec: runtime.modelSpec,
+            reasoning_level: runtime.reasoningLevel,
           },
-        };
-      case "invoke": {
-        const input = await readStdin();
-        const request = JSON.parse(input) as WireModelRequest;
-        const maxOutputTokens = positiveInteger(
-          process.env.RENOA_PI_MAX_OUTPUT_TOKENS,
-          "RENOA_PI_MAX_OUTPUT_TOKENS",
-        );
-        return { ok: true, response: await invokeModel(request, runtime, maxOutputTokens) };
+        });
+        return;
+      case "stream": {
+        const { request, maxOutputTokens } = await readInvocation();
+        try {
+          await streamModel(request, runtime, maxOutputTokens, writeRecord);
+        } catch (error) {
+          await writeRecord(streamFailure(error));
+        }
+        return;
       }
     }
-  } catch (error) {
-    return failure(error);
   } finally {
     runtime.close();
   }
+}
+
+async function readInvocation(): Promise<{
+  request: WireModelRequest;
+  maxOutputTokens: number;
+}> {
+  const input = await readStdin();
+  return {
+    request: JSON.parse(input) as WireModelRequest,
+    maxOutputTokens: positiveInteger(
+      process.env.RENOA_PI_MAX_OUTPUT_TOKENS,
+      "RENOA_PI_MAX_OUTPUT_TOKENS",
+    ),
+  };
 }
 
 function optionalJson(value: string | undefined): unknown {
@@ -58,11 +81,23 @@ function optionalJson(value: string | undefined): unknown {
   }
 }
 
-function requiredAction(value: string | undefined): "describe" | "invoke" {
-  if (value === "describe" || value === "invoke") {
+function optionalReasoning(
+  value: string | undefined,
+): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value)) {
+    return value as "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  }
+  throw new Error("RENOA_PI_REASONING is invalid");
+}
+
+function requiredAction(value: string | undefined): "catalog" | "describe" | "stream" {
+  if (value === "catalog" || value === "describe" || value === "stream") {
     return value;
   }
-  throw new Error("RENOA_PI_ACTION must be describe or invoke");
+  throw new Error("RENOA_PI_ACTION must be catalog, describe, or stream");
 }
 
 function positiveInteger(value: string | undefined, name: string): number {
@@ -73,14 +108,26 @@ function positiveInteger(value: string | undefined, name: string): number {
   return parsed;
 }
 
-function failure(error: unknown): BridgeResult {
+function streamFailure(error: unknown): WireStreamRecord {
   return {
-    ok: false,
+    event: "error",
     error: error instanceof Error ? error.message : String(error),
     ...(error instanceof ModelInvocationError && error.kind !== undefined
       ? { error_kind: error.kind }
       : {}),
   };
+}
+
+function writeRecord(record: DescriptionResult | WireStreamRecord): Promise<void> {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(`${JSON.stringify(record)}\n`, (error) => {
+      if (error === null || error === undefined) {
+        resolve();
+      } else {
+        reject(error);
+      }
+    });
+  });
 }
 
 async function readStdin(): Promise<string> {
@@ -92,8 +139,7 @@ async function readStdin(): Promise<string> {
   return input;
 }
 
-main()
-  .catch(failure)
-  .then((result) => {
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-  });
+main().catch((error: unknown) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});

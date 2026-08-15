@@ -8,7 +8,69 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 
-import { ModelInvocationError, invokeModel } from "../src/model-bridge.js";
+import {
+  ModelInvocationError,
+  streamModel,
+  type WireStreamRecord,
+} from "../src/model-bridge.js";
+
+test("the model bridge streams indexed content before its terminal response", async () => {
+  const faux = fauxProvider({ tokenSize: { min: 1, max: 1 } });
+  faux.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxThinking("plan"),
+        { type: "text", text: "Hello" },
+        fauxToolCall("read_file", {}, { id: "read-1" }),
+      ],
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const records: WireStreamRecord[] = [];
+
+  await streamModel(
+    { system_prompt: "Use tools carefully.", messages: [], tools: [] },
+    {
+      model: faux.getModel(),
+      streamFn: faux.provider.streamSimple.bind(faux.provider),
+    },
+    32,
+    (record) => {
+      records.push(record);
+    },
+  );
+
+  assert.deepEqual(records.slice(0, -1), [
+    {
+      event: "content_delta",
+      content_index: 0,
+      delta: { type: "reasoning", text: "plan" },
+    },
+    {
+      event: "content_delta",
+      content_index: 1,
+      delta: { type: "text", text: "Hell" },
+    },
+    {
+      event: "content_delta",
+      content_index: 1,
+      delta: { type: "text", text: "o" },
+    },
+    {
+      event: "content_delta",
+      content_index: 2,
+      delta: { type: "tool_call_start", id: "read-1", name: "read_file" },
+    },
+    {
+      event: "content_delta",
+      content_index: 2,
+      delta: { type: "tool_call_arguments", json_delta: "{}" },
+    },
+  ]);
+  const terminal = records.at(-1);
+  assert.ok(terminal?.event === "completed");
+  assert.equal(terminal.response.stop_reason, "tool_use");
+});
 
 test("the model bridge preserves Renoa input and returns a complete tool response", async () => {
   const faux = fauxProvider();
@@ -40,7 +102,7 @@ test("the model bridge preserves Renoa input and returns a complete tool respons
     },
   ]);
 
-  const response = await invokeModel(
+  const response = await completedResponse(
     {
       system_prompt: "Use tools carefully.",
       messages: [
@@ -81,6 +143,26 @@ test("the model bridge preserves Renoa input and returns a complete tool respons
   assert.ok(response.usage);
 });
 
+test("the model bridge sends the selected reasoning level to Pi", async () => {
+  const faux = fauxProvider();
+  faux.setResponses([fauxAssistantMessage("Done.")]);
+  let observedReasoning: string | undefined;
+
+  await completedResponse(
+    { system_prompt: "Think carefully.", messages: [], tools: [] },
+    {
+      model: faux.getModel(),
+      reasoningLevel: "low",
+      streamFn: (model, context, options) => {
+        observedReasoning = options?.reasoning;
+        return faux.provider.streamSimple(model, context, options);
+      },
+    },
+  );
+
+  assert.equal(observedReasoning, "low");
+});
+
 test("the model bridge preserves assistant and tool-result continuation context", async () => {
   const faux = fauxProvider();
   faux.setResponses([
@@ -110,7 +192,7 @@ test("the model bridge preserves assistant and tool-result continuation context"
     },
   ]);
 
-  const response = await invokeModel(
+  const response = await completedResponse(
     {
       system_prompt: "Continue carefully.",
       messages: [
@@ -167,7 +249,7 @@ test("an explicit provider context rejection is classified before inference", as
   ]);
 
   await assert.rejects(
-    invokeModel(
+    completedResponse(
       { system_prompt: "Too large.", messages: [], tools: [] },
       {
         model: faux.getModel(),
@@ -192,7 +274,7 @@ test("an overflow-shaped error after generated output remains outcome-unknown", 
   ]);
 
   await assert.rejects(
-    invokeModel(
+    completedResponse(
       { system_prompt: "Too large.", messages: [], tools: [] },
       {
         model: faux.getModel(),
@@ -203,3 +285,19 @@ test("an overflow-shaped error after generated output remains outcome-unknown", 
     (error: unknown) => error instanceof ModelInvocationError && error.kind === undefined,
   );
 });
+
+async function completedResponse(
+  request: Parameters<typeof streamModel>[0],
+  runtime: Parameters<typeof streamModel>[1],
+  maxOutputTokens?: number,
+) {
+  const records: WireStreamRecord[] = [];
+  await streamModel(request, runtime, maxOutputTokens, (record) => {
+    records.push(record);
+  });
+  const terminal = records.at(-1);
+  if (terminal?.event !== "completed") {
+    throw new Error("model stream did not complete");
+  }
+  return terminal.response;
+}
