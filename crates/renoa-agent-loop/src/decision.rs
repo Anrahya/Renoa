@@ -13,8 +13,8 @@ mod interruption;
 use crate::{
     AgentCommand,
     configuration::{AgentLoopConfig, MODEL_EFFECT_BINDING},
-    context::{ContextInput, ContextStrategy},
-    format::{LoopPhase, checkpoint, message_event, message_events, transcript},
+    context::ContextStrategy,
+    format::{LoopPhase, checkpoint, context_input, message_event, message_events},
 };
 
 pub(crate) struct LoopTool {
@@ -91,7 +91,7 @@ impl AgentLoop {
         let next_turn = model_turns
             .checked_add(1)
             .ok_or_else(|| LoopError::new("model turn counter overflowed"))?;
-        let request = self.model_request(&input.events)?;
+        let request = self.model_request(input.operation_id, &input.events)?;
         Ok(LoopDecision::InvokeEffect {
             checkpoint: checkpoint(LoopPhase::AwaitingModel {
                 model_turns: next_turn,
@@ -104,7 +104,7 @@ impl AgentLoop {
 
     fn settle_model(&self, model_turns: u32, input: LoopInput) -> Result<LoopDecision, LoopError> {
         let effect = require_effect(input.effect, "model result")?;
-        let expected_request = self.model_request(&input.events)?;
+        let expected_request = self.model_request(input.operation_id, &input.events)?;
         require_effect_identity(
             &effect,
             MODEL_EFFECT_BINDING,
@@ -203,11 +203,12 @@ impl AgentLoop {
 
     fn model_request(
         &self,
+        active_operation_id: renoa_kernel::OperationId,
         events: &[renoa_kernel::SemanticEvent],
     ) -> Result<ModelRequest, LoopError> {
         let messages = self
             .context
-            .project(ContextInput::new(transcript(events)?))
+            .project(context_input(active_operation_id, events)?)
             .map_err(|error| LoopError::new(format!("context projection failed: {error}")))?;
         Ok(ModelRequest {
             system_prompt: self.config.system_prompt.clone(),

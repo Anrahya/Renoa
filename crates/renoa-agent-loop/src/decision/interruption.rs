@@ -81,7 +81,7 @@ impl AgentLoop {
         &self,
         input: &UnknownEffectInput,
     ) -> Result<UnknownEffectAbandonment, LoopError> {
-        let expected_request = self.model_request(&input.events)?;
+        let expected_request = self.model_request(input.operation_id, &input.events)?;
         require_unknown_effect_identity(
             &input.effect,
             MODEL_EFFECT_BINDING,
@@ -126,7 +126,7 @@ impl AgentLoop {
     }
 
     fn cancel_model(&self, input: &CancellationInput) -> Result<CancellationTransition, LoopError> {
-        let expected_request = self.model_request(&input.events)?;
+        let expected_request = self.model_request(input.operation_id, &input.events)?;
         let effect = input.effect.as_ref().ok_or_else(|| {
             LoopError::new("an awaiting model checkpoint has no cancellation effect")
         })?;

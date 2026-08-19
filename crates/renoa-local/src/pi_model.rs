@@ -271,6 +271,12 @@ impl ContextSizer for PiModel {
     }
 }
 
+impl renoa_agent_loop::ContextSizer for PiModel {
+    fn estimate_input_tokens(&self, request: &ModelRequest) -> u64 {
+        crate::pi_context::estimate_input_tokens(request)
+    }
+}
+
 async fn describe_bridge(config: PiBridgeConfig) -> Result<PiModelDescription, ModelError> {
     let output = run_bridge(
         config,

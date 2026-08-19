@@ -59,11 +59,23 @@ therefore change bindings, not kernel code. Replacing the loop means supplying
 another `LoopPlugin` to the kernel.
 
 `ContextStrategy` is synchronous, pure loop policy. It receives the complete
-decoded durable transcript and returns only the ordered messages visible to the
-next model request. The built-in `FullHistoryStrategy` preserves current
+decoded durable transcript, each message's operation and journal sequence, and
+the active operation identity. It returns only the ordered messages visible to
+the next model request. The built-in `FullHistoryStrategy` preserves current
 behavior. A strategy revision must change whenever its behavior changes; an
 active operation accepts only the frozen revision. Projection never mutates the
-semantic journal, and external compaction work must later use a kernel effect.
+semantic journal.
+
+`CompactionPlanner` is a pure helper for replaceable context strategies. Given
+validated limits, an optional activated checkpoint, the exact normal request
+shape, and model-aware sizing, it selects a safe durable prefix and constructs
+the exact summary request. It keeps tool calls with their results, preserves the
+active user request in the retained tail, bounds large tool output in summary
+input, and uses monotonic binary searches instead of rebuilding every possible
+prefix. It chooses the first safe cut meeting the retained-tail target, or the
+largest dispatchable summary prefix when no cut can meet that target. It does
+not call a model, persist a checkpoint, or activate a summary. Those stateful
+steps must be mediated by kernel effects in the next slice.
 
 ## Durable formats
 
@@ -99,12 +111,13 @@ hidden in process memory or owned only by the checkpoint. The checkpoint keeps
 the active tool batch and exact next index so restart never guesses which call
 may run.
 
-Loop binding revision 5 adds replaceable, revision-frozen context projection.
-Revision 4 added loop-owned durable cancellation closure. Revision 3 added
-explicit, honest closure of unknown model and tool effects. Revision 2 added
-fail-closed tool-call identity validation and typed live tool uncertainty. The
-checkpoint schema remains 1 because the program-counter representation did not
-change.
+Loop binding revision 6 adds durable message origins to context input and the
+pure bounded compaction planner. Revision 5 added replaceable, revision-frozen
+context projection. Revision 4 added loop-owned durable cancellation closure.
+Revision 3 added explicit, honest closure of unknown model and tool effects.
+Revision 2 added fail-closed tool-call identity validation and typed live tool
+uncertainty. The checkpoint schema remains 1 because the program-counter
+representation did not change.
 
 ## Execution rules
 
@@ -142,14 +155,16 @@ slice:
 - model-turn and per-response tool-call limits fail the operation explicitly;
 - a context strategy can replace the model-facing message view without
   deleting or rewriting durable history;
+- a context strategy can derive a deterministic, bounded compaction plan from
+  real durable operation and sequence metadata without changing that history;
 - durable cancellation balances every outstanding tool call in source order,
   while preserving a settled current result and distinguishing work that never
   dispatched from work that may have run; and
 - a new operation reconstructs prior session messages from the event log.
 
-Steering, follow-ups, approvals, bounded compaction, parallel tool batches,
-transient streaming, and authoritative settlement of an unknown effect are not
-implemented by this runtime slice.
+Durable summary execution and activation, steering, follow-ups, approvals,
+parallel tool batches, transient streaming, and authoritative settlement of an
+unknown effect are not implemented by this runtime slice.
 
 ## Effect adapters and recovery
 
@@ -214,14 +229,15 @@ real.
 ## Relationship to the durable harness
 
 The loop rules and leaf calls are adapted from Renoa's own `renoa-agent` and
-`renoa-harness` behavior. No external source is copied. The older harness
-remains intact while this consumer proves the smaller kernel boundary. It still
-contains mature async context projection and compaction. The kernel loop now
-has a pure, revision-frozen projection strategy, but the researched bounded
-compaction behavior has not yet been migrated. The older harness's unknown-tool
-abandonment behavior has been replaced on the kernel path by the generic kernel
-transition and loop-owned transcript closure.
+`renoa-harness` behavior. No external source is copied. The pure planner and
+bounded checkpoint formatter were adapted from repository commits
+`6e8fccdb193f801b21812c14364752aaa30621c5` and
+`47eddbc5de74113fcb688f3f739b943e6e96826e`, under this repository's
+`Apache-2.0 OR MIT` license. The older harness remains intact while this
+consumer proves the smaller kernel boundary. Its unknown-tool abandonment
+behavior has been replaced on the kernel path by the generic kernel transition
+and loop-owned transcript closure.
 
-The next migration slice remains consumer-gated: move the researched bounded
-compaction behavior onto this loop-owned strategy boundary, with every summary
-model call mediated by a kernel effect.
+The next migration slice remains consumer-gated: execute the planned summary
+as a persisted kernel effect, activate its checkpoint durably, and prove retry
+and restart behavior without moving context policy into the kernel.

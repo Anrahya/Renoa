@@ -2,7 +2,10 @@ use renoa_agent::{ContentBlock, Message};
 use renoa_kernel::{Checkpoint, LoopError, NewEvent, SemanticEvent};
 use serde::{Deserialize, Serialize};
 
-use crate::configuration::CHECKPOINT_SCHEMA_VERSION;
+use crate::{
+    configuration::CHECKPOINT_SCHEMA_VERSION,
+    context::{ContextInput, ContextOrigin},
+};
 
 /// Versioned semantic-event kind carrying one provider-neutral message.
 pub const MESSAGE_EVENT_KIND: &str = "renoa.agent.message.v1";
@@ -83,8 +86,11 @@ pub(crate) fn message_events(
     messages.into_iter().map(message_event).collect()
 }
 
-pub(crate) fn transcript(events: &[SemanticEvent]) -> Result<Vec<Message>, LoopError> {
-    let mut messages = Vec::new();
+pub(crate) fn context_input(
+    active_operation_id: renoa_kernel::OperationId,
+    events: &[SemanticEvent],
+) -> Result<ContextInput, LoopError> {
+    let mut entries = Vec::new();
     for event in events {
         if event.kind == MESSAGE_EVENT_KIND {
             let message = serde_json::from_value(event.payload.clone()).map_err(|error| {
@@ -93,7 +99,10 @@ pub(crate) fn transcript(events: &[SemanticEvent]) -> Result<Vec<Message>, LoopE
                     event.event_id
                 ))
             })?;
-            messages.push(message);
+            entries.push((
+                ContextOrigin::new(event.operation_id, event.sequence),
+                message,
+            ));
         } else if event.kind.starts_with(MESSAGE_EVENT_PREFIX) {
             return Err(LoopError::new(format!(
                 "message event kind `{}` is unsupported",
@@ -101,5 +110,5 @@ pub(crate) fn transcript(events: &[SemanticEvent]) -> Result<Vec<Message>, LoopE
             )));
         }
     }
-    Ok(messages)
+    Ok(ContextInput::new(active_operation_id, entries))
 }

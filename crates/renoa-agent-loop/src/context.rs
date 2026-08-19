@@ -1,5 +1,48 @@
 use renoa_agent::Message;
+use renoa_kernel::OperationId;
 use thiserror::Error;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ContextOrigin {
+    operation_id: OperationId,
+    sequence: u64,
+}
+
+impl ContextOrigin {
+    pub(crate) const fn new(operation_id: OperationId, sequence: u64) -> Self {
+        Self {
+            operation_id,
+            sequence,
+        }
+    }
+}
+
+/// One durable message plus its session-journal position.
+#[derive(Debug, Clone, Copy)]
+pub struct ContextEntry<'a> {
+    origin: ContextOrigin,
+    message: &'a Message,
+}
+
+impl ContextEntry<'_> {
+    /// Returns the operation that produced this message.
+    #[must_use]
+    pub const fn operation_id(&self) -> OperationId {
+        self.origin.operation_id
+    }
+
+    /// Returns the message's gapless session-local event sequence.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.origin.sequence
+    }
+
+    /// Returns the provider-neutral durable message.
+    #[must_use]
+    pub const fn message(&self) -> &Message {
+        self.message
+    }
+}
 
 /// Durable messages available when preparing one model request.
 ///
@@ -8,18 +51,44 @@ use thiserror::Error;
 /// construct kernel state themselves.
 #[derive(Debug)]
 pub struct ContextInput {
+    active_operation_id: OperationId,
+    origins: Vec<ContextOrigin>,
     messages: Vec<Message>,
 }
 
 impl ContextInput {
-    pub(crate) const fn new(messages: Vec<Message>) -> Self {
-        Self { messages }
+    pub(crate) fn new(
+        active_operation_id: OperationId,
+        entries: Vec<(ContextOrigin, Message)>,
+    ) -> Self {
+        let (origins, messages) = entries.into_iter().unzip();
+        Self {
+            active_operation_id,
+            origins,
+            messages,
+        }
+    }
+
+    /// Returns the operation being prepared for its next model call.
+    #[must_use]
+    pub const fn active_operation_id(&self) -> OperationId {
+        self.active_operation_id
     }
 
     /// Returns the complete decoded session transcript.
     #[must_use]
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// Iterates over messages with their durable operation and sequence.
+    #[must_use]
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = ContextEntry<'_>> + ExactSizeIterator {
+        self.origins
+            .iter()
+            .copied()
+            .zip(&self.messages)
+            .map(|(origin, message)| ContextEntry { origin, message })
     }
 
     /// Takes ownership of the complete decoded session transcript.
