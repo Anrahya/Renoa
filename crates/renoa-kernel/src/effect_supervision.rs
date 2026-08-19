@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     panic::resume_unwind,
     sync::{Arc, Mutex},
 };
@@ -8,9 +8,16 @@ use tokio::runtime::Handle;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    EffectAdapter, EffectCompletion, EffectInvocation, KernelError, SessionId, StoreError,
-    StoreErrorKind, database::DatabaseLease,
+    EffectAdapter, EffectCompletion, EffectInvocation, KernelError, OperationId, SessionId,
+    StoreError, StoreErrorKind, database::DatabaseLease,
 };
+
+pub(crate) type RunningSessions = Arc<Mutex<HashMap<SessionId, RunningSession>>>;
+
+pub(crate) struct RunningSession {
+    operation_id: Option<OperationId>,
+    cancellation: CancellationToken,
+}
 
 pub(crate) struct SessionDriveLease {
     ownership: Arc<SessionDriveOwnership>,
@@ -18,7 +25,7 @@ pub(crate) struct SessionDriveLease {
 
 impl SessionDriveLease {
     pub(crate) fn acquire(
-        running: &Arc<Mutex<HashSet<SessionId>>>,
+        running: &RunningSessions,
         database: &Arc<DatabaseLease>,
         session_id: SessionId,
     ) -> Result<Self, KernelError> {
@@ -28,16 +35,57 @@ impl SessionDriveLease {
                 format!("session ownership lock was poisoned: {error}"),
             ))
         })?;
-        if !sessions.insert(session_id) {
+        if sessions.contains_key(&session_id) {
             return Err(KernelError::Busy(session_id));
         }
+        let cancellation = CancellationToken::new();
+        sessions.insert(
+            session_id,
+            RunningSession {
+                operation_id: None,
+                cancellation: cancellation.clone(),
+            },
+        );
         Ok(Self {
             ownership: Arc::new(SessionDriveOwnership {
                 running: Arc::clone(running),
                 _database: Arc::clone(database),
                 session_id,
+                cancellation,
             }),
         })
+    }
+
+    pub(crate) fn bind(&self, operation_id: OperationId) -> Result<(), KernelError> {
+        let mut sessions = self.ownership.running.lock().map_err(|error| {
+            KernelError::Store(StoreError::message(
+                StoreErrorKind::Ownership,
+                format!("session ownership lock was poisoned: {error}"),
+            ))
+        })?;
+        let running = sessions
+            .get_mut(&self.ownership.session_id)
+            .ok_or_else(|| {
+                KernelError::Store(StoreError::message(
+                    StoreErrorKind::Ownership,
+                    "session ownership disappeared before operation binding",
+                ))
+            })?;
+        match running.operation_id {
+            None => running.operation_id = Some(operation_id),
+            Some(bound) if bound == operation_id => {}
+            Some(bound) => {
+                return Err(KernelError::Store(StoreError::message(
+                    StoreErrorKind::Ownership,
+                    format!("session drive changed operation from {bound} to {operation_id}"),
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn effect_cancellation(&self) -> CancellationToken {
+        self.ownership.cancellation.child_token()
     }
 }
 
@@ -50,10 +98,33 @@ impl Clone for SessionDriveLease {
 }
 
 struct SessionDriveOwnership {
-    running: Arc<Mutex<HashSet<SessionId>>>,
+    running: RunningSessions,
     // Keeps the OS writer lock alive when cleanup outlives the Kernel handle.
     _database: Arc<DatabaseLease>,
     session_id: SessionId,
+    cancellation: CancellationToken,
+}
+
+pub(crate) fn signal_running_operation(
+    running: &RunningSessions,
+    session_id: SessionId,
+    operation_id: OperationId,
+) -> Result<(), KernelError> {
+    let cancellation = running
+        .lock()
+        .map_err(|error| {
+            KernelError::Store(StoreError::message(
+                StoreErrorKind::Ownership,
+                format!("session ownership lock was poisoned: {error}"),
+            ))
+        })?
+        .get(&session_id)
+        .filter(|entry| entry.operation_id == Some(operation_id))
+        .map(|entry| entry.cancellation.clone());
+    if let Some(cancellation) = cancellation {
+        cancellation.cancel();
+    }
+    Ok(())
 }
 
 impl Drop for SessionDriveOwnership {

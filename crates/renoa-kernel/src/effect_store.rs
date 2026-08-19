@@ -6,6 +6,7 @@ use crate::{
     Checkpoint, EffectId, EffectInvocation, EffectOutcome, EffectRecovery, EffectSnapshot,
     EffectStatus, Kernel, KernelError, OperationId, SettledEffect,
     admission::from_sql_integer,
+    cancellation::cancellation_requested,
     operation_phase::OperationPhase,
     schema::{json_error, sqlite_error},
 };
@@ -39,37 +40,30 @@ impl PendingEffect {
 pub(crate) enum EffectStart {
     Invoke(PendingEffect),
     Blocked,
+    CancellationPending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EffectIntentCommit {
+    Committed,
+    CancellationPending,
 }
 
 impl Kernel {
-    pub(crate) fn load_current_effect_binding(
-        &self,
-        operation_id: OperationId,
-    ) -> Result<Option<(String, String)>, KernelError> {
-        let connection = self.database.connection()?;
-        connection
-            .query_row(
-                "SELECT e.binding, e.binding_revision
-                 FROM operations AS o
-                 JOIN effects AS e ON e.effect_id = o.current_effect_id
-                 WHERE o.operation_id = ?1",
-                [operation_id.to_string()],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-            .map_err(sqlite_error)
-    }
-
     pub(crate) fn commit_effect_intent(
         &self,
         operation_id: OperationId,
         expected_transition: i64,
         intent: &NewEffectIntent,
-    ) -> Result<(), KernelError> {
+    ) -> Result<EffectIntentCommit, KernelError> {
         let mut connection = self.database.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
+        if cancellation_requested(&transaction, operation_id)? {
+            transaction.commit().map_err(sqlite_error)?;
+            return Ok(EffectIntentCommit::CancellationPending);
+        }
         let position = transaction
             .query_row(
                 "SELECT next_effect_position FROM operations
@@ -123,7 +117,8 @@ impl Kernel {
                 "effect intent state update failed".to_owned(),
             ));
         }
-        transaction.commit().map_err(sqlite_error)
+        transaction.commit().map_err(sqlite_error)?;
+        Ok(EffectIntentCommit::Committed)
     }
 
     pub(crate) fn prepare_effect(
@@ -138,6 +133,10 @@ impl Kernel {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
+        if cancellation_requested(&transaction, operation_id)? {
+            transaction.commit().map_err(sqlite_error)?;
+            return Ok(EffectStart::CancellationPending);
+        }
         let (phase, current_effect_id) = transaction
             .query_row(
                 "SELECT phase, current_effect_id FROM operations
@@ -322,7 +321,7 @@ impl Kernel {
     }
 }
 
-fn mark_outcome_unknown(
+pub(crate) fn mark_outcome_unknown(
     transaction: &rusqlite::Transaction<'_>,
     operation_id: OperationId,
     effect_id: EffectId,

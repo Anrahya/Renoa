@@ -6,6 +6,8 @@ projects are studied for established agent-runtime mechanics.
 ## Pi
 
 - Repository snapshot: `a96fb984d8c8b065fc5d193309fc812a882adee0`
+- Cancellation follow-up: `496185f6e4267b979e3663c45f7eb70b0c6a97b4`
+  (MIT)
 - Remote-catalog follow-up: `9d2ec7ffabe927bfad2214c1cee25b6632a78dcf`
   (MIT)
 - Runtime packages: `@earendil-works/pi-agent-core@0.84.1` and
@@ -55,24 +57,31 @@ projects are studied for established agent-runtime mechanics.
   tool exceptions as results; its separate harness-v2 design proposes replaying
   safe effects and inserting interrupted results for unsafe ones. Renoa adopts
   the recovery distinction, not that unimplemented design or its code. Renoa
-  did not copy Pi's catalog provider or its persistence layer.
+  did not copy Pi's catalog provider or its persistence layer. The cancellation
+  follow-up confirmed Pi's turn-wide signal propagation and checks around
+  model and tool work; Renoa adds durable request identity and transaction
+  ordering instead of copying Pi's in-memory control path.
 
 ## OpenAI Codex CLI
 
 - Repository snapshot: `02bc1dd796e367619b44fe62825d9f118470ad6f`
+- Cancellation follow-up: `3b45c29062ff0e76e71c91b6753290400e7fa8da`
 - License: Apache-2.0
 - Studied source: `codex/codex-rs/core/src/session/turn.rs` and
   `codex/codex-rs/app-server-transport/src/transport/remote_control`
 - Adopted ideas: explicit turn cancellation, event-driven execution,
   turn-scoped model state, bounded continuation, and separation between model
-  sampling and tool execution. The continuity proof also adopts outbound node
-  connections, stable identities independent of a socket, bounded outbound
-  queues, sequence-based recovery, and idempotent redelivery. It does not copy
-  Codex's service-specific enrollment or relay protocol.
+  sampling and tool execution. The follow-up confirmed exact thread-and-turn
+  targeting, an explicit interrupted terminal state, and draining in-flight
+  tool work before cancellation returns. The continuity proof also adopts
+  outbound node connections, stable identities independent of a socket,
+  bounded outbound queues, sequence-based recovery, and idempotent redelivery.
+  It does not copy Codex's service-specific enrollment or relay protocol.
 
 ## Grok Build
 
 - Repository snapshot: `ed6d543643628663873c5de28298e022ed634238`
+- Cancellation follow-up: `19d42e35c07a9c9244f03f6df0c4c353f970d4f9`
 - Monorepo source revision: `d6937fe255dce4133c3d000a50f9cb94de12f06f`
 - License: Apache-2.0; its tool crate carries additional notices for adapted
   Codex and OpenCode implementations.
@@ -86,11 +95,15 @@ projects are studied for established agent-runtime mechanics.
   repair idempotent. Renoa deliberately does not copy Grok Build's blanket
   statement that a dangling call was not executed, because a crash after
   dispatch cannot prove that claim. The current call is recorded as possibly
-  completed; only later sequential calls are recorded as not run.
+  completed; only later sequential calls are recorded as not run. The
+  cancellation follow-up confirmed exact active-prompt targeting and an
+  explicit cancelled terminal state. Renoa does not copy Grok Build's actor or
+  hard-abort machinery.
 
 ## DeepSeek Harness
 
 - Repository snapshot: `99f6f02fecdb7dff40c3fbc9470f5907c29f74ca`
+- Cancellation follow-up: `141eb6fef83422698aef7a981029e843e8161534`
 - Release at review: `dsh-0.1.0-rc.7` developer preview
 - License: MIT
 - Studied source: Cordis runtime and plugin contracts, session and agent event
@@ -108,7 +121,11 @@ projects are studied for established agent-runtime mechanics.
   distinction between a tool that never started and one whose outcome is
   unknown. Unlike DeepSeek's automatic interrupted-turn repair, Renoa preserves
   the block until an explicit host action and keeps the external effect unknown
-  after closing the transcript. No DeepSeek source is copied.
+  after closing the transcript. No DeepSeek source is copied. The cancellation
+  follow-up confirmed a turn-wide cooperative signal, quiescence before
+  reporting completion, and the useful distinction between work aborted before
+  dispatch and work that may have run. Renoa preserves those facts in its
+  durable effect journal rather than copying DeepSeek's runtime implementation.
 
 ## Durable workflow systems
 

@@ -13,6 +13,9 @@ agent behavior, not part of the non-replaceable kernel. A different loop can
 implement `LoopPlugin`, define its own checkpoint and events, and use different
 effect adapters without changing kernel control flow or schema.
 
+The current capability status and deliberately deferred gaps are tracked in
+[`agent-loop-readiness.md`](agent-loop-readiness.md).
+
 Future model, tool, and loop capabilities should reuse established external
 standards at adapter boundaries where their semantics fit. A Renoa-specific
 contract is justified only by a concrete durability or execution invariant the
@@ -88,11 +91,11 @@ hidden in process memory or owned only by the checkpoint. The checkpoint keeps
 the active tool batch and exact next index so restart never guesses which call
 may run.
 
-Loop binding revision 3 adds explicit, honest closure of unknown model and tool
-effects. Revision 2 added fail-closed tool-call identity validation and typed
-live tool uncertainty. The checkpoint schema remains 1 because the
-program-counter representation did not change; the loop revision prevents
-unknown effects from being closed by behavior that lacks the new contract.
+Loop binding revision 4 adds loop-owned durable cancellation closure. Revision
+3 added explicit, honest closure of unknown model and tool effects. Revision 2
+added fail-closed tool-call identity validation and typed live tool uncertainty.
+The checkpoint schema remains 1 because the program-counter representation did
+not change; the loop revision freezes the changed interruption behavior.
 
 ## Execution rules
 
@@ -127,12 +130,14 @@ slice:
 - empty or duplicate model tool-call identifiers fail the operation before the
   assistant message or any tool effect is committed;
 - model-turn and per-response tool-call limits fail the operation explicitly;
-  and
+- durable cancellation balances every outstanding tool call in source order,
+  while preserving a settled current result and distinguishing work that never
+  dispatched from work that may have run; and
 - a new operation reconstructs prior session messages from the event log.
 
-Steering, follow-ups, cancellation, approvals, context projection, compaction,
-parallel tool batches, transient streaming, and authoritative settlement of an
-unknown effect are not implemented by this runtime slice.
+Steering, follow-ups, approvals, context projection, compaction, parallel tool
+batches, transient streaming, and authoritative settlement of an unknown
+effect are not implemented by this runtime slice.
 
 ## Effect adapters and recovery
 
@@ -170,6 +175,15 @@ kernel commits those events with the failed operation, releases queued work,
 and leaves the effect itself permanently unknown. A repeated abandonment adds
 nothing and returns the same terminal outcome.
 
+The host may instead durably cancel any active operation. Cancellation of model
+work records no invented assistant response. Cancellation before tool dispatch
+records a model-visible error saying the call was not run. Cancellation after a
+definite tool result preserves that exact result; cancellation after uncertain
+dispatch says the call may have finished. Every later sequential call receives
+a call-matched not-run error. The operation ends without making another model
+request, but the balanced history is visible to the next operation's model
+request. Internal adapter errors are never copied into these tool messages.
+
 ## Local proof
 
 `renoa-local` exposes its existing guarded read, edit, write, and Bash tools as
@@ -195,6 +209,6 @@ yet been migrated. Its unknown-tool abandonment behavior has now been replaced
 on the kernel path by the generic kernel transition and loop-owned transcript
 closure.
 
-The next migration slice remains consumer-gated. Durable user cancellation now
-ranks ahead of context projection; neither belongs in the kernel merely for
-parity.
+The next migration slice remains consumer-gated. With durable cancellation
+proved, bounded context projection and compaction are next; they must remain
+loop/host policy rather than kernel-owned model behavior.

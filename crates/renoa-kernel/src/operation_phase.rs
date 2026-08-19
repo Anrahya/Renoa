@@ -10,6 +10,7 @@ pub(crate) enum OperationPhase {
     Waiting,
     Completed,
     Failed,
+    Cancelled,
 }
 
 impl OperationPhase {
@@ -23,6 +24,7 @@ impl OperationPhase {
             Self::Waiting => "waiting",
             Self::Completed => "completed",
             Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
         }
     }
 
@@ -36,6 +38,7 @@ impl OperationPhase {
             "waiting" => Ok(Self::Waiting),
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
             _ => Err(KernelError::Corrupt(format!(
                 "unknown operation phase `{value}`"
             ))),
@@ -52,7 +55,15 @@ impl OperationPhase {
             Self::Waiting => OperationStatus::Waiting,
             Self::Completed => OperationStatus::Completed,
             Self::Failed => OperationStatus::Failed,
+            Self::Cancelled => OperationStatus::Cancelled,
         }
+    }
+
+    pub(crate) const fn is_cancellable(self) -> bool {
+        matches!(
+            self,
+            Self::NeedDecision | Self::EffectIntent | Self::EffectDispatched | Self::OutcomeUnknown
+        )
     }
 
     pub(crate) fn active_effect_status(self) -> Result<&'static str, KernelError> {

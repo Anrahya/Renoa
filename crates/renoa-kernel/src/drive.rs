@@ -1,5 +1,4 @@
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
-use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentId, Checkpoint, Command, DriveResult, EffectCompletion, EffectId, EventCursor, Kernel,
@@ -7,7 +6,7 @@ use crate::{
     SessionId,
     admission::{parse_agent_id, parse_operation_id},
     decision_store::CommittedDecision,
-    effect_store::{EffectStart, NewEffectIntent, parse_effect_id},
+    effect_store::{EffectIntentCommit, EffectStart, NewEffectIntent, parse_effect_id},
     effect_supervision::{SessionDriveLease, supervise_effect},
     inspection::require_state_version,
     operation_phase::OperationPhase,
@@ -27,11 +26,6 @@ struct ActiveOperation {
     newly_activated: bool,
 }
 
-enum EffectAdvance {
-    Settled,
-    Blocked,
-}
-
 impl Kernel {
     /// Activates and drives one ordered operation to a terminal or blocked boundary.
     ///
@@ -48,6 +42,9 @@ impl Kernel {
     /// process-local session lease and database writer lease remain held until
     /// the adapter resolves after cleanup. The next drive then applies the
     /// persisted recovery class if no outcome was durably settled.
+    /// [`Kernel::request_cancellation`] instead persists an exact user request,
+    /// signals this operation, waits for the same cleanup rule, and lets the
+    /// loop close its semantic state before this method returns.
     ///
     /// # Panics
     ///
@@ -62,6 +59,7 @@ impl Kernel {
         let Some(mut active) = self.activate(session_id, runtime.manifest())? else {
             return Ok(DriveResult::Idle);
         };
+        lease.bind(active.operation_id)?;
         if &active.manifest != runtime.manifest() {
             return Err(KernelError::RuntimeMismatch);
         }
@@ -70,22 +68,22 @@ impl Kernel {
             self.crash_if(crate::CrashPoint::ActivationCommitted);
         }
         loop {
+            if let Some(outcome) =
+                self.close_requested_cancellation(session_id, active.operation_id, runtime)?
+            {
+                return Ok(DriveResult::Finished {
+                    operation_id: active.operation_id,
+                    outcome,
+                });
+            }
             let events = self.events_after(session_id, EventCursor::START)?.events;
             if matches!(
                 active.phase,
                 OperationPhase::EffectIntent | OperationPhase::EffectDispatched
             ) {
-                match self.drive_effect_phase(&active, runtime, &lease).await? {
-                    EffectAdvance::Blocked => {
-                        return Ok(DriveResult::Blocked {
-                            operation_id: active.operation_id,
-                        });
-                    }
-                    EffectAdvance::Settled => {
-                        active = self.load_active(session_id, active.operation_id)?;
-                        continue;
-                    }
-                }
+                self.drive_effect_phase(&active, runtime, &lease).await?;
+                active = self.load_active(session_id, active.operation_id)?;
+                continue;
             }
             if active.phase == OperationPhase::OutcomeUnknown {
                 return Ok(DriveResult::Blocked {
@@ -100,57 +98,70 @@ impl Kernel {
             }
             let input = self.load_loop_input(session_id, &active, events)?;
             let decision = runtime.plugin.decide(input).map_err(KernelError::Loop)?;
-            let found = decision.checkpoint().schema_version();
-            let expected = active.manifest.checkpoint_schema_version;
-            if found != expected {
-                return Err(KernelError::CheckpointSchemaMismatch { expected, found });
+            if let Some(outcome) =
+                self.apply_loop_decision(session_id, &active, runtime, decision)?
+            {
+                #[cfg(test)]
+                self.crash_if(crate::CrashPoint::TerminalCommitted);
+                return Ok(DriveResult::Finished {
+                    operation_id: active.operation_id,
+                    outcome,
+                });
             }
-            if let LoopDecision::InvokeEffect {
+            active = self.load_active(session_id, active.operation_id)?;
+        }
+    }
+
+    fn apply_loop_decision(
+        &self,
+        session_id: SessionId,
+        active: &ActiveOperation,
+        runtime: &Runtime,
+        decision: LoopDecision,
+    ) -> Result<Option<crate::OperationOutcome>, KernelError> {
+        let found = decision.checkpoint().schema_version();
+        let expected = active.manifest.checkpoint_schema_version;
+        if found != expected {
+            return Err(KernelError::CheckpointSchemaMismatch { expected, found });
+        }
+        if let LoopDecision::InvokeEffect {
+            checkpoint,
+            binding,
+            request,
+            recovery,
+        } = decision
+        {
+            let revision = active
+                .manifest
+                .effect_bindings
+                .get(&binding)
+                .ok_or_else(|| KernelError::EffectBindingUnavailable(binding.clone()))?;
+            runtime
+                .resolve_effect(&binding, revision)
+                .ok_or_else(|| KernelError::EffectBindingUnavailable(binding.clone()))?;
+            let intent = NewEffectIntent {
                 checkpoint,
                 binding,
+                binding_revision: revision.clone(),
                 request,
                 recovery,
-            } = decision
+            };
+            if self.commit_effect_intent(active.operation_id, active.transition_version, &intent)?
+                == EffectIntentCommit::Committed
             {
-                let revision = active
-                    .manifest
-                    .effect_bindings
-                    .get(&binding)
-                    .ok_or_else(|| KernelError::EffectBindingUnavailable(binding.clone()))?;
-                runtime
-                    .resolve_effect(&binding, revision)
-                    .ok_or_else(|| KernelError::EffectBindingUnavailable(binding.clone()))?;
-                let intent = NewEffectIntent {
-                    checkpoint,
-                    binding,
-                    binding_revision: revision.clone(),
-                    request,
-                    recovery,
-                };
-                self.commit_effect_intent(active.operation_id, active.transition_version, &intent)?;
                 #[cfg(test)]
                 self.crash_if(crate::CrashPoint::EffectIntentCommitted);
-                active = self.load_active(session_id, active.operation_id)?;
-                continue;
             }
-            match self.commit_decision(
-                session_id,
-                active.operation_id,
-                active.transition_version,
-                decision,
-            )? {
-                CommittedDecision::Continue => {
-                    active = self.load_active(session_id, active.operation_id)?;
-                }
-                CommittedDecision::Finished(outcome) => {
-                    #[cfg(test)]
-                    self.crash_if(crate::CrashPoint::TerminalCommitted);
-                    return Ok(DriveResult::Finished {
-                        operation_id: active.operation_id,
-                        outcome,
-                    });
-                }
-            }
+            return Ok(None);
+        }
+        match self.commit_decision(
+            session_id,
+            active.operation_id,
+            active.transition_version,
+            decision,
+        )? {
+            CommittedDecision::Continue | CommittedDecision::CancellationPending => Ok(None),
+            CommittedDecision::Finished(outcome) => Ok(Some(outcome)),
         }
     }
 
@@ -159,42 +170,33 @@ impl Kernel {
         active: &ActiveOperation,
         runtime: &Runtime,
         lease: &SessionDriveLease,
-    ) -> Result<EffectAdvance, KernelError> {
-        let (binding, revision) = self
-            .load_current_effect_binding(active.operation_id)?
-            .ok_or_else(|| KernelError::Corrupt("active effect binding is missing".to_owned()))?;
-        if active.manifest.effect_bindings.get(&binding) != Some(&revision) {
+    ) -> Result<(), KernelError> {
+        let pending = match self.prepare_effect(active.operation_id, active.transition_version)? {
+            EffectStart::Invoke(pending) => pending,
+            EffectStart::Blocked | EffectStart::CancellationPending => return Ok(()),
+        };
+        if active.manifest.effect_bindings.get(&pending.binding) != Some(&pending.binding_revision)
+        {
             return Err(KernelError::Corrupt(
                 "active effect differs from the frozen manifest".to_owned(),
             ));
         }
         let adapter = runtime
-            .resolve_effect(&binding, &revision)
-            .ok_or_else(|| KernelError::EffectBindingUnavailable(binding.clone()))?;
+            .resolve_effect(&pending.binding, &pending.binding_revision)
+            .ok_or_else(|| KernelError::EffectBindingUnavailable(pending.binding.clone()))?;
         let executor =
             tokio::runtime::Handle::try_current().map_err(|_| KernelError::RuntimeUnavailable)?;
-        let EffectStart::Invoke(pending) =
-            self.prepare_effect(active.operation_id, active.transition_version)?
-        else {
-            return Ok(EffectAdvance::Blocked);
-        };
-        if pending.binding != binding || pending.binding_revision != revision {
-            return Err(KernelError::Corrupt(
-                "prepared effect changed its frozen binding".to_owned(),
-            ));
-        }
         let effect_id = pending.effect_id;
         let expected_transition = pending.transition_version;
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectDispatchCommitted);
-        let cancellation = CancellationToken::new();
-        let invocation = pending.into_invocation(cancellation);
+        let invocation = pending.into_invocation(lease.effect_cancellation());
         let completion = supervise_effect(&executor, adapter, invocation, lease.clone()).await?;
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectCompletedBeforeSettlement);
         let EffectCompletion::Settled(outcome) = completion else {
             self.record_outcome_unknown(active.operation_id, effect_id, expected_transition)?;
-            return Ok(EffectAdvance::Blocked);
+            return Ok(());
         };
         self.settle_effect(
             active.operation_id,
@@ -204,7 +206,7 @@ impl Kernel {
         )?;
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectSettlementCommitted);
-        Ok(EffectAdvance::Settled)
+        Ok(())
     }
 
     fn load_loop_input(
@@ -303,7 +305,7 @@ impl Kernel {
             }
             (operation_id, true)
         };
-        let mut active = load_active_query(&transaction, agent_id, operation_id)?;
+        let mut active = load_active_query(&transaction, agent_id, session_id, operation_id)?;
         active.newly_activated = newly_activated;
         transaction.commit().map_err(sqlite_error)?;
         Ok(Some(active))
@@ -325,13 +327,19 @@ impl Kernel {
             .optional()
             .map_err(sqlite_error)?
             .ok_or_else(|| KernelError::Corrupt("active operation pointer changed".to_owned()))?;
-        load_active_query(&connection, parse_agent_id(&agent_id)?, operation_id)
+        load_active_query(
+            &connection,
+            parse_agent_id(&agent_id)?,
+            session_id,
+            operation_id,
+        )
     }
 }
 
 fn load_active_query(
     connection: &rusqlite::Connection,
     agent_id: AgentId,
+    session_id: SessionId,
     operation_id: OperationId,
 ) -> Result<ActiveOperation, KernelError> {
     let (
@@ -349,9 +357,10 @@ fn load_active_query(
                         o.transition_version, o.manifest_json,
                         o.checkpoint_json, o.input_effect_id
                  FROM operations AS o
-                 JOIN commands AS c ON c.command_id = o.command_id
-                 WHERE o.operation_id = ?1",
-            [operation_id.to_string()],
+                 JOIN commands AS c
+                   ON c.session_id = o.session_id AND c.command_id = o.command_id
+                 WHERE o.session_id = ?1 AND o.operation_id = ?2",
+            params![session_id.to_string(), operation_id.to_string()],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,

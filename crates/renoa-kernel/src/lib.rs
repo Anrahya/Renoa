@@ -1,6 +1,7 @@
 //! Durable execution laws for composable Renoa agent runtimes.
 
 mod admission;
+mod cancellation;
 mod database;
 mod decision_store;
 mod drive;
@@ -16,16 +17,19 @@ mod state;
 mod unknown_effect;
 
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     error::Error as StdError,
     fmt,
     path::Path,
     sync::{Arc, Mutex},
 };
 
+pub use cancellation::{
+    CancellationEffect, CancellationInput, CancellationTransition, UnsettledEffect,
+};
 use database::DatabaseLease;
 pub use events::{EventCursor, EventPage, SemanticEvent};
-pub use ids::{AgentId, CommandId, EffectId, EventId, OperationId, SessionId};
+pub use ids::{AgentId, CancellationId, CommandId, EffectId, EventId, OperationId, SessionId};
 pub use runtime::{
     Checkpoint, EffectAdapter, EffectBinding, EffectCompletion, EffectFuture, EffectInvocation,
     EffectOutcome, EffectRecovery, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin,
@@ -139,6 +143,15 @@ pub enum KernelError {
     },
     #[error("operation {0} has no unknown effect to abandon")]
     NoUnknownEffect(OperationId),
+    #[error("cancellation {cancellation_id} is already bound to operation {operation_id}")]
+    CancellationConflict {
+        cancellation_id: CancellationId,
+        operation_id: OperationId,
+    },
+    #[error("operation {0} is not active and cancellable")]
+    OperationNotCancellable(OperationId),
+    #[error("operation {0} has a committed cancellation request")]
+    CancellationPending(OperationId),
     #[error("session {0} already has an active driver")]
     Busy(SessionId),
     #[error("kernel effect execution requires a Tokio runtime")]
@@ -170,7 +183,7 @@ pub enum KernelError {
 /// The exclusive durable owner of one Renoa kernel database.
 pub struct Kernel {
     database: Arc<DatabaseLease>,
-    running_sessions: Arc<Mutex<HashSet<SessionId>>>,
+    running_sessions: effect_supervision::RunningSessions,
     #[cfg(test)]
     crash_point: Option<CrashPoint>,
 }
@@ -187,7 +200,7 @@ impl Kernel {
         schema::initialize(&mut connection)?;
         Ok(Self {
             database,
-            running_sessions: Arc::new(Mutex::new(HashSet::new())),
+            running_sessions: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
             crash_point: None,
         })
@@ -217,6 +230,7 @@ pub(crate) enum CrashPoint {
     EffectCompletedBeforeSettlement,
     EffectSettlementCommitted,
     UnknownEffectAbandonmentCommitted,
+    CancellationCommitted,
     TerminalCommitted,
 }
 

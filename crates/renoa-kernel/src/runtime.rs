@@ -5,7 +5,10 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::{AgentId, Command, EffectId, KernelError, OperationId, SemanticEvent, SessionId};
+use crate::{
+    AgentId, CancellationInput, CancellationTransition, Command, EffectId, KernelError,
+    OperationId, SemanticEvent, SessionId,
+};
 
 /// Opaque loop-owned durable state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +216,23 @@ pub trait LoopPlugin: Send + Sync {
     ) -> Result<UnknownEffectAbandonment, LoopError> {
         Err(LoopError::new(
             "loop plugin does not support unknown-effect abandonment",
+        ))
+    }
+
+    /// Closes loop-owned state after a durable user cancellation.
+    ///
+    /// This boundary cannot request another external effect. A loop that does
+    /// not support cancellation leaves the operation safely blocked.
+    ///
+    /// # Errors
+    ///
+    /// A loop error commits no semantic state and leaves cancellation pending.
+    fn cancel_operation(
+        &self,
+        _input: CancellationInput,
+    ) -> Result<CancellationTransition, LoopError> {
+        Err(LoopError::new(
+            "loop plugin does not support operation cancellation",
         ))
     }
 }

@@ -6,10 +6,12 @@ use std::sync::{
 use tempfile::tempdir;
 
 use crate::{
-    AgentId, Checkpoint, Command, CommandId, CrashPoint, DriveResult, EffectAdapter, EffectBinding,
+    AgentId, CancellationEffect, CancellationId, CancellationInput, CancellationTransition,
+    Checkpoint, Command, CommandId, CrashPoint, DriveResult, EffectAdapter, EffectBinding,
     EffectCompletion, EffectFuture, EffectInvocation, EffectOutcome, EffectRecovery, EffectStatus,
     EventCursor, Kernel, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent,
-    OperationOutcome, Runtime, SessionId, UnknownEffectAbandonment, UnknownEffectInput,
+    OperationOutcome, OperationStatus, Runtime, SessionId, UnknownEffectAbandonment,
+    UnknownEffectInput,
 };
 
 #[tokio::test]
@@ -74,6 +76,82 @@ async fn dispatch_marker_makes_never_replay_recovery_conservatively_unknown() {
         snapshot.operations[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
+}
+
+#[tokio::test]
+async fn cancellation_of_committed_intent_proves_the_effect_never_dispatched() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("cancel-intent.sqlite3");
+    let (mut kernel, session_id) = kernel_with_command(&database);
+    kernel.crash_at(CrashPoint::EffectIntentCommitted);
+    let runtime = effect_runtime(EffectRecovery::NeverReplay, Arc::new(NeverCalledAdapter));
+    let task = tokio::spawn(async move { kernel.drive(session_id, &runtime).await });
+    assert!(task.await.expect_err("injected crash").is_panic());
+
+    let kernel = Kernel::open(&database).expect("reopen kernel");
+    let operation_id = kernel
+        .inspect(session_id)
+        .expect("inspect intent")
+        .operations[0]
+        .operation_id;
+    kernel
+        .request_cancellation(session_id, operation_id, CancellationId::new())
+        .expect("request cancellation");
+    assert_eq!(
+        kernel
+            .drive(
+                session_id,
+                &effect_runtime(EffectRecovery::NeverReplay, Arc::new(NeverCalledAdapter)),
+            )
+            .await
+            .expect("close cancellation"),
+        DriveResult::Finished {
+            operation_id,
+            outcome: OperationOutcome::Cancelled,
+        }
+    );
+    let snapshot = kernel.inspect(session_id).expect("inspect cancellation");
+    assert_eq!(snapshot.operations[0].status, OperationStatus::Cancelled);
+    assert_eq!(
+        snapshot.operations[0].effects[0].status,
+        EffectStatus::IntentCommitted
+    );
+    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 0);
+}
+
+#[tokio::test]
+async fn cancellation_after_a_dispatch_crash_never_replays_the_effect() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("cancel-dispatch.sqlite3");
+    let (mut kernel, session_id) = kernel_with_command(&database);
+    kernel.crash_at(CrashPoint::EffectDispatchCommitted);
+    let runtime = effect_runtime(EffectRecovery::SafeToReplay, Arc::new(NeverCalledAdapter));
+    let task = tokio::spawn(async move { kernel.drive(session_id, &runtime).await });
+    assert!(task.await.expect_err("injected crash").is_panic());
+
+    let kernel = Kernel::open(&database).expect("reopen kernel");
+    let operation_id = kernel
+        .inspect(session_id)
+        .expect("inspect dispatch")
+        .operations[0]
+        .operation_id;
+    kernel
+        .request_cancellation(session_id, operation_id, CancellationId::new())
+        .expect("request cancellation");
+    kernel
+        .drive(
+            session_id,
+            &effect_runtime(EffectRecovery::SafeToReplay, Arc::new(NeverCalledAdapter)),
+        )
+        .await
+        .expect("close cancellation without replay");
+    let snapshot = kernel.inspect(session_id).expect("inspect cancellation");
+    assert_eq!(snapshot.operations[0].status, OperationStatus::Cancelled);
+    assert_eq!(
+        snapshot.operations[0].effects[0].status,
+        EffectStatus::OutcomeUnknown
+    );
+    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 1);
 }
 
 #[tokio::test]
@@ -186,6 +264,47 @@ async fn abandonment_commit_survives_a_lost_reply_without_duplicate_events() {
 }
 
 #[tokio::test]
+async fn cancellation_commit_survives_a_lost_reply_without_duplicate_events() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("cancel-commit.sqlite3");
+    let (mut kernel, session_id) = kernel_with_command(&database);
+    kernel.crash_at(CrashPoint::EffectIntentCommitted);
+    let runtime = effect_runtime(EffectRecovery::NeverReplay, Arc::new(NeverCalledAdapter));
+    let task = tokio::spawn(async move { kernel.drive(session_id, &runtime).await });
+    assert!(task.await.expect_err("intent crash").is_panic());
+
+    let mut kernel = Kernel::open(&database).expect("reopen kernel");
+    let operation_id = kernel
+        .inspect(session_id)
+        .expect("inspect intent")
+        .operations[0]
+        .operation_id;
+    let cancellation_id = CancellationId::new();
+    kernel
+        .request_cancellation(session_id, operation_id, cancellation_id)
+        .expect("request cancellation");
+    kernel.crash_at(CrashPoint::CancellationCommitted);
+    let runtime = effect_runtime(EffectRecovery::NeverReplay, Arc::new(NeverCalledAdapter));
+    let task = tokio::spawn(async move { kernel.drive(session_id, &runtime).await });
+    assert!(task.await.expect_err("lost cancellation reply").is_panic());
+
+    let kernel = Kernel::open(&database).expect("reopen committed cancellation");
+    kernel
+        .request_cancellation(session_id, operation_id, cancellation_id)
+        .expect("retry cancellation request");
+    let snapshot = kernel.inspect(session_id).expect("inspect cancellation");
+    assert_eq!(snapshot.operations[0].status, OperationStatus::Cancelled);
+    assert_eq!(
+        kernel
+            .events_after(session_id, EventCursor::START)
+            .expect("read cancellation event")
+            .events
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn activation_and_terminal_commits_are_recovered_without_duplicate_loop_work() {
     let directory = tempdir().expect("temporary directory");
     let activation_database = directory.path().join("activation.sqlite3");
@@ -288,6 +407,25 @@ impl LoopPlugin for EffectLoop {
             events: vec![NewEvent::new(
                 "abandoned",
                 serde_json::json!({"effect_id": input.effect.effect_id}),
+            )],
+        })
+    }
+
+    fn cancel_operation(
+        &self,
+        input: CancellationInput,
+    ) -> Result<CancellationTransition, LoopError> {
+        let effect_state = match input.effect {
+            Some(CancellationEffect::NotDispatched(_)) => "not_dispatched",
+            Some(CancellationEffect::Settled(_)) => "settled",
+            Some(CancellationEffect::OutcomeUnknown(_)) => "outcome_unknown",
+            None => "none",
+        };
+        Ok(CancellationTransition {
+            checkpoint: Checkpoint::new(1, serde_json::json!({"cancelled": true})),
+            events: vec![NewEvent::new(
+                "cancelled",
+                serde_json::json!({"effect": effect_state}),
             )],
         })
     }

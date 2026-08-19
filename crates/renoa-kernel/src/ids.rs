@@ -37,5 +37,6 @@ kernel_id!(AgentId);
 kernel_id!(SessionId);
 kernel_id!(CommandId);
 kernel_id!(OperationId);
+kernel_id!(CancellationId);
 kernel_id!(EffectId);
 kernel_id!(EventId);

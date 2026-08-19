@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
 use crate::{KernelError, StoreError};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 pub(crate) const OPERATION_STATE_VERSION: u32 = 1;
 
 const SCHEMA: &str = "CREATE TABLE agents (
@@ -38,7 +38,7 @@ const SCHEMA: &str = "CREATE TABLE agents (
             phase IN (
                 'queued', 'need_decision', 'effect_intent',
                 'effect_dispatched', 'outcome_unknown', 'waiting',
-                'completed', 'failed'
+                'completed', 'failed', 'cancelled'
             )
         ),
         state_version INTEGER NOT NULL CHECK (state_version > 0),
@@ -87,7 +87,68 @@ const SCHEMA: &str = "CREATE TABLE agents (
         outcome_json TEXT,
         UNIQUE (operation_id, position),
         CHECK ((status = 'settled') = (outcome_json IS NOT NULL))
-     ) STRICT;";
+     ) STRICT;
+
+     CREATE TABLE cancellation_requests (
+        cancellation_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        FOREIGN KEY (session_id, operation_id)
+            REFERENCES operations(session_id, operation_id)
+     ) STRICT;
+
+     CREATE INDEX cancellation_requests_operation
+        ON cancellation_requests(session_id, operation_id);";
+
+const MIGRATE_V1_TO_V2: &str = "CREATE TABLE operations_v2 (
+        operation_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+        command_id TEXT NOT NULL UNIQUE,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        phase TEXT NOT NULL CHECK (
+            phase IN (
+                'queued', 'need_decision', 'effect_intent',
+                'effect_dispatched', 'outcome_unknown', 'waiting',
+                'completed', 'failed', 'cancelled'
+            )
+        ),
+        state_version INTEGER NOT NULL CHECK (state_version > 0),
+        transition_version INTEGER NOT NULL CHECK (transition_version >= 0),
+        manifest_json TEXT,
+        checkpoint_json TEXT,
+        current_effect_id TEXT,
+        input_effect_id TEXT,
+        outcome_json TEXT,
+        next_effect_position INTEGER NOT NULL CHECK (next_effect_position >= 0),
+        UNIQUE (session_id, position),
+        UNIQUE (session_id, operation_id),
+        FOREIGN KEY (session_id, command_id)
+            REFERENCES commands(session_id, command_id)
+     ) STRICT;
+
+     INSERT INTO operations_v2 (
+        operation_id, session_id, command_id, position, phase, state_version,
+        transition_version, manifest_json, checkpoint_json, current_effect_id,
+        input_effect_id, outcome_json, next_effect_position
+     ) SELECT
+        operation_id, session_id, command_id, position, phase, state_version,
+        transition_version, manifest_json, checkpoint_json, current_effect_id,
+        input_effect_id, outcome_json, next_effect_position
+     FROM operations;
+
+     DROP TABLE operations;
+     ALTER TABLE operations_v2 RENAME TO operations;
+
+     CREATE TABLE cancellation_requests (
+        cancellation_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        operation_id TEXT NOT NULL,
+        FOREIGN KEY (session_id, operation_id)
+            REFERENCES operations(session_id, operation_id)
+     ) STRICT;
+
+     CREATE INDEX cancellation_requests_operation
+        ON cancellation_requests(session_id, operation_id);";
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError> {
     let version = connection
@@ -102,6 +163,11 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
     if version == SCHEMA_VERSION {
         return validate_database(connection);
     }
+    if version == 1 {
+        validate_database(connection)?;
+        migrate_v1_to_v2(connection)?;
+        return validate_database(connection);
+    }
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sqlite_error)?;
@@ -111,6 +177,29 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
         .map_err(sqlite_error)?;
     transaction.commit().map_err(sqlite_error)?;
     validate_database(connection)
+}
+
+fn migrate_v1_to_v2(connection: &mut Connection) -> Result<(), KernelError> {
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .map_err(sqlite_error)?;
+    let migration = (|| {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        transaction
+            .execute_batch(MIGRATE_V1_TO_V2)
+            .map_err(sqlite_error)?;
+        transaction
+            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(sqlite_error)?;
+        transaction.commit().map_err(sqlite_error)
+    })();
+    let foreign_keys = connection
+        .pragma_update(None, "foreign_keys", true)
+        .map_err(sqlite_error);
+    migration?;
+    foreign_keys
 }
 
 fn validate_database(connection: &Connection) -> Result<(), KernelError> {
@@ -199,6 +288,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{initialize, open_connection};
+    use crate::{AgentId, Command, CommandId, Kernel, SessionId};
 
     #[test]
     fn actual_connections_use_required_durability_settings() {
@@ -211,7 +301,59 @@ mod tests {
         assert_eq!(pragma_text(&connection, "journal_mode"), "wal");
         assert_eq!(pragma_integer(&connection, "synchronous"), 2);
         assert_eq!(pragma_integer(&connection, "busy_timeout"), 5_000);
-        assert_eq!(pragma_integer(&connection, "user_version"), 1);
+        assert_eq!(pragma_integer(&connection, "user_version"), 2);
+    }
+
+    #[test]
+    fn version_one_data_migrates_with_its_cross_record_ownership_intact() {
+        let directory = tempdir().expect("temporary directory");
+        let database = directory.path().join("kernel.sqlite3");
+        let kernel = Kernel::open(&database).expect("create current database");
+        let agent_id = AgentId::new();
+        let session_id = SessionId::new();
+        kernel.create_agent(agent_id).expect("create agent");
+        kernel
+            .create_session(session_id, agent_id)
+            .expect("create session");
+        let admission = kernel
+            .submit(
+                session_id,
+                Command::new(CommandId::new(), serde_json::json!({ "input": "saved" })),
+            )
+            .expect("submit command");
+        drop(kernel);
+
+        let connection = open_connection(&database).expect("open fixture database");
+        connection
+            .execute_batch(
+                "DROP TABLE cancellation_requests;
+                 PRAGMA user_version = 1;",
+            )
+            .expect("represent version one schema");
+        drop(connection);
+
+        let migrated = Kernel::open(&database).expect("migrate version one database");
+        let snapshot = migrated.inspect(session_id).expect("inspect migrated data");
+        assert_eq!(snapshot.operations[0].operation_id, admission.operation_id);
+        drop(migrated);
+
+        let connection = open_connection(&database).expect("inspect migration");
+        assert_eq!(pragma_integer(&connection, "user_version"), 2);
+        let cancellation_table: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table' AND name = 'cancellation_requests'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect cancellation table");
+        assert_eq!(cancellation_table, 1);
+        let violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("check migrated foreign keys");
+        assert_eq!(violations, 0);
     }
 
     fn pragma_integer(connection: &rusqlite::Connection, name: &str) -> i64 {

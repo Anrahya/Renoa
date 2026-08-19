@@ -12,10 +12,11 @@ kernel API. [`kernel-v0.md`](kernel-v0.md) describes the older command-scoped
 RCP executor and does not define this kernel.
 
 The foundation slice implements one local SQLite kernel, a decision-only loop
-plugin boundary, generic effect adapters, explicit abandonment of unknown
-effects, durable inspection, and cursor replay. The kernel crate intentionally
-does not integrate RCP, ACP, T3 Code, providers, tools, prompts, context policy,
-or workspaces. Its first external consumer, documented in
+plugin boundary, generic effect adapters, durable cancellation, explicit
+abandonment of unknown effects, durable inspection, and cursor replay. The
+kernel crate intentionally does not integrate RCP, ACP, T3 Code, providers,
+tools, prompts, context policy, or workspaces. Its first external consumer,
+documented in
 [`renoa-agent-loop-v0.md`](renoa-agent-loop-v0.md), now proves a
 provider-neutral model/tool turn, honest unknown-effect recovery, and a real
 local workspace edit without moving those concerns into the kernel.
@@ -50,6 +51,7 @@ The kernel owns:
 - the frozen runtime manifest for an active operation;
 - the versioned loop checkpoint and operational program counter;
 - exact effect intent, dispatch state, recovery class, and settlement;
+- exact-operation cancellation admission and process-local signalling;
 - gapless semantic event order and cursor replay;
 - atomic state transitions and fail-closed recovery; and
 - database, stored-state, manifest, and checkpoint compatibility checks.
@@ -110,6 +112,12 @@ checkpoint facts, and may return only a checkpoint and semantic events. Its
 output type cannot request another effect. The host decides whether to invoke
 this action; the kernel never abandons uncertainty automatically.
 
+`LoopPlugin::cancel_operation` is the corresponding decision-only boundary for
+a durable user cancellation. It receives the exact command, gapless history,
+checkpoint, and any current effect fact: settled, definitely not dispatched, or
+outcome unknown. It can close loop-owned history but cannot request another
+effect or change the recorded external fact.
+
 An `EffectAdapter` receives a stable effect ID, the exact saved request, and an
 attempt-scoped cancellation signal. It reports either one definite success or
 failure outcome, or that the external outcome is unknowable. Provider
@@ -121,7 +129,7 @@ An adapter must resolve only after work it started has stopped when the signal
 is cancelled. Dropping `Kernel::drive` cancels an in-flight invocation, but a
 supervised task retains both the session lease and the database writer lease
 until the adapter confirms cleanup. This is process-lifecycle safety, not the
-still-open durable cancellation contract.
+durable user-cancellation request itself.
 
 ## Durable domain
 
@@ -151,6 +159,29 @@ position. Queued content is not semantic history. Activation always chooses the
 lowest queued position, freezes the supplied runtime manifest, initializes the
 operation program counter, and installs the session's active pointer in one
 transaction.
+
+### Cancellation
+
+`Kernel::request_cancellation` accepts a caller-stable `CancellationId` plus one
+exact session and active operation. It commits that identity and target before
+signalling a process-local driver. Repeating the same identity and target is a
+no-op, including after terminal settlement; reusing the identity for another
+target is a conflict. A queued or terminal operation is not cancellable.
+
+Cancellation and ordinary progress serialize through SQLite. If cancellation
+commits first, no later model or tool effect may be created or dispatched. If
+dispatch commits first, the kernel signals the operation-owned cancellation
+token and waits for the adapter to stop its work before settlement. A definite
+result remains definite; an unprovable result remains `OutcomeUnknown`.
+
+The loop then writes any provider-neutral repair events and a final checkpoint
+in the same transaction that marks the operation `Cancelled` and releases the
+session. Model work has no invented assistant response. Tool work receives
+call-matched results: an already-settled result is preserved, work never
+dispatched is reported as not run, and possibly dispatched work is reported as
+possibly completed. Later sequential calls are reported as not run. These
+events are available to a future model turn without forcing another model call
+inside the cancelled operation.
 
 ### Runtime manifest and checkpoint
 
@@ -225,12 +256,14 @@ rejected; an equal cursor returns an empty page.
 ## Operation state machine
 
 ```text
-Queued
-  -> NeedDecision
-  -> EffectIntent -> EffectDispatched -> NeedDecision
-                                   \-> OutcomeUnknown -> Failed
-  -> NeedDecision                  (append and continue)
-  -> Waiting | Completed | Failed  (terminal)
+Queued -> NeedDecision
+NeedDecision -> NeedDecision  (append and continue)
+             -> EffectIntent -> EffectDispatched -> NeedDecision
+                                             \-> OutcomeUnknown
+             -> Waiting | Completed | Failed
+NeedDecision | EffectIntent | EffectDispatched | OutcomeUnknown
+             -> Cancelled  (durable cancellation)
+OutcomeUnknown -> Failed  (explicit abandonment)
 ```
 
 Only `Queued` operations lack a manifest. Every other phase has the exact
@@ -281,12 +314,14 @@ No loop plugin or effect adapter runs inside a SQLite transaction.
 | Settle effect | exact outcome, effect `Settled`, operation `NeedDecision` | result is available exactly once | call loop; never repeat settled effect |
 | Mark uncertainty | effect and operation `OutcomeUnknown` | recovery or the live adapter cannot prove the result | block without dispatch |
 | Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer | the operation is closed while the effect remains unknown | return the same outcome on retry or activate queued work |
+| Request cancellation | stable cancellation identity and exact active target | cancellation is authoritative even if the signal reply is lost | signal the exact live operation or close it on the next drive |
+| Close cancellation | loop checkpoint and events, operation `Cancelled`, clear active pointer | effect facts remain definite, not dispatched, or unknown as recorded | exact request retry is a no-op or activate queued work |
 | Terminate | checkpoint, events, outcome, clear active pointer | operation is terminal | activate next queued operation |
 
 Required deterministic injections cover both sides of activation, effect
 intent, dispatch, effect completion, settlement, unknown-effect abandonment,
-and terminal event commits. A panic or process loss after a committed row never
-requires inference from a missing record.
+cancellation closure, and terminal event commits. A panic or process loss after
+a committed row never requires inference from a missing record.
 
 ## Foundation proof
 
@@ -310,7 +345,11 @@ The first complete slice must prove through the public seams:
     ownership until cleanup finishes; and
 16. explicit unknown-effect abandonment validates the frozen runtime and
     gapless history, never invokes an adapter, is idempotent after a lost reply,
-    preserves the effect as unknown, and releases queued work atomically.
+    preserves the effect as unknown, and releases queued work atomically; and
+17. cancellation is persisted before signalling, targets one exact active
+    operation, prevents later dispatch when it wins, waits for started work to
+    stop, preserves the effect's certainty, closes loop-owned history, and
+    releases queued work atomically.
 
 The scripted loop and fake effect adapter are test boundaries only. They are
 not product policy or privileged kernel implementations.
@@ -384,12 +423,15 @@ fork or movement path plus idempotence, isolation, recovery, and fencing tests.
 14. Unknown effects remain blocked until an explicit host action; abandonment
     can close loop-owned history but cannot change the effect into a definite
     success or failure.
+15. Cancellation is an idempotent, exact-operation durable command. It is
+    committed before signalling, cannot start new effects, and does not erase
+    whether existing work settled, never dispatched, or may have run.
 
 ## Explicitly open decisions
 
 - authoritative settlement of `OutcomeUnknown` from an adapter receipt,
   callback, or status lookup tied to the stable effect identity;
-- cancellation, steering, approval, and their ordering relative to commands;
+- steering, approval, and their ordering relative to commands and cancellation;
 - RCP task-to-session provisioning and coordinator command positions;
 - event retention, deletion, indexing, and snapshot compaction;
 - checkpoint size limits and host-level context compaction;

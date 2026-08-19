@@ -3,17 +3,18 @@ use std::{
     fs,
     num::NonZeroU32,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use futures_util::{StreamExt, stream};
 use renoa_agent::{
-    AssistantContent, AssistantMetadata, Message, Model, ModelError, ModelEvent, ModelEventStream,
-    ModelRequest, ModelResponse, StopReason, ToolCall,
+    AssistantContent, AssistantMetadata, ContentBlock, Message, Model, ModelError, ModelEvent,
+    ModelEventStream, ModelRequest, ModelResponse, StopReason, ToolCall,
 };
 use renoa_agent_loop::{AgentCommand, AgentLoopConfig, ModelBinding, build_runtime};
 use renoa_kernel::{
-    AgentId, Command, CommandId, DriveResult, EffectRecovery, EventCursor, Kernel,
-    OperationOutcome, SessionId,
+    AgentId, CancellationId, Command, CommandId, DriveResult, EffectRecovery, EventCursor, Kernel,
+    OperationOutcome, OperationStatus, SessionId,
 };
 use renoa_local::LocalWorkspace;
 use tempfile::tempdir;
@@ -99,6 +100,137 @@ async fn kernel_agent_loop_edits_a_real_local_workspace() {
         snapshot.operations[0].effects[1].recovery,
         EffectRecovery::NeverReplay
     );
+}
+
+#[tokio::test]
+async fn kernel_cancellation_stops_real_bash_and_balances_the_next_model_context() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace_root = directory.path().join("workspace");
+    fs::create_dir(&workspace_root).expect("create workspace");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let workspace = LocalWorkspace::open(&workspace_root).expect("open workspace");
+    let runtime = Arc::new(bash_cancellation_runtime(&workspace, Arc::clone(&requests)));
+    let kernel =
+        Arc::new(Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel"));
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+    kernel.create_agent(agent_id).expect("create agent");
+    kernel
+        .create_session(session_id, agent_id)
+        .expect("create session");
+    let first = kernel
+        .submit(
+            session_id,
+            Command::new(
+                CommandId::new(),
+                serde_json::to_value(AgentCommand::text("Run the long command."))
+                    .expect("serialize command"),
+            ),
+        )
+        .expect("submit command");
+    let runner = Arc::clone(&kernel);
+    let driven_runtime = Arc::clone(&runtime);
+    let drive =
+        tokio::spawn(async move { runner.drive(session_id, driven_runtime.as_ref()).await });
+    wait_for_path(&workspace_root.join("started.txt")).await;
+
+    kernel
+        .request_cancellation(session_id, first.operation_id, CancellationId::new())
+        .expect("request cancellation");
+    assert_eq!(
+        drive
+            .await
+            .expect("join driver")
+            .expect("settle cancellation"),
+        DriveResult::Finished {
+            operation_id: first.operation_id,
+            outcome: OperationOutcome::Cancelled,
+        }
+    );
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    assert!(
+        !workspace_root.join("leaked.txt").exists(),
+        "a Bash child survived cancellation settlement"
+    );
+    assert_eq!(
+        kernel
+            .inspect(session_id)
+            .expect("inspect cancellation")
+            .operations[0]
+            .status,
+        OperationStatus::Cancelled
+    );
+
+    let second = kernel
+        .submit(
+            session_id,
+            Command::new(
+                CommandId::new(),
+                serde_json::to_value(AgentCommand::text("Continue.")).expect("serialize command"),
+            ),
+        )
+        .expect("submit continuation");
+    assert_eq!(
+        kernel
+            .drive(session_id, runtime.as_ref())
+            .await
+            .expect("drive continuation"),
+        DriveResult::Finished {
+            operation_id: second.operation_id,
+            outcome: OperationOutcome::Completed,
+        }
+    );
+    let requests = requests.lock().expect("request lock");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].messages.len(), 4);
+    let Message::Tool { result } = &requests[1].messages[2] else {
+        panic!("cancelled tool result was not carried into the next model request")
+    };
+    assert_eq!(result.call_id, "bash-cancel");
+    assert!(result.is_error);
+    assert!(matches!(
+        result.content.as_slice(),
+        [ContentBlock::Text { text }] if text.contains("cancelled")
+    ));
+}
+
+async fn wait_for_path(path: &std::path::Path) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !path.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("command did not start");
+}
+
+fn bash_cancellation_runtime(
+    workspace: &LocalWorkspace,
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+) -> renoa_kernel::Runtime {
+    let model = Arc::new(ScriptedModel::new(
+        [
+            tool_response(tool_call(
+                "bash-cancel",
+                "bash",
+                serde_json::json!({
+                    "command": "echo started > started.txt; (sleep 1; echo leaked > leaked.txt) & wait"
+                }),
+            )),
+            text_response("Continued after the cancelled command."),
+        ],
+        requests,
+    ));
+    build_runtime(
+        AgentLoopConfig::new(
+            "Run commands carefully.",
+            NonZeroU32::new(3).expect("non-zero model limit"),
+            NonZeroU32::new(2).expect("non-zero tool limit"),
+        ),
+        ModelBinding::new("scripted-local-v1", model, EffectRecovery::SafeToReplay),
+        workspace.kernel_tool_bindings(),
+    )
+    .expect("build kernel runtime")
 }
 
 struct ScriptedModel {

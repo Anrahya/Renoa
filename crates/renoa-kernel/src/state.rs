@@ -55,6 +55,7 @@ pub enum OperationStatus {
     Waiting,
     Completed,
     Failed,
+    Cancelled,
 }
 
 /// The terminal reason an operation released its session.
@@ -65,6 +66,7 @@ pub enum OperationOutcome {
     WaitingForInput,
     Completed,
     Failed { reason: String },
+    Cancelled,
 }
 
 /// The durable lifecycle of one external effect.

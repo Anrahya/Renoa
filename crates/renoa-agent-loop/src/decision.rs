@@ -3,14 +3,15 @@ use renoa_agent::{
     ToolResult, ToolSpec, validate_tool_call_ids,
 };
 use renoa_kernel::{
-    EffectOutcome, EffectRecovery, LoopDecision, LoopError, LoopInput, LoopPlugin, SettledEffect,
-    UnknownEffect, UnknownEffectAbandonment, UnknownEffectInput,
+    EffectOutcome, EffectRecovery, LoopDecision, LoopError, LoopInput, SettledEffect,
 };
+
+mod interruption;
 
 use crate::{
     AgentCommand,
     configuration::{AgentLoopConfig, MODEL_EFFECT_BINDING},
-    format::{LoopPhase, checkpoint, decode_checkpoint, message_event, message_events, transcript},
+    format::{LoopPhase, checkpoint, message_event, message_events, transcript},
 };
 
 pub(crate) struct LoopTool {
@@ -307,103 +308,6 @@ impl AgentLoop {
             events: vec![message_event(Message::Tool { result })?],
         })
     }
-
-    fn abandon_unknown_model(
-        &self,
-        input: &UnknownEffectInput,
-    ) -> Result<UnknownEffectAbandonment, LoopError> {
-        let expected_request = self.model_request(&input.events)?;
-        require_unknown_effect_identity(
-            &input.effect,
-            MODEL_EFFECT_BINDING,
-            &encode("model request", expected_request)?,
-        )?;
-        Ok(UnknownEffectAbandonment {
-            checkpoint: checkpoint(LoopPhase::Terminal)?,
-            events: Vec::new(),
-        })
-    }
-
-    fn abandon_unknown_tool(
-        &self,
-        calls: &[ToolCall],
-        next_index: u32,
-        input: &UnknownEffectInput,
-    ) -> Result<UnknownEffectAbandonment, LoopError> {
-        let index = usize::try_from(next_index)
-            .map_err(|error| LoopError::new(format!("tool call index is invalid: {error}")))?;
-        let call = calls.get(index).ok_or_else(|| {
-            LoopError::new("tool checkpoint points outside its durable call batch")
-        })?;
-        let tool = self
-            .tools
-            .iter()
-            .find(|tool| tool.spec.name == call.name)
-            .ok_or_else(|| LoopError::new("awaited tool binding is no longer configured"))?;
-        require_unknown_effect_identity(
-            &input.effect,
-            &tool.effect_binding,
-            &encode("tool request", call)?,
-        )?;
-
-        let mut results = Vec::with_capacity(calls.len() - index);
-        results.push(Message::Tool {
-            result: unavailable_result(
-                call,
-                "This tool may have finished, but Renoa could not recover its result. It was not run again.",
-            ),
-        });
-        results.extend(calls[index + 1..].iter().map(|call| Message::Tool {
-            result: unavailable_result(
-                call,
-                "Tool call was not run because an earlier tool outcome is unknown.",
-            ),
-        }));
-        Ok(UnknownEffectAbandonment {
-            checkpoint: checkpoint(LoopPhase::Terminal)?,
-            events: message_events(results)?,
-        })
-    }
-}
-
-impl LoopPlugin for AgentLoop {
-    fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
-        let Some(saved) = input.checkpoint.as_ref() else {
-            return Self::decide_initial(&input);
-        };
-        match decode_checkpoint(saved)? {
-            LoopPhase::NeedModel { model_turns } => self.request_model(model_turns, &input),
-            LoopPhase::AwaitingModel { model_turns } => self.settle_model(model_turns, input),
-            LoopPhase::NeedTool {
-                model_turns,
-                calls,
-                next_index,
-            } => self.request_tool(model_turns, calls, next_index, input.effect.as_ref()),
-            LoopPhase::AwaitingTool {
-                model_turns,
-                calls,
-                next_index,
-            } => self.settle_tool(model_turns, calls, next_index, input.effect),
-            LoopPhase::Terminal => Err(LoopError::new(
-                "a terminal agent checkpoint cannot be driven",
-            )),
-        }
-    }
-
-    fn abandon_unknown_effect(
-        &self,
-        input: UnknownEffectInput,
-    ) -> Result<UnknownEffectAbandonment, LoopError> {
-        match decode_checkpoint(&input.checkpoint)? {
-            LoopPhase::AwaitingModel { .. } => self.abandon_unknown_model(&input),
-            LoopPhase::AwaitingTool {
-                calls, next_index, ..
-            } => self.abandon_unknown_tool(&calls, next_index, &input),
-            LoopPhase::NeedModel { .. } | LoopPhase::NeedTool { .. } | LoopPhase::Terminal => Err(
-                LoopError::new("checkpoint is not awaiting the unknown effect"),
-            ),
-        }
-    }
 }
 
 fn require_effect(
@@ -420,20 +324,6 @@ fn require_effect_identity(
 ) -> Result<(), LoopError> {
     require_effect_request_identity(
         "settled",
-        &effect.binding,
-        &effect.request,
-        binding,
-        request,
-    )
-}
-
-fn require_unknown_effect_identity(
-    effect: &UnknownEffect,
-    binding: &str,
-    request: &serde_json::Value,
-) -> Result<(), LoopError> {
-    require_effect_request_identity(
-        "unknown",
         &effect.binding,
         &effect.request,
         binding,

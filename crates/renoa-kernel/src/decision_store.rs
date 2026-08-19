@@ -2,6 +2,7 @@ use rusqlite::{Transaction, TransactionBehavior, params};
 
 use crate::{
     EventId, Kernel, KernelError, LoopDecision, OperationId, OperationOutcome, SessionId,
+    cancellation::cancellation_requested,
     operation_phase::OperationPhase,
     schema::{json_error, sqlite_error},
 };
@@ -9,6 +10,7 @@ use crate::{
 pub(crate) enum CommittedDecision {
     Continue,
     Finished(OperationOutcome),
+    CancellationPending,
 }
 
 impl Kernel {
@@ -63,6 +65,10 @@ impl Kernel {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
+        if cancellation_requested(&transaction, operation_id)? {
+            transaction.commit().map_err(sqlite_error)?;
+            return Ok(CommittedDecision::CancellationPending);
+        }
         append_events(&transaction, session_id, operation_id, &events)?;
         let checkpoint_json = serde_json::to_string(&checkpoint).map_err(json_error)?;
         let outcome_json = outcome

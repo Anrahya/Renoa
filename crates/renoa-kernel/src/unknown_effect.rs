@@ -5,6 +5,7 @@ use crate::{
     Runtime, RuntimeManifest, SessionId, UnknownEffect, UnknownEffectAbandonment,
     UnknownEffectInput,
     admission::{from_sql_integer, parse_agent_id, parse_command_id, parse_operation_id},
+    cancellation::cancellation_requested,
     decision_store::append_events,
     effect_store::parse_effect_id,
     effect_supervision::SessionDriveLease,
@@ -174,6 +175,7 @@ impl Kernel {
             | OperationPhase::Completed => {
                 return Err(KernelError::NoUnknownEffect(operation_id));
             }
+            OperationPhase::Cancelled => return Err(KernelError::NoUnknownEffect(operation_id)),
         };
         transaction.commit().map_err(sqlite_error)?;
         Ok(state)
@@ -191,6 +193,9 @@ impl Kernel {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
+        if cancellation_requested(&transaction, operation_id)? {
+            return Err(KernelError::CancellationPending(operation_id));
+        }
         let event_high_water = transaction
             .query_row(
                 "SELECT next_event_sequence FROM sessions
