@@ -13,7 +13,7 @@ use renoa_agent::{
     ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::{
-    AgentCommand, AgentLoopConfig, AgentToolBinding, ModelBinding, build_runtime,
+    AgentCommand, AgentLoopConfig, AgentToolBinding, ContextBinding, ModelBinding, build_runtime,
 };
 use renoa_kernel::{
     AgentId, CancellationId, Command, CommandId, DriveResult, EffectRecovery, EventCursor, Kernel,
@@ -30,6 +30,7 @@ async fn cancelling_model_work_does_not_invent_an_assistant_message() {
     let runtime = Arc::new(
         build_runtime(
             config(),
+            ContextBinding::full_history(),
             ModelBinding::new(
                 "cancellable-model-v1",
                 Arc::new(CancellableModel {
@@ -107,6 +108,7 @@ async fn uncertain_cancelled_tool_is_honest_and_later_calls_are_not_run() {
     let runtime = Arc::new(
         build_runtime(
             config(),
+            ContextBinding::full_history(),
             ModelBinding::new("one-response-v1", model, EffectRecovery::SafeToReplay),
             vec![AgentToolBinding::new(
                 "uncertain-tool-v1",

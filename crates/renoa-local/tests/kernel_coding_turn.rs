@@ -11,7 +11,9 @@ use renoa_agent::{
     AssistantContent, AssistantMetadata, ContentBlock, Message, Model, ModelError, ModelEvent,
     ModelEventStream, ModelRequest, ModelResponse, StopReason, ToolCall,
 };
-use renoa_agent_loop::{AgentCommand, AgentLoopConfig, ModelBinding, build_runtime};
+use renoa_agent_loop::{
+    AgentCommand, AgentLoopConfig, ContextBinding, ModelBinding, build_runtime,
+};
 use renoa_kernel::{
     AgentId, CancellationId, Command, CommandId, DriveResult, EffectRecovery, EventCursor, Kernel,
     OperationOutcome, OperationStatus, SessionId,
@@ -50,6 +52,7 @@ async fn kernel_agent_loop_edits_a_real_local_workspace() {
             NonZeroU32::new(4).expect("non-zero model limit"),
             NonZeroU32::new(4).expect("non-zero tool limit"),
         ),
+        ContextBinding::full_history(),
         ModelBinding::new("scripted-local-v1", model, EffectRecovery::SafeToReplay),
         workspace.kernel_tool_bindings(),
     )
@@ -227,6 +230,7 @@ fn bash_cancellation_runtime(
             NonZeroU32::new(3).expect("non-zero model limit"),
             NonZeroU32::new(2).expect("non-zero tool limit"),
         ),
+        ContextBinding::full_history(),
         ModelBinding::new("scripted-local-v1", model, EffectRecovery::SafeToReplay),
         workspace.kernel_tool_bindings(),
     )

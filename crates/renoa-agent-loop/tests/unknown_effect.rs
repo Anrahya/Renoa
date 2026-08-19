@@ -12,7 +12,7 @@ use renoa_agent::{
     ToolError, ToolOutput, ToolResult, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::{
-    AgentCommand, AgentLoopConfig, AgentToolBinding, ModelBinding, build_runtime,
+    AgentCommand, AgentLoopConfig, AgentToolBinding, ContextBinding, ModelBinding, build_runtime,
 };
 use renoa_kernel::{
     AgentId, Command, CommandId, DriveResult, EffectRecovery, EffectStatus, EventCursor, Kernel,
@@ -173,6 +173,7 @@ fn runtime(model: Arc<dyn Model>, tool: Arc<dyn Tool>) -> renoa_kernel::Runtime 
             NonZeroU32::new(4).expect("non-zero model limit"),
             NonZeroU32::new(4).expect("non-zero tool limit"),
         ),
+        ContextBinding::full_history(),
         ModelBinding::new("model-v1", model, EffectRecovery::SafeToReplay),
         vec![AgentToolBinding::new(
             "mutating-tool-v1",

@@ -42,20 +42,28 @@ credentials, or a network except through kernel-dispatched effect adapters.
 
 ## Runtime composition
 
-`build_runtime` consumes three concrete host choices:
+`build_runtime` consumes four concrete host choices:
 
 - `AgentLoopConfig`: system instructions and non-zero model/tool-call limits;
+- `ContextBinding`: a pure context strategy and its stable revision;
 - `ModelBinding`: any `renoa-agent::Model`, its stable revision, and recovery
   declaration; and
 - zero or more `AgentToolBinding` values: any `renoa-agent::Tool`, a stable
   revision, and recovery declaration.
 
-The builder validates tool names and revisions, computes a content digest over
-the instructions, limits, advertised tool order and specifications, and
-recovery declarations, and then creates the exact kernel `RuntimeManifest`.
-Provider replacement therefore changes a binding, not kernel code. Tool
-replacement does the same. Replacing the loop means supplying another
-`LoopPlugin` to the kernel.
+The builder validates context, model, and tool revisions, computes a content
+digest over the context revision, instructions, limits, advertised tool order
+and specifications, and recovery declarations, and then creates the exact
+kernel `RuntimeManifest`. Provider, context-strategy, and tool replacement
+therefore change bindings, not kernel code. Replacing the loop means supplying
+another `LoopPlugin` to the kernel.
+
+`ContextStrategy` is synchronous, pure loop policy. It receives the complete
+decoded durable transcript and returns only the ordered messages visible to the
+next model request. The built-in `FullHistoryStrategy` preserves current
+behavior. A strategy revision must change whenever its behavior changes; an
+active operation accepts only the frozen revision. Projection never mutates the
+semantic journal, and external compaction work must later use a kernel effect.
 
 ## Durable formats
 
@@ -91,11 +99,12 @@ hidden in process memory or owned only by the checkpoint. The checkpoint keeps
 the active tool batch and exact next index so restart never guesses which call
 may run.
 
-Loop binding revision 4 adds loop-owned durable cancellation closure. Revision
-3 added explicit, honest closure of unknown model and tool effects. Revision 2
-added fail-closed tool-call identity validation and typed live tool uncertainty.
-The checkpoint schema remains 1 because the program-counter representation did
-not change; the loop revision freezes the changed interruption behavior.
+Loop binding revision 5 adds replaceable, revision-frozen context projection.
+Revision 4 added loop-owned durable cancellation closure. Revision 3 added
+explicit, honest closure of unknown model and tool effects. Revision 2 added
+fail-closed tool-call identity validation and typed live tool uncertainty. The
+checkpoint schema remains 1 because the program-counter representation did not
+change.
 
 ## Execution rules
 
@@ -104,6 +113,7 @@ One admitted operation advances as follows:
 ```text
 command
   -> commit user-message event
+  -> project the durable transcript into a model-facing view
   -> persist exact model request
   -> model effect
   -> commit complete assistant message
@@ -130,14 +140,16 @@ slice:
 - empty or duplicate model tool-call identifiers fail the operation before the
   assistant message or any tool effect is committed;
 - model-turn and per-response tool-call limits fail the operation explicitly;
+- a context strategy can replace the model-facing message view without
+  deleting or rewriting durable history;
 - durable cancellation balances every outstanding tool call in source order,
   while preserving a settled current result and distinguishing work that never
   dispatched from work that may have run; and
 - a new operation reconstructs prior session messages from the event log.
 
-Steering, follow-ups, approvals, context projection, compaction, parallel tool
-batches, transient streaming, and authoritative settlement of an unknown
-effect are not implemented by this runtime slice.
+Steering, follow-ups, approvals, bounded compaction, parallel tool batches,
+transient streaming, and authoritative settlement of an unknown effect are not
+implemented by this runtime slice.
 
 ## Effect adapters and recovery
 
@@ -204,11 +216,12 @@ real.
 The loop rules and leaf calls are adapted from Renoa's own `renoa-agent` and
 `renoa-harness` behavior. No external source is copied. The older harness
 remains intact while this consumer proves the smaller kernel boundary. It still
-contains mature cancellation, context projection, and compaction that have not
-yet been migrated. Its unknown-tool abandonment behavior has now been replaced
-on the kernel path by the generic kernel transition and loop-owned transcript
-closure.
+contains mature async context projection and compaction. The kernel loop now
+has a pure, revision-frozen projection strategy, but the researched bounded
+compaction behavior has not yet been migrated. The older harness's unknown-tool
+abandonment behavior has been replaced on the kernel path by the generic kernel
+transition and loop-owned transcript closure.
 
-The next migration slice remains consumer-gated. With durable cancellation
-proved, bounded context projection and compaction are next; they must remain
-loop/host policy rather than kernel-owned model behavior.
+The next migration slice remains consumer-gated: move the researched bounded
+compaction behavior onto this loop-owned strategy boundary, with every summary
+model call mediated by a kernel effect.

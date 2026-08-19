@@ -17,7 +17,7 @@ no contract should be added until a real consumer needs it.
 | Durable user cancellation | Ready | Stable request identity, persist-before-signal, exact active-operation targeting, no new effects after cancellation wins, awaited cleanup, and loop-owned transcript closure |
 | Local coding proof | Ready | A deterministic model drives the real guarded file and Bash tools through the kernel path |
 | Transient model/tool progress | Partial | The provider-neutral SDK has deltas and tool updates; the kernel runtime does not yet expose a transient observation channel |
-| Context projection and compaction | Next | The older harness proves bounded projection and compaction; the kernel runtime still replays the full durable event history |
+| Context projection and compaction | Partial | Model-facing projection is replaceable, revision-frozen, and proven without rewriting durable history; bounded compaction is not yet migrated |
 | Steering and follow-ups | Deferred | Ordering against active work and admitted commands needs a real surface consumer |
 | Approvals and permissions | Deferred | These remain host/product policy; a durable decision contract needs a concrete host flow |
 | Parallel tool batches | Deferred | The SDK can describe parallel-safe tools, but the durable loop intentionally executes source order sequentially |
@@ -25,6 +25,7 @@ no contract should be added until a real consumer needs it.
 | Cross-session context and branches | Deferred | Session-tree direction is recorded in the kernel architecture, but provenance and snapshot contracts need the first branch consumer |
 | Remote continuity (RCP) | Separate | RCP remains a harness-independent connection system and is not part of loop readiness |
 
-The next slice is context projection and bounded compaction. It must preserve
-the full semantic journal, make projection host/loop policy rather than a
-kernel concern, and prove restart behavior before the matrix changes.
+The next slice is bounded compaction. It must preserve the full semantic
+journal, reuse the researched safe-cut and retry behavior, keep summary calls
+behind kernel effects, and prove restart behavior before this row becomes
+`Ready`.

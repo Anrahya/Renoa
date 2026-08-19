@@ -8,13 +8,15 @@ use thiserror::Error;
 
 use crate::{
     adapters::{ModelAdapter, ToolAdapter},
+    context::{ContextStrategy, FullHistoryStrategy},
     decision::{AgentLoop, LoopTool},
 };
 
 pub(crate) const CHECKPOINT_SCHEMA_VERSION: u32 = 1;
 pub(crate) const LOOP_BINDING: &str = "renoa.agent.model-tool-loop";
-pub(crate) const LOOP_REVISION: &str = "4";
+pub(crate) const LOOP_REVISION: &str = "5";
 pub(crate) const MODEL_EFFECT_BINDING: &str = "renoa.agent.model";
+const FULL_HISTORY_CONTEXT_REVISION: &str = "renoa.context.full-history.v1";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Durable behavior limits and instructions for one model/tool loop runtime.
@@ -63,6 +65,29 @@ impl ModelBinding {
     }
 }
 
+/// One replaceable context strategy plus its recovery-compatible identity.
+pub struct ContextBinding {
+    revision: String,
+    strategy: Arc<dyn ContextStrategy>,
+}
+
+impl ContextBinding {
+    /// Binds a context strategy to one stable behavior revision.
+    #[must_use]
+    pub fn new(revision: impl Into<String>, strategy: Arc<dyn ContextStrategy>) -> Self {
+        Self {
+            revision: revision.into(),
+            strategy,
+        }
+    }
+
+    /// Uses the built-in strategy that exposes the complete durable transcript.
+    #[must_use]
+    pub fn full_history() -> Self {
+        Self::new(FULL_HISTORY_CONTEXT_REVISION, Arc::new(FullHistoryStrategy))
+    }
+}
+
 /// One replaceable tool adapter plus its recovery-compatible identity.
 pub struct AgentToolBinding {
     revision: String,
@@ -93,9 +118,13 @@ impl AgentToolBinding {
 /// binding before an operation can activate.
 pub fn build_runtime(
     config: AgentLoopConfig,
+    context: ContextBinding,
     model: ModelBinding,
     tools: Vec<AgentToolBinding>,
 ) -> Result<Runtime, AgentLoopBuildError> {
+    if context.revision.is_empty() {
+        return Err(AgentLoopBuildError::EmptyContextRevision);
+    }
     if model.revision.is_empty() {
         return Err(AgentLoopBuildError::EmptyModelRevision);
     }
@@ -133,8 +162,14 @@ pub fn build_runtime(
         ));
     }
 
-    let config_digest = digest_configuration(&config, model.recovery, &digest_tools)?;
-    let loop_plugin = Arc::new(AgentLoop::new(config, model.recovery, loop_tools));
+    let config_digest =
+        digest_configuration(&config, &context.revision, model.recovery, &digest_tools)?;
+    let loop_plugin = Arc::new(AgentLoop::new(
+        config,
+        context.strategy,
+        model.recovery,
+        loop_tools,
+    ));
     let mut effects = Vec::with_capacity(tool_adapters.len() + 1);
     effects.push(EffectBinding::new(
         MODEL_EFFECT_BINDING,
@@ -160,6 +195,7 @@ struct DigestConfiguration<'a> {
     system_prompt: &'a str,
     max_model_turns: u32,
     max_tool_calls_per_turn: u32,
+    context_revision: &'a str,
     model_recovery: EffectRecovery,
     tools: &'a [DigestTool],
 }
@@ -173,6 +209,7 @@ struct DigestTool {
 
 fn digest_configuration(
     config: &AgentLoopConfig,
+    context_revision: &str,
     model_recovery: EffectRecovery,
     tools: &[DigestTool],
 ) -> Result<String, AgentLoopBuildError> {
@@ -180,6 +217,7 @@ fn digest_configuration(
         system_prompt: &config.system_prompt,
         max_model_turns: config.max_model_turns.get(),
         max_tool_calls_per_turn: config.max_tool_calls_per_turn.get(),
+        context_revision,
         model_recovery,
         tools,
     })
@@ -197,6 +235,8 @@ fn digest_configuration(
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AgentLoopBuildError {
+    #[error("context binding revision cannot be empty")]
+    EmptyContextRevision,
     #[error("model binding revision cannot be empty")]
     EmptyModelRevision,
     #[error("tool name cannot be empty")]

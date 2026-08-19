@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use renoa_agent::{
     AssistantContent, ContentBlock, Message, ModelRequest, ModelResponse, StopReason, ToolCall,
     ToolResult, ToolSpec, validate_tool_call_ids,
@@ -11,6 +13,7 @@ mod interruption;
 use crate::{
     AgentCommand,
     configuration::{AgentLoopConfig, MODEL_EFFECT_BINDING},
+    context::{ContextInput, ContextStrategy},
     format::{LoopPhase, checkpoint, message_event, message_events, transcript},
 };
 
@@ -22,6 +25,7 @@ pub(crate) struct LoopTool {
 
 pub(crate) struct AgentLoop {
     config: AgentLoopConfig,
+    context: Arc<dyn ContextStrategy>,
     model_recovery: EffectRecovery,
     tools: Vec<LoopTool>,
 }
@@ -29,11 +33,13 @@ pub(crate) struct AgentLoop {
 impl AgentLoop {
     pub(crate) const fn new(
         config: AgentLoopConfig,
+        context: Arc<dyn ContextStrategy>,
         model_recovery: EffectRecovery,
         tools: Vec<LoopTool>,
     ) -> Self {
         Self {
             config,
+            context,
             model_recovery,
             tools,
         }
@@ -199,9 +205,13 @@ impl AgentLoop {
         &self,
         events: &[renoa_kernel::SemanticEvent],
     ) -> Result<ModelRequest, LoopError> {
+        let messages = self
+            .context
+            .project(ContextInput::new(transcript(events)?))
+            .map_err(|error| LoopError::new(format!("context projection failed: {error}")))?;
         Ok(ModelRequest {
             system_prompt: self.config.system_prompt.clone(),
-            messages: transcript(events)?,
+            messages,
             tools: self.tools.iter().map(|tool| tool.spec.clone()).collect(),
         })
     }

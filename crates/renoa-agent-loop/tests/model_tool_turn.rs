@@ -11,8 +11,8 @@ use renoa_agent::{
     ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::{
-    AgentCommand, AgentLoopConfig, AgentToolBinding, MESSAGE_EVENT_KIND, ModelBinding,
-    build_runtime,
+    AgentCommand, AgentLoopConfig, AgentToolBinding, ContextBinding, MESSAGE_EVENT_KIND,
+    ModelBinding, build_runtime,
 };
 use renoa_kernel::{
     AgentId, Command, CommandId, DriveResult, EffectRecovery, EventCursor, Kernel,
@@ -50,6 +50,7 @@ async fn kernel_drives_a_complete_model_tool_model_turn() {
             NonZeroU32::new(4).expect("non-zero model limit"),
             NonZeroU32::new(4).expect("non-zero tool limit"),
         ),
+        ContextBinding::full_history(),
         ModelBinding::new("scripted-model-v1", model, EffectRecovery::SafeToReplay),
         vec![AgentToolBinding::new(
             "replace-value-v1",
@@ -150,6 +151,7 @@ async fn duplicate_tool_call_identifiers_fail_before_any_tool_effect() {
             NonZeroU32::new(2).expect("non-zero model limit"),
             NonZeroU32::new(2).expect("non-zero tool limit"),
         ),
+        ContextBinding::full_history(),
         ModelBinding::new(
             "scripted-model-v1",
             Arc::new(ScriptedModel::new([response], requests)),
@@ -215,6 +217,7 @@ async fn empty_tool_call_identifier_fails_before_any_tool_effect() {
             NonZeroU32::new(2).expect("non-zero model limit"),
             NonZeroU32::new(1).expect("non-zero tool limit"),
         ),
+        ContextBinding::full_history(),
         ModelBinding::new(
             "scripted-model-v1",
             Arc::new(ScriptedModel::new(

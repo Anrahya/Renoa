@@ -11,7 +11,7 @@ use renoa_agent::{
     ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::{
-    AgentCommand, AgentLoopConfig, AgentToolBinding, ModelBinding, build_runtime,
+    AgentCommand, AgentLoopConfig, AgentToolBinding, ContextBinding, ModelBinding, build_runtime,
 };
 use renoa_kernel::{
     AgentId, Command, CommandId, DriveResult, EffectRecovery, EffectStatus, EventCursor, Kernel,
@@ -285,6 +285,7 @@ fn test_runtime(model: Arc<dyn Model>, tools: Vec<AgentToolBinding>) -> renoa_ke
             NonZeroU32::new(4).expect("non-zero model limit"),
             NonZeroU32::new(4).expect("non-zero tool limit"),
         ),
+        ContextBinding::full_history(),
         ModelBinding::new("recovery-model-v1", model, EffectRecovery::SafeToReplay),
         tools,
     )
