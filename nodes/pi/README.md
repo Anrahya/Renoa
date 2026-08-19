@@ -45,7 +45,24 @@ second catalog lookup.
 
 ## Run with OpenCode Go
 
-Use the model ID and API key supplied by OpenCode Go:
+Subscribe to OpenCode Go and copy its API key. Store it in the same owner-only
+credential database used by xAI without placing the key in shell history or a
+long-lived environment variable:
+
+```sh
+mkdir -p ~/.config/renoa
+chmod 700 ~/.config/renoa
+export RENOA_PI_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
+read -rsp 'OpenCode Go API key: ' RENOA_OPENCODE_GO_KEY
+printf '\n'
+printf '%s\n' "$RENOA_OPENCODE_GO_KEY" | pnpm auth:opencode-go
+unset RENOA_OPENCODE_GO_KEY
+```
+
+The enrollment command refuses interactive terminal input so the terminal
+cannot echo the key. It accepts exactly one bounded line over standard input,
+never prints the key, and stores it under the `opencode-go` provider identity.
+Use the model ID supplied by OpenCode Go when starting Renoa:
 
 ```sh
 export RENOA_RCP_ENDPOINT='wss://your-coordinator/connect'
@@ -57,7 +74,6 @@ export RENOA_PI_PROVIDER='opencode-go'
 export RENOA_PI_MODEL='your-opencode-go-model-id'
 export RENOA_PI_INSTRUCTIONS='You are a careful coding agent.'
 export RENOA_PI_TARGET='workspace:renoa'
-export OPENCODE_API_KEY='your-opencode-key'
 # Optional, but these two values must be set together.
 export RENOA_PI_WORKSPACE_ROOT='/absolute/path/to/workspace'
 export RENOA_PI_WORKSPACE_ACCESS='read_write' # or 'read'

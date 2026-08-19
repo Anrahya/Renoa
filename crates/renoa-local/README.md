@@ -18,6 +18,11 @@ pnpm --dir nodes/pi install --frozen-lockfile --ignore-scripts
 pnpm --dir nodes/pi build
 ```
 
+Enroll provider credentials into an owner-only SQLite file before starting the
+host. SuperGrok uses `pnpm --dir nodes/pi auth:xai`. OpenCode Go uses the
+non-echoing piped-key flow documented in
+[`nodes/pi/README.md`](../../nodes/pi/README.md#run-with-opencode-go).
+
 Then configure one Pi model and run a turn:
 
 ```sh
