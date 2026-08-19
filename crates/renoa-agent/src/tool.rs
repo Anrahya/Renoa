@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +40,38 @@ pub struct ToolCall {
     pub thought_signature: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+}
+
+/// An invalid set of tool calls from one completed model response.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum ToolCallBatchError {
+    #[error("model returned a tool call with an empty identifier")]
+    EmptyId,
+    #[error("model returned duplicate tool-call identifier `{0}`")]
+    DuplicateId(String),
+}
+
+/// Validates identifiers that must be unambiguous within one tool-call batch.
+///
+/// # Errors
+///
+/// Returns [`ToolCallBatchError::EmptyId`] for an empty identifier or
+/// [`ToolCallBatchError::DuplicateId`] when two calls have the same identifier.
+pub fn validate_tool_call_ids<'a>(
+    identifiers: impl IntoIterator<Item = &'a str>,
+) -> Result<(), ToolCallBatchError> {
+    let identifiers = identifiers.into_iter();
+    let mut observed = HashSet::with_capacity(identifiers.size_hint().0);
+    for identifier in identifiers {
+        if identifier.is_empty() {
+            return Err(ToolCallBatchError::EmptyId);
+        }
+        if !observed.insert(identifier) {
+            return Err(ToolCallBatchError::DuplicateId(identifier.to_owned()));
+        }
+    }
+    Ok(())
 }
 
 /// Model-visible outcome of one tool invocation.
@@ -91,14 +126,58 @@ impl ToolUpdates {
 #[error("{message}")]
 pub struct ToolError {
     message: String,
+    certainty: ToolErrorCertainty,
 }
 
 impl ToolError {
+    /// Creates a definite failure that may be returned to the model.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            certainty: ToolErrorCertainty::Definite,
         }
+    }
+
+    /// Creates an error for an invocation whose external outcome cannot be proven.
+    #[must_use]
+    pub fn outcome_unknown(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            certainty: ToolErrorCertainty::OutcomeUnknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolErrorCertainty {
+    Definite,
+    OutcomeUnknown,
+}
+
+/// Evidence that a tool invocation may have completed without a known result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
+#[error("tool `{tool_name}` call `{call_id}` has an unknown outcome: {message}")]
+pub struct ToolOutcomeUnknown {
+    call_id: String,
+    tool_name: String,
+    message: String,
+}
+
+impl ToolOutcomeUnknown {
+    #[must_use]
+    pub fn call_id(&self) -> &str {
+        &self.call_id
+    }
+
+    #[must_use]
+    pub fn tool_name(&self) -> &str {
+        &self.tool_name
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -111,7 +190,9 @@ pub trait Tool: Send + Sync {
         ToolExecutionMode::Parallel
     }
 
-    /// Returns ordered model-visible content or a model-visible error.
+    /// Returns ordered model-visible content, a definite model-visible error,
+    /// or [`ToolError::outcome_unknown`] when the final external outcome cannot
+    /// be proven.
     ///
     /// The future must observe `cancellation` and resolve only after work it
     /// started is stopped. Process tools, for example, must kill and reap their
@@ -125,20 +206,32 @@ pub trait Tool: Send + Sync {
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>>;
 }
 
-/// Executes one tool call, drains bounded progress, and returns one
-/// model-visible result. On cancellation, this waits for the tool future to
-/// confirm its work has stopped. Callers own start/end lifecycle events.
+/// Executes one tool call and drains bounded progress.
+///
+/// Definite tool failures become model-visible error results. Uncertain
+/// failures remain typed errors so a durable caller can stop without recording
+/// a false result. On cancellation, this waits for the tool future to confirm
+/// its work has stopped. Callers own lifecycle events; an uncertain outcome has
+/// no settled end event.
+///
+/// # Errors
+///
+/// Returns [`ToolOutcomeUnknown`] when the tool cannot prove its final external
+/// outcome.
 pub async fn invoke_tool(
     tool: Option<&dyn Tool>,
     call: ToolCall,
     cancellation: CancellationToken,
     sink: Option<&dyn AgentEventSink>,
-) -> ToolResult {
+) -> Result<ToolResult, ToolOutcomeUnknown> {
     if cancellation.is_cancelled() {
-        return error_tool_result(&call, "Tool execution was cancelled.");
+        return Ok(error_tool_result(&call, "Tool execution was cancelled."));
     }
     let Some(tool) = tool else {
-        return error_tool_result(&call, &format!("Tool `{}` is not available.", call.name));
+        return Ok(error_tool_result(
+            &call,
+            &format!("Tool `{}` is not available.", call.name),
+        ));
     };
 
     let (updates, mut receiver) = ToolUpdates::channel();
@@ -172,14 +265,21 @@ pub async fn invoke_tool(
     }
 
     match outcome {
-        Ok(output) => ToolResult {
+        Ok(output) => Ok(ToolResult {
             call_id: call.id,
             name: call.name,
             content: output.content,
             details: output.details,
             is_error: false,
+        }),
+        Err(error) => match error.certainty {
+            ToolErrorCertainty::Definite => Ok(error_tool_result(&call, &error.message)),
+            ToolErrorCertainty::OutcomeUnknown => Err(ToolOutcomeUnknown {
+                call_id: call.id,
+                tool_name: call.name,
+                message: error.message,
+            }),
         },
-        Err(error) => error_tool_result(&call, &error.to_string()),
     }
 }
 

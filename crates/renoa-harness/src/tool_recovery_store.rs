@@ -12,6 +12,7 @@ use crate::{
         cancellation_requested, parse_session_id, parse_state, parse_uuid, update_state,
         validate_tool_batch,
     },
+    tool_store::current_tool_state,
 };
 
 impl Store {
@@ -29,7 +30,7 @@ impl Store {
                 .map_err(sqlite_error)?;
             let pending = load_pending_tool(&transaction, operation_id)?;
             let recovery = if cancellation_requested(&transaction, operation_id)? {
-                mark_tool_outcome_unknown(&transaction, operation_id, &pending)?;
+                commit_pending_outcome_unknown(&transaction, operation_id, &pending)?;
                 ToolPendingRecovery::Blocked
             } else {
                 match pending.recovery {
@@ -37,13 +38,45 @@ impl Store {
                         retry_safe_tool(&transaction, operation_id, pending)?,
                     )),
                     ToolRecovery::NeverReplay => {
-                        mark_tool_outcome_unknown(&transaction, operation_id, &pending)?;
+                        commit_pending_outcome_unknown(&transaction, operation_id, &pending)?;
                         ToolPendingRecovery::Blocked
                     }
                 }
             };
             transaction.commit().map_err(sqlite_error)?;
             Ok(recovery)
+        })
+        .await
+    }
+
+    pub(crate) async fn mark_tool_outcome_unknown(
+        &self,
+        lease: &std::sync::Arc<SessionRunLease>,
+        intent: ToolIntent,
+    ) -> Result<crate::drive::ToolSettlement, HarnessError> {
+        let database = self.database();
+        let lease = std::sync::Arc::clone(lease);
+        blocking_transition(lease, move || {
+            let mut connection = database.connection()?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sqlite_error)?;
+            let Some(old_state_json) = current_tool_state(&transaction, &intent)? else {
+                return Ok(crate::drive::ToolSettlement::Stale);
+            };
+            commit_tool_outcome_unknown(
+                &transaction,
+                &ToolUnknownCommit {
+                    operation_id: intent.operation_id,
+                    progress: &intent.progress,
+                    batch: intent.batch,
+                    effect_id: intent.effect_id,
+                    settlement_token: intent.settlement_token,
+                    old_state_json: &old_state_json,
+                },
+            )?;
+            transaction.commit().map_err(sqlite_error)?;
+            Ok(crate::drive::ToolSettlement::Blocked)
         })
         .await
     }
@@ -203,10 +236,36 @@ fn retry_safe_tool(
     })
 }
 
-fn mark_tool_outcome_unknown(
+fn commit_pending_outcome_unknown(
     transaction: &Transaction<'_>,
     operation_id: OperationId,
     pending: &PendingTool,
+) -> Result<(), HarnessError> {
+    commit_tool_outcome_unknown(
+        transaction,
+        &ToolUnknownCommit {
+            operation_id,
+            progress: &pending.progress,
+            batch: pending.batch,
+            effect_id: pending.effect_id,
+            settlement_token: pending.settlement_token,
+            old_state_json: &pending.state_json,
+        },
+    )
+}
+
+struct ToolUnknownCommit<'a> {
+    operation_id: OperationId,
+    progress: &'a OperationProgress,
+    batch: ToolBatch,
+    effect_id: Uuid,
+    settlement_token: Uuid,
+    old_state_json: &'a str,
+}
+
+fn commit_tool_outcome_unknown(
+    transaction: &Transaction<'_>,
+    commit: &ToolUnknownCommit<'_>,
 ) -> Result<(), HarnessError> {
     let changed = transaction
         .execute(
@@ -214,27 +273,27 @@ fn mark_tool_outcome_unknown(
              WHERE operation_id = ?1 AND batch_id = ?2 AND source_index = ?3
                  AND status = 'pending' AND effect_id = ?4 AND settlement_token = ?5",
             params![
-                operation_id.to_string(),
-                pending.batch.batch_id.to_string(),
-                i64::from(pending.batch.next_index),
-                pending.effect_id.to_string(),
-                pending.settlement_token.to_string(),
+                commit.operation_id.to_string(),
+                commit.batch.batch_id.to_string(),
+                i64::from(commit.batch.next_index),
+                commit.effect_id.to_string(),
+                commit.settlement_token.to_string(),
             ],
         )
         .map_err(sqlite_error)?;
     if changed != 1 {
         return Err(HarnessError::Corrupt(
-            "unsafe tool recovery compare-and-set failed".to_owned(),
+            "tool outcome-unknown compare-and-set failed".to_owned(),
         ));
     }
     let next_state = StoredState::from_state(StoredOperationState::ToolOutcomeUnknown {
-        progress: pending.progress.clone(),
-        batch: pending.batch,
+        progress: commit.progress.clone(),
+        batch: commit.batch,
     });
     update_state(
         transaction,
-        operation_id,
-        &pending.state_json,
+        commit.operation_id,
+        commit.old_state_json,
         &serde_json::to_string(&next_state).map_err(json_error)?,
     )
 }

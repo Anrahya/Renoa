@@ -246,3 +246,77 @@ async fn an_oversized_tool_batch_fails_before_any_call_is_published_or_run() {
         vec![Message::user_text("inspect both")]
     );
 }
+
+#[tokio::test]
+async fn duplicate_tool_call_identifiers_fail_before_publication_or_execution() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("harness.sqlite3");
+    let calls = ["first.txt", "second.txt"].map(|path| renoa_agent::ToolCall {
+        id: "call-duplicate".to_owned(),
+        name: "read_file".to_owned(),
+        arguments: serde_json::json!({"path": path}),
+        thought_signature: None,
+        namespace: None,
+    });
+    let model = Arc::new(ScriptedModel::new([ModelResponse {
+        content: calls.into_iter().map(AssistantContent::tool_call).collect(),
+        stop_reason: StopReason::ToolUse,
+        usage: Some(usage(2, 1)),
+        metadata: AssistantMetadata::default(),
+    }]));
+    let tool = Arc::new(RecordingTool::new(
+        ToolSpec {
+            name: "read_file".to_owned(),
+            description: "Read one file".to_owned(),
+            input_schema: serde_json::json!({"type": "object"}),
+        },
+        ToolOutput {
+            content: vec![ContentBlock::text("contents")],
+            details: None,
+        },
+    ));
+    let profile = RuntimeProfile::new(
+        "coding-v1",
+        model,
+        "Be precise.",
+        NonZeroU32::new(2).expect("non-zero attempt limit"),
+    )
+    .with_tools(
+        vec![ToolBinding::new(
+            "read-file-v1",
+            tool.clone(),
+            ToolRecovery::SafeToReplay,
+        )],
+        NonZeroU32::new(2).expect("non-zero tool-call limit"),
+    )
+    .expect("valid tools");
+    let harness = Harness::open(&database).expect("open harness");
+    let session_id = SessionId::new();
+    harness
+        .create_standalone_session(session_id)
+        .await
+        .expect("create session");
+    harness
+        .admit_standalone(
+            session_id,
+            OperationRequest::new(RequestId::new(), vec![ContentBlock::text("inspect both")]),
+        )
+        .await
+        .expect("admit operation");
+
+    assert!(matches!(
+        harness
+            .run_next(session_id, &profile)
+            .await
+            .expect("reject duplicate tool-call identifiers"),
+        RunNext::Finished {
+            outcome: OperationOutcome::Failed { ref message },
+            ..
+        } if message == "model returned duplicate tool-call identifier `call-duplicate`"
+    ));
+    assert!(tool.calls().is_empty());
+    let snapshot = harness.inspect(session_id).await.expect("inspect session");
+    assert_eq!(snapshot.operations[0].status, OperationStatus::Failed);
+    assert_eq!(snapshot.messages, vec![Message::user_text("inspect both")]);
+    assert_eq!(snapshot.outputs.len(), 1);
+}

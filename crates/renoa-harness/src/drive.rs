@@ -81,6 +81,7 @@ pub(crate) enum Settlement {
 pub(crate) enum ToolSettlement {
     Continue(StoredState),
     Finished(OperationOutcome),
+    Blocked,
     Stale,
 }
 
@@ -246,7 +247,13 @@ async fn drive_planned_tool(
     let Some(frozen_tool) = planned.frozen_tool.as_ref() else {
         let call = planned.call.clone();
         emit_event(sink, AgentEvent::ToolExecutionStart { call: call.clone() }).await;
-        let result = invoke_tool(None, call.clone(), CancellationToken::new(), sink).await;
+        let result = invoke_tool(None, call.clone(), CancellationToken::new(), sink)
+            .await
+            .map_err(|_| {
+                HarnessError::Corrupt(
+                    "an unavailable tool produced an unknown outcome without executing".to_owned(),
+                )
+            })?;
         let observed = result.clone();
         let settlement = store
             .settle_unavailable_tool(lease, planned, result)
@@ -302,12 +309,20 @@ async fn execute_tool_intent(
         sink,
     )
     .await;
-    let observed = result.clone();
     #[cfg(test)]
     crash_if(
         crash_point,
         crate::CrashPoint::ToolCompletedBeforeSettlement,
     );
+    let Ok(result) = result else {
+        let settlement = store.mark_tool_outcome_unknown(lease, intent).await?;
+        return tool_settlement_step(
+            settlement,
+            #[cfg(test)]
+            crash_point,
+        );
+    };
+    let observed = result.clone();
     let settlement = store.settle_tool(lease, intent, result).await?;
     let step = tool_settlement_step(
         settlement,
@@ -362,6 +377,7 @@ fn tool_settlement_step(
             crash_if(crash_point, crate::CrashPoint::ToolSettlementCommitted);
             Ok(DriveStep::Finished(outcome))
         }
+        ToolSettlement::Blocked => Ok(DriveStep::Blocked),
         ToolSettlement::Stale => Err(HarnessError::Corrupt(
             "the sole session driver produced a stale tool result".to_owned(),
         )),

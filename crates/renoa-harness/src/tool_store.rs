@@ -413,7 +413,7 @@ fn append_tool_result_and_advance(
     Ok(ToolSettlement::Continue(state))
 }
 
-fn current_tool_state(
+pub(crate) fn current_tool_state(
     transaction: &rusqlite::Transaction<'_>,
     intent: &ToolIntent,
 ) -> Result<Option<String>, HarnessError> {

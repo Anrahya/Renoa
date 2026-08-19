@@ -1,0 +1,23 @@
+[package]
+name = "renoa-agent-loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
+renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true

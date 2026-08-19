@@ -415,13 +415,20 @@ results for the remaining calls in that batch, and fails the operation. It
 never guesses that the external effect failed. Richer reconciliation remains
 future work.
 
-A tool emits zero or more transient progress updates followed by exactly one
-final result. Durable harness v0 executes each model-produced batch
-sequentially. Unknown tool names and tool failures become model-visible error
-results. Calls from a length-stopped response are never executed; the complete
-batch receives error results before any continuation. Parallel batches remain
-an in-memory Agent feature until crash tests prove independent recovery and
-source-ordered settlement.
+A tool emits zero or more transient progress updates followed by one definite
+result or typed uncertainty. Durable harness v0 executes each model-produced
+batch sequentially. Unknown tool names and definite tool failures become
+model-visible error results. A live tool that cannot prove its external outcome
+atomically enters `OutcomeUnknown`, emits no fabricated result, and is not
+invoked again. Calls from a length-stopped response are never executed; the
+complete batch receives error results before any continuation. Parallel batches
+remain an in-memory Agent feature until crash tests prove independent recovery
+and source-ordered settlement.
+
+Before publishing a completed assistant message or creating a tool plan, the
+harness rejects empty or duplicate tool-call identifiers as invalid model
+behavior. Provider-reported usage is still settled, but no ambiguous call can
+reach an external tool.
 
 Before another model request or operation activates, every settled assistant
 tool call has exactly one durable result in source order, including denied,

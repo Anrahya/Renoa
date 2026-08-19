@@ -4,7 +4,7 @@ use crate::{
     AgentEvent, AgentEventSink, AssistantContent, ContentBlock, Message, ModelRequest,
     ModelResponse, SamplingError, SamplingResult, StopReason, TokenUsage,
     events::{append_message, emit_event, finish_message},
-    sample_model,
+    sample_model, validate_tool_call_ids,
 };
 
 use super::{Agent, AgentError, AgentRunResult};
@@ -116,6 +116,13 @@ impl Agent {
                 limit: self.config.max_tool_calls_per_turn,
                 usage,
             });
+        }
+        if let Err(source) = validate_tool_call_ids(calls.iter().map(|call| call.id.as_str())) {
+            if response.message_started {
+                emit_event(sink, AgentEvent::MessageAbort).await;
+            }
+            emit_event(sink, AgentEvent::TurnEnd).await;
+            return Err(AgentError::InvalidToolCallBatch { source, usage });
         }
 
         let output = content

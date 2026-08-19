@@ -8,7 +8,9 @@ use renoa_agent::{
     BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolSpec,
     ToolUpdates,
 };
+use renoa_agent_loop::AgentToolBinding;
 use renoa_harness::{ToolBinding, ToolRecovery};
+use renoa_kernel::EffectRecovery;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -59,33 +61,79 @@ impl LocalWorkspace {
     /// Creates the concrete tool bindings for one runtime profile.
     #[must_use]
     pub fn tool_bindings(&self) -> Vec<ToolBinding> {
-        vec![
-            ToolBinding::new(
-                self.tool_binding_id("read-file-v1"),
-                Arc::new(ReadFile::new(Arc::clone(&self.root))),
-                ToolRecovery::SafeToReplay,
-            ),
-            ToolBinding::new(
-                self.tool_binding_id("edit-file-v1"),
-                Arc::new(EditFile::new(Arc::clone(&self.root))),
-                ToolRecovery::NeverReplay,
-            ),
-            ToolBinding::new(
-                self.tool_binding_id("write-file-v1"),
-                Arc::new(WriteFile::new(Arc::clone(&self.root))),
-                ToolRecovery::NeverReplay,
-            ),
-            ToolBinding::new(
-                self.tool_binding_id("bash-v1"),
-                Arc::new(Bash::new(Arc::clone(&self.root))),
-                ToolRecovery::NeverReplay,
-            ),
-        ]
+        self.tools()
+            .into_iter()
+            .map(|binding| {
+                ToolBinding::new(
+                    binding.id,
+                    binding.tool,
+                    match binding.recovery {
+                        LocalRecovery::SafeToReplay => ToolRecovery::SafeToReplay,
+                        LocalRecovery::NeverReplay => ToolRecovery::NeverReplay,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Creates the same concrete tools for the decision-only kernel agent loop.
+    #[must_use]
+    pub fn kernel_tool_bindings(&self) -> Vec<AgentToolBinding> {
+        self.tools()
+            .into_iter()
+            .map(|binding| {
+                AgentToolBinding::new(
+                    binding.id,
+                    binding.tool,
+                    match binding.recovery {
+                        LocalRecovery::SafeToReplay => EffectRecovery::SafeToReplay,
+                        LocalRecovery::NeverReplay => EffectRecovery::NeverReplay,
+                    },
+                )
+            })
+            .collect()
     }
 
     fn tool_binding_id(&self, tool: &str) -> String {
         format!("renoa-local/{tool}/{}", self.binding_id)
     }
+
+    fn tools(&self) -> Vec<LocalToolBinding> {
+        vec![
+            LocalToolBinding {
+                id: self.tool_binding_id("read-file-v1"),
+                tool: Arc::new(ReadFile::new(Arc::clone(&self.root))),
+                recovery: LocalRecovery::SafeToReplay,
+            },
+            LocalToolBinding {
+                id: self.tool_binding_id("edit-file-v1"),
+                tool: Arc::new(EditFile::new(Arc::clone(&self.root))),
+                recovery: LocalRecovery::NeverReplay,
+            },
+            LocalToolBinding {
+                id: self.tool_binding_id("write-file-v1"),
+                tool: Arc::new(WriteFile::new(Arc::clone(&self.root))),
+                recovery: LocalRecovery::NeverReplay,
+            },
+            LocalToolBinding {
+                id: self.tool_binding_id("bash-v1"),
+                tool: Arc::new(Bash::new(Arc::clone(&self.root))),
+                recovery: LocalRecovery::NeverReplay,
+            },
+        ]
+    }
+}
+
+struct LocalToolBinding {
+    id: String,
+    tool: Arc<dyn Tool>,
+    recovery: LocalRecovery,
+}
+
+#[derive(Clone, Copy)]
+enum LocalRecovery {
+    SafeToReplay,
+    NeverReplay,
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

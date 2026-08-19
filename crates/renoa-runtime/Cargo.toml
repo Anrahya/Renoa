@@ -7,13 +7,13 @@ rust-version.workspace = true
 
 [dependencies]
 futures-util.workspace = true
-renoa-core = { path = "../renoa-core" }
+renoa-core = { path = "../renoa-core", version = "0.1.0" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
-renoa-store-sqlite = { path = "../renoa-store-sqlite" }
+renoa-store-sqlite = { path = "../renoa-store-sqlite", version = "0.1.0" }
 serde_json.workspace = true
 tempfile.workspace = true
 

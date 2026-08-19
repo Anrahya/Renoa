@@ -11,8 +11,8 @@ use renoa_agent::{
     StopReason, Tool, ToolCall, ToolError, ToolOutput, ToolResult, ToolSpec, ToolUpdates,
 };
 use renoa_harness::{
-    Harness, OperationOutcome, OperationRequest, RequestId, RunNext, RuntimeProfile,
-    RuntimeProfileError, SessionId, ToolBinding, ToolRecovery,
+    Harness, OperationOutcome, OperationRequest, OperationStatus, RequestId, RunNext,
+    RuntimeProfile, RuntimeProfileError, SessionId, ToolBinding, ToolRecovery,
 };
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
@@ -146,6 +146,85 @@ async fn a_tool_error_becomes_one_result_and_the_model_can_recover() {
     );
 }
 
+#[tokio::test]
+async fn an_uncertain_tool_outcome_blocks_without_a_model_visible_result() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("harness.sqlite3");
+    let call = ToolCall {
+        id: "call-unknown-1".to_owned(),
+        name: "publish".to_owned(),
+        arguments: serde_json::json!({"document": "release-notes"}),
+        thought_signature: None,
+        namespace: None,
+    };
+    let model = Arc::new(ScriptedModel::new([ModelResponse {
+        content: vec![AssistantContent::tool_call(call)],
+        stop_reason: StopReason::ToolUse,
+        usage: None,
+        metadata: AssistantMetadata::default(),
+    }]));
+    let tool = Arc::new(UncertainTool::new());
+    let profile = RuntimeProfile::new(
+        "coding-v1",
+        model.clone(),
+        "Be precise.",
+        NonZeroU32::new(2).expect("non-zero attempt limit"),
+    )
+    .with_tools(
+        vec![ToolBinding::new(
+            "publish-v1",
+            tool.clone(),
+            ToolRecovery::NeverReplay,
+        )],
+        NonZeroU32::new(1).expect("non-zero tool-call limit"),
+    )
+    .expect("valid tools");
+    let harness = Harness::open(&database).expect("open harness");
+    let session_id = SessionId::new();
+    harness
+        .create_standalone_session(session_id)
+        .await
+        .expect("create session");
+    let admission = harness
+        .admit_standalone(
+            session_id,
+            OperationRequest::new(RequestId::new(), vec![ContentBlock::text("publish it")]),
+        )
+        .await
+        .expect("admit operation");
+
+    assert_eq!(
+        harness
+            .run_next(session_id, &profile)
+            .await
+            .expect("run uncertain tool"),
+        RunNext::Blocked {
+            operation_id: admission.operation_id,
+        }
+    );
+    assert_eq!(tool.call_count(), 1);
+    assert_eq!(model.requests().len(), 1);
+    let snapshot = harness.inspect(session_id).await.expect("inspect session");
+    assert_eq!(
+        snapshot.operations[0].status,
+        OperationStatus::OutcomeUnknown
+    );
+    assert_eq!(snapshot.messages.len(), 2);
+    assert!(matches!(snapshot.messages[0], Message::User { .. }));
+    assert!(matches!(snapshot.messages[1], Message::Assistant { .. }));
+
+    assert_eq!(
+        harness
+            .run_next(session_id, &profile)
+            .await
+            .expect("revisit blocked tool"),
+        RunNext::Blocked {
+            operation_id: admission.operation_id,
+        }
+    );
+    assert_eq!(tool.call_count(), 1);
+}
+
 struct FailingTool {
     spec: ToolSpec,
     message: &'static str,
@@ -183,5 +262,45 @@ impl Tool for FailingTool {
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(std::future::ready(Err(ToolError::new(self.message))))
+    }
+}
+
+struct UncertainTool {
+    spec: ToolSpec,
+    calls: AtomicUsize,
+}
+
+impl UncertainTool {
+    fn new() -> Self {
+        Self {
+            spec: ToolSpec {
+                name: "publish".to_owned(),
+                description: "Publish a document.".to_owned(),
+                input_schema: serde_json::json!({"type": "object"}),
+            },
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl Tool for UncertainTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    fn execute(
+        &self,
+        _call: ToolCall,
+        _cancellation: CancellationToken,
+        _updates: ToolUpdates,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(std::future::ready(Err(ToolError::outcome_unknown(
+            "connection closed after dispatch",
+        ))))
     }
 }

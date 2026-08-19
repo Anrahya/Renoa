@@ -5,7 +5,8 @@ use thiserror::Error;
 use crate::{
     AgentEvent, AgentEventSink, AgentHandle, AgentState, ContentBlock, ContextProjectionError,
     ContextProjector, Message, Model, ModelError, QueueMode, StopReason, TokenUsage, Tool,
-    ToolExecutionMode, control::AgentControl, events::emit_event,
+    ToolCallBatchError, ToolExecutionMode, ToolOutcomeUnknown, control::AgentControl,
+    events::emit_event,
 };
 
 mod run;
@@ -81,6 +82,14 @@ pub enum AgentError {
         limit: usize,
         usage: Option<TokenUsage>,
     },
+    #[error("{source}")]
+    InvalidToolCallBatch {
+        #[source]
+        source: ToolCallBatchError,
+        usage: Option<TokenUsage>,
+    },
+    #[error("one or more tool outcomes are unknown")]
+    ToolOutcomesUnknown { outcomes: Vec<ToolOutcomeUnknown> },
     #[error("the model exceeded the configured turn limit of {0}")]
     TurnLimit(u32),
 }
@@ -201,8 +210,9 @@ impl Agent {
         self.control.handle()
     }
 
-    /// Clears conversation state and queued input without changing this
-    /// Agent's model, instructions, tools, event sink, or limits.
+    /// Clears conversation state, unresolved tool outcomes, and queued input
+    /// without changing this Agent's model, instructions, tools, event sink,
+    /// or limits.
     pub fn reset(&mut self) {
         self.state = AgentState::default();
         self.control.clear_queues();
@@ -216,8 +226,8 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns a typed error for cancellation, model or stream failure, or a
-    /// configured safety limit.
+    /// Returns a typed error for unresolved tool outcomes, cancellation, model
+    /// or stream failure, or a configured safety limit.
     pub async fn prompt(&mut self, text: impl Into<String>) -> Result<AgentRunResult, AgentError> {
         self.prompt_content(vec![ContentBlock::text(text)]).await
     }
@@ -231,6 +241,7 @@ impl Agent {
         &mut self,
         content: Vec<ContentBlock>,
     ) -> Result<AgentRunResult, AgentError> {
+        self.ensure_tool_outcomes_known()?;
         let run = self.control.start();
         let sink = self.event_sink.clone();
         emit_event(sink.as_deref(), AgentEvent::AgentStart).await;
@@ -259,10 +270,12 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`AgentError::NothingToResume`] for an empty conversation and
-    /// [`AgentError::AssistantTail`] when new user input is required. Other
-    /// errors match [`Self::prompt`].
+    /// Returns [`AgentError::ToolOutcomesUnknown`] before sampling when the
+    /// portable state is blocked, [`AgentError::NothingToResume`] for an empty
+    /// conversation, and [`AgentError::AssistantTail`] when new user input is
+    /// required. Other errors match [`Self::prompt`].
     pub async fn resume(&mut self) -> Result<AgentRunResult, AgentError> {
+        self.ensure_tool_outcomes_known()?;
         if self.config.max_model_turns == 0 {
             return Err(AgentError::TurnLimit(0));
         }
@@ -289,6 +302,23 @@ impl Agent {
             .await;
         emit_event(sink.as_deref(), AgentEvent::AgentEnd).await;
         result
+    }
+
+    fn ensure_tool_outcomes_known(&self) -> Result<(), AgentError> {
+        if self.state.unresolved_tool_outcomes.is_empty() {
+            return Ok(());
+        }
+        Err(AgentError::ToolOutcomesUnknown {
+            outcomes: self.state.unresolved_tool_outcomes.clone(),
+        })
+    }
+
+    pub(super) fn block_on_tool_outcomes(
+        &mut self,
+        outcomes: Vec<ToolOutcomeUnknown>,
+    ) -> AgentError {
+        self.state.unresolved_tool_outcomes.clone_from(&outcomes);
+        AgentError::ToolOutcomesUnknown { outcomes }
     }
 }
 

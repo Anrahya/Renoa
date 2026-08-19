@@ -89,6 +89,16 @@ harness session, exposes standard ACP model and reasoning selectors, streams
 model and tool progress, and cancels active work. Its exact supported surface and deliberate limits are in
 [docs/acp-v1.md](docs/acp-v1.md). ACP stays outside both the harness and RCP.
 
+## License
+
+Renoa is available under either the
+[Apache License, Version 2.0](LICENSE-APACHE) or the [MIT license](LICENSE-MIT),
+at your option.
+
+Unless explicitly stated otherwise, contributions intentionally submitted for
+inclusion in Renoa are provided under those same terms without additional
+conditions.
+
 Start with [docs/rcp-v0.md](docs/rcp-v0.md), the canonical RCP architecture and
 decision record. The transport-independent behavior is in
 [docs/rcp-operations-v0.md](docs/rcp-operations-v0.md), and its first concrete

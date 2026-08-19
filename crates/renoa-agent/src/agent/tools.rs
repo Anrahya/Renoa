@@ -5,8 +5,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentEvent, AgentEventSink, BoxFuture, Message, Tool, ToolCall, ToolExecutionMode, ToolOutput,
-    ToolResult,
+    AgentEvent, AgentEventSink, BoxFuture, Message, Tool, ToolCall, ToolExecutionMode,
+    ToolOutcomeUnknown, ToolOutput, ToolResult,
     events::{append_message, emit_event},
     invoke_tool,
     tool::error_tool_result,
@@ -64,7 +64,7 @@ impl Agent {
                 progress_sender,
             );
             tokio::pin!(execution);
-            let result = loop {
+            let outcome = loop {
                 tokio::select! {
                     biased;
                     Some(progress) = progress_receiver.recv() => {
@@ -74,10 +74,29 @@ impl Agent {
                 }
             };
             drain_progress(sink, calls, &mut progress_receiver).await;
+            let result = match outcome {
+                Ok(result) => result,
+                Err(error) => {
+                    let error = self.block_on_tool_outcomes(vec![error]);
+                    self.reject_unstarted_calls(
+                        &calls[index + 1..],
+                        "Tool call was not executed because a previous tool outcome is unknown.",
+                        sink,
+                    )
+                    .await;
+                    emit_event(sink, AgentEvent::TurnEnd).await;
+                    return Err(error);
+                }
+            };
             emit_tool_end(sink, call.clone(), result.clone()).await;
             append_message(sink, &mut self.state.messages, Message::Tool { result }).await;
             if cancellation.is_cancelled() {
-                self.reject_unstarted_calls(&calls[index + 1..], sink).await;
+                self.reject_unstarted_calls(
+                    &calls[index + 1..],
+                    "Tool call was not executed because the run was cancelled.",
+                    sink,
+                )
+                .await;
                 emit_event(sink, AgentEvent::TurnEnd).await;
                 return Err(AgentError::Cancelled);
             }
@@ -126,21 +145,34 @@ impl Agent {
                 }
                 Some((index, result)) = executions.next() => {
                     drain_progress(sink, calls, &mut progress_receiver).await;
-                    emit_tool_end(sink, calls[index].clone(), result.clone()).await;
+                    if let Ok(settled) = &result {
+                        emit_tool_end(sink, calls[index].clone(), settled.clone()).await;
+                    }
                     results[index] = Some(result);
                 }
             }
         }
         drain_progress(sink, calls, &mut progress_receiver).await;
 
+        let mut unknown = Vec::new();
         for (index, call) in calls.iter().enumerate() {
-            let result = results[index].take().unwrap_or_else(|| {
-                error_tool_result(
+            let outcome = results[index].take().unwrap_or_else(|| {
+                Ok(error_tool_result(
                     call,
                     "Tool call was not executed because the run was cancelled.",
-                )
+                ))
             });
-            append_message(sink, &mut self.state.messages, Message::Tool { result }).await;
+            match outcome {
+                Ok(result) => {
+                    append_message(sink, &mut self.state.messages, Message::Tool { result }).await;
+                }
+                Err(error) => unknown.push(error),
+            }
+        }
+        if !unknown.is_empty() {
+            let error = self.block_on_tool_outcomes(unknown);
+            emit_event(sink, AgentEvent::TurnEnd).await;
+            return Err(error);
         }
         if cancellation.is_cancelled() {
             emit_event(sink, AgentEvent::TurnEnd).await;
@@ -152,13 +184,11 @@ impl Agent {
     async fn reject_unstarted_calls(
         &mut self,
         calls: &[ToolCall],
+        reason: &str,
         sink: Option<&dyn AgentEventSink>,
     ) {
         for call in calls {
-            let result = error_tool_result(
-                call,
-                "Tool call was not executed because the run was cancelled.",
-            );
+            let result = error_tool_result(call, reason);
             append_message(sink, &mut self.state.messages, Message::Tool { result }).await;
         }
     }
@@ -182,7 +212,7 @@ async fn execute_tool(
     tool: Option<Arc<dyn Tool>>,
     cancellation: CancellationToken,
     progress: mpsc::Sender<Progress>,
-) -> (usize, ToolResult) {
+) -> (usize, Result<ToolResult, ToolOutcomeUnknown>) {
     let progress = ProgressForwarder { index, progress };
     let result = invoke_tool(tool.as_deref(), call, cancellation, Some(&progress)).await;
     (index, result)

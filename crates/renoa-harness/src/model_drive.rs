@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use renoa_agent::{
     AgentEventSink, AssistantContent, ModelErrorKind, ModelResponse, SamplingError, StopReason,
-    sample_model,
+    sample_model, validate_tool_call_ids,
 };
 
 use crate::{
@@ -232,6 +232,13 @@ fn model_response_rejection(intent: &ModelIntent, response: &ModelResponse) -> O
             "model returned {tool_call_count} tool calls; the per-step limit is {}",
             intent.progress.runtime.max_tool_calls_per_step
         ))
+    } else if let Err(error) =
+        validate_tool_call_ids(response.content.iter().filter_map(|content| match content {
+            AssistantContent::ToolCall { call } => Some(call.id.as_str()),
+            AssistantContent::Text { .. } | AssistantContent::Reasoning { .. } => None,
+        }))
+    {
+        Some(error.to_string())
     } else if response.stop_reason == StopReason::ToolUse && tool_call_count == 0 {
         Some("model ended for tool use without returning a tool call".to_owned())
     } else {

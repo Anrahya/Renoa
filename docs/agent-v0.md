@@ -28,10 +28,11 @@ RCP reference executor; neither crate wraps the other.
   output and tool execution.
 - `ContextProjector` lets a host choose the active transcript independently for
   every model request without rewriting authoritative Agent state.
-- `AgentState` contains the portable active transcript, not the authoritative
-  full session history. System instructions, tools, model selection, and policy
-  are supplied again by the host after restoration. A host constructs its
-  projected transcript with `AgentState::from_messages`.
+- `AgentState` contains the portable active transcript and any unresolved tool
+  outcomes, not the authoritative full session history. System instructions,
+  tools, model selection, and policy are supplied again by the host after
+  restoration. `AgentState::from_messages` asserts that the host-selected
+  transcript has no unresolved tool outcome.
 
 One `Agent` is one conversation. A host must not share it between unrelated
 tasks or principals.
@@ -54,12 +55,13 @@ The tests prove that:
    and provider/model identity survive JSON state restoration;
 7. interleaved assistant text and tool-call blocks, plus structured tool
    results, preserve source order through execution and continuation;
-8. missing tools and tool failures become model-visible error results rather
-   than crashing the loop;
+8. missing tools and definite tool failures become model-visible error results,
+   while a tool that cannot prove its external outcome returns typed uncertainty
+   instead of inviting an unsafe retry;
 9. `length`-stopped calls with possibly truncated arguments never execute;
-10. duplicate tool names, oversized call batches, and runaway model
-   continuation are bounded explicitly, without losing reported usage from a
-   rejected model response;
+10. duplicate tool names, empty or duplicate model tool-call identifiers,
+    oversized call batches, and runaway model continuation are rejected
+    explicitly, without losing reported usage from a rejected model response;
 11. bounded live tool updates stay transient while final text/image content and
     structured details enter durable history exactly once;
 12. parallel-safe tool calls may finish out of order while their result messages
@@ -74,8 +76,9 @@ The tests prove that:
 16. queued text/image input is bounded, remains queued when a run reaches its
     turn limit, is claimed atomically when resuming a completed assistant tail,
     and cannot be invalidated by lowering its configured bound;
-17. `reset()` clears the transcript and queues while leaving the configured
-    model and instructions usable for a fresh prompt;
+17. unresolved tool outcomes survive state restoration and block both new
+    prompts and resume before model or tool work; `reset()` explicitly clears
+    them with the transcript and queues while leaving configuration usable;
 18. successful provider outcomes and normalized token usage survive state
     restoration, while complete multi-turn usage is summed for the run;
 19. host context projection runs before every model request without mutating the
@@ -124,6 +127,19 @@ model-visible `ToolResult`. A `Tool` must decode and validate raw JSON arguments
 before performing effects; `ToolSpec::input_schema` is the schema advertised to
 the model, not a second generic validator inside the Agent loop.
 
+`ToolError::new` is a definite, model-visible failure. A tool that dispatched an
+external action but cannot prove its final outcome must instead return
+`ToolError::outcome_unknown`. `invoke_tool` preserves that state as a typed
+`ToolOutcomeUnknown`; it never fabricates a failed `ToolResult`. The in-memory
+`Agent` stops the run and reports every uncertain call from an opt-in parallel
+batch. It stores those unresolved outcomes in `AgentState`, so state transfer
+cannot accidentally bypass the block. `prompt()` and `resume()` remain blocked
+until the host explicitly resets the lightweight Agent or reconstructs state
+from authoritative reconciled history. Durable callers map the same evidence
+into their own blocked state. Resetting clears the local guard; it does not
+prove what happened externally, so a host must not repeat the same action
+unless reconciliation or the tool's semantics make that safe.
+
 ## Model outcome and accounting
 
 `StopReason` has three successful provider outcomes: `Stop`, `ToolUse`, and
@@ -140,8 +156,9 @@ when its provider reports an inclusive input total. Usage is optional because
 unknown usage must not become a misleading zero. Every completed assistant
 message keeps its own value. `AgentRunResult::usage` sums every model turn only
 when all turns reported usage; otherwise it is `None`, while known per-message
-values remain in `AgentState`. When a completed response is rejected by the
-tool-call safety limit, its usage remains available on the typed error.
+values remain in `AgentState`. When a completed response is rejected by
+tool-call identity validation or the safety limit, its usage remains available
+on the typed error.
 
 The SDK stores counts, not money. A host can combine them with the model used
 for that run and a current or snapshotted price catalog to build token and cost
