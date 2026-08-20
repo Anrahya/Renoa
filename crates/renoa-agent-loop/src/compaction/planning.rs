@@ -55,6 +55,26 @@ pub(super) fn select_plan(
     }))
 }
 
+pub(super) fn validate_boundary(
+    context: &ContextInput,
+    covered_through_sequence: u64,
+) -> Result<(), CompactionPlanningError> {
+    let all_entries = context.entries().collect::<Vec<_>>();
+    active_user_anchor(&all_entries, context.active_operation_id())?;
+    let entries = entries_after_checkpoint(&all_entries, context.active_checkpoint())?;
+    let cuts = safe_cut_indices(entries, context.active_operation_id())?;
+    if cuts
+        .iter()
+        .any(|index| entries[*index].sequence() == covered_through_sequence)
+    {
+        Ok(())
+    } else {
+        Err(CompactionPlanningError::InvalidPlan(
+            "covered boundary is not a safe transcript cut".to_owned(),
+        ))
+    }
+}
+
 fn active_user_anchor<'a>(
     entries: &'a [ContextEntry<'a>],
     active_operation_id: renoa_kernel::OperationId,
@@ -77,14 +97,14 @@ fn entries_after_checkpoint<'a>(
     let Some(checkpoint) = checkpoint else {
         return Ok(entries);
     };
-    if checkpoint.summary.trim().is_empty() {
+    if checkpoint.summary().trim().is_empty() {
         return Err(CompactionPlanningError::InvalidCheckpoint(
             "summary is empty".to_owned(),
         ));
     }
     let boundary = entries
         .iter()
-        .position(|entry| entry.sequence() == checkpoint.covered_through_sequence)
+        .position(|entry| entry.sequence() == checkpoint.covered_through_sequence())
         .ok_or_else(|| {
             CompactionPlanningError::InvalidCheckpoint(
                 "covered sequence is not a durable message".to_owned(),
@@ -145,7 +165,7 @@ fn summary_at(
     cut_index: usize,
 ) -> Result<ModelRequest, CompactionPlanningError> {
     summary_request(
-        checkpoint.map(|checkpoint| checkpoint.summary),
+        checkpoint.map(CompactionCheckpoint::summary),
         &entries[..=cut_index],
     )
 }

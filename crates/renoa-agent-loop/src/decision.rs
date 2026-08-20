@@ -8,13 +8,16 @@ use renoa_kernel::{
     EffectOutcome, EffectRecovery, LoopDecision, LoopError, LoopInput, SettledEffect,
 };
 
+mod compaction;
 mod interruption;
 
 use crate::{
     AgentCommand,
     configuration::{AgentLoopConfig, MODEL_EFFECT_BINDING},
-    context::ContextStrategy,
-    format::{LoopPhase, checkpoint, context_input, message_event, message_events},
+    context::{ContextPreparation, ContextStrategy},
+    format::{
+        LoopPhase, ModelEffectOutput, checkpoint, context_input, message_event, message_events,
+    },
 };
 
 pub(crate) struct LoopTool {
@@ -88,30 +91,42 @@ impl AgentLoop {
                 ),
             });
         }
-        let next_turn = model_turns
-            .checked_add(1)
-            .ok_or_else(|| LoopError::new("model turn counter overflowed"))?;
-        let request = self.model_request(input.operation_id, &input.events)?;
-        Ok(LoopDecision::InvokeEffect {
-            checkpoint: checkpoint(LoopPhase::AwaitingModel {
-                model_turns: next_turn,
-            })?,
-            binding: MODEL_EFFECT_BINDING.to_owned(),
-            request: encode("model request", request)?,
-            recovery: self.model_recovery,
-        })
+        match self.prepare_context(input.operation_id, &input.events, false)? {
+            ContextPreparation::Model { messages } => {
+                let next_turn = model_turns
+                    .checked_add(1)
+                    .ok_or_else(|| LoopError::new("model turn counter overflowed"))?;
+                Ok(LoopDecision::InvokeEffect {
+                    checkpoint: checkpoint(LoopPhase::AwaitingModel {
+                        model_turns: next_turn,
+                    })?,
+                    binding: MODEL_EFFECT_BINDING.to_owned(),
+                    request: encode("model request", self.model_request(messages))?,
+                    recovery: self.model_recovery,
+                })
+            }
+            ContextPreparation::Compact { plan, max_attempts } => {
+                self.invoke_compaction(model_turns, plan, max_attempts)
+            }
+            ContextPreparation::CapacityExceeded {
+                estimated_input_tokens,
+                dispatch_limit_tokens,
+            } => {
+                Self::context_capacity_failure(estimated_input_tokens, dispatch_limit_tokens, None)
+            }
+        }
     }
 
     fn settle_model(&self, model_turns: u32, input: LoopInput) -> Result<LoopDecision, LoopError> {
         let effect = require_effect(input.effect, "model result")?;
-        let expected_request = self.model_request(input.operation_id, &input.events)?;
+        let expected_request = self.normal_model_request(input.operation_id, &input.events)?;
         require_effect_identity(
             &effect,
             MODEL_EFFECT_BINDING,
             &encode("model request", expected_request)?,
         )?;
-        let response = match effect.outcome {
-            EffectOutcome::Success(response) => decode("model response", response)?,
+        let output = match effect.outcome {
+            EffectOutcome::Success(output) => decode("model effect output", output)?,
             EffectOutcome::Failure { message } => {
                 return Ok(LoopDecision::Fail {
                     checkpoint: checkpoint(LoopPhase::Terminal)?,
@@ -125,7 +140,18 @@ impl AgentLoop {
                 ));
             }
         };
-        self.classify_model_response(model_turns, response)
+        match output {
+            ModelEffectOutput::Completed { response } => {
+                self.classify_model_response(model_turns, response)
+            }
+            ModelEffectOutput::ContextWindowExceeded { message } => self
+                .compact_after_provider_overflow(
+                    model_turns,
+                    input.operation_id,
+                    &input.events,
+                    &message,
+                ),
+        }
     }
 
     fn classify_model_response(
@@ -201,20 +227,75 @@ impl AgentLoop {
         })
     }
 
-    fn model_request(
+    fn prepare_context(
+        &self,
+        active_operation_id: renoa_kernel::OperationId,
+        events: &[renoa_kernel::SemanticEvent],
+        compaction_required: bool,
+    ) -> Result<ContextPreparation, LoopError> {
+        let preparation = self
+            .context
+            .prepare(self.build_context_input(active_operation_id, events, compaction_required)?)
+            .map_err(|error| LoopError::new(format!("context projection failed: {error}")))?;
+        if let ContextPreparation::Compact { plan, .. } = &preparation {
+            self.validate_compaction_plan(active_operation_id, events, plan)?;
+        }
+        Ok(preparation)
+    }
+
+    fn build_context_input(
+        &self,
+        active_operation_id: renoa_kernel::OperationId,
+        events: &[renoa_kernel::SemanticEvent],
+        compaction_required: bool,
+    ) -> Result<crate::ContextInput, LoopError> {
+        let tools = self
+            .tools
+            .iter()
+            .map(|tool| tool.spec.clone())
+            .collect::<Vec<_>>();
+        context_input(
+            active_operation_id,
+            events,
+            &self.config.system_prompt,
+            &tools,
+            compaction_required,
+        )
+    }
+
+    pub(super) fn validate_compaction_plan(
+        &self,
+        active_operation_id: renoa_kernel::OperationId,
+        events: &[renoa_kernel::SemanticEvent],
+        plan: &crate::CompactionPlan,
+    ) -> Result<(), LoopError> {
+        let input = self.build_context_input(active_operation_id, events, false)?;
+        crate::compaction::validate_plan(&input, plan)
+            .map_err(|error| LoopError::new(format!("context compaction plan is invalid: {error}")))
+    }
+
+    fn normal_model_request(
         &self,
         active_operation_id: renoa_kernel::OperationId,
         events: &[renoa_kernel::SemanticEvent],
     ) -> Result<ModelRequest, LoopError> {
-        let messages = self
-            .context
-            .project(context_input(active_operation_id, events)?)
-            .map_err(|error| LoopError::new(format!("context projection failed: {error}")))?;
-        Ok(ModelRequest {
+        match self.prepare_context(active_operation_id, events, false)? {
+            ContextPreparation::Model { messages } => Ok(self.model_request(messages)),
+            ContextPreparation::Compact { .. } => Err(LoopError::new(
+                "context strategy changed a persisted model request into a compaction request",
+            )),
+            ContextPreparation::CapacityExceeded { .. } => Err(LoopError::new(
+                "context strategy changed a persisted model request into a capacity failure",
+            )),
+        }
+    }
+
+    fn model_request(&self, messages: Vec<Message>) -> ModelRequest {
+        ModelRequest {
             system_prompt: self.config.system_prompt.clone(),
             messages,
             tools: self.tools.iter().map(|tool| tool.spec.clone()).collect(),
-        })
+        }
     }
 
     fn request_tool(

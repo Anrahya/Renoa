@@ -11,8 +11,8 @@ use renoa_kernel::OperationId;
 use serde_json::json;
 
 use super::{
-    CompactionCheckpoint, CompactionLimits, CompactionLimitsError, CompactionPlanner,
-    CompactionPlanningError, ContextSizer,
+    CompactionCheckpoint, CompactionLimits, CompactionLimitsError, CompactionPlan,
+    CompactionPlanner, CompactionPlanningError, ContextSizer, validate_plan,
 };
 use crate::{ContextInput, context::ContextOrigin};
 
@@ -133,6 +133,41 @@ fn malformed_tool_history_fails_before_sizing() {
         planner().plan(&input, None, "system", &[], &NeverCalledSizer),
         Err(CompactionPlanningError::InvalidHistory(message))
             if message == "tool result has no pending call"
+    ));
+}
+
+#[test]
+fn persisted_plan_boundary_must_remain_a_safe_transcript_cut() {
+    let prior = OperationId::new();
+    let active = OperationId::new();
+    let input = context(
+        active,
+        vec![
+            (prior, Message::user_text("prior request")),
+            (
+                prior,
+                assistant(
+                    vec![AssistantContent::tool_call(tool_call("call-1", "read"))],
+                    StopReason::ToolUse,
+                ),
+            ),
+            (prior, tool_result("call-1", "read", "result")),
+            (active, Message::user_text("active request")),
+        ],
+    );
+    let plan = CompactionPlan {
+        summary_request: ModelRequest {
+            system_prompt: "summarize".to_owned(),
+            messages: vec![Message::user_text("source")],
+            tools: Vec::new(),
+        },
+        covered_through_sequence: 1,
+    };
+
+    assert!(matches!(
+        validate_plan(&input, &plan),
+        Err(CompactionPlanningError::InvalidPlan(message))
+            if message == "covered boundary is not a safe transcript cut"
     ));
 }
 
@@ -270,6 +305,10 @@ fn context(active: OperationId, entries: Vec<(OperationId, Message)>) -> Context
                 )
             })
             .collect(),
+        None,
+        "system",
+        &[],
+        false,
     )
 }
 

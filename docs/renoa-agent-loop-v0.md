@@ -59,14 +59,18 @@ therefore change bindings, not kernel code. Replacing the loop means supplying
 another `LoopPlugin` to the kernel.
 
 `ContextStrategy` is synchronous, pure loop policy. It receives the complete
-decoded durable transcript, each message's operation and journal sequence, and
-the active operation identity. It returns only the ordered messages visible to
-the next model request. The built-in `FullHistoryStrategy` preserves current
-behavior. A strategy revision must change whenever its behavior changes; an
-active operation accepts only the frozen revision. Projection never mutates the
-semantic journal.
+decoded durable transcript, each message's operation and journal sequence, the
+active operation identity, the frozen request shape, and the latest activated
+context checkpoint. It chooses either the next model-facing view, a compaction
+plan, or an explicit capacity failure. The built-in `FullHistoryStrategy`
+preserves projection-only behavior. `CompactingContextStrategy` adds Renoa's
+bounded portable-summary policy using a host-supplied deterministic
+`ContextSizer`. A strategy revision must change whenever its behavior changes;
+an active operation accepts only the frozen revision. Context preparation never
+mutates the semantic journal or performs external work.
 
-`CompactionPlanner` is a pure helper for replaceable context strategies. Given
+`CompactionPlanner` is the pure planning helper used by the replaceable
+compacting strategy. Given
 validated limits, an optional activated checkpoint, the exact normal request
 shape, and model-aware sizing, it selects a safe durable prefix and constructs
 the exact summary request. It keeps tool calls with their results, preserves the
@@ -74,8 +78,9 @@ active user request in the retained tail, bounds large tool output in summary
 input, and uses monotonic binary searches instead of rebuilding every possible
 prefix. It chooses the first safe cut meeting the retained-tail target, or the
 largest dispatchable summary prefix when no cut can meet that target. It does
-not call a model, persist a checkpoint, or activate a summary. Those stateful
-steps must be mediated by kernel effects in the next slice.
+not call a model, write storage, or activate a summary. The loop executes its
+plan as an ordinary persisted model effect and activates only a validated result
+as a semantic event.
 
 ## Durable formats
 
@@ -96,11 +101,25 @@ semantic event kinds are ignored because they may belong to observers or other
 runtime features. An unknown version under the `renoa.agent.message.` namespace
 fails closed instead of silently changing model history.
 
-Checkpoint schema 1 contains only the loop program counter:
+An activated portable summary is a separate semantic event with kind:
+
+```text
+renoa.agent.context-checkpoint.v1
+```
+
+Its payload contains the exact summary and the durable message sequence it
+covers. Context checkpoints must be non-empty, refer to an earlier message, and
+strictly advance the previous boundary. Unknown versions under this namespace
+fail closed. They project history for the model; they never delete or rewrite
+the full message journal.
+
+Checkpoint schema 2 contains the loop program counter and in-flight compaction
+intent:
 
 ```text
 NeedModel(model_turns)
 AwaitingModel(model_turns)
+AwaitingCompaction(model_turns, exact_plan, max_attempts, attempt)
 NeedTool(model_turns, calls, next_index)
 AwaitingTool(model_turns, calls, next_index)
 Terminal
@@ -109,15 +128,17 @@ Terminal
 Conversation history is reconstructed from durable semantic events. It is not
 hidden in process memory or owned only by the checkpoint. The checkpoint keeps
 the active tool batch and exact next index so restart never guesses which call
-may run.
+may run. While compacting, it also keeps the exact summary request, durable cut,
+and bounded attempt counters so restart cannot silently re-plan work already in
+flight.
 
-Loop binding revision 6 adds durable message origins to context input and the
-pure bounded compaction planner. Revision 5 added replaceable, revision-frozen
-context projection. Revision 4 added loop-owned durable cancellation closure.
-Revision 3 added explicit, honest closure of unknown model and tool effects.
-Revision 2 added fail-closed tool-call identity validation and typed live tool
-uncertainty. The checkpoint schema remains 1 because the program-counter
-representation did not change.
+Loop binding revision 7 adds durable summary execution, checkpoint activation,
+and typed provider-overflow recovery. Revision 6 added durable message origins
+to context input and the pure bounded compaction planner. Revision 5 added
+replaceable, revision-frozen context projection. Revision 4 added loop-owned
+durable cancellation closure. Revision 3 added explicit, honest closure of
+unknown model and tool effects. Revision 2 added fail-closed tool-call identity
+validation and typed live tool uncertainty.
 
 ## Execution rules
 
@@ -126,7 +147,12 @@ One admitted operation advances as follows:
 ```text
 command
   -> commit user-message event
-  -> project the durable transcript into a model-facing view
+  -> prepare the durable transcript
+       -> if oversized: persist exact summary request
+          -> model effect
+          -> validate and commit context-checkpoint event
+          -> prepare again
+       -> otherwise: project the model-facing view
   -> persist exact model request
   -> model effect
   -> commit complete assistant message
@@ -157,20 +183,32 @@ slice:
   deleting or rewriting durable history;
 - a context strategy can derive a deterministic, bounded compaction plan from
   real durable operation and sequence metadata without changing that history;
+- every summary request is an exact persisted model effect with no advertised
+  tools, and only a complete, normally stopped, bounded response with all seven
+  required non-empty sections may activate;
+- malformed summaries retry the same frozen plan only up to the strategy's
+  explicit bound; cancellation, unknown outcomes, and a compactor provider
+  rejection never invent or activate a checkpoint;
+- process loss replays an unsettled safe summary effect with the same identity,
+  while a settled summary activates after restart without another model call;
+- a typed provider context-window rejection triggers the same compaction path
+  without repeating the known-oversized normal request;
 - durable cancellation balances every outstanding tool call in source order,
   while preserving a settled current result and distinguishing work that never
   dispatched from work that may have run; and
 - a new operation reconstructs prior session messages from the event log.
 
-Durable summary execution and activation, steering, follow-ups, approvals,
-parallel tool batches, transient streaming, and authoritative settlement of an
-unknown effect are not implemented by this runtime slice.
+Steering, follow-ups, approvals, parallel tool batches, transient streaming,
+and authoritative settlement of an unknown effect are not implemented by this
+runtime slice.
 
 ## Effect adapters and recovery
 
 The model adapter decodes the exact persisted `ModelRequest`, invokes the
 selected `Model` through `sample_model`, and returns one complete serialized
-`ModelResponse`, a definite pre-inference failure, or explicit uncertainty.
+`ModelResponse`, a typed context-window rejection, a definite adapter failure,
+or explicit uncertainty. A typed context-window rejection is settled durably so
+the loop can request compaction; it is not copied into model-visible history.
 An incomplete stream, cancellation after dispatch, or provider error whose
 kind is `OutcomeUnknown` blocks the durable operation instead of becoming a
 false terminal failure. Provider wire formats, authentication, and
@@ -211,6 +249,14 @@ a call-matched not-run error. The operation ends without making another model
 request, but the balanced history is visible to the next operation's model
 request. Internal adapter errors are never copied into these tool messages.
 
+Compaction uses the same model binding and recovery declaration as ordinary
+sampling, but its exact persisted request advertises no tools. Before dispatch
+and again before settlement, the loop validates that its saved boundary is
+still a safe cut in the durable transcript. A valid response and its activated
+checkpoint event commit in one kernel transition. An unknown summary outcome
+blocks honestly; explicit abandonment or cancellation terminates without
+creating a summary.
+
 ## Local proof
 
 `renoa-local` exposes its existing guarded read, edit, write, and Bash tools as
@@ -238,6 +284,9 @@ consumer proves the smaller kernel boundary. Its unknown-tool abandonment
 behavior has been replaced on the kernel path by the generic kernel transition
 and loop-owned transcript closure.
 
-The next migration slice remains consumer-gated: execute the planned summary
-as a persisted kernel effect, activate its checkpoint durably, and prove retry
-and restart behavior without moving context policy into the kernel.
+The original kernel handoff's generic foundation, model/tool-loop adaptation,
+real local coding turn, and durable compaction migration are now complete. The
+next migration remains consumer-gated: compose the existing kernel, loop,
+provider, and tools into the first narrow product host—preferably the planned
+read-only GitHub review agent—before adding another generic contract. ACP and
+RCP remain separate later surface and continuity work.

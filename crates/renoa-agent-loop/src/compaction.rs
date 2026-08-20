@@ -1,20 +1,29 @@
 use std::num::NonZeroU64;
 
-use renoa_agent::{ModelRequest, ToolSpec};
+use renoa_agent::{Message, ModelRequest, ToolSpec};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::ContextInput;
 
 mod format;
 mod planning;
+mod strategy;
 #[cfg(test)]
 mod tests;
+mod validation;
+
+pub use strategy::CompactingContextStrategy;
+
+const CHECKPOINT_PREFIX: &str = "[CONTEXT CHECKPOINT]\n";
+const CHECKPOINT_SUFFIX: &str = "\n[END CONTEXT CHECKPOINT]";
 
 /// Validated token limits used by pure compaction planning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactionLimits {
     dispatch_limit: NonZeroU64,
     tail_budget: NonZeroU64,
+    max_summary: NonZeroU64,
 }
 
 impl CompactionLimits {
@@ -56,6 +65,7 @@ impl CompactionLimits {
         Ok(Self {
             dispatch_limit: dispatch_limit_tokens,
             tail_budget: tail_budget_tokens,
+            max_summary: max_summary_tokens,
         })
     }
 
@@ -67,6 +77,10 @@ impl CompactionLimits {
 
     const fn tail_budget_tokens(self) -> NonZeroU64 {
         self.tail_budget
+    }
+
+    const fn max_summary_tokens(self) -> NonZeroU64 {
+        self.max_summary
     }
 }
 
@@ -89,10 +103,23 @@ impl<'a> CompactionCheckpoint<'a> {
             summary,
         }
     }
+
+    /// Returns the last durable message represented by this checkpoint.
+    #[must_use]
+    pub const fn covered_through_sequence(self) -> u64 {
+        self.covered_through_sequence
+    }
+
+    /// Returns the activated portable summary.
+    #[must_use]
+    pub const fn summary(self) -> &'a str {
+        self.summary
+    }
 }
 
 /// A pure, deterministic summary request and the durable prefix it covers.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompactionPlan {
     summary_request: ModelRequest,
     covered_through_sequence: u64,
@@ -156,6 +183,30 @@ impl CompactionPlanner {
     }
 }
 
+pub(crate) fn validate_plan(
+    context: &ContextInput,
+    plan: &CompactionPlan,
+) -> Result<(), CompactionPlanningError> {
+    if plan.summary_request.messages.is_empty() {
+        return Err(CompactionPlanningError::InvalidPlan(
+            "summary request has no model input".to_owned(),
+        ));
+    }
+    if !plan.summary_request.tools.is_empty() {
+        return Err(CompactionPlanningError::InvalidPlan(
+            "summary request advertises tools".to_owned(),
+        ));
+    }
+    if context.active_checkpoint().is_some_and(|checkpoint| {
+        checkpoint.covered_through_sequence() >= plan.covered_through_sequence
+    }) {
+        return Err(CompactionPlanningError::InvalidPlan(
+            "covered boundary does not advance the active checkpoint".to_owned(),
+        ));
+    }
+    planning::validate_boundary(context, plan.covered_through_sequence)
+}
+
 /// Deterministic model-aware sizing for one provider-neutral request.
 ///
 /// Estimates must not decrease when a request is extended without removing
@@ -165,6 +216,10 @@ impl CompactionPlanner {
 pub trait ContextSizer: Send + Sync {
     /// Estimates provider input tokens for the exact request supplied.
     fn estimate_input_tokens(&self, request: &ModelRequest) -> u64;
+}
+
+fn checkpoint_message(summary: &str) -> Message {
+    Message::user_text(format!("{CHECKPOINT_PREFIX}{summary}{CHECKPOINT_SUFFIX}"))
 }
 
 /// Invalid ordering among compaction token limits.
@@ -206,6 +261,8 @@ pub enum CompactionPlanningError {
     InvalidActiveUser,
     #[error("active context checkpoint is invalid: {0}")]
     InvalidCheckpoint(String),
+    #[error("compaction plan is invalid: {0}")]
+    InvalidPlan(String),
     #[error("compaction request encoding failed: {0}")]
     RequestEncoding(#[source] serde_json::Error),
 }

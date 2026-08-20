@@ -17,7 +17,7 @@ no contract should be added until a real consumer needs it.
 | Durable user cancellation | Ready | Stable request identity, persist-before-signal, exact active-operation targeting, no new effects after cancellation wins, awaited cleanup, and loop-owned transcript closure |
 | Local coding proof | Ready | A deterministic model drives the real guarded file and Bash tools through the kernel path |
 | Transient model/tool progress | Partial | The provider-neutral SDK has deltas and tool updates; the kernel runtime does not yet expose a transient observation channel |
-| Context projection and compaction | Partial | Projection is replaceable and origin-aware; the researched safe-cut, bounded-input planner is pure and proven through the real kernel path; summary execution and durable checkpoint activation remain |
+| Context projection and compaction | Ready | Replaceable, revision-frozen strategy; safe-cut planning; exact persisted summary calls; bounded validation retries; durable non-destructive activation; typed provider-overflow fallback; cancellation, uncertainty, and both restart windows proven through the real kernel path |
 | Steering and follow-ups | Deferred | Ordering against active work and admitted commands needs a real surface consumer |
 | Approvals and permissions | Deferred | These remain host/product policy; a durable decision contract needs a concrete host flow |
 | Parallel tool batches | Deferred | The SDK can describe parallel-safe tools, but the durable loop intentionally executes source order sequentially |
@@ -25,7 +25,8 @@ no contract should be added until a real consumer needs it.
 | Cross-session context and branches | Deferred | Session-tree direction is recorded in the kernel architecture, but provenance and snapshot contracts need the first branch consumer |
 | Remote continuity (RCP) | Separate | RCP remains a harness-independent connection system and is not part of loop readiness |
 
-The next slice is durable summary execution and checkpoint activation. It must
-preserve the full semantic journal, keep summary calls behind kernel effects,
-bound retries explicitly, and prove restart behavior before this row becomes
-`Ready`.
+The next slice should be chosen by a real product consumer, not another
+speculative kernel seam. The smallest useful candidate is the planned read-only
+GitHub review host composed from the existing kernel, model/tool loop, provider,
+and narrowly scoped GitHub tools. Any new contract should be added only when
+that flow consumes and tests it.

@@ -12,9 +12,9 @@ use crate::{
     decision::{AgentLoop, LoopTool},
 };
 
-pub(crate) const CHECKPOINT_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CHECKPOINT_SCHEMA_VERSION: u32 = 2;
 pub(crate) const LOOP_BINDING: &str = "renoa.agent.model-tool-loop";
-pub(crate) const LOOP_REVISION: &str = "6";
+pub(crate) const LOOP_REVISION: &str = "7";
 pub(crate) const MODEL_EFFECT_BINDING: &str = "renoa.agent.model";
 const FULL_HISTORY_CONTEXT_REVISION: &str = "renoa.context.full-history.v1";
 const HEX: &[u8; 16] = b"0123456789abcdef";

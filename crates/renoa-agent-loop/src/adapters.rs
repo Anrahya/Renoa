@@ -7,6 +7,8 @@ use renoa_kernel::{
     EffectAdapter, EffectCompletion, EffectFuture, EffectInvocation, EffectOutcome,
 };
 
+use crate::format::ModelEffectOutput;
+
 pub(crate) struct ModelAdapter {
     model: Arc<dyn Model>,
 }
@@ -28,20 +30,28 @@ impl EffectAdapter for ModelAdapter {
                 Err(error) => return failure("invalid persisted model request", error),
             };
             match sample_model(model.as_ref(), request, cancellation, None).await {
-                Ok(result) => match serde_json::to_value(result.response) {
-                    Ok(response) => EffectOutcome::Success(response).into(),
-                    Err(error) => failure("model response serialization failed", error),
-                },
+                Ok(result) => model_completion(ModelEffectOutput::Completed {
+                    response: result.response,
+                }),
                 Err(SamplingError::Model(error))
                     if error.kind() == ModelErrorKind::ContextWindowExceeded =>
                 {
-                    failure("model invocation failed", error)
+                    model_completion(ModelEffectOutput::ContextWindowExceeded {
+                        message: error.to_string(),
+                    })
                 }
                 // Every other current or future sampling failure is uncertain
                 // until its semantics are explicitly classified as pre-dispatch.
                 Err(_) => EffectCompletion::OutcomeUnknown,
             }
         })
+    }
+}
+
+fn model_completion(output: ModelEffectOutput) -> EffectCompletion {
+    match serde_json::to_value(output) {
+        Ok(output) => EffectOutcome::Success(output).into(),
+        Err(error) => failure("model response serialization failed", error),
     }
 }
 

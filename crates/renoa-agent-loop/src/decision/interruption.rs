@@ -18,6 +18,12 @@ impl LoopPlugin for AgentLoop {
         match decode_checkpoint(saved)? {
             LoopPhase::NeedModel { model_turns } => self.request_model(model_turns, &input),
             LoopPhase::AwaitingModel { model_turns } => self.settle_model(model_turns, input),
+            LoopPhase::AwaitingCompaction {
+                model_turns,
+                plan,
+                max_attempts,
+                attempt,
+            } => self.settle_compaction(model_turns, plan, max_attempts, attempt, input),
             LoopPhase::NeedTool {
                 model_turns,
                 calls,
@@ -40,6 +46,9 @@ impl LoopPlugin for AgentLoop {
     ) -> Result<UnknownEffectAbandonment, LoopError> {
         match decode_checkpoint(&input.checkpoint)? {
             LoopPhase::AwaitingModel { .. } => self.abandon_unknown_model(&input),
+            LoopPhase::AwaitingCompaction { plan, .. } => {
+                Self::abandon_unknown_compaction(&plan, &input)
+            }
             LoopPhase::AwaitingTool {
                 calls, next_index, ..
             } => self.abandon_unknown_tool(&calls, next_index, &input),
@@ -63,6 +72,7 @@ impl LoopPlugin for AgentLoop {
                 cancelled(Vec::new())
             }
             LoopPhase::AwaitingModel { .. } => self.cancel_model(&input),
+            LoopPhase::AwaitingCompaction { plan, .. } => Self::cancel_compaction(&plan, &input),
             LoopPhase::NeedTool {
                 calls, next_index, ..
             } => Self::cancel_planned_tools(&calls, next_index, &input),
@@ -81,11 +91,26 @@ impl AgentLoop {
         &self,
         input: &UnknownEffectInput,
     ) -> Result<UnknownEffectAbandonment, LoopError> {
-        let expected_request = self.model_request(input.operation_id, &input.events)?;
+        let expected_request = self.normal_model_request(input.operation_id, &input.events)?;
         require_unknown_effect_identity(
             &input.effect,
             MODEL_EFFECT_BINDING,
             &encode("model request", expected_request)?,
+        )?;
+        Ok(UnknownEffectAbandonment {
+            checkpoint: checkpoint(LoopPhase::Terminal)?,
+            events: Vec::new(),
+        })
+    }
+
+    fn abandon_unknown_compaction(
+        plan: &crate::CompactionPlan,
+        input: &UnknownEffectInput,
+    ) -> Result<UnknownEffectAbandonment, LoopError> {
+        require_unknown_effect_identity(
+            &input.effect,
+            MODEL_EFFECT_BINDING,
+            &encode("compaction request", plan.summary_request())?,
         )?;
         Ok(UnknownEffectAbandonment {
             checkpoint: checkpoint(LoopPhase::Terminal)?,
@@ -126,7 +151,7 @@ impl AgentLoop {
     }
 
     fn cancel_model(&self, input: &CancellationInput) -> Result<CancellationTransition, LoopError> {
-        let expected_request = self.model_request(input.operation_id, &input.events)?;
+        let expected_request = self.normal_model_request(input.operation_id, &input.events)?;
         let effect = input.effect.as_ref().ok_or_else(|| {
             LoopError::new("an awaiting model checkpoint has no cancellation effect")
         })?;
@@ -134,6 +159,21 @@ impl AgentLoop {
             effect,
             MODEL_EFFECT_BINDING,
             &encode("model request", expected_request)?,
+        )?;
+        cancelled(Vec::new())
+    }
+
+    fn cancel_compaction(
+        plan: &crate::CompactionPlan,
+        input: &CancellationInput,
+    ) -> Result<CancellationTransition, LoopError> {
+        let effect = input.effect.as_ref().ok_or_else(|| {
+            LoopError::new("an awaiting compaction checkpoint has no cancellation effect")
+        })?;
+        require_cancellation_effect_identity(
+            effect,
+            MODEL_EFFECT_BINDING,
+            &encode("compaction request", plan.summary_request())?,
         )?;
         cancelled(Vec::new())
     }

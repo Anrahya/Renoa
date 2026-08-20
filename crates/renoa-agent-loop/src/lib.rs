@@ -8,14 +8,15 @@ mod decision;
 mod format;
 
 pub use compaction::{
-    CompactionCheckpoint, CompactionLimits, CompactionLimitsError, CompactionPlan,
-    CompactionPlanner, CompactionPlanningError, ContextSizer,
+    CompactingContextStrategy, CompactionCheckpoint, CompactionLimits, CompactionLimitsError,
+    CompactionPlan, CompactionPlanner, CompactionPlanningError, ContextSizer,
 };
 pub use configuration::{
     AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, ContextBinding, ModelBinding,
     build_runtime,
 };
 pub use context::{
-    ContextEntry, ContextInput, ContextStrategy, ContextStrategyError, FullHistoryStrategy,
+    CompactionValidationError, ContextEntry, ContextInput, ContextPreparation, ContextStrategy,
+    ContextStrategyError, FullHistoryStrategy,
 };
-pub use format::{AgentCommand, MESSAGE_EVENT_KIND};
+pub use format::{AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND};
