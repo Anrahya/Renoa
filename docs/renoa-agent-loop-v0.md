@@ -69,6 +69,14 @@ bounded portable-summary policy using a host-supplied deterministic
 an active operation accepts only the frozen revision. Context preparation never
 mutates the semantic journal or performs external work.
 
+Custom strategies construct their own typed `CompactionPlan` and the loop
+validates its request shape and durable cut before persistence. The built-in
+compactor also accepts a replaceable `ContextProjector`. It applies that
+projector before every normal-request and retained-tail size estimate, so the
+concrete normal request is sized after projection. Summary requests remain
+isolated from this projection and advertise no tools. Projector behavior is
+frozen through the surrounding context revision.
+
 `CompactionPlanner` is the pure planning helper used by the replaceable
 compacting strategy. Given
 validated limits, an optional activated checkpoint, the exact normal request
@@ -183,9 +191,14 @@ slice:
   deleting or rewriting durable history;
 - a context strategy can derive a deterministic, bounded compaction plan from
   real durable operation and sequence metadata without changing that history;
+- an externally implemented strategy can execute its own typed compaction plan,
+  and an external projector is included before every relevant size decision;
 - every summary request is an exact persisted model effect with no advertised
-  tools, and only a complete, normally stopped, bounded response with all seven
-  required non-empty sections may activate;
+  tools, and only a non-empty response accepted by the strategy that created
+  the plan may activate;
+- the built-in `CompactingContextStrategy` additionally requires a complete,
+  normally stopped, bounded response with all seven non-empty checkpoint
+  sections;
 - malformed summaries retry the same frozen plan only up to the strategy's
   explicit bound; cancellation, unknown outcomes, and a compactor provider
   rejection never invent or activate a checkpoint;

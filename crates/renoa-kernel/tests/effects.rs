@@ -61,15 +61,10 @@ async fn a_possibly_dispatched_safe_effect_replays_with_exact_identity() {
     let crashing = Arc::new(CrashingAdapter {
         calls: Arc::clone(&first_calls),
     });
+    let crashing_runtime = effect_runtime(EffectRecovery::SafeToReplay, crashing, false);
+    let expected_manifest = crashing_runtime.manifest().clone();
     let runner = Arc::clone(&kernel);
-    let task = tokio::spawn(async move {
-        runner
-            .drive(
-                session_id,
-                &effect_runtime(EffectRecovery::SafeToReplay, crashing, false),
-            )
-            .await
-    });
+    let task = tokio::spawn(async move { runner.drive(session_id, &crashing_runtime).await });
     assert!(task.await.expect_err("adapter panic").is_panic());
     let first = first_calls
         .lock()
@@ -98,6 +93,9 @@ async fn a_possibly_dispatched_safe_effect_replays_with_exact_identity() {
     assert_eq!(replay_calls.len(), 1);
     assert_eq!(replay_calls[0].effect_id, first.effect_id);
     assert_eq!(replay_calls[0].request, first.request);
+    assert_eq!(replay_calls[0].binding, "external");
+    assert_eq!(replay_calls[0].binding_revision, "1");
+    assert_eq!(replay_calls[0].runtime_manifest, expected_manifest);
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect recovered session");

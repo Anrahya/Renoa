@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     Checkpoint, EffectId, EffectInvocation, EffectOutcome, EffectRecovery, EffectSnapshot,
-    EffectStatus, Kernel, KernelError, OperationId, SettledEffect,
+    EffectStatus, Kernel, KernelError, OperationId, RuntimeManifest, SettledEffect,
     admission::from_sql_integer,
     cancellation::cancellation_requested,
     operation_phase::OperationPhase,
@@ -28,9 +28,16 @@ pub(crate) struct NewEffectIntent {
 }
 
 impl PendingEffect {
-    pub(crate) fn into_invocation(self, cancellation: CancellationToken) -> EffectInvocation {
+    pub(crate) fn into_invocation(
+        self,
+        runtime_manifest: RuntimeManifest,
+        cancellation: CancellationToken,
+    ) -> EffectInvocation {
         EffectInvocation {
             effect_id: self.effect_id,
+            binding: self.binding,
+            binding_revision: self.binding_revision,
+            runtime_manifest,
             request: self.request,
             cancellation,
         }

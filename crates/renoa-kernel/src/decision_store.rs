@@ -3,6 +3,7 @@ use rusqlite::{Transaction, TransactionBehavior, params};
 use crate::{
     EventId, Kernel, KernelError, LoopDecision, OperationId, OperationOutcome, SessionId,
     cancellation::cancellation_requested,
+    events::validate_new_events,
     operation_phase::OperationPhase,
     schema::{json_error, sqlite_error},
 };
@@ -56,11 +57,7 @@ impl Kernel {
                 return Err(KernelError::EffectBindingUnavailable(binding));
             }
         };
-        if events.iter().any(|event| event.kind.is_empty()) {
-            return Err(KernelError::InvalidDecision(
-                "semantic event kind cannot be empty".to_owned(),
-            ));
-        }
+        validate_new_events(&events)?;
         let mut connection = self.database.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)

@@ -6,11 +6,10 @@ use crate::{
     SessionId,
     admission::{parse_agent_id, parse_operation_id},
     decision_store::CommittedDecision,
-    effect_store::{EffectIntentCommit, EffectStart, NewEffectIntent, parse_effect_id},
+    effect_store::{EffectIntentCommit, EffectStart, NewEffectIntent},
     effect_supervision::{SessionDriveLease, supervise_effect},
-    inspection::require_state_version,
     operation_phase::OperationPhase,
-    runtime::require_compatible_checkpoint,
+    operation_store::load_operation,
     schema::{json_error, sqlite_error},
 };
 
@@ -190,7 +189,8 @@ impl Kernel {
         let expected_transition = pending.transition_version;
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectDispatchCommitted);
-        let invocation = pending.into_invocation(lease.effect_cancellation());
+        let invocation =
+            pending.into_invocation(active.manifest.clone(), lease.effect_cancellation());
         let completion = supervise_effect(&executor, adapter, invocation, lease.clone()).await?;
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectCompletedBeforeSettlement);
@@ -231,6 +231,7 @@ impl Kernel {
             agent_id: active.agent_id,
             session_id,
             operation_id: active.operation_id,
+            runtime_manifest: active.manifest.clone(),
             command: active.command.clone(),
             events,
             checkpoint: active.checkpoint.clone(),
@@ -342,69 +343,20 @@ fn load_active_query(
     session_id: SessionId,
     operation_id: OperationId,
 ) -> Result<ActiveOperation, KernelError> {
-    let (
-        command_json,
-        command_id,
-        phase,
-        state_version,
-        transition_version,
-        manifest_json,
-        checkpoint_json,
-        input_effect_id,
-    ) = connection
-        .query_row(
-            "SELECT c.content_json, o.command_id, o.phase, o.state_version,
-                        o.transition_version, o.manifest_json,
-                        o.checkpoint_json, o.input_effect_id
-                 FROM operations AS o
-                 JOIN commands AS c
-                   ON c.session_id = o.session_id AND c.command_id = o.command_id
-                 WHERE o.session_id = ?1 AND o.operation_id = ?2",
-            params![session_id.to_string(), operation_id.to_string()],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sqlite_error)?
+    let stored = load_operation(connection, session_id, operation_id)?
         .ok_or_else(|| KernelError::Corrupt("active operation is missing".to_owned()))?;
-    require_state_version(state_version)?;
-    let phase = OperationPhase::from_database(&phase)?;
-    let manifest_json = manifest_json.ok_or_else(|| {
+    let manifest = stored.manifest.ok_or_else(|| {
         KernelError::Corrupt("active operation has no runtime manifest".to_owned())
     })?;
-    let manifest: RuntimeManifest = serde_json::from_str(&manifest_json).map_err(json_error)?;
-    let checkpoint: Option<Checkpoint> = checkpoint_json
-        .map(|value| serde_json::from_str(&value).map_err(json_error))
-        .transpose()?;
-    require_compatible_checkpoint(&manifest, checkpoint.as_ref())?;
-    let command: Command = serde_json::from_str(&command_json).map_err(json_error)?;
-    let stored_command_id = crate::admission::parse_command_id(&command_id)?;
-    if command.command_id() != stored_command_id {
-        return Err(KernelError::Corrupt(
-            "active operation command identity differs from stored content".to_owned(),
-        ));
-    }
     Ok(ActiveOperation {
         agent_id,
         operation_id,
-        command,
+        command: stored.command,
         manifest,
-        checkpoint,
-        transition_version,
-        phase,
-        input_effect_id: input_effect_id
-            .map(|value| parse_effect_id(&value))
-            .transpose()?,
+        checkpoint: stored.checkpoint,
+        transition_version: stored.transition_version,
+        phase: stored.phase,
+        input_effect_id: stored.input_effect_id,
         newly_activated: false,
     })
 }

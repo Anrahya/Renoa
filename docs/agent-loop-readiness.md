@@ -17,7 +17,7 @@ no contract should be added until a real consumer needs it.
 | Durable user cancellation | Ready | Stable request identity, persist-before-signal, exact active-operation targeting, no new effects after cancellation wins, awaited cleanup, and loop-owned transcript closure |
 | Local coding proof | Ready | A deterministic model drives the real guarded file and Bash tools through the kernel path |
 | Transient model/tool progress | Partial | The provider-neutral SDK has deltas and tool updates; the kernel runtime does not yet expose a transient observation channel |
-| Context projection and compaction | Ready | Replaceable, revision-frozen strategy; safe-cut planning; exact persisted summary calls; bounded validation retries; durable non-destructive activation; typed provider-overflow fallback; cancellation, uncertainty, and both restart windows proven through the real kernel path |
+| Context projection and compaction | Ready | External strategies can construct typed plans; external projectors are sized before dispatch selection; safe-cut planning, exact persisted summaries, bounded validation, non-destructive activation, overflow fallback, cancellation, uncertainty, and restart windows are proven through the real kernel path |
 | Steering and follow-ups | Deferred | Ordering against active work and admitted commands needs a real surface consumer |
 | Approvals and permissions | Deferred | These remain host/product policy; a durable decision contract needs a concrete host flow |
 | Parallel tool batches | Deferred | The SDK can describe parallel-safe tools, but the durable loop intentionally executes source order sequentially |

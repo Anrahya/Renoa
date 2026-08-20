@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use renoa_kernel::{
     AgentId, Checkpoint, Command, CommandId, DriveResult, EventCursor, Kernel, KernelError,
     LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent, OperationOutcome,
-    OperationStatus, Runtime, SessionId,
+    OperationStatus, Runtime, RuntimeManifest, SessionId,
 };
 use tempfile::tempdir;
 
@@ -111,6 +111,43 @@ async fn activation_freezes_the_exact_runtime_manifest() {
             .expect("resume exact runtime"),
         DriveResult::Finished { .. }
     ));
+}
+
+#[tokio::test]
+async fn loop_receives_the_exact_frozen_runtime_manifest() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let session_id = create_session(&kernel);
+    kernel
+        .submit(
+            session_id,
+            Command::new(CommandId::new(), serde_json::json!({"prompt": "work"})),
+        )
+        .expect("submit command");
+    let observed = Arc::new(Mutex::new(None));
+    let runtime = Runtime::new(
+        LoopBinding::new(
+            "manifest-observer",
+            "3",
+            Arc::new(ManifestObservingLoop {
+                observed: Arc::clone(&observed),
+            }),
+        ),
+        7,
+        "manifest-config",
+        Vec::new(),
+    )
+    .expect("valid runtime");
+
+    kernel
+        .drive(session_id, &runtime)
+        .await
+        .expect("drive operation");
+
+    assert_eq!(
+        observed.lock().expect("observed manifest lock").as_ref(),
+        Some(runtime.manifest())
+    );
 }
 
 #[tokio::test]
@@ -250,6 +287,20 @@ fn completing_runtime(config_digest: &str, checkpoint_schema: u32) -> Runtime {
 struct CompletingLoop {
     checkpoint_schema: u32,
     seen: Mutex<Vec<serde_json::Value>>,
+}
+
+struct ManifestObservingLoop {
+    observed: Arc<Mutex<Option<RuntimeManifest>>>,
+}
+
+impl LoopPlugin for ManifestObservingLoop {
+    fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
+        *self.observed.lock().expect("observed manifest lock") = Some(input.runtime_manifest);
+        Ok(LoopDecision::Complete {
+            checkpoint: Checkpoint::new(7, serde_json::json!({"done": true})),
+            events: Vec::new(),
+        })
+    }
 }
 
 impl LoopPlugin for CompletingLoop {

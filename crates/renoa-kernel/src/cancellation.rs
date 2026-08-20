@@ -7,18 +7,18 @@ use crate::{
     SettledEffect,
     admission::{from_sql_integer, parse_agent_id, parse_operation_id},
     decision_store::append_events,
-    effect_store::{mark_outcome_unknown, parse_effect_id},
+    effect_store::mark_outcome_unknown,
     effect_supervision::signal_running_operation,
-    events::load_event_page,
-    inspection::require_state_version,
+    events::{load_event_page, validate_new_events},
     operation_phase::OperationPhase,
+    operation_store::load_operation,
     runtime::require_compatible_checkpoint,
     schema::{json_error, sqlite_error},
 };
 
 mod store;
 
-use store::{decode_command, decode_manifest, load_cancellation_effect, load_operation};
+use store::load_cancellation_effect;
 
 /// Exact persisted effect identity without a definite outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +175,7 @@ impl Kernel {
             .cancel_operation(pending.input)
             .map_err(KernelError::Loop)?;
         require_compatible_checkpoint(&pending.manifest, Some(&transition.checkpoint))?;
-        validate_transition(&transition)?;
+        validate_new_events(&transition.events)?;
         self.commit_cancellation(
             session_id,
             operation_id,
@@ -217,22 +217,22 @@ impl Kernel {
                 "cancelled operation no longer owns its session".to_owned(),
             ));
         }
-        let mut stored = load_operation(&transaction, session_id, operation_id)?;
-        require_state_version(stored.state_version)?;
-        let mut phase = OperationPhase::from_database(&stored.phase)?;
-        if !phase.is_cancellable() || stored.outcome_json.is_some() {
+        let mut stored = load_operation(&transaction, session_id, operation_id)?
+            .ok_or_else(|| KernelError::Corrupt("cancelled operation is missing".to_owned()))?;
+        let mut phase = stored.phase;
+        if !phase.is_cancellable() || stored.outcome.is_some() {
             return Err(KernelError::Corrupt(
                 "cancellation request targets a non-cancellable operation".to_owned(),
             ));
         }
         if phase == OperationPhase::EffectDispatched {
-            let effect_id = stored.current_effect_id.as_deref().ok_or_else(|| {
+            let effect_id = stored.current_effect_id.ok_or_else(|| {
                 KernelError::Corrupt("dispatched operation has no current effect".to_owned())
             })?;
             mark_outcome_unknown(
                 &transaction,
                 operation_id,
-                parse_effect_id(effect_id)?,
+                effect_id,
                 stored.transition_version,
             )?;
             stored.transition_version = stored
@@ -241,19 +241,15 @@ impl Kernel {
                 .ok_or_else(|| KernelError::Corrupt("transition version overflowed".to_owned()))?;
             phase = OperationPhase::OutcomeUnknown;
         }
-        let manifest = decode_manifest(stored.manifest_json)?;
-        let checkpoint = stored
-            .checkpoint_json
-            .map(|value| serde_json::from_str(&value).map_err(json_error))
-            .transpose()?;
-        require_compatible_checkpoint(&manifest, checkpoint.as_ref())?;
-        let command = decode_command(&stored.command_id, &stored.command_json)?;
+        let manifest = stored.manifest.ok_or_else(|| {
+            KernelError::Corrupt("cancelled operation has no manifest".to_owned())
+        })?;
         let effect = load_cancellation_effect(
             &transaction,
             operation_id,
             phase,
-            stored.current_effect_id.as_deref(),
-            stored.input_effect_id.as_deref(),
+            stored.current_effect_id,
+            stored.input_effect_id,
             &manifest,
         )?;
         let page = load_event_page(&transaction, session_id, EventCursor::START)?;
@@ -262,9 +258,9 @@ impl Kernel {
                 agent_id: parse_agent_id(&agent_id)?,
                 session_id,
                 operation_id,
-                command,
+                command: stored.command,
                 events: page.events,
-                checkpoint,
+                checkpoint: stored.checkpoint,
                 effect,
             },
             manifest,
@@ -382,14 +378,4 @@ pub(crate) fn cancellation_requested(
             |row| row.get(0),
         )
         .map_err(sqlite_error)
-}
-
-fn validate_transition(transition: &CancellationTransition) -> Result<(), KernelError> {
-    if transition.events.iter().any(|event| event.kind.is_empty()) {
-        Err(KernelError::InvalidDecision(
-            "semantic event kind cannot be empty".to_owned(),
-        ))
-    } else {
-        Ok(())
-    }
 }

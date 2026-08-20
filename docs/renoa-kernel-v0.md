@@ -89,9 +89,9 @@ host / ACP / RCP node
 
 `LoopPlugin` is ordinary trusted Rust code. The kernel gives it an owned,
 read-only snapshot containing the exact command, durable semantic history,
-current checkpoint, and any newly settled effect. It has no kernel handle,
-SQLite connection, mutable store, model, tool, filesystem, or network access.
-It returns one decision:
+current checkpoint, frozen runtime manifest, and any newly settled effect. It
+has no kernel handle, SQLite connection, mutable store, model, tool, filesystem,
+or network access. It returns one decision:
 
 - `InvokeEffect` with the next checkpoint, named binding, exact JSON request,
   and `SafeToReplay` or `NeverReplay` recovery;
@@ -118,12 +118,12 @@ checkpoint, and any current effect fact: settled, definitely not dispatched, or
 outcome unknown. It can close loop-owned history but cannot request another
 effect or change the recorded external fact.
 
-An `EffectAdapter` receives a stable effect ID, the exact saved request, and an
-attempt-scoped cancellation signal. It reports either one definite success or
-failure outcome, or that the external outcome is unknowable. Provider
-transport retries, tool execution, and other effect-specific behavior remain
-inside or behind the adapter. Process interruption is handled by the kernel
-recovery class.
+An `EffectAdapter` receives a stable effect ID, exact binding and revision, the
+frozen runtime manifest, the exact saved request, and an attempt-scoped
+cancellation signal. It reports either one definite success or failure outcome,
+or that the external outcome is unknowable. Provider transport retries, tool
+execution, and other effect-specific behavior remain inside or behind the
+adapter. Process interruption is handled by the kernel recovery class.
 
 An adapter must resolve only after work it started has stopped when the signal
 is cancelled. Dropping `Kernel::drive` cancels an in-flight invocation, but a
@@ -434,7 +434,7 @@ fork or movement path plus idempotence, isolation, recovery, and fencing tests.
 - steering, approval, and their ordering relative to commands and cancellation;
 - RCP task-to-session provisioning and coordinator command positions;
 - event retention, deletion, indexing, and snapshot compaction;
-- checkpoint size limits and host-level context compaction;
+- kernel-enforced checkpoint size limits;
 - explicit cross-session context sharing, including provenance,
   authorization, captured source position, and reference-versus-materialized
   representation;
@@ -448,3 +448,7 @@ fork or movement path plus idempotence, isolation, recovery, and fencing tests.
 
 An open decision becomes locked only when a runtime consumes it, tests prove
 its invariants on the real path, and this document records the reason.
+
+Host-level model-context compaction is implemented and tested as replaceable
+loop policy. It remains outside the kernel ownership boundary; only a future
+kernel-enforced checkpoint-size limit is still open here.

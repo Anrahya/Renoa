@@ -16,7 +16,7 @@ pub use configuration::{
     build_runtime,
 };
 pub use context::{
-    CompactionValidationError, ContextEntry, ContextInput, ContextPreparation, ContextStrategy,
-    ContextStrategyError, FullHistoryStrategy,
+    CompactionValidationError, ContextEntry, ContextInput, ContextPreparation, ContextProjector,
+    ContextStrategy, ContextStrategyError, FullHistoryStrategy,
 };
 pub use format::{AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND};

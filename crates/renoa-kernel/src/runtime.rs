@@ -102,6 +102,9 @@ impl From<EffectOutcome> for EffectCompletion {
 #[derive(Debug, Clone)]
 pub struct EffectInvocation {
     pub effect_id: EffectId,
+    pub binding: String,
+    pub binding_revision: String,
+    pub runtime_manifest: RuntimeManifest,
     pub request: Value,
     /// Cancelled when the caller drops the drive that owns this attempt.
     pub cancellation: CancellationToken,
@@ -165,6 +168,7 @@ pub struct LoopInput {
     pub agent_id: AgentId,
     pub session_id: SessionId,
     pub operation_id: OperationId,
+    pub runtime_manifest: RuntimeManifest,
     pub command: Command,
     pub events: Vec<SemanticEvent>,
     pub checkpoint: Option<Checkpoint>,

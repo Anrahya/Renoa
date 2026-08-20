@@ -4,7 +4,7 @@ use renoa_agent::{Message, ModelRequest, ModelResponse, ToolSpec};
 
 use super::{CompactionLimits, CompactionPlanner, ContextSizer, checkpoint_message, validation};
 use crate::context::{
-    CompactionValidationError, ContextInput, ContextPreparation, ContextStrategy,
+    CompactionValidationError, ContextInput, ContextPreparation, ContextProjector, ContextStrategy,
     ContextStrategyError,
 };
 
@@ -17,6 +17,15 @@ pub struct CompactingContextStrategy {
     planner: CompactionPlanner,
     max_attempts: NonZeroU32,
     sizer: Arc<dyn ContextSizer>,
+    projector: Arc<dyn ContextProjector>,
+}
+
+struct UnchangedMessages;
+
+impl ContextProjector for UnchangedMessages {
+    fn project(&self, messages: Vec<Message>) -> Result<Vec<Message>, ContextStrategyError> {
+        Ok(messages)
+    }
 }
 
 impl CompactingContextStrategy {
@@ -28,10 +37,25 @@ impl CompactingContextStrategy {
         max_attempts: NonZeroU32,
         sizer: Arc<dyn ContextSizer>,
     ) -> Self {
+        Self::with_projector(limits, max_attempts, sizer, Arc::new(UnchangedMessages))
+    }
+
+    /// Binds the compactor to a replaceable deterministic message projector.
+    ///
+    /// The projector runs before every normal and retained-tail size estimate,
+    /// making the estimate describe the exact message set that would be sent.
+    #[must_use]
+    pub fn with_projector(
+        limits: CompactionLimits,
+        max_attempts: NonZeroU32,
+        sizer: Arc<dyn ContextSizer>,
+        projector: Arc<dyn ContextProjector>,
+    ) -> Self {
         Self {
             planner: CompactionPlanner::new(limits),
             max_attempts,
             sizer,
+            projector,
         }
     }
 
@@ -66,11 +90,11 @@ impl CompactingContextStrategy {
 
 impl ContextStrategy for CompactingContextStrategy {
     fn project(&self, input: ContextInput) -> Result<Vec<Message>, ContextStrategyError> {
-        Self::projected_messages(&input)
+        self.projector.project(Self::projected_messages(&input)?)
     }
 
     fn prepare(&self, input: ContextInput) -> Result<ContextPreparation, ContextStrategyError> {
-        let messages = Self::projected_messages(&input)?;
+        let messages = self.projector.project(Self::projected_messages(&input)?)?;
         let candidate = ModelRequest {
             system_prompt: input.system_prompt().to_owned(),
             messages,
@@ -85,12 +109,13 @@ impl ContextStrategy for CompactingContextStrategy {
         }
         let plan = self
             .planner
-            .plan(
+            .plan_projected(
                 &input,
                 input.active_checkpoint(),
                 input.system_prompt(),
                 input.tools(),
                 self.sizer.as_ref(),
+                self.projector.as_ref(),
             )
             .map_err(|error| ContextStrategyError::new(error.to_string()))?;
         Ok(match plan {

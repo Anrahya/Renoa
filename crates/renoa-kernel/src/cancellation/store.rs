@@ -3,67 +3,17 @@ use serde_json::Value;
 
 use super::{CancellationEffect, UnsettledEffect};
 use crate::{
-    Command, EffectOutcome, KernelError, OperationId, RuntimeManifest, SessionId, SettledEffect,
-    admission::parse_command_id,
-    effect_store::parse_effect_id,
+    EffectId, EffectOutcome, KernelError, OperationId, RuntimeManifest, SettledEffect,
     operation_phase::OperationPhase,
     schema::{json_error, sqlite_error},
 };
-
-pub(super) struct StoredOperation {
-    pub(super) command_id: String,
-    pub(super) command_json: String,
-    pub(super) phase: String,
-    pub(super) state_version: i64,
-    pub(super) transition_version: i64,
-    pub(super) manifest_json: Option<String>,
-    pub(super) checkpoint_json: Option<String>,
-    pub(super) current_effect_id: Option<String>,
-    pub(super) input_effect_id: Option<String>,
-    pub(super) outcome_json: Option<String>,
-}
-
-pub(super) fn load_operation(
-    connection: &rusqlite::Connection,
-    session_id: SessionId,
-    operation_id: OperationId,
-) -> Result<StoredOperation, KernelError> {
-    connection
-        .query_row(
-            "SELECT o.command_id, c.content_json, o.phase, o.state_version,
-                    o.transition_version, o.manifest_json, o.checkpoint_json,
-                    o.current_effect_id, o.input_effect_id, o.outcome_json
-             FROM operations AS o
-             JOIN commands AS c
-               ON c.session_id = o.session_id AND c.command_id = o.command_id
-             WHERE o.session_id = ?1 AND o.operation_id = ?2",
-            params![session_id.to_string(), operation_id.to_string()],
-            |row| {
-                Ok(StoredOperation {
-                    command_id: row.get(0)?,
-                    command_json: row.get(1)?,
-                    phase: row.get(2)?,
-                    state_version: row.get(3)?,
-                    transition_version: row.get(4)?,
-                    manifest_json: row.get(5)?,
-                    checkpoint_json: row.get(6)?,
-                    current_effect_id: row.get(7)?,
-                    input_effect_id: row.get(8)?,
-                    outcome_json: row.get(9)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(sqlite_error)?
-        .ok_or_else(|| KernelError::Corrupt("cancelled operation is missing".to_owned()))
-}
 
 pub(super) fn load_cancellation_effect(
     connection: &rusqlite::Connection,
     operation_id: OperationId,
     phase: OperationPhase,
-    current_effect_id: Option<&str>,
-    input_effect_id: Option<&str>,
+    current_effect_id: Option<EffectId>,
+    input_effect_id: Option<EffectId>,
     manifest: &RuntimeManifest,
 ) -> Result<Option<CancellationEffect>, KernelError> {
     let (effect_id, expected_status, kind) = match phase {
@@ -95,7 +45,6 @@ pub(super) fn load_cancellation_effect(
             )));
         }
     };
-    let effect_id = parse_effect_id(effect_id)?;
     let (binding, revision, request, status, outcome) = connection
         .query_row(
             "SELECT binding, binding_revision, request_json, status, outcome_json
@@ -159,10 +108,10 @@ enum EffectKind {
     OutcomeUnknown,
 }
 
-fn require_effect_id<'a>(
-    current_effect_id: Option<&'a str>,
-    input_effect_id: Option<&str>,
-) -> Result<&'a str, KernelError> {
+fn require_effect_id(
+    current_effect_id: Option<EffectId>,
+    input_effect_id: Option<EffectId>,
+) -> Result<EffectId, KernelError> {
     if input_effect_id.is_some() {
         return Err(KernelError::Corrupt(
             "active effect phase contains settled input".to_owned(),
@@ -170,21 +119,4 @@ fn require_effect_id<'a>(
     }
     current_effect_id
         .ok_or_else(|| KernelError::Corrupt("active effect identity is missing".to_owned()))
-}
-
-pub(super) fn decode_manifest(value: Option<String>) -> Result<RuntimeManifest, KernelError> {
-    value
-        .map(|value| serde_json::from_str(&value).map_err(json_error))
-        .transpose()?
-        .ok_or_else(|| KernelError::Corrupt("cancelled operation has no manifest".to_owned()))
-}
-
-pub(super) fn decode_command(command_id: &str, command_json: &str) -> Result<Command, KernelError> {
-    let command: Command = serde_json::from_str(command_json).map_err(json_error)?;
-    if command.command_id() != parse_command_id(command_id)? {
-        return Err(KernelError::Corrupt(
-            "cancelled operation command identity differs from stored content".to_owned(),
-        ));
-    }
-    Ok(command)
 }

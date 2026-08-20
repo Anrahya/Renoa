@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{EventId, Kernel, KernelError, OperationId, SessionId, admission::from_sql_integer};
+use crate::{
+    EventId, Kernel, KernelError, NewEvent, OperationId, SessionId, admission::from_sql_integer,
+};
 use crate::{admission::parse_operation_id, schema::sqlite_error};
 
 /// The next unread session-local semantic event sequence.
@@ -38,6 +40,16 @@ pub struct SemanticEvent {
 pub struct EventPage {
     pub events: Vec<SemanticEvent>,
     pub next_cursor: EventCursor,
+}
+
+pub(crate) fn validate_new_events(events: &[NewEvent]) -> Result<(), KernelError> {
+    if events.iter().any(|event| event.kind.is_empty()) {
+        Err(KernelError::InvalidDecision(
+            "semantic event kind cannot be empty".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 impl Kernel {

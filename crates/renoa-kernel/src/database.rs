@@ -111,8 +111,8 @@ fn reject_database_links(database_file: &File, path: &Path) -> Result<(), Kernel
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileIdentity {
-    first: u64,
-    second: u64,
+    device: u64,
+    inode: u64,
 }
 
 #[cfg(unix)]
@@ -146,8 +146,8 @@ fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
     use std::os::unix::fs::MetadataExt;
 
     FileIdentity {
-        first: metadata.dev(),
-        second: metadata.ino(),
+        device: metadata.dev(),
+        inode: metadata.ino(),
     }
 }
 

@@ -3,6 +3,8 @@ mod activation_recovery;
 mod compaction_support;
 #[path = "durable_compaction/repeated_active_turn.rs"]
 mod repeated_active_turn;
+#[path = "durable_compaction/replaceability.rs"]
+mod replaceability;
 
 use std::sync::{Arc, Mutex};
 

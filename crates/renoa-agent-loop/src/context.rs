@@ -212,6 +212,26 @@ pub trait ContextStrategy: Send + Sync {
     }
 }
 
+/// A deterministic transformation applied to normal model-request messages.
+///
+/// This is the composition point for host-owned message projection around the
+/// built-in durable compaction policy. The same projector is applied before a
+/// normal request is sized and to every retained-tail candidate considered by
+/// the compaction planner. Summary requests remain isolated and tool-free. A
+/// projector may filter, replace, or add messages, but it must preserve the
+/// [`crate::ContextSizer`] monotonicity contract: extending its supplied
+/// candidate without removing messages cannot reduce the projected estimate.
+/// Any projector configuration must be represented by the surrounding
+/// [`crate::ContextBinding`] revision.
+pub trait ContextProjector: Send + Sync {
+    /// Transforms one complete candidate message set without external work.
+    ///
+    /// # Errors
+    ///
+    /// A failure commits no loop transition and can be retried safely.
+    fn project(&self, messages: Vec<Message>) -> Result<Vec<Message>, ContextStrategyError>;
+}
+
 /// The built-in strategy that exposes every durable message in order.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FullHistoryStrategy;

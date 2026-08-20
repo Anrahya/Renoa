@@ -1,17 +1,16 @@
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use crate::{
-    AgentId, Checkpoint, Command, EventCursor, Kernel, KernelError, OperationId, OperationOutcome,
-    Runtime, RuntimeManifest, SessionId, UnknownEffect, UnknownEffectAbandonment,
-    UnknownEffectInput,
-    admission::{from_sql_integer, parse_agent_id, parse_command_id, parse_operation_id},
+    AgentId, EventCursor, Kernel, KernelError, OperationId, OperationOutcome, Runtime,
+    RuntimeManifest, SessionId, UnknownEffect, UnknownEffectAbandonment, UnknownEffectInput,
+    admission::{from_sql_integer, parse_agent_id, parse_operation_id},
     cancellation::cancellation_requested,
     decision_store::append_events,
     effect_store::parse_effect_id,
     effect_supervision::SessionDriveLease,
-    events::load_event_page,
-    inspection::require_state_version,
+    events::{load_event_page, validate_new_events},
     operation_phase::OperationPhase,
+    operation_store::{StoredOperation, load_operation},
     runtime::require_compatible_checkpoint,
     schema::{json_error, sqlite_error},
 };
@@ -31,19 +30,6 @@ enum UnknownEffectState {
         manifest: RuntimeManifest,
         outcome: OperationOutcome,
     },
-}
-
-struct StoredOperation {
-    command_id: String,
-    command_json: String,
-    phase: String,
-    state_version: i64,
-    transition_version: i64,
-    manifest_json: Option<String>,
-    checkpoint_json: Option<String>,
-    current_effect_id: Option<String>,
-    input_effect_id: Option<String>,
-    outcome_json: Option<String>,
 }
 
 impl Kernel {
@@ -88,7 +74,7 @@ impl Kernel {
                     .abandon_unknown_effect(input)
                     .map_err(KernelError::Loop)?;
                 require_compatible_checkpoint(&manifest, Some(&abandonment.checkpoint))?;
-                validate_abandonment(&abandonment)?;
+                validate_new_events(&abandonment.events)?;
                 let outcome = self.commit_unknown_effect_abandonment(
                     session_id,
                     operation_id,
@@ -121,36 +107,9 @@ impl Kernel {
             .optional()
             .map_err(sqlite_error)?
             .ok_or(KernelError::SessionNotFound(session_id))?;
-        let stored = transaction
-            .query_row(
-                "SELECT o.command_id, c.content_json, o.phase, o.state_version,
-                        o.transition_version, o.manifest_json, o.checkpoint_json,
-                        o.current_effect_id, o.input_effect_id, o.outcome_json
-                 FROM operations AS o
-                 JOIN commands AS c
-                   ON c.session_id = o.session_id AND c.command_id = o.command_id
-                 WHERE o.session_id = ?1 AND o.operation_id = ?2",
-                params![session_id.to_string(), operation_id.to_string()],
-                |row| {
-                    Ok(StoredOperation {
-                        command_id: row.get(0)?,
-                        command_json: row.get(1)?,
-                        phase: row.get(2)?,
-                        state_version: row.get(3)?,
-                        transition_version: row.get(4)?,
-                        manifest_json: row.get(5)?,
-                        checkpoint_json: row.get(6)?,
-                        current_effect_id: row.get(7)?,
-                        input_effect_id: row.get(8)?,
-                        outcome_json: row.get(9)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(sqlite_error)?
+        let stored = load_operation(&transaction, session_id, operation_id)?
             .ok_or(KernelError::NoUnknownEffect(operation_id))?;
-        require_state_version(stored.state_version)?;
-        let phase = OperationPhase::from_database(&stored.phase)?;
+        let phase = stored.phase;
         let state = match phase {
             OperationPhase::OutcomeUnknown => load_pending_abandonment(
                 &transaction,
@@ -297,18 +256,20 @@ fn load_pending_abandonment(
             "unknown-effect operation is not the session's active operation".to_owned(),
         ));
     }
-    if stored.input_effect_id.is_some() || stored.outcome_json.is_some() {
+    if stored.input_effect_id.is_some() || stored.outcome.is_some() {
         return Err(KernelError::Corrupt(
             "unknown-effect operation contains settled input or a terminal outcome".to_owned(),
         ));
     }
-    let manifest = decode_manifest(stored.manifest_json)?;
-    let checkpoint = decode_checkpoint(&manifest, stored.checkpoint_json)?;
-    let command = decode_command(&stored.command_id, &stored.command_json)?;
+    let manifest = stored.manifest.ok_or_else(|| {
+        KernelError::Corrupt("unknown-effect operation has no manifest".to_owned())
+    })?;
+    let checkpoint = stored.checkpoint.ok_or_else(|| {
+        KernelError::Corrupt("unknown-effect operation has no checkpoint".to_owned())
+    })?;
     let effect_id = stored.current_effect_id.ok_or_else(|| {
         KernelError::Corrupt("unknown-effect operation has no current effect".to_owned())
     })?;
-    let effect_id = parse_effect_id(&effect_id)?;
     let (binding, binding_revision, request_json, status, outcome_json) = transaction
         .query_row(
             "SELECT binding, binding_revision, request_json, status, outcome_json
@@ -343,7 +304,7 @@ fn load_pending_abandonment(
             agent_id,
             session_id,
             operation_id,
-            command,
+            command: stored.command,
             events: page.events,
             checkpoint,
             effect: UnknownEffect {
@@ -399,7 +360,9 @@ fn load_prior_abandonment(
             "abandoned operation still owns active execution state".to_owned(),
         ));
     }
-    let manifest = decode_manifest(stored.manifest_json)?;
+    let manifest = stored.manifest.ok_or_else(|| {
+        KernelError::Corrupt("unknown-effect operation has no manifest".to_owned())
+    })?;
     if manifest.effect_bindings.get(&binding) != Some(&binding_revision) {
         return Err(KernelError::Corrupt(
             "abandoned unknown effect differs from the frozen manifest".to_owned(),
@@ -412,12 +375,11 @@ fn load_prior_abandonment(
         ));
     }
     serde_json::from_str::<serde_json::Value>(&request_json).map_err(json_error)?;
-    decode_command(&stored.command_id, &stored.command_json)?;
-    let _checkpoint = decode_checkpoint(&manifest, stored.checkpoint_json)?;
+    stored.checkpoint.ok_or_else(|| {
+        KernelError::Corrupt("unknown-effect operation has no checkpoint".to_owned())
+    })?;
     let outcome = stored
-        .outcome_json
-        .map(|value| serde_json::from_str(&value).map_err(json_error))
-        .transpose()?
+        .outcome
         .ok_or_else(|| KernelError::Corrupt("abandoned operation has no outcome".to_owned()))?;
     if outcome != abandoned_outcome() {
         return Err(KernelError::Corrupt(
@@ -428,52 +390,11 @@ fn load_prior_abandonment(
     Ok(UnknownEffectState::AlreadyAbandoned { manifest, outcome })
 }
 
-fn decode_manifest(value: Option<String>) -> Result<RuntimeManifest, KernelError> {
-    value
-        .map(|value| serde_json::from_str(&value).map_err(json_error))
-        .transpose()?
-        .ok_or_else(|| KernelError::Corrupt("unknown-effect operation has no manifest".to_owned()))
-}
-
-fn decode_checkpoint(
-    manifest: &RuntimeManifest,
-    value: Option<String>,
-) -> Result<Checkpoint, KernelError> {
-    let checkpoint = value
-        .map(|value| serde_json::from_str(&value).map_err(json_error))
-        .transpose()?
-        .ok_or_else(|| {
-            KernelError::Corrupt("unknown-effect operation has no checkpoint".to_owned())
-        })?;
-    require_compatible_checkpoint(manifest, Some(&checkpoint))?;
-    Ok(checkpoint)
-}
-
-fn decode_command(command_id: &str, command_json: &str) -> Result<Command, KernelError> {
-    let command: Command = serde_json::from_str(command_json).map_err(json_error)?;
-    if command.command_id() != parse_command_id(command_id)? {
-        return Err(KernelError::Corrupt(
-            "unknown-effect command identity differs from stored content".to_owned(),
-        ));
-    }
-    Ok(command)
-}
-
 fn require_runtime(manifest: &RuntimeManifest, runtime: &Runtime) -> Result<(), KernelError> {
     if manifest == runtime.manifest() {
         Ok(())
     } else {
         Err(KernelError::RuntimeMismatch)
-    }
-}
-
-fn validate_abandonment(abandonment: &UnknownEffectAbandonment) -> Result<(), KernelError> {
-    if abandonment.events.iter().any(|event| event.kind.is_empty()) {
-        Err(KernelError::InvalidDecision(
-            "semantic event kind cannot be empty".to_owned(),
-        ))
-    } else {
-        Ok(())
     }
 }
 

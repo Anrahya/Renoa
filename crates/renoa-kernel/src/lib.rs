@@ -11,6 +11,7 @@ mod events;
 mod ids;
 mod inspection;
 mod operation_phase;
+mod operation_store;
 mod runtime;
 mod schema;
 mod state;

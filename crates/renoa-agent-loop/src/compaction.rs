@@ -4,7 +4,7 @@ use renoa_agent::{Message, ModelRequest, ToolSpec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::ContextInput;
+use crate::{ContextInput, ContextProjector, ContextStrategyError};
 
 mod format;
 mod planning;
@@ -126,6 +126,27 @@ pub struct CompactionPlan {
 }
 
 impl CompactionPlan {
+    /// Creates a typed plan for a custom context strategy.
+    ///
+    /// The loop additionally validates the covered boundary against the exact
+    /// durable transcript before persisting this request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty summary input or a summary request that advertises
+    /// tools.
+    pub fn new(
+        summary_request: ModelRequest,
+        covered_through_sequence: u64,
+    ) -> Result<Self, CompactionPlanningError> {
+        let plan = Self {
+            summary_request,
+            covered_through_sequence,
+        };
+        validate_plan_shape(&plan)?;
+        Ok(plan)
+    }
+
     /// Returns the provider-neutral request that must be persisted before use.
     #[must_use]
     pub const fn summary_request(&self) -> &ModelRequest {
@@ -179,6 +200,27 @@ impl CompactionPlanner {
             tools,
             self.limits,
             sizer,
+            None,
+        )
+    }
+
+    pub(crate) fn plan_projected(
+        &self,
+        context: &ContextInput,
+        checkpoint: Option<CompactionCheckpoint<'_>>,
+        system_prompt: &str,
+        tools: &[ToolSpec],
+        sizer: &dyn ContextSizer,
+        projector: &dyn ContextProjector,
+    ) -> Result<Option<CompactionPlan>, CompactionPlanningError> {
+        planning::select_plan(
+            context,
+            checkpoint,
+            system_prompt,
+            tools,
+            self.limits,
+            sizer,
+            Some(projector),
         )
     }
 }
@@ -187,6 +229,18 @@ pub(crate) fn validate_plan(
     context: &ContextInput,
     plan: &CompactionPlan,
 ) -> Result<(), CompactionPlanningError> {
+    validate_plan_shape(plan)?;
+    if context.active_checkpoint().is_some_and(|checkpoint| {
+        checkpoint.covered_through_sequence() >= plan.covered_through_sequence
+    }) {
+        return Err(CompactionPlanningError::InvalidPlan(
+            "covered boundary does not advance the active checkpoint".to_owned(),
+        ));
+    }
+    planning::validate_boundary(context, plan.covered_through_sequence)
+}
+
+fn validate_plan_shape(plan: &CompactionPlan) -> Result<(), CompactionPlanningError> {
     if plan.summary_request.messages.is_empty() {
         return Err(CompactionPlanningError::InvalidPlan(
             "summary request has no model input".to_owned(),
@@ -197,14 +251,7 @@ pub(crate) fn validate_plan(
             "summary request advertises tools".to_owned(),
         ));
     }
-    if context.active_checkpoint().is_some_and(|checkpoint| {
-        checkpoint.covered_through_sequence() >= plan.covered_through_sequence
-    }) {
-        return Err(CompactionPlanningError::InvalidPlan(
-            "covered boundary does not advance the active checkpoint".to_owned(),
-        ));
-    }
-    planning::validate_boundary(context, plan.covered_through_sequence)
+    Ok(())
 }
 
 /// Deterministic model-aware sizing for one provider-neutral request.
@@ -263,6 +310,8 @@ pub enum CompactionPlanningError {
     InvalidCheckpoint(String),
     #[error("compaction plan is invalid: {0}")]
     InvalidPlan(String),
+    #[error("context projection failed: {0}")]
+    Projection(#[source] ContextStrategyError),
     #[error("compaction request encoding failed: {0}")]
     RequestEncoding(#[source] serde_json::Error),
 }

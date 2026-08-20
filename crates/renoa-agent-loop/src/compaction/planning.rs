@@ -6,7 +6,7 @@ use super::{
     CompactionCheckpoint, CompactionLimits, CompactionPlan, CompactionPlanningError, ContextSizer,
     format::summary_request,
 };
-use crate::{ContextEntry, ContextInput};
+use crate::{ContextEntry, ContextInput, ContextProjector};
 
 pub(super) fn select_plan(
     context: &ContextInput,
@@ -15,6 +15,7 @@ pub(super) fn select_plan(
     tools: &[ToolSpec],
     limits: CompactionLimits,
     sizer: &dyn ContextSizer,
+    projector: Option<&dyn ContextProjector>,
 ) -> Result<Option<CompactionPlan>, CompactionPlanningError> {
     let all_entries = context.entries().collect::<Vec<_>>();
     let anchor = active_user_anchor(&all_entries, context.active_operation_id())?;
@@ -30,29 +31,23 @@ pub(super) fn select_plan(
     else {
         return Ok(None);
     };
-    let request_shape = TailRequestShape {
-        system_prompt,
-        tools,
-    };
-    let selected = first_tail_within_budget(
-        entries,
-        anchor,
-        &cuts,
-        last_fitting,
-        limits.tail_budget_tokens().get(),
-        request_shape,
+    let sizing = TailSizing {
+        budget: limits.tail_budget_tokens().get(),
+        request_shape: TailRequestShape {
+            system_prompt,
+            tools,
+        },
         sizer,
-    )
-    .unwrap_or(last_fitting);
+        projector,
+    };
+    let selected = first_tail_within_budget(entries, anchor, &cuts, last_fitting, sizing)?
+        .unwrap_or(last_fitting);
     let summary_request = if selected == last_fitting {
         last_request
     } else {
         summary_at(entries, checkpoint, cuts[selected])?
     };
-    Ok(Some(CompactionPlan {
-        summary_request,
-        covered_through_sequence: entries[cuts[selected]].sequence(),
-    }))
+    CompactionPlan::new(summary_request, entries[cuts[selected]].sequence()).map(Some)
 }
 
 pub(super) fn validate_boundary(
@@ -141,22 +136,25 @@ fn first_tail_within_budget(
     anchor: ContextEntry<'_>,
     cuts: &[usize],
     last_fitting: usize,
-    tail_budget: u64,
-    request_shape: TailRequestShape<'_>,
-    sizer: &dyn ContextSizer,
-) -> Option<usize> {
+    sizing: TailSizing<'_>,
+) -> Result<Option<usize>, CompactionPlanningError> {
     let mut first_unknown = 0;
     let mut first_fitting = last_fitting + 1;
     while first_unknown < first_fitting {
         let position = first_unknown + (first_fitting - first_unknown) / 2;
-        let request = tail_request(entries, anchor, cuts[position], request_shape);
-        if sizer.estimate_input_tokens(&request) <= tail_budget {
+        let mut request = tail_request(entries, anchor, cuts[position], sizing.request_shape);
+        if let Some(projector) = sizing.projector {
+            request.messages = projector
+                .project(request.messages)
+                .map_err(CompactionPlanningError::Projection)?;
+        }
+        if sizing.sizer.estimate_input_tokens(&request) <= sizing.budget {
             first_fitting = position;
         } else {
             first_unknown = position + 1;
         }
     }
-    (first_fitting <= last_fitting).then_some(first_fitting)
+    Ok((first_fitting <= last_fitting).then_some(first_fitting))
 }
 
 fn summary_at(
@@ -266,6 +264,14 @@ fn tail_request(
 struct TailRequestShape<'a> {
     system_prompt: &'a str,
     tools: &'a [ToolSpec],
+}
+
+#[derive(Clone, Copy)]
+struct TailSizing<'a> {
+    budget: u64,
+    request_shape: TailRequestShape<'a>,
+    sizer: &'a dyn ContextSizer,
+    projector: Option<&'a dyn ContextProjector>,
 }
 
 fn invalid_history<T>(message: &str) -> Result<T, CompactionPlanningError> {
