@@ -123,7 +123,7 @@ impl LocalWorkspace {
                 recovery: LocalRecovery::NeverReplay,
             },
             LocalToolBinding {
-                id: self.tool_binding_id("bash-v2"),
+                id: self.tool_binding_id("bash-v3"),
                 tool: Arc::new(Bash::new(Arc::clone(&self.root))),
                 recovery: LocalRecovery::NeverReplay,
             },

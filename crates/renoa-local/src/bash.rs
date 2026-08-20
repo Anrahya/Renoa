@@ -1,10 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use renoa_agent::{
     BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolSpec,
     ToolUpdates,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use tokio::{process::Command, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -20,6 +20,8 @@ use crate::{
 
 const TRUNCATION_NOTICE: &str =
     "[Earlier command output was truncated; showing the final output.]\n";
+const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
+const MAX_TIMEOUT_SECONDS: u64 = 1_800;
 
 pub(crate) struct Bash {
     root: Arc<PathBuf>,
@@ -32,15 +34,23 @@ impl Bash {
             root,
             spec: ToolSpec {
                 name: "bash".to_owned(),
-                description: concat!(
-                    "Run one shell command in the workspace and wait for it to finish. ",
-                    "Output is capped at 2,000 lines or 50 KiB, preserving the final output."
-                )
-                .to_owned(),
+                description: format!(
+                    "Run one shell command in the workspace and wait for it to finish. \
+The default timeout is {DEFAULT_TIMEOUT_SECONDS} seconds; timeout_seconds may set it from 1 \
+to {MAX_TIMEOUT_SECONDS} seconds. Output is capped at 2,000 lines or 50 KiB, preserving the \
+final output."
+                ),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "command": { "type": "string", "minLength": 1 }
+                        "command": { "type": "string", "minLength": 1 },
+                        "timeout_seconds": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": MAX_TIMEOUT_SECONDS,
+                            "default": DEFAULT_TIMEOUT_SECONDS,
+                            "description": "Maximum execution time in seconds."
+                        }
                     },
                     "required": ["command"],
                     "additionalProperties": false
@@ -54,6 +64,15 @@ impl Bash {
 #[serde(deny_unknown_fields)]
 struct BashInput {
     command: String,
+    #[serde(default, deserialize_with = "deserialize_timeout")]
+    timeout_seconds: Option<u64>,
+}
+
+fn deserialize_timeout<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    u64::deserialize(deserializer).map(Some)
 }
 
 impl Tool for Bash {
@@ -74,6 +93,7 @@ impl Tool for Bash {
         Box::pin(async move {
             let input: BashInput = decode(call.arguments)?;
             non_empty("command", &input.command)?;
+            let timeout_seconds = resolve_timeout(input.timeout_seconds)?;
             let mut process = Command::new("/bin/bash");
             process
                 .args(["-lc", input.command.as_str()])
@@ -93,6 +113,8 @@ impl Tool for Bash {
                 .ok_or_else(|| ToolError::new("shell stderr was not piped"))?;
             let stdout = drain_tail(stdout);
             let stderr = drain_tail(stderr);
+            let deadline = tokio::time::sleep(Duration::from_secs(timeout_seconds));
+            tokio::pin!(deadline);
             let exit = tokio::select! {
                 biased;
                 () = cancellation.cancelled() => {
@@ -102,10 +124,21 @@ impl Tool for Bash {
                 status = child.wait() => ProcessExit::Finished(
                     status.map_err(|error| tool_error("wait for shell", error))?
                 ),
+                () = &mut deadline => {
+                    stop_process_group(&mut child, pid).await?;
+                    ProcessExit::TimedOut
+                }
             };
-            let ProcessExit::Finished(status) = exit else {
-                collect_completion(pid, stdout, stderr).await?;
-                return Err(cancelled_error());
+            let status = match exit {
+                ProcessExit::Cancelled => {
+                    collect_completion(pid, stdout, stderr).await?;
+                    return Err(cancelled_error());
+                }
+                ProcessExit::TimedOut => {
+                    let (stdout, stderr) = collect_completion(pid, stdout, stderr).await?;
+                    return Err(timeout_error(timeout_seconds, &stdout, &stderr));
+                }
+                ProcessExit::Finished(status) => status,
             };
             let completion = collect_completion(pid, stdout, stderr);
             tokio::pin!(completion);
@@ -117,6 +150,11 @@ impl Tool for Bash {
                     return Err(cancelled_error());
                 }
                 output = &mut completion => output?,
+                () = &mut deadline => {
+                    stop_process_group(&mut child, pid).await?;
+                    let (stdout, stderr) = completion.await?;
+                    return Err(timeout_error(timeout_seconds, &stdout, &stderr));
+                }
             };
             let rendered = render_process_output(&stdout, &stderr, status.code());
             if !status.success() {
@@ -138,7 +176,18 @@ impl Tool for Bash {
 
 enum ProcessExit {
     Cancelled,
+    TimedOut,
     Finished(std::process::ExitStatus),
+}
+
+fn resolve_timeout(requested: Option<u64>) -> Result<u64, ToolError> {
+    let seconds = requested.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
+    if !(1..=MAX_TIMEOUT_SECONDS).contains(&seconds) {
+        return Err(ToolError::new(format!(
+            "timeout_seconds must be between 1 and {MAX_TIMEOUT_SECONDS}"
+        )));
+    }
+    Ok(seconds)
 }
 
 async fn collect_completion(
@@ -159,6 +208,19 @@ fn cancelled_error() -> ToolError {
     ToolError::new("bash execution was cancelled after its process group stopped")
 }
 
+fn timeout_error(timeout_seconds: u64, stdout: &CapturedTail, stderr: &CapturedTail) -> ToolError {
+    let unit = if timeout_seconds == 1 {
+        "second"
+    } else {
+        "seconds"
+    };
+    let header = format!(
+        "Command timed out after {timeout_seconds} {unit}. Its process group was stopped. \
+The command may have made partial changes before it stopped.\n"
+    );
+    ToolError::new(render_captured_output(&header, stdout, stderr))
+}
+
 fn render_process_output(
     stdout: &CapturedTail,
     stderr: &CapturedTail,
@@ -166,6 +228,10 @@ fn render_process_output(
 ) -> String {
     let code = code.map_or_else(|| "unknown".to_owned(), |value| value.to_string());
     let header = format!("Process exited with code {code}.\n");
+    render_captured_output(&header, stdout, stderr)
+}
+
+fn render_captured_output(header: &str, stdout: &CapturedTail, stderr: &CapturedTail) -> String {
     let mut body = String::new();
     append_output(&mut body, "stdout", stdout);
     append_output(&mut body, "stderr", stderr);
@@ -176,7 +242,7 @@ fn render_process_output(
     let (visible, additionally_truncated) = tail(&body, payload_limit, MAX_TOOL_OUTPUT_LINES);
     let truncated = additionally_truncated || stdout.truncated() || stderr.truncated();
     let mut rendered = String::with_capacity(MAX_TOOL_OUTPUT_BYTES);
-    rendered.push_str(&header);
+    rendered.push_str(header);
     if truncated {
         rendered.push_str(TRUNCATION_NOTICE);
     }
@@ -204,12 +270,79 @@ fn tool_error(action: &str, error: impl std::fmt::Display) -> ToolError {
 mod tests {
     use std::fs;
 
-    use renoa_agent::{ContentBlock, ToolCall, invoke_tool};
+    use renoa_agent::{ContentBlock, Tool, ToolCall, invoke_tool};
     use tempfile::tempdir;
     use tokio_util::sync::CancellationToken;
 
     use super::Bash;
     use crate::output::MAX_TOOL_OUTPUT_BYTES;
+
+    #[test]
+    fn timeout_contract_is_bounded_and_unambiguous() {
+        let directory = tempdir().expect("temporary directory");
+        let bash = Bash::new(std::sync::Arc::new(directory.path().to_path_buf()));
+
+        assert_eq!(
+            bash.spec().input_schema["properties"]["timeout_seconds"],
+            serde_json::json!({
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1800,
+                "default": 120,
+                "description": "Maximum execution time in seconds."
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_input_is_validated_before_the_command_starts() {
+        let directory = tempdir().expect("temporary directory");
+        let bash = Bash::new(std::sync::Arc::new(directory.path().to_path_buf()));
+
+        for timeout in [
+            serde_json::json!(0),
+            serde_json::json!(1801),
+            serde_json::json!(1.5),
+            serde_json::json!("1"),
+            serde_json::Value::Null,
+        ] {
+            let call = ToolCall {
+                id: "bash-invalid-timeout".to_owned(),
+                name: "bash".to_owned(),
+                arguments: serde_json::json!({
+                    "command": "printf ran > should-not-exist",
+                    "timeout_seconds": timeout
+                }),
+                thought_signature: None,
+                namespace: None,
+            };
+            let result = invoke_tool(Some(&bash), call, CancellationToken::new(), None)
+                .await
+                .expect("invalid input has a definite result");
+
+            assert!(result.is_error);
+        }
+        assert!(!directory.path().join("should-not-exist").exists());
+
+        let accepted = invoke_tool(
+            Some(&bash),
+            ToolCall {
+                id: "bash-maximum-timeout".to_owned(),
+                name: "bash".to_owned(),
+                arguments: serde_json::json!({
+                    "command": "printf accepted",
+                    "timeout_seconds": 1800
+                }),
+                thought_signature: None,
+                namespace: None,
+            },
+            CancellationToken::new(),
+            None,
+        )
+        .await
+        .expect("maximum timeout has a definite result");
+        assert!(!accepted.is_error);
+    }
 
     #[tokio::test]
     async fn large_shell_output_is_bounded_and_keeps_the_tail() {

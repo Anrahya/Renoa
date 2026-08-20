@@ -93,12 +93,15 @@ sandbox for untrusted work. "Full access" means no new Host-level filtering; it
 does not mean weakening existing adapter correctness or cancellation behavior.
 
 Model-visible output is bounded. Reads use one-based pagination; Bash preserves
-the final output; grep and find return deterministic workspace-relative results
-and explicit truncation notices. Search delegates regex traversal and ignore
-semantics to the resolved `rg` executable, then applies positive path globs
-without overriding ignored files. Grep and find skip hidden paths, including
-`.git`; unrestricted Bash is the explicit path for hidden-file access. Its
-reported revision is part of each search binding identity.
+the final output and stops its process group after 120 seconds by default. A
+call may choose 1 through 1,800 seconds; timeout results include retained output
+and warn that partial changes may already exist. Grep and find return
+deterministic workspace-relative results and explicit truncation notices.
+Search delegates regex traversal and ignore semantics to the resolved `rg`
+executable, then applies positive path globs without overriding ignored files.
+Grep and find skip hidden paths, including `.git`; unrestricted Bash is the
+explicit path for hidden-file access. Its reported revision is part of each
+search binding identity.
 
 When a real permission consumer is designed, effective capabilities will be
 resolved before runtime construction. Forbidden tools must then be absent from
