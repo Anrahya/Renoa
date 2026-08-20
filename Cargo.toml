@@ -13,6 +13,7 @@ agent-client-protocol = "2.0.0"
 axum = { version = "0.8.9", features = ["ws"] }
 futures-util = "0.3.33"
 getrandom = "0.4.3"
+globset = { version = "0.4.20", default-features = false }
 nix = { version = "0.30", features = ["process", "signal"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

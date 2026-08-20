@@ -16,6 +16,7 @@ no contract should be added until a real consumer needs it.
 | Unknown-effect closure | Ready | Explicit host action balances tool history without changing an unknown effect into a false result |
 | Durable user cancellation | Ready | Stable request identity, persist-before-signal, exact active-operation targeting, no new effects after cancellation wins, awaited cleanup, and loop-owned transcript closure |
 | Local coding proof | Ready | A deterministic model drives the real guarded file and Bash tools through the kernel path |
+| Local Host composition | Ready | Pi model, durable compaction, instructions, and the complete local coding tool set resolve into one frozen kernel runtime; the headless product path uses it |
 | Transient model/tool progress | Partial | The provider-neutral SDK has deltas and tool updates; the kernel runtime does not yet expose a transient observation channel |
 | Context projection and compaction | Ready | External strategies can construct typed plans; external projectors are sized before dispatch selection; safe-cut planning, exact persisted summaries, bounded validation, non-destructive activation, overflow fallback, cancellation, uncertainty, and restart windows are proven through the real kernel path |
 | Steering and follow-ups | Deferred | Ordering against active work and admitted commands needs a real surface consumer |
@@ -26,7 +27,7 @@ no contract should be added until a real consumer needs it.
 | Remote continuity (RCP) | Separate | RCP remains a harness-independent connection system and is not part of loop readiness |
 
 The next slice should be chosen by a real product consumer, not another
-speculative kernel seam. The smallest useful candidate is the planned read-only
-GitHub review host composed from the existing kernel, model/tool loop, provider,
-and narrowly scoped GitHub tools. Any new contract should be added only when
-that flow consumes and tests it.
+speculative kernel seam. The local coding Host is now that consumer. Its next
+useful slice is ACP/GPUI observation of the real kernel path, beginning with the
+smallest transient event boundary that surface consumes. Any new contract
+should be added only when that flow tests it end to end.

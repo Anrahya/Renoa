@@ -298,8 +298,11 @@ behavior has been replaced on the kernel path by the generic kernel transition
 and loop-owned transcript closure.
 
 The original kernel handoff's generic foundation, model/tool-loop adaptation,
-real local coding turn, and durable compaction migration are now complete. The
-next migration remains consumer-gated: compose the existing kernel, loop,
-provider, and tools into the first narrow product host—preferably the planned
-read-only GitHub review agent—before adding another generic contract. ACP and
-RCP remain separate later surface and continuity work.
+real local coding turn, and durable compaction migration are now complete.
+`renoa-local::build_local_runtime` now composes the loop, Pi provider,
+compaction strategy, and complete local tool set into the first product Host,
+and the headless local runner executes through the kernel path. The Host
+contract is recorded in [`renoa-host-v0.md`](renoa-host-v0.md). The next
+migration remains consumer-gated: expose this Host through ACP and the chosen
+GPUI surface without moving surface policy into the kernel. RCP remains
+separate continuity work.

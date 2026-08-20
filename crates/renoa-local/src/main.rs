@@ -1,10 +1,12 @@
-use std::{env, error::Error, io, path::PathBuf, sync::Arc};
+use std::{env, error::Error, io, path::PathBuf};
 
-use renoa_agent::ContentBlock;
-use renoa_harness::{
-    CancellationId, Harness, OperationOutcome, OperationRequest, RequestId, RunNext, SessionId,
+use renoa_agent::{AssistantContent, Message};
+use renoa_agent_loop::{AgentCommand, MESSAGE_EVENT_KIND};
+use renoa_kernel::{
+    AgentId, CancellationId, Command, CommandId, DriveResult, EventCursor, Kernel, OperationId,
+    OperationOutcome, SessionId,
 };
-use renoa_local::{LocalRuntimeConfig, LocalWorkspace, build_local_profile};
+use renoa_local::{LocalRuntimeConfig, LocalWorkspace, build_local_runtime};
 use uuid::Uuid;
 
 #[tokio::main]
@@ -25,9 +27,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
     let database = PathBuf::from(&arguments[0]);
     let workspace = LocalWorkspace::open(&arguments[1])?;
-    let session_id = session_id(&arguments[2])?;
     let prompt = arguments[3..].join(" ");
-    let profile = build_local_profile(
+    let runtime = build_local_runtime(
         LocalRuntimeConfig::new(
             required_environment("RENOA_PI_BRIDGE")?,
             required_environment("RENOA_PI_PROVIDER")?,
@@ -38,70 +39,99 @@ async fn run() -> Result<(), Box<dyn Error>> {
         &workspace,
     )
     .await?;
-    let harness = Arc::new(Harness::open(database)?);
-    harness.create_standalone_session(session_id).await?;
-    let admission = harness
-        .admit_standalone(
-            session_id,
-            OperationRequest::new(RequestId::new(), vec![ContentBlock::text(prompt)]),
-        )
-        .await?;
-    let execution = harness.run_next(session_id, &profile);
+    let kernel = Kernel::open(database)?;
+    let session_id = open_session(&kernel, &arguments[2])?;
+    let command = serde_json::to_value(AgentCommand::text(prompt))?;
+    let admission = kernel.submit(session_id, Command::new(CommandId::new(), command))?;
+    let execution = kernel.drive(session_id, &runtime);
     tokio::pin!(execution);
     let result = tokio::select! {
         biased;
         result = &mut execution => result?,
         signal = tokio::signal::ctrl_c() => {
             signal?;
-            harness.request_standalone_cancellation(
+            kernel.request_cancellation(
                 session_id,
                 admission.operation_id,
                 CancellationId::new(),
-            ).await?;
+            )?;
             execution.await?
         }
     };
 
     println!("session_id={session_id}");
-    report(result)
+    report(&kernel, session_id, result)
 }
 
-fn report(result: RunNext) -> Result<(), Box<dyn Error>> {
+fn report(
+    kernel: &Kernel,
+    session_id: SessionId,
+    result: DriveResult,
+) -> Result<(), Box<dyn Error>> {
     match result {
-        RunNext::Finished {
-            outcome:
-                OperationOutcome::Completed {
-                    output,
-                    stop_reason: _,
-                    usage: _,
-                },
-            ..
+        DriveResult::Finished {
+            operation_id,
+            outcome: OperationOutcome::Completed,
         } => {
-            println!("{output}");
+            println!("{}", completed_output(kernel, session_id, operation_id)?);
             Ok(())
         }
-        RunNext::Finished {
-            outcome: OperationOutcome::Cancelled { message },
+        DriveResult::Finished {
+            outcome: OperationOutcome::Cancelled,
             ..
-        }
-        | RunNext::Finished {
-            outcome: OperationOutcome::Failed { message },
+        } => Err(io::Error::other("operation was cancelled").into()),
+        DriveResult::Finished {
+            outcome: OperationOutcome::Failed { reason },
             ..
-        } => Err(io::Error::other(message).into()),
-        RunNext::Blocked { operation_id } => Err(io::Error::other(format!(
+        } => Err(io::Error::other(reason).into()),
+        DriveResult::Finished {
+            outcome: OperationOutcome::WaitingForInput,
+            ..
+        } => Err(io::Error::other("operation is waiting for more input").into()),
+        DriveResult::Blocked { operation_id } => Err(io::Error::other(format!(
             "operation {operation_id} is blocked on an uncertain tool outcome"
         ))
         .into()),
-        RunNext::Idle => Err(io::Error::other("the session had no runnable operation").into()),
-        _ => Err(io::Error::other("the harness returned an unsupported outcome").into()),
+        DriveResult::Idle => Err(io::Error::other("the session had no runnable operation").into()),
+        _ => Err(io::Error::other("the kernel returned an unsupported outcome").into()),
     }
 }
 
-fn session_id(value: &str) -> Result<SessionId, Box<dyn Error>> {
+fn open_session(kernel: &Kernel, value: &str) -> Result<SessionId, Box<dyn Error>> {
     if value == "new" {
-        return Ok(SessionId::new());
+        let agent_id = AgentId::new();
+        let session_id = SessionId::new();
+        kernel.create_agent(agent_id)?;
+        kernel.create_session(session_id, agent_id)?;
+        return Ok(session_id);
     }
-    Ok(SessionId::from_uuid(Uuid::parse_str(value)?))
+    let session_id = SessionId::from_uuid(Uuid::parse_str(value)?);
+    kernel.inspect(session_id)?;
+    Ok(session_id)
+}
+
+fn completed_output(
+    kernel: &Kernel,
+    session_id: SessionId,
+    operation_id: OperationId,
+) -> Result<String, Box<dyn Error>> {
+    let events = kernel.events_after(session_id, EventCursor::START)?.events;
+    let event = events
+        .iter()
+        .rev()
+        .find(|event| event.operation_id == operation_id && event.kind == MESSAGE_EVENT_KIND)
+        .ok_or_else(|| io::Error::other("completed operation has no message event"))?;
+    let message = serde_json::from_value::<Message>(event.payload.clone())?;
+    let Message::Assistant { content, .. } = message else {
+        return Err(io::Error::other("completed operation has no assistant message").into());
+    };
+    Ok(content
+        .into_iter()
+        .filter_map(|block| match block {
+            AssistantContent::Text { text, .. } => Some(text),
+            AssistantContent::Reasoning { .. } | AssistantContent::ToolCall { .. } => None,
+        })
+        .collect())
 }
 
 fn required_environment(name: &str) -> Result<String, Box<dyn Error>> {

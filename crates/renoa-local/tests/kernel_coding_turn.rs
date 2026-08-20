@@ -106,6 +106,96 @@ async fn kernel_agent_loop_edits_a_real_local_workspace() {
 }
 
 #[tokio::test]
+async fn kernel_agent_loop_routes_find_and_grep_results_back_to_the_model() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace_root = directory.path().join("workspace");
+    fs::create_dir_all(workspace_root.join("src")).expect("create source directory");
+    fs::write(
+        workspace_root.join("src/lib.rs"),
+        "pub fn answer() -> u8 { 42 } // needle\n",
+    )
+    .expect("write source fixture");
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(ScriptedModel::new(
+        [
+            tool_response(tool_call(
+                "find-1",
+                "find",
+                serde_json::json!({ "pattern": "*.rs" }),
+            )),
+            tool_response(tool_call(
+                "grep-1",
+                "grep",
+                serde_json::json!({ "pattern": "needle", "glob": "*.rs" }),
+            )),
+            text_response("Found the matching Rust source."),
+        ],
+        Arc::clone(&requests),
+    ));
+    let workspace = LocalWorkspace::open(&workspace_root).expect("open workspace");
+    let runtime = build_runtime(
+        AgentLoopConfig::new(
+            "Inspect the workspace carefully.",
+            NonZeroU32::new(4).expect("non-zero model limit"),
+            NonZeroU32::new(2).expect("non-zero tool limit"),
+        ),
+        ContextBinding::full_history(),
+        ModelBinding::new("scripted-search-v1", model, EffectRecovery::SafeToReplay),
+        workspace.kernel_tool_bindings(),
+    )
+    .expect("build kernel runtime");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+    kernel.create_agent(agent_id).expect("create agent");
+    kernel
+        .create_session(session_id, agent_id)
+        .expect("create session");
+    let admission = kernel
+        .submit(
+            session_id,
+            Command::new(
+                CommandId::new(),
+                serde_json::to_value(AgentCommand::text("Find Rust files containing needle."))
+                    .expect("serialize command"),
+            ),
+        )
+        .expect("submit command");
+
+    assert_eq!(
+        kernel
+            .drive(session_id, &runtime)
+            .await
+            .expect("drive search turn"),
+        DriveResult::Finished {
+            operation_id: admission.operation_id,
+            outcome: OperationOutcome::Completed,
+        }
+    );
+
+    let requests = requests.lock().expect("request lock");
+    assert_eq!(requests.len(), 3);
+    assert_eq!(tool_result_text(&requests[1].messages[2]), "src/lib.rs\n");
+    assert_eq!(
+        tool_result_text(&requests[2].messages[4]),
+        "src/lib.rs:1:pub fn answer() -> u8 { 42 } // needle\n"
+    );
+    drop(requests);
+
+    let snapshot = kernel.inspect(session_id).expect("inspect search turn");
+    assert_eq!(snapshot.operations[0].effects.len(), 5);
+    assert_eq!(
+        snapshot.operations[0].effects[1].recovery,
+        EffectRecovery::SafeToReplay
+    );
+    assert_eq!(
+        snapshot.operations[0].effects[3].recovery,
+        EffectRecovery::SafeToReplay
+    );
+}
+
+#[tokio::test]
 async fn kernel_cancellation_stops_real_bash_and_balances_the_next_model_context() {
     let directory = tempdir().expect("temporary directory");
     let workspace_root = directory.path().join("workspace");
@@ -298,4 +388,14 @@ fn text_response(text: &str) -> ModelResponse {
         usage: None,
         metadata: AssistantMetadata::default(),
     }
+}
+
+fn tool_result_text(message: &Message) -> &str {
+    let Message::Tool { result } = message else {
+        panic!("expected a tool result message")
+    };
+    let [ContentBlock::Text { text }] = result.content.as_slice() else {
+        panic!("tool result did not contain exactly one text block")
+    };
+    text
 }

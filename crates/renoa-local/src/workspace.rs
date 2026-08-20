@@ -1,24 +1,22 @@
 use std::{
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
-use renoa_agent::{
-    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolSpec,
-    ToolUpdates,
-};
+use renoa_agent::{Tool, ToolError};
 use renoa_agent_loop::AgentToolBinding;
 use renoa_harness::{ToolBinding, ToolRecovery};
 use renoa_kernel::EffectRecovery;
-use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio_util::sync::CancellationToken;
 
-use crate::bash::Bash;
-
-const OUTPUT_LIMIT: usize = 1_000_000;
+use crate::{
+    bash::Bash,
+    file_tools::{EditFile, ReadFile, WriteFile},
+    ripgrep::Ripgrep,
+    search::{Find, Grep},
+};
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -27,12 +25,19 @@ pub enum LocalWorkspaceError {
     NotDirectory(PathBuf),
     #[error("workspace path cannot be resolved: {0}")]
     Unavailable(#[source] io::Error),
+    #[error("ripgrep (`rg`) is required but was not found on PATH")]
+    RipgrepUnavailable,
+    #[error("ripgrep cannot be inspected: {0}")]
+    RipgrepInspection(#[source] io::Error),
+    #[error("the resolved `rg` executable did not report a valid ripgrep version")]
+    InvalidRipgrepVersion,
 }
 
 /// A canonical local directory exposed through a small coding-tool set.
 pub struct LocalWorkspace {
     root: Arc<PathBuf>,
     binding_id: String,
+    ripgrep: Arc<Ripgrep>,
 }
 
 impl LocalWorkspace {
@@ -46,9 +51,11 @@ impl LocalWorkspace {
         if !root.is_dir() {
             return Err(LocalWorkspaceError::NotDirectory(root));
         }
+        let ripgrep = Arc::new(Ripgrep::discover()?);
         Ok(Self {
             binding_id: hex_sha256(root.as_os_str().as_encoded_bytes()),
             root: Arc::new(root),
+            ripgrep,
         })
     }
 
@@ -101,24 +108,42 @@ impl LocalWorkspace {
     fn tools(&self) -> Vec<LocalToolBinding> {
         vec![
             LocalToolBinding {
-                id: self.tool_binding_id("read-file-v1"),
+                id: self.tool_binding_id("read-file-v2"),
                 tool: Arc::new(ReadFile::new(Arc::clone(&self.root))),
                 recovery: LocalRecovery::SafeToReplay,
             },
             LocalToolBinding {
-                id: self.tool_binding_id("edit-file-v1"),
+                id: self.tool_binding_id("edit-file-v2"),
                 tool: Arc::new(EditFile::new(Arc::clone(&self.root))),
                 recovery: LocalRecovery::NeverReplay,
             },
             LocalToolBinding {
-                id: self.tool_binding_id("write-file-v1"),
+                id: self.tool_binding_id("write-file-v2"),
                 tool: Arc::new(WriteFile::new(Arc::clone(&self.root))),
                 recovery: LocalRecovery::NeverReplay,
             },
             LocalToolBinding {
-                id: self.tool_binding_id("bash-v1"),
+                id: self.tool_binding_id("bash-v2"),
                 tool: Arc::new(Bash::new(Arc::clone(&self.root))),
                 recovery: LocalRecovery::NeverReplay,
+            },
+            LocalToolBinding {
+                id: format!(
+                    "renoa-local/grep-v2/{}/rg-{}",
+                    self.binding_id,
+                    self.ripgrep.revision()
+                ),
+                tool: Arc::new(Grep::new(Arc::clone(&self.root), Arc::clone(&self.ripgrep))),
+                recovery: LocalRecovery::SafeToReplay,
+            },
+            LocalToolBinding {
+                id: format!(
+                    "renoa-local/find-v2/{}/rg-{}",
+                    self.binding_id,
+                    self.ripgrep.revision()
+                ),
+                tool: Arc::new(Find::new(Arc::clone(&self.root), Arc::clone(&self.ripgrep))),
+                recovery: LocalRecovery::SafeToReplay,
             },
         ]
     }
@@ -136,7 +161,7 @@ enum LocalRecovery {
     NeverReplay,
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
+pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
 
     Sha256::digest(bytes)
@@ -147,186 +172,15 @@ fn hex_sha256(bytes: &[u8]) -> String {
         })
 }
 
-struct WriteFile {
-    root: Arc<PathBuf>,
-    spec: ToolSpec,
+pub(crate) async fn existing_file(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
+    let path = existing_path(root, requested).await?;
+    if !path.is_file() {
+        return Err(ToolError::new("path must name a file"));
+    }
+    Ok(path)
 }
 
-impl WriteFile {
-    fn new(root: Arc<PathBuf>) -> Self {
-        Self {
-            root,
-            spec: ToolSpec {
-                name: "write_file".to_owned(),
-                description: "Create or replace one UTF-8 text file inside the workspace."
-                    .to_owned(),
-                input_schema: object_schema(
-                    &["path", "content"],
-                    &json!({
-                        "path": { "type": "string" },
-                        "content": { "type": "string" }
-                    }),
-                ),
-            },
-        }
-    }
-}
-
-impl Tool for WriteFile {
-    fn spec(&self) -> &ToolSpec {
-        &self.spec
-    }
-
-    fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Sequential
-    }
-
-    fn execute(
-        &self,
-        call: ToolCall,
-        _cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(async move {
-            let path = writable_path(&self.root, string_argument(&call.arguments, "path")?).await?;
-            let content = string_argument(&call.arguments, "content")?;
-            if content.len() > OUTPUT_LIMIT {
-                return Err(ToolError::new(format!(
-                    "content exceeds the {OUTPUT_LIMIT}-byte write limit"
-                )));
-            }
-            tokio::fs::write(&path, content)
-                .await
-                .map_err(|error| tool_error("write file", error))?;
-            Ok(ToolOutput {
-                content: vec![ContentBlock::text(format!("Wrote {}", path.display()))],
-                details: Some(json!({ "path": path })),
-            })
-        })
-    }
-}
-
-struct ReadFile {
-    root: Arc<PathBuf>,
-    spec: ToolSpec,
-}
-
-impl ReadFile {
-    fn new(root: Arc<PathBuf>) -> Self {
-        Self {
-            root,
-            spec: ToolSpec {
-                name: "read_file".to_owned(),
-                description: "Read one UTF-8 text file inside the workspace.".to_owned(),
-                input_schema: object_schema(&["path"], &json!({ "path": { "type": "string" } })),
-            },
-        }
-    }
-}
-
-impl Tool for ReadFile {
-    fn spec(&self) -> &ToolSpec {
-        &self.spec
-    }
-
-    fn execute(
-        &self,
-        call: ToolCall,
-        _cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(async move {
-            let path = existing_path(&self.root, string_argument(&call.arguments, "path")?).await?;
-            let bytes = tokio::fs::read(&path)
-                .await
-                .map_err(|error| tool_error("read file", error))?;
-            if bytes.len() > OUTPUT_LIMIT {
-                return Err(ToolError::new(format!(
-                    "file exceeds the {OUTPUT_LIMIT}-byte read limit"
-                )));
-            }
-            let text = String::from_utf8(bytes)
-                .map_err(|_| ToolError::new("file is not valid UTF-8 text"))?;
-            Ok(ToolOutput {
-                content: vec![ContentBlock::text(text)],
-                details: Some(json!({ "path": path })),
-            })
-        })
-    }
-}
-
-struct EditFile {
-    root: Arc<PathBuf>,
-    spec: ToolSpec,
-}
-
-impl EditFile {
-    fn new(root: Arc<PathBuf>) -> Self {
-        Self {
-            root,
-            spec: ToolSpec {
-                name: "edit_file".to_owned(),
-                description: "Replace one exact text occurrence in a workspace file.".to_owned(),
-                input_schema: object_schema(
-                    &["path", "old_text", "new_text"],
-                    &json!({
-                        "path": { "type": "string" },
-                        "old_text": { "type": "string", "minLength": 1 },
-                        "new_text": { "type": "string" }
-                    }),
-                ),
-            },
-        }
-    }
-}
-
-impl Tool for EditFile {
-    fn spec(&self) -> &ToolSpec {
-        &self.spec
-    }
-
-    fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Sequential
-    }
-
-    fn execute(
-        &self,
-        call: ToolCall,
-        _cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(async move {
-            let path = existing_path(&self.root, string_argument(&call.arguments, "path")?).await?;
-            let old_text = string_argument(&call.arguments, "old_text")?;
-            if old_text.is_empty() {
-                return Err(ToolError::new("old_text must not be empty"));
-            }
-            let new_text = string_argument(&call.arguments, "new_text")?;
-            let content = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|error| tool_error("read file", error))?;
-            let Some(start) = content.find(old_text) else {
-                return Err(ToolError::new("old_text was not found"));
-            };
-            if content[start + old_text.len()..].contains(old_text) {
-                return Err(ToolError::new("old_text occurs more than once"));
-            }
-            let mut edited = String::with_capacity(content.len() - old_text.len() + new_text.len());
-            edited.push_str(&content[..start]);
-            edited.push_str(new_text);
-            edited.push_str(&content[start + old_text.len()..]);
-            tokio::fs::write(&path, edited)
-                .await
-                .map_err(|error| tool_error("write file", error))?;
-            Ok(ToolOutput {
-                content: vec![ContentBlock::text(format!("Edited {}", path.display()))],
-                details: Some(json!({ "path": path })),
-            })
-        })
-    }
-}
-
-async fn existing_path(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
+pub(crate) async fn existing_path(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
     let requested = relative_path(requested)?;
     let path = tokio::fs::canonicalize(root.join(requested))
         .await
@@ -337,7 +191,37 @@ async fn existing_path(root: &Path, requested: &str) -> Result<PathBuf, ToolErro
     Ok(path)
 }
 
-async fn writable_path(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
+pub(crate) async fn existing_directory(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
+    let path = existing_path(root, requested).await?;
+    if !path.is_dir() {
+        return Err(ToolError::new("path must name a directory"));
+    }
+    Ok(path)
+}
+
+pub(crate) fn ensure_visible_search_path(
+    root: &Path,
+    requested: &str,
+    resolved: &Path,
+) -> Result<(), ToolError> {
+    let resolved = resolved
+        .strip_prefix(root)
+        .map_err(|_| ToolError::new("search path escapes the workspace"))?;
+    if has_hidden_component(Path::new(requested)) || has_hidden_component(resolved) {
+        return Err(ToolError::new(
+            "grep and find skip hidden paths; use bash for explicit hidden-file access",
+        ));
+    }
+    Ok(())
+}
+
+fn has_hidden_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(component, Component::Normal(name) if name.as_encoded_bytes().starts_with(b"."))
+    })
+}
+
+pub(crate) async fn writable_path(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
     let requested = relative_path(requested)?;
     let candidate = root.join(requested);
     match tokio::fs::symlink_metadata(&candidate).await {
@@ -360,7 +244,7 @@ async fn writable_path(root: &Path, requested: &str) -> Result<PathBuf, ToolErro
     Ok(parent.join(name))
 }
 
-fn relative_path(requested: &str) -> Result<&Path, ToolError> {
+pub(crate) fn relative_path(requested: &str) -> Result<&Path, ToolError> {
     let path = Path::new(requested);
     if requested.is_empty()
         || path.components().any(|component| {
@@ -375,22 +259,6 @@ fn relative_path(requested: &str) -> Result<&Path, ToolError> {
         return Err(ToolError::new("path must stay relative to the workspace"));
     }
     Ok(path)
-}
-
-fn string_argument<'a>(arguments: &'a Value, name: &str) -> Result<&'a str, ToolError> {
-    arguments
-        .get(name)
-        .and_then(Value::as_str)
-        .ok_or_else(|| ToolError::new(format!("{name} must be a string")))
-}
-
-fn object_schema(required: &[&str], properties: &Value) -> Value {
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
-    })
 }
 
 fn tool_error(action: &str, error: impl std::fmt::Display) -> ToolError {

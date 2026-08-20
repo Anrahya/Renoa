@@ -851,7 +851,7 @@ slices.
 4. Add approval only with a real node policy and surface; the current registered
    tool set is intentionally all-allowed.
 5. **Implemented:** `renoa-local` proves the product boundary with Pi AI model
-   routing plus external read, edit, write, and bash tools; it is an
+   routing plus external read, edit, write, Bash, grep, and find tools; it is an
    all-allowed personal host, not a hostile sandbox.
 6. **Implemented:** optional host context projection preserves full history,
    persists the exact projected request before dispatch, and keeps usage for

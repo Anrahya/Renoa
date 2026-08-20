@@ -1,15 +1,30 @@
 # Renoa local host
 
-`renoa-local` is the first real coding host for `renoa-harness`. It binds one
-durable harness session to:
+`renoa-local` is the first real Host for `renoa-kernel`. It resolves one local
+coding runtime from:
 
 - Pi AI model routing through a small Node process adapter; and
-- local `read_file`, `edit_file`, `write_file`, and `bash` tools.
+- Renoa's durable model/tool loop and compaction strategy; and
+- local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
+  tools.
 
-Provider credentials and tool implementations stay outside the harness core.
+Provider credentials and tool implementations stay outside the kernel.
 The host is intentionally all-allowed: registering a tool makes it available.
 Paths are confined to the configured workspace, but `bash` is unrestricted and
 this is not a sandbox for untrusted work.
+
+Model-visible output is bounded: file reads are paginated, `grep` returns at
+most 100 matches, `find` returns at most 1,000 paths, and process output keeps
+the final 50 KiB or 2,000 lines. Search uses the resolved `rg` executable with
+configuration disabled, deterministic ordering, ignore-file handling, and
+workspace-relative results. Hidden paths, including `.git`, are intentionally
+skipped by `grep` and `find`; unrestricted `bash` remains the explicit escape
+hatch. `rg` is therefore a required local executable.
+
+The architecture and deliberately open permission decisions are recorded in
+[`docs/renoa-host-v0.md`](../../docs/renoa-host-v0.md). The ACP adapter still
+uses the legacy harness path until the kernel path has the transient observation
+boundary required by a real surface.
 
 Build the Pi bridge first:
 
@@ -33,7 +48,7 @@ export RENOA_PI_MODEL='grok-4.6'
 export RENOA_PI_INSTRUCTIONS='You are a careful coding agent.'
 
 cargo run -p renoa-local -- \
-  /absolute/path/to/harness.sqlite \
+  /absolute/path/to/kernel.sqlite \
   /absolute/path/to/workspace \
   new \
   'Read the project, make the requested change, and run its build.'
@@ -41,17 +56,19 @@ cargo run -p renoa-local -- \
 
 The command prints the stable session ID. Pass that ID instead of `new` to add
 the next turn to the same durable conversation. `Ctrl-C` requests ordered
-harness cancellation and waits for active model or process work to stop.
+kernel cancellation and waits for active model or process work to stop.
 
-At startup the Pi bridge resolves the selected model's context and output
-limits and verifies authentication. A packaged Pi model stays package-pinned;
-an xAI model absent from that package can be resolved from Pi's official live
-catalog. Renoa validates the provider, API, and xAI endpoint, then pins the
-exact model record and includes its SHA-256 identity in the runtime revision.
-An in-flight operation therefore fails closed instead of silently changing
-model behavior after restart. The host caps model output at 32,768 tokens and
-enables durable context checkpoints with explicit headroom; no provider table
-is compiled into the Rust harness. The local token estimate is deliberately
+At startup the Host resolves the selected model's context and output limits and
+verifies authentication. A packaged Pi model stays package-pinned; an xAI model
+absent from that package can be resolved from Pi's official live catalog. Renoa
+validates the provider, API, and xAI endpoint, then pins the exact model record
+and includes its SHA-256 identity in the runtime revision. The kernel freezes
+that revision with the loop, context configuration, instructions, and
+workspace-bound tools before an operation runs. An interrupted operation
+therefore fails closed instead of silently changing behavior after restart.
+
+The Host caps model output at 32,768 tokens and enables durable context
+checkpoints with explicit headroom. The local token estimate is deliberately
 conservative but not treated as exact. An explicit pre-inference provider
 context rejection is persisted and forces compaction without replaying the
 rejected request.
