@@ -10,22 +10,31 @@ async fn local_host_resolves_the_complete_coding_runtime() {
     let bridge = directory.path().join("bridge.mjs");
     let credentials = directory.path().join("credentials.sqlite3");
     fs::create_dir(&workspace_path).expect("create workspace");
+    fs::write(
+        workspace_path.join("AGENTS.md"),
+        "Keep the host composition deterministic.\n",
+    )
+    .expect("write project instructions");
     fs::write(&bridge, DESCRIBE_BRIDGE).expect("write bridge");
     fs::write(&credentials, "").expect("write credential placeholder");
 
     let workspace = LocalWorkspace::open(&workspace_path).expect("open workspace");
-    let runtime = build_local_runtime(
-        LocalRuntimeConfig::new(
-            bridge,
-            "xai",
-            "grok-test",
-            credentials,
-            "You are a careful coding agent.",
-        ),
+    let captured = LocalRuntimeConfig::for_alpha(
+        bridge.clone(),
+        "xai",
+        "grok-test",
+        credentials.clone(),
         &workspace,
     )
-    .await
-    .expect("resolve local runtime");
+    .expect("capture Alpha runtime configuration");
+    fs::write(
+        workspace_path.join("AGENTS.md"),
+        "Use the changed project instructions.\n",
+    )
+    .expect("change project instructions after capture");
+    let runtime = build_local_runtime(captured, &workspace)
+        .await
+        .expect("resolve local runtime");
 
     let manifest = runtime.manifest();
     assert_eq!(manifest.loop_binding, "renoa.agent.model-tool-loop");
@@ -47,6 +56,19 @@ async fn local_host_resolves_the_complete_coding_runtime() {
             "missing full-access tool binding `{tool}`"
         );
     }
+
+    let changed = build_local_runtime(
+        LocalRuntimeConfig::for_alpha(bridge, "xai", "grok-test", credentials, &workspace)
+            .expect("recompose Alpha runtime configuration"),
+        &workspace,
+    )
+    .await
+    .expect("resolve runtime after instruction change");
+    assert_ne!(
+        manifest.config_digest,
+        changed.manifest().config_digest,
+        "Alpha must preserve its synchronously captured project instructions"
+    );
 }
 
 const DESCRIBE_BRIDGE: &str = r#"

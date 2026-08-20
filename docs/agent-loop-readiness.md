@@ -10,13 +10,13 @@ no contract should be added until a real consumer needs it.
 | --- | --- | --- |
 | Ordered model/tool loop | Ready | Durable user, assistant, and tool messages; sequential tool calls; exact continuation after restart |
 | Replaceable model and tools | Ready | Frozen named bindings and revisions; provider and workspace policy stay outside the kernel |
-| Model response integrity | Ready | Only complete responses enter semantic history; tool-call identities and stop reasons are validated |
+| Model response integrity | Ready | Only complete responses enter semantic history; tool-call identities and stop reasons are validated; proven pre-inference context and authentication rejections remain out of model-visible history |
 | Tool failures | Ready | Definite tool failures become call-matched model-visible results; internal adapter failures are not exposed as tool output |
 | Effect recovery | Ready | Intent precedes dispatch; safe effects replay with the same identity; unsafe uncertain effects block honestly |
 | Unknown-effect closure | Ready | Explicit host action balances tool history without changing an unknown effect into a false result |
 | Durable user cancellation | Ready | Stable request identity, persist-before-signal, exact active-operation targeting, no new effects after cancellation wins, awaited cleanup, and loop-owned transcript closure |
 | Local coding proof | Ready | A deterministic model drives the real guarded file and Bash tools through the kernel path |
-| Local Host composition | Ready | Pi model, durable compaction, instructions, and the complete local coding tool set resolve into one frozen kernel runtime; the headless product path uses it |
+| Local Host composition | Ready | Alpha's versioned prompt, bounded workspace rules, selected Pi model/reasoning, durable compaction, and all six local tools resolve into one frozen runtime; the headless path proves same-session selection changes |
 | Transient model/tool progress | Partial | The provider-neutral SDK has deltas and tool updates; the kernel runtime does not yet expose a transient observation channel |
 | Context projection and compaction | Ready | External strategies can construct typed plans; external projectors are sized before dispatch selection; safe-cut planning, exact persisted summaries, bounded validation, non-destructive activation, overflow fallback, cancellation, uncertainty, and restart windows are proven through the real kernel path |
 | Steering and follow-ups | Deferred | Ordering against active work and admitted commands needs a real surface consumer |

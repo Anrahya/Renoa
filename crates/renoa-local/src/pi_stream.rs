@@ -175,6 +175,9 @@ async fn read_records(
                     Some(BridgeErrorKind::ContextWindowExceeded) => {
                         ModelError::context_window_exceeded(error)
                     }
+                    Some(BridgeErrorKind::AuthenticationFailed) => {
+                        ModelError::authentication_failed(error)
+                    }
                     None => ModelError::new(error),
                 })));
             }
@@ -273,4 +276,5 @@ impl From<BridgeDelta> for AssistantDelta {
 #[serde(rename_all = "snake_case")]
 enum BridgeErrorKind {
     ContextWindowExceeded,
+    AuthenticationFailed,
 }

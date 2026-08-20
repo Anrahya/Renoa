@@ -40,6 +40,11 @@ impl EffectAdapter for ModelAdapter {
                         message: error.to_string(),
                     })
                 }
+                Err(SamplingError::Model(error))
+                    if error.kind() == ModelErrorKind::AuthenticationFailed =>
+                {
+                    failure("model authentication failed", error)
+                }
                 // Every other current or future sampling failure is uncertain
                 // until its semantics are explicitly classified as pre-dispatch.
                 Err(_) => EffectCompletion::OutcomeUnknown,

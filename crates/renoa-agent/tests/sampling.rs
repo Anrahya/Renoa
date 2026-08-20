@@ -71,6 +71,39 @@ async fn context_rejection_is_known_only_before_assistant_output_starts() {
     ));
 }
 
+#[tokio::test]
+async fn authentication_failure_is_known_only_before_assistant_output_starts() {
+    let request = ModelRequest {
+        system_prompt: String::new(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+    let result = sample_model(
+        &AuthenticationRejectingModel { emits_delta: false },
+        request.clone(),
+        CancellationToken::new(),
+        None,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(SamplingError::Model(error))
+            if error.kind() == ModelErrorKind::AuthenticationFailed
+    ));
+
+    let result = sample_model(
+        &AuthenticationRejectingModel { emits_delta: true },
+        request,
+        CancellationToken::new(),
+        None,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(SamplingError::Model(error)) if error.kind() == ModelErrorKind::OutcomeUnknown
+    ));
+}
+
 #[derive(Default)]
 struct CountingModel {
     invocations: AtomicUsize,
@@ -108,6 +141,32 @@ impl Model for ContextRejectingModel {
         }
         events.push(Err(ModelError::context_window_exceeded(
             "prompt exceeds context window",
+        )));
+        stream::iter(events).boxed()
+    }
+}
+
+struct AuthenticationRejectingModel {
+    emits_delta: bool,
+}
+
+impl Model for AuthenticationRejectingModel {
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> ModelEventStream<'_> {
+        let mut events = Vec::new();
+        if self.emits_delta {
+            events.push(Ok(ModelEvent::ContentDelta {
+                content_index: 0,
+                delta: AssistantDelta::Text {
+                    text: "partial".to_owned(),
+                },
+            }));
+        }
+        events.push(Err(ModelError::authentication_failed(
+            "OAuth refresh failed",
         )));
         stream::iter(events).boxed()
     }

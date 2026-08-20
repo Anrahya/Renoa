@@ -6,7 +6,7 @@ import type {
   Tool,
   ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
-import { isContextOverflow } from "@earendil-works/pi-ai";
+import { isContextOverflow, ModelsError } from "@earendil-works/pi-ai";
 
 import type { ModelRuntime } from "./model-runtime.js";
 
@@ -121,11 +121,13 @@ type WireAssistantContent =
       readonly thought_signature?: string;
     };
 
-type ModelBinding = Pick<ModelRuntime, "model" | "streamFn"> & {
+type ModelBinding = Pick<ModelRuntime, "authenticate" | "model" | "streamFn"> & {
   readonly reasoningLevel?: ModelThinkingLevel;
 };
 
-export type ModelInvocationErrorKind = "context_window_exceeded";
+export type ModelInvocationErrorKind =
+  | "context_window_exceeded"
+  | "authentication_failed";
 
 export class ModelInvocationError extends Error {
   readonly kind: ModelInvocationErrorKind | undefined;
@@ -149,6 +151,17 @@ export async function streamModel(
       ? {}
       : { reasoning: runtime.reasoningLevel }),
   };
+  try {
+    await runtime.authenticate();
+  } catch (error) {
+    if (
+      error instanceof ModelsError &&
+      (error.code === "auth" || error.code === "oauth")
+    ) {
+      throw new ModelInvocationError(error.message, "authentication_failed");
+    }
+    throw error;
+  }
   const stream = await runtime.streamFn(runtime.model, toContext(request), options);
   for await (const event of stream) {
     const record = contentDelta(event);

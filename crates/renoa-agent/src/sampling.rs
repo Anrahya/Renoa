@@ -3,8 +3,8 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentEvent, AgentEventSink, MessageRole, Model, ModelError, ModelErrorKind, ModelEvent,
-    ModelRequest, ModelResponse, events::emit_event,
+    AgentEvent, AgentEventSink, MessageRole, Model, ModelError, ModelEvent, ModelRequest,
+    ModelResponse, events::emit_event,
 };
 
 /// The complete result of one model-adapter invocation.
@@ -88,7 +88,7 @@ pub async fn sample_model(
             Some(Err(error)) => {
                 if message_started {
                     emit_event(sink, AgentEvent::MessageAbort).await;
-                    if error.kind() == ModelErrorKind::ContextWindowExceeded {
+                    if error.kind().is_known_before_inference() {
                         return Err(SamplingError::Model(ModelError::new(error.to_string())));
                     }
                 }

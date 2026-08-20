@@ -6,7 +6,7 @@ use renoa_kernel::{
     AgentId, CancellationId, Command, CommandId, DriveResult, EventCursor, Kernel, OperationId,
     OperationOutcome, SessionId,
 };
-use renoa_local::{LocalRuntimeConfig, LocalWorkspace, build_local_runtime};
+use renoa_local::{LocalRuntimeConfig, LocalWorkspace, PiReasoningLevel, build_local_runtime};
 use uuid::Uuid;
 
 #[tokio::main]
@@ -28,17 +28,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let database = PathBuf::from(&arguments[0]);
     let workspace = LocalWorkspace::open(&arguments[1])?;
     let prompt = arguments[3..].join(" ");
-    let runtime = build_local_runtime(
-        LocalRuntimeConfig::new(
-            required_environment("RENOA_PI_BRIDGE")?,
-            required_environment("RENOA_PI_PROVIDER")?,
-            required_environment("RENOA_PI_MODEL")?,
-            required_environment("RENOA_PI_AUTH_STORE")?,
-            required_environment("RENOA_PI_INSTRUCTIONS")?,
-        ),
+    let mut runtime_config = LocalRuntimeConfig::for_alpha(
+        required_environment("RENOA_PI_BRIDGE")?,
+        required_environment("RENOA_PI_PROVIDER")?,
+        required_environment("RENOA_PI_MODEL")?,
+        required_environment("RENOA_PI_AUTH_STORE")?,
         &workspace,
-    )
-    .await?;
+    )?;
+    if let Some(reasoning) = optional_reasoning()? {
+        runtime_config = runtime_config.with_reasoning(reasoning);
+    }
+    let runtime = build_local_runtime(runtime_config, &workspace).await?;
     let kernel = Kernel::open(database)?;
     let session_id = open_session(&kernel, &arguments[2])?;
     let command = serde_json::to_value(AgentCommand::text(prompt))?;
@@ -138,4 +138,19 @@ fn required_environment(name: &str) -> Result<String, Box<dyn Error>> {
     env::var(name)
         .map_err(|_| io::Error::other(format!("{name} must be set")))
         .map_err(Into::into)
+}
+
+fn optional_reasoning() -> Result<Option<PiReasoningLevel>, Box<dyn Error>> {
+    match env::var("RENOA_PI_REASONING") {
+        Ok(value) => PiReasoningLevel::from_id(&value).map(Some).ok_or_else(|| {
+            io::Error::other(
+                "RENOA_PI_REASONING must be off, minimal, low, medium, high, xhigh, or max",
+            )
+            .into()
+        }),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => {
+            Err(io::Error::other("RENOA_PI_REASONING must be valid UTF-8").into())
+        }
+    }
 }

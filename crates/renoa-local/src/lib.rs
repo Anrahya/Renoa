@@ -1,5 +1,6 @@
 //! First local Host for composable Renoa agent runtimes.
 
+mod alpha;
 mod bash;
 mod file_tools;
 mod output;
@@ -14,6 +15,7 @@ mod search;
 mod tool_input;
 mod workspace;
 
+pub use alpha::AlphaError;
 pub use pi_catalog::{PiModelOption, PiReasoningLevel, discover_pi_models};
 pub use pi_model::{PiModel, PiModelConfigError};
 pub use runtime::{

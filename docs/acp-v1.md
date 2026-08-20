@@ -29,7 +29,8 @@ renoa-agent acp
 messages use standard input and output. Diagnostics use standard error so they
 cannot corrupt JSON-RPC framing. One process owns one active ACP session.
 
-The process reads the same local runtime configuration as `renoa-local`:
+The ACP adapter still uses the legacy harness backend. Until it is migrated to
+the kernel-backed Alpha Host path, that process reads:
 
 - `RENOA_PI_BRIDGE`
 - `RENOA_PI_PROVIDER`
@@ -42,6 +43,8 @@ Without `RENOA_DATA_DIR`, sessions use Renoa's platform data directory.
 `RENOA_PI_PROVIDER` selects the provider hosted by this process.
 `RENOA_PI_MODEL` is the initial model for a new session; it is not a fixed UI
 choice. Authentication remains local to the provider adapter.
+`RENOA_PI_INSTRUCTIONS` is legacy ACP configuration; the kernel-backed local
+runner uses Alpha's versioned prompt and does not read it.
 
 ## Implemented ACP behavior
 

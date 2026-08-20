@@ -4,6 +4,7 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
   createModels,
   getSupportedThinkingLevels,
+  ModelsError,
   type Api,
   type Model,
   type ModelThinkingLevel,
@@ -33,6 +34,7 @@ export interface ModelRuntime {
   readonly modelBindingId: string;
   readonly modelSpec: string;
   readonly reasoningLevel: ModelThinkingLevel;
+  readonly authenticate: () => Promise<void>;
   readonly streamFn: StreamFn;
   close(): void;
 }
@@ -128,12 +130,21 @@ export async function loadModelRuntime(options: ModelRuntimeOptions): Promise<Mo
         `unknown ${options.provider} model ${options.modelId}; available models: ${available}`,
       );
     }
-    const reasoningLevel = resolveReasoningLevel(model, options.reasoningLevel);
+    const selectedModel = model;
+    const reasoningLevel = resolveReasoningLevel(selectedModel, options.reasoningLevel);
     return {
-      model,
-      modelBindingId: modelBindingId(model),
-      modelSpec: JSON.stringify(model),
+      model: selectedModel,
+      modelBindingId: modelBindingId(selectedModel),
+      modelSpec: JSON.stringify(selectedModel),
       reasoningLevel,
+      authenticate: async () => {
+        if ((await models.getAuth(selectedModel)) === undefined) {
+          throw new ModelsError(
+            "auth",
+            `Provider is not configured: ${selectedModel.provider}`,
+          );
+        }
+      },
       streamFn: models.streamSimple.bind(models),
       close: () => credentials.close(),
     };
@@ -239,7 +250,7 @@ function validateModelSpec(
     value.name.length === 0 ||
     !supportsApi(provider, value.api) ||
     value.provider !== provider ||
-    !trustedBaseUrl(provider, value.baseUrl) ||
+    !trustedBaseUrl(provider, value.api, value.baseUrl) ||
     (provider === "xai" && value.headers !== undefined) ||
     (value.compat !== undefined && !isRecord(value.compat)) ||
     (value.samplingParams !== undefined && !isRecord(value.samplingParams)) ||
@@ -266,14 +277,16 @@ function supportsApi(provider: PiProvider, api: unknown): boolean {
     : api === "anthropic-messages" || api === "openai-completions" || api === "openai-responses";
 }
 
-function trustedBaseUrl(provider: PiProvider, value: unknown): boolean {
+function trustedBaseUrl(provider: PiProvider, api: unknown, value: unknown): boolean {
   if (typeof value !== "string") {
     return false;
   }
   if (provider === "xai") {
     return value === "https://api.x.ai/v1";
   }
-  return value === "https://opencode.ai/zen/go";
+  return api === "anthropic-messages"
+    ? value === "https://opencode.ai/zen/go"
+    : value === "https://opencode.ai/zen/go/v1";
 }
 
 function modelBindingId(model: Model<Api>): string {

@@ -28,6 +28,10 @@ one surface over this Host. ACP remains the standard agent-facing surface
 protocol; Renoa-specific capability management will use a separate logical
 Host API whose transport is not selected until the GPUI consumer is inspected.
 
+The first concrete agent profile is Renoa Alpha v1, specified in
+[`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is
+`renoa.coding.alpha.v1`.
+
 ## What lives where
 
 The same component has three distinct states:
@@ -110,17 +114,20 @@ permission-shaped fields are reserved in this slice.
 
 ## Current concrete composition
 
-`LocalRuntimeConfig` is the first in-process profile recipe. It selects:
+`LocalRuntimeConfig` carries the first in-process provider selection. The
+normal local product path selects Alpha's versioned instructions; an explicit
+instruction constructor remains for the legacy ACP harness until that surface
+moves to the kernel path. The resolved inputs are:
 
 - Pi provider and model;
 - reasoning configuration;
-- system instructions; and
+- Alpha's base prompt and bounded workspace `AGENTS.md` instructions; and
 - the concrete credential and bridge bindings.
 
 `build_local_runtime` resolves that recipe with a `LocalWorkspace`:
 
 ```text
-LocalRuntimeConfig
+LocalRuntimeConfig + Alpha v1
   + PiModel
   + CompactingContextStrategy
   + LocalWorkspace tools
@@ -137,6 +144,11 @@ Host derives the same researched compaction limits used by the existing local
 product path. Model identity, reasoning, context behavior, instructions,
 limits, tool specifications, recovery declarations, and workspace-bound tool
 revisions are represented by the resulting manifest.
+
+Model and reasoning selection are not Alpha's identity. They may change
+between operations while the Agent Instance, Session, instructions, tools, and
+history remain continuous. A change never mutates an active operation; the
+kernel freezes each operation's exact model and reasoning revision.
 
 This recipe is not yet a durable general profile schema. Persistence should be
 added only when the first management flow consumes it.

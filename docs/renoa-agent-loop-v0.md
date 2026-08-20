@@ -219,13 +219,17 @@ runtime slice.
 
 The model adapter decodes the exact persisted `ModelRequest`, invokes the
 selected `Model` through `sample_model`, and returns one complete serialized
-`ModelResponse`, a typed context-window rejection, a definite adapter failure,
+`ModelResponse`, a typed pre-inference rejection, a definite adapter failure,
 or explicit uncertainty. A typed context-window rejection is settled durably so
-the loop can request compaction; it is not copied into model-visible history.
-An incomplete stream, cancellation after dispatch, or provider error whose
-kind is `OutcomeUnknown` blocks the durable operation instead of becoming a
-false terminal failure. Provider wire formats, authentication, and
-provider-internal transport behavior remain inside the selected model.
+the loop can request compaction; it is not copied into model-visible history. A
+typed authentication rejection proven to precede inference settles as a clear
+operation failure and is likewise absent from model-visible history. An
+incomplete stream, cancellation after dispatch, or provider error whose kind is
+`OutcomeUnknown` blocks the durable operation instead of becoming a false
+terminal failure. If assistant output has started, even an otherwise typed
+rejection is downgraded to `OutcomeUnknown`. Provider wire formats,
+authentication, and provider-internal transport behavior remain inside the
+selected model.
 
 Each tool adapter decodes one exact persisted `ToolCall` and invokes its
 selected `Tool` through `invoke_tool`. Success and definite failure return one
@@ -300,9 +304,11 @@ and loop-owned transcript closure.
 The original kernel handoff's generic foundation, model/tool-loop adaptation,
 real local coding turn, and durable compaction migration are now complete.
 `renoa-local::build_local_runtime` now composes the loop, Pi provider,
-compaction strategy, and complete local tool set into the first product Host,
-and the headless local runner executes through the kernel path. The Host
-contract is recorded in [`renoa-host-v0.md`](renoa-host-v0.md). The next
+compaction strategy, and complete local tool set into the first product Host.
+The headless local runner executes Renoa Alpha's versioned instructions and
+workspace rules through that kernel path. The Host contract is recorded in
+[`renoa-host-v0.md`](renoa-host-v0.md), and Alpha's contract and research
+record are in [`renoa-alpha-v1.md`](renoa-alpha-v1.md). The next
 migration remains consumer-gated: expose this Host through ACP and the chosen
 GPUI surface without moving surface policy into the kernel. RCP remains
 separate continuity work.

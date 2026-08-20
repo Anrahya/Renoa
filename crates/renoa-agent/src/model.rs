@@ -102,6 +102,15 @@ impl ModelError {
         }
     }
 
+    /// Reports a credential rejection that is known to have happened before inference.
+    #[must_use]
+    pub fn authentication_failed(message: impl Into<String>) -> Self {
+        Self {
+            kind: ModelErrorKind::AuthenticationFailed,
+            message: message.into(),
+        }
+    }
+
     #[must_use]
     pub fn kind(&self) -> ModelErrorKind {
         self.kind
@@ -116,6 +125,17 @@ pub enum ModelErrorKind {
     OutcomeUnknown,
     /// The provider rejected the request for exceeding its context window before inference.
     ContextWindowExceeded,
+    /// Credential resolution failed before the provider began inference.
+    AuthenticationFailed,
+}
+
+impl ModelErrorKind {
+    pub(crate) const fn is_known_before_inference(self) -> bool {
+        matches!(
+            self,
+            Self::ContextWindowExceeded | Self::AuthenticationFailed
+        )
+    }
 }
 
 pub type ModelEventStream<'a> = BoxStream<'a, Result<ModelEvent, ModelError>>;

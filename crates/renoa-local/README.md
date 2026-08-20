@@ -3,6 +3,7 @@
 `renoa-local` is the first real Host for `renoa-kernel`. It resolves one local
 coding runtime from:
 
+- Renoa Alpha's versioned coding behavior and workspace `AGENTS.md` rules;
 - Pi AI model routing through a small Node process adapter; and
 - Renoa's durable model/tool loop and compaction strategy; and
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
@@ -45,7 +46,7 @@ export RENOA_PI_BRIDGE='/absolute/path/to/nodes/pi/dist/src/model-bridge-main.js
 export RENOA_PI_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
 export RENOA_PI_PROVIDER='xai' # or opencode-go
 export RENOA_PI_MODEL='grok-4.6'
-export RENOA_PI_INSTRUCTIONS='You are a careful coding agent.'
+export RENOA_PI_REASONING='high' # optional: off|minimal|low|medium|high|xhigh|max
 
 cargo run -p renoa-local -- \
   /absolute/path/to/kernel.sqlite \
@@ -58,8 +59,22 @@ The command prints the stable session ID. Pass that ID instead of `new` to add
 the next turn to the same durable conversation. `Ctrl-C` requests ordered
 kernel cancellation and waits for active model or process work to stop.
 
-At startup the Host resolves the selected model's context and output limits and
-verifies authentication. A packaged Pi model stays package-pinned; an xAI model
+The normal runner always uses Renoa Alpha. Change `RENOA_PI_MODEL` or
+`RENOA_PI_REASONING` before the next command to change that operation's model
+behavior without replacing the session or its history. An active operation
+keeps the exact runtime already frozen by the kernel.
+
+Alpha loads `AGENTS.md` from the canonical workspace root. The file must be
+UTF-8, remain inside the workspace after symlink resolution, and fit within 32
+KiB. Oversized rules fail clearly instead of entering the context partially.
+The full profile contract and research record are in
+[`docs/renoa-alpha-v1.md`](../../docs/renoa-alpha-v1.md).
+
+At startup the Host resolves the selected model's context and output limits.
+Authentication is resolved when the first model stream starts. A credential
+rejection proven to happen before inference fails the operation clearly and
+leaves the session usable; a failure after output starts remains uncertain. A
+packaged Pi model stays package-pinned; an xAI model
 absent from that package can be resolved from Pi's official live catalog. Renoa
 validates the provider, API, and xAI endpoint, then pins the exact model record
 and includes its SHA-256 identity in the runtime revision. The kernel freezes

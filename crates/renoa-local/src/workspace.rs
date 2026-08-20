@@ -65,6 +65,10 @@ impl LocalWorkspace {
         &self.binding_id
     }
 
+    pub(crate) fn root(&self) -> &Path {
+        self.root.as_ref()
+    }
+
     /// Creates the concrete tool bindings for one runtime profile.
     #[must_use]
     pub fn tool_bindings(&self) -> Vec<ToolBinding> {

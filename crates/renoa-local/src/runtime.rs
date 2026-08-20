@@ -13,7 +13,9 @@ use renoa_harness::{CompactionPolicy, CompactionPolicyError, RuntimeProfile, Run
 use renoa_kernel::{EffectRecovery, Runtime};
 use thiserror::Error;
 
-use crate::{LocalWorkspace, PiModel, PiModelConfigError, PiModelOption, PiReasoningLevel};
+use crate::{
+    AlphaError, LocalWorkspace, PiModel, PiModelConfigError, PiModelOption, PiReasoningLevel,
+};
 
 const MODEL_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(32).unwrap();
 const TOOL_CALL_LIMIT: NonZeroU32 = NonZeroU32::new(16).unwrap();
@@ -22,7 +24,7 @@ const COMPACTION_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(2).unwrap();
 const MAX_CHECKPOINT_TOKENS: u64 = 16_384;
 const MIN_CONTEXT_SAFETY_TOKENS: u64 = 8_192;
 
-/// Provider and instruction inputs for one local coding runtime.
+/// Provider, model, and instruction inputs for one local coding runtime.
 pub struct LocalRuntimeConfig {
     bridge: PathBuf,
     provider: String,
@@ -51,6 +53,27 @@ impl LocalRuntimeConfig {
             model_spec: None,
             reasoning: None,
         }
+    }
+
+    /// Selects Renoa Alpha's versioned coding behavior and captures workspace rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the workspace's project instructions are invalid.
+    pub fn for_alpha(
+        bridge: impl Into<PathBuf>,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        credential_store: impl Into<PathBuf>,
+        workspace: &LocalWorkspace,
+    ) -> Result<Self, AlphaError> {
+        Ok(Self::new(
+            bridge,
+            provider,
+            model,
+            credential_store,
+            crate::alpha::system_prompt(workspace.root())?,
+        ))
     }
 
     #[must_use]

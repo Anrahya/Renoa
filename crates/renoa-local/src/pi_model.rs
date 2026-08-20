@@ -354,6 +354,7 @@ struct BridgeEnvelope<T> {
 #[serde(rename_all = "snake_case")]
 enum BridgeErrorKind {
     ContextWindowExceeded,
+    AuthenticationFailed,
 }
 
 #[derive(Deserialize)]
@@ -378,6 +379,9 @@ pub(crate) fn decode_response<T: DeserializeOwned>(encoded: &[u8]) -> Result<T, 
         (false, None, Some(error), None) => Err(ModelError::new(error)),
         (false, None, Some(error), Some(BridgeErrorKind::ContextWindowExceeded)) => {
             Err(ModelError::context_window_exceeded(error))
+        }
+        (false, None, Some(error), Some(BridgeErrorKind::AuthenticationFailed)) => {
+            Err(ModelError::authentication_failed(error))
         }
         _ => Err(ModelError::new(
             "Pi model bridge returned an invalid envelope",

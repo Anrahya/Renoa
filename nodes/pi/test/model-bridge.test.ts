@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  ModelsError,
   fauxAssistantMessage,
   fauxProvider,
   fauxThinking,
@@ -31,6 +32,7 @@ test("the model bridge streams indexed content before its terminal response", as
   await streamModel(
     { system_prompt: "Use tools carefully.", messages: [], tools: [] },
     {
+      authenticate: async () => {},
       model: faux.getModel(),
       streamFn: faux.provider.streamSimple.bind(faux.provider),
     },
@@ -124,6 +126,7 @@ test("the model bridge preserves Renoa input and returns a complete tool respons
       ],
     },
     {
+      authenticate: async () => {},
       model: faux.getModel(),
       streamFn: faux.provider.streamSimple.bind(faux.provider),
     },
@@ -151,6 +154,7 @@ test("the model bridge sends the selected reasoning level to Pi", async () => {
   await completedResponse(
     { system_prompt: "Think carefully.", messages: [], tools: [] },
     {
+      authenticate: async () => {},
       model: faux.getModel(),
       reasoningLevel: "low",
       streamFn: (model, context, options) => {
@@ -225,6 +229,7 @@ test("the model bridge preserves assistant and tool-result continuation context"
       tools: [],
     },
     {
+      authenticate: async () => {},
       model: faux.getModel(),
       streamFn: faux.provider.streamSimple.bind(faux.provider),
     },
@@ -252,6 +257,7 @@ test("an explicit provider context rejection is classified before inference", as
     completedResponse(
       { system_prompt: "Too large.", messages: [], tools: [] },
       {
+        authenticate: async () => {},
         model: faux.getModel(),
         streamFn: faux.provider.streamSimple.bind(faux.provider),
       },
@@ -277,12 +283,35 @@ test("an overflow-shaped error after generated output remains outcome-unknown", 
     completedResponse(
       { system_prompt: "Too large.", messages: [], tools: [] },
       {
+        authenticate: async () => {},
         model: faux.getModel(),
         streamFn: faux.provider.streamSimple.bind(faux.provider),
       },
       32,
     ),
     (error: unknown) => error instanceof ModelInvocationError && error.kind === undefined,
+  );
+});
+
+test("an authentication failure before provider dispatch is classified", async () => {
+  const faux = fauxProvider();
+
+  await assert.rejects(
+    completedResponse(
+      { system_prompt: "Authenticate.", messages: [], tools: [] },
+      {
+        authenticate: async () => {
+          throw new ModelsError("oauth", "OAuth refresh failed for xai");
+        },
+        model: faux.getModel(),
+        streamFn: () => {
+          throw new Error("provider stream must not start after failed authentication");
+        },
+      },
+      32,
+    ),
+    (error: unknown) =>
+      error instanceof ModelInvocationError && error.kind === "authentication_failed",
   );
 });
 

@@ -30,7 +30,40 @@ test("the xAI runtime resolves a model from a durable OAuth login", async () => 
 
     assert.equal(runtime.model.provider, "xai");
     assert.equal(runtime.model.id, "grok-4.6");
+    await runtime.authenticate();
     runtime.close();
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("every OpenCode Go catalog model reloads from its pinned specification", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "renoa-pi-opencode-go-runtime-"));
+  const authStorePath = join(directory, "auth.sqlite");
+  try {
+    const credentials = new SqliteCredentialStore(authStorePath);
+    await credentials.modify("opencode-go", async () => ({
+      type: "api_key",
+      key: "test-key",
+    }));
+    credentials.close();
+
+    const catalog = await loadModelCatalog({
+      provider: "opencode-go",
+      authStorePath,
+    });
+    assert.ok(catalog.length > 0);
+
+    for (const candidate of catalog) {
+      const runtime = await loadModelRuntime({
+        provider: "opencode-go",
+        modelId: candidate.id,
+        authStorePath,
+        modelSpec: candidate.model_spec,
+      });
+      assert.equal(runtime.model.id, candidate.id);
+      runtime.close();
+    }
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
