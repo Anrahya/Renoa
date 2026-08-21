@@ -22,10 +22,25 @@ workspace-relative results. Hidden paths, including `.git`, are intentionally
 skipped by `grep` and `find`; unrestricted `bash` remains the explicit escape
 hatch. `rg` is therefore a required local executable.
 
+Every built-in tool has a total deadline. Read, edit, write, grep, and find use
+120 seconds. Bash defaults to 120 seconds and accepts 1 through 1,800 seconds
+per call. Cancellation and deadlines wait until owned work is stopped. Bash,
+ripgrep, and model bridge processes run in isolated process groups so their
+descendants cannot outlive the call. File writes and edits use synced atomic
+replacement; edits reject a concurrent content change.
+
 The architecture and deliberately open permission decisions are recorded in
-[`docs/renoa-host-v0.md`](../../docs/renoa-host-v0.md). The ACP adapter still
-uses the legacy harness path until the kernel path has the transient observation
-boundary required by a real surface.
+[`docs/renoa-host-v0.md`](../../docs/renoa-host-v0.md). `LocalHost` and
+`AlphaSession` are the complete boundary used by ACP; `LocalSession` is the
+lower kernel command boundary also used by the headless diagnostic runner.
+Live ACP updates come from a presentation-only event observer in the model and
+tool adapters; the kernel remains the sole durable execution owner.
+
+Host sessions use a stable top-level layout: `session.json` for identity,
+`runtime.jsonl` for acknowledged provider/model/reasoning choices,
+`kernel.sqlite3` for recovery truth, and `trace.sqlite3` for the ordered
+diagnostic timeline. Token/cache usage, exact provider payloads, stream chunks,
+durations, and tool diagnostics live only in the trace database.
 
 Build the Pi bridge first:
 
@@ -64,13 +79,16 @@ The normal runner always uses Renoa Alpha. Change `RENOA_PI_MODEL` or
 behavior without replacing the session or its history. An active operation
 keeps the exact runtime already frozen by the kernel.
 
-Alpha loads `AGENTS.md` from the canonical workspace root. The file must be
+Alpha loads `AGENTS.md` from the canonical workspace root before every new
+turn. The file must be
 UTF-8, remain inside the workspace after symlink resolution, and fit within 32
 KiB. Oversized rules fail clearly instead of entering the context partially.
 The full profile contract and research record are in
 [`docs/renoa-alpha-v1.md`](../../docs/renoa-alpha-v1.md).
 
-At startup the Host resolves the selected model's context and output limits.
+Before each newly admitted turn the Host resolves the selected model's context,
+output limits, and current project instructions. Session creation and model
+selection changes also validate the runtime before acknowledging success.
 Authentication is resolved when the first model stream starts. A credential
 rejection proven to happen before inference fails the operation clearly and
 leaves the session usable; a failure after output starts remains uncertain. A

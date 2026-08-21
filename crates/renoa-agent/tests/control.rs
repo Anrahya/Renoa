@@ -71,10 +71,14 @@ impl Model for PendingModel {
     fn stream(
         &self,
         _request: ModelRequest,
-        _cancellation: CancellationToken,
+        cancellation: CancellationToken,
     ) -> ModelEventStream<'_> {
         self.started.notify_one();
-        stream::pending().boxed()
+        stream::once(async move {
+            cancellation.cancelled().await;
+            Err(renoa_agent::ModelError::new("cancelled model stopped"))
+        })
+        .boxed()
     }
 }
 

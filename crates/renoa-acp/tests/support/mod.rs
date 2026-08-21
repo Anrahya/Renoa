@@ -26,7 +26,6 @@ impl AcpProcess {
             .env("RENOA_PI_PROVIDER", "xai")
             .env("RENOA_PI_MODEL", "grok-test")
             .env("RENOA_PI_AUTH_STORE", auth_store)
-            .env("RENOA_PI_INSTRUCTIONS", "Be precise.")
             .env("RENOA_TEST_STARTED", data.join("model-started"))
             .env("RENOA_TEST_COMPLETED", data.join("model-completed"))
             .env("RENOA_TEST_CONTINUE", data.join("model-continue"))
@@ -74,6 +73,31 @@ impl AcpProcess {
             "params": { "cwd": workspace, "mcpServers": [] }
         }));
         self.read()
+    }
+
+    pub(crate) fn load_session(
+        &mut self,
+        workspace: &std::path::Path,
+        session_id: &str,
+    ) -> (Vec<Value>, Value) {
+        self.send(&json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/load",
+            "params": {
+                "sessionId": session_id,
+                "cwd": workspace,
+                "mcpServers": []
+            }
+        }));
+        let mut updates = Vec::new();
+        loop {
+            let message = self.read();
+            if message["id"] == 2 {
+                return (updates, message);
+            }
+            updates.push(message);
+        }
     }
 
     pub(crate) fn prompt(&mut self, session_id: &str, text: &str, turn_id: &str) -> (Value, Value) {
@@ -150,6 +174,20 @@ if (process.env.RENOA_PI_ACTION === "describe") {
   process.exit(0);
 }
 const request = JSON.parse(input);
+process.stdout.write(JSON.stringify({
+  event: "provider_request",
+  payload: {
+    model: process.env.RENOA_PI_MODEL,
+    system_prompt: request.system_prompt,
+    messages: request.messages,
+    tools: request.tools
+  }
+}) + "\n");
+process.stdout.write(JSON.stringify({
+  event: "provider_response",
+  status: 200,
+  headers: { "x-request-id": "fixture-request" }
+}) + "\n");
 const prompt = request.messages.findLast(message => message.role === "user").content[0].text;
 const toolResults = request.messages.filter(message => message.role === "tool");
 if (prompt === "Stream") {
@@ -182,6 +220,20 @@ let content;
 let stop_reason = "stop";
 if (prompt === "Hello") {
   content = [{ type: "text", text: "Hello back." }];
+} else if (
+  prompt === "Alpha" &&
+  request.system_prompt.startsWith("You are Alpha, Renoa's local coding agent.") &&
+  request.system_prompt.includes("Keep the ACP kernel path exact.") &&
+  request.tools.map(tool => tool.name).join(",") ===
+    "read_file,edit_file,write_file,bash,grep,find"
+) {
+  content = [{ type: "text", text: "Alpha is kernel-backed." }];
+} else if (
+  prompt === "Refresh instructions" &&
+  request.system_prompt.includes("Use the replacement instruction.") &&
+  !request.system_prompt.includes("Use the first instruction.")
+) {
+  content = [{ type: "text", text: "Instructions refreshed." }];
 } else if (prompt === "Configured" && process.env.RENOA_PI_REASONING === "low") {
   content = [{ type: "text", text: "Reasoning configured." }];
 } else if (

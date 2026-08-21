@@ -7,15 +7,18 @@ Client Protocol wire version 1 over newline-delimited JSON-RPC on standard I/O.
 The Rust SDK package is `agent-client-protocol@2.0.0`; that package version is
 not ACP wire version 2. Unstable ACP features are disabled.
 
-ACP is not part of the harness and is not RCP. The dependency direction is:
+ACP is a surface adapter, not part of the kernel and not RCP. The dependency
+direction is:
 
 ```text
-coding frontend -> ACP adapter -> durable Renoa harness -> model and local tools
+coding frontend -> ACP adapter -> Renoa local Host -> kernel
+                                              |       |
+                                              |       `-> durable agent loop
+                                              `----------> Pi model and local tools
 ```
 
-The harness remains usable without ACP. RCP can later sit outside the harness
-and provide cross-device task continuity without changing this frontend
-contract.
+The Host and kernel remain usable without ACP. RCP can later provide
+cross-device task continuity without changing this frontend contract.
 
 ## Process contract
 
@@ -29,28 +32,32 @@ renoa-agent acp
 messages use standard input and output. Diagnostics use standard error so they
 cannot corrupt JSON-RPC framing. One process owns one active ACP session.
 
-The ACP adapter still uses the legacy harness backend. Until it is migrated to
-the kernel-backed Alpha Host path, that process reads:
+The process reads:
 
 - `RENOA_PI_BRIDGE`
 - `RENOA_PI_PROVIDER`
 - `RENOA_PI_MODEL`
 - `RENOA_PI_AUTH_STORE`
-- `RENOA_PI_INSTRUCTIONS`
 - optional `RENOA_DATA_DIR`
 
 Without `RENOA_DATA_DIR`, sessions use Renoa's platform data directory.
 `RENOA_PI_PROVIDER` selects the provider hosted by this process.
 `RENOA_PI_MODEL` is the initial model for a new session; it is not a fixed UI
 choice. Authentication remains local to the provider adapter.
-`RENOA_PI_INSTRUCTIONS` is legacy ACP configuration; the kernel-backed local
-runner uses Alpha's versioned prompt and does not read it.
+The adapter always resolves Renoa Alpha v1, including its curated base prompt
+and bounded workspace `AGENTS.md` instructions. An environment variable cannot
+replace Alpha's instructions. The Host reads `AGENTS.md` again before each new
+turn and freezes the result only when the kernel admits that operation.
 
 ## Implemented ACP behavior
 
 - `initialize` negotiates stable protocol version 1.
-- `session/new` creates a durable standalone harness session.
+- `session/new` creates a durable Alpha Agent and kernel Session.
 - `session/load` reopens that session after the ACP process exits.
+- `session/load` replays the complete kernel-backed transcript before its
+  response, using durable kernel event UUIDs as ACP message IDs.
+- `session/close` cancels active work, waits for adapter cleanup, and releases
+  the process for another session.
 - `session/new` and `session/load` return standard ACP `model` and
   `thought_level` select options.
 - `session/set_config_option` changes the model or reasoning level and returns
@@ -61,11 +68,17 @@ runner uses Alpha's versioned prompt and does not read it.
 - Model text and reasoning deltas stream while inference is running.
 - Tool start, progress, completion, failure, and final assistant text stream as
   ACP session updates.
-- The final prompt response is sent only after the harness has durably settled
+- The final prompt response is sent only after the kernel has durably settled
   the operation.
 
-The adapter advertises only `loadSession` and image prompts. Audio, embedded
-resources, additional workspace directories, and MCP servers are rejected.
+Transient model and tool events are routed directly from the agent-loop
+adapters to ACP. This observer is excluded from the frozen runtime manifest and
+authoritative history. The kernel remains surface-blind; completed output is
+projected from durable semantic events before ACP returns success.
+
+The adapter advertises `loadSession`, `session/close`, and image prompts. Audio,
+embedded resources, additional workspace directories, and MCP servers are
+rejected.
 
 The model list comes from Pi's authenticated provider catalog. Renoa validates
 and pins the selected model specification before building a runtime, so a
@@ -83,43 +96,68 @@ Each session is stored at:
 ```text
 <data-directory>/sessions/<session-uuid>/session.json
 <data-directory>/sessions/<session-uuid>/runtime.jsonl
-<data-directory>/sessions/<session-uuid>/harness.sqlite3
+<data-directory>/sessions/<session-uuid>/kernel.sqlite3
+<data-directory>/sessions/<session-uuid>/trace.sqlite3
 ```
 
-The manifest binds the session UUID to one canonical workspace path. The
-manifest, initial runtime selection, and harness session all exist before
+The versioned manifest binds the Alpha profile, Agent identity, Session
+identity, and canonical workspace. The Host builds the manifest, initial
+runtime selection, and kernel database in one hidden staging directory, syncs
+them, then atomically publishes the directory under the session UUID before
 `session/new` is acknowledged.
 `session/load` requires the same UUID and canonical workspace, then reconstructs
-model context from the durable harness transcript.
+model context from gapless kernel semantic history. It also verifies that the
+manifest's Agent identity matches the kernel's durable Session binding.
 
 `runtime.jsonl` is an append-only record of acknowledged model and reasoning
 changes. Each complete record is synced before the ACP response. Reload uses
-the last complete record and ignores an incomplete crash tail. The provider's
-current validated model binding is included in the harness runtime revision, so
+the last complete record and truncates an incomplete crash tail before another
+record can be appended. The provider's current validated model binding is
+included in the kernel runtime manifest, so
 recovery cannot silently execute pending work under different model behavior.
 
-T3 Code sends one UUID in `_meta.requestId` and `_meta.promptId` for each turn.
-Renoa reuses that UUID as the harness request identity. A redelivered settled
-prompt therefore returns its existing durable outcome without another model
-call. If both fields are present, they must match. Clients that omit both fields
-receive a generated identity and do not get lost-request idempotency across
-processes.
+`trace.sqlite3` is the separate diagnostic timeline. One run records ordered
+wall-clock timestamps and elapsed times, model time-to-first-output and total
+duration, every stream chunk, exact provider-neutral and translated provider
+requests, redacted response headers, normalized input/output/cache tokens, and
+tool inputs, progress, results, durations, and typed failures. It is never read
+to rebuild model context or decide kernel recovery.
 
-ACP v1 does not replay old transcript notifications during `session/load`. The
-frontend retains its presentation history; the harness retains the
-authoritative execution transcript needed to continue the agent correctly.
+Renoa's desktop transport and T3 Code send one UUID in `_meta.requestId` and
+`_meta.promptId` for each turn. Renoa reuses that UUID as the kernel command
+identity. A redelivered settled prompt therefore returns its existing durable
+outcome without another model call. If both fields are present, they must
+match. Clients that omit both fields receive a generated identity and do not
+get lost-request idempotency across processes.
+
+If a process stopped after admitting a turn but before settling it, a different
+new turn is rejected before admission or model execution. Retrying the original
+turn identity and exact content resumes that durable operation.
+
+If model or tool execution has an outcome that cannot be proven, the local Host
+explicitly abandons that operation without replay. ACP returns the honest
+failure, while the repaired loop history and released session allow a later
+turn to continue.
+
+During `session/load`, Renoa validates gapless semantic history and sends its
+user, assistant, reasoning, tool-call, and tool-result updates before the load
+response. The desktop keeps only the last session identity in browser storage;
+it does not persist a second transcript.
 
 ## Current limits
 
 - Local standard-I/O transport only; no draft ACP v2 remote transport.
 - One session and one active prompt per process.
 - All locally configured tools run without approval prompts. Permission policy
-  remains a future harness/product feature, not an ACP rule.
+  remains a future Host/product feature, not an ACP rule.
 - No MCP servers, mode switching, account methods, or extra workspace roots are
   advertised. SuperGrok login is still performed before launch rather than
   through ACP account methods.
-- ACP live updates are transient. Missed cross-device replay belongs to RCP,
-  not this adapter.
+- An active turn's live deltas are transient. Reload reconstructs settled local
+  history; cross-device delivery continuity still belongs to RCP.
+- Earlier pre-release session manifests used storage versions 1 and 2. This
+  adapter rejects them explicitly instead of guessing at an execution or trace
+  migration.
 - If the client loses the successful `session/new` response, stable ACP v1
   provides no caller-supplied creation identity or session-list operation for
   recovering that unknown UUID. The durable session can be orphaned. Turn

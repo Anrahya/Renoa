@@ -6,16 +6,17 @@ use std::{
 
 use renoa_agent::{Tool, ToolError};
 use renoa_agent_loop::AgentToolBinding;
-use renoa_harness::{ToolBinding, ToolRecovery};
 use renoa_kernel::EffectRecovery;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{
     bash::Bash,
+    deadline::{DEFAULT_TOOL_DEADLINE, DeadlineTool},
     file_tools::{EditFile, ReadFile, WriteFile},
     ripgrep::Ripgrep,
     search::{Find, Grep},
+    tool_error::io_error,
 };
 
 #[derive(Debug, Error)]
@@ -59,35 +60,11 @@ impl LocalWorkspace {
         })
     }
 
-    /// Stable identity of the canonical root frozen into runtime bindings.
-    #[must_use]
-    pub(crate) fn binding_id(&self) -> &str {
-        &self.binding_id
-    }
-
     pub(crate) fn root(&self) -> &Path {
         self.root.as_ref()
     }
 
-    /// Creates the concrete tool bindings for one runtime profile.
-    #[must_use]
-    pub fn tool_bindings(&self) -> Vec<ToolBinding> {
-        self.tools()
-            .into_iter()
-            .map(|binding| {
-                ToolBinding::new(
-                    binding.id,
-                    binding.tool,
-                    match binding.recovery {
-                        LocalRecovery::SafeToReplay => ToolRecovery::SafeToReplay,
-                        LocalRecovery::NeverReplay => ToolRecovery::NeverReplay,
-                    },
-                )
-            })
-            .collect()
-    }
-
-    /// Creates the same concrete tools for the decision-only kernel agent loop.
+    /// Creates the concrete local tool bindings for the kernel agent loop.
     #[must_use]
     pub fn kernel_tool_bindings(&self) -> Vec<AgentToolBinding> {
         self.tools()
@@ -112,18 +89,30 @@ impl LocalWorkspace {
     fn tools(&self) -> Vec<LocalToolBinding> {
         vec![
             LocalToolBinding {
-                id: self.tool_binding_id("read-file-v2"),
-                tool: Arc::new(ReadFile::new(Arc::clone(&self.root))),
+                id: self.tool_binding_id("read-file-v3-deadline-120s"),
+                tool: Arc::new(DeadlineTool::new(
+                    Arc::new(ReadFile::new(Arc::clone(&self.root))),
+                    DEFAULT_TOOL_DEADLINE,
+                    false,
+                )),
                 recovery: LocalRecovery::SafeToReplay,
             },
             LocalToolBinding {
-                id: self.tool_binding_id("edit-file-v2"),
-                tool: Arc::new(EditFile::new(Arc::clone(&self.root))),
+                id: self.tool_binding_id("edit-file-v3-atomic-deadline-120s"),
+                tool: Arc::new(DeadlineTool::new(
+                    Arc::new(EditFile::new(Arc::clone(&self.root))),
+                    DEFAULT_TOOL_DEADLINE,
+                    false,
+                )),
                 recovery: LocalRecovery::NeverReplay,
             },
             LocalToolBinding {
-                id: self.tool_binding_id("write-file-v2"),
-                tool: Arc::new(WriteFile::new(Arc::clone(&self.root))),
+                id: self.tool_binding_id("write-file-v3-atomic-deadline-120s"),
+                tool: Arc::new(DeadlineTool::new(
+                    Arc::new(WriteFile::new(Arc::clone(&self.root))),
+                    DEFAULT_TOOL_DEADLINE,
+                    false,
+                )),
                 recovery: LocalRecovery::NeverReplay,
             },
             LocalToolBinding {
@@ -133,20 +122,28 @@ impl LocalWorkspace {
             },
             LocalToolBinding {
                 id: format!(
-                    "renoa-local/grep-v2/{}/rg-{}",
+                    "renoa-local/grep-v3-deadline-120s/{}/rg-{}",
                     self.binding_id,
                     self.ripgrep.revision()
                 ),
-                tool: Arc::new(Grep::new(Arc::clone(&self.root), Arc::clone(&self.ripgrep))),
+                tool: Arc::new(DeadlineTool::new(
+                    Arc::new(Grep::new(Arc::clone(&self.root), Arc::clone(&self.ripgrep))),
+                    DEFAULT_TOOL_DEADLINE,
+                    false,
+                )),
                 recovery: LocalRecovery::SafeToReplay,
             },
             LocalToolBinding {
                 id: format!(
-                    "renoa-local/find-v2/{}/rg-{}",
+                    "renoa-local/find-v3-deadline-120s/{}/rg-{}",
                     self.binding_id,
                     self.ripgrep.revision()
                 ),
-                tool: Arc::new(Find::new(Arc::clone(&self.root), Arc::clone(&self.ripgrep))),
+                tool: Arc::new(DeadlineTool::new(
+                    Arc::new(Find::new(Arc::clone(&self.root), Arc::clone(&self.ripgrep))),
+                    DEFAULT_TOOL_DEADLINE,
+                    false,
+                )),
                 recovery: LocalRecovery::SafeToReplay,
             },
         ]
@@ -179,7 +176,7 @@ pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
 pub(crate) async fn existing_file(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
     let path = existing_path(root, requested).await?;
     if !path.is_file() {
-        return Err(ToolError::new("path must name a file"));
+        return Err(ToolError::invalid_input("path must name a file"));
     }
     Ok(path)
 }
@@ -188,9 +185,9 @@ pub(crate) async fn existing_path(root: &Path, requested: &str) -> Result<PathBu
     let requested = relative_path(requested)?;
     let path = tokio::fs::canonicalize(root.join(requested))
         .await
-        .map_err(|error| tool_error("resolve path", error))?;
+        .map_err(|error| io_error("resolve path", &error, false))?;
     if !path.starts_with(root) {
-        return Err(ToolError::new("path escapes the workspace"));
+        return Err(ToolError::permission_denied("path escapes the workspace"));
     }
     Ok(path)
 }
@@ -198,7 +195,7 @@ pub(crate) async fn existing_path(root: &Path, requested: &str) -> Result<PathBu
 pub(crate) async fn existing_directory(root: &Path, requested: &str) -> Result<PathBuf, ToolError> {
     let path = existing_path(root, requested).await?;
     if !path.is_dir() {
-        return Err(ToolError::new("path must name a directory"));
+        return Err(ToolError::invalid_input("path must name a directory"));
     }
     Ok(path)
 }
@@ -210,9 +207,9 @@ pub(crate) fn ensure_visible_search_path(
 ) -> Result<(), ToolError> {
     let resolved = resolved
         .strip_prefix(root)
-        .map_err(|_| ToolError::new("search path escapes the workspace"))?;
+        .map_err(|_| ToolError::permission_denied("search path escapes the workspace"))?;
     if has_hidden_component(Path::new(requested)) || has_hidden_component(resolved) {
-        return Err(ToolError::new(
+        return Err(ToolError::invalid_input(
             "grep and find skip hidden paths; use bash for explicit hidden-file access",
         ));
     }
@@ -231,20 +228,20 @@ pub(crate) async fn writable_path(root: &Path, requested: &str) -> Result<PathBu
     match tokio::fs::symlink_metadata(&candidate).await {
         Ok(_) => return existing_path(root, requested.to_string_lossy().as_ref()).await,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(tool_error("inspect path", error)),
+        Err(error) => return Err(io_error("inspect path", &error, false)),
     }
     let parent = candidate
         .parent()
-        .ok_or_else(|| ToolError::new("file path has no parent directory"))?;
+        .ok_or_else(|| ToolError::invalid_input("file path has no parent directory"))?;
     let parent = tokio::fs::canonicalize(parent)
         .await
-        .map_err(|error| tool_error("resolve parent directory", error))?;
+        .map_err(|error| io_error("resolve parent directory", &error, false))?;
     if !parent.starts_with(root) {
-        return Err(ToolError::new("path escapes the workspace"));
+        return Err(ToolError::permission_denied("path escapes the workspace"));
     }
     let name = candidate
         .file_name()
-        .ok_or_else(|| ToolError::new("path must name a file"))?;
+        .ok_or_else(|| ToolError::invalid_input("path must name a file"))?;
     Ok(parent.join(name))
 }
 
@@ -260,11 +257,9 @@ pub(crate) fn relative_path(requested: &str) -> Result<&Path, ToolError> {
             )
         })
     {
-        return Err(ToolError::new("path must stay relative to the workspace"));
+        return Err(ToolError::invalid_input(
+            "path must stay relative to the workspace",
+        ));
     }
     Ok(path)
-}
-
-fn tool_error(action: &str, error: impl std::fmt::Display) -> ToolError {
-    ToolError::new(format!("cannot {action}: {error}"))
 }

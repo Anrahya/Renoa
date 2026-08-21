@@ -1,0 +1,56 @@
+{
+  "name": "@acp-components/core",
+  "version": "0.1.0",
+  "description": "Framework-agnostic core for the Agent Client Protocol — multi-agent provider, per-session stores, transports, and imperative actions.",
+  "keywords": [
+    "agent-client-protocol",
+    "acp",
+    "agent",
+    "agent-sdk",
+    "ai",
+    "ai-agent",
+    "tool-calling",
+    "zustand",
+    "core"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zvzuola/acp-components.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/zvzuola/acp-components#readme",
+  "bugs": {
+    "url": "https://github.com/zvzuola/acp-components/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json --emitDeclarationOnly",
+    "dev": "vite build --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.2.1",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vitest": "^3.0.0"
+  }
+}

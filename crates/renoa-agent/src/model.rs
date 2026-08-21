@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -5,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{AssistantContent, AssistantMetadata, Message, ToolSpec};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRequest {
     pub system_prompt: String,
     pub messages: Vec<Message>,
@@ -53,7 +55,8 @@ pub struct ModelResponse {
 }
 
 /// Provider-neutral transient output for one assistant content block.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantDelta {
     /// Visible assistant text.
     Text { text: String },
@@ -67,6 +70,15 @@ pub enum AssistantDelta {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelEvent {
+    /// Exact provider payload after adapter translation and before dispatch.
+    ProviderRequest {
+        payload: serde_json::Value,
+    },
+    /// Redacted transport metadata received before the response body is consumed.
+    ProviderResponse {
+        status: u16,
+        headers: BTreeMap<String, String>,
+    },
     /// Transient content for one position in the final assistant content array.
     ContentDelta {
         content_index: usize,
@@ -111,6 +123,15 @@ impl ModelError {
         }
     }
 
+    /// Reports a model deadline whose provider-side outcome is not proven.
+    #[must_use]
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self {
+            kind: ModelErrorKind::Timeout,
+            message: message.into(),
+        }
+    }
+
     #[must_use]
     pub fn kind(&self) -> ModelErrorKind {
         self.kind
@@ -127,6 +148,8 @@ pub enum ModelErrorKind {
     ContextWindowExceeded,
     /// Credential resolution failed before the provider began inference.
     AuthenticationFailed,
+    /// A first-event, idle, or total deadline expired.
+    Timeout,
 }
 
 impl ModelErrorKind {
@@ -141,6 +164,12 @@ impl ModelErrorKind {
 pub type ModelEventStream<'a> = BoxStream<'a, Result<ModelEvent, ModelError>>;
 
 pub trait Model: Send + Sync {
+    /// Starts one provider invocation.
+    ///
+    /// The returned stream owns the invocation. When `cancellation` fires it
+    /// must stop all started work, including descendant processes, and close
+    /// only after cleanup is complete. Dropping the stream must also initiate
+    /// cleanup; detached provider work is forbidden.
     fn stream(
         &self,
         request: ModelRequest,

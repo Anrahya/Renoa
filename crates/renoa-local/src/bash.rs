@@ -15,6 +15,7 @@ use crate::{
         CapturedTail, child_pid, configure, drain_tail, join_tail, stop_process_group,
         wait_for_process_group,
     },
+    tool_error::io_error,
     tool_input::{decode, non_empty},
 };
 
@@ -101,16 +102,16 @@ impl Tool for Bash {
             configure(&mut process);
             let mut child = process
                 .spawn()
-                .map_err(|error| tool_error("start shell", error))?;
+                .map_err(|error| io_error("start shell", &error, false))?;
             let pid = child_pid(&child)?;
             let stdout = child
                 .stdout
                 .take()
-                .ok_or_else(|| ToolError::new("shell stdout was not piped"))?;
+                .ok_or_else(|| ToolError::outcome_unknown("shell stdout was not piped"))?;
             let stderr = child
                 .stderr
                 .take()
-                .ok_or_else(|| ToolError::new("shell stderr was not piped"))?;
+                .ok_or_else(|| ToolError::outcome_unknown("shell stderr was not piped"))?;
             let stdout = drain_tail(stdout);
             let stderr = drain_tail(stderr);
             let deadline = tokio::time::sleep(Duration::from_secs(timeout_seconds));
@@ -122,7 +123,7 @@ impl Tool for Bash {
                     ProcessExit::Cancelled
                 }
                 status = child.wait() => ProcessExit::Finished(
-                    status.map_err(|error| tool_error("wait for shell", error))?
+                    status.map_err(|error| ToolError::outcome_unknown(format!("cannot wait for shell: {error}")))?
                 ),
                 () = &mut deadline => {
                     stop_process_group(&mut child, pid).await?;
@@ -158,7 +159,7 @@ impl Tool for Bash {
             };
             let rendered = render_process_output(&stdout, &stderr, status.code());
             if !status.success() {
-                return Err(ToolError::new(rendered));
+                return Err(ToolError::process_failed(rendered, true));
             }
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(rendered)],
@@ -183,7 +184,7 @@ enum ProcessExit {
 fn resolve_timeout(requested: Option<u64>) -> Result<u64, ToolError> {
     let seconds = requested.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
     if !(1..=MAX_TIMEOUT_SECONDS).contains(&seconds) {
-        return Err(ToolError::new(format!(
+        return Err(ToolError::invalid_input(format!(
             "timeout_seconds must be between 1 and {MAX_TIMEOUT_SECONDS}"
         )));
     }
@@ -205,7 +206,10 @@ async fn collect_completion(
 }
 
 fn cancelled_error() -> ToolError {
-    ToolError::new("bash execution was cancelled after its process group stopped")
+    ToolError::cancelled(
+        "bash execution was cancelled after its process group stopped",
+        true,
+    )
 }
 
 fn timeout_error(timeout_seconds: u64, stdout: &CapturedTail, stderr: &CapturedTail) -> ToolError {
@@ -218,7 +222,7 @@ fn timeout_error(timeout_seconds: u64, stdout: &CapturedTail, stderr: &CapturedT
         "Command timed out after {timeout_seconds} {unit}. Its process group was stopped. \
 The command may have made partial changes before it stopped.\n"
     );
-    ToolError::new(render_captured_output(&header, stdout, stderr))
+    ToolError::timeout(render_captured_output(&header, stdout, stderr), true)
 }
 
 fn render_process_output(
@@ -260,10 +264,6 @@ fn append_output(rendered: &mut String, label: &str, output: &CapturedTail) {
     if !rendered.ends_with('\n') {
         rendered.push('\n');
     }
-}
-
-fn tool_error(action: &str, error: impl std::fmt::Display) -> ToolError {
-    ToolError::new(format!("cannot {action}: {error}"))
 }
 
 #[cfg(test)]

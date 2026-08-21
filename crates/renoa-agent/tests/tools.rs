@@ -148,7 +148,12 @@ async fn unavailable_tool_becomes_a_model_visible_error() {
                 call_id: call.id,
                 name: call.name,
                 content: vec![ContentBlock::text("Tool `missing_tool` is not available.")],
-                details: None,
+                details: Some(json!({
+                    "error": {
+                        "code": "unavailable",
+                        "partial_changes_possible": false
+                    }
+                })),
                 is_error: true,
             },
         })
@@ -179,7 +184,12 @@ async fn tool_failure_becomes_a_model_visible_error() {
                 call_id: call.id,
                 name: call.name,
                 content: vec![ContentBlock::text("fixture failed")],
-                details: None,
+                details: Some(json!({
+                    "error": {
+                        "code": "internal",
+                        "partial_changes_possible": false
+                    }
+                })),
                 is_error: true,
             },
         })
@@ -213,7 +223,12 @@ async fn length_stopped_tool_arguments_are_never_executed() {
                 content: vec![ContentBlock::text(
                     "Tool call was not executed because the model response reached its token limit.",
                 )],
-                details: None,
+                details: Some(json!({
+                    "error": {
+                        "code": "output_limit",
+                        "partial_changes_possible": false
+                    }
+                })),
                 is_error: true,
             },
         })

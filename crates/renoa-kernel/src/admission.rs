@@ -5,6 +5,12 @@ use crate::{
     schema::{json_error, sqlite_error},
 };
 
+#[derive(Clone, Copy)]
+enum AdmissionMode {
+    Ordered,
+    RequireNoUnfinishedOperation,
+}
+
 impl Kernel {
     /// Ensures that an agent with this stable identity exists.
     ///
@@ -93,42 +99,53 @@ impl Kernel {
         session_id: SessionId,
         command: Command,
     ) -> Result<Admission, KernelError> {
+        self.submit_with_mode(session_id, command, AdmissionMode::Ordered)
+    }
+
+    /// Durably admits an exact command only when no different operation is unfinished.
+    ///
+    /// Exact redelivery remains idempotent. The availability check and insert
+    /// share one immediate `SQLite` transaction, so concurrent callers cannot
+    /// both pass the check and leave hidden queued work.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelError::UnfinishedOperation`] before inserting a new
+    /// command when this session already contains unfinished work. Exact
+    /// redelivery is resolved first. Returns the same identity, ownership, and
+    /// storage failures as [`Kernel::submit`].
+    pub fn submit_exclusive(
+        &self,
+        session_id: SessionId,
+        command: Command,
+    ) -> Result<Admission, KernelError> {
+        self.submit_with_mode(
+            session_id,
+            command,
+            AdmissionMode::RequireNoUnfinishedOperation,
+        )
+    }
+
+    fn submit_with_mode(
+        &self,
+        session_id: SessionId,
+        command: Command,
+        mode: AdmissionMode,
+    ) -> Result<Admission, KernelError> {
         let mut connection = self.database.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
         let content_json = serde_json::to_string(&command).map_err(json_error)?;
         let command_id = command.into_command_id();
-        let existing = transaction
-            .query_row(
-                "SELECT o.operation_id, o.position, c.session_id, c.content_json
-                 FROM commands AS c
-                 JOIN operations AS o ON o.command_id = c.command_id
-                 WHERE c.command_id = ?1",
-                [command_id.to_string()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(sqlite_error)?;
-        if let Some((operation_id, position, stored_session, stored_content)) = existing {
-            let operation_id = parse_operation_id(&operation_id)?;
-            if stored_session != session_id.to_string() || stored_content != content_json {
-                return Err(KernelError::CommandConflict {
-                    command_id,
-                    operation_id,
-                });
-            }
-            return Ok(Admission {
-                operation_id,
-                position: from_sql_integer(position, "operation position")?,
-            });
+        if let Some(admission) =
+            existing_admission(&transaction, session_id, command_id, &content_json)?
+        {
+            return Ok(admission);
+        }
+
+        if matches!(mode, AdmissionMode::RequireNoUnfinishedOperation) {
+            require_no_unfinished_operation(&transaction, session_id)?;
         }
 
         let position = transaction
@@ -186,6 +203,71 @@ impl Kernel {
             position: from_sql_integer(position, "operation position")?,
         })
     }
+}
+
+fn existing_admission(
+    transaction: &rusqlite::Transaction<'_>,
+    session_id: SessionId,
+    command_id: crate::CommandId,
+    content_json: &str,
+) -> Result<Option<Admission>, KernelError> {
+    let existing = transaction
+        .query_row(
+            "SELECT o.operation_id, o.position, c.session_id, c.content_json
+             FROM commands AS c
+             JOIN operations AS o ON o.command_id = c.command_id
+             WHERE c.command_id = ?1",
+            [command_id.to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(sqlite_error)?;
+    let Some((operation_id, position, stored_session, stored_content)) = existing else {
+        return Ok(None);
+    };
+    let operation_id = parse_operation_id(&operation_id)?;
+    if stored_session != session_id.to_string() || stored_content != content_json {
+        return Err(KernelError::CommandConflict {
+            command_id,
+            operation_id,
+        });
+    }
+    Ok(Some(Admission {
+        operation_id,
+        position: from_sql_integer(position, "operation position")?,
+    }))
+}
+
+fn require_no_unfinished_operation(
+    transaction: &rusqlite::Transaction<'_>,
+    session_id: SessionId,
+) -> Result<(), KernelError> {
+    let unfinished = transaction
+        .query_row(
+            "SELECT operation_id, command_id
+             FROM operations
+             WHERE session_id = ?1 AND outcome_json IS NULL
+             ORDER BY position
+             LIMIT 1",
+            [session_id.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(sqlite_error)?;
+    if let Some((operation_id, command_id)) = unfinished {
+        return Err(KernelError::UnfinishedOperation {
+            operation_id: parse_operation_id(&operation_id)?,
+            command_id: parse_command_id(&command_id)?,
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn parse_agent_id(value: &str) -> Result<AgentId, KernelError> {

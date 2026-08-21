@@ -167,6 +167,54 @@ writeFileSync({}, "completed");
     drop(stream);
 }
 
+#[tokio::test]
+async fn dropping_the_model_stream_stops_bridge_descendants() {
+    let directory = tempdir().expect("temporary directory");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    let started = directory.path().join("started");
+    let descendant_completed = directory.path().join("descendant-completed");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(
+        &bridge,
+        format!(
+            r#"{}
+import {{ spawn }} from "node:child_process";
+import {{ writeFileSync }} from "node:fs";
+for await (const _chunk of process.stdin) {{}}
+writeFileSync({}, "started");
+spawn(process.execPath, ["-e", {}], {{ stdio: "ignore" }});
+await new Promise(resolve => setTimeout(resolve, 5000));
+"#,
+            DESCRIPTION,
+            serde_json::to_string(&started).expect("encode started path"),
+            serde_json::to_string(&format!(
+                "setTimeout(() => require('node:fs').writeFileSync({}, 'completed'), 800)",
+                serde_json::to_string(&descendant_completed).expect("encode completed path")
+            ))
+            .expect("encode descendant program"),
+        ),
+    )
+    .expect("write descendant bridge");
+    let model = load_model(&bridge, &auth_store).await;
+    let stream = model.stream(request(), CancellationToken::new());
+
+    timeout(Duration::from_secs(2), async {
+        while !started.exists() {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("bridge starts");
+    drop(stream);
+
+    sleep(Duration::from_secs(1)).await;
+    assert!(
+        !descendant_completed.exists(),
+        "dropped stream left a bridge descendant running"
+    );
+}
+
 async fn load_model(bridge: &std::path::Path, auth_store: &std::path::Path) -> PiModel {
     PiModel::load(
         bridge,

@@ -13,16 +13,16 @@ doc = false
 [dependencies]
 agent-client-protocol.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
-renoa-harness = { path = "../renoa-harness", version = "0.1.0" }
 renoa-local = { path = "../renoa-local", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-std", "io-util"] }
-tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
+rusqlite.workspace = true
 tempfile.workspace = true
 
 [lints]

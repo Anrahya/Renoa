@@ -6,17 +6,17 @@ use std::{
 
 use futures_util::{StreamExt, stream};
 use renoa_agent::{
-    AssistantContent, AssistantMetadata, BoxFuture, ContentBlock, Message, Model, ModelError,
-    ModelEvent, ModelEventStream, ModelRequest, ModelResponse, StopReason, Tool, ToolCall,
-    ToolError, ToolOutput, ToolSpec, ToolUpdates,
+    AgentEvent, AgentEventSink, AssistantContent, AssistantMetadata, BoxFuture, ContentBlock,
+    Message, Model, ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse,
+    StopReason, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::{
     AgentCommand, AgentLoopConfig, AgentToolBinding, ContextBinding, MESSAGE_EVENT_KIND,
-    ModelBinding, build_runtime,
+    ModelBinding, build_runtime, build_runtime_with_events,
 };
 use renoa_kernel::{
     AgentId, Command, CommandId, DriveResult, EffectRecovery, EventCursor, Kernel,
-    OperationOutcome, SessionId,
+    OperationOutcome, Runtime, SessionId,
 };
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
@@ -44,21 +44,8 @@ async fn kernel_drives_a_complete_model_tool_model_turn() {
         ],
         Arc::clone(&calls),
     ));
-    let runtime = build_runtime(
-        AgentLoopConfig::new(
-            "Change the requested value.",
-            NonZeroU32::new(4).expect("non-zero model limit"),
-            NonZeroU32::new(4).expect("non-zero tool limit"),
-        ),
-        ContextBinding::full_history(),
-        ModelBinding::new("scripted-model-v1", model, EffectRecovery::SafeToReplay),
-        vec![AgentToolBinding::new(
-            "replace-value-v1",
-            Arc::new(ReplaceValue),
-            EffectRecovery::NeverReplay,
-        )],
-    )
-    .expect("build runtime");
+    let events = Arc::new(RecordingSink::default());
+    let runtime = observed_runtime(model, Arc::clone(&events));
     let content = serde_json::to_value(AgentCommand::text("Replace old with new."))
         .expect("serialize command");
     let admission = kernel
@@ -87,6 +74,85 @@ async fn kernel_drives_a_complete_model_tool_model_turn() {
     assert!(matches!(requests[1].messages[2], Message::Tool { .. }));
     drop(requests);
 
+    assert_durable_turn(&kernel, session_id);
+    let events = events.events.lock().expect("event lock");
+    let tool_events = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                AgentEvent::ToolExecutionStart { .. }
+                    | AgentEvent::ToolExecutionUpdate { .. }
+                    | AgentEvent::ToolExecutionEnd { .. }
+                    | AgentEvent::ToolExecutionOutcomeUnknown { .. }
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        tool_events.as_slice(),
+        [
+            AgentEvent::ToolExecutionStart { call },
+            AgentEvent::ToolExecutionUpdate {
+                call: updated_call,
+                update,
+            },
+            AgentEvent::ToolExecutionEnd { call: settled_call, result },
+        ] if call.id == "replace-1"
+            && updated_call == call
+            && update.content == vec![ContentBlock::text("Replacing value.")]
+            && settled_call == call
+            && result.call_id == call.id
+            && !result.is_error
+    ));
+}
+
+fn observed_runtime(model: Arc<ScriptedModel>, events: Arc<RecordingSink>) -> Runtime {
+    let unobserved = build_runtime(
+        AgentLoopConfig::new(
+            "Change the requested value.",
+            NonZeroU32::new(4).expect("non-zero model limit"),
+            NonZeroU32::new(4).expect("non-zero tool limit"),
+        ),
+        ContextBinding::full_history(),
+        ModelBinding::new(
+            "scripted-model-v1",
+            model.clone(),
+            EffectRecovery::SafeToReplay,
+        ),
+        vec![AgentToolBinding::new(
+            "replace-value-v1",
+            Arc::new(ReplaceValue),
+            EffectRecovery::NeverReplay,
+        )],
+    )
+    .expect("build unobserved runtime");
+    let event_sink: Arc<dyn AgentEventSink> = events;
+    let runtime = build_runtime_with_events(
+        AgentLoopConfig::new(
+            "Change the requested value.",
+            NonZeroU32::new(4).expect("non-zero model limit"),
+            NonZeroU32::new(4).expect("non-zero tool limit"),
+        ),
+        ContextBinding::full_history(),
+        ModelBinding::new("scripted-model-v1", model, EffectRecovery::SafeToReplay),
+        vec![AgentToolBinding::new(
+            "replace-value-v1",
+            Arc::new(ReplaceValue),
+            EffectRecovery::NeverReplay,
+        )],
+        event_sink,
+    )
+    .expect("build runtime");
+    assert_eq!(
+        unobserved.manifest(),
+        runtime.manifest(),
+        "transient observation must not change durable runtime identity"
+    );
+    runtime
+}
+
+fn assert_durable_turn(kernel: &Kernel, session_id: SessionId) {
     let page = kernel
         .events_after(session_id, EventCursor::START)
         .expect("read semantic history");
@@ -270,6 +336,19 @@ struct ScriptedModel {
     requests: Arc<Mutex<Vec<ModelRequest>>>,
 }
 
+#[derive(Default)]
+struct RecordingSink {
+    events: Mutex<Vec<AgentEvent>>,
+}
+
+impl AgentEventSink for RecordingSink {
+    fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.events.lock().expect("event lock").push(event);
+        })
+    }
+}
+
 impl ScriptedModel {
     fn new(
         responses: impl IntoIterator<Item = ModelResponse>,
@@ -324,16 +403,24 @@ impl Tool for ReplaceValue {
         &self,
         call: ToolCall,
         _cancellation: CancellationToken,
-        _updates: ToolUpdates,
+        updates: ToolUpdates,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(std::future::ready(Ok(ToolOutput {
-            content: vec![ContentBlock::text(format!(
-                "Replaced {} with {}.",
-                call.arguments["from"].as_str().unwrap_or_default(),
-                call.arguments["to"].as_str().unwrap_or_default()
-            ))],
-            details: None,
-        })))
+        Box::pin(async move {
+            updates
+                .emit(ToolOutput {
+                    content: vec![ContentBlock::text("Replacing value.")],
+                    details: None,
+                })
+                .await;
+            Ok(ToolOutput {
+                content: vec![ContentBlock::text(format!(
+                    "Replaced {} with {}.",
+                    call.arguments["from"].as_str().unwrap_or_default(),
+                    call.arguments["to"].as_str().unwrap_or_default()
+                ))],
+                details: None,
+            })
+        })
     }
 }
 

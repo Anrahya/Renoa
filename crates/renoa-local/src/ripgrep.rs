@@ -16,6 +16,7 @@ use crate::{
         CapturedTail, child_pid, configure, drain_tail, join_tail, stop_process_group,
         wait_for_process_group,
     },
+    tool_error::io_error,
     workspace::{LocalWorkspaceError, hex_sha256},
 };
 
@@ -80,12 +81,12 @@ impl SearchProcess {
         configure(&mut command);
         let mut child = command
             .spawn()
-            .map_err(|error| tool_error(&format!("start {name}"), error))?;
+            .map_err(|error| io_error(&format!("start {name}"), &error, false))?;
         let pid = child_pid(&child)?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| ToolError::new(format!("{name} stderr was not piped")))?;
+            .ok_or_else(|| ToolError::outcome_unknown(format!("{name} stderr was not piped")))?;
         Ok(Self {
             child,
             pid,
@@ -101,7 +102,7 @@ impl SearchProcess {
         self.child
             .stdout
             .take()
-            .ok_or_else(|| ToolError::new(format!("{name} stdout was not piped")))
+            .ok_or_else(|| ToolError::outcome_unknown(format!("{name} stdout was not piped")))
     }
 
     pub(crate) async fn stop(&mut self) -> Result<(), ToolError> {
@@ -118,10 +119,13 @@ impl SearchProcess {
             biased;
             () = cancellation.cancelled() => {
                 self.stop().await?;
-                return Err(ToolError::new(format!("{name} execution was cancelled")));
+                return Err(ToolError::cancelled(
+                    format!("{name} execution was cancelled"),
+                    false,
+                ));
             }
             status = self.child.wait() => {
-                status.map_err(|error| tool_error(&format!("wait for {name}"), error))?
+                status.map_err(|error| ToolError::outcome_unknown(format!("cannot wait for {name}: {error}")))?
             }
         };
         let (group, stderr) = tokio::join!(wait_for_process_group(self.pid), self.take_stderr());
@@ -139,13 +143,16 @@ impl SearchProcess {
             return Ok(());
         }
         let diagnostic = String::from_utf8_lossy(&self.stderr.bytes);
-        Err(ToolError::new(format!(
-            "ripgrep exited with code {}: {}",
-            status
-                .code()
-                .map_or_else(|| "unknown".to_owned(), |code| code.to_string()),
-            diagnostic.trim()
-        )))
+        Err(ToolError::process_failed(
+            format!(
+                "ripgrep exited with code {}: {}",
+                status
+                    .code()
+                    .map_or_else(|| "unknown".to_owned(), |code| code.to_string()),
+                diagnostic.trim()
+            ),
+            false,
+        ))
     }
 
     async fn collect_stderr(&mut self) -> Result<(), ToolError> {
@@ -157,11 +164,7 @@ impl SearchProcess {
         let task = self
             .stderr_task
             .take()
-            .ok_or_else(|| ToolError::new("ripgrep stderr was already collected"))?;
+            .ok_or_else(|| ToolError::internal("ripgrep stderr was already collected"))?;
         join_tail(task).await
     }
-}
-
-fn tool_error(action: &str, error: impl std::fmt::Display) -> ToolError {
-    ToolError::new(format!("cannot {action}: {error}"))
 }

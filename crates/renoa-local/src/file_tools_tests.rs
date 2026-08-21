@@ -131,6 +131,33 @@ async fn mutation_results_use_relative_paths_and_enforce_the_write_limit() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_dangling_symlink_cannot_redirect_a_workspace_write() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace = directory.path().join("workspace");
+    let outside = directory.path().join("outside.txt");
+    fs::create_dir(&workspace).expect("create workspace");
+    std::os::unix::fs::symlink(&outside, workspace.join("link.txt"))
+        .expect("create dangling symlink");
+    let write = WriteFile::new(Arc::new(workspace));
+
+    let result = invoke_tool(
+        Some(&write),
+        tool_call(
+            "write_file",
+            serde_json::json!({ "path": "link.txt", "content": "escaped\n" }),
+        ),
+        CancellationToken::new(),
+        None,
+    )
+    .await
+    .expect("workspace rejection is definite");
+
+    assert!(result.is_error);
+    assert!(!outside.exists(), "write followed a dangling symlink");
+}
+
 fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
         id: format!("{name}-call"),

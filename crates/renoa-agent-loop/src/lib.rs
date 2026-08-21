@@ -13,7 +13,7 @@ pub use compaction::{
 };
 pub use configuration::{
     AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, ContextBinding, ModelBinding,
-    build_runtime,
+    build_runtime, build_runtime_with_events,
 };
 pub use context::{
     CompactionValidationError, ContextEntry, ContextInput, ContextPreparation, ContextProjector,

@@ -1,90 +1,25 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::{ContentBlock as AcpContentBlock, Meta, PromptRequest};
-use renoa_agent::ContentBlock;
-use renoa_harness::{
-    CancellationId, HarnessError, OperationOutcome, OperationRequest, RequestId, RunNext,
-};
+use renoa_agent::{AgentEventSink, ContentBlock};
+use renoa_local::{AlphaSession, LocalTurnOutcome};
 use uuid::Uuid;
 
-use crate::{ServerError, session::ActiveSession};
+use crate::ServerError;
 
 pub(crate) async fn execute(
-    session: &Arc<ActiveSession>,
+    session: &Arc<AlphaSession>,
     request: PromptRequest,
-    request_id: RequestId,
-    sink: &dyn renoa_agent::AgentEventSink,
-) -> Result<OperationOutcome, ServerError> {
+    request_id: Uuid,
+    sink: Arc<dyn AgentEventSink>,
+) -> Result<LocalTurnOutcome, ServerError> {
     let content = prompt_content(request.prompt)?;
-    let lease = session.begin_prompt(request_id).await?;
-    let result = execute_admitted(session, content, &lease, sink).await;
-    session.finish_prompt(lease.request_id).await;
-    result
+    Ok(session.execute_turn(request_id, content, sink).await?)
 }
 
-async fn execute_admitted(
-    session: &ActiveSession,
-    content: Vec<ContentBlock>,
-    lease: &crate::session::PromptLease,
-    sink: &dyn renoa_agent::AgentEventSink,
-) -> Result<OperationOutcome, ServerError> {
-    let admission = session
-        .harness
-        .admit_standalone(session.id, OperationRequest::new(lease.request_id, content))
-        .await?;
-    if let Some(outcome) = session
-        .harness
-        .settled_outcome(session.id, admission.operation_id)
-        .await?
-    {
-        return Ok(outcome);
-    }
-
-    let execution = session
-        .harness
-        .run_next_with_events(session.id, &lease.profile, sink);
-    tokio::pin!(execution);
-    let run = tokio::select! {
-        biased;
-        result = &mut execution => result?,
-        () = lease.cancellation.cancelled() => {
-            let cancellation_id = CancellationId::new();
-            loop {
-                match session.harness.request_standalone_cancellation(
-                    session.id,
-                    admission.operation_id,
-                    cancellation_id,
-                ).await {
-                    Ok(()) => break execution.await?,
-                    Err(HarnessError::OperationNotCancellable(_)) => {
-                        if let Ok(result) =
-                            tokio::time::timeout(Duration::from_millis(2), &mut execution).await
-                        {
-                            break result?;
-                        }
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-        }
-    };
-    match run {
-        RunNext::Finished { outcome, .. } => Ok(outcome),
-        RunNext::Blocked { operation_id } => Err(ServerError::Operation(format!(
-            "operation {operation_id} is blocked on an uncertain tool outcome"
-        ))),
-        RunNext::Idle => Err(ServerError::Operation(
-            "the admitted operation had no durable outcome".to_owned(),
-        )),
-        _ => Err(ServerError::Operation(
-            "the harness returned an unsupported run result".to_owned(),
-        )),
-    }
-}
-
-pub(crate) fn request_identity(meta: Option<&Meta>) -> Result<RequestId, ServerError> {
+pub(crate) fn request_identity(meta: Option<&Meta>) -> Result<Uuid, ServerError> {
     let Some(meta) = meta else {
-        return Ok(RequestId::new());
+        return Ok(Uuid::new_v4());
     };
     let request_id = meta_identity(meta, "requestId")?;
     let prompt_id = meta_identity(meta, "promptId")?;
@@ -94,10 +29,9 @@ pub(crate) fn request_identity(meta: Option<&Meta>) -> Result<RequestId, ServerE
         ));
     }
     let Some(value) = request_id.or(prompt_id) else {
-        return Ok(RequestId::new());
+        return Ok(Uuid::new_v4());
     };
     Uuid::parse_str(value)
-        .map(RequestId::from_uuid)
         .map_err(|_| ServerError::InvalidRequest("prompt requestId must be a UUID".to_owned()))
 }
 

@@ -7,7 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -85,7 +85,7 @@ pub struct ToolResult {
 }
 
 /// Final or partial output produced by a tool.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ToolOutput {
     pub content: Vec<ContentBlock>,
     pub details: Option<Value>,
@@ -125,28 +125,139 @@ impl ToolUpdates {
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("{message}")]
 pub struct ToolError {
+    code: ToolErrorCode,
     message: String,
     certainty: ToolErrorCertainty,
+    partial_changes_possible: bool,
 }
 
 impl ToolError {
-    /// Creates a definite failure that may be returned to the model.
+    /// Creates an unclassified definite failure that may be returned to the model.
+    ///
+    /// New adapters should use a category-specific constructor whenever the
+    /// failure is understood. This constructor remains for implementations
+    /// whose external error vocabulary has not yet been mapped.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            certainty: ToolErrorCertainty::Definite,
-        }
+        Self::definite(ToolErrorCode::Internal, message, false)
+    }
+
+    #[must_use]
+    pub fn invalid_input(message: impl Into<String>) -> Self {
+        Self::definite(ToolErrorCode::InvalidInput, message, false)
+    }
+
+    #[must_use]
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::definite(ToolErrorCode::NotFound, message, false)
+    }
+
+    #[must_use]
+    pub fn permission_denied(message: impl Into<String>) -> Self {
+        Self::definite(ToolErrorCode::PermissionDenied, message, false)
+    }
+
+    #[must_use]
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::definite(ToolErrorCode::Conflict, message, false)
+    }
+
+    #[must_use]
+    pub fn timeout(message: impl Into<String>, partial_changes_possible: bool) -> Self {
+        Self::definite(ToolErrorCode::Timeout, message, partial_changes_possible)
+    }
+
+    #[must_use]
+    pub fn cancelled(message: impl Into<String>, partial_changes_possible: bool) -> Self {
+        Self::definite(ToolErrorCode::Cancelled, message, partial_changes_possible)
+    }
+
+    #[must_use]
+    pub fn process_failed(message: impl Into<String>, partial_changes_possible: bool) -> Self {
+        Self::definite(
+            ToolErrorCode::ProcessFailed,
+            message,
+            partial_changes_possible,
+        )
+    }
+
+    #[must_use]
+    pub fn output_limit(message: impl Into<String>) -> Self {
+        Self::definite(ToolErrorCode::OutputLimit, message, false)
+    }
+
+    #[must_use]
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::definite(ToolErrorCode::Unavailable, message, false)
+    }
+
+    #[must_use]
+    pub fn io(message: impl Into<String>, partial_changes_possible: bool) -> Self {
+        Self::definite(ToolErrorCode::Io, message, partial_changes_possible)
+    }
+
+    #[must_use]
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::definite(ToolErrorCode::Internal, message, false)
     }
 
     /// Creates an error for an invocation whose external outcome cannot be proven.
     #[must_use]
     pub fn outcome_unknown(message: impl Into<String>) -> Self {
         Self {
+            code: ToolErrorCode::Unavailable,
             message: message.into(),
             certainty: ToolErrorCertainty::OutcomeUnknown,
+            partial_changes_possible: true,
         }
     }
+
+    #[must_use]
+    pub fn code(&self) -> ToolErrorCode {
+        self.code
+    }
+
+    #[must_use]
+    pub fn outcome_is_unknown(&self) -> bool {
+        self.certainty == ToolErrorCertainty::OutcomeUnknown
+    }
+
+    #[must_use]
+    pub fn partial_changes_possible(&self) -> bool {
+        self.partial_changes_possible
+    }
+
+    fn definite(
+        code: ToolErrorCode,
+        message: impl Into<String>,
+        partial_changes_possible: bool,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            certainty: ToolErrorCertainty::Definite,
+            partial_changes_possible,
+        }
+    }
+}
+
+/// Stable model-visible category of a definite tool failure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ToolErrorCode {
+    InvalidInput,
+    NotFound,
+    PermissionDenied,
+    Conflict,
+    Timeout,
+    Cancelled,
+    ProcessFailed,
+    OutputLimit,
+    Unavailable,
+    Io,
+    #[default]
+    Internal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,7 +272,11 @@ enum ToolErrorCertainty {
 pub struct ToolOutcomeUnknown {
     call_id: String,
     tool_name: String,
+    #[serde(default)]
+    code: ToolErrorCode,
     message: String,
+    #[serde(default)]
+    partial_changes_possible: bool,
 }
 
 impl ToolOutcomeUnknown {
@@ -178,6 +293,16 @@ impl ToolOutcomeUnknown {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    #[must_use]
+    pub fn code(&self) -> ToolErrorCode {
+        self.code
+    }
+
+    #[must_use]
+    pub fn partial_changes_possible(&self) -> bool {
+        self.partial_changes_possible
     }
 }
 
@@ -225,12 +350,15 @@ pub async fn invoke_tool(
     sink: Option<&dyn AgentEventSink>,
 ) -> Result<ToolResult, ToolOutcomeUnknown> {
     if cancellation.is_cancelled() {
-        return Ok(error_tool_result(&call, "Tool execution was cancelled."));
+        return Ok(error_tool_result(
+            &call,
+            &ToolError::cancelled("Tool execution was cancelled.", false),
+        ));
     }
     let Some(tool) = tool else {
         return Ok(error_tool_result(
             &call,
-            &format!("Tool `{}` is not available.", call.name),
+            &ToolError::unavailable(format!("Tool `{}` is not available.", call.name)),
         ));
     };
 
@@ -273,22 +401,29 @@ pub async fn invoke_tool(
             is_error: false,
         }),
         Err(error) => match error.certainty {
-            ToolErrorCertainty::Definite => Ok(error_tool_result(&call, &error.message)),
+            ToolErrorCertainty::Definite => Ok(error_tool_result(&call, &error)),
             ToolErrorCertainty::OutcomeUnknown => Err(ToolOutcomeUnknown {
                 call_id: call.id,
                 tool_name: call.name,
+                code: error.code,
                 message: error.message,
+                partial_changes_possible: error.partial_changes_possible,
             }),
         },
     }
 }
 
-pub(crate) fn error_tool_result(call: &ToolCall, message: &str) -> ToolResult {
+pub(crate) fn error_tool_result(call: &ToolCall, error: &ToolError) -> ToolResult {
     ToolResult {
         call_id: call.id.clone(),
         name: call.name.clone(),
-        content: vec![ContentBlock::text(message)],
-        details: None,
+        content: vec![ContentBlock::text(error.to_string())],
+        details: Some(json!({
+            "error": {
+                "code": error.code,
+                "partial_changes_possible": error.partial_changes_possible
+            }
+        })),
         is_error: true,
     }
 }

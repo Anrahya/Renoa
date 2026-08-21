@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde_json::json;
+use serde_json::{Value, json};
 use tempfile::tempdir;
 
 use support::{AcpProcess, BRIDGE};
@@ -119,32 +119,12 @@ fn a_model_change_survives_session_reload() {
         .as_str()
         .expect("session id")
         .to_owned();
-    first.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/set_config_option",
-        "params": {
-            "sessionId": session_id,
-            "configId": "thought_level",
-            "value": "low"
-        }
-    }));
-    let configured = first.read();
+    let configured = set_option(&mut first, 3, &session_id, "thought_level", "low");
     assert_eq!(
         configured["result"]["configOptions"][1]["currentValue"],
         "low"
     );
-    first.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 4,
-        "method": "session/set_config_option",
-        "params": {
-            "sessionId": session_id,
-            "configId": "model",
-            "value": "grok-fast"
-        }
-    }));
-    let configured = first.read();
+    let configured = set_option(&mut first, 4, &session_id, "model", "grok-fast");
     assert_eq!(
         configured["result"]["configOptions"][0]["currentValue"],
         "grok-fast"
@@ -163,17 +143,7 @@ fn a_model_change_survives_session_reload() {
 
     let mut resumed = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
     resumed.initialize();
-    resumed.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "session/load",
-        "params": {
-            "sessionId": session_id,
-            "cwd": workspace,
-            "mcpServers": []
-        }
-    }));
-    let loaded = resumed.read();
+    let loaded = load_session(&mut resumed, &session_id, &workspace);
     assert_eq!(
         loaded["result"]["configOptions"][0]["currentValue"],
         "grok-fast"
@@ -189,7 +159,22 @@ fn a_model_change_survives_session_reload() {
         "Model configured."
     );
     assert_eq!(response["result"]["stopReason"], "end_turn");
+    let configured = set_option(&mut resumed, 4, &session_id, "thought_level", "high");
+    assert_eq!(
+        configured["result"]["configOptions"][1]["currentValue"],
+        "high"
+    );
     resumed.finish();
+
+    let mut repaired = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    repaired.initialize();
+    let loaded = load_session(&mut repaired, &session_id, &workspace);
+    assert_eq!(
+        loaded["result"]["configOptions"][0]["currentValue"],
+        "grok-fast"
+    );
+    assert_eq!(loaded["result"]["configOptions"][1]["currentValue"], "high");
+    repaired.finish();
 }
 
 #[test]
@@ -259,4 +244,29 @@ fn wait_for_path(path: &std::path::Path) {
         assert!(Instant::now() < deadline, "model process did not start");
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn set_option(
+    process: &mut AcpProcess,
+    id: u64,
+    session_id: &str,
+    config_id: &str,
+    value: &str,
+) -> Value {
+    process.send(&json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session/set_config_option",
+        "params": {
+            "sessionId": session_id,
+            "configId": config_id,
+            "value": value
+        }
+    }));
+    process.read()
+}
+
+fn load_session(process: &mut AcpProcess, session_id: &str, workspace: &std::path::Path) -> Value {
+    let (_history, response) = process.load_session(workspace, session_id);
+    response
 }

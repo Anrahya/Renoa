@@ -142,6 +142,13 @@ pub enum KernelError {
         command_id: CommandId,
         operation_id: OperationId,
     },
+    #[error(
+        "session has unfinished operation {operation_id} for command {command_id}; retry that command before submitting another"
+    )]
+    UnfinishedOperation {
+        operation_id: OperationId,
+        command_id: CommandId,
+    },
     #[error("operation {0} has no unknown effect to abandon")]
     NoUnknownEffect(OperationId),
     #[error("cancellation {cancellation_id} is already bound to operation {operation_id}")]

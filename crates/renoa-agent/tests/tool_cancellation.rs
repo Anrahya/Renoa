@@ -58,7 +58,12 @@ async fn cancellation_before_tool_execution_preserves_context_without_invoking_t
                     call_id: call.id,
                     name: call.name,
                     content: vec![ContentBlock::text("Tool execution was cancelled.")],
-                    details: None,
+                    details: Some(json!({
+                        "error": {
+                            "code": "cancelled",
+                            "partial_changes_possible": false
+                        }
+                    })),
                     is_error: true,
                 },
             },

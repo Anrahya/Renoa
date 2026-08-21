@@ -1,6 +1,6 @@
 use std::{collections::HashSet, num::NonZeroU32, sync::Arc};
 
-use renoa_agent::{Model, Tool, ToolSpec};
+use renoa_agent::{AgentEventSink, Model, Tool, ToolSpec};
 use renoa_kernel::{EffectBinding, EffectRecovery, LoopBinding, Runtime, RuntimeError};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -122,6 +122,35 @@ pub fn build_runtime(
     model: ModelBinding,
     tools: Vec<AgentToolBinding>,
 ) -> Result<Runtime, AgentLoopBuildError> {
+    build_runtime_inner(config, context, model, tools, None)
+}
+
+/// Builds a runtime whose transient model and tool events are forwarded to a host observer.
+///
+/// The observer is not part of the frozen runtime manifest and receives only
+/// transient copies of runtime events. It is intended for live surfaces such
+/// as ACP; authoritative history remains in kernel semantic events.
+///
+/// # Errors
+///
+/// Applies the same binding validation as [`build_runtime`].
+pub fn build_runtime_with_events(
+    config: AgentLoopConfig,
+    context: ContextBinding,
+    model: ModelBinding,
+    tools: Vec<AgentToolBinding>,
+    events: Arc<dyn AgentEventSink>,
+) -> Result<Runtime, AgentLoopBuildError> {
+    build_runtime_inner(config, context, model, tools, Some(events))
+}
+
+fn build_runtime_inner(
+    config: AgentLoopConfig,
+    context: ContextBinding,
+    model: ModelBinding,
+    tools: Vec<AgentToolBinding>,
+    events: Option<Arc<dyn AgentEventSink>>,
+) -> Result<Runtime, AgentLoopBuildError> {
     if context.revision.is_empty() {
         return Err(AgentLoopBuildError::EmptyContextRevision);
     }
@@ -158,7 +187,10 @@ pub fn build_runtime(
         tool_adapters.push(EffectBinding::new(
             effect_binding,
             binding.revision,
-            Arc::new(ToolAdapter::new(binding.tool)),
+            Arc::new(ToolAdapter::new(
+                binding.tool,
+                events.as_ref().map(Arc::clone),
+            )),
         ));
     }
 
@@ -174,7 +206,7 @@ pub fn build_runtime(
     effects.push(EffectBinding::new(
         MODEL_EFFECT_BINDING,
         model.revision,
-        Arc::new(ModelAdapter::new(model.model)),
+        Arc::new(ModelAdapter::new(model.model, events)),
     ));
     effects.extend(tool_adapters);
     Runtime::new(

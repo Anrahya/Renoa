@@ -44,6 +44,11 @@ test("the model bridge streams indexed content before its terminal response", as
 
   assert.deepEqual(records.slice(0, -1), [
     {
+      event: "provider_response",
+      status: 200,
+      headers: {},
+    },
+    {
       event: "content_delta",
       content_index: 0,
       delta: { type: "reasoning", text: "plan" },

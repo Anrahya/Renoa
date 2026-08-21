@@ -160,6 +160,13 @@ lowest queued position, freezes the supplied runtime manifest, initializes the
 operation program counter, and installs the session's active pointer in one
 transaction.
 
+`Kernel::submit_exclusive` is an additional atomic admission primitive for a
+Host profile that permits only one unfinished operation. It checks for
+unfinished work and inserts the command in the same immediate transaction.
+This prevents concurrent Host callers from both passing a read check and
+leaving hidden queued work. The ordinary `Kernel::submit` path remains the
+general ordered-queue primitive.
+
 ### Cancellation
 
 `Kernel::request_cancellation` accepts a caller-stable `CancellationId` plus one

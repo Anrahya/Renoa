@@ -76,7 +76,7 @@ async fn structured_stream_drives_its_tool_call_through_completion() {
         expected_final_turn_events(final_assistant),
     ]
     .concat();
-    assert_eq!(events.events(), expected);
+    assert_eq!(events.presentation_events(), expected);
 }
 
 fn expected_user_events(user: Message) -> Vec<AgentEvent> {
@@ -173,7 +173,7 @@ async fn failed_stream_aborts_partial_text_without_persisting_it() {
     let user = Message::user_text("Hello");
     assert_eq!(agent.state().messages(), std::slice::from_ref(&user));
     assert_eq!(
-        events.events(),
+        events.presentation_events(),
         vec![
             AgentEvent::AgentStart,
             AgentEvent::TurnStart,
@@ -212,7 +212,7 @@ async fn incomplete_stream_aborts_partial_text_without_persisting_it() {
     let user = Message::user_text("Hello");
     assert_eq!(agent.state().messages(), std::slice::from_ref(&user));
     assert_eq!(
-        events.events(),
+        events.presentation_events(),
         vec![
             AgentEvent::AgentStart,
             AgentEvent::TurnStart,
@@ -409,12 +409,27 @@ struct RecordingSink {
 }
 
 impl RecordingSink {
-    fn events(&self) -> Vec<AgentEvent> {
+    fn presentation_events(&self) -> Vec<AgentEvent> {
         self.events
             .lock()
             .expect("event sink lock must not be poisoned")
-            .clone()
+            .iter()
+            .filter(|event| !is_model_diagnostic(event))
+            .cloned()
+            .collect()
     }
+}
+
+fn is_model_diagnostic(event: &AgentEvent) -> bool {
+    matches!(
+        event,
+        AgentEvent::ModelRequestStart { .. }
+            | AgentEvent::ModelProviderRequest { .. }
+            | AgentEvent::ModelProviderResponse { .. }
+            | AgentEvent::ModelRequestChunk { .. }
+            | AgentEvent::ModelRequestEnd { .. }
+            | AgentEvent::ModelRequestFailed { .. }
+    )
 }
 
 impl AgentEventSink for RecordingSink {

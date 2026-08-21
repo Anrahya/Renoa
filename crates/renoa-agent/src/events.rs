@@ -1,4 +1,24 @@
-use crate::{AssistantDelta, BoxFuture, Message, MessageRole, ToolCall, ToolOutput, ToolResult};
+use std::collections::BTreeMap;
+
+use serde::Serialize;
+
+use crate::{
+    AssistantDelta, BoxFuture, Message, MessageRole, ModelRequest, ModelResponse, ToolCall,
+    ToolOutcomeUnknown, ToolOutput, ToolResult,
+};
+
+/// Stable diagnostic category for one unsuccessful model invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ModelFailureCode {
+    OutcomeUnknown,
+    ContextWindowExceeded,
+    AuthenticationFailed,
+    Timeout,
+    Cancelled,
+    IncompleteStream,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEvent {
@@ -15,6 +35,34 @@ pub enum AgentEvent {
     MessageEnd {
         message: Message,
     },
+    ModelRequestStart {
+        invocation_id: String,
+        request: ModelRequest,
+    },
+    ModelProviderRequest {
+        invocation_id: String,
+        payload: serde_json::Value,
+    },
+    ModelProviderResponse {
+        invocation_id: String,
+        status: u16,
+        headers: BTreeMap<String, String>,
+    },
+    ModelRequestChunk {
+        invocation_id: String,
+        content_index: usize,
+        delta: AssistantDelta,
+    },
+    ModelRequestEnd {
+        invocation_id: String,
+        response: ModelResponse,
+    },
+    ModelRequestFailed {
+        invocation_id: String,
+        code: ModelFailureCode,
+        message: String,
+        outcome_unknown: bool,
+    },
     ToolExecutionStart {
         call: ToolCall,
     },
@@ -26,10 +74,19 @@ pub enum AgentEvent {
         call: ToolCall,
         result: ToolResult,
     },
+    ToolExecutionOutcomeUnknown {
+        call: ToolCall,
+        error: ToolOutcomeUnknown,
+    },
     TurnEnd,
     AgentEnd,
 }
 
+/// Host-owned observer for transient model and tool progress.
+///
+/// Emission is awaited inline to preserve order and backpressure. Implementors
+/// must return promptly and must not treat these events as authoritative
+/// history; a dropped execution may end delivery without a terminal event.
 pub trait AgentEventSink: Send + Sync {
     fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()>;
 }

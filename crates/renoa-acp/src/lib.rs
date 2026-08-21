@@ -1,12 +1,10 @@
-//! ACP v1 adapter for the durable Renoa coding harness.
+//! ACP v1 surface adapter for the local Renoa Host.
 
 mod config;
 mod error;
 mod events;
 mod prompt;
-mod selection;
 mod server;
-mod session;
 
 pub use config::Config;
 pub use error::ServerError;

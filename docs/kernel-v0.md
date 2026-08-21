@@ -1,8 +1,8 @@
-# Renoa kernel contract v0
+# Archived reference executor contract v0
 
-> This kernel is one reference executor for RCP. It is not Renoa's continuity
-> protocol and is not required by an RCP coordinator or surface. Pi SDK or
-> another harness may replace it behind an execution-node adapter.
+> **Archived:** this document describes an older command-scoped RCP executor.
+> It is not the current, non-replaceable Renoa kernel. The current contract is
+> [`renoa-kernel-v0.md`](renoa-kernel-v0.md).
 
 ## Purpose
 

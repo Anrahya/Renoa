@@ -7,6 +7,8 @@ use std::{
 use thiserror::Error;
 
 const BASE_PROMPT: &str = include_str!("../prompts/alpha-v1.md");
+/// Stable Host identity of Renoa's first local coding profile.
+pub const ALPHA_PROFILE_ID: &str = "renoa.coding.alpha.v1";
 const PROJECT_INSTRUCTIONS_FILE: &str = "AGENTS.md";
 const MAX_PROJECT_INSTRUCTIONS_BYTES: usize = 32 * 1024;
 const MAX_PROJECT_INSTRUCTIONS_BYTES_U64: u64 = 32 * 1024;

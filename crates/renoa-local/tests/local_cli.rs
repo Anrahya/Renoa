@@ -8,7 +8,7 @@ use uuid::Uuid;
 fn the_headless_runner_completes_a_durable_coding_turn() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
-    let database = directory.path().join("harness.sqlite3");
+    let database = directory.path().join("kernel.sqlite3");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
     fs::create_dir(&workspace).expect("create workspace");

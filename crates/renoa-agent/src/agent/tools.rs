@@ -23,7 +23,9 @@ impl Agent {
         for call in calls {
             let result = error_tool_result(
                 call,
-                "Tool call was not executed because the model response reached its token limit.",
+                &crate::ToolError::output_limit(
+                    "Tool call was not executed because the model response reached its token limit.",
+                ),
             );
             append_message(sink, &mut self.state.messages, Message::Tool { result }).await;
         }
@@ -159,7 +161,10 @@ impl Agent {
             let outcome = results[index].take().unwrap_or_else(|| {
                 Ok(error_tool_result(
                     call,
-                    "Tool call was not executed because the run was cancelled.",
+                    &crate::ToolError::cancelled(
+                        "Tool call was not executed because the run was cancelled.",
+                        false,
+                    ),
                 ))
             });
             match outcome {
@@ -188,7 +193,7 @@ impl Agent {
         sink: Option<&dyn AgentEventSink>,
     ) {
         for call in calls {
-            let result = error_tool_result(call, reason);
+            let result = error_tool_result(call, &crate::ToolError::cancelled(reason, false));
             append_message(sink, &mut self.state.messages, Message::Tool { result }).await;
         }
     }

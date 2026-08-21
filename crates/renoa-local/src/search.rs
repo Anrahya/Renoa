@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     output::HeadOutput,
     ripgrep::{Ripgrep, SearchProcess},
+    tool_error::io_error,
     tool_input::{bounded_limit, decode, non_empty},
     workspace::{ensure_visible_search_path, existing_directory, existing_path},
 };
@@ -232,14 +233,14 @@ async fn grep(
             biased;
             () = cancellation.cancelled() => {
                 process.stop().await?;
-                return Err(ToolError::new("grep execution was cancelled"));
+                return Err(ToolError::cancelled("grep execution was cancelled", false));
             }
             read = reader.read_until(b'\n', &mut buffer) => read,
         };
         let read = match read {
             Ok(read) => read,
             Err(error) => {
-                return stop_with_error(&mut process, tool_error("read ripgrep output", error))
+                return stop_with_error(&mut process, tool_error("read ripgrep output", &error))
                     .await;
             }
         };
@@ -251,7 +252,7 @@ async fn grep(
             Err(error) => {
                 return stop_with_error(
                     &mut process,
-                    ToolError::new(format!("invalid ripgrep output: {error}")),
+                    ToolError::internal(format!("invalid ripgrep output: {error}")),
                 )
                 .await;
             }
@@ -323,14 +324,14 @@ async fn find(
             biased;
             () = cancellation.cancelled() => {
                 process.stop().await?;
-                return Err(ToolError::new("find execution was cancelled"));
+                return Err(ToolError::cancelled("find execution was cancelled", false));
             }
             read = reader.read_until(0, &mut buffer) => read,
         };
         let read = match read {
             Ok(read) => read,
             Err(error) => {
-                return stop_with_error(&mut process, tool_error("read ripgrep output", error))
+                return stop_with_error(&mut process, tool_error("read ripgrep output", &error))
                     .await;
             }
         };
@@ -343,7 +344,7 @@ async fn find(
         let Ok(raw) = std::str::from_utf8(&buffer) else {
             return stop_with_error(
                 &mut process,
-                ToolError::new("ripgrep returned a non-UTF-8 path"),
+                ToolError::internal("ripgrep returned a non-UTF-8 path"),
             )
             .await;
         };
@@ -418,7 +419,7 @@ fn render_match(
     let path = data
         .path
         .text
-        .ok_or_else(|| ToolError::new("ripgrep returned a non-UTF-8 path"))?;
+        .ok_or_else(|| ToolError::internal("ripgrep returned a non-UTF-8 path"))?;
     let path = workspace_relative(root, Path::new(&path))?;
     if glob.is_some_and(|glob| !glob.is_match(&path)) {
         return Ok(None);
@@ -426,11 +427,11 @@ fn render_match(
     let line = data
         .lines
         .text
-        .ok_or_else(|| ToolError::new("ripgrep returned non-UTF-8 match text"))?;
+        .ok_or_else(|| ToolError::internal("ripgrep returned non-UTF-8 match text"))?;
     let line = line.trim_end_matches(['\r', '\n']);
     let line_number = data
         .line_number
-        .ok_or_else(|| ToolError::new("ripgrep omitted a match line number"))?;
+        .ok_or_else(|| ToolError::internal("ripgrep omitted a match line number"))?;
     Ok(Some(format!(
         "{}:{line_number}:{line}\n",
         path.to_string_lossy()
@@ -439,8 +440,9 @@ fn render_match(
 
 fn workspace_relative(root: &Path, path: &Path) -> Result<PathBuf, ToolError> {
     let relative = if path.is_absolute() {
-        path.strip_prefix(root)
-            .map_err(|_| ToolError::new("ripgrep returned a path outside the workspace"))?
+        path.strip_prefix(root).map_err(|_| {
+            ToolError::permission_denied("ripgrep returned a path outside the workspace")
+        })?
     } else {
         path
     };
@@ -449,7 +451,9 @@ fn workspace_relative(root: &Path, path: &Path) -> Result<PathBuf, ToolError> {
 
 fn compile_glob(pattern: &str) -> Result<GlobMatcher, ToolError> {
     if pattern.starts_with('/') {
-        return Err(ToolError::new("glob pattern must be workspace-relative"));
+        return Err(ToolError::invalid_input(
+            "glob pattern must be workspace-relative",
+        ));
     }
     let recursive_pattern;
     let pattern = if pattern.contains('/') {
@@ -462,7 +466,7 @@ fn compile_glob(pattern: &str) -> Result<GlobMatcher, ToolError> {
         .literal_separator(true)
         .build()
         .map(|glob| glob.compile_matcher())
-        .map_err(|error| ToolError::new(format!("invalid glob pattern: {error}")))
+        .map_err(|error| ToolError::invalid_input(format!("invalid glob pattern: {error}")))
 }
 
 async fn stop_with_error<T>(process: &mut SearchProcess, error: ToolError) -> Result<T, ToolError> {
@@ -470,8 +474,8 @@ async fn stop_with_error<T>(process: &mut SearchProcess, error: ToolError) -> Re
     Err(error)
 }
 
-fn tool_error(action: &str, error: impl std::fmt::Display) -> ToolError {
-    ToolError::new(format!("cannot {action}: {error}"))
+fn tool_error(action: &str, error: &std::io::Error) -> ToolError {
+    io_error(action, error, false)
 }
 
 #[cfg(test)]

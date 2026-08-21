@@ -1,3 +1,7 @@
+#[path = "acp_lifecycle/close.rs"]
+mod close;
+#[path = "acp_lifecycle/observability.rs"]
+mod observability;
 mod support;
 
 use std::{
@@ -8,6 +12,7 @@ use std::{
 
 use serde_json::json;
 use tempfile::tempdir;
+use uuid::Uuid;
 
 use support::{AcpProcess, BRIDGE};
 
@@ -34,6 +39,7 @@ fn a_frontend_can_create_and_run_one_durable_session() {
         initialized["result"]["agentCapabilities"]["promptCapabilities"]["image"],
         true
     );
+    assert!(initialized["result"]["agentCapabilities"]["sessionCapabilities"]["close"].is_object());
 
     let created = process.create_session(&workspace);
     assert_eq!(created["id"], 2);
@@ -61,65 +67,10 @@ fn a_frontend_can_create_and_run_one_durable_session() {
     assert!(
         data.join("sessions")
             .join(session_id)
-            .join("harness.sqlite3")
+            .join("kernel.sqlite3")
             .is_file(),
         "the ACP response was sent without durable session state"
     );
-}
-
-#[test]
-fn provider_deltas_reach_the_frontend_before_the_model_finishes() {
-    let directory = tempdir().expect("temporary directory");
-    let workspace = directory.path().join("workspace");
-    let data = directory.path().join("data");
-    let bridge = directory.path().join("bridge.mjs");
-    let auth_store = directory.path().join("auth.sqlite");
-    fs::create_dir(&workspace).expect("create workspace");
-    fs::write(&auth_store, "").expect("create auth placeholder");
-    fs::write(&bridge, BRIDGE).expect("write model bridge");
-    let mut process = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
-    process.initialize();
-    let created = process.create_session(&workspace);
-    let session_id = created["result"]["sessionId"]
-        .as_str()
-        .expect("session id")
-        .to_owned();
-
-    process.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/prompt",
-        "params": {
-            "sessionId": session_id,
-            "prompt": [{ "type": "text", "text": "Stream" }],
-            "_meta": {
-                "requestId": "8a74e10d-fbe5-45fc-9412-5529336f0fdb",
-                "promptId": "8a74e10d-fbe5-45fc-9412-5529336f0fdb"
-            }
-        }
-    }));
-    let first = process.read();
-    assert_eq!(first["params"]["update"]["content"]["text"], "Hello ");
-    assert_eq!(
-        first["params"]["update"]["messageId"],
-        "8a74e10d-fbe5-45fc-9412-5529336f0fdb"
-    );
-    assert!(
-        !data.join("model-completed").exists(),
-        "the first ACP delta was buffered until model completion"
-    );
-
-    fs::write(data.join("model-continue"), "continue").expect("release model bridge");
-    let second = process.read();
-    let completed = process.read();
-    assert_eq!(second["params"]["update"]["content"]["text"], "world");
-    assert_eq!(
-        second["params"]["update"]["messageId"],
-        first["params"]["update"]["messageId"]
-    );
-    assert_eq!(completed["id"], 3);
-    assert_eq!(completed["result"]["stopReason"], "end_turn");
-    process.finish();
 }
 
 #[test]
@@ -195,19 +146,29 @@ fn a_new_process_resumes_the_same_durable_conversation() {
 
     let mut resumed = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
     resumed.initialize();
-    resumed.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "session/load",
-        "params": {
-            "sessionId": session_id,
-            "cwd": workspace,
-            "mcpServers": []
-        }
-    }));
-    let loaded = resumed.read();
+    let (history, loaded) = resumed.load_session(&workspace, &session_id);
     assert_eq!(loaded["id"], 2);
     assert!(loaded["result"].is_object());
+    assert_eq!(history.len(), 2);
+    assert_eq!(
+        history[0]["params"]["update"]["sessionUpdate"],
+        "user_message_chunk"
+    );
+    assert_eq!(history[0]["params"]["update"]["content"]["text"], "First");
+    assert_eq!(
+        history[1]["params"]["update"]["sessionUpdate"],
+        "agent_message_chunk"
+    );
+    assert_eq!(
+        history[1]["params"]["update"]["content"]["text"],
+        "First response."
+    );
+    for update in &history {
+        let message_id = update["params"]["update"]["messageId"]
+            .as_str()
+            .expect("durable message id");
+        Uuid::parse_str(message_id).expect("message id is a durable event UUID");
+    }
 
     let (update, response) = resumed.prompt(
         &session_id,

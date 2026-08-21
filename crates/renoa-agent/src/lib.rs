@@ -13,7 +13,7 @@ mod tool;
 pub use agent::{Agent, AgentConfig, AgentConfigError, AgentError, AgentRunResult};
 pub use context::{ContextProjectionError, ContextProjector};
 pub use control::{AgentHandle, QueueError, QueueMode};
-pub use events::{AgentEvent, AgentEventSink};
+pub use events::{AgentEvent, AgentEventSink, ModelFailureCode};
 pub use message::{AssistantContent, AssistantMetadata, ContentBlock, Message, MessageRole};
 pub use model::{
     AssistantDelta, Model, ModelError, ModelErrorKind, ModelEvent, ModelEventStream, ModelRequest,
@@ -22,8 +22,9 @@ pub use model::{
 pub use sampling::{SamplingError, SamplingResult, sample_model};
 pub use state::AgentState;
 pub use tool::{
-    Tool, ToolCall, ToolCallBatchError, ToolError, ToolExecutionMode, ToolOutcomeUnknown,
-    ToolOutput, ToolResult, ToolSpec, ToolUpdates, invoke_tool, validate_tool_call_ids,
+    Tool, ToolCall, ToolCallBatchError, ToolError, ToolErrorCode, ToolExecutionMode,
+    ToolOutcomeUnknown, ToolOutput, ToolResult, ToolSpec, ToolUpdates, invoke_tool,
+    validate_tool_call_ids,
 };
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

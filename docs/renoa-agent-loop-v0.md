@@ -276,10 +276,10 @@ creating a summary.
 
 ## Local proof
 
-`renoa-local` exposes its existing guarded read, edit, write, and Bash tools as
-`AgentToolBinding` values in addition to the legacy harness bindings. The
-kernel coding-turn test uses a deterministic scripted model and the real local
-edit tool to change a workspace file through this path:
+`renoa-local` exposes its guarded read, edit, write, Bash, grep, and find tools
+as `AgentToolBinding` values. The kernel coding-turn test uses a deterministic
+scripted model and the real local edit tool to change a workspace file through
+this path:
 
 ```text
 Kernel -> agent loop -> model adapter -> tool adapter -> LocalWorkspace
@@ -289,17 +289,18 @@ The model boundary is deterministic; the file mutation, path confinement,
 effect persistence, transcript construction, and terminal operation path are
 real.
 
-## Relationship to the durable harness
+## Relationship to the retired execution path
 
 The loop rules and leaf calls are adapted from Renoa's own `renoa-agent` and
 `renoa-harness` behavior. No external source is copied. The pure planner and
 bounded checkpoint formatter were adapted from repository commits
 `6e8fccdb193f801b21812c14364752aaa30621c5` and
 `47eddbc5de74113fcb688f3f739b943e6e96826e`, under this repository's
-`Apache-2.0 OR MIT` license. The older harness remains intact while this
-consumer proves the smaller kernel boundary. Its unknown-tool abandonment
-behavior has been replaced on the kernel path by the generic kernel transition
-and loop-owned transcript closure.
+`Apache-2.0 OR MIT` license. The old harness crate has been retired; its source
+remains recoverable through Git history and its design record remains archived
+in [`harness-v0.md`](harness-v0.md). Its unknown-tool abandonment behavior was
+replaced on the kernel path by the generic kernel transition and loop-owned
+transcript closure.
 
 The original kernel handoff's generic foundation, model/tool-loop adaptation,
 real local coding turn, and durable compaction migration are now complete.
@@ -308,7 +309,7 @@ compaction strategy, and complete local tool set into the first product Host.
 The headless local runner executes Renoa Alpha's versioned instructions and
 workspace rules through that kernel path. The Host contract is recorded in
 [`renoa-host-v0.md`](renoa-host-v0.md), and Alpha's contract and research
-record are in [`renoa-alpha-v1.md`](renoa-alpha-v1.md). The next
-migration remains consumer-gated: expose this Host through ACP and the chosen
-GPUI surface without moving surface policy into the kernel. RCP remains
+record are in [`renoa-alpha-v1.md`](renoa-alpha-v1.md). ACP now exposes this
+Host while transient presentation stays outside the kernel. The UI can build
+on that ACP contract without creating another execution engine. RCP remains
 separate continuity work.

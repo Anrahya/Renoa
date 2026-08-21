@@ -10,10 +10,10 @@ use agent_client_protocol::{
     },
 };
 use renoa_agent::{
-    AgentEvent, AgentEventSink, AssistantDelta, BoxFuture, ContentBlock, MessageRole, ToolCall,
-    ToolOutput, ToolResult,
+    AgentEvent, AgentEventSink, AssistantContent, AssistantDelta, BoxFuture, ContentBlock, Message,
+    MessageRole, ToolCall, ToolOutput, ToolResult,
 };
-
+use renoa_local::LocalHistoryEntry;
 pub(crate) struct AcpEventSink {
     connection: ConnectionTo<Client>,
     session_id: SessionId,
@@ -111,6 +111,11 @@ impl AcpEventSink {
             AgentEvent::ToolExecutionEnd { call, result } => {
                 self.send(SessionUpdate::ToolCallUpdate(tool_result(call, result)));
             }
+            AgentEvent::ToolExecutionOutcomeUnknown { call, error } => {
+                self.send(SessionUpdate::ToolCallUpdate(tool_outcome_unknown(
+                    call.id, &error,
+                )));
+            }
             _ => {}
         }
     }
@@ -150,6 +155,56 @@ fn text_chunk(text: String, message_id: &str) -> ContentChunk {
         .message_id(MessageId::from(message_id.to_owned()))
 }
 
+pub(crate) fn replay_history(
+    connection: &ConnectionTo<Client>,
+    session_id: &str,
+    history: Vec<LocalHistoryEntry>,
+) -> Result<(), ServerError> {
+    for entry in history {
+        for update in replay_message(entry.message, &entry.event_id) {
+            connection
+                .send_notification(SessionNotification::new(session_id.to_owned(), update))
+                .map_err(ServerError::Transport)?;
+        }
+    }
+    Ok(())
+}
+
+fn replay_message(message: Message, message_id: &str) -> Vec<SessionUpdate> {
+    match message {
+        Message::User { content } => content
+            .into_iter()
+            .map(|block| {
+                SessionUpdate::UserMessageChunk(
+                    ContentChunk::new(acp_content(block))
+                        .message_id(MessageId::from(message_id.to_owned())),
+                )
+            })
+            .collect(),
+        Message::Assistant { content, .. } => content
+            .into_iter()
+            .map(|block| match block {
+                AssistantContent::Text { text, .. } => {
+                    SessionUpdate::AgentMessageChunk(text_chunk(text, message_id))
+                }
+                AssistantContent::Reasoning { text, .. } => {
+                    SessionUpdate::AgentThoughtChunk(text_chunk(text, message_id))
+                }
+                AssistantContent::ToolCall { call } => SessionUpdate::ToolCall(
+                    AcpToolCall::new(call.id.clone(), tool_title(&call))
+                        .kind(tool_kind(&call.name))
+                        .status(ToolCallStatus::InProgress)
+                        .raw_input(call.arguments),
+                ),
+            })
+            .collect(),
+        Message::Tool { result } => vec![SessionUpdate::ToolCallUpdate(tool_result_by_id(
+            result.call_id.clone(),
+            result,
+        ))],
+    }
+}
+
 impl AgentEventSink for AcpEventSink {
     fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
         Box::pin(async move { self.observe(event) })
@@ -167,8 +222,12 @@ fn tool_update(call_id: String, update: ToolOutput) -> ToolCallUpdate {
 }
 
 fn tool_result(call: ToolCall, result: ToolResult) -> ToolCallUpdate {
+    tool_result_by_id(call.id, result)
+}
+
+fn tool_result_by_id(call_id: String, result: ToolResult) -> ToolCallUpdate {
     ToolCallUpdate::new(
-        call.id,
+        call_id,
         ToolCallUpdateFields::new()
             .status(if result.is_error {
                 ToolCallStatus::Failed
@@ -177,6 +236,30 @@ fn tool_result(call: ToolCall, result: ToolResult) -> ToolCallUpdate {
             })
             .content(tool_content(result.content))
             .raw_output(result.details),
+    )
+}
+
+fn tool_outcome_unknown(
+    call_id: String,
+    error: &renoa_agent::ToolOutcomeUnknown,
+) -> ToolCallUpdate {
+    let content = vec![ToolCallContent::from(AcpContentBlock::Text(
+        TextContent::new(error.message().to_owned()),
+    ))];
+    let raw_output = serde_json::json!({
+        "error": {
+            "code": error.code(),
+            "message": error.message(),
+            "outcome_unknown": true,
+            "partial_changes_possible": error.partial_changes_possible(),
+        }
+    });
+    ToolCallUpdate::new(
+        call_id,
+        ToolCallUpdateFields::new()
+            .status(ToolCallStatus::Failed)
+            .content(content)
+            .raw_output(raw_output),
     )
 }
 

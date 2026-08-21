@@ -1,17 +1,12 @@
 use std::{env, path::PathBuf};
 
-use renoa_local::{LocalRuntimeConfig, PiModelOption, PiReasoningLevel, discover_pi_models};
+use renoa_local::LocalHost;
 
 use crate::ServerError;
 
 /// Process configuration for the local ACP adapter.
 pub struct Config {
-    data_directory: PathBuf,
-    bridge: PathBuf,
-    provider: String,
-    model: String,
-    credential_store: PathBuf,
-    instructions: String,
+    host: LocalHost,
 }
 
 impl Config {
@@ -22,54 +17,19 @@ impl Config {
     /// Returns an error when required provider settings or a usable data directory are absent.
     pub fn from_environment() -> Result<Self, ServerError> {
         let data_directory = data_directory()?;
-        std::fs::create_dir_all(data_directory.join("sessions"))?;
-        let data_directory = std::fs::canonicalize(data_directory)?;
         Ok(Self {
-            data_directory,
-            bridge: required_path("RENOA_PI_BRIDGE")?,
-            provider: required("RENOA_PI_PROVIDER")?,
-            model: required("RENOA_PI_MODEL")?,
-            credential_store: required_path("RENOA_PI_AUTH_STORE")?,
-            instructions: required("RENOA_PI_INSTRUCTIONS")?,
+            host: LocalHost::new(
+                data_directory.join("sessions"),
+                required_path("RENOA_PI_BRIDGE")?,
+                required("RENOA_PI_PROVIDER")?,
+                required("RENOA_PI_MODEL")?,
+                required_path("RENOA_PI_AUTH_STORE")?,
+            )?,
         })
     }
 
-    pub(crate) fn sessions_directory(&self) -> PathBuf {
-        self.data_directory.join("sessions")
-    }
-
-    pub(crate) fn runtime_config(
-        &self,
-        model: &PiModelOption,
-        reasoning: PiReasoningLevel,
-    ) -> LocalRuntimeConfig {
-        LocalRuntimeConfig::new(
-            self.bridge.clone(),
-            self.provider.clone(),
-            model.id(),
-            self.credential_store.clone(),
-            self.instructions.clone(),
-        )
-        .with_discovered_model(model)
-        .with_reasoning(reasoning)
-    }
-
-    pub(crate) async fn models(&self) -> Result<Vec<PiModelOption>, ServerError> {
-        discover_pi_models(
-            self.bridge.clone(),
-            self.provider.clone(),
-            self.credential_store.clone(),
-        )
-        .await
-        .map_err(Into::into)
-    }
-
-    pub(crate) fn provider(&self) -> &str {
-        &self.provider
-    }
-
-    pub(crate) fn model(&self) -> &str {
-        &self.model
+    pub(crate) const fn host(&self) -> &LocalHost {
+        &self.host
     }
 }
 

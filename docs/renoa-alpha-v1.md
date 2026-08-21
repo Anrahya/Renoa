@@ -80,11 +80,12 @@ manifests, and configuration digests are not prompt content.
 
 ## Deliberate omissions
 
-V1 does not add profile persistence, permission vocabulary, subagents, MCP,
-background jobs, repository maps, automatic test policy, ACP migration, or a
-generic profile trait. A later subagent capability may ask the Host to resolve
-another agent with its own session, delegated authority, tools, model, and
-instructions; it will reuse the same kernel and agent loop.
+Alpha's profile contract does not define profile persistence, permission
+vocabulary, subagents, MCP, background jobs, repository maps, automatic test
+policy, surface protocol behavior, or a generic profile trait. ACP can expose
+Alpha without becoming part of Alpha. A later subagent capability may ask the
+Host to resolve another agent with its own session, delegated authority, tools,
+model, and instructions; it will reuse the same kernel and agent loop.
 
 ## Proof
 

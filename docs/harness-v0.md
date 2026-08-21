@@ -1,36 +1,26 @@
-# Renoa Harness architecture v0
+# Archived Renoa Harness architecture v0
 
-## Status and authority
+> **Archived:** the `renoa-harness` crate was retired after its proven behavior
+> moved into the non-replaceable kernel plus replaceable agent-loop and Host
+> layers. This file preserves historical reasoning only. It is not an active
+> contract. See [`renoa-kernel-v0.md`](renoa-kernel-v0.md),
+> [`renoa-agent-loop-v0.md`](renoa-agent-loop-v0.md), and
+> [`renoa-host-v0.md`](renoa-host-v0.md).
 
-This document defines Renoa's durable agent-harness architecture. The
-standalone model-and-tool slice exists in `renoa-harness`: it durably admits
-and orders operations, persists each model or tool intent before dispatch,
-settles complete results atomically, records uncertain effects honestly,
-durably cancels active standalone operations, and recovers from process
-interruption using SQLite. Runtime profiles can project immutable history into
-model context, create durable bounded checkpoints before context overflow, and
-inspection exposes known usage without hiding missing or uncertain attempts.
+## Historical status
 
-`renoa-local` is the first product-path host. It combines that harness with Pi
-AI provider routing and external local read, edit, write, and process tools. It
-can complete and durably continue a coding conversation without adding those
-implementations or their policy to the harness core.
+This document recorded the former standalone harness. Its present-tense design
+language below is retained for provenance, but it no longer describes live
+code or constrains new work. The current authoritative boundaries are:
 
-RCP-bound admission, approvals, steering, and host movement remain later
-slices. Sections describing them constrain those slices; they do not claim
-that those behaviors exist today.
+- [renoa-kernel-v0.md](renoa-kernel-v0.md) for durable execution;
+- [renoa-agent-loop-v0.md](renoa-agent-loop-v0.md) for replaceable agent-loop
+  behavior;
+- [renoa-host-v0.md](renoa-host-v0.md) for local composition; and
+- [rcp-v0.md](rcp-v0.md) for separate cross-device continuity.
 
-The adjacent documents have narrower authority:
-
-- [agent-v0.md](agent-v0.md) defines the current non-durable `renoa-agent`
-  SDK;
-- [rcp-v0.md](rcp-v0.md) defines cross-device task continuity; and
-- [kernel-v0.md](kernel-v0.md) defines the older command-scoped reference
-  executor, not this harness.
-
-If this document conflicts with RCP, `rcp-v0.md` owns the continuity boundary.
-Implementation evidence may change this design only after this document and
-its reasoning are updated explicitly.
+If this archive conflicts with any current contract, the current contract owns
+the decision.
 
 ## Purpose
 

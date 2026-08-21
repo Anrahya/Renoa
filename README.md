@@ -1,93 +1,64 @@
 # Renoa
 
-Renoa is the reference implementation of the Renoa Continuity Protocol (RCP),
-a task-centered protocol for continuing agent work across surfaces and
-execution environments.
+Renoa is a modular agent system built around one small, non-replaceable durable
+kernel. The kernel preserves execution truth: stable identities, command
+admission, ordered state, effects, cancellation, recovery, semantic history,
+and frozen runtime revisions.
 
-The durable task is Renoa's stable core. Mac, Android, Telegram, GitHub, and
-other surfaces attach to the same authorized task journal. Execution nodes
-temporarily perform work for that task through a replaceable harness such as
-Renoa's Rust kernel, Pi SDK, or a future adapter. Connections, surfaces, nodes,
-models, and harnesses may change without changing task identity.
+Everything that defines an agent's behavior stays replaceable outside that
+kernel: model provider, agent loop, context and compaction strategy, tools,
+skills, workspace policy, permissions, and surfaces.
 
-The repository currently contains a standalone Rust Agent SDK, a durable
-standalone Rust harness with crash-safe sequential tools, cancellation,
-context projection, durable bounded compaction, provider-overflow recovery,
-and truthful model-usage inspection, a stable ACP v1 adapter for local coding
-frontends, a
-kernel-v0 reference executor, a live `renoa-node`
-bridge, a headless TypeScript surface client, a Pi SDK execution node, and a
-loopback-only continuity proof. Both
-execution bridges keep model execution independent of the coordinator socket,
-publish locally committed events while a turn is running, and resume from
-durable acknowledgement cursors after reconnecting. The coordinator
-authenticates enrolled devices, lists each principal's tasks, durably dispatches
-owned work, maintains one ordered journal for every surface, and replays missed
-events. This is not yet a stable public RCP wire implementation.
-
-Run the loopback coordinator as its own process with:
-
-```sh
-cargo run -p renoa-control --bin renoa-coordinator -- \
-  serve /absolute/path/to/control.sqlite 7818
+```text
+surface -> Renoa Host -> Renoa Kernel -> resolved loop and effect adapters
+                |
+                `-> profile + model + context + tools + workspace policy
 ```
 
-The process always binds `127.0.0.1`, prints its JSON WebSocket endpoint after
-the database and listener are ready, and stops cleanly on `SIGINT` or
-`SIGTERM`. It intentionally has no public plaintext mode.
+The local Host assembles a concrete Agent instance from those pieces for each
+new operation. The kernel freezes that exact assembly, then executes it
+durably. This is the base for adding different agents and future capabilities
+without turning the kernel into product policy or one giant plugin interface.
 
-Create a single-use surface enrollment from the trusted host with:
+## Current local coding path
+
+- [`renoa-kernel`](crates/renoa-kernel) is the non-replaceable durability core.
+- [`renoa-agent`](crates/renoa-agent) defines provider-neutral messages, models,
+  tools, and streaming events.
+- [`renoa-agent-loop`](crates/renoa-agent-loop) is the replaceable model/tool
+  loop with durable, replaceable context compaction.
+- [`renoa-local`](crates/renoa-local/README.md) is the first Host. It composes
+  Renoa Alpha, Pi provider routing, the compaction strategy, and six local
+  coding tools.
+- [`renoa-acp`](crates/renoa-acp) is a thin ACP v1 surface adapter. A compatible
+  frontend launches `renoa-agent acp`; ACP translates UI messages and live
+  updates but does not own agent composition or durability.
+- [`ui`](ui/README.md) is the first Renoa desktop surface. Its Tauri process
+  owns only the local ACP child and transport; the React UI uses the standard
+  ACP client contract.
+
+Alpha currently has `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and
+`find`. Model and reasoning choices can change between operations. Workspace
+`AGENTS.md` instructions are read again for every new operation, while an
+already admitted operation keeps its frozen behavior.
+
+After the one-time Fedora packages and SuperGrok login documented in the
+[desktop README](ui/README.md), launch the complete local path with:
 
 ```sh
-renoa-coordinator enroll-surface \
-  /absolute/path/to/control.sqlite <principal-uuid> <surface-name>
+pnpm --dir ui desktop:dev:local
 ```
 
-The JSON output contains a secret token that expires after five minutes. This
-command adds no remote administration endpoint. Provision a node identity and
-one task binding from the same trusted host with:
+## RCP is separate
 
-```sh
-renoa-coordinator enroll-node \
-  /absolute/path/to/control.sqlite <node-uuid>
-renoa-coordinator create-task \
-  /absolute/path/to/control.sqlite \
-  <task-uuid> <principal-uuid> <node-uuid> <target>
-```
+RCP is Renoa's future continuity layer for authenticated communication and
+handoff across surfaces and execution nodes. It is intentionally not part of
+the current local Agent path and does not replace, wrap, or define the kernel.
 
-Node enrollment also emits a single-use five-minute token. `create-task`
-persists the exact operator-selected identities and emits nothing on success.
-These local bootstrap commands are not part of RCP's network operations.
-
-The first private VPS deployment uses systemd and Tailscale Serve without
-exposing the coordinator to the public internet. Its exact operational contract
-is in [deploy/README.md](deploy/README.md).
-
-The TypeScript client is in
-[clients/typescript](clients/typescript/README.md). It proves authentication,
-task discovery and authorization, durable replay cursors, live reattachment,
-typed recovery failures, and idempotent command recovery against the real Rust
-coordinator without becoming part of the agent kernel.
-
-The Pi node is in [nodes/pi](nodes/pi/README.md). It proves that RCP's shared
-execution profile is independent of Renoa's Rust kernel and uses Pi's own
-provider routing for OpenCode Go and xAI. Its first capability proof configures
-Pi's packaged read, write, and edit tools locally while both Pi and the Rust
-kernel consume the same neutral RCP execution delivery. SuperGrok device OAuth,
-credential refresh, filesystem paths, prompts, models, tools, and permission
-policy all stay outside RCP.
-
-The first standalone coding host is in
-[crates/renoa-local](crates/renoa-local/README.md). It runs the durable Rust
-harness with Pi AI provider routing and external local read, edit, write, and
-bash tools. It proves a real coding turn without coupling provider credentials,
-filesystem behavior, or process policy into `renoa-harness`.
-
-The ACP adapter is in [crates/renoa-acp](crates/renoa-acp). A coding frontend
-launches `renoa-agent acp`; the adapter creates or reloads the same durable
-harness session, exposes standard ACP model and reasoning selectors, streams
-model and tool progress, and cancels active work. Its exact supported surface and deliberate limits are in
-[docs/acp-v1.md](docs/acp-v1.md). ACP stays outside both the harness and RCP.
+This repository still contains the earlier loopback RCP coordinator, clients,
+node bridges, and deployment proof. Their canonical continuity decisions live
+in [`docs/rcp-v0.md`](docs/rcp-v0.md). They remain isolated while the first
+local surface and Host contract become real.
 
 ## License
 
@@ -99,16 +70,14 @@ Unless explicitly stated otherwise, contributions intentionally submitted for
 inclusion in Renoa are provided under those same terms without additional
 conditions.
 
-Start with [docs/rcp-v0.md](docs/rcp-v0.md), the canonical RCP architecture and
-decision record. The transport-independent behavior is in
-[docs/rcp-operations-v0.md](docs/rcp-operations-v0.md), and its first concrete
-binding is in [docs/rcp-json-ws-v0.md](docs/rcp-json-ws-v0.md). See
-[docs/continuity-v0.md](docs/continuity-v0.md) for the current proof,
-[docs/identity-v0.md](docs/identity-v0.md) for device trust,
-[docs/kernel-v0.md](docs/kernel-v0.md) for the optional reference executor,
-[docs/agent-v0.md](docs/agent-v0.md) for the standalone Rust Agent SDK boundary,
-[docs/harness-v0.md](docs/harness-v0.md) for the standalone durable harness
-and its remaining durable-harness architecture,
-[docs/acp-v1.md](docs/acp-v1.md) for the local coding-frontend adapter, and
-[docs/reference-implementations.md](docs/reference-implementations.md) for the
-upstream designs being studied.
+Start with the current
+[`renoa-kernel` contract](docs/renoa-kernel-v0.md),
+[`Host architecture`](docs/renoa-host-v0.md),
+[`Alpha profile`](docs/renoa-alpha-v1.md),
+[`agent-loop contract`](docs/renoa-agent-loop-v0.md), and
+[`ACP adapter`](docs/acp-v1.md).
+
+For continuity work, [`docs/rcp-v0.md`](docs/rcp-v0.md) remains canonical.
+[`docs/harness-v0.md`](docs/harness-v0.md) and
+[`docs/kernel-v0.md`](docs/kernel-v0.md) are archived records of superseded
+implementations, not the current Renoa architecture.

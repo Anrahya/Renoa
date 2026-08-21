@@ -3,6 +3,7 @@ import type {
   AssistantMessageEvent,
   Context,
   Message,
+  ProviderResponse,
   Tool,
   ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
@@ -87,6 +88,12 @@ export interface WireModelResponse {
 }
 
 export type WireStreamRecord =
+  | { readonly event: "provider_request"; readonly payload: JsonValue }
+  | {
+      readonly event: "provider_response";
+      readonly status: number;
+      readonly headers: Readonly<Record<string, string>>;
+    }
   | {
       readonly event: "content_delta";
       readonly content_index: number;
@@ -150,6 +157,17 @@ export async function streamModel(
     ...(runtime.reasoningLevel === undefined || runtime.reasoningLevel === "off"
       ? {}
       : { reasoning: runtime.reasoningLevel }),
+    onPayload: async (payload: unknown) => {
+      await emit({ event: "provider_request", payload: diagnosticValue(payload) });
+      return undefined;
+    },
+    onResponse: async (response: ProviderResponse) => {
+      await emit({
+        event: "provider_response",
+        status: response.status,
+        headers: redactedHeaders(response.headers),
+      });
+    },
   };
   try {
     await runtime.authenticate();
@@ -182,6 +200,23 @@ export async function streamModel(
     }
   }
   throw new Error("Pi model stream closed without a terminal event");
+}
+
+function diagnosticValue(value: unknown): JsonValue {
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) {
+    return null;
+  }
+  return JSON.parse(encoded) as JsonValue;
+}
+
+function redactedHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => [
+      name,
+      /authorization|cookie|credential|api[-_]?key|token/i.test(name) ? "<redacted>" : value,
+    ]),
+  );
 }
 
 function contentDelta(event: AssistantMessageEvent): WireStreamRecord | undefined {

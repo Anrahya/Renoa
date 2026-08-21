@@ -1,0 +1,6 @@
+packages:
+  - "desktop"
+  - "vendor/acp-components/packages/core"
+
+allowBuilds:
+  esbuild: true

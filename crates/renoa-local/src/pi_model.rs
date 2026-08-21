@@ -3,10 +3,10 @@ use std::{
     io,
     num::{NonZeroU32, NonZeroU64},
     path::PathBuf,
+    time::Duration,
 };
 
 use renoa_agent::{Model, ModelError, ModelEventStream, ModelRequest};
-use renoa_harness::ContextSizer;
 use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -18,8 +18,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::pi_catalog::PiReasoningLevel;
+use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
 pub(crate) const OUTPUT_LIMIT: usize = 16 * 1_024 * 1_024;
+const CONTROL_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -230,7 +232,6 @@ impl PiBridgeConfig {
             .env("RENOA_PI_ACTION", action)
             .env("RENOA_PI_PROVIDER", &self.provider)
             .env("RENOA_PI_AUTH_STORE", &self.credential_store)
-            .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -246,6 +247,7 @@ impl PiBridgeConfig {
         if let Some(reasoning) = self.reasoning {
             command.env("RENOA_PI_REASONING", reasoning.as_str());
         }
+        configure_process_group(&mut command);
         command
     }
 }
@@ -262,12 +264,6 @@ impl Model for PiModel {
             &request,
             cancellation,
         )
-    }
-}
-
-impl ContextSizer for PiModel {
-    fn estimate_input_tokens(&self, request: &ModelRequest) -> u64 {
-        crate::pi_context::estimate_input_tokens(request)
     }
 }
 
@@ -300,6 +296,8 @@ pub(crate) async fn run_bridge(
         .command(action, max_output_tokens)
         .spawn()
         .map_err(|error| model_error("start Pi model bridge", error))?;
+    let pid = child_pid_raw(&child)
+        .map_err(|error| ModelError::new(format!("Pi model bridge ownership failed: {error}")))?;
     let mut stdin = child
         .stdin
         .take()
@@ -310,26 +308,35 @@ pub(crate) async fn run_bridge(
     let exit = tokio::select! {
         biased;
         () = cancellation.cancelled() => {
-            let _ = child.start_kill();
-            child.wait().await.map_err(|error| model_error("reap Pi model bridge", error))?;
+            stop_bridge_child(&mut child, pid).await?;
             ProcessExit::Cancelled
         }
         status = child.wait() => ProcessExit::Finished(
             status.map_err(|error| model_error("wait for Pi model bridge", error))?
         ),
+        () = tokio::time::sleep(CONTROL_ACTION_TIMEOUT) => {
+            stop_bridge_child(&mut child, pid).await?;
+            ProcessExit::TimedOut
+        }
     };
+    if matches!(&exit, ProcessExit::Finished(_)) {
+        stop_bridge_child(&mut child, pid).await?;
+    }
     let write_result = writer
         .await
         .map_err(|error| ModelError::new(format!("Pi request writer failed: {error}")))?;
     let stdout = join_output(stdout, "stdout").await?;
     let stderr = join_output(stderr, "stderr").await?;
-    if matches!(exit, ProcessExit::Cancelled) {
-        return Err(ModelError::new("Pi model request was cancelled"));
-    }
-    write_result.map_err(|error| model_error("write Pi model request", error))?;
-    let ProcessExit::Finished(status) = exit else {
-        unreachable!("cancelled process exits above")
+    let status = match exit {
+        ProcessExit::Finished(status) => status,
+        ProcessExit::Cancelled => return Err(ModelError::new("Pi model request was cancelled")),
+        ProcessExit::TimedOut => {
+            return Err(ModelError::timeout(
+                "Pi model bridge control action exceeded its 30-second deadline",
+            ));
+        }
     };
+    write_result.map_err(|error| model_error("write Pi model request", error))?;
     if !status.success() {
         return Err(ModelError::new(format!(
             "Pi model bridge exited with {status}: {}",
@@ -391,7 +398,17 @@ pub(crate) fn decode_response<T: DeserializeOwned>(encoded: &[u8]) -> Result<T, 
 
 enum ProcessExit {
     Cancelled,
+    TimedOut,
     Finished(std::process::ExitStatus),
+}
+
+pub(crate) async fn stop_bridge_child(
+    child: &mut tokio::process::Child,
+    pid: u32,
+) -> Result<(), ModelError> {
+    stop_process_group_raw(child, pid)
+        .await
+        .map_err(|error| ModelError::new(format!("Pi model bridge cleanup failed: {error}")))
 }
 
 pub(crate) struct CapturedOutput {

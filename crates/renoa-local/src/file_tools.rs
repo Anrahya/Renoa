@@ -10,7 +10,9 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    atomic_file::{content_hash, replace},
     output::{HeadOutput, MAX_TOOL_OUTPUT_BYTES, MAX_TOOL_OUTPUT_LINES, truncation_notice},
+    tool_error::io_error,
     tool_input::{bounded_limit, decode, non_empty},
     workspace::{existing_file, writable_path},
 };
@@ -61,20 +63,18 @@ impl Tool for WriteFile {
     fn execute(
         &self,
         call: ToolCall,
-        _cancellation: CancellationToken,
+        cancellation: CancellationToken,
         _updates: ToolUpdates,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let input: WriteFileInput = decode(call.arguments)?;
             let path = writable_path(&self.root, &input.path).await?;
             if input.content.len() > MAX_FILE_WRITE_BYTES {
-                return Err(ToolError::new(format!(
+                return Err(ToolError::output_limit(format!(
                     "content exceeds the {MAX_FILE_WRITE_BYTES}-byte write limit"
                 )));
             }
-            tokio::fs::write(&path, input.content)
-                .await
-                .map_err(|error| tool_error("write file", error))?;
+            replace(&path, input.content.as_bytes(), None, &cancellation).await?;
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(format!("Wrote {}", input.path))],
                 details: Some(json!({ "path": input.path })),
@@ -139,7 +139,7 @@ impl Tool for ReadFile {
             let input: ReadFileInput = decode(call.arguments)?;
             let offset = input.offset.unwrap_or(1);
             if offset == 0 {
-                return Err(ToolError::new("offset must be at least 1"));
+                return Err(ToolError::invalid_input("offset must be at least 1"));
             }
             let limit = bounded_limit(input.limit, MAX_TOOL_OUTPUT_LINES)?;
             let path = existing_file(&self.root, &input.path).await?;
@@ -172,13 +172,13 @@ async fn read_page(
 ) -> Result<ReadPage, ToolError> {
     let file = tokio::fs::File::open(path)
         .await
-        .map_err(|error| tool_error("open file", error))?;
+        .map_err(|error| io_error("open file", &error, false))?;
     let mut reader = BufReader::new(file);
     let mut line_number = 1;
     while line_number < offset {
         match read_bounded_line(&mut reader, false, 0, cancellation).await? {
             LineRead::End => {
-                return Err(ToolError::new(format!(
+                return Err(ToolError::invalid_input(format!(
                     "offset {offset} is beyond the end of the file"
                 )));
             }
@@ -193,7 +193,7 @@ async fn read_page(
             LineRead::End => break,
             LineRead::Complete(bytes) => {
                 let line = String::from_utf8(bytes)
-                    .map_err(|_| ToolError::new("file is not valid UTF-8 text"))?;
+                    .map_err(|_| ToolError::invalid_input("file is not valid UTF-8 text"))?;
                 if !output.push_line(&line) {
                     break;
                 }
@@ -217,7 +217,7 @@ async fn read_page(
         false
     };
     if offset > 1 && output.line_count() == 0 && !has_more {
-        return Err(ToolError::new(format!(
+        return Err(ToolError::invalid_input(format!(
             "offset {offset} is beyond the end of the file"
         )));
     }
@@ -256,10 +256,10 @@ async fn read_bounded_line<R: AsyncBufRead + Unpin>(
         let available = tokio::select! {
             biased;
             () = cancellation.cancelled() => {
-                return Err(ToolError::new("read execution was cancelled"));
+                return Err(ToolError::cancelled("read execution was cancelled", false));
             }
             available = reader.fill_buf() => {
-                available.map_err(|error| tool_error("read file", error))?
+                available.map_err(|error| io_error("read file", &error, false))?
             }
         };
         if available.is_empty() {
@@ -341,28 +341,42 @@ impl Tool for EditFile {
     fn execute(
         &self,
         call: ToolCall,
-        _cancellation: CancellationToken,
+        cancellation: CancellationToken,
         _updates: ToolUpdates,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let input: EditFileInput = decode(call.arguments)?;
             non_empty("old_text", &input.old_text)?;
             let path = existing_file(&self.root, &input.path).await?;
-            let content = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|error| tool_error("read file", error))?;
+            let read = tokio::fs::read(&path);
+            tokio::pin!(read);
+            let bytes = tokio::select! {
+                biased;
+                () = cancellation.cancelled() => {
+                    return Err(ToolError::cancelled("edit execution was cancelled", false));
+                }
+                result = &mut read => result.map_err(|error| io_error("read file", &error, false))?,
+            };
+            if bytes.len() > MAX_FILE_WRITE_BYTES {
+                return Err(ToolError::output_limit(format!(
+                    "file exceeds the {MAX_FILE_WRITE_BYTES}-byte edit limit"
+                )));
+            }
+            let original_hash = content_hash(&bytes);
+            let content = String::from_utf8(bytes)
+                .map_err(|_| ToolError::invalid_input("file is not valid UTF-8 text"))?;
             let Some(start) = content.find(&input.old_text) else {
-                return Err(ToolError::new("old_text was not found"));
+                return Err(ToolError::not_found("old_text was not found"));
             };
             if content[start + input.old_text.len()..].contains(&input.old_text) {
-                return Err(ToolError::new("old_text occurs more than once"));
+                return Err(ToolError::conflict("old_text occurs more than once"));
             }
             let edited_len = content
                 .len()
                 .saturating_sub(input.old_text.len())
                 .saturating_add(input.new_text.len());
             if edited_len > MAX_FILE_WRITE_BYTES {
-                return Err(ToolError::new(format!(
+                return Err(ToolError::output_limit(format!(
                     "edited file exceeds the {MAX_FILE_WRITE_BYTES}-byte write limit"
                 )));
             }
@@ -370,9 +384,7 @@ impl Tool for EditFile {
             edited.push_str(&content[..start]);
             edited.push_str(&input.new_text);
             edited.push_str(&content[start + input.old_text.len()..]);
-            tokio::fs::write(&path, edited)
-                .await
-                .map_err(|error| tool_error("write file", error))?;
+            replace(&path, edited.as_bytes(), Some(original_hash), &cancellation).await?;
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(format!("Edited {}", input.path))],
                 details: Some(json!({ "path": input.path })),
@@ -388,10 +400,6 @@ fn object_schema(required: &[&str], properties: &serde_json::Value) -> serde_jso
         "required": required,
         "additionalProperties": false
     })
-}
-
-fn tool_error(action: &str, error: impl std::fmt::Display) -> ToolError {
-    ToolError::new(format!("cannot {action}: {error}"))
 }
 
 #[cfg(test)]

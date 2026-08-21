@@ -5,7 +5,8 @@ use crate::{
     tool::{ToolCall, ToolResult},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MessageRole {
     User,
     Assistant,

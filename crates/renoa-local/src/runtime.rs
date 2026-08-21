@@ -8,8 +8,8 @@ use renoa_agent_loop::{
     AgentLoopBuildError, AgentLoopConfig, CompactingContextStrategy, CompactionLimits,
     CompactionLimitsError, ContextBinding, ContextSizer, ModelBinding,
     build_runtime as build_agent_runtime,
+    build_runtime_with_events as build_observed_agent_runtime,
 };
-use renoa_harness::{CompactionPolicy, CompactionPolicyError, RuntimeProfile, RuntimeProfileError};
 use renoa_kernel::{EffectRecovery, Runtime};
 use thiserror::Error;
 
@@ -36,25 +36,6 @@ pub struct LocalRuntimeConfig {
 }
 
 impl LocalRuntimeConfig {
-    #[must_use]
-    pub fn new(
-        bridge: impl Into<PathBuf>,
-        provider: impl Into<String>,
-        model: impl Into<String>,
-        credential_store: impl Into<PathBuf>,
-        instructions: impl Into<String>,
-    ) -> Self {
-        Self {
-            bridge: bridge.into(),
-            provider: provider.into(),
-            model: model.into(),
-            credential_store: credential_store.into(),
-            instructions: instructions.into(),
-            model_spec: None,
-            reasoning: None,
-        }
-    }
-
     /// Selects Renoa Alpha's versioned coding behavior and captures workspace rules.
     ///
     /// # Errors
@@ -67,13 +48,15 @@ impl LocalRuntimeConfig {
         credential_store: impl Into<PathBuf>,
         workspace: &LocalWorkspace,
     ) -> Result<Self, AlphaError> {
-        Ok(Self::new(
-            bridge,
-            provider,
-            model,
-            credential_store,
-            crate::alpha::system_prompt(workspace.root())?,
-        ))
+        Ok(Self {
+            bridge: bridge.into(),
+            provider: provider.into(),
+            model: model.into(),
+            credential_store: credential_store.into(),
+            instructions: crate::alpha::system_prompt(workspace.root())?,
+            model_spec: None,
+            reasoning: None,
+        })
     }
 
     #[must_use]
@@ -104,44 +87,9 @@ pub enum LocalRuntimeError {
     #[error("checkpoint budget is zero")]
     ZeroCheckpointBudget,
     #[error(transparent)]
-    Compaction(#[from] CompactionPolicyError),
-    #[error(transparent)]
-    Profile(#[from] RuntimeProfileError),
-    #[error(transparent)]
     ContextLimits(#[from] CompactionLimitsError),
     #[error(transparent)]
     AgentLoop(#[from] AgentLoopBuildError),
-}
-
-/// Resolves one provider model and freezes its local workspace bindings.
-///
-/// # Errors
-///
-/// Returns an error when the model, context limits, or tool bindings are invalid.
-pub async fn build_local_profile(
-    config: LocalRuntimeConfig,
-    workspace: &LocalWorkspace,
-) -> Result<RuntimeProfile, LocalRuntimeError> {
-    let resolved = resolve_model(config).await?;
-    let compaction = compaction_policy(resolved.model.as_ref())?;
-    let concrete_model = Arc::clone(&resolved.model);
-    let harness_model: Arc<dyn renoa_agent::Model> = concrete_model;
-    RuntimeProfile::new(
-        format!(
-            "pi/{}/{}/{}/reasoning-{}/local-{}/compaction-v1",
-            resolved.provider,
-            resolved.model_id,
-            resolved.model.binding_id(),
-            resolved.model.reasoning().as_str(),
-            workspace.binding_id()
-        ),
-        harness_model,
-        resolved.instructions,
-        MODEL_ATTEMPT_LIMIT,
-    )
-    .with_tools(workspace.tool_bindings(), TOOL_CALL_LIMIT)
-    .map(|profile| profile.with_compaction(compaction, resolved.model))
-    .map_err(Into::into)
 }
 
 /// Resolves one full-access local coding runtime for the durable kernel.
@@ -157,6 +105,30 @@ pub async fn build_local_runtime(
     config: LocalRuntimeConfig,
     workspace: &LocalWorkspace,
 ) -> Result<Runtime, LocalRuntimeError> {
+    build_local_runtime_inner(config, workspace, None).await
+}
+
+/// Resolves the same local runtime while forwarding transient model and tool events.
+///
+/// The event sink is for live presentation only and is excluded from the
+/// kernel's frozen manifest.
+///
+/// # Errors
+///
+/// Returns the same resolution errors as [`build_local_runtime`].
+pub async fn build_local_runtime_with_events(
+    config: LocalRuntimeConfig,
+    workspace: &LocalWorkspace,
+    events: Arc<dyn renoa_agent::AgentEventSink>,
+) -> Result<Runtime, LocalRuntimeError> {
+    build_local_runtime_inner(config, workspace, Some(events)).await
+}
+
+async fn build_local_runtime_inner(
+    config: LocalRuntimeConfig,
+    workspace: &LocalWorkspace,
+    events: Option<Arc<dyn renoa_agent::AgentEventSink>>,
+) -> Result<Runtime, LocalRuntimeError> {
     let resolved = resolve_model(config).await?;
     let context = context_binding(&resolved.model)?;
     let model_revision = format!(
@@ -166,12 +138,13 @@ pub async fn build_local_runtime(
         resolved.model.binding_id(),
         resolved.model.reasoning().as_str()
     );
-    build_agent_runtime(
-        AgentLoopConfig::new(resolved.instructions, MODEL_ATTEMPT_LIMIT, TOOL_CALL_LIMIT),
-        context,
-        ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay),
-        workspace.kernel_tool_bindings(),
-    )
+    let config = AgentLoopConfig::new(resolved.instructions, MODEL_ATTEMPT_LIMIT, TOOL_CALL_LIMIT);
+    let model = ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay);
+    let tools = workspace.kernel_tool_bindings();
+    match events {
+        Some(events) => build_observed_agent_runtime(config, context, model, tools, events),
+        None => build_agent_runtime(config, context, model, tools),
+    }
     .map_err(Into::into)
 }
 
@@ -201,17 +174,6 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, PiMo
         instructions: config.instructions,
         model,
     })
-}
-
-fn compaction_policy(model: &PiModel) -> Result<CompactionPolicy, LocalRuntimeError> {
-    let settings = compaction_settings(model)?;
-    Ok(CompactionPolicy::new(
-        settings.context,
-        settings.reserved,
-        settings.target,
-        settings.max_summary,
-        COMPACTION_ATTEMPT_LIMIT,
-    )?)
 }
 
 fn context_binding(model: &Arc<PiModel>) -> Result<ContextBinding, LocalRuntimeError> {
