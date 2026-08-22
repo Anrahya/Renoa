@@ -9,6 +9,10 @@ import type {
 } from "@earendil-works/pi-ai";
 
 const SCHEMA_VERSION = 1;
+// Pi bounds an OAuth refresh at 15 seconds. Another Renoa session modifying the
+// same provider must wait long enough to observe that refreshed credential
+// instead of failing early or performing a second rotating-token refresh.
+const LOCK_WAIT_MS = 30_000;
 
 export class SqliteCredentialStore implements CredentialStore {
   readonly #database: DatabaseSync;
@@ -17,6 +21,7 @@ export class SqliteCredentialStore implements CredentialStore {
   constructor(path: string) {
     secureFile(path);
     this.#database = new DatabaseSync(path);
+    this.#database.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};`);
     const schema = this.#database.prepare("PRAGMA user_version").get() as {
       readonly user_version: number;
     };
@@ -30,7 +35,6 @@ export class SqliteCredentialStore implements CredentialStore {
       this.#database.exec(`
         PRAGMA journal_mode = DELETE;
         PRAGMA synchronous = FULL;
-        PRAGMA busy_timeout = 5000;
         CREATE TABLE IF NOT EXISTS credentials (
           provider_id TEXT PRIMARY KEY,
           credential_type TEXT NOT NULL CHECK (credential_type IN ('api_key', 'oauth')),

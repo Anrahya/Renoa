@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { test } from "node:test";
 
 import { SqliteCredentialStore } from "../src/credentials.js";
@@ -62,6 +64,46 @@ test("concurrent OAuth rotations observe the latest stored credential", async ()
     assert.deepEqual(await store.read("xai"), credential(2));
     store.close();
   } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("a second process waits for an in-flight OAuth rotation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "renoa-pi-auth-process-rotation-"));
+  const path = join(directory, "credentials.sqlite");
+  const credentialsModule = new URL("../src/credentials.js", import.meta.url).href;
+  const holderSource = `
+    import { SqliteCredentialStore } from ${JSON.stringify(credentialsModule)};
+    const store = new SqliteCredentialStore(process.argv[1]);
+    await store.modify("xai", async (current) => {
+      process.stdout.write("locked\\n");
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      return current;
+    });
+    store.close();
+  `;
+  let holder: ReturnType<typeof spawn> | undefined;
+  try {
+    const initial = new SqliteCredentialStore(path);
+    await initial.modify("xai", async () => credential(0));
+    initial.close();
+
+    holder = spawn(process.execPath, ["--input-type=module", "-e", holderSource, path], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const holderExit = once(holder, "exit");
+    assert.ok(holder.stdout);
+    const [output] = await once(holder.stdout, "data");
+    assert.match(String(output), /locked/);
+
+    const competing = new SqliteCredentialStore(path);
+    assert.deepEqual(await competing.read("xai"), credential(0));
+    competing.close();
+
+    const [code] = await holderExit;
+    assert.equal(code, 0);
+  } finally {
+    holder?.kill();
     await rm(directory, { force: true, recursive: true });
   }
 });
