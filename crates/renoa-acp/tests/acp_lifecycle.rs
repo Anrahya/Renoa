@@ -1,5 +1,9 @@
+#[path = "support/assertions.rs"]
+mod assertions;
 #[path = "acp_lifecycle/close.rs"]
 mod close;
+#[path = "acp_lifecycle/delete.rs"]
+mod delete;
 #[path = "acp_lifecycle/observability.rs"]
 mod observability;
 mod support;
@@ -14,6 +18,7 @@ use serde_json::json;
 use tempfile::tempdir;
 use uuid::Uuid;
 
+use assertions::assert_equivalent_prompt_outcomes;
 use support::{AcpProcess, BRIDGE};
 
 #[test]
@@ -40,6 +45,9 @@ fn a_frontend_can_create_and_run_one_durable_session() {
         true
     );
     assert!(initialized["result"]["agentCapabilities"]["sessionCapabilities"]["close"].is_object());
+    assert!(
+        initialized["result"]["agentCapabilities"]["sessionCapabilities"]["delete"].is_object()
+    );
 
     let created = process.create_session(&workspace);
     assert_eq!(created["id"], 2);
@@ -53,13 +61,18 @@ fn a_frontend_can_create_and_run_one_durable_session() {
     assert_eq!(update["method"], "session/update");
     assert_eq!(update["params"]["sessionId"], session_id);
     assert_eq!(
-        update["params"]["update"],
-        json!({
-            "sessionUpdate": "agent_message_chunk",
-            "content": { "type": "text", "text": "Hello back." },
-            "messageId": turn_id
-        })
+        update["params"]["update"]["sessionUpdate"],
+        "agent_message_chunk"
     );
+    assert_eq!(
+        update["params"]["update"]["content"],
+        json!({ "type": "text", "text": "Hello back." })
+    );
+    let message_id = update["params"]["update"]["messageId"]
+        .as_str()
+        .expect("assistant message id");
+    Uuid::parse_str(message_id).expect("assistant message id is a UUID");
+    assert_ne!(message_id, turn_id);
     assert_eq!(completed["id"], 3);
     assert_eq!(completed["result"]["stopReason"], "end_turn");
 
@@ -135,8 +148,8 @@ fn a_new_process_resumes_the_same_durable_conversation() {
         .as_str()
         .expect("session id")
         .to_owned();
-    let (first_update, first_response) =
-        first.prompt(&session_id, "First", "a19115d8-2796-496a-8763-abe0159efd24");
+    let first_turn_id = "a19115d8-2796-496a-8763-abe0159efd24";
+    let (first_update, first_response) = first.prompt(&session_id, "First", first_turn_id);
     assert_eq!(
         first_update["params"]["update"]["content"]["text"],
         "First response."
@@ -155,6 +168,10 @@ fn a_new_process_resumes_the_same_durable_conversation() {
         "user_message_chunk"
     );
     assert_eq!(history[0]["params"]["update"]["content"]["text"], "First");
+    assert_eq!(
+        history[0]["params"]["update"]["_meta"]["requestId"],
+        first_turn_id
+    );
     assert_eq!(
         history[1]["params"]["update"]["sessionUpdate"],
         "agent_message_chunk"
@@ -257,7 +274,7 @@ fn redelivering_a_settled_prompt_replays_without_a_second_model_call() {
     let first = process.prompt(&session_id, "Idempotent", turn_id);
     let replay = process.prompt(&session_id, "Idempotent", turn_id);
 
-    assert_eq!(first, replay);
+    assert_equivalent_prompt_outcomes(&first, &replay, turn_id);
     process.finish();
 }
 
@@ -334,11 +351,16 @@ fn a_tool_turn_streams_execution_before_the_final_answer() {
             }
         }
     }));
+    let before_tool = process.read();
     let started = process.read();
     let settled = process.read();
     let answer = process.read();
     let response = process.read();
 
+    assert_eq!(
+        before_tool["params"]["update"]["content"]["text"],
+        "Checking. "
+    );
     assert_eq!(started["params"]["update"]["sessionUpdate"], "tool_call");
     assert_eq!(started["params"]["update"]["toolCallId"], "read-1");
     assert_eq!(started["params"]["update"]["kind"], "read");
@@ -354,6 +376,18 @@ fn a_tool_turn_streams_execution_before_the_final_answer() {
         "value\n"
     );
     assert_eq!(answer["params"]["update"]["content"]["text"], "Read it.");
+    let before_tool_id = before_tool["params"]["update"]["messageId"]
+        .as_str()
+        .expect("pre-tool assistant message id");
+    let answer_id = answer["params"]["update"]["messageId"]
+        .as_str()
+        .expect("final assistant message id");
+    Uuid::parse_str(before_tool_id).expect("pre-tool message id is a UUID");
+    Uuid::parse_str(answer_id).expect("final message id is a UUID");
+    assert_ne!(
+        before_tool_id, answer_id,
+        "separate assistant messages must have separate ACP identities"
+    );
     assert_eq!(response["result"]["stopReason"], "end_turn");
     process.finish();
 }

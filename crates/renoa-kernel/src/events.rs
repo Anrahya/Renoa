@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    EventId, Kernel, KernelError, NewEvent, OperationId, SessionId, admission::from_sql_integer,
+    CommandId, EventId, Kernel, KernelError, NewEvent, OperationId, SessionId,
+    admission::{from_sql_integer, parse_command_id, parse_operation_id},
+    schema::sqlite_error,
 };
-use crate::{admission::parse_operation_id, schema::sqlite_error};
 
 /// The next unread session-local semantic event sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -30,6 +31,7 @@ impl EventCursor {
 pub struct SemanticEvent {
     pub event_id: EventId,
     pub operation_id: OperationId,
+    pub command_id: CommandId,
     pub sequence: u64,
     pub kind: String,
     pub payload: Value,
@@ -138,10 +140,13 @@ pub(crate) fn load_events(
 ) -> Result<Vec<SemanticEvent>, KernelError> {
     let mut statement = connection
         .prepare(
-            "SELECT event_id, operation_id, sequence, kind, payload_json
-             FROM semantic_events
-             WHERE session_id = ?1 AND sequence >= ?2
-             ORDER BY sequence",
+            "SELECT e.event_id, e.operation_id, o.command_id,
+                    e.sequence, e.kind, e.payload_json
+             FROM semantic_events AS e
+             JOIN operations AS o
+               ON o.session_id = e.session_id AND o.operation_id = e.operation_id
+             WHERE e.session_id = ?1 AND e.sequence >= ?2
+             ORDER BY e.sequence",
         )
         .map_err(sqlite_error)?;
     let rows = statement
@@ -149,18 +154,21 @@ pub(crate) fn load_events(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, String>(3)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })
         .map_err(sqlite_error)?;
     let mut events = Vec::new();
     for row in rows {
-        let (event_id, operation_id, sequence, kind, payload) = row.map_err(sqlite_error)?;
+        let (event_id, operation_id, command_id, sequence, kind, payload) =
+            row.map_err(sqlite_error)?;
         events.push(SemanticEvent {
             event_id: parse_event_id(&event_id)?,
             operation_id: parse_operation_id(&operation_id)?,
+            command_id: parse_command_id(&command_id)?,
             sequence: from_sql_integer(sequence, "event sequence")?,
             kind,
             payload: serde_json::from_str(&payload).map_err(crate::schema::json_error)?,

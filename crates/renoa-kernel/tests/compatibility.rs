@@ -12,11 +12,12 @@ async fn semantic_replay_is_gapless_stable_and_rejects_an_ahead_cursor() {
     let directory = tempdir().expect("temporary directory");
     let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
     let session_id = create_session(&kernel);
-    for value in ["first", "second"] {
+    let commands = [("first", CommandId::new()), ("second", CommandId::new())];
+    for (value, command_id) in commands {
         kernel
             .submit(
                 session_id,
-                Command::new(CommandId::new(), serde_json::json!(value)),
+                Command::new(command_id, serde_json::json!(value)),
             )
             .expect("submit command");
         kernel
@@ -31,6 +32,8 @@ async fn semantic_replay_is_gapless_stable_and_rejects_an_ahead_cursor() {
     assert_eq!(all.next_cursor, EventCursor::new(2));
     assert_eq!(all.events[0].sequence, 0);
     assert_eq!(all.events[1].sequence, 1);
+    assert_eq!(all.events[0].command_id, commands[0].1);
+    assert_eq!(all.events[1].command_id, commands[1].1);
     assert_eq!(
         kernel
             .events_after(session_id, EventCursor::START)

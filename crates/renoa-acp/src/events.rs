@@ -4,7 +4,7 @@ use crate::ServerError;
 use agent_client_protocol::{
     Client, ConnectionTo,
     schema::v1::{
-        ContentBlock as AcpContentBlock, ContentChunk, ImageContent, MessageId, SessionId,
+        ContentBlock as AcpContentBlock, ContentChunk, ImageContent, MessageId, Meta, SessionId,
         SessionNotification, SessionUpdate, TextContent, ToolCall as AcpToolCall, ToolCallContent,
         ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
     },
@@ -14,30 +14,30 @@ use renoa_agent::{
     MessageRole, ToolCall, ToolOutput, ToolResult,
 };
 use renoa_local::LocalHistoryEntry;
+use uuid::Uuid;
+
 pub(crate) struct AcpEventSink {
     connection: ConnectionTo<Client>,
     session_id: SessionId,
-    message_id: String,
     state: Mutex<EventState>,
 }
 
-#[derive(Default)]
 struct EventState {
     current_text: String,
+    message_id: String,
     send_error: Option<String>,
 }
 
 impl AcpEventSink {
-    pub(crate) fn new(
-        connection: ConnectionTo<Client>,
-        session_id: impl Into<SessionId>,
-        message_id: String,
-    ) -> Self {
+    pub(crate) fn new(connection: ConnectionTo<Client>, session_id: impl Into<SessionId>) -> Self {
         Self {
             connection,
             session_id: session_id.into(),
-            message_id,
-            state: Mutex::new(EventState::default()),
+            state: Mutex::new(EventState {
+                current_text: String::new(),
+                message_id: Uuid::new_v4().to_string(),
+                send_error: None,
+            }),
         }
     }
 
@@ -66,7 +66,7 @@ impl AcpEventSink {
             return Ok(None);
         }
         state.current_text.push_str(text);
-        Ok(Some(text_chunk(text.to_owned(), &self.message_id)))
+        Ok(Some(text_chunk(text.to_owned(), &state.message_id)))
     }
 
     pub(crate) fn ensure_delivery(&self) -> Result<(), ServerError> {
@@ -94,10 +94,11 @@ impl AcpEventSink {
 
     fn observe(&self, event: AgentEvent) {
         match event {
-            AgentEvent::MessageStart {
+            AgentEvent::ModelRequestStart { .. }
+            | AgentEvent::MessageStart {
                 role: MessageRole::Assistant,
-            }
-            | AgentEvent::MessageAbort => self.clear_text(),
+            } => self.start_assistant_message(),
+            AgentEvent::MessageAbort => self.clear_text(),
             AgentEvent::MessageUpdate { delta, .. } => self.send_delta(delta),
             AgentEvent::ToolExecutionStart { call } => self.send(SessionUpdate::ToolCall(
                 AcpToolCall::new(call.id.clone(), tool_title(&call))
@@ -126,23 +127,36 @@ impl AcpEventSink {
         }
     }
 
+    fn start_assistant_message(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.current_text.clear();
+            state.message_id = Uuid::new_v4().to_string();
+        }
+    }
+
     fn send_delta(&self, delta: AssistantDelta) {
         match delta {
             AssistantDelta::Text { text } => {
-                if let Ok(mut state) = self.state.lock() {
+                let message_id = if let Ok(mut state) = self.state.lock() {
                     state.current_text.push_str(&text);
+                    state.message_id.clone()
                 } else {
                     return;
-                }
+                };
                 self.send(SessionUpdate::AgentMessageChunk(text_chunk(
                     text,
-                    &self.message_id,
+                    &message_id,
                 )));
             }
             AssistantDelta::Reasoning { text } => {
+                let message_id = if let Ok(state) = self.state.lock() {
+                    state.message_id.clone()
+                } else {
+                    return;
+                };
                 self.send(SessionUpdate::AgentThoughtChunk(text_chunk(
                     text,
-                    &self.message_id,
+                    &message_id,
                 )));
             }
             AssistantDelta::ToolCallStart { .. } | AssistantDelta::ToolCallArguments { .. } => {}
@@ -161,7 +175,8 @@ pub(crate) fn replay_history(
     history: Vec<LocalHistoryEntry>,
 ) -> Result<(), ServerError> {
     for entry in history {
-        for update in replay_message(entry.message, &entry.event_id) {
+        let request_id = entry.command_id.to_string();
+        for update in replay_message(entry.message, &entry.event_id, &request_id) {
             connection
                 .send_notification(SessionNotification::new(session_id.to_owned(), update))
                 .map_err(ServerError::Transport)?;
@@ -170,14 +185,20 @@ pub(crate) fn replay_history(
     Ok(())
 }
 
-fn replay_message(message: Message, message_id: &str) -> Vec<SessionUpdate> {
+fn replay_message(message: Message, message_id: &str, request_id: &str) -> Vec<SessionUpdate> {
     match message {
         Message::User { content } => content
             .into_iter()
             .map(|block| {
+                let mut meta = Meta::new();
+                meta.insert(
+                    "requestId".to_owned(),
+                    serde_json::Value::String(request_id.to_owned()),
+                );
                 SessionUpdate::UserMessageChunk(
                     ContentChunk::new(acp_content(block))
-                        .message_id(MessageId::from(message_id.to_owned())),
+                        .message_id(MessageId::from(message_id.to_owned()))
+                        .meta(meta),
                 )
             })
             .collect(),
@@ -284,10 +305,23 @@ fn tool_kind(name: &str) -> ToolKind {
         "read_file" => ToolKind::Read,
         "edit_file" | "write_file" => ToolKind::Edit,
         "bash" => ToolKind::Execute,
+        "grep" | "find" => ToolKind::Search,
         _ => ToolKind::Other,
     }
 }
 
 fn tool_title(call: &ToolCall) -> String {
     call.name.replace('_', " ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tool_kind;
+    use agent_client_protocol::schema::v1::ToolKind;
+
+    #[test]
+    fn coding_search_tools_use_the_standard_search_kind() {
+        assert_eq!(tool_kind("grep"), ToolKind::Search);
+        assert_eq!(tool_kind("find"), ToolKind::Search);
+    }
 }

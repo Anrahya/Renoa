@@ -1,5 +1,5 @@
 use renoa_agent::{Message, ModelRequest};
-use renoa_kernel::{Checkpoint, EventId, OperationId, SemanticEvent};
+use renoa_kernel::{Checkpoint, CommandId, EventId, OperationId, SemanticEvent};
 use serde_json::json;
 
 use super::{CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND, context_input, decode_checkpoint};
@@ -37,9 +37,10 @@ fn compaction_attempt_cannot_exceed_its_persisted_bound() {
 #[test]
 fn active_checkpoint_must_cover_an_earlier_durable_message() {
     let operation_id = OperationId::new();
+    let command_id = CommandId::new();
     let events = vec![
-        message_event(operation_id, 0, "first"),
-        checkpoint_event(operation_id, 1, 99, "summary"),
+        message_event(operation_id, command_id, 0, "first"),
+        checkpoint_event(operation_id, command_id, 1, 99, "summary"),
     ];
 
     let error = context_input(operation_id, &events, "system", &[], false)
@@ -54,11 +55,12 @@ fn active_checkpoint_must_cover_an_earlier_durable_message() {
 #[test]
 fn checkpoint_chain_must_advance_its_message_boundary() {
     let operation_id = OperationId::new();
+    let command_id = CommandId::new();
     let events = vec![
-        message_event(operation_id, 0, "first"),
-        message_event(operation_id, 1, "second"),
-        checkpoint_event(operation_id, 2, 1, "newer"),
-        checkpoint_event(operation_id, 3, 0, "stale"),
+        message_event(operation_id, command_id, 0, "first"),
+        message_event(operation_id, command_id, 1, "second"),
+        checkpoint_event(operation_id, command_id, 2, 1, "newer"),
+        checkpoint_event(operation_id, command_id, 3, 0, "stale"),
     ];
 
     let error = context_input(operation_id, &events, "system", &[], false)
@@ -73,11 +75,13 @@ fn checkpoint_chain_must_advance_its_message_boundary() {
 #[test]
 fn unknown_checkpoint_event_version_fails_closed() {
     let operation_id = OperationId::new();
+    let command_id = CommandId::new();
     let events = vec![
-        message_event(operation_id, 0, "first"),
+        message_event(operation_id, command_id, 0, "first"),
         SemanticEvent {
             event_id: EventId::new(),
             operation_id,
+            command_id,
             sequence: 1,
             kind: "renoa.agent.context-checkpoint.v2".to_owned(),
             payload: json!({}),
@@ -93,11 +97,12 @@ fn unknown_checkpoint_event_version_fails_closed() {
 #[test]
 fn latest_valid_checkpoint_is_exposed_without_rewriting_messages() {
     let operation_id = OperationId::new();
+    let command_id = CommandId::new();
     let events = vec![
-        message_event(operation_id, 0, "first"),
-        message_event(operation_id, 1, "second"),
-        checkpoint_event(operation_id, 2, 0, "first summary"),
-        checkpoint_event(operation_id, 3, 1, "second summary"),
+        message_event(operation_id, command_id, 0, "first"),
+        message_event(operation_id, command_id, 1, "second"),
+        checkpoint_event(operation_id, command_id, 2, 0, "first summary"),
+        checkpoint_event(operation_id, command_id, 3, 1, "second summary"),
     ];
 
     let input =
@@ -112,10 +117,16 @@ fn latest_valid_checkpoint_is_exposed_without_rewriting_messages() {
     );
 }
 
-fn message_event(operation_id: OperationId, sequence: u64, text: &str) -> SemanticEvent {
+fn message_event(
+    operation_id: OperationId,
+    command_id: CommandId,
+    sequence: u64,
+    text: &str,
+) -> SemanticEvent {
     SemanticEvent {
         event_id: EventId::new(),
         operation_id,
+        command_id,
         sequence,
         kind: MESSAGE_EVENT_KIND.to_owned(),
         payload: serde_json::to_value(Message::user_text(text)).expect("encode message"),
@@ -124,6 +135,7 @@ fn message_event(operation_id: OperationId, sequence: u64, text: &str) -> Semant
 
 fn checkpoint_event(
     operation_id: OperationId,
+    command_id: CommandId,
     sequence: u64,
     covered_through_sequence: u64,
     summary: &str,
@@ -131,6 +143,7 @@ fn checkpoint_event(
     SemanticEvent {
         event_id: EventId::new(),
         operation_id,
+        command_id,
         sequence,
         kind: CONTEXT_CHECKPOINT_EVENT_KIND.to_owned(),
         payload: json!({

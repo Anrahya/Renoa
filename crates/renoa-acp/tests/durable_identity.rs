@@ -1,3 +1,7 @@
+#[path = "support/assertions.rs"]
+mod assertions;
+#[path = "durable_identity/crash_recovery.rs"]
+mod crash_recovery;
 mod support;
 
 use std::{
@@ -11,6 +15,7 @@ use serde_json::json;
 use tempfile::tempdir;
 use uuid::Uuid;
 
+use assertions::assert_equivalent_prompt_outcomes;
 use support::{AcpProcess, BRIDGE};
 
 #[test]
@@ -77,7 +82,7 @@ fn settled_prompt_redelivery_survives_an_acp_process_restart() {
     assert!(loaded.get("result").is_some(), "load failed: {loaded}");
     let replay = resumed.prompt(&session_id, "Idempotent", turn_id);
 
-    assert_eq!(initial, replay);
+    assert_equivalent_prompt_outcomes(&initial, &replay, turn_id);
     resumed.finish();
 }
 

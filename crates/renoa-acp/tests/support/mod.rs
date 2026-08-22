@@ -30,6 +30,12 @@ impl AcpProcess {
             .env("RENOA_TEST_COMPLETED", data.join("model-completed"))
             .env("RENOA_TEST_CONTINUE", data.join("model-continue"))
             .env("RENOA_TEST_INVOKED", data.join("model-invoked"))
+            .env("RENOA_TEST_MODEL_ATTEMPTS", data.join("model-attempts"))
+            .env("RENOA_TEST_MODEL_CHILD_PID", data.join("model-child-pid"))
+            .env("RENOA_TEST_UNSAFE_STARTED", data.join("unsafe-started"))
+            .env("RENOA_TEST_UNSAFE_CHILD_PID", data.join("unsafe-child-pid"))
+            .env("RENOA_TEST_UNSAFE_CONTINUE", data.join("unsafe-continue"))
+            .env("RENOA_TEST_UNSAFE_COMPLETED", data.join("unsafe-completed"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -101,6 +107,19 @@ impl AcpProcess {
     }
 
     pub(crate) fn prompt(&mut self, session_id: &str, text: &str, turn_id: &str) -> (Value, Value) {
+        self.send_prompt(session_id, text, turn_id);
+        let mut messages = self.read_until_response(3);
+        assert_eq!(
+            messages.len(),
+            2,
+            "simple prompt returned an unexpected ACP message sequence: {messages:?}"
+        );
+        let response = messages.pop().expect("prompt response");
+        let update = messages.pop().expect("prompt update");
+        (update, response)
+    }
+
+    pub(crate) fn send_prompt(&mut self, session_id: &str, text: &str, turn_id: &str) {
         self.send(&json!({
             "jsonrpc": "2.0",
             "id": 3,
@@ -111,7 +130,18 @@ impl AcpProcess {
                 "_meta": { "requestId": turn_id, "promptId": turn_id }
             }
         }));
-        (self.read(), self.read())
+    }
+
+    pub(crate) fn read_until_response(&mut self, request_id: u64) -> Vec<Value> {
+        let mut messages = Vec::new();
+        loop {
+            let message = self.read();
+            let is_response = message["id"] == request_id;
+            messages.push(message);
+            if is_response {
+                return messages;
+            }
+        }
     }
 
     pub(crate) fn read(&mut self) -> Value {
@@ -130,11 +160,22 @@ impl AcpProcess {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    #[allow(
+        dead_code,
+        reason = "shared integration-test support is compiled by tests that do not simulate a crash"
+    )]
+    pub(crate) fn kill(mut self) {
+        drop(self.stdin.take());
+        self.child.kill().expect("kill ACP process");
+        let status = self.child.wait().expect("reap killed ACP process");
+        assert!(!status.success(), "killed ACP process exited successfully");
+    }
 }
 
 pub(crate) const BRIDGE: &str = r#"
 import { createHash } from "node:crypto";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const models = [
@@ -264,6 +305,32 @@ if (prompt === "Hello") {
     process.exit(3);
   }
   content = [{ type: "text", text: "Exactly once." }];
+} else if (prompt === "Crash model") {
+  const attemptsPath = process.env.RENOA_TEST_MODEL_ATTEMPTS;
+  const attempts = existsSync(attemptsPath)
+    ? Number.parseInt(readFileSync(attemptsPath, "utf8"), 10)
+    : 0;
+  writeFileSync(attemptsPath, String(attempts + 1));
+  if (attempts === 0) {
+    writeFileSync(process.env.RENOA_TEST_MODEL_CHILD_PID, String(process.pid));
+    writeFileSync(process.env.RENOA_TEST_STARTED, "started");
+    while (!existsSync(process.env.RENOA_TEST_CONTINUE)) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  content = [{ type: "text", text: "Recovered model call." }];
+} else if (prompt === "Crash bash" && toolResults.length === 0) {
+  content = [{
+    type: "tool_call",
+    id: "unsafe-bash-1",
+    name: "bash",
+    arguments: {
+      command: "echo $$ > \"$RENOA_TEST_UNSAFE_CHILD_PID\"; echo started >> \"$RENOA_TEST_UNSAFE_STARTED\"; while [ ! -e \"$RENOA_TEST_UNSAFE_CONTINUE\" ]; do sleep 0.01; done; echo completed >> \"$RENOA_TEST_UNSAFE_COMPLETED\""
+    }
+  }];
+  stop_reason = "tool_use";
+} else if (prompt === "Crash bash" && toolResults.length === 1) {
+  content = [{ type: "text", text: "Bash completed." }];
 } else if (
   prompt === "Image" &&
   request.messages.findLast(message => message.role === "user").content[1].type === "image" &&
@@ -272,12 +339,20 @@ if (prompt === "Hello") {
 ) {
   content = [{ type: "text", text: "Image received." }];
 } else if (prompt === "Tool" && toolResults.length === 0) {
-  content = [{
-    type: "tool_call",
-    id: "read-1",
-    name: "read_file",
-    arguments: { path: "value.txt" }
-  }];
+  process.stdout.write(JSON.stringify({
+    event: "content_delta",
+    content_index: 0,
+    delta: { type: "text", text: "Checking. " }
+  }) + "\n");
+  content = [
+    { type: "text", text: "Checking. " },
+    {
+      type: "tool_call",
+      id: "read-1",
+      name: "read_file",
+      arguments: { path: "value.txt" }
+    }
+  ];
   stop_reason = "tool_use";
 } else if (prompt === "Tool" && toolResults.length === 1) {
   content = [{ type: "text", text: "Read it." }];

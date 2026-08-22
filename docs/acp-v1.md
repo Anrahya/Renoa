@@ -58,6 +58,8 @@ turn and freezes the result only when the kernel admits that operation.
   response, using durable kernel event UUIDs as ACP message IDs.
 - `session/close` cancels active work, waits for adapter cleanup, and releases
   the process for another session.
+- `session/delete` permanently removes one closed session. Repeating deletion
+  is safe; deleting a session still owned by a process is rejected.
 - `session/new` and `session/load` return standard ACP `model` and
   `thought_level` select options.
 - `session/set_config_option` changes the model or reasoning level and returns
@@ -76,9 +78,9 @@ adapters to ACP. This observer is excluded from the frozen runtime manifest and
 authoritative history. The kernel remains surface-blind; completed output is
 projected from durable semantic events before ACP returns success.
 
-The adapter advertises `loadSession`, `session/close`, and image prompts. Audio,
-embedded resources, additional workspace directories, and MCP servers are
-rejected.
+The adapter advertises `loadSession`, `session/close`, `session/delete`, and
+image prompts. Audio, embedded resources, additional workspace directories,
+and MCP servers are rejected.
 
 The model list comes from Pi's authenticated provider catalog. Renoa validates
 and pins the selected model specification before building a runtime, so a
@@ -130,14 +132,36 @@ model call. If both fields are present, they must match. Clients that omit both
 fields receive a generated identity and do not get lost-request idempotency
 across processes.
 
+The command identity remains separate from ACP message identity. Live
+assistant messages receive one agent-generated `messageId` per message.
+Replayed message chunks keep their durable semantic-event `messageId`, while a
+replayed user chunk carries its originating command UUID in `_meta.requestId`.
+That lets a surface reconcile an optimistic user entry without treating a
+client correlation value as the agent-owned message identity.
+
 If a process stopped after admitting a turn but before settling it, a different
 new turn is rejected before admission or model execution. Retrying the original
 turn identity and exact content resumes that durable operation.
 
-If model or tool execution has an outcome that cannot be proven, the local Host
-explicitly abandons that operation without replay. ACP returns the honest
-failure, while the repaired loop history and released session allow a later
-turn to continue.
+Process recovery follows the frozen effect policy; it does not promise that an
+ambiguous external call ran exactly once. A settled effect is never repeated.
+An interrupted safe model, read, grep, or find effect may be dispatched again
+with its exact durable identity and request. An interrupted edit, write, or Bash
+effect is never dispatched again: Renoa settles the operation as failed and
+persists a model-visible result explaining that the tool may have finished but
+its result is unknown.
+
+A crash-resuming surface must durably retain the Renoa Session UUID and the
+exact unresolved turn UUID and content before sending that turn. After restart,
+it loads the exact Session, reconciles its presentation cache from Renoa's
+complete replay, and only then redelivers the same unresolved turn. It must not
+substitute current UI configuration, infer execution state from cached text, or
+silently create another Session when load fails.
+
+If recovery reaches an explicit unknown outcome after applying that policy, the
+local Host abandons the operation without another dispatch. ACP returns the
+honest failure, while the repaired loop history and released session allow a
+later turn to continue.
 
 During `session/load`, Renoa validates gapless semantic history and sends its
 user, assistant, reasoning, tool-call, and tool-result updates before the load

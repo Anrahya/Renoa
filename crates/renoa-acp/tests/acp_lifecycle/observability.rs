@@ -3,6 +3,7 @@ use std::fs;
 use rusqlite::Connection;
 use serde_json::json;
 use tempfile::tempdir;
+use uuid::Uuid;
 
 use super::support::{AcpProcess, BRIDGE};
 
@@ -39,9 +40,13 @@ fn provider_deltas_reach_the_frontend_before_the_model_finishes() {
     }));
     let first = process.read();
     assert_eq!(first["params"]["update"]["content"]["text"], "Hello ");
-    assert_eq!(
-        first["params"]["update"]["messageId"],
-        "8a74e10d-fbe5-45fc-9412-5529336f0fdb"
+    let first_message_id = first["params"]["update"]["messageId"]
+        .as_str()
+        .expect("first assistant message id");
+    Uuid::parse_str(first_message_id).expect("assistant message id is a UUID");
+    assert_ne!(
+        first_message_id, "8a74e10d-fbe5-45fc-9412-5529336f0fdb",
+        "the frontend request identity must not become an assistant message identity"
     );
     assert!(
         !data.join("model-completed").exists(),

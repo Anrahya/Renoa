@@ -20,6 +20,7 @@ pub struct LocalSession {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalHistoryEntry {
     pub event_id: String,
+    pub command_id: CommandId,
     pub message: Message,
 }
 
@@ -162,6 +163,7 @@ impl LocalSession {
                     })?;
                 Ok(LocalHistoryEntry {
                     event_id: event.event_id.to_string(),
+                    command_id: event.command_id,
                     message,
                 })
             })

@@ -6,10 +6,11 @@ use agent_client_protocol::{
         ProtocolVersion,
         v1::{
             AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
-            Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
-            LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptCapabilities,
-            PromptRequest, PromptResponse, SessionCapabilities, SessionCloseCapabilities,
-            SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
+            DeleteSessionRequest, DeleteSessionResponse, Implementation, InitializeRequest,
+            InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+            NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
+            SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
+            SessionConfigOptionCategory, SessionConfigSelectOption, SessionDeleteCapabilities,
             SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
             SetSessionConfigOptionResponse, StopReason,
         },
@@ -32,9 +33,8 @@ pub(crate) async fn serve_stdio(config: Config) -> Result<(), ServerError> {
         .builder()
         .name("renoa-agent")
         .on_receive_request(
-            async move |request: InitializeRequest, responder, _connection| {
-                responder.respond(initialize(request))
-            },
+            async move |request: InitializeRequest, responder, _connection| responder
+                .respond(initialize(request)),
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
@@ -43,6 +43,16 @@ pub(crate) async fn serve_stdio(config: Config) -> Result<(), ServerError> {
                 move |request: CloseSessionRequest, responder, _connection| {
                     let server = Arc::clone(&server);
                     async move { respond(responder, server.close_session(request).await) }
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let server = Arc::clone(&server);
+                move |request: DeleteSessionRequest, responder, _connection| {
+                    let server = Arc::clone(&server);
+                    async move { respond(responder, server.delete_session(request).await) }
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -104,12 +114,7 @@ pub(crate) async fn serve_stdio(config: Config) -> Result<(), ServerError> {
                 let server = Arc::clone(&server);
                 move |notification: CancelNotification, _connection| {
                     let server = Arc::clone(&server);
-                    async move {
-                        server
-                            .cancel(notification)
-                            .await
-                            .map_err(ServerError::into_protocol_error)
-                    }
+                    async move { server.cancel(notification).await.map_err(ServerError::into_protocol_error) }
                 }
             },
             agent_client_protocol::on_receive_notification!(),
@@ -196,6 +201,27 @@ impl Server {
         }
     }
 
+    async fn delete_session(
+        &self,
+        request: DeleteSessionRequest,
+    ) -> Result<DeleteSessionResponse, ServerError> {
+        let session_id = Uuid::parse_str(&request.session_id.to_string())
+            .map_err(|_| ServerError::InvalidRequest("sessionId is not a Renoa UUID".to_owned()))?;
+        if self
+            .active
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|active| active.id() == session_id)
+        {
+            return Err(ServerError::InvalidRequest(
+                "close the active ACP session before deleting it".to_owned(),
+            ));
+        }
+        self.config.host().delete_alpha_session(session_id).await?;
+        Ok(DeleteSessionResponse::new())
+    }
+
     async fn prompt(
         &self,
         request: PromptRequest,
@@ -206,7 +232,6 @@ impl Server {
         let sink = Arc::new(AcpEventSink::new(
             connection.clone(),
             session.id().to_string(),
-            request_id.to_string(),
         ));
         let events: Arc<dyn AgentEventSink> = sink.clone();
         let outcome = prompt::execute(&session, request, request_id, events).await?;
@@ -342,7 +367,9 @@ fn initialize(_request: InitializeRequest) -> InitializeResponse {
                 .load_session(true)
                 .prompt_capabilities(PromptCapabilities::new().image(true))
                 .session_capabilities(
-                    SessionCapabilities::new().close(SessionCloseCapabilities::new()),
+                    SessionCapabilities::new()
+                        .close(SessionCloseCapabilities::new())
+                        .delete(SessionDeleteCapabilities::new()),
                 ),
         )
         .agent_info(Implementation::new(

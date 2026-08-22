@@ -1337,6 +1337,7 @@ name = "renoa-acp"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "nix",
  "renoa-agent",
  "renoa-kernel",
  "renoa-local",

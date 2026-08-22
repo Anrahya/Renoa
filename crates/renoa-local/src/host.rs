@@ -13,7 +13,10 @@ use crate::{
     AlphaError, AlphaSession, LocalRuntimeConfig, LocalRuntimeError, LocalSession,
     LocalSessionError, LocalWorkspace, LocalWorkspaceError, PiModelConfigError, PiModelOption,
     PiReasoningLevel, build_local_runtime, build_local_runtime_with_events, discover_pi_models,
-    host_storage::{KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, read_manifest},
+    host_storage::{
+        KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, delete_session_storage,
+        read_manifest,
+    },
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
     trace::{TRACE_DATABASE, TraceError, TraceStore},
 };
@@ -209,6 +212,20 @@ impl LocalHost {
             models,
             selection,
         )))
+    }
+
+    /// Permanently removes one closed Alpha session from durable Host storage.
+    ///
+    /// Deleting a missing session succeeds so a retried ACP request is safe.
+    ///
+    /// # Errors
+    ///
+    /// Returns an ownership, identity, metadata, or storage failure. A session
+    /// still owned by any process cannot be deleted.
+    pub async fn delete_alpha_session(&self, session_uuid: Uuid) -> Result<(), LocalHostError> {
+        let sessions = self.config.sessions.clone();
+        let session_id = SessionId::from_uuid(session_uuid);
+        tokio::task::spawn_blocking(move || delete_session_storage(&sessions, session_id)).await?
     }
 
     async fn models(&self) -> Result<Vec<PiModelOption>, LocalHostError> {

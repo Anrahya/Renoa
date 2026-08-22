@@ -1,3 +1,5 @@
+#[path = "support/assertions.rs"]
+mod assertions;
 mod support;
 
 use std::fs;
@@ -6,6 +8,7 @@ use renoa_kernel::{Kernel, SessionId};
 use tempfile::tempdir;
 use uuid::Uuid;
 
+use assertions::assert_equivalent_prompt_outcomes;
 use support::{AcpProcess, BRIDGE};
 
 #[test]
@@ -145,6 +148,6 @@ fn settled_redelivery_does_not_re_resolve_changed_workspace_instructions() {
     assert!(loaded.get("result").is_some(), "load failed: {loaded}");
     let replay = resumed.prompt(&session_id, "Alpha", request_id);
 
-    assert_eq!(first, replay);
+    assert_equivalent_prompt_outcomes(&first, &replay, request_id);
     resumed.finish();
 }
