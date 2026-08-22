@@ -23,11 +23,12 @@ Renoa Host
    durable admission, effects, events, and recovery
 ```
 
-`renoa-local` is the first Host implementation. The first UI is a TypeScript
-surface built on ACP; a Rust/GPUI surface remains possible later. ACP is the
-standard agent-facing surface protocol. Renoa-specific capability management
-will use a separate logical Host API whose transport is not selected until a
-real management consumer is implemented.
+`renoa-local` is the first Host implementation. Product surfaces are maintained
+outside this core repository and connect through ACP; the first graphical
+surface is a Rust/GPUI Zeron fork. ACP is the standard agent-facing surface
+protocol. Renoa-specific capability management will use a separate logical Host
+API whose transport is not selected until a real management consumer is
+implemented.
 
 The first concrete agent profile is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is

@@ -123,12 +123,12 @@ requests, redacted response headers, normalized input/output/cache tokens, and
 tool inputs, progress, results, durations, and typed failures. It is never read
 to rebuild model context or decide kernel recovery.
 
-Renoa's desktop transport and T3 Code send one UUID in `_meta.requestId` and
-`_meta.promptId` for each turn. Renoa reuses that UUID as the kernel command
-identity. A redelivered settled prompt therefore returns its existing durable
-outcome without another model call. If both fields are present, they must
-match. Clients that omit both fields receive a generated identity and do not
-get lost-request idempotency across processes.
+An ACP client can send one UUID in `_meta.requestId` and `_meta.promptId` for
+each turn. Renoa reuses that UUID as the kernel command identity. A redelivered
+settled prompt therefore returns its existing durable outcome without another
+model call. If both fields are present, they must match. Clients that omit both
+fields receive a generated identity and do not get lost-request idempotency
+across processes.
 
 If a process stopped after admitting a turn but before settling it, a different
 new turn is rejected before admission or model execution. Retrying the original
@@ -141,8 +141,9 @@ turn to continue.
 
 During `session/load`, Renoa validates gapless semantic history and sends its
 user, assistant, reasoning, tool-call, and tool-result updates before the load
-response. The desktop keeps only the last session identity in browser storage;
-it does not persist a second transcript.
+response. A surface may keep a presentation cache, but it must reconcile that
+cache with the replayed durable event identities instead of treating a second
+transcript as execution truth.
 
 ## Current limits
 

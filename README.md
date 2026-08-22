@@ -33,20 +33,20 @@ without turning the kernel into product policy or one giant plugin interface.
 - [`renoa-acp`](crates/renoa-acp) is a thin ACP v1 surface adapter. A compatible
   frontend launches `renoa-agent acp`; ACP translates UI messages and live
   updates but does not own agent composition or durability.
-- [`ui`](ui/README.md) is the first Renoa desktop surface. Its Tauri process
-  owns only the local ACP child and transport; the React UI uses the standard
-  ACP client contract.
 
 Alpha currently has `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and
 `find`. Model and reasoning choices can change between operations. Workspace
 `AGENTS.md` instructions are read again for every new operation, while an
 already admitted operation keeps its frozen behavior.
 
-After the one-time Fedora packages and SuperGrok login documented in the
-[desktop README](ui/README.md), launch the complete local path with:
+Graphical surfaces live outside this core repository and connect through ACP.
+After configuring a provider as documented in
+[`renoa-local`](crates/renoa-local/README.md), build and start the surface-neutral
+ACP process with:
 
 ```sh
-pnpm --dir ui desktop:dev:local
+cargo build -p renoa-acp
+./target/debug/renoa-agent acp
 ```
 
 ## RCP is separate
