@@ -43,12 +43,22 @@ fn image_prompt_content_crosses_acp_without_being_changed() {
             }
         }
     }));
-    let update = process.read();
-    let completed = process.read();
+    let messages = process.read_until_response(3);
+    let update = messages
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "agent_message_chunk")
+        .expect("assistant update");
+    let usage = messages
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "usage_update")
+        .expect("usage update");
+    let completed = messages.last().expect("prompt response");
     assert_eq!(
         update["params"]["update"]["content"]["text"],
         "Image received."
     );
+    assert_eq!(usage["params"]["update"]["used"], 2);
+    assert_eq!(usage["params"]["update"]["size"], 500_000);
     assert_eq!(completed["result"]["stopReason"], "end_turn");
     process.finish();
 }
@@ -85,7 +95,7 @@ fn a_new_process_resumes_the_same_durable_conversation() {
     let (history, loaded) = resumed.load_session(&workspace, &session_id);
     assert_eq!(loaded["id"], 2);
     assert!(loaded["result"].is_object());
-    assert_eq!(history.len(), 2);
+    assert_eq!(history.len(), 3);
     assert_eq!(
         history[0]["params"]["update"]["sessionUpdate"],
         "user_message_chunk"
@@ -103,7 +113,15 @@ fn a_new_process_resumes_the_same_durable_conversation() {
         history[1]["params"]["update"]["content"]["text"],
         "First response."
     );
-    for update in &history {
+    assert_eq!(
+        history[2]["params"]["update"],
+        json!({
+            "sessionUpdate": "usage_update",
+            "used": 2,
+            "size": 500_000
+        })
+    );
+    for update in &history[..2] {
         let message_id = update["params"]["update"]["messageId"]
             .as_str()
             .expect("durable message id");

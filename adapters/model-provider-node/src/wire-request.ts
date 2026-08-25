@@ -171,13 +171,16 @@ function parseAssistantContent(value: unknown, path: string): WireModelResponse[
     };
   }
   if (value.type === "reasoning") {
-    if (typeof value.text !== "string" || typeof value.redacted !== "boolean") {
+    if (
+      typeof value.text !== "string" ||
+      (value.redacted !== undefined && typeof value.redacted !== "boolean")
+    ) {
       throw invalidRequest(`${path} reasoning fields are malformed`);
     }
     return {
       type: "reasoning",
       text: value.text,
-      redacted: value.redacted,
+      redacted: value.redacted ?? false,
       ...(typeof value.signature === "string" ? { signature: value.signature } : value.signature === undefined ? {} : invalidField(`${path}.signature`)),
     };
   }

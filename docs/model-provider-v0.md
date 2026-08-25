@@ -113,8 +113,9 @@ pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scrip
 pnpm --dir adapters/model-provider-node build
 export RENOA_MODEL_BRIDGE="$PWD/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDER=xai   # or opencode-go
-export RENOA_MODEL=grok-4.6
+export RENOA_MODEL_PROVIDERS=xai,opencode-go
+export RENOA_MODEL_PROVIDER=opencode-go # default for new ACP sessions
+export RENOA_MODEL=deepseek-v4-pro
 export RENOA_MODEL_REASONING=high # optional
 ```
 
@@ -122,6 +123,17 @@ Authenticate with `pnpm --dir adapters/model-provider-node auth:xai` or
 `auth:opencode-go`. The RCP Pi node still uses `RENOA_PI_*` harness settings
 and is not this adapter.
 
+`renoa-agent` exposes enabled models as `provider/model` ACP identities. The
+qualification is presentation identity only: the Host persists provider and
+raw model separately and resolves that exact pair on every later turn and
+session reload. The headless `renoa-local` command continues to use the single
+provider selected by `RENOA_MODEL_PROVIDER`.
+
 A replacement adapter must implement `catalog`, `describe`, and `stream` over
 newline JSON on stdout, consume the same `RENOA_MODEL_*` environment, and
 preserve binding IDs as SHA-256 of the advertised model spec JSON.
+Each `catalog` entry also carries the model's validated positive
+`context_window_tokens`; the Host pins that value with the active model choice
+and ACP uses it only for standard context-usage telemetry. Each successful
+`stream` terminal reports normalized input, output, cache-read, and cache-write
+tokens when the provider supplied them.

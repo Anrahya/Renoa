@@ -5,6 +5,7 @@ import opencodeGoCatalog from "./upstream/catalogs/opencode-go.json" with { type
 import type { CatalogModel, ProviderId, ReasoningLevel } from "./contract.js";
 import {
   OPENCODE_GO_BASE_URL,
+  OPENCODE_GO_CATALOG_ADDITIONS,
   opencodeGoTransport,
   type OpenCodeTransport,
 } from "./providers/opencode-go.js";
@@ -21,7 +22,16 @@ export interface CatalogEntry {
 
 export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[] {
   const raw = provider === "xai" ? xaiCatalog : opencodeGoCatalog;
-  const discovered = flattenCatalog(raw)
+  const pinned = flattenCatalog(raw);
+  const pinnedIds = new Set(pinned.map((entry) => entry.id));
+  const source =
+    provider === "opencode-go"
+      ? [
+          ...pinned,
+          ...OPENCODE_GO_CATALOG_ADDITIONS.filter((entry) => !pinnedIds.has(entry.id)),
+        ]
+      : pinned;
+  const discovered = source
     .map((entry) => (provider === "opencode-go" ? applyOpenCodeOfficialTransport(entry) : entry))
     .filter((entry): entry is Record<string, unknown> => entry !== undefined)
     .map((entry) => validateModelSpec(entry, provider, String(entry.id)));
@@ -40,6 +50,7 @@ export function toWireCatalog(entries: readonly CatalogEntry[]): readonly Catalo
     id: entry.id,
     name: entry.name,
     reasoning_levels: entry.reasoning_levels,
+    context_window_tokens: entry.model.contextWindow,
     model_spec: entry.model,
   }));
 }

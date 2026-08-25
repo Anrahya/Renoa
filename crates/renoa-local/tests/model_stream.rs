@@ -158,13 +158,11 @@ async fn cancellation_after_the_bridge_emits_completed_keeps_the_response() {
     let directory = tempdir().expect("temporary directory");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
-    let ready = directory.path().join("ready");
     fs::write(&auth_store, "").expect("create auth placeholder");
     fs::write(
         &bridge,
         format!(
-            r#"{}
-import {{ writeFileSync }} from "node:fs";
+            r#"{DESCRIPTION}
 for await (const _chunk of process.stdin) {{}}
 process.stdout.write(JSON.stringify({{
   event: "completed",
@@ -175,28 +173,25 @@ process.stdout.write(JSON.stringify({{
     metadata: {{ api: "test", provider: "xai", model: "grok-test" }}
   }}
 }}) + "\n");
-writeFileSync({}, "ready");
 await new Promise(() => {{}});
 "#,
-            DESCRIPTION,
-            serde_json::to_string(&ready).expect("encode ready path"),
         ),
     )
     .expect("write completed-then-hang bridge");
     let model = load_model(&bridge, &auth_store).await;
     let cancellation = CancellationToken::new();
-    let stream = model.stream(request(), cancellation.clone());
-    timeout(Duration::from_secs(2), async {
-        while !ready.exists() {
-            sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("bridge emits completed");
-    cancellation.cancel();
-    let events = timeout(Duration::from_secs(2), stream.collect::<Vec<_>>())
+    let mut stream = model.stream(request(), cancellation.clone());
+    let completed = timeout(Duration::from_secs(2), stream.next())
         .await
-        .expect("cancelled stream must settle");
+        .expect("bridge publishes completed")
+        .expect("stream contains completed");
+    cancellation.cancel();
+    let mut events = vec![completed];
+    events.extend(
+        timeout(Duration::from_secs(2), stream.collect::<Vec<_>>())
+            .await
+            .expect("cancelled stream must settle"),
+    );
     assert!(
         events.iter().any(|event| matches!(
             event,

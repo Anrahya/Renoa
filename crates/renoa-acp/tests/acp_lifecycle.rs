@@ -298,8 +298,9 @@ fn model_catalog_probe_is_read_only_and_marks_runtime_defaults() {
         .args(["models", "--json"])
         .env("RENOA_DATA_DIR", &data)
         .env("RENOA_MODEL_BRIDGE", &bridge)
-        .env("RENOA_MODEL_PROVIDER", "xai")
-        .env("RENOA_MODEL", "grok-test")
+        .env("RENOA_MODEL_PROVIDERS", "xai,opencode-go")
+        .env("RENOA_MODEL_PROVIDER", "opencode-go")
+        .env("RENOA_MODEL", "deepseek-test")
         .env("RENOA_MODEL_AUTH_STORE", &auth_store)
         .output()
         .expect("run model catalog probe");
@@ -321,9 +322,9 @@ fn model_catalog_probe_is_read_only_and_marks_runtime_defaults() {
         json!({
             "models": [
                 {
-                    "id": "grok-test",
-                    "name": "Grok Test",
-                    "isDefault": true,
+                    "id": "xai/grok-test",
+                    "name": "Grok Test (xAI)",
+                    "isDefault": false,
                     "reasoningLevels": [
                         { "id": "low", "name": "Low" },
                         { "id": "medium", "name": "Medium" },
@@ -332,12 +333,32 @@ fn model_catalog_probe_is_read_only_and_marks_runtime_defaults() {
                     "defaultReasoning": "high"
                 },
                 {
-                    "id": "grok-fast",
-                    "name": "Grok Fast",
+                    "id": "xai/grok-fast",
+                    "name": "Grok Fast (xAI)",
                     "isDefault": false,
                     "reasoningLevels": [
                         { "id": "off", "name": "Off" },
                         { "id": "low", "name": "Low" },
+                        { "id": "high", "name": "High" }
+                    ],
+                    "defaultReasoning": "high"
+                },
+                {
+                    "id": "opencode-go/deepseek-test",
+                    "name": "DeepSeek Test (OpenCode Go)",
+                    "isDefault": true,
+                    "reasoningLevels": [
+                        { "id": "low", "name": "Low" },
+                        { "id": "high", "name": "High" }
+                    ],
+                    "defaultReasoning": "high"
+                },
+                {
+                    "id": "opencode-go/grok-test",
+                    "name": "Grok Test (OpenCode Go)",
+                    "isDefault": false,
+                    "reasoningLevels": [
+                        { "id": "off", "name": "Off" },
                         { "id": "high", "name": "High" }
                     ],
                     "defaultReasoning": "high"

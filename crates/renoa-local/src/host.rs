@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -12,7 +13,8 @@ use crate::alpha_session::AlphaSessionStorage;
 use crate::{
     AlphaError, AlphaSession, LocalRuntimeConfig, LocalRuntimeError, LocalSession,
     LocalSessionError, LocalWorkspace, LocalWorkspaceError, ModelBridgeError, ModelChoice,
-    ReasoningLevel, build_local_runtime, build_local_runtime_with_events, discover_models,
+    ModelProvider, ReasoningLevel, build_local_runtime, build_local_runtime_with_events,
+    discover_models,
     host_storage::{
         KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, delete_session_storage,
         read_manifest,
@@ -29,7 +31,8 @@ pub struct LocalHost {
 pub(crate) struct HostConfig {
     pub(crate) sessions: PathBuf,
     pub(crate) bridge: PathBuf,
-    pub(crate) provider: String,
+    pub(crate) providers: Vec<ModelProvider>,
+    pub(crate) initial_provider: ModelProvider,
     pub(crate) initial_model: String,
     pub(crate) credential_store: PathBuf,
 }
@@ -77,7 +80,7 @@ impl From<TraceError> for LocalHostError {
 }
 
 impl LocalHost {
-    /// Creates the first local Host around one provider and durable session root.
+    /// Creates the local Host around its enabled providers and durable session root.
     ///
     /// # Errors
     ///
@@ -85,10 +88,26 @@ impl LocalHost {
     pub fn new(
         sessions: impl Into<PathBuf>,
         bridge: impl Into<PathBuf>,
-        provider: impl Into<String>,
+        providers: Vec<ModelProvider>,
+        initial_provider: ModelProvider,
         initial_model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
     ) -> Result<Self, LocalHostError> {
+        if providers.is_empty() {
+            return Err(LocalHostError::Configuration(
+                "at least one model provider must be enabled".to_owned(),
+            ));
+        }
+        if providers.iter().copied().collect::<HashSet<_>>().len() != providers.len() {
+            return Err(LocalHostError::Configuration(
+                "enabled model providers must be unique".to_owned(),
+            ));
+        }
+        if !providers.contains(&initial_provider) {
+            return Err(LocalHostError::Configuration(format!(
+                "default {initial_provider} provider is not enabled"
+            )));
+        }
         let sessions = sessions.into();
         std::fs::create_dir_all(&sessions)?;
         let sessions = std::fs::canonicalize(sessions)?;
@@ -96,7 +115,8 @@ impl LocalHost {
             config: Arc::new(HostConfig {
                 sessions,
                 bridge: bridge.into(),
-                provider: provider.into(),
+                providers,
+                initial_provider,
                 initial_model: initial_model.into(),
                 credential_store: credential_store.into(),
             }),
@@ -116,15 +136,24 @@ impl LocalHost {
         let workspace = LocalWorkspace::open(cwd)?;
         let workspace_path = std::fs::canonicalize(cwd)?;
         let models = self.models().await?;
-        let reasoning = initial_reasoning(&models, &self.config.initial_model)?;
-        let model = require_model(&models, &self.config.initial_model, "configured")?;
+        let reasoning = initial_reasoning(
+            &models,
+            self.config.initial_provider,
+            &self.config.initial_model,
+        )?;
+        let model = require_model(
+            &models,
+            self.config.initial_provider,
+            &self.config.initial_model,
+            "configured",
+        )?;
         self.resolve_runtime(model, reasoning, &workspace, None)
             .await?;
         let agent_id = AgentId::new();
         let session_uuid = Uuid::new_v4();
         let session_id = SessionId::from_uuid(session_uuid);
         let selection = RuntimeSelection {
-            provider: self.config.provider.clone(),
+            provider: self.config.initial_provider,
             model: self.config.initial_model.clone(),
             reasoning,
         };
@@ -191,10 +220,10 @@ impl LocalHost {
         let selection_path = directory.join(SELECTION_FILE);
         let trace = TraceStore::open(directory.join(TRACE_DATABASE), session_id)?;
         let selection = read_selection(selection_path.clone()).await?;
-        if selection.provider != self.config.provider {
+        if !self.config.providers.contains(&selection.provider) {
             return Err(LocalHostError::Configuration(format!(
-                "session requires the {} provider, but {} is configured",
-                selection.provider, self.config.provider
+                "session requires the {} provider, but it is not enabled",
+                selection.provider
             )));
         }
         let models = self.models().await?;
@@ -229,12 +258,18 @@ impl LocalHost {
     }
 
     async fn models(&self) -> Result<Vec<ModelChoice>, LocalHostError> {
-        Ok(discover_models(
-            self.config.bridge.clone(),
-            self.config.provider.clone(),
-            self.config.credential_store.clone(),
-        )
-        .await?)
+        let mut models = Vec::new();
+        for provider in &self.config.providers {
+            models.extend(
+                discover_models(
+                    self.config.bridge.clone(),
+                    *provider,
+                    self.config.credential_store.clone(),
+                )
+                .await?,
+            );
+        }
+        Ok(models)
     }
 
     async fn resolve_runtime(
@@ -257,7 +292,7 @@ pub(crate) async fn resolve_runtime(
 ) -> Result<renoa_kernel::Runtime, LocalHostError> {
     let config = LocalRuntimeConfig::for_alpha(
         host.bridge.clone(),
-        host.provider.clone(),
+        model.provider().as_str(),
         model.id(),
         host.credential_store.clone(),
         workspace,
@@ -272,9 +307,10 @@ pub(crate) async fn resolve_runtime(
 
 pub(crate) fn initial_reasoning(
     models: &[ModelChoice],
+    provider: ModelProvider,
     configured_model: &str,
 ) -> Result<ReasoningLevel, LocalHostError> {
-    let model = require_model(models, configured_model, "configured")?;
+    let model = require_model(models, provider, configured_model, "configured")?;
     model.default_reasoning().ok_or_else(|| {
         LocalHostError::Configuration(format!(
             "configured {configured_model} model has no supported reasoning level"
@@ -282,18 +318,34 @@ pub(crate) fn initial_reasoning(
     })
 }
 
-pub(crate) fn selected_model<'a>(models: &'a [ModelChoice], id: &str) -> Option<&'a ModelChoice> {
-    models.iter().find(|model| model.id() == id)
+pub(crate) fn selected_model<'a>(
+    models: &'a [ModelChoice],
+    provider: ModelProvider,
+    id: &str,
+) -> Option<&'a ModelChoice> {
+    models
+        .iter()
+        .find(|model| model.provider() == provider && model.id() == id)
+}
+
+pub(crate) fn selected_model_by_selection_id<'a>(
+    models: &'a [ModelChoice],
+    selection_id: &str,
+) -> Option<&'a ModelChoice> {
+    models
+        .iter()
+        .find(|model| model.selection_id() == selection_id)
 }
 
 pub(crate) fn require_model<'a>(
     models: &'a [ModelChoice],
+    provider: ModelProvider,
     id: &str,
     source: &str,
 ) -> Result<&'a ModelChoice, LocalHostError> {
-    selected_model(models, id).ok_or_else(|| {
+    selected_model(models, provider, id).ok_or_else(|| {
         LocalHostError::Configuration(format!(
-            "{source} {id} model is not available from the authenticated provider"
+            "{source} {provider}/{id} model is not available from the authenticated provider"
         ))
     })
 }
@@ -302,7 +354,7 @@ fn validate_selection<'a>(
     models: &'a [ModelChoice],
     selection: &RuntimeSelection,
 ) -> Result<&'a ModelChoice, LocalHostError> {
-    let model = require_model(models, &selection.model, "saved")?;
+    let model = require_model(models, selection.provider, &selection.model, "saved")?;
     if !model.reasoning_levels().contains(&selection.reasoning) {
         return Err(LocalHostError::Configuration(format!(
             "saved {} model no longer supports {} reasoning",

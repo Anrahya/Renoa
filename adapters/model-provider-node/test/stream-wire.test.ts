@@ -54,6 +54,42 @@ test("xAI Grok 4.6 sends distinct reasoning_effort values on the chat completion
   assert.equal(new Set(bodies).size, 3);
 });
 
+test("OpenCode Go Ox Alpha sends its documented chat, reasoning, and tool fields", async () => {
+  const server = await startFakeServer();
+  server.enqueue({ sse: successfulChat("ox") });
+  const directory = tempDir();
+  try {
+    await runStream({
+      directory: directory.path,
+      provider: "opencode-go",
+      modelId: "ox-alpha-free",
+      baseUrl: server.baseUrl,
+      credential: { type: "api_key", key: "opencode-test-key" },
+      reasoningLevel: "max",
+    });
+    const request = server.requests[0];
+    assert.ok(request);
+    assert.equal(request.method, "POST");
+    assert.equal(request.url, "/v1/chat/completions");
+    assert.match(request.headers.authorization ?? "", /^Bearer opencode-test-key$/);
+    const body = JSON.parse(request.body) as {
+      model?: string;
+      reasoning_effort?: string;
+      max_tokens?: number;
+      max_completion_tokens?: number;
+      tools?: unknown[];
+    };
+    assert.equal(body.model, "ox-alpha-free");
+    assert.equal(body.reasoning_effort, "max");
+    assert.equal(typeof body.max_tokens, "number");
+    assert.equal(body.max_completion_tokens, undefined);
+    assert.equal(body.tools?.length, 1);
+  } finally {
+    await server.close();
+    directory.close();
+  }
+});
+
 test("each supported transport uses the official method, route, auth, and body fields", async () => {
   const chat = await startFakeServer();
   chat.enqueue({ sse: successfulChat("chat") });

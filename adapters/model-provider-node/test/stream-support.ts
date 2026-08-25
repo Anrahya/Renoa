@@ -21,7 +21,7 @@ export interface StreamOptions {
   baseUrl: string;
   credential: Credential;
   provider?: "xai" | "opencode-go";
-  reasoningLevel?: "low" | "medium" | "high" | "xhigh";
+  reasoningLevel?: "low" | "medium" | "high" | "xhigh" | "max";
   clock?: ManualClock;
   signal?: AbortSignal;
   releases?: number;

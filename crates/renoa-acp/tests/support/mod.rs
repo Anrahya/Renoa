@@ -18,13 +18,34 @@ impl AcpProcess {
         bridge: &std::path::Path,
         auth_store: &std::path::Path,
     ) -> Self {
+        Self::spawn_with_providers(
+            workspace,
+            data,
+            bridge,
+            auth_store,
+            "xai",
+            "xai",
+            "grok-test",
+        )
+    }
+
+    pub(crate) fn spawn_with_providers(
+        workspace: &std::path::Path,
+        data: &std::path::Path,
+        bridge: &std::path::Path,
+        auth_store: &std::path::Path,
+        providers: &str,
+        default_provider: &str,
+        default_model: &str,
+    ) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
             .arg("acp")
             .current_dir(workspace)
             .env("RENOA_DATA_DIR", data)
             .env("RENOA_MODEL_BRIDGE", bridge)
-            .env("RENOA_MODEL_PROVIDER", "xai")
-            .env("RENOA_MODEL", "grok-test")
+            .env("RENOA_MODEL_PROVIDERS", providers)
+            .env("RENOA_MODEL_PROVIDER", default_provider)
+            .env("RENOA_MODEL", default_model)
             .env("RENOA_MODEL_AUTH_STORE", auth_store)
             .env("RENOA_TEST_STARTED", data.join("model-started"))
             .env("RENOA_TEST_COMPLETED", data.join("model-completed"))
@@ -109,13 +130,21 @@ impl AcpProcess {
     pub(crate) fn prompt(&mut self, session_id: &str, text: &str, turn_id: &str) -> (Value, Value) {
         self.send_prompt(session_id, text, turn_id);
         let mut messages = self.read_until_response(3);
-        assert_eq!(
-            messages.len(),
-            2,
+        let response = messages.pop().expect("prompt response");
+        let update_position = messages
+            .iter()
+            .position(|message| {
+                message["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+            })
+            .expect("simple prompt update");
+        let update = messages.remove(update_position);
+        assert!(
+            messages.len() <= 1
+                && messages.iter().all(|message| {
+                    message["params"]["update"]["sessionUpdate"] == "usage_update"
+                }),
             "simple prompt returned an unexpected ACP message sequence: {messages:?}"
         );
-        let response = messages.pop().expect("prompt response");
-        let update = messages.pop().expect("prompt update");
         (update, response)
     }
 
@@ -188,20 +217,40 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const models = [
-  {
-    id: "grok-test",
-    name: "Grok Test",
-    reasoning_levels: ["low", "medium", "high"],
-    model_spec: { id: "grok-test" }
-  },
-  {
-    id: "grok-fast",
-    name: "Grok Fast",
-    reasoning_levels: ["off", "low", "high"],
-    model_spec: { id: "grok-fast" }
-  }
-];
+const provider = process.env.RENOA_MODEL_PROVIDER;
+const models = provider === "opencode-go"
+  ? [
+      {
+        id: "deepseek-test",
+        name: "DeepSeek Test",
+        reasoning_levels: ["low", "high"],
+        context_window_tokens: 500000,
+        model_spec: { id: "deepseek-test" }
+      },
+      {
+        id: "grok-test",
+        name: "Grok Test",
+        reasoning_levels: ["off", "high"],
+        context_window_tokens: 500000,
+        model_spec: { id: "grok-test" }
+      }
+    ]
+  : [
+      {
+        id: "grok-test",
+        name: "Grok Test",
+        reasoning_levels: ["low", "medium", "high"],
+        context_window_tokens: 500000,
+        model_spec: { id: "grok-test" }
+      },
+      {
+        id: "grok-fast",
+        name: "Grok Fast",
+        reasoning_levels: ["off", "low", "high"],
+        context_window_tokens: 500000,
+        model_spec: { id: "grok-fast" }
+      }
+    ];
 if (process.env.RENOA_MODEL_ACTION === "catalog") {
   process.stdout.write(JSON.stringify({ ok: true, response: { models } }));
   process.exit(0);
@@ -343,6 +392,13 @@ if (prompt === "Hello") {
   process.env.RENOA_MODEL_REASONING === "low"
 ) {
   content = [{ type: "text", text: "Model configured." }];
+} else if (
+  prompt === "OpenCode configured" &&
+  provider === "opencode-go" &&
+  process.env.RENOA_MODEL === "deepseek-test" &&
+  process.env.RENOA_MODEL_REASONING === "high"
+) {
+  content = [{ type: "text", text: "OpenCode configured." }];
 } else if (prompt === "First") {
   content = [{ type: "text", text: "First response." }];
 } else if (
@@ -425,7 +481,7 @@ process.stdout.write(JSON.stringify({
     content,
     stop_reason,
     usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
-    metadata: { api: "test", provider: "xai", model: process.env.RENOA_MODEL }
+    metadata: { api: "test", provider, model: process.env.RENOA_MODEL }
   }
 }));
 "#;

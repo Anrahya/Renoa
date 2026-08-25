@@ -175,7 +175,12 @@ impl Server {
             .load_alpha_session(session_id, &request.cwd)
             .await?;
         let config_options = config_options(&session)?;
-        events::replay_history(connection, &session.id().to_string(), session.history()?)?;
+        events::replay_history(
+            connection,
+            &session.id().to_string(),
+            session.history()?,
+            session.context_window_tokens()?,
+        )?;
         *active = Some(session);
         Ok(LoadSessionResponse::new().config_options(config_options))
     }
@@ -232,6 +237,7 @@ impl Server {
         let sink = Arc::new(AcpEventSink::new(
             connection.clone(),
             session.id().to_string(),
+            session.context_window_tokens()?,
         ));
         let events: Arc<dyn AgentEventSink> = sink.clone();
         let outcome = prompt::execute(&session, request, request_id, events).await?;
@@ -333,7 +339,7 @@ fn config_options(session: &AlphaSession) -> Result<Vec<SessionConfigOption>, Se
     } = session.configuration()?;
     let model = models
         .iter()
-        .find(|model| model.id() == selected)
+        .find(|model| model.selection_id() == selected)
         .ok_or_else(|| {
             ServerError::Operation("active model is absent from its catalog".to_owned())
         })?;
@@ -344,7 +350,12 @@ fn config_options(session: &AlphaSession) -> Result<Vec<SessionConfigOption>, Se
             selected,
             models
                 .iter()
-                .map(|model| SessionConfigSelectOption::new(model.id().to_owned(), model.name()))
+                .map(|model| {
+                    SessionConfigSelectOption::new(
+                        model.selection_id(),
+                        format!("{} ({})", model.name(), model.provider().name()),
+                    )
+                })
                 .collect::<Vec<_>>(),
         )
         .category(SessionConfigOptionCategory::Model),

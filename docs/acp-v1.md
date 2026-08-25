@@ -46,15 +46,21 @@ create or modify durable session state.
 The process reads:
 
 - `RENOA_MODEL_BRIDGE`
+- optional `RENOA_MODEL_PROVIDERS`
 - `RENOA_MODEL_PROVIDER`
 - `RENOA_MODEL`
 - `RENOA_MODEL_AUTH_STORE`
 - optional `RENOA_DATA_DIR`
 
 Without `RENOA_DATA_DIR`, sessions use Renoa's platform data directory.
-`RENOA_MODEL_PROVIDER` selects the provider hosted by this process.
-`RENOA_MODEL` is the initial model for a new session; it is not a fixed UI
-choice. Authentication remains local to the provider adapter.
+`RENOA_MODEL_PROVIDERS` is a comma-separated enabled set; when absent, it
+defaults to the single `RENOA_MODEL_PROVIDER`. `RENOA_MODEL_PROVIDER` and
+`RENOA_MODEL` select the default provider and raw model ID for a new session.
+Surfaces see collision-safe `provider/model` choices and can switch both with
+the standard ACP model selector. Renoa durably stores provider and model as
+separate fields, so `session/load` restores the exact adapter rather than the
+current process default. Authentication remains local to the provider adapter,
+and every explicitly enabled provider must have a usable credential.
 The adapter always resolves Renoa Alpha v1, including its curated base prompt
 and bounded workspace `AGENTS.md` instructions. An environment variable cannot
 replace Alpha's instructions. The Host reads `AGENTS.md` again before each new
@@ -81,6 +87,12 @@ turn and freezes the result only when the kernel admits that operation.
 - Model text and reasoning deltas stream while inference is running.
 - Tool start, progress, completion, failure, and final assistant text stream as
   ACP session updates.
+- Every provider call with reported token usage emits the standard ACP
+  `usage_update`. `used` is that call's input, cache-read, cache-write, and
+  output tokens; `size` is the active model's validated context window.
+- `session/load` emits the latest usage stored in durable assistant history
+  after replaying the transcript, so a restarted surface restores the meter
+  without another model call.
 - The final prompt response is sent only after the kernel has durably settled
   the operation.
 
@@ -93,9 +105,10 @@ The adapter advertises `loadSession`, `session/close`, `session/delete`, and
 image prompts. Audio, embedded resources, additional workspace directories,
 and MCP servers are rejected.
 
-The model list comes from Pi's authenticated provider catalog. Renoa validates
-and pins the selected model specification before building a runtime, so a
-newly discovered model is not fetched again between selection and use.
+The model list comes from the Renoa-owned provider adapter's authenticated,
+pinned catalog. Renoa validates and pins the selected model specification
+before building a runtime, so a newly discovered model is not fetched again
+between selection and use.
 Reasoning choices come from that model's declared capability map. A model
 change keeps the current reasoning level when the new model supports it;
 otherwise it uses `high`, or the model's first supported level. Configuration

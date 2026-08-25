@@ -54,13 +54,20 @@ fn provider_deltas_reach_the_frontend_before_the_model_finishes() {
     );
 
     fs::write(data.join("model-continue"), "continue").expect("release model bridge");
-    let second = process.read();
-    let completed = process.read();
+    let remaining = process.read_until_response(3);
+    let second = &remaining[0];
     assert_eq!(second["params"]["update"]["content"]["text"], "world");
     assert_eq!(
         second["params"]["update"]["messageId"],
         first["params"]["update"]["messageId"]
     );
+    let usage = remaining
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "usage_update")
+        .expect("provider usage reaches ACP");
+    assert_eq!(usage["params"]["update"]["used"], 3);
+    assert_eq!(usage["params"]["update"]["size"], 500_000);
+    let completed = remaining.last().expect("prompt response");
     assert_eq!(completed["id"], 3);
     assert_eq!(completed["result"]["stopReason"], "end_turn");
     process.finish();

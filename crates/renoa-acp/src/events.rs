@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{num::NonZeroU64, sync::Mutex};
 
 use crate::ServerError;
 use agent_client_protocol::{
@@ -7,12 +7,12 @@ use agent_client_protocol::{
         ContentBlock as AcpContentBlock, ContentChunk, ImageContent, MessageId, Meta, SessionId,
         SessionInfoUpdate, SessionNotification, SessionUpdate, TextContent,
         ToolCall as AcpToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate,
-        ToolCallUpdateFields, ToolKind,
+        ToolCallUpdateFields, ToolKind, UsageUpdate,
     },
 };
 use renoa_agent::{
     AgentEvent, AgentEventSink, AssistantContent, AssistantDelta, BoxFuture, ContentBlock, Message,
-    MessageRole, ModelFailureCode, ToolCall, ToolOutput, ToolResult,
+    MessageRole, ModelFailureCode, TokenUsage, ToolCall, ToolOutput, ToolResult,
 };
 use renoa_local::LocalHistoryEntry;
 use serde_json::json;
@@ -21,6 +21,7 @@ use uuid::Uuid;
 pub(crate) struct AcpEventSink {
     connection: ConnectionTo<Client>,
     session_id: SessionId,
+    context_window_tokens: NonZeroU64,
     state: Mutex<EventState>,
 }
 
@@ -38,10 +39,15 @@ pub(crate) struct LastModelFailure {
 }
 
 impl AcpEventSink {
-    pub(crate) fn new(connection: ConnectionTo<Client>, session_id: impl Into<SessionId>) -> Self {
+    pub(crate) fn new(
+        connection: ConnectionTo<Client>,
+        session_id: impl Into<SessionId>,
+        context_window_tokens: NonZeroU64,
+    ) -> Self {
         Self {
             connection,
             session_id: session_id.into(),
+            context_window_tokens,
             state: Mutex::new(EventState {
                 current_text: String::new(),
                 message_id: Uuid::new_v4().to_string(),
@@ -121,6 +127,11 @@ impl AcpEventSink {
             } => self.start_assistant_message(),
             AgentEvent::MessageAbort => self.clear_text(),
             AgentEvent::MessageUpdate { delta, .. } => self.send_delta(delta),
+            AgentEvent::ModelRequestEnd { response, .. } => {
+                if let Some(usage) = response.usage {
+                    self.send_usage(usage);
+                }
+            }
             AgentEvent::ToolExecutionStart { call } => self.send(SessionUpdate::ToolCall(
                 AcpToolCall::new(call.id.clone(), tool_title(&call))
                     .kind(tool_kind(&call.name))
@@ -181,6 +192,21 @@ impl AcpEventSink {
         }
     }
 
+    fn send_usage(&self, usage: TokenUsage) {
+        let Some(used) = context_tokens(usage) else {
+            if let Ok(mut state) = self.state.lock()
+                && state.send_error.is_none()
+            {
+                state.send_error = Some("provider token usage overflowed u64".to_owned());
+            }
+            return;
+        };
+        self.send(SessionUpdate::UsageUpdate(UsageUpdate::new(
+            used,
+            self.context_window_tokens.get(),
+        )));
+    }
+
     fn start_assistant_message(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.current_text.clear();
@@ -227,8 +253,16 @@ pub(crate) fn replay_history(
     connection: &ConnectionTo<Client>,
     session_id: &str,
     history: Vec<LocalHistoryEntry>,
+    context_window_tokens: NonZeroU64,
 ) -> Result<(), ServerError> {
+    let mut latest_usage = None;
     for entry in history {
+        if let Message::Assistant {
+            usage: Some(usage), ..
+        } = &entry.message
+        {
+            latest_usage = Some(*usage);
+        }
         let request_id = entry.command_id.to_string();
         for update in replay_message(entry.message, &entry.event_id, &request_id) {
             connection
@@ -236,7 +270,26 @@ pub(crate) fn replay_history(
                 .map_err(ServerError::Transport)?;
         }
     }
+    if let Some(usage) = latest_usage {
+        let used = context_tokens(usage).ok_or_else(|| {
+            ServerError::Operation("durable token usage overflowed u64".to_owned())
+        })?;
+        connection
+            .send_notification(SessionNotification::new(
+                session_id.to_owned(),
+                SessionUpdate::UsageUpdate(UsageUpdate::new(used, context_window_tokens.get())),
+            ))
+            .map_err(ServerError::Transport)?;
+    }
     Ok(())
+}
+
+fn context_tokens(usage: TokenUsage) -> Option<u64> {
+    usage
+        .input
+        .checked_add(usage.cache_read)?
+        .checked_add(usage.cache_write)?
+        .checked_add(usage.output)
 }
 
 fn replay_message(message: Message, message_id: &str, request_id: &str) -> Vec<SessionUpdate> {
@@ -370,12 +423,39 @@ fn tool_title(call: &ToolCall) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::tool_kind;
+    use super::{context_tokens, tool_kind};
     use agent_client_protocol::schema::v1::ToolKind;
+    use renoa_agent::TokenUsage;
 
     #[test]
     fn coding_search_tools_use_the_standard_search_kind() {
         assert_eq!(tool_kind("grep"), ToolKind::Search);
         assert_eq!(tool_kind("find"), ToolKind::Search);
+    }
+
+    #[test]
+    fn context_usage_counts_every_normalized_token_lane() {
+        assert_eq!(
+            context_tokens(TokenUsage {
+                input: 11,
+                output: 7,
+                cache_read: 5,
+                cache_write: 3,
+            }),
+            Some(26)
+        );
+    }
+
+    #[test]
+    fn context_usage_rejects_overflow_instead_of_wrapping() {
+        assert_eq!(
+            context_tokens(TokenUsage {
+                input: u64::MAX,
+                output: 1,
+                cache_read: 0,
+                cache_write: 0,
+            }),
+            None
+        );
     }
 }

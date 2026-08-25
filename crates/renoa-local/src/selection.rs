@@ -6,13 +6,13 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LocalHostError, ReasoningLevel};
+use crate::{LocalHostError, ModelProvider, ReasoningLevel};
 
 pub(crate) const SELECTION_FILE: &str = "runtime.jsonl";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct RuntimeSelection {
-    pub(crate) provider: String,
+    pub(crate) provider: ModelProvider,
     pub(crate) model: String,
     pub(crate) reasoning: ReasoningLevel,
 }

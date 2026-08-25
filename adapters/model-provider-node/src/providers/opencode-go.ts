@@ -14,6 +14,41 @@ export const OPENCODE_GO_BASE_URL = {
   "anthropic-messages": "https://opencode.ai/zen/go",
 } as const;
 
+/**
+ * Current OpenCode Go models absent from the pinned Pi catalog. Metadata is a
+ * Renoa-supported projection of models.dev commit
+ * be4e8d624fe57e129ef4e6523f8d774946f29b81 (MIT): video input is omitted
+ * because Renoa's provider-neutral contract currently carries text and images.
+ */
+export const OPENCODE_GO_CATALOG_ADDITIONS: readonly Record<string, unknown>[] = [
+  {
+    id: "ox-alpha-free",
+    name: "Ox Alpha Free (Unlimited)",
+    api: "openai-completions",
+    provider: "opencode-go",
+    baseUrl: OPENCODE_GO_BASE_URL["openai-completions"],
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    compat: {
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      maxTokensField: "max_tokens",
+    },
+    contextWindow: 1_000_000,
+    maxTokens: 131_072,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    },
+  },
+];
+
 export const OPENCODE_GO_TRANSPORTS: Readonly<Record<string, OpenCodeTransport>> = {
   "grok-4.5": "openai-responses",
   "gpt-5.6-luna": "openai-responses",

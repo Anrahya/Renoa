@@ -199,8 +199,12 @@ fn an_unfinished_turn_requires_its_stable_identity_before_execution() {
             }
         }
     }));
-    let update = resumed.read();
-    let completed = resumed.read();
+    let mut messages = resumed.read_until_response(4);
+    let completed = messages.pop().expect("prompt response");
+    let update = messages
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "agent_message_chunk")
+        .expect("assistant update");
     assert_eq!(
         update["params"]["update"]["content"]["text"],
         "Exactly once."

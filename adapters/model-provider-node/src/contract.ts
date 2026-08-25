@@ -169,6 +169,7 @@ export interface CatalogModel {
   readonly id: string;
   readonly name: string;
   readonly reasoning_levels: readonly string[];
+  readonly context_window_tokens: number;
   readonly model_spec: unknown;
 }
 

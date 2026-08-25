@@ -1,6 +1,6 @@
-use std::{env, path::PathBuf};
+use std::{collections::HashSet, env, path::PathBuf};
 
-use renoa_local::{LocalHost, LocalHostError, ModelChoice, discover_models};
+use renoa_local::{LocalHost, LocalHostError, ModelChoice, ModelProvider, discover_models};
 use serde::Serialize;
 
 use crate::ServerError;
@@ -34,7 +34,8 @@ struct CatalogReasoningLevel {
 
 struct ProviderSettings {
     bridge: PathBuf,
-    provider: String,
+    providers: Vec<ModelProvider>,
+    default_provider: ModelProvider,
     model: String,
     credential_store: PathBuf,
 }
@@ -52,7 +53,8 @@ impl Config {
             host: LocalHost::new(
                 data_directory.join("sessions"),
                 settings.bridge,
-                settings.provider,
+                settings.providers,
+                settings.default_provider,
                 settings.model,
                 settings.credential_store,
             )?,
@@ -66,9 +68,11 @@ impl Config {
 
 impl ProviderSettings {
     fn from_environment() -> Result<Self, ServerError> {
+        let default_provider = required_provider("RENOA_MODEL_PROVIDER")?;
         Ok(Self {
             bridge: required_path("RENOA_MODEL_BRIDGE")?,
-            provider: required("RENOA_MODEL_PROVIDER")?,
+            providers: enabled_providers(default_provider)?,
+            default_provider,
             model: required("RENOA_MODEL")?,
             credential_store: required_path("RENOA_MODEL_AUTH_STORE")?,
         })
@@ -76,10 +80,17 @@ impl ProviderSettings {
 }
 
 impl ModelCatalog {
-    fn from_models(models: Vec<ModelChoice>, configured_model: &str) -> Result<Self, ServerError> {
-        if !models.iter().any(|model| model.id() == configured_model) {
+    fn from_models(
+        models: Vec<ModelChoice>,
+        default_provider: ModelProvider,
+        configured_model: &str,
+    ) -> Result<Self, ServerError> {
+        if !models
+            .iter()
+            .any(|model| model.provider() == default_provider && model.id() == configured_model)
+        {
             return Err(ServerError::Configuration(format!(
-                "configured {configured_model} model is not available from the authenticated provider"
+                "configured {default_provider}/{configured_model} model is not available from the authenticated provider"
             )));
         }
         let models = models
@@ -92,9 +103,10 @@ impl ModelCatalog {
                     ))
                 })?;
                 Ok(CatalogModel {
-                    id: model.id().to_owned(),
-                    name: model.name().to_owned(),
-                    is_default: model.id() == configured_model,
+                    id: model.selection_id(),
+                    name: format!("{} ({})", model.name(), model.provider().name()),
+                    is_default: model.provider() == default_provider
+                        && model.id() == configured_model,
                     reasoning_levels: model
                         .reasoning_levels()
                         .iter()
@@ -119,14 +131,64 @@ impl ModelCatalog {
 /// Returns an error when provider settings, authentication, or the catalog are invalid.
 pub async fn configured_model_catalog() -> Result<ModelCatalog, ServerError> {
     let settings = ProviderSettings::from_environment()?;
-    let models = discover_models(
-        settings.bridge,
-        settings.provider,
-        settings.credential_store,
-    )
-    .await
-    .map_err(LocalHostError::from)?;
-    ModelCatalog::from_models(models, &settings.model)
+    let mut models = Vec::new();
+    for provider in &settings.providers {
+        models.extend(
+            discover_models(
+                settings.bridge.clone(),
+                *provider,
+                settings.credential_store.clone(),
+            )
+            .await
+            .map_err(LocalHostError::from)?,
+        );
+    }
+    ModelCatalog::from_models(models, settings.default_provider, &settings.model)
+}
+
+fn enabled_providers(default: ModelProvider) -> Result<Vec<ModelProvider>, ServerError> {
+    let configured = env::var("RENOA_MODEL_PROVIDERS")
+        .ok()
+        .filter(|value| !value.is_empty());
+    parse_enabled_providers(default, configured.as_deref())
+}
+
+fn parse_enabled_providers(
+    default: ModelProvider,
+    configured: Option<&str>,
+) -> Result<Vec<ModelProvider>, ServerError> {
+    let Some(configured) = configured else {
+        return Ok(vec![default]);
+    };
+    let providers = configured
+        .split(',')
+        .map(str::trim)
+        .map(|provider| {
+            ModelProvider::from_id(provider).ok_or_else(|| {
+                ServerError::Configuration(format!(
+                    "RENOA_MODEL_PROVIDERS contains unsupported provider {provider}"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if providers.iter().copied().collect::<HashSet<_>>().len() != providers.len() {
+        return Err(ServerError::Configuration(
+            "RENOA_MODEL_PROVIDERS must not repeat a provider".to_owned(),
+        ));
+    }
+    if !providers.contains(&default) {
+        return Err(ServerError::Configuration(format!(
+            "RENOA_MODEL_PROVIDER {default} is absent from RENOA_MODEL_PROVIDERS"
+        )));
+    }
+    Ok(providers)
+}
+
+fn required_provider(name: &str) -> Result<ModelProvider, ServerError> {
+    let value = required(name)?;
+    ModelProvider::from_id(&value).ok_or_else(|| {
+        ServerError::Configuration(format!("{name} contains unsupported provider {value}"))
+    })
 }
 
 fn required(name: &str) -> Result<String, ServerError> {
@@ -175,5 +237,33 @@ fn absolute(path: PathBuf) -> Result<PathBuf, ServerError> {
         Ok(path)
     } else {
         Ok(env::current_dir()?.join(path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ModelProvider, parse_enabled_providers};
+
+    #[test]
+    fn absent_provider_set_keeps_the_default_as_the_only_provider() {
+        assert_eq!(
+            parse_enabled_providers(ModelProvider::Xai, None).expect("default provider"),
+            vec![ModelProvider::Xai]
+        );
+    }
+
+    #[test]
+    fn provider_set_is_ordered_unique_and_contains_the_default() {
+        assert_eq!(
+            parse_enabled_providers(ModelProvider::OpenCodeGo, Some("xai, opencode-go"),)
+                .expect("two enabled providers"),
+            vec![ModelProvider::Xai, ModelProvider::OpenCodeGo]
+        );
+        for invalid in ["xai,xai", "xai", "xai,"] {
+            assert!(
+                parse_enabled_providers(ModelProvider::OpenCodeGo, Some(invalid)).is_err(),
+                "accepted invalid provider set {invalid}"
+            );
+        }
     }
 }

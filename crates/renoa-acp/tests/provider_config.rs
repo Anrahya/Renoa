@@ -34,10 +34,10 @@ fn a_grok_session_exposes_model_and_reasoning_selectors() {
                 "name": "Model",
                 "category": "model",
                 "type": "select",
-                "currentValue": "grok-test",
+                "currentValue": "xai/grok-test",
                 "options": [
-                    { "value": "grok-test", "name": "Grok Test" },
-                    { "value": "grok-fast", "name": "Grok Fast" }
+                    { "value": "xai/grok-test", "name": "Grok Test (xAI)" },
+                    { "value": "xai/grok-fast", "name": "Grok Fast (xAI)" }
                 ]
             },
             {
@@ -124,10 +124,10 @@ fn a_model_change_survives_session_reload() {
         configured["result"]["configOptions"][1]["currentValue"],
         "low"
     );
-    let configured = set_option(&mut first, 4, &session_id, "model", "grok-fast");
+    let configured = set_option(&mut first, 4, &session_id, "model", "xai/grok-fast");
     assert_eq!(
         configured["result"]["configOptions"][0]["currentValue"],
-        "grok-fast"
+        "xai/grok-fast"
     );
     first.finish();
     OpenOptions::new()
@@ -146,7 +146,7 @@ fn a_model_change_survives_session_reload() {
     let loaded = load_session(&mut resumed, &session_id, &workspace);
     assert_eq!(
         loaded["result"]["configOptions"][0]["currentValue"],
-        "grok-fast"
+        "xai/grok-fast"
     );
     assert_eq!(loaded["result"]["configOptions"][1]["currentValue"], "low");
     let (update, response) = resumed.prompt(
@@ -171,10 +171,97 @@ fn a_model_change_survives_session_reload() {
     let loaded = load_session(&mut repaired, &session_id, &workspace);
     assert_eq!(
         loaded["result"]["configOptions"][0]["currentValue"],
-        "grok-fast"
+        "xai/grok-fast"
     );
     assert_eq!(loaded["result"]["configOptions"][1]["currentValue"], "high");
     repaired.finish();
+}
+
+#[test]
+fn a_provider_change_survives_reload_and_drives_the_selected_adapter() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(&bridge, BRIDGE).expect("write model bridge");
+
+    let mut first = AcpProcess::spawn_with_providers(
+        &workspace,
+        &data,
+        &bridge,
+        &auth_store,
+        "xai,opencode-go",
+        "xai",
+        "grok-test",
+    );
+    first.initialize();
+    let created = first.create_session(&workspace);
+    let session_id = created["result"]["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+    assert_eq!(
+        created["result"]["configOptions"][0]["options"],
+        json!([
+            { "value": "xai/grok-test", "name": "Grok Test (xAI)" },
+            { "value": "xai/grok-fast", "name": "Grok Fast (xAI)" },
+            {
+                "value": "opencode-go/deepseek-test",
+                "name": "DeepSeek Test (OpenCode Go)"
+            },
+            { "value": "opencode-go/grok-test", "name": "Grok Test (OpenCode Go)" }
+        ])
+    );
+
+    let configured = set_option(
+        &mut first,
+        3,
+        &session_id,
+        "model",
+        "opencode-go/deepseek-test",
+    );
+    assert_eq!(
+        configured["result"]["configOptions"][0]["currentValue"],
+        "opencode-go/deepseek-test"
+    );
+    let (update, response) = first.prompt(
+        &session_id,
+        "OpenCode configured",
+        "216288ac-7db3-4ab6-a2cb-545eaf562379",
+    );
+    assert_eq!(
+        update["params"]["update"]["content"]["text"],
+        "OpenCode configured."
+    );
+    assert_eq!(response["result"]["stopReason"], "end_turn");
+    first.finish();
+
+    let mut resumed = AcpProcess::spawn_with_providers(
+        &workspace,
+        &data,
+        &bridge,
+        &auth_store,
+        "xai,opencode-go",
+        "xai",
+        "grok-test",
+    );
+    resumed.initialize();
+    let loaded = load_session(&mut resumed, &session_id, &workspace);
+    assert_eq!(
+        loaded["result"]["configOptions"][0]["currentValue"],
+        "opencode-go/deepseek-test"
+    );
+    resumed.finish();
+
+    let runtime = fs::read_to_string(data.join("sessions").join(session_id).join("runtime.jsonl"))
+        .expect("read runtime selections");
+    assert_eq!(
+        runtime.lines().last().expect("latest runtime selection"),
+        r#"{"provider":"opencode-go","model":"deepseek-test","reasoning":"high"}"#
+    );
 }
 
 #[test]

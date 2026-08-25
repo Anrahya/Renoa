@@ -32,7 +32,7 @@ pub use alpha::{ALPHA_PROFILE_ID, AlphaError};
 pub use alpha_session::{AlphaSession, AlphaSessionConfiguration};
 pub use host::{LocalHost, LocalHostError};
 pub use model_bridge::{BridgeModel, ModelBridgeError};
-pub use model_catalog::{ModelChoice, ReasoningLevel, discover_models};
+pub use model_catalog::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
 pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
 };

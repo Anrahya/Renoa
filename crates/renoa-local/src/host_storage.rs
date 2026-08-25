@@ -220,7 +220,7 @@ mod tests {
 
     use super::{KERNEL_DATABASE, create_session_storage, delete_session_storage, publish_session};
     use crate::{
-        LocalHostError, LocalSession, LocalSessionError, ReasoningLevel,
+        LocalHostError, LocalSession, LocalSessionError, ModelProvider, ReasoningLevel,
         selection::RuntimeSelection,
     };
 
@@ -279,7 +279,7 @@ mod tests {
             session_id,
             workspace.path().to_owned(),
             &RuntimeSelection {
-                provider: "test".to_owned(),
+                provider: ModelProvider::Xai,
                 model: "test".to_owned(),
                 reasoning: ReasoningLevel::High,
             },

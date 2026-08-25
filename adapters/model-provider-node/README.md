@@ -36,9 +36,15 @@ Point Renoa at the compiled entrypoint:
 ```sh
 export RENOA_MODEL_BRIDGE="/absolute/path/to/adapters/model-provider-node/dist/src/main.js"
 export RENOA_MODEL_AUTH_STORE="$HOME/.config/renoa/pi-auth.sqlite"
-export RENOA_MODEL_PROVIDER=xai
-export RENOA_MODEL=grok-4.6
+export RENOA_MODEL_PROVIDERS=xai,opencode-go
+export RENOA_MODEL_PROVIDER=opencode-go
+export RENOA_MODEL=deepseek-v4-pro
 ```
+
+ACP shows the combined catalog and stores the chosen provider and model with
+each session. `RENOA_MODEL_PROVIDER` and `RENOA_MODEL` only choose the default
+for a new session. Omit `RENOA_MODEL_PROVIDERS` to enable only that default
+provider.
 
 The process reads `RENOA_MODEL_ACTION` (`catalog` | `describe` | `stream`) from
 the Rust host. Do not set it by hand for normal Alpha use.

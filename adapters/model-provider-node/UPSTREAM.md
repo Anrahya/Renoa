@@ -8,6 +8,16 @@ Adapted from [Pi](https://github.com/earendil-works/pi) `packages/ai`.
 
 Full license text: `src/upstream/LICENSE-MIT`.
 
+The Renoa-owned OpenCode Go catalog overlay also projects metadata from
+[models.dev](https://github.com/anomalyco/models.dev):
+
+- Source revision: `be4e8d624fe57e129ef4e6523f8d774946f29b81`
+- Source path: `providers/opencode-go/models/ox-alpha-free.toml`
+- License: MIT
+- Copyright (c) 2025 models.dev
+
+Full license text: `src/upstream/LICENSE-MODELS-DEV-MIT`.
+
 Relative imports in adapted TypeScript use `.js` specifiers for this package’s NodeNext tsconfig. Protocol logic is otherwise Pi’s.
 
 Catalog JSON files are gitignored in the Pi clone (`packages/ai/src/providers/data/`). They were copied from the published `@earendil-works/pi-ai@0.84.2` package (`dist/providers/data/`), which is the hydrated output of those source paths at the same version.

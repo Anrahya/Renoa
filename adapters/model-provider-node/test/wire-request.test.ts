@@ -24,6 +24,32 @@ test("inbound WireModelRequest rejects missing fields instead of inventing them"
   assert.equal(request.tools[0]?.name, "read_file");
 });
 
+test("inbound assistant reasoning defaults an omitted redacted flag to false", () => {
+  const request = parseWireModelRequest({
+    system_prompt: "Be precise.",
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Inspect the requested file." }],
+        stop_reason: "tool_use",
+        usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
+        metadata: {
+          api: "openai-completions",
+          provider: "opencode-go",
+          model: "ox-alpha-free",
+        },
+      },
+    ],
+    tools: [],
+  });
+
+  const message = request.messages[0];
+  assert.equal(message?.role, "assistant");
+  assert.deepEqual(message?.role === "assistant" ? message.content : undefined, [
+    { type: "reasoning", text: "Inspect the requested file.", redacted: false },
+  ]);
+});
+
 test("nested WireModelRequest fields are classified invalid_request instead of throwing TypeError", () => {
   const classified = (value: unknown) => {
     try {

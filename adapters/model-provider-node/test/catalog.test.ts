@@ -7,6 +7,7 @@ import {
   findCatalogModel,
   loadPinnedCatalog,
   modelBindingId,
+  toWireCatalog,
   validateModelSpec,
 } from "../src/catalog.js";
 import { loadCatalog } from "../src/runtime.js";
@@ -41,6 +42,28 @@ test("OpenCode catalog uses official transports and does not guess from the mode
   const glm = advertised.get("glm-5.1");
   assert.equal(glm?.model.api, "openai-completions");
   assert.equal(modelBindingId(glm!.model), sha256(JSON.stringify(glm!.model)));
+});
+
+test("Ox Alpha projects the current models.dev contract onto Renoa's supported modalities", () => {
+  const ox = findCatalogModel("opencode-go", "ox-alpha-free");
+  assert.ok(ox);
+  assert.equal(ox.name, "Ox Alpha Free (Unlimited)");
+  assert.equal(ox.model.api, "openai-completions");
+  assert.equal(ox.model.baseUrl, "https://opencode.ai/zen/go/v1");
+  assert.equal(ox.model.contextWindow, 1_000_000);
+  assert.equal(ox.model.maxTokens, 131_072);
+  assert.deepEqual(ox.model.input, ["text", "image"]);
+  assert.deepEqual([...ox.reasoning_levels], ["low", "high", "max"]);
+  assert.deepEqual(ox.model.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+});
+
+test("wire catalog exposes each validated model context window", () => {
+  const entries = loadPinnedCatalog("opencode-go");
+  const wire = toWireCatalog(entries);
+  assert.equal(wire.length, entries.length);
+  for (const [index, entry] of entries.entries()) {
+    assert.equal(wire[index]?.context_window_tokens, entry.model.contextWindow);
+  }
 });
 
 test("migrated OpenCode models do not keep the previous Pi completions binding id", () => {

@@ -106,11 +106,27 @@ fn a_tool_turn_streams_execution_before_the_final_answer() {
             }
         }
     }));
-    let before_tool = process.read();
-    let started = process.read();
-    let settled = process.read();
-    let answer = process.read();
-    let response = process.read();
+    let messages = process.read_until_response(3);
+    let updates = &messages[..messages.len() - 1];
+    assert_eq!(
+        updates
+            .iter()
+            .map(|message| &message["params"]["update"]["sessionUpdate"])
+            .collect::<Vec<_>>(),
+        [
+            "agent_message_chunk",
+            "usage_update",
+            "tool_call",
+            "tool_call_update",
+            "usage_update",
+            "agent_message_chunk",
+        ]
+    );
+    let before_tool = &updates[0];
+    let started = &updates[2];
+    let settled = &updates[3];
+    let answer = &updates[5];
+    let response = messages.last().expect("prompt response");
 
     assert_eq!(
         before_tool["params"]["update"]["content"]["text"],
@@ -131,6 +147,10 @@ fn a_tool_turn_streams_execution_before_the_final_answer() {
         "value\n"
     );
     assert_eq!(answer["params"]["update"]["content"]["text"], "Read it.");
+    for usage in [&updates[1], &updates[4]] {
+        assert_eq!(usage["params"]["update"]["used"], 2);
+        assert_eq!(usage["params"]["update"]["size"], 500_000);
+    }
     let before_tool_id = before_tool["params"]["update"]["messageId"]
         .as_str()
         .expect("pre-tool assistant message id");

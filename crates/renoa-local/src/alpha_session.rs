@@ -1,4 +1,5 @@
 use std::{
+    num::NonZeroU64,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -10,9 +11,12 @@ use uuid::Uuid;
 
 use crate::{
     LocalHistoryEntry, LocalHostError, LocalSession, LocalTurnOutcome, LocalWorkspace, ModelChoice,
-    ReasoningLevel,
+    ModelProvider, ReasoningLevel,
     alpha_trace::finish_trace,
-    host::{HostConfig, initial_reasoning, require_model, resolve_runtime, selected_model},
+    host::{
+        HostConfig, initial_reasoning, require_model, resolve_runtime,
+        selected_model_by_selection_id,
+    },
     selection::{RuntimeSelection, append_selection},
     trace::{ObservedEventSink, TraceRun, TraceStore},
 };
@@ -39,6 +43,7 @@ pub(crate) struct AlphaSessionStorage {
 }
 
 struct SessionState {
+    provider: ModelProvider,
     model: String,
     reasoning: ReasoningLevel,
     accepting_work: bool,
@@ -49,6 +54,7 @@ struct TracedTurn<'a> {
     command_id: CommandId,
     content: Vec<ContentBlock>,
     cancellation: CancellationToken,
+    provider: ModelProvider,
     model_id: &'a str,
     reasoning: ReasoningLevel,
     events: Arc<dyn AgentEventSink>,
@@ -89,6 +95,7 @@ impl AlphaSession {
             trace: storage.trace,
             models,
             state: Mutex::new(SessionState {
+                provider: selection.provider,
                 model: selection.model,
                 reasoning: selection.reasoning,
                 accepting_work: true,
@@ -119,11 +126,26 @@ impl AlphaSession {
     /// Returns an error if a prior panic poisoned session coordination state.
     pub fn configuration(&self) -> Result<AlphaSessionConfiguration, LocalHostError> {
         let state = self.state()?;
+        let model = require_model(&self.models, state.provider, &state.model, "active")?;
         Ok(AlphaSessionConfiguration {
             models: self.models.clone(),
-            model: state.model.clone(),
+            model: model.selection_id(),
             reasoning: state.reasoning,
         })
+    }
+
+    /// Returns the active model's advertised context-window size.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if session coordination state was poisoned or its
+    /// persisted model no longer exists in the authenticated catalog.
+    pub fn context_window_tokens(&self) -> Result<NonZeroU64, LocalHostError> {
+        let state = self.state()?;
+        Ok(
+            require_model(&self.models, state.provider, &state.model, "active")?
+                .context_window_tokens(),
+        )
     }
 
     /// Runs one caller-identified turn through fresh Alpha composition.
@@ -140,14 +162,14 @@ impl AlphaSession {
         content: Vec<ContentBlock>,
         events: Arc<dyn AgentEventSink>,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let (guard, cancellation, model_id, reasoning) = self.begin_prompt(request_id)?;
+        let (guard, cancellation, provider, model_id, reasoning) = self.begin_prompt(request_id)?;
         let command_id = CommandId::from_uuid(request_id);
         let trace = self
             .trace
             .start_run(
                 command_id,
                 &content,
-                &self.host.provider,
+                provider.as_str(),
                 &model_id,
                 reasoning.as_str(),
             )
@@ -159,6 +181,7 @@ impl AlphaSession {
                 command_id,
                 content,
                 cancellation,
+                provider,
                 model_id: &model_id,
                 reasoning,
                 events: observed,
@@ -178,6 +201,7 @@ impl AlphaSession {
             command_id,
             content,
             cancellation,
+            provider,
             model_id,
             reasoning,
             events,
@@ -189,7 +213,7 @@ impl AlphaSession {
                 Some("running"),
                 serde_json::json!({
                     "command_id": command_id,
-                    "provider": self.host.provider,
+                    "provider": provider.as_str(),
                     "model": model_id,
                     "reasoning": reasoning.as_str()
                 }),
@@ -206,7 +230,7 @@ impl AlphaSession {
             return Ok(outcome);
         }
         let workspace = LocalWorkspace::open(&self.workspace)?;
-        let model = require_model(&self.models, model_id, "active")?;
+        let model = require_model(&self.models, provider, model_id, "active")?;
         let runtime =
             resolve_runtime(&self.host, model, reasoning, &workspace, Some(events)).await?;
         Ok(self
@@ -257,14 +281,14 @@ impl AlphaSession {
     /// Rejects unsupported or concurrent changes and preserves the prior selection on failure.
     pub async fn set_reasoning(&self, reasoning: ReasoningLevel) -> Result<(), LocalHostError> {
         let guard = self.begin_configuration()?;
-        let (model_id, current) = {
+        let (provider, model_id, current) = {
             let state = self.state()?;
-            (state.model.clone(), state.reasoning)
+            (state.provider, state.model.clone(), state.reasoning)
         };
         if current == reasoning {
             return Ok(());
         }
-        let model = require_model(&self.models, &model_id, "active")?;
+        let model = require_model(&self.models, provider, &model_id, "active")?;
         if !model.reasoning_levels().contains(&reasoning) {
             return Err(LocalHostError::InvalidRequest(format!(
                 "{model_id} does not support {} reasoning",
@@ -285,24 +309,26 @@ impl AlphaSession {
     /// Rejects unknown or concurrent changes and preserves the prior selection on failure.
     pub async fn set_model(&self, model_id: &str) -> Result<(), LocalHostError> {
         let guard = self.begin_configuration()?;
-        let (current_model, current_reasoning) = {
+        let (current_provider, current_model, current_reasoning) = {
             let state = self.state()?;
-            (state.model.clone(), state.reasoning)
+            (state.provider, state.model.clone(), state.reasoning)
         };
-        if current_model == model_id {
+        let current = require_model(&self.models, current_provider, &current_model, "active")?;
+        if current.selection_id() == model_id {
             return Ok(());
         }
-        let model = selected_model(&self.models, model_id)
+        let model = selected_model_by_selection_id(&self.models, model_id)
             .ok_or_else(|| LocalHostError::InvalidRequest("unknown model selection".to_owned()))?;
         let reasoning = if model.reasoning_levels().contains(&current_reasoning) {
             current_reasoning
         } else {
-            initial_reasoning(&self.models, model_id)?
+            initial_reasoning(&self.models, model.provider(), model.id())?
         };
-        self.validate_and_persist(model, reasoning, model_id.to_owned())
+        self.validate_and_persist(model, reasoning, model.id().to_owned())
             .await?;
         let mut state = self.state()?;
-        model_id.clone_into(&mut state.model);
+        state.provider = model.provider();
+        model.id().clone_into(&mut state.model);
         state.reasoning = reasoning;
         drop(state);
         drop(guard);
@@ -312,8 +338,16 @@ impl AlphaSession {
     fn begin_prompt(
         &self,
         request_id: Uuid,
-    ) -> Result<(ActivityGuard<'_>, CancellationToken, String, ReasoningLevel), LocalHostError>
-    {
+    ) -> Result<
+        (
+            ActivityGuard<'_>,
+            CancellationToken,
+            ModelProvider,
+            String,
+            ReasoningLevel,
+        ),
+        LocalHostError,
+    > {
         let mut state = self.state()?;
         if !state.accepting_work {
             return Err(LocalHostError::InvalidRequest(
@@ -335,6 +369,7 @@ impl AlphaSession {
         Ok((
             ActivityGuard::prompt(self, request_id),
             cancellation,
+            state.provider,
             model,
             reasoning,
         ))
@@ -374,7 +409,7 @@ impl AlphaSession {
         append_selection(
             self.selection_path.clone(),
             RuntimeSelection {
-                provider: self.host.provider.clone(),
+                provider: model.provider(),
                 model: model_id,
                 reasoning,
             },
