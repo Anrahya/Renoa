@@ -32,6 +32,17 @@ renoa-agent acp
 messages use standard input and output. Diagnostics use standard error so they
 cannot corrupt JSON-RPC framing. One process owns one active ACP session.
 
+Before creating a session, a surface can discover the authenticated model and
+reasoning choices with:
+
+```sh
+renoa-agent models --json
+```
+
+This read-only command uses the same provider settings as ACP, marks the
+configured initial model and each model's default reasoning level, and does not
+create or modify durable session state.
+
 The process reads:
 
 - `RENOA_PI_BRIDGE`

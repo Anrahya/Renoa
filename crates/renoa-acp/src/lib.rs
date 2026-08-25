@@ -6,7 +6,7 @@ mod events;
 mod prompt;
 mod server;
 
-pub use config::Config;
+pub use config::{Config, ModelCatalog, configured_model_catalog};
 pub use error::ServerError;
 
 /// Serves stable ACP v1 as newline-delimited JSON-RPC over standard I/O.

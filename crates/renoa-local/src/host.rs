@@ -275,10 +275,7 @@ pub(crate) fn initial_reasoning(
     configured_model: &str,
 ) -> Result<PiReasoningLevel, LocalHostError> {
     let model = require_model(models, configured_model, "configured")?;
-    if model.reasoning_levels().contains(&PiReasoningLevel::High) {
-        return Ok(PiReasoningLevel::High);
-    }
-    model.reasoning_levels().first().copied().ok_or_else(|| {
+    model.default_reasoning().ok_or_else(|| {
         LocalHostError::Configuration(format!(
             "configured {configured_model} model has no supported reasoning level"
         ))

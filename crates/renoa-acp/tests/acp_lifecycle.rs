@@ -406,6 +406,68 @@ fn version_probe_does_not_start_the_acp_transport() {
     assert!(output.stderr.is_empty());
 }
 
+#[test]
+fn model_catalog_probe_is_read_only_and_marks_runtime_defaults() {
+    let directory = tempdir().expect("temporary directory");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    let data = directory.path().join("must-not-exist");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(&bridge, BRIDGE).expect("write model bridge");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
+        .args(["models", "--json"])
+        .env("RENOA_DATA_DIR", &data)
+        .env("RENOA_PI_BRIDGE", &bridge)
+        .env("RENOA_PI_PROVIDER", "xai")
+        .env("RENOA_PI_MODEL", "grok-test")
+        .env("RENOA_PI_AUTH_STORE", &auth_store)
+        .output()
+        .expect("run model catalog probe");
+
+    assert!(
+        output.status.success(),
+        "catalog probe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(
+        !data.exists(),
+        "catalog probing created durable session state"
+    );
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("decode model catalog");
+    assert_eq!(
+        catalog,
+        json!({
+            "models": [
+                {
+                    "id": "grok-test",
+                    "name": "Grok Test",
+                    "isDefault": true,
+                    "reasoningLevels": [
+                        { "id": "low", "name": "Low" },
+                        { "id": "medium", "name": "Medium" },
+                        { "id": "high", "name": "High" }
+                    ],
+                    "defaultReasoning": "high"
+                },
+                {
+                    "id": "grok-fast",
+                    "name": "Grok Fast",
+                    "isDefault": false,
+                    "reasoningLevels": [
+                        { "id": "off", "name": "Off" },
+                        { "id": "low", "name": "Low" },
+                        { "id": "high", "name": "High" }
+                    ],
+                    "defaultReasoning": "high"
+                }
+            ]
+        })
+    );
+}
+
 fn wait_for_path(path: &std::path::Path) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while !path.exists() {

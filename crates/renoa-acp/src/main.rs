@@ -1,4 +1,8 @@
-use std::{env, error::Error, io};
+use std::{
+    env,
+    error::Error,
+    io::{self, Write as _},
+};
 
 #[tokio::main]
 async fn main() {
@@ -19,6 +23,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
             renoa_acp::serve_stdio(renoa_acp::Config::from_environment()?).await?;
             Ok(())
         }
-        _ => Err(io::Error::other("usage: renoa-agent <acp|--version>").into()),
+        [command, format] if command == "models" && format == "--json" => {
+            let catalog = renoa_acp::configured_model_catalog().await?;
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, &catalog)?;
+            stdout.write_all(b"\n")?;
+            Ok(())
+        }
+        _ => Err(io::Error::other("usage: renoa-agent <acp|models --json|--version>").into()),
     }
 }

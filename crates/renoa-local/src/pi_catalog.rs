@@ -85,6 +85,15 @@ impl PiModelOption {
         &self.reasoning_levels
     }
 
+    /// The Host-owned default for a newly selected model.
+    #[must_use]
+    pub fn default_reasoning(&self) -> Option<PiReasoningLevel> {
+        self.reasoning_levels
+            .contains(&PiReasoningLevel::High)
+            .then_some(PiReasoningLevel::High)
+            .or_else(|| self.reasoning_levels.first().copied())
+    }
+
     pub(crate) fn encoded_spec(&self) -> String {
         serde_json::to_string(&self.model_spec)
             .expect("a parsed JSON model specification always serializes")
