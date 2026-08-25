@@ -6,7 +6,10 @@ use std::{
     time::Duration,
 };
 
-use renoa_agent::{Model, ModelError, ModelEventStream, ModelRequest};
+use renoa_agent::{
+    InferenceOutcome, Model, ModelError, ModelErrorKind, ModelEventStream, ModelFailureDiagnostic,
+    ModelRequest,
+};
 use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -17,7 +20,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::pi_catalog::PiReasoningLevel;
+use crate::model_catalog::ReasoningLevel;
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
 pub(crate) const OUTPUT_LIMIT: usize = 16 * 1_024 * 1_024;
@@ -25,54 +28,54 @@ const CONTROL_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum PiModelConfigError {
-    #[error("Pi model bridge cannot be resolved: {0}")]
+pub enum ModelBridgeError {
+    #[error("model adapter cannot be resolved: {0}")]
     Bridge(#[source] io::Error),
-    #[error("Pi credential store cannot be resolved: {0}")]
+    #[error("credential store cannot be resolved: {0}")]
     CredentialStore(#[source] io::Error),
-    #[error("Pi model bridge is not a file: {0}")]
+    #[error("model adapter is not a file: {0}")]
     BridgeNotFile(PathBuf),
-    #[error("Pi credential store is not a file: {0}")]
+    #[error("credential store is not a file: {0}")]
     CredentialStoreNotFile(PathBuf),
-    #[error("unsupported Pi provider: {0}")]
+    #[error("unsupported model provider: {0}")]
     UnsupportedProvider(String),
-    #[error("Pi model id must not be empty")]
+    #[error("model id must not be empty")]
     EmptyModel,
-    #[error("Pi model bridge could not resolve the selected model: {0}")]
+    #[error("model adapter could not resolve the selected model: {0}")]
     ModelResolution(#[source] ModelError),
-    #[error("Pi model reported a zero-token context window")]
+    #[error("model adapter reported a zero-token context window")]
     ZeroContextWindow,
-    #[error("Pi model reported a zero-token output limit")]
+    #[error("model adapter reported a zero-token output limit")]
     ZeroProviderOutputLimit,
-    #[error("Pi model bridge returned an invalid model specification")]
+    #[error("model adapter returned an invalid model specification")]
     InvalidModelSpec,
-    #[error("Pi model bridge returned an invalid model binding id")]
+    #[error("model adapter returned an invalid model binding id")]
     InvalidModelBindingId,
-    #[error("Pi model bridge returned an invalid model catalog")]
+    #[error("model adapter returned an invalid model catalog")]
     InvalidModelCatalog,
 }
 
-/// A provider adapter that invokes Pi AI for one exact Renoa model request.
-pub struct PiModel {
-    config: PiBridgeConfig,
+/// A process-boundary provider adapter for one exact Renoa model request.
+pub struct BridgeModel {
+    config: ModelBridgeConfig,
     binding_id: String,
     context_window_tokens: NonZeroU64,
     max_output_tokens: NonZeroU32,
-    reasoning: PiReasoningLevel,
+    reasoning: ReasoningLevel,
 }
 
 #[derive(Clone)]
-pub(crate) struct PiBridgeConfig {
+pub(crate) struct ModelBridgeConfig {
     bridge: PathBuf,
     provider: String,
     model: Option<String>,
     credential_store: PathBuf,
     model_spec: Option<String>,
-    reasoning: Option<PiReasoningLevel>,
+    reasoning: Option<ReasoningLevel>,
 }
 
-impl PiModel {
-    /// Resolves and validates the selected Pi model before accepting work.
+impl BridgeModel {
+    /// Resolves and validates the selected model before accepting work.
     ///
     /// # Errors
     ///
@@ -82,9 +85,9 @@ impl PiModel {
         provider: impl Into<String>,
         model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
-        reasoning: Option<PiReasoningLevel>,
+        reasoning: Option<ReasoningLevel>,
         max_output_tokens: NonZeroU32,
-    ) -> Result<Self, PiModelConfigError> {
+    ) -> Result<Self, ModelBridgeError> {
         Self::load_with_spec(
             bridge,
             provider,
@@ -103,10 +106,10 @@ impl PiModel {
         model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
         model_spec: Option<String>,
-        reasoning: Option<PiReasoningLevel>,
+        reasoning: Option<ReasoningLevel>,
         max_output_tokens: NonZeroU32,
-    ) -> Result<Self, PiModelConfigError> {
-        let mut config = PiBridgeConfig::new(
+    ) -> Result<Self, ModelBridgeError> {
+        let mut config = ModelBridgeConfig::new(
             bridge,
             provider,
             model,
@@ -116,11 +119,11 @@ impl PiModel {
         )?;
         let description = describe_bridge(config.clone())
             .await
-            .map_err(PiModelConfigError::ModelResolution)?;
+            .map_err(ModelBridgeError::ModelResolution)?;
         let context_window_tokens = NonZeroU64::new(description.context_window_tokens)
-            .ok_or(PiModelConfigError::ZeroContextWindow)?;
+            .ok_or(ModelBridgeError::ZeroContextWindow)?;
         let provider_output_limit = NonZeroU64::new(description.max_output_tokens)
-            .ok_or(PiModelConfigError::ZeroProviderOutputLimit)?;
+            .ok_or(ModelBridgeError::ZeroProviderOutputLimit)?;
         let max_output_tokens = NonZeroU32::try_from(provider_output_limit)
             .map_or(max_output_tokens, |provider_output_limit| {
                 max_output_tokens.min(provider_output_limit)
@@ -128,7 +131,7 @@ impl PiModel {
         serde_json::from_str::<serde_json::Value>(&description.model_spec)
             .ok()
             .filter(serde_json::Value::is_object)
-            .ok_or(PiModelConfigError::InvalidModelSpec)?;
+            .ok_or(ModelBridgeError::InvalidModelSpec)?;
         if description.model_binding_id.len() != 64
             || !description
                 .model_binding_id
@@ -136,7 +139,7 @@ impl PiModel {
                 .all(|byte| byte.is_ascii_hexdigit())
             || description.model_binding_id != sha256_hex(description.model_spec.as_bytes())
         {
-            return Err(PiModelConfigError::InvalidModelBindingId);
+            return Err(ModelBridgeError::InvalidModelBindingId);
         }
         config.model_spec = Some(description.model_spec);
         config.reasoning = Some(description.reasoning_level);
@@ -165,31 +168,31 @@ impl PiModel {
     }
 
     #[must_use]
-    pub const fn reasoning(&self) -> PiReasoningLevel {
+    pub const fn reasoning(&self) -> ReasoningLevel {
         self.reasoning
     }
 }
 
-impl PiBridgeConfig {
+impl ModelBridgeConfig {
     fn new(
         bridge: impl Into<PathBuf>,
         provider: impl Into<String>,
         model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
         model_spec: Option<String>,
-        reasoning: Option<PiReasoningLevel>,
-    ) -> Result<Self, PiModelConfigError> {
+        reasoning: Option<ReasoningLevel>,
+    ) -> Result<Self, ModelBridgeError> {
         let mut config = Self::for_provider(bridge, provider, credential_store)?;
         let model = model.into();
         if model.is_empty() {
-            return Err(PiModelConfigError::EmptyModel);
+            return Err(ModelBridgeError::EmptyModel);
         }
         config.model = Some(model);
         if let Some(model_spec) = model_spec {
             serde_json::from_str::<serde_json::Value>(&model_spec)
                 .ok()
                 .filter(serde_json::Value::is_object)
-                .ok_or(PiModelConfigError::InvalidModelSpec)?;
+                .ok_or(ModelBridgeError::InvalidModelSpec)?;
             config.model_spec = Some(model_spec);
         }
         config.reasoning = reasoning;
@@ -200,19 +203,19 @@ impl PiBridgeConfig {
         bridge: impl Into<PathBuf>,
         provider: impl Into<String>,
         credential_store: impl Into<PathBuf>,
-    ) -> Result<Self, PiModelConfigError> {
-        let bridge = std::fs::canonicalize(bridge.into()).map_err(PiModelConfigError::Bridge)?;
+    ) -> Result<Self, ModelBridgeError> {
+        let bridge = std::fs::canonicalize(bridge.into()).map_err(ModelBridgeError::Bridge)?;
         if !bridge.is_file() {
-            return Err(PiModelConfigError::BridgeNotFile(bridge));
+            return Err(ModelBridgeError::BridgeNotFile(bridge));
         }
         let credential_store = std::fs::canonicalize(credential_store.into())
-            .map_err(PiModelConfigError::CredentialStore)?;
+            .map_err(ModelBridgeError::CredentialStore)?;
         if !credential_store.is_file() {
-            return Err(PiModelConfigError::CredentialStoreNotFile(credential_store));
+            return Err(ModelBridgeError::CredentialStoreNotFile(credential_store));
         }
         let provider = provider.into();
         if provider != "xai" && provider != "opencode-go" {
-            return Err(PiModelConfigError::UnsupportedProvider(provider));
+            return Err(ModelBridgeError::UnsupportedProvider(provider));
         }
         Ok(Self {
             bridge,
@@ -229,36 +232,36 @@ impl PiBridgeConfig {
         command
             .arg("--dns-result-order=ipv4first")
             .arg(&self.bridge)
-            .env("RENOA_PI_ACTION", action)
-            .env("RENOA_PI_PROVIDER", &self.provider)
-            .env("RENOA_PI_AUTH_STORE", &self.credential_store)
+            .env("RENOA_MODEL_ACTION", action)
+            .env("RENOA_MODEL_PROVIDER", &self.provider)
+            .env("RENOA_MODEL_AUTH_STORE", &self.credential_store)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         if let Some(model) = &self.model {
-            command.env("RENOA_PI_MODEL", model);
+            command.env("RENOA_MODEL", model);
         }
         if let Some(limit) = max_output_tokens {
-            command.env("RENOA_PI_MAX_OUTPUT_TOKENS", limit.get().to_string());
+            command.env("RENOA_MODEL_MAX_OUTPUT_TOKENS", limit.get().to_string());
         }
         if let Some(model_spec) = &self.model_spec {
-            command.env("RENOA_PI_MODEL_SPEC", model_spec);
+            command.env("RENOA_MODEL_SPEC", model_spec);
         }
         if let Some(reasoning) = self.reasoning {
-            command.env("RENOA_PI_REASONING", reasoning.as_str());
+            command.env("RENOA_MODEL_REASONING", reasoning.as_str());
         }
         configure_process_group(&mut command);
         command
     }
 }
 
-impl Model for PiModel {
+impl Model for BridgeModel {
     fn stream(
         &self,
         request: ModelRequest,
         cancellation: CancellationToken,
     ) -> ModelEventStream<'_> {
-        crate::pi_stream::stream_model(
+        crate::model_stream::stream_model(
             self.config.clone(),
             self.max_output_tokens,
             &request,
@@ -267,13 +270,13 @@ impl Model for PiModel {
     }
 }
 
-impl renoa_agent_loop::ContextSizer for PiModel {
+impl renoa_agent_loop::ContextSizer for BridgeModel {
     fn estimate_input_tokens(&self, request: &ModelRequest) -> u64 {
-        crate::pi_context::estimate_input_tokens(request)
+        crate::model_context::estimate_input_tokens(request)
     }
 }
 
-async fn describe_bridge(config: PiBridgeConfig) -> Result<PiModelDescription, ModelError> {
+async fn describe_bridge(config: ModelBridgeConfig) -> Result<BridgeDescription, ModelError> {
     let output = run_bridge(
         config,
         "describe",
@@ -286,7 +289,7 @@ async fn describe_bridge(config: PiBridgeConfig) -> Result<PiModelDescription, M
 }
 
 pub(crate) async fn run_bridge(
-    config: PiBridgeConfig,
+    config: ModelBridgeConfig,
     action: &str,
     max_output_tokens: Option<NonZeroU32>,
     input: Vec<u8>,
@@ -295,13 +298,13 @@ pub(crate) async fn run_bridge(
     let mut child = config
         .command(action, max_output_tokens)
         .spawn()
-        .map_err(|error| model_error("start Pi model bridge", error))?;
+        .map_err(|error| model_error("start model adapter", error))?;
     let pid = child_pid_raw(&child)
-        .map_err(|error| ModelError::new(format!("Pi model bridge ownership failed: {error}")))?;
+        .map_err(|error| ModelError::new(format!("model adapter ownership failed: {error}")))?;
     let mut stdin = child
         .stdin
         .take()
-        .ok_or_else(|| ModelError::new("Pi model bridge stdin is unavailable"))?;
+        .ok_or_else(|| ModelError::new("model adapter stdin is unavailable"))?;
     let writer = tokio::spawn(async move { stdin.write_all(&input).await });
     let stdout = drain(child.stdout.take().expect("piped stdout"));
     let stderr = drain(child.stderr.take().expect("piped stderr"));
@@ -312,7 +315,7 @@ pub(crate) async fn run_bridge(
             ProcessExit::Cancelled
         }
         status = child.wait() => ProcessExit::Finished(
-            status.map_err(|error| model_error("wait for Pi model bridge", error))?
+            status.map_err(|error| model_error("wait for model adapter", error))?
         ),
         () = tokio::time::sleep(CONTROL_ACTION_TIMEOUT) => {
             stop_bridge_child(&mut child, pid).await?;
@@ -324,27 +327,27 @@ pub(crate) async fn run_bridge(
     }
     let write_result = writer
         .await
-        .map_err(|error| ModelError::new(format!("Pi request writer failed: {error}")))?;
+        .map_err(|error| ModelError::new(format!("model request writer failed: {error}")))?;
     let stdout = join_output(stdout, "stdout").await?;
     let stderr = join_output(stderr, "stderr").await?;
     let status = match exit {
         ProcessExit::Finished(status) => status,
-        ProcessExit::Cancelled => return Err(ModelError::new("Pi model request was cancelled")),
+        ProcessExit::Cancelled => return Err(ModelError::cancelled("model request was cancelled")),
         ProcessExit::TimedOut => {
             return Err(ModelError::timeout(
-                "Pi model bridge control action exceeded its 30-second deadline",
+                "model adapter control action exceeded its 30-second deadline",
             ));
         }
     };
-    write_result.map_err(|error| model_error("write Pi model request", error))?;
+    write_result.map_err(|error| model_error("write model request", error))?;
     if !status.success() {
         return Err(ModelError::new(format!(
-            "Pi model bridge exited with {status}: {}",
+            "model adapter exited with {status}: {}",
             String::from_utf8_lossy(&stderr.bytes)
         )));
     }
     if stdout.truncated {
-        return Err(ModelError::new("Pi model response exceeded 16 MiB"));
+        return Err(ModelError::new("model adapter response exceeded 16 MiB"));
     }
     Ok(stdout.bytes)
 }
@@ -354,46 +357,56 @@ struct BridgeEnvelope<T> {
     ok: bool,
     response: Option<T>,
     error: Option<String>,
-    error_kind: Option<BridgeErrorKind>,
+    #[serde(default)]
+    error_kind: Option<ModelErrorKind>,
+    #[serde(default)]
+    inference_outcome: Option<InferenceOutcome>,
+    #[serde(default)]
+    diagnostic: Option<ModelFailureDiagnostic>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum BridgeErrorKind {
-    ContextWindowExceeded,
-    AuthenticationFailed,
-}
-
-#[derive(Deserialize)]
-struct PiModelDescription {
+struct BridgeDescription {
     context_window_tokens: u64,
     max_output_tokens: u64,
     model_binding_id: String,
     model_spec: String,
-    reasoning_level: PiReasoningLevel,
+    reasoning_level: ReasoningLevel,
 }
 
 pub(crate) fn decode_response<T: DeserializeOwned>(encoded: &[u8]) -> Result<T, ModelError> {
     let envelope: BridgeEnvelope<T> = serde_json::from_slice(encoded)
-        .map_err(|error| model_error("decode Pi model response", error))?;
-    match (
-        envelope.ok,
-        envelope.response,
-        envelope.error,
-        envelope.error_kind,
-    ) {
-        (true, Some(response), None, None) => Ok(response),
-        (false, None, Some(error), None) => Err(ModelError::new(error)),
-        (false, None, Some(error), Some(BridgeErrorKind::ContextWindowExceeded)) => {
-            Err(ModelError::context_window_exceeded(error))
-        }
-        (false, None, Some(error), Some(BridgeErrorKind::AuthenticationFailed)) => {
-            Err(ModelError::authentication_failed(error))
-        }
-        _ => Err(ModelError::new(
-            "Pi model bridge returned an invalid envelope",
+        .map_err(|error| model_error("decode model adapter response", error))?;
+    if envelope.ok {
+        return match (envelope.response, envelope.error) {
+            (Some(response), None) => Ok(response),
+            _ => Err(ModelError::new(
+                "model adapter returned an invalid envelope",
+            )),
+        };
+    }
+    match envelope.error {
+        Some(error) => Err(classified_error(
+            error,
+            envelope.error_kind,
+            envelope.inference_outcome,
+            envelope.diagnostic,
+        )),
+        None => Err(ModelError::new(
+            "model adapter returned an invalid envelope",
         )),
     }
+}
+
+pub(crate) fn classified_error(
+    message: String,
+    kind: Option<ModelErrorKind>,
+    inference_outcome: Option<InferenceOutcome>,
+    diagnostic: Option<ModelFailureDiagnostic>,
+) -> ModelError {
+    let kind = kind.unwrap_or(ModelErrorKind::Unknown);
+    let inference_outcome = inference_outcome.unwrap_or(InferenceOutcome::Unknown);
+    ModelError::classified(kind, inference_outcome, message, diagnostic)
 }
 
 enum ProcessExit {
@@ -408,7 +421,7 @@ pub(crate) async fn stop_bridge_child(
 ) -> Result<(), ModelError> {
     stop_process_group_raw(child, pid)
         .await
-        .map_err(|error| ModelError::new(format!("Pi model bridge cleanup failed: {error}")))
+        .map_err(|error| ModelError::new(format!("model adapter cleanup failed: {error}")))
 }
 
 pub(crate) struct CapturedOutput {
@@ -443,8 +456,8 @@ pub(crate) async fn join_output(
 ) -> Result<CapturedOutput, ModelError> {
     output
         .await
-        .map_err(|error| ModelError::new(format!("Pi {name} reader failed: {error}")))?
-        .map_err(|error| model_error(&format!("read Pi model {name}"), error))
+        .map_err(|error| ModelError::new(format!("model adapter {name} reader failed: {error}")))?
+        .map_err(|error| model_error(&format!("read model adapter {name}"), error))
 }
 
 pub(crate) fn model_error(action: &str, error: impl std::fmt::Display) -> ModelError {

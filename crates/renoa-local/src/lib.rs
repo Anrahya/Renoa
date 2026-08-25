@@ -9,11 +9,11 @@ mod deadline;
 mod file_tools;
 mod host;
 mod host_storage;
+mod model_bridge;
+mod model_catalog;
+mod model_context;
+mod model_stream;
 mod output;
-mod pi_catalog;
-mod pi_context;
-mod pi_model;
-mod pi_stream;
 mod process;
 mod ripgrep;
 mod runtime;
@@ -25,11 +25,14 @@ mod tool_input;
 mod trace;
 mod workspace;
 
+#[cfg(test)]
+mod model_adapter_process_tests;
+
 pub use alpha::{ALPHA_PROFILE_ID, AlphaError};
 pub use alpha_session::{AlphaSession, AlphaSessionConfiguration};
 pub use host::{LocalHost, LocalHostError};
-pub use pi_catalog::{PiModelOption, PiReasoningLevel, discover_pi_models};
-pub use pi_model::{PiModel, PiModelConfigError};
+pub use model_bridge::{BridgeModel, ModelBridgeError};
+pub use model_catalog::{ModelChoice, ReasoningLevel, discover_models};
 pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
 };

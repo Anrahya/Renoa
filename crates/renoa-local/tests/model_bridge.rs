@@ -4,7 +4,7 @@ use renoa_agent::{
     AssistantContent, ContentBlock, ModelErrorKind, ModelRequest, SamplingError, StopReason,
     TokenUsage, sample_model,
 };
-use renoa_local::{PiModel, PiModelConfigError};
+use renoa_local::{BridgeModel, ModelBridgeError};
 use tempfile::tempdir;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
@@ -13,7 +13,7 @@ const TEST_MODEL_BINDING_ID: &str =
     "15fa2142926bbf4af032a8a733095d6127ca0a041e85ee583e25bc635821fd21";
 
 #[tokio::test]
-async fn pi_model_uses_a_smaller_provider_output_limit() {
+async fn model_uses_a_smaller_provider_output_limit() {
     let directory = tempdir().expect("temporary directory");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
@@ -35,7 +35,7 @@ process.stdout.write(JSON.stringify({
     )
     .expect("write model bridge");
 
-    let model = PiModel::load(
+    let model = BridgeModel::load(
         &bridge,
         "xai",
         "grok-test",
@@ -50,7 +50,7 @@ process.stdout.write(JSON.stringify({
 }
 
 #[tokio::test]
-async fn pi_model_rejects_a_model_spec_with_the_wrong_binding_id() {
+async fn model_rejects_a_model_spec_with_the_wrong_binding_id() {
     let directory = tempdir().expect("temporary directory");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
@@ -72,7 +72,7 @@ process.stdout.write(JSON.stringify({
     )
     .expect("write model bridge");
 
-    let result = PiModel::load(
+    let result = BridgeModel::load(
         &bridge,
         "xai",
         "grok-test",
@@ -84,12 +84,12 @@ process.stdout.write(JSON.stringify({
 
     assert!(matches!(
         result,
-        Err(PiModelConfigError::InvalidModelBindingId)
+        Err(ModelBridgeError::InvalidModelBindingId)
     ));
 }
 
 #[tokio::test]
-async fn pi_model_crosses_the_process_boundary_with_one_exact_request() {
+async fn model_crosses_the_process_boundary_with_one_exact_request() {
     let directory = tempdir().expect("temporary directory");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
@@ -99,7 +99,7 @@ async fn pi_model_crosses_the_process_boundary_with_one_exact_request() {
         r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-if (process.env.RENOA_PI_ACTION === "describe") {
+if (process.env.RENOA_MODEL_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
     response: {
@@ -110,17 +110,17 @@ if (process.env.RENOA_PI_ACTION === "describe") {
       reasoning_level: "high"
     }
   }));
-} else if (process.env.RENOA_PI_ACTION !== "stream") {
+} else if (process.env.RENOA_MODEL_ACTION !== "stream") {
   process.stdout.write(JSON.stringify({ ok: false, error: "unknown action" }));
 } else if (!process.execArgv.includes("--dns-result-order=ipv4first")) {
   process.stdout.write(JSON.stringify({ ok: false, error: "DNS address order missing" }));
-} else if (process.env.RENOA_PI_MODEL_SPEC !== "{\"id\":\"grok-test\"}") {
+} else if (process.env.RENOA_MODEL_SPEC !== "{\"id\":\"grok-test\"}") {
   process.stdout.write(JSON.stringify({ ok: false, error: "model binding missing" }));
-} else if (process.env.RENOA_PI_MAX_OUTPUT_TOKENS !== "32768") {
+} else if (process.env.RENOA_MODEL_MAX_OUTPUT_TOKENS !== "32768") {
   process.stdout.write(JSON.stringify({ ok: false, error: "output cap missing" }));
 } else if (JSON.parse(input).system_prompt !== "Be precise." || JSON.parse(input).messages[0].content[0].text !== "Hello") {
   process.stdout.write(JSON.stringify({ ok: false, error: "request changed" }));
-} else if (process.env.RENOA_PI_PROVIDER !== "xai" || process.env.RENOA_PI_MODEL !== "grok-test") {
+} else if (process.env.RENOA_MODEL_PROVIDER !== "xai" || process.env.RENOA_MODEL !== "grok-test") {
   process.stdout.write(JSON.stringify({ ok: false, error: "model configuration missing" }));
 } else {
   process.stdout.write(JSON.stringify({
@@ -136,7 +136,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
 "#,
     )
     .expect("write model bridge");
-    let model = PiModel::load(
+    let model = BridgeModel::load(
         &bridge,
         "xai",
         "grok-test",
@@ -145,7 +145,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
         NonZeroU32::new(32_768).expect("non-zero output cap"),
     )
     .await
-    .expect("configure Pi model adapter");
+    .expect("configure model adapter");
     assert_eq!(model.context_window_tokens().get(), 500_000);
     assert_eq!(model.max_output_tokens().get(), 32_768);
     assert_eq!(model.binding_id(), TEST_MODEL_BINDING_ID);
@@ -163,7 +163,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
         None,
     )
     .await
-    .expect("sample through Pi adapter");
+    .expect("sample through model adapter");
 
     assert_eq!(
         sampled.response.content,
@@ -186,7 +186,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
 }
 
 #[tokio::test]
-async fn cancelling_a_pi_model_request_stops_its_bridge_process() {
+async fn cancelling_a_model_request_stops_its_bridge_process() {
     let directory = tempdir().expect("temporary directory");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
@@ -200,7 +200,7 @@ async fn cancelling_a_pi_model_request_stops_its_bridge_process() {
 import {{ writeFileSync }} from "node:fs";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-if (process.env.RENOA_PI_ACTION === "describe") {{
+if (process.env.RENOA_MODEL_ACTION === "describe") {{
   process.stdout.write(JSON.stringify({{
     ok: true,
     response: {{
@@ -232,7 +232,7 @@ process.stdout.write(JSON.stringify({{
         ),
     )
     .expect("write model bridge");
-    let model = PiModel::load(
+    let model = BridgeModel::load(
         &bridge,
         "xai",
         "grok-test",
@@ -241,7 +241,7 @@ process.stdout.write(JSON.stringify({{
         NonZeroU32::new(32_768).expect("non-zero output cap"),
     )
     .await
-    .expect("configure Pi model adapter");
+    .expect("configure model adapter");
     let cancellation = CancellationToken::new();
     let sampling_cancellation = cancellation.clone();
     let sampling = tokio::spawn(async move {
@@ -282,7 +282,7 @@ process.stdout.write(JSON.stringify({{
 }
 
 #[tokio::test]
-async fn pi_model_preserves_a_known_context_rejection() {
+async fn model_preserves_a_known_context_rejection() {
     let directory = tempdir().expect("temporary directory");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
@@ -292,7 +292,7 @@ async fn pi_model_preserves_a_known_context_rejection() {
         r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-if (process.env.RENOA_PI_ACTION === "describe") {
+if (process.env.RENOA_MODEL_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
     response: {
@@ -314,7 +314,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
 "#,
     )
     .expect("write model bridge");
-    let model = PiModel::load(
+    let model = BridgeModel::load(
         &bridge,
         "xai",
         "grok-test",
@@ -323,7 +323,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
         NonZeroU32::new(32_768).expect("non-zero output cap"),
     )
     .await
-    .expect("configure Pi model adapter");
+    .expect("configure model adapter");
 
     let result = sample_model(
         &model,

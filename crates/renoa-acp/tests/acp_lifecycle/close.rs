@@ -84,16 +84,18 @@ fn closing_an_active_session_waits_until_provider_work_is_stopped() {
         "params": { "sessionId": session_id }
     }));
 
-    let first = process.read();
-    let second = process.read();
-    let prompt = [&first, &second]
-        .into_iter()
-        .find(|message| message["id"] == 3)
-        .expect("prompt response");
-    let close = [&first, &second]
-        .into_iter()
-        .find(|message| message["id"] == 4)
-        .expect("close response");
+    let mut prompt = None;
+    let mut close = None;
+    while prompt.is_none() || close.is_none() {
+        let message = process.read();
+        if message["id"] == 3 {
+            prompt = Some(message);
+        } else if message["id"] == 4 {
+            close = Some(message);
+        }
+    }
+    let prompt = prompt.expect("prompt response");
+    let close = close.expect("close response");
     assert_eq!(prompt["result"]["stopReason"], "cancelled");
     assert!(close["result"].is_object());
     assert!(

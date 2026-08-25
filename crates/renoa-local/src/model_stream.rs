@@ -9,7 +9,8 @@ use std::{
 
 use futures_util::{Stream, StreamExt as _, stream};
 use renoa_agent::{
-    AssistantDelta, ModelError, ModelEvent, ModelEventStream, ModelRequest, ModelResponse,
+    AssistantDelta, InferenceOutcome, ModelError, ModelErrorKind, ModelEvent, ModelEventStream,
+    ModelFailureDiagnostic, ModelRequest, ModelResponse,
 };
 use serde::Deserialize;
 use tokio::{
@@ -18,9 +19,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::pi_model::{
-    OUTPUT_LIMIT, PiBridgeConfig, decode_response, drain, join_output, model_error,
-    stop_bridge_child,
+use crate::model_bridge::{
+    ModelBridgeConfig, OUTPUT_LIMIT, classified_error, decode_response, drain, join_output,
+    model_error, stop_bridge_child,
 };
 use crate::process::child_pid_raw;
 
@@ -29,7 +30,7 @@ const STREAM_IDLE_DEADLINE: Duration = Duration::from_mins(5);
 const MODEL_TOTAL_DEADLINE: Duration = Duration::from_mins(30);
 
 pub(crate) fn stream_model(
-    config: PiBridgeConfig,
+    config: ModelBridgeConfig,
     max_output_tokens: NonZeroU32,
     request: &ModelRequest,
     cancellation: CancellationToken,
@@ -37,7 +38,7 @@ pub(crate) fn stream_model(
     let input = match serde_json::to_vec(&request) {
         Ok(input) => input,
         Err(error) => {
-            return stream::once(async move { Err(model_error("encode Pi model request", error)) })
+            return stream::once(async move { Err(model_error("encode model request", error)) })
                 .boxed();
         }
     };
@@ -53,20 +54,20 @@ pub(crate) fn stream_model(
             }
         }
     });
-    Box::pin(PiEventStream {
+    Box::pin(AdapterEventStream {
         receiver,
         cancellation: stream_cancellation,
         task: Some(task),
     })
 }
 
-struct PiEventStream {
+struct AdapterEventStream {
     receiver: mpsc::Receiver<Result<ModelEvent, ModelError>>,
     cancellation: CancellationToken,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl Stream for PiEventStream {
+impl Stream for AdapterEventStream {
     type Item = Result<ModelEvent, ModelError>;
 
     fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -86,7 +87,7 @@ impl Stream for PiEventStream {
                     Poll::Ready(Err(error)) => {
                         self.task = None;
                         Poll::Ready(Some(Err(ModelError::new(format!(
-                            "Pi model stream task failed: {error}"
+                            "model adapter stream task failed: {error}"
                         )))))
                     }
                 }
@@ -95,14 +96,14 @@ impl Stream for PiEventStream {
     }
 }
 
-impl Drop for PiEventStream {
+impl Drop for AdapterEventStream {
     fn drop(&mut self) {
         self.cancellation.cancel();
     }
 }
 
 async fn run_stream(
-    config: PiBridgeConfig,
+    config: ModelBridgeConfig,
     max_output_tokens: NonZeroU32,
     input: Vec<u8>,
     cancellation: CancellationToken,
@@ -111,13 +112,13 @@ async fn run_stream(
     let mut child = config
         .command("stream", Some(max_output_tokens))
         .spawn()
-        .map_err(|error| model_error("start Pi model bridge", error))?;
+        .map_err(|error| model_error("start model adapter", error))?;
     let pid = child_pid_raw(&child)
-        .map_err(|error| ModelError::new(format!("Pi model bridge ownership failed: {error}")))?;
+        .map_err(|error| ModelError::new(format!("model adapter ownership failed: {error}")))?;
     let mut stdin = child
         .stdin
         .take()
-        .ok_or_else(|| ModelError::new("Pi model bridge stdin is unavailable"))?;
+        .ok_or_else(|| ModelError::new("model adapter stdin is unavailable"))?;
     let writer = tokio::spawn(async move { stdin.write_all(&input).await });
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = drain(child.stderr.take().expect("piped stderr"));
@@ -131,10 +132,17 @@ async fn run_stream(
     .await;
     let terminal = match read {
         Ok(ReadExit::Finished(terminal)) => terminal,
-        Ok(ReadExit::Cancelled) => {
+        Ok(ReadExit::Cancelled {
+            may_have_dispatched,
+        }) => {
             stop_bridge_child(&mut child, pid).await?;
             drain_after_stop(writer, stderr).await;
-            return Err(ModelError::new("Pi model request was cancelled"));
+            let error = ModelError::cancelled("model request was cancelled");
+            return Err(if may_have_dispatched {
+                error.with_unknown_outcome()
+            } else {
+                error
+            });
         }
         Ok(ReadExit::ReceiverClosed) => {
             stop_bridge_child(&mut child, pid).await?;
@@ -147,47 +155,28 @@ async fn run_stream(
             return Err(error);
         }
     };
-    let status = tokio::select! {
-        biased;
-        () = cancellation.cancelled() => {
-            stop_bridge_child(&mut child, pid).await?;
-            drain_after_stop(writer, stderr).await;
-            return Err(ModelError::new("Pi model request was cancelled"));
-        }
-        () = sender.closed() => {
-            stop_bridge_child(&mut child, pid).await?;
-            drain_after_stop(writer, stderr).await;
-            return Ok(());
-        }
-        status = child.wait() => {
-            status.map_err(|error| model_error("wait for Pi model bridge", error))?
-        }
-        () = tokio::time::sleep_until(total_deadline) => {
-            stop_bridge_child(&mut child, pid).await?;
-            drain_after_stop(writer, stderr).await;
-            return Err(ModelError::timeout(
-                "model invocation exceeded its 30-minute total deadline",
-            ));
-        }
-    };
-    stop_bridge_child(&mut child, pid).await?;
-    writer
-        .await
-        .map_err(|error| ModelError::new(format!("Pi request writer failed: {error}")))?
-        .map_err(|error| model_error("write Pi model request", error))?;
-    let stderr = join_output(stderr, "stderr").await?;
-    if !status.success() {
-        return Err(ModelError::new(format!(
-            "Pi model bridge exited with {status}: {}",
-            String::from_utf8_lossy(&stderr.bytes)
-        )));
-    }
-    if stderr.truncated {
-        return Err(ModelError::new("Pi model bridge stderr exceeded 16 MiB"));
-    }
-    let response = (*terminal)?;
-    let _ = sender.send(Ok(ModelEvent::Completed { response })).await;
+    // Publish completed and error records before touching the child. Cleanup
+    // remains owned by this task, but cannot delay or replace the terminal
+    // record already available to the consumer.
+    publish_terminal(&sender, *terminal).await;
+    drop(sender);
+    let _ = stop_bridge_child(&mut child, pid).await;
+    drain_after_stop(writer, stderr).await;
     Ok(())
+}
+
+async fn publish_terminal(
+    sender: &mpsc::Sender<Result<ModelEvent, ModelError>>,
+    terminal: Result<ModelResponse, ModelError>,
+) {
+    match terminal {
+        Ok(response) => {
+            let _ = sender.send(Ok(ModelEvent::Completed { response })).await;
+        }
+        Err(error) => {
+            let _ = sender.send(Err(error)).await;
+        }
+    }
 }
 
 async fn read_records(
@@ -203,7 +192,13 @@ async fn read_records(
         let line = tokio::select! {
             biased;
             () = cancellation.cancelled() => {
-                return Ok(ReadExit::Cancelled);
+                return Ok(if let Some(terminal) = state.terminal.take() {
+                    ReadExit::Finished(terminal)
+                } else {
+                    ReadExit::Cancelled {
+                        may_have_dispatched: state.may_have_dispatched(),
+                    }
+                });
             }
             () = sender.closed() => {
                 return Ok(ReadExit::ReceiverClosed);
@@ -223,7 +218,7 @@ async fn read_records(
                     "model stream was idle for 5 minutes",
                 ));
             }
-            line = lines.next_line() => line.map_err(|error| model_error("read Pi model stream", error))?,
+            line = lines.next_line() => line.map_err(|error| model_error("read model adapter stream", error))?,
         };
         let Some(line) = line else {
             break;
@@ -232,6 +227,12 @@ async fn read_records(
             && let Some(exit) = forward_delta(sender, cancellation, event).await
         {
             return Ok(exit);
+        }
+        // A terminal completed/error record is authoritative. Do not keep
+        // waiting for EOF — a hung adapter would otherwise sit until idle
+        // timeout and replace the valid terminal with a timeout error.
+        if state.terminal.is_some() {
+            return state.finish();
         }
     }
     state.finish()
@@ -259,6 +260,7 @@ struct StreamReadState {
     idle_deadline: tokio::time::Instant,
     received_bytes: usize,
     first_output_seen: bool,
+    provider_traffic: bool,
     terminal: Option<Box<Result<ModelResponse, ModelError>>>,
 }
 
@@ -269,6 +271,7 @@ impl StreamReadState {
             idle_deadline: tokio::time::Instant::now() + deadlines.idle,
             received_bytes: 0,
             first_output_seen: false,
+            provider_traffic: false,
             terminal: None,
         }
     }
@@ -278,22 +281,40 @@ impl StreamReadState {
             .received_bytes
             .checked_add(encoded.len())
             .and_then(|bytes| bytes.checked_add(1))
-            .ok_or_else(|| ModelError::new("Pi model response size overflowed usize"))?;
+            .ok_or_else(|| ModelError::new("model adapter response size overflowed usize"))?;
         if self.received_bytes > OUTPUT_LIMIT {
-            return Err(ModelError::new("Pi model response exceeded 16 MiB"));
+            return Err(ModelError::new("model adapter response exceeded 16 MiB"));
         }
         if self.terminal.is_some() {
             return Err(ModelError::new(
-                "Pi model bridge emitted data after its terminal record",
+                "model adapter emitted data after its terminal record",
             ));
         }
         self.idle_deadline = tokio::time::Instant::now() + self.deadlines.idle;
         Ok(match decode_record(encoded)? {
             StreamRecord::ProviderRequest { payload } => {
+                self.provider_traffic = true;
                 Some(ModelEvent::ProviderRequest { payload })
             }
             StreamRecord::ProviderResponse { status, headers } => {
+                self.provider_traffic = true;
                 Some(ModelEvent::ProviderResponse { status, headers })
+            }
+            StreamRecord::RetryAttempt {
+                attempt,
+                next_attempt,
+                category,
+                delay_ms,
+                cause_code,
+            } => {
+                self.provider_traffic = true;
+                Some(ModelEvent::RetryAttempt {
+                    attempt,
+                    next_attempt,
+                    category,
+                    delay_ms,
+                    cause_code,
+                })
             }
             StreamRecord::ContentDelta {
                 content_index,
@@ -310,25 +331,31 @@ impl StreamReadState {
                 self.terminal = Some(Box::new(Ok(response)));
                 None
             }
-            StreamRecord::Error { error, error_kind } => {
+            StreamRecord::Error {
+                error,
+                error_kind,
+                inference_outcome,
+                diagnostic,
+            } => {
                 self.first_output_seen = true;
-                self.terminal = Some(Box::new(Err(match error_kind {
-                    Some(BridgeErrorKind::ContextWindowExceeded) => {
-                        ModelError::context_window_exceeded(error)
-                    }
-                    Some(BridgeErrorKind::AuthenticationFailed) => {
-                        ModelError::authentication_failed(error)
-                    }
-                    None => ModelError::new(error),
-                })));
+                self.terminal = Some(Box::new(Err(classified_error(
+                    error,
+                    error_kind,
+                    inference_outcome,
+                    diagnostic,
+                ))));
                 None
             }
         })
     }
 
+    const fn may_have_dispatched(&self) -> bool {
+        self.provider_traffic || self.first_output_seen
+    }
+
     fn finish(self) -> Result<ReadExit, ModelError> {
         let terminal = self.terminal.ok_or_else(|| {
-            ModelError::new("Pi model bridge closed without a terminal stream record")
+            ModelError::new("model adapter closed without a terminal stream record")
         })?;
         Ok(ReadExit::Finished(terminal))
     }
@@ -341,7 +368,9 @@ async fn forward_delta(
 ) -> Option<ReadExit> {
     tokio::select! {
         biased;
-        () = cancellation.cancelled() => Some(ReadExit::Cancelled),
+        () = cancellation.cancelled() => Some(ReadExit::Cancelled {
+            may_have_dispatched: true,
+        }),
         () = sender.closed() => Some(ReadExit::ReceiverClosed),
         result = sender.send(Ok(event)) => result.err().map(|_| ReadExit::ReceiverClosed),
     }
@@ -349,7 +378,7 @@ async fn forward_delta(
 
 async fn drain_after_stop(
     writer: tokio::task::JoinHandle<std::io::Result<()>>,
-    stderr: tokio::task::JoinHandle<std::io::Result<crate::pi_model::CapturedOutput>>,
+    stderr: tokio::task::JoinHandle<std::io::Result<crate::model_bridge::CapturedOutput>>,
 ) {
     let _ = writer.await;
     let _ = join_output(stderr, "stderr").await;
@@ -358,16 +387,16 @@ async fn drain_after_stop(
 #[derive(Debug)]
 enum ReadExit {
     Finished(Box<Result<ModelResponse, ModelError>>),
-    Cancelled,
+    Cancelled { may_have_dispatched: bool },
     ReceiverClosed,
 }
 
 fn decode_record(encoded: &[u8]) -> Result<StreamRecord, ModelError> {
     let value: serde_json::Value = serde_json::from_slice(encoded)
-        .map_err(|error| model_error("decode Pi model stream record", error))?;
+        .map_err(|error| model_error("decode model adapter stream record", error))?;
     if value.get("event").is_some() {
         serde_json::from_value(value)
-            .map_err(|error| model_error("decode Pi model stream record", error))
+            .map_err(|error| model_error("decode model adapter stream record", error))
     } else {
         decode_response(encoded).map(|response| StreamRecord::Completed { response })
     }
@@ -383,6 +412,14 @@ enum StreamRecord {
         status: u16,
         headers: BTreeMap<String, String>,
     },
+    RetryAttempt {
+        attempt: u32,
+        next_attempt: u32,
+        category: ModelErrorKind,
+        delay_ms: u64,
+        #[serde(default)]
+        cause_code: Option<String>,
+    },
     ContentDelta {
         content_index: usize,
         delta: BridgeDelta,
@@ -392,7 +429,12 @@ enum StreamRecord {
     },
     Error {
         error: String,
-        error_kind: Option<BridgeErrorKind>,
+        #[serde(default)]
+        error_kind: Option<ModelErrorKind>,
+        #[serde(default)]
+        inference_outcome: Option<InferenceOutcome>,
+        #[serde(default)]
+        diagnostic: Option<ModelFailureDiagnostic>,
     },
 }
 
@@ -416,13 +458,6 @@ impl From<BridgeDelta> for AssistantDelta {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum BridgeErrorKind {
-    ContextWindowExceeded,
-    AuthenticationFailed,
-}
-
 #[cfg(test)]
-#[path = "pi_stream_tests.rs"]
+#[path = "model_stream_tests.rs"]
 mod tests;

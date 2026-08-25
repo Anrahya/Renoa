@@ -3,14 +3,16 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentEvent, AgentEventSink, MessageRole, Model, ModelError, ModelErrorKind, ModelEvent,
-    ModelFailureCode, ModelRequest, ModelResponse, events::emit_event,
+    AgentEvent, AgentEventSink, InferenceOutcome, MessageRole, Model, ModelError, ModelErrorKind,
+    ModelEvent, ModelEventStream, ModelFailureCode, ModelFailureDiagnostic, ModelRequest,
+    ModelResponse, events::emit_event,
 };
 
 struct SamplingObserver<'a> {
     invocation_id: String,
     sink: Option<&'a dyn AgentEventSink>,
     message_started: bool,
+    provider_traffic: bool,
 }
 
 impl<'a> SamplingObserver<'a> {
@@ -28,12 +30,14 @@ impl<'a> SamplingObserver<'a> {
             invocation_id,
             sink,
             message_started: false,
+            provider_traffic: false,
         }
     }
 
     async fn record(&mut self, event: ModelEvent) -> Option<ModelResponse> {
         match event {
             ModelEvent::ProviderRequest { payload } => {
+                self.provider_traffic = true;
                 emit_event(
                     self.sink,
                     AgentEvent::ModelProviderRequest {
@@ -44,6 +48,7 @@ impl<'a> SamplingObserver<'a> {
                 .await;
             }
             ModelEvent::ProviderResponse { status, headers } => {
+                self.provider_traffic = true;
                 emit_event(
                     self.sink,
                     AgentEvent::ModelProviderResponse {
@@ -86,6 +91,27 @@ impl<'a> SamplingObserver<'a> {
                 )
                 .await;
             }
+            ModelEvent::RetryAttempt {
+                attempt,
+                next_attempt,
+                category,
+                delay_ms,
+                cause_code,
+            } => {
+                self.provider_traffic = true;
+                emit_event(
+                    self.sink,
+                    AgentEvent::ModelRetryAttempt {
+                        invocation_id: self.invocation_id.clone(),
+                        attempt,
+                        next_attempt,
+                        category,
+                        delay_ms,
+                        cause_code,
+                    },
+                )
+                .await;
+            }
             ModelEvent::Completed { response } => {
                 emit_event(
                     self.sink,
@@ -101,12 +127,13 @@ impl<'a> SamplingObserver<'a> {
         None
     }
 
-    async fn cancel(&self) {
+    async fn cancel(&self, may_have_dispatched: bool) {
         self.abort_message().await;
         self.failure(
             ModelFailureCode::Cancelled,
             "model sampling was cancelled".to_owned(),
-            true,
+            may_have_dispatched,
+            None,
         )
         .await;
     }
@@ -114,18 +141,18 @@ impl<'a> SamplingObserver<'a> {
     async fn model_failure(&self, mut error: ModelError) -> ModelError {
         if self.message_started {
             self.abort_message().await;
-            if error.kind().is_known_before_inference() {
-                error = ModelError::new(error.to_string());
+            if error.inference_outcome() == InferenceOutcome::KnownNotStarted {
+                error = error.with_unknown_outcome();
             }
         }
-        let code = match error.kind() {
-            ModelErrorKind::ContextWindowExceeded => ModelFailureCode::ContextWindowExceeded,
-            ModelErrorKind::AuthenticationFailed => ModelFailureCode::AuthenticationFailed,
-            ModelErrorKind::Timeout => ModelFailureCode::Timeout,
-            ModelErrorKind::OutcomeUnknown => ModelFailureCode::OutcomeUnknown,
-        };
-        let outcome_unknown = !error.kind().is_known_before_inference();
-        self.failure(code, error.to_string(), outcome_unknown).await;
+        let outcome_unknown = error.inference_outcome() == InferenceOutcome::Unknown;
+        self.failure(
+            failure_code(error.kind()),
+            error.to_string(),
+            outcome_unknown,
+            error.diagnostic().cloned(),
+        )
+        .await;
         error
     }
 
@@ -135,6 +162,7 @@ impl<'a> SamplingObserver<'a> {
             ModelFailureCode::IncompleteStream,
             "model stream ended without a completed response".to_owned(),
             true,
+            None,
         )
         .await;
     }
@@ -145,7 +173,13 @@ impl<'a> SamplingObserver<'a> {
         }
     }
 
-    async fn failure(&self, code: ModelFailureCode, message: String, outcome_unknown: bool) {
+    async fn failure(
+        &self,
+        code: ModelFailureCode,
+        message: String,
+        outcome_unknown: bool,
+        diagnostic: Option<ModelFailureDiagnostic>,
+    ) {
         emit_event(
             self.sink,
             AgentEvent::ModelRequestFailed {
@@ -153,9 +187,26 @@ impl<'a> SamplingObserver<'a> {
                 code,
                 message,
                 outcome_unknown,
+                diagnostic,
             },
         )
         .await;
+    }
+}
+
+const fn failure_code(kind: ModelErrorKind) -> ModelFailureCode {
+    match kind {
+        ModelErrorKind::Authentication => ModelFailureCode::Authentication,
+        ModelErrorKind::RateLimited => ModelFailureCode::RateLimited,
+        ModelErrorKind::InvalidRequest => ModelFailureCode::InvalidRequest,
+        ModelErrorKind::ContextWindowExceeded => ModelFailureCode::ContextWindowExceeded,
+        ModelErrorKind::Network => ModelFailureCode::Network,
+        ModelErrorKind::Timeout => ModelFailureCode::Timeout,
+        ModelErrorKind::ProviderUnavailable => ModelFailureCode::ProviderUnavailable,
+        ModelErrorKind::Protocol => ModelFailureCode::Protocol,
+        ModelErrorKind::StreamInterrupted => ModelFailureCode::StreamInterrupted,
+        ModelErrorKind::Cancelled => ModelFailureCode::Cancelled,
+        ModelErrorKind::Unknown => ModelFailureCode::Unknown,
     }
 }
 
@@ -202,9 +253,11 @@ pub async fn sample_model(
             biased;
             () = cancellation.cancelled() => {
                 invocation_cancellation.cancel();
-                while stream.next().await.is_some() {}
-                observer.cancel().await;
-                return Err(SamplingError::Cancelled);
+                return drain_cancelled_stream(
+                    &mut stream,
+                    &mut observer,
+                )
+                .await;
             },
             event = stream.next() => event,
         };
@@ -219,6 +272,13 @@ pub async fn sample_model(
                 });
             }
             Some(Err(error)) => {
+                if cancellation.is_cancelled()
+                    && !observer.provider_traffic
+                    && !observer.message_started
+                {
+                    observer.cancel(false).await;
+                    return Err(SamplingError::Cancelled);
+                }
                 let error = observer.model_failure(error).await;
                 return Err(SamplingError::Model(error));
             }
@@ -228,4 +288,41 @@ pub async fn sample_model(
             }
         }
     }
+}
+
+async fn drain_cancelled_stream(
+    stream: &mut ModelEventStream<'_>,
+    observer: &mut SamplingObserver<'_>,
+) -> Result<SamplingResult, SamplingError> {
+    let mut adapter_error = None;
+    let mut completed = None;
+    while let Some(event) = stream.next().await {
+        match event {
+            Ok(event) => {
+                if let Some(response) = observer.record(event).await {
+                    completed = Some(response);
+                }
+            }
+            Err(error) => adapter_error = Some(error),
+        }
+    }
+    if let Some(response) = completed {
+        return Ok(SamplingResult {
+            response,
+            message_started: observer.message_started,
+        });
+    }
+    let may_have_dispatched = observer.provider_traffic || observer.message_started;
+    if may_have_dispatched {
+        if let Some(error) = adapter_error {
+            let error = observer.model_failure(error).await;
+            return Err(SamplingError::Model(error));
+        }
+        observer.cancel(true).await;
+        return Err(SamplingError::Model(
+            ModelError::cancelled("model sampling was cancelled").with_unknown_outcome(),
+        ));
+    }
+    observer.cancel(false).await;
+    Err(SamplingError::Cancelled)
 }

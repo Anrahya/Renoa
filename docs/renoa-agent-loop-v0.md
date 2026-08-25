@@ -223,11 +223,13 @@ selected `Model` through `sample_model`, and returns one complete serialized
 or explicit uncertainty. A typed context-window rejection is settled durably so
 the loop can request compaction; it is not copied into model-visible history. A
 typed authentication rejection proven to precede inference settles as a clear
-operation failure and is likewise absent from model-visible history. An
-incomplete stream, cancellation after dispatch, or provider error whose kind is
-`OutcomeUnknown` blocks the durable operation instead of becoming a false
-terminal failure. If assistant output has started, even an otherwise typed
-rejection is downgraded to `OutcomeUnknown`. Provider wire formats,
+operation failure and is likewise absent from model-visible history. Other
+pre-inference provider failures (`known_not_started`) also settle as definite
+failures with the adapter's concise message. An incomplete stream, cancellation
+after dispatch, or provider error whose inference outcome is `unknown` blocks
+the durable operation instead of becoming a false terminal failure. If assistant
+output has started, the inference outcome is `unknown` even when the failure
+category remains classified. Provider wire formats,
 authentication, and provider-internal transport behavior remain inside the
 selected model.
 

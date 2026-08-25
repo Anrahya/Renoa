@@ -6,19 +6,19 @@ mod close;
 mod delete;
 #[path = "acp_lifecycle/observability.rs"]
 mod observability;
+#[path = "acp_lifecycle/sessions.rs"]
+mod sessions;
 mod support;
+#[path = "acp_lifecycle/turns.rs"]
+mod turns;
 
-use std::{
-    fs,
-    process::Command,
-    time::{Duration, Instant},
-};
+use std::{fs, process::Command};
 
 use serde_json::json;
 use tempfile::tempdir;
 use uuid::Uuid;
 
-use assertions::assert_equivalent_prompt_outcomes;
+use renoa_kernel::{EffectStatus, Kernel, OperationStatus, SessionId};
 use support::{AcpProcess, BRIDGE};
 
 #[test]
@@ -87,7 +87,7 @@ fn a_frontend_can_create_and_run_one_durable_session() {
 }
 
 #[test]
-fn image_prompt_content_crosses_acp_without_being_changed() {
+fn a_provider_failure_is_a_terminal_jsonrpc_error() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
     let data = directory.path().join("data");
@@ -104,182 +104,36 @@ fn image_prompt_content_crosses_acp_without_being_changed() {
         .expect("session id")
         .to_owned();
 
-    process.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/prompt",
-        "params": {
-            "sessionId": session_id,
-            "prompt": [
-                { "type": "text", "text": "Image" },
-                { "type": "image", "data": "AAEC", "mimeType": "image/png" }
-            ],
-            "_meta": {
-                "requestId": "ba303fbd-c106-4a98-b613-bf6007f42f13",
-                "promptId": "ba303fbd-c106-4a98-b613-bf6007f42f13"
-            }
-        }
-    }));
-    let update = process.read();
-    let completed = process.read();
-    assert_eq!(
-        update["params"]["update"]["content"]["text"],
-        "Image received."
-    );
-    assert_eq!(completed["result"]["stopReason"], "end_turn");
-    process.finish();
-}
-
-#[test]
-fn a_new_process_resumes_the_same_durable_conversation() {
-    let directory = tempdir().expect("temporary directory");
-    let workspace = directory.path().join("workspace");
-    let data = directory.path().join("data");
-    let bridge = directory.path().join("bridge.mjs");
-    let auth_store = directory.path().join("auth.sqlite");
-    fs::create_dir(&workspace).expect("create workspace");
-    fs::write(&auth_store, "").expect("create auth placeholder");
-    fs::write(&bridge, BRIDGE).expect("write model bridge");
-
-    let mut first = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
-    first.initialize();
-    let created = first.create_session(&workspace);
-    let session_id = created["result"]["sessionId"]
-        .as_str()
-        .expect("session id")
-        .to_owned();
-    let first_turn_id = "a19115d8-2796-496a-8763-abe0159efd24";
-    let (first_update, first_response) = first.prompt(&session_id, "First", first_turn_id);
-    assert_eq!(
-        first_update["params"]["update"]["content"]["text"],
-        "First response."
-    );
-    assert_eq!(first_response["result"]["stopReason"], "end_turn");
-    first.finish();
-
-    let mut resumed = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
-    resumed.initialize();
-    let (history, loaded) = resumed.load_session(&workspace, &session_id);
-    assert_eq!(loaded["id"], 2);
-    assert!(loaded["result"].is_object());
-    assert_eq!(history.len(), 2);
-    assert_eq!(
-        history[0]["params"]["update"]["sessionUpdate"],
-        "user_message_chunk"
-    );
-    assert_eq!(history[0]["params"]["update"]["content"]["text"], "First");
-    assert_eq!(
-        history[0]["params"]["update"]["_meta"]["requestId"],
-        first_turn_id
-    );
-    assert_eq!(
-        history[1]["params"]["update"]["sessionUpdate"],
-        "agent_message_chunk"
-    );
-    assert_eq!(
-        history[1]["params"]["update"]["content"]["text"],
-        "First response."
-    );
-    for update in &history {
-        let message_id = update["params"]["update"]["messageId"]
-            .as_str()
-            .expect("durable message id");
-        Uuid::parse_str(message_id).expect("message id is a durable event UUID");
-    }
-
-    let (update, response) = resumed.prompt(
+    process.send_prompt(
         &session_id,
-        "Second",
-        "9d3c5140-6c66-48ea-aa30-1a9329d20da6",
+        "FailProvider",
+        "3d5a2c1e-8b47-4f9a-9c1d-0e2f3a4b5c6d",
     );
-    assert_eq!(
-        update["params"]["update"]["content"]["text"],
-        "Continued from durable history."
-    );
-    assert_eq!(response["result"]["stopReason"], "end_turn");
-    resumed.finish();
-}
-
-#[test]
-fn session_cancel_stops_the_active_model_process() {
-    let directory = tempdir().expect("temporary directory");
-    let workspace = directory.path().join("workspace");
-    let data = directory.path().join("data");
-    let bridge = directory.path().join("bridge.mjs");
-    let auth_store = directory.path().join("auth.sqlite");
-    fs::create_dir(&workspace).expect("create workspace");
-    fs::write(&auth_store, "").expect("create auth placeholder");
-    fs::write(&bridge, BRIDGE).expect("write model bridge");
-    let mut process = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
-    process.initialize();
-    let created = process.create_session(&workspace);
-    let session_id = created["result"]["sessionId"]
-        .as_str()
-        .expect("session id")
-        .to_owned();
-
-    process.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/prompt",
-        "params": {
-            "sessionId": session_id,
-            "prompt": [{ "type": "text", "text": "Wait" }],
-            "_meta": {
-                "requestId": "467ffcc5-b743-466d-9717-af8112444910",
-                "promptId": "467ffcc5-b743-466d-9717-af8112444910"
-            }
-        }
-    }));
-    wait_for_path(&data.join("model-started"));
-    let cancelled_at = Instant::now();
-    process.send(&json!({
-        "jsonrpc": "2.0",
-        "method": "session/cancel",
-        "params": { "sessionId": session_id }
-    }));
-    let response = process.read();
-    assert_eq!(response["id"], 3);
-    assert_eq!(response["result"]["stopReason"], "cancelled");
+    let messages = process.read_until_response(3);
+    let response = messages
+        .last()
+        .expect("provider failure must produce a JSON-RPC response");
     assert!(
-        cancelled_at.elapsed() < Duration::from_secs(2),
-        "cancellation waited for the model process"
+        response.get("error").is_some(),
+        "provider failure must not leave the ACP prompt working: {messages:?}"
     );
-    process.finish();
-    assert!(
-        !data.join("model-completed").exists(),
-        "the provider process survived durable cancellation"
-    );
-}
-
-#[test]
-fn redelivering_a_settled_prompt_replays_without_a_second_model_call() {
-    let directory = tempdir().expect("temporary directory");
-    let workspace = directory.path().join("workspace");
-    let data = directory.path().join("data");
-    let bridge = directory.path().join("bridge.mjs");
-    let auth_store = directory.path().join("auth.sqlite");
-    fs::create_dir(&workspace).expect("create workspace");
-    fs::write(&auth_store, "").expect("create auth placeholder");
-    fs::write(&bridge, BRIDGE).expect("write model bridge");
-    let mut process = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
-    process.initialize();
-    let created = process.create_session(&workspace);
-    let session_id = created["result"]["sessionId"]
+    assert!(response.get("result").is_none());
+    let data = response["error"]["data"]
         .as_str()
-        .expect("session id")
-        .to_owned();
-    let turn_id = "c56040df-eb1b-433d-a23b-b2de6dcfd776";
-
-    let first = process.prompt(&session_id, "Idempotent", turn_id);
-    let replay = process.prompt(&session_id, "Idempotent", turn_id);
-
-    assert_equivalent_prompt_outcomes(&first, &replay, turn_id);
+        .expect("JSON-RPC error data");
+    assert!(
+        data.contains("connection reset before an HTTP response (ECONNRESET)"),
+        "ACP error must surface the provider failure: {data}"
+    );
+    assert!(
+        !data.contains("effect outcome is unknown"),
+        "known pre-inference failure must not be abandoned: {data}"
+    );
     process.finish();
 }
 
 #[test]
-fn conflicting_frontend_turn_ids_are_rejected_before_admission() {
+fn unknown_provider_outcome_keeps_detailed_ui_error_and_unknown_effect() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
     let data = directory.path().join("data");
@@ -296,38 +150,78 @@ fn conflicting_frontend_turn_ids_are_rejected_before_admission() {
         .expect("session id")
         .to_owned();
 
-    process.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/prompt",
-        "params": {
-            "sessionId": session_id,
-            "prompt": [{ "type": "text", "text": "Idempotent" }],
-            "_meta": {
-                "requestId": "0c1f7860-62f3-47f7-8f51-9c6ab8a4c9c2",
-                "promptId": "84f25320-7fdd-43ee-999a-0211bddcc69a"
-            }
-        }
-    }));
-    let response = process.read();
-    assert_eq!(response["id"], 3);
-    assert_eq!(response["error"]["code"], -32602);
-    process.finish();
-    assert!(
-        !data.join("model-invoked").exists(),
-        "ambiguous turn identity reached the model"
+    process.send_prompt(
+        &session_id,
+        "FailAfterDispatch",
+        "7c1e9b2a-4d83-41f0-9a66-2b8c0d1e4f70",
     );
+    let messages = process.read_until_response(3);
+    let response = messages
+        .last()
+        .expect("unknown provider outcome must produce a JSON-RPC response");
+    assert!(
+        response.get("error").is_some(),
+        "unknown provider outcome must not leave the ACP prompt working: {messages:?}"
+    );
+    let data_text = response["error"]["data"]
+        .as_str()
+        .expect("JSON-RPC error data");
+    assert!(
+        data_text.contains("connection reset after the request may have been transmitted"),
+        "ACP error must surface the provider failure: {data_text}"
+    );
+    assert!(
+        !data_text.contains("effect outcome is unknown"),
+        "JSON-RPC must not replace the provider error with the abandoned-operation reason: {data_text}"
+    );
+    let info = messages.iter().find(|message| {
+        message["method"] == "session/update"
+            && message["params"]["update"]["sessionUpdate"] == "session_info_update"
+    });
+    let info = info.expect("ACP must emit a redacted ModelRequestFailed session update");
+    assert_eq!(
+        info["params"]["update"]["_meta"]["renoa.modelRequestFailed"]["outcome_unknown"],
+        true
+    );
+    assert!(
+        info["params"]["update"]["_meta"]["renoa.modelRequestFailed"]["message"]
+            .as_str()
+            .is_some_and(|message| message
+                .contains("connection reset after the request may have been transmitted")),
+        "session update must carry the concise provider error: {info}"
+    );
+    assert_eq!(
+        info["params"]["update"]["_meta"]["renoa.modelRequestFailed"]["diagnostic"]["provider_message"],
+        "The upstream closed the connection after reading the chat completion request."
+    );
+
+    process.finish();
+    let snapshot = Kernel::open(
+        data.join("sessions")
+            .join(&session_id)
+            .join("kernel.sqlite3"),
+    )
+    .expect("open kernel")
+    .inspect(SessionId::from_uuid(
+        Uuid::parse_str(&session_id).expect("session UUID"),
+    ))
+    .expect("inspect abandoned unknown effect");
+    assert_eq!(snapshot.operations[0].status, OperationStatus::Failed);
+    assert_eq!(
+        snapshot.operations[0].effects[0].status,
+        EffectStatus::OutcomeUnknown
+    );
+    assert_eq!(snapshot.operations[0].effects[0].outcome, None);
 }
 
 #[test]
-fn a_tool_turn_streams_execution_before_the_final_answer() {
+fn a_later_model_failure_does_not_reuse_a_stale_context_rejection() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
     let data = directory.path().join("data");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
     fs::create_dir(&workspace).expect("create workspace");
-    fs::write(workspace.join("value.txt"), "value\n").expect("write workspace file");
     fs::write(&auth_store, "").expect("create auth placeholder");
     fs::write(&bridge, BRIDGE).expect("write model bridge");
     let mut process = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
@@ -338,57 +232,42 @@ fn a_tool_turn_streams_execution_before_the_final_answer() {
         .expect("session id")
         .to_owned();
 
-    process.send(&json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/prompt",
-        "params": {
-            "sessionId": session_id,
-            "prompt": [{ "type": "text", "text": "Tool" }],
-            "_meta": {
-                "requestId": "95a82c47-614d-4b66-a4a5-f3e284d198dc",
-                "promptId": "95a82c47-614d-4b66-a4a5-f3e284d198dc"
-            }
-        }
-    }));
-    let before_tool = process.read();
-    let started = process.read();
-    let settled = process.read();
-    let answer = process.read();
-    let response = process.read();
+    process.send_prompt(
+        &session_id,
+        "FailContext",
+        "11111111-1111-4111-8111-111111111111",
+    );
+    let first = process.read_until_response(3);
+    let first_error = first
+        .last()
+        .expect("context rejection must produce a JSON-RPC response")["error"]["data"]
+        .as_str()
+        .expect("first JSON-RPC error data");
+    assert!(
+        first_error.contains("context window"),
+        "first prompt must surface the context rejection: {first_error}"
+    );
 
-    assert_eq!(
-        before_tool["params"]["update"]["content"]["text"],
-        "Checking. "
+    process.send_prompt_id(
+        4,
+        &session_id,
+        "FailAfterDispatch",
+        "22222222-2222-4222-8222-222222222222",
     );
-    assert_eq!(started["params"]["update"]["sessionUpdate"], "tool_call");
-    assert_eq!(started["params"]["update"]["toolCallId"], "read-1");
-    assert_eq!(started["params"]["update"]["kind"], "read");
-    assert_eq!(started["params"]["update"]["status"], "in_progress");
-    assert_eq!(
-        settled["params"]["update"]["sessionUpdate"],
-        "tool_call_update"
-    );
-    assert_eq!(settled["params"]["update"]["toolCallId"], "read-1");
-    assert_eq!(settled["params"]["update"]["status"], "completed");
-    assert_eq!(
-        settled["params"]["update"]["content"][0]["content"]["text"],
-        "value\n"
-    );
-    assert_eq!(answer["params"]["update"]["content"]["text"], "Read it.");
-    let before_tool_id = before_tool["params"]["update"]["messageId"]
+    let second = process.read_until_response(4);
+    let second_error = second
+        .last()
+        .expect("later failure must produce a JSON-RPC response")["error"]["data"]
         .as_str()
-        .expect("pre-tool assistant message id");
-    let answer_id = answer["params"]["update"]["messageId"]
-        .as_str()
-        .expect("final assistant message id");
-    Uuid::parse_str(before_tool_id).expect("pre-tool message id is a UUID");
-    Uuid::parse_str(answer_id).expect("final message id is a UUID");
-    assert_ne!(
-        before_tool_id, answer_id,
-        "separate assistant messages must have separate ACP identities"
+        .expect("second JSON-RPC error data");
+    assert!(
+        second_error.contains("connection reset after the request may have been transmitted"),
+        "stale context rejection must not replace a later model failure: {second_error}"
     );
-    assert_eq!(response["result"]["stopReason"], "end_turn");
+    assert!(
+        !second_error.contains("context window"),
+        "later JSON-RPC must not keep the first prompt's context error: {second_error}"
+    );
     process.finish();
 }
 
@@ -418,10 +297,10 @@ fn model_catalog_probe_is_read_only_and_marks_runtime_defaults() {
     let output = Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
         .args(["models", "--json"])
         .env("RENOA_DATA_DIR", &data)
-        .env("RENOA_PI_BRIDGE", &bridge)
-        .env("RENOA_PI_PROVIDER", "xai")
-        .env("RENOA_PI_MODEL", "grok-test")
-        .env("RENOA_PI_AUTH_STORE", &auth_store)
+        .env("RENOA_MODEL_BRIDGE", &bridge)
+        .env("RENOA_MODEL_PROVIDER", "xai")
+        .env("RENOA_MODEL", "grok-test")
+        .env("RENOA_MODEL_AUTH_STORE", &auth_store)
         .output()
         .expect("run model catalog probe");
 
@@ -466,12 +345,4 @@ fn model_catalog_probe_is_read_only_and_marks_runtime_defaults() {
             ]
         })
     );
-}
-
-fn wait_for_path(path: &std::path::Path) {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !path.exists() {
-        assert!(Instant::now() < deadline, "model process did not start");
-        std::thread::sleep(Duration::from_millis(10));
-    }
 }

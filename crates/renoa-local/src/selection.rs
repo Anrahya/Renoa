@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LocalHostError, PiReasoningLevel};
+use crate::{LocalHostError, ReasoningLevel};
 
 pub(crate) const SELECTION_FILE: &str = "runtime.jsonl";
 
@@ -14,7 +14,7 @@ pub(crate) const SELECTION_FILE: &str = "runtime.jsonl";
 pub(crate) struct RuntimeSelection {
     pub(crate) provider: String,
     pub(crate) model: String,
-    pub(crate) reasoning: PiReasoningLevel,
+    pub(crate) reasoning: ReasoningLevel,
 }
 
 pub(crate) fn create_selection_log(

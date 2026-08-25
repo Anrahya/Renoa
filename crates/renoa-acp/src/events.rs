@@ -5,15 +5,17 @@ use agent_client_protocol::{
     Client, ConnectionTo,
     schema::v1::{
         ContentBlock as AcpContentBlock, ContentChunk, ImageContent, MessageId, Meta, SessionId,
-        SessionNotification, SessionUpdate, TextContent, ToolCall as AcpToolCall, ToolCallContent,
-        ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+        SessionInfoUpdate, SessionNotification, SessionUpdate, TextContent,
+        ToolCall as AcpToolCall, ToolCallContent, ToolCallStatus, ToolCallUpdate,
+        ToolCallUpdateFields, ToolKind,
     },
 };
 use renoa_agent::{
     AgentEvent, AgentEventSink, AssistantContent, AssistantDelta, BoxFuture, ContentBlock, Message,
-    MessageRole, ToolCall, ToolOutput, ToolResult,
+    MessageRole, ModelFailureCode, ToolCall, ToolOutput, ToolResult,
 };
 use renoa_local::LocalHistoryEntry;
+use serde_json::json;
 use uuid::Uuid;
 
 pub(crate) struct AcpEventSink {
@@ -26,6 +28,13 @@ struct EventState {
     current_text: String,
     message_id: String,
     send_error: Option<String>,
+    last_model_failure: Option<LastModelFailure>,
+}
+
+#[derive(Clone)]
+pub(crate) struct LastModelFailure {
+    pub message: String,
+    pub cancelled: bool,
 }
 
 impl AcpEventSink {
@@ -37,6 +46,7 @@ impl AcpEventSink {
                 current_text: String::new(),
                 message_id: Uuid::new_v4().to_string(),
                 send_error: None,
+                last_model_failure: None,
             }),
         }
     }
@@ -81,6 +91,14 @@ impl AcpEventSink {
         })
     }
 
+    pub(crate) fn last_model_failure(&self) -> Result<Option<LastModelFailure>, ServerError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| ServerError::Operation("ACP event state was poisoned".to_owned()))?;
+        Ok(state.last_model_failure.clone())
+    }
+
     fn send(&self, update: SessionUpdate) {
         if let Err(error) = self
             .connection
@@ -94,8 +112,11 @@ impl AcpEventSink {
 
     fn observe(&self, event: AgentEvent) {
         match event {
-            AgentEvent::ModelRequestStart { .. }
-            | AgentEvent::MessageStart {
+            AgentEvent::ModelRequestStart { .. } => {
+                self.clear_last_model_failure();
+                self.start_assistant_message();
+            }
+            AgentEvent::MessageStart {
                 role: MessageRole::Assistant,
             } => self.start_assistant_message(),
             AgentEvent::MessageAbort => self.clear_text(),
@@ -117,6 +138,33 @@ impl AcpEventSink {
                     call.id, &error,
                 )));
             }
+            AgentEvent::ModelRequestFailed {
+                code,
+                message,
+                outcome_unknown,
+                diagnostic,
+                ..
+            } => {
+                if let Ok(mut state) = self.state.lock() {
+                    state.last_model_failure = Some(LastModelFailure {
+                        message: message.clone(),
+                        cancelled: matches!(code, ModelFailureCode::Cancelled),
+                    });
+                }
+                let mut meta = Meta::new();
+                meta.insert(
+                    "renoa.modelRequestFailed".to_owned(),
+                    json!({
+                        "code": code,
+                        "message": message,
+                        "outcome_unknown": outcome_unknown,
+                        "diagnostic": diagnostic,
+                    }),
+                );
+                self.send(SessionUpdate::SessionInfoUpdate(
+                    SessionInfoUpdate::new().meta(meta),
+                ));
+            }
             _ => {}
         }
     }
@@ -124,6 +172,12 @@ impl AcpEventSink {
     fn clear_text(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.current_text.clear();
+        }
+    }
+
+    fn clear_last_model_failure(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.last_model_failure = None;
         }
     }
 

@@ -58,6 +58,40 @@ impl TraceState {
                 TraceEntry::new("message", "end", occurred_at_ms, elapsed_us)
                     .payload(&to_value(message))
             }
+            AgentEvent::ModelRequestStart { .. }
+            | AgentEvent::ModelProviderRequest { .. }
+            | AgentEvent::ModelProviderResponse { .. }
+            | AgentEvent::ModelRequestChunk { .. }
+            | AgentEvent::ModelRequestEnd { .. }
+            | AgentEvent::ModelRequestFailed { .. }
+            | AgentEvent::ModelRetryAttempt { .. } => {
+                self.model_agent_event(event, occurred_at_ms, elapsed_us)
+            }
+            AgentEvent::ToolExecutionStart { call } => {
+                self.tool_started(call, occurred_at_ms, elapsed_us)
+            }
+            AgentEvent::ToolExecutionUpdate { call, update } => {
+                TraceEntry::new("tool", "execution_update", occurred_at_ms, elapsed_us)
+                    .correlation(call.id)
+                    .name(call.name)
+                    .payload(&to_value(update))
+            }
+            AgentEvent::ToolExecutionEnd { call, result } => {
+                self.tool_finished(call, occurred_at_ms, elapsed_us, result)
+            }
+            AgentEvent::ToolExecutionOutcomeUnknown { call, error } => {
+                self.tool_unknown(call, occurred_at_ms, elapsed_us, error)
+            }
+        }
+    }
+
+    fn model_agent_event(
+        &mut self,
+        event: AgentEvent,
+        occurred_at_ms: i64,
+        elapsed_us: i64,
+    ) -> TraceEntry {
+        match event {
             AgentEvent::ModelRequestStart {
                 invocation_id,
                 request,
@@ -96,46 +130,39 @@ impl TraceState {
                 code,
                 message,
                 outcome_unknown,
+                diagnostic,
             } => self.model_failed(
                 invocation_id,
                 code,
-                &message,
-                outcome_unknown,
+                &json!({
+                    "code": code,
+                    "message": message,
+                    "outcome_unknown": outcome_unknown,
+                    "diagnostic": diagnostic
+                }),
                 occurred_at_ms,
                 elapsed_us,
             ),
-            AgentEvent::ToolExecutionStart { call } => {
-                self.tool_started(call, occurred_at_ms, elapsed_us)
-            }
-            AgentEvent::ToolExecutionUpdate { call, update } => {
-                TraceEntry::new("tool", "execution_update", occurred_at_ms, elapsed_us)
-                    .correlation(call.id)
-                    .name(call.name)
-                    .payload(&to_value(update))
-            }
-            AgentEvent::ToolExecutionEnd { call, result } => {
-                let started = self.tool_starts.remove(&call.id);
-                let status = if result.is_error {
-                    "failed"
-                } else {
-                    "completed"
-                };
-                TraceEntry::new("tool", "execution_finished", occurred_at_ms, elapsed_us)
-                    .correlation(call.id)
-                    .name(call.name)
-                    .status(Some(status))
-                    .duration(started.map(|started| elapsed_us - started))
-                    .payload(&to_value(result))
-            }
-            AgentEvent::ToolExecutionOutcomeUnknown { call, error } => {
-                let started = self.tool_starts.remove(&call.id);
-                TraceEntry::new("tool", "outcome_unknown", occurred_at_ms, elapsed_us)
-                    .correlation(call.id)
-                    .name(call.name)
-                    .status(Some("unknown"))
-                    .duration(started.map(|started| elapsed_us - started))
-                    .payload(&to_value(error))
-            }
+            AgentEvent::ModelRetryAttempt {
+                invocation_id,
+                attempt,
+                next_attempt,
+                category,
+                delay_ms,
+                cause_code,
+            } => Self::model_retry(
+                invocation_id,
+                &json!({
+                    "attempt": attempt,
+                    "next_attempt": next_attempt,
+                    "category": category,
+                    "delay_ms": delay_ms,
+                    "cause_code": cause_code
+                }),
+                occurred_at_ms,
+                elapsed_us,
+            ),
+            _ => unreachable!("non-model events are dispatched by agent_event"),
         }
     }
 
@@ -210,8 +237,7 @@ impl TraceState {
         &mut self,
         invocation_id: String,
         code: ModelFailureCode,
-        message: &str,
-        outcome_unknown: bool,
+        payload: &Value,
         occurred_at_ms: i64,
         elapsed_us: i64,
     ) -> TraceEntry {
@@ -226,11 +252,55 @@ impl TraceState {
                     .first_output_us
                     .map(|first| first - timing.started_us)
             }))
-            .payload(&json!({
-                "code": code,
-                "message": message,
-                "outcome_unknown": outcome_unknown
-            }))
+            .payload(payload)
+    }
+
+    fn model_retry(
+        invocation_id: String,
+        payload: &Value,
+        occurred_at_ms: i64,
+        elapsed_us: i64,
+    ) -> TraceEntry {
+        TraceEntry::new("model", "retry_attempt", occurred_at_ms, elapsed_us)
+            .correlation(invocation_id)
+            .payload(payload)
+    }
+
+    fn tool_finished(
+        &mut self,
+        call: ToolCall,
+        occurred_at_ms: i64,
+        elapsed_us: i64,
+        result: renoa_agent::ToolResult,
+    ) -> TraceEntry {
+        let started = self.tool_starts.remove(&call.id);
+        let status = if result.is_error {
+            "failed"
+        } else {
+            "completed"
+        };
+        TraceEntry::new("tool", "execution_finished", occurred_at_ms, elapsed_us)
+            .correlation(call.id)
+            .name(call.name)
+            .status(Some(status))
+            .duration(started.map(|started| elapsed_us - started))
+            .payload(&to_value(result))
+    }
+
+    fn tool_unknown(
+        &mut self,
+        call: ToolCall,
+        occurred_at_ms: i64,
+        elapsed_us: i64,
+        error: renoa_agent::ToolOutcomeUnknown,
+    ) -> TraceEntry {
+        let started = self.tool_starts.remove(&call.id);
+        TraceEntry::new("tool", "outcome_unknown", occurred_at_ms, elapsed_us)
+            .correlation(call.id)
+            .name(call.name)
+            .status(Some("unknown"))
+            .duration(started.map(|started| elapsed_us - started))
+            .payload(&to_value(error))
     }
 
     fn tool_started(&mut self, call: ToolCall, occurred_at_ms: i64, elapsed_us: i64) -> TraceEntry {
@@ -265,10 +335,15 @@ const fn role_name(role: renoa_agent::MessageRole) -> &'static str {
 
 const fn model_failure_name(code: ModelFailureCode) -> &'static str {
     match code {
-        ModelFailureCode::OutcomeUnknown => "outcome_unknown",
+        ModelFailureCode::Authentication => "authentication",
+        ModelFailureCode::RateLimited => "rate_limited",
+        ModelFailureCode::InvalidRequest => "invalid_request",
         ModelFailureCode::ContextWindowExceeded => "context_window_exceeded",
-        ModelFailureCode::AuthenticationFailed => "authentication_failed",
+        ModelFailureCode::Network => "network",
         ModelFailureCode::Timeout => "timeout",
+        ModelFailureCode::ProviderUnavailable => "provider_unavailable",
+        ModelFailureCode::Protocol => "protocol",
+        ModelFailureCode::StreamInterrupted => "stream_interrupted",
         ModelFailureCode::Cancelled => "cancelled",
         ModelFailureCode::IncompleteStream => "incomplete_stream",
         _ => "unknown",

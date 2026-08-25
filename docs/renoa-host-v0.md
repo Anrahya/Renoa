@@ -134,16 +134,16 @@ Host types; it does not construct a kernel `Runtime` or persist Host state.
 local product path selects Alpha's versioned instructions. The resolved inputs
 are:
 
-- Pi provider and model;
+- provider and model;
 - reasoning configuration;
 - Alpha's base prompt and bounded workspace `AGENTS.md` instructions; and
-- the concrete credential and bridge bindings.
+- the concrete credential and adapter bindings.
 
 `build_local_runtime` resolves that recipe with a `LocalWorkspace`:
 
 ```text
 LocalRuntimeConfig + Alpha v1
-  + PiModel
+  + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
             |
@@ -154,7 +154,7 @@ renoa-agent-loop::build_runtime
 renoa-kernel::Runtime + frozen RuntimeManifest
 ```
 
-The Pi model is both the model adapter and the deterministic context sizer. The
+The process adapter is both the model implementation and the deterministic context sizer. The
 Host derives the same researched compaction limits used by the existing local
 product path. Model identity, reasoning, context behavior, instructions,
 limits, tool specifications, recovery declarations, and workspace-bound tool
@@ -290,7 +290,7 @@ appear settled.
 
 The Host foundation proved that:
 
-1. `renoa-local` resolves the existing Pi model, durable compaction strategy,
+1. `renoa-local` resolves the existing model adapter, durable compaction strategy,
    and complete local tool set into a kernel `Runtime`;
 2. the local headless runner executes its real coding turn through
    `renoa-kernel`, not the legacy harness;

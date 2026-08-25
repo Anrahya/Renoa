@@ -14,7 +14,7 @@ direction is:
 coding frontend -> ACP adapter -> Renoa local Host -> kernel
                                               |       |
                                               |       `-> durable agent loop
-                                              `----------> Pi model and local tools
+                                              `----------> model adapter and local tools
 ```
 
 The Host and kernel remain usable without ACP. RCP can later provide
@@ -45,15 +45,15 @@ create or modify durable session state.
 
 The process reads:
 
-- `RENOA_PI_BRIDGE`
-- `RENOA_PI_PROVIDER`
-- `RENOA_PI_MODEL`
-- `RENOA_PI_AUTH_STORE`
+- `RENOA_MODEL_BRIDGE`
+- `RENOA_MODEL_PROVIDER`
+- `RENOA_MODEL`
+- `RENOA_MODEL_AUTH_STORE`
 - optional `RENOA_DATA_DIR`
 
 Without `RENOA_DATA_DIR`, sessions use Renoa's platform data directory.
-`RENOA_PI_PROVIDER` selects the provider hosted by this process.
-`RENOA_PI_MODEL` is the initial model for a new session; it is not a fixed UI
+`RENOA_MODEL_PROVIDER` selects the provider hosted by this process.
+`RENOA_MODEL` is the initial model for a new session; it is not a fixed UI
 choice. Authentication remains local to the provider adapter.
 The adapter always resolves Renoa Alpha v1, including its curated base prompt
 and bounded workspace `AGENTS.md` instructions. An environment variable cannot
@@ -170,9 +170,11 @@ substitute current UI configuration, infer execution state from cached text, or
 silently create another Session when load fails.
 
 If recovery reaches an explicit unknown outcome after applying that policy, the
-local Host abandons the operation without another dispatch. ACP returns the
-honest failure, while the repaired loop history and released session allow a
-later turn to continue.
+local Host abandons the operation without another dispatch. The durable effect
+stays `OutcomeUnknown`. ACP still captures the redacted `ModelRequestFailed`
+event as a `session_info_update` and returns that concise provider error as the
+terminal JSON-RPC error, so the UI can show what failed while kernel truth
+remains unknown.
 
 During `session/load`, Renoa validates gapless semantic history and sends its
 user, assistant, reasoning, tool-call, and tool-result updates before the load

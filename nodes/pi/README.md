@@ -1,9 +1,13 @@
 # Renoa Pi node
 
-This is the first non-Rust harness attached to RCP. It runs Pi's agent loop,
-stores admitted commands, conversation context, and execution events in local
-SQLite, and reconnects to the Renoa coordinator without stopping active work.
-It uses Pi's core SDK packages directly; Pi's CLI and TUI are not dependencies.
+This is the first non-Rust harness attached to RCP. It is not the Alpha
+model-provider adapter. Alpha, ACP, and `renoa-local` use
+[`@renoa/model-provider`](../../adapters/model-provider-node/README.md).
+
+This package runs Pi's agent loop, stores admitted commands, conversation
+context, and execution events in local SQLite, and reconnects to the Renoa
+coordinator without stopping active work. It uses Pi's core SDK packages
+directly; Pi's CLI and TUI are not dependencies.
 
 Pi's prompt, target, model, and tools are local node configuration. RCP sends
 only a task identity and command. A workspace in `read` mode exposes Pi's

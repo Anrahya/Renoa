@@ -28,11 +28,11 @@ fn the_headless_runner_completes_a_durable_coding_turn() {
             "new".as_ref(),
             "Change value.txt from old to new and verify it.".as_ref(),
         ])
-        .env("RENOA_PI_BRIDGE", &bridge)
-        .env("RENOA_PI_PROVIDER", "xai")
-        .env("RENOA_PI_MODEL", "grok-test-a")
-        .env("RENOA_PI_AUTH_STORE", &auth_store)
-        .env("RENOA_PI_REASONING", "low")
+        .env("RENOA_MODEL_BRIDGE", &bridge)
+        .env("RENOA_MODEL_PROVIDER", "xai")
+        .env("RENOA_MODEL", "grok-test-a")
+        .env("RENOA_MODEL_AUTH_STORE", &auth_store)
+        .env("RENOA_MODEL_REASONING", "low")
         .output()
         .expect("run headless Renoa");
 
@@ -60,11 +60,11 @@ fn the_headless_runner_completes_a_durable_coding_turn() {
             session.as_ref(),
             "Continue with the existing context.".as_ref(),
         ])
-        .env("RENOA_PI_BRIDGE", &bridge)
-        .env("RENOA_PI_PROVIDER", "xai")
-        .env("RENOA_PI_MODEL", "grok-test-b")
-        .env("RENOA_PI_AUTH_STORE", &auth_store)
-        .env("RENOA_PI_REASONING", "high")
+        .env("RENOA_MODEL_BRIDGE", &bridge)
+        .env("RENOA_MODEL_PROVIDER", "xai")
+        .env("RENOA_MODEL", "grok-test-b")
+        .env("RENOA_MODEL_AUTH_STORE", &auth_store)
+        .env("RENOA_MODEL_REASONING", "high")
         .output()
         .expect("resume headless Renoa");
     assert!(
@@ -106,18 +106,19 @@ fn invalid_reasoning_fails_before_the_provider_process_starts() {
             "new".as_ref(),
             "Do not dispatch.".as_ref(),
         ])
-        .env("RENOA_PI_BRIDGE", &bridge)
-        .env("RENOA_PI_PROVIDER", "xai")
-        .env("RENOA_PI_MODEL", "grok-test")
-        .env("RENOA_PI_AUTH_STORE", &auth_store)
-        .env("RENOA_PI_REASONING", "impossible")
+        .env("RENOA_MODEL_BRIDGE", &bridge)
+        .env("RENOA_MODEL_PROVIDER", "xai")
+        .env("RENOA_MODEL", "grok-test")
+        .env("RENOA_MODEL_AUTH_STORE", &auth_store)
+        .env("RENOA_MODEL_REASONING", "impossible")
         .output()
         .expect("run headless Renoa with invalid reasoning");
 
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("RENOA_PI_REASONING must be off, minimal, low, medium, high, xhigh, or max")
+        String::from_utf8_lossy(&output.stderr).contains(
+            "RENOA_MODEL_REASONING must be off, minimal, low, medium, high, xhigh, or max"
+        )
     );
     assert!(
         !marker.exists(),
@@ -143,16 +144,16 @@ fn authentication_failure_is_clear_and_does_not_block_the_session() {
             "new".as_ref(),
             "Attempt one model request.".as_ref(),
         ])
-        .env("RENOA_PI_BRIDGE", &bridge)
-        .env("RENOA_PI_PROVIDER", "xai")
-        .env("RENOA_PI_MODEL", "grok-test")
-        .env("RENOA_PI_AUTH_STORE", &auth_store)
+        .env("RENOA_MODEL_BRIDGE", &bridge)
+        .env("RENOA_MODEL_PROVIDER", "xai")
+        .env("RENOA_MODEL", "grok-test")
+        .env("RENOA_MODEL_AUTH_STORE", &auth_store)
         .output()
         .expect("run headless Renoa with rejected authentication");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("model authentication failed: OAuth refresh failed for xai"));
+    assert!(stderr.contains("OAuth refresh failed for xai"));
     assert!(!stderr.contains("blocked on an uncertain"));
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 runner output");
     let session = stdout
@@ -188,7 +189,7 @@ fn assert_frozen_runtime_selections(database: &Path, session: &str) {
             .get("renoa.agent.model")
             .map(String::as_str),
         Some(
-            "pi/xai/grok-test-a/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-low"
+            "renoa-model-provider-node/v1/xai/grok-test-a/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-low"
         )
     );
     assert_eq!(
@@ -197,7 +198,7 @@ fn assert_frozen_runtime_selections(database: &Path, session: &str) {
             .get("renoa.agent.model")
             .map(String::as_str),
         Some(
-            "pi/xai/grok-test-b/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-high"
+            "renoa-model-provider-node/v1/xai/grok-test-b/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-high"
         )
     );
     assert_eq!(
@@ -209,7 +210,7 @@ fn assert_frozen_runtime_selections(database: &Path, session: &str) {
 const BRIDGE: &str = r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-if (process.env.RENOA_PI_ACTION === "describe") {
+if (process.env.RENOA_MODEL_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
     response: {
@@ -217,7 +218,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
       max_output_tokens: 500000,
       model_spec: "{}",
       model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-      reasoning_level: process.env.RENOA_PI_REASONING ?? "high"
+      reasoning_level: process.env.RENOA_MODEL_REASONING ?? "high"
     }
   }));
   process.exit(0);
@@ -238,7 +239,7 @@ if (JSON.stringify(toolNames) !== JSON.stringify([
 ])) {
   throw new Error(`unexpected Alpha tools: ${JSON.stringify(toolNames)}`);
 }
-if (process.env.RENOA_PI_MODEL === "grok-test-b") {
+if (process.env.RENOA_MODEL === "grok-test-b") {
   const prior = request.messages.find(
     (message) => message.role === "assistant" && message.metadata?.model === "grok-test-a"
   );
@@ -303,7 +304,7 @@ process.stdout.write(JSON.stringify({
 const AUTHENTICATION_FAILURE_BRIDGE: &str = r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-if (process.env.RENOA_PI_ACTION === "describe") {
+if (process.env.RENOA_MODEL_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
     response: {
@@ -319,6 +320,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
 process.stdout.write(JSON.stringify({
   event: "error",
   error: "OAuth refresh failed for xai",
-  error_kind: "authentication_failed"
+  error_kind: "authentication",
+  inference_outcome: "known_not_started"
 }) + "\n");
 "#;

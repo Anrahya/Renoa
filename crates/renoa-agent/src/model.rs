@@ -84,6 +84,14 @@ pub enum ModelEvent {
         content_index: usize,
         delta: AssistantDelta,
     },
+    /// Adapter retry diagnostic. Never enters model context.
+    RetryAttempt {
+        attempt: u32,
+        next_attempt: u32,
+        category: ModelErrorKind,
+        delay_ms: u64,
+        cause_code: Option<String>,
+    },
     Completed {
         response: ModelResponse,
     },
@@ -93,72 +101,153 @@ pub enum ModelEvent {
 #[error("{message}")]
 pub struct ModelError {
     kind: ModelErrorKind,
+    inference_outcome: InferenceOutcome,
     message: String,
+    diagnostic: Option<Box<ModelFailureDiagnostic>>,
 }
 
 impl ModelError {
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
+        Self::classified(
+            ModelErrorKind::Unknown,
+            InferenceOutcome::Unknown,
+            message,
+            None,
+        )
+    }
+
+    /// Builds a classified provider failure that the loop and traces can consume.
+    #[must_use]
+    pub fn classified(
+        kind: ModelErrorKind,
+        inference_outcome: InferenceOutcome,
+        message: impl Into<String>,
+        diagnostic: Option<ModelFailureDiagnostic>,
+    ) -> Self {
         Self {
-            kind: ModelErrorKind::OutcomeUnknown,
+            kind,
+            inference_outcome,
             message: message.into(),
+            diagnostic: diagnostic.map(Box::new),
         }
     }
 
     /// Reports a provider rejection that is known to have happened before inference.
     #[must_use]
     pub fn context_window_exceeded(message: impl Into<String>) -> Self {
-        Self {
-            kind: ModelErrorKind::ContextWindowExceeded,
-            message: message.into(),
-        }
+        Self::classified(
+            ModelErrorKind::ContextWindowExceeded,
+            InferenceOutcome::KnownNotStarted,
+            message,
+            None,
+        )
     }
 
     /// Reports a credential rejection that is known to have happened before inference.
     #[must_use]
     pub fn authentication_failed(message: impl Into<String>) -> Self {
-        Self {
-            kind: ModelErrorKind::AuthenticationFailed,
-            message: message.into(),
-        }
+        Self::classified(
+            ModelErrorKind::Authentication,
+            InferenceOutcome::KnownNotStarted,
+            message,
+            None,
+        )
     }
 
     /// Reports a model deadline whose provider-side outcome is not proven.
     #[must_use]
     pub fn timeout(message: impl Into<String>) -> Self {
-        Self {
-            kind: ModelErrorKind::Timeout,
-            message: message.into(),
-        }
+        Self::classified(
+            ModelErrorKind::Timeout,
+            InferenceOutcome::Unknown,
+            message,
+            None,
+        )
+    }
+
+    /// Reports a caller-requested cancellation.
+    #[must_use]
+    pub fn cancelled(message: impl Into<String>) -> Self {
+        Self::classified(
+            ModelErrorKind::Cancelled,
+            InferenceOutcome::KnownNotStarted,
+            message,
+            None,
+        )
     }
 
     #[must_use]
-    pub fn kind(&self) -> ModelErrorKind {
+    pub const fn kind(&self) -> ModelErrorKind {
         self.kind
     }
+
+    #[must_use]
+    pub const fn inference_outcome(&self) -> InferenceOutcome {
+        self.inference_outcome
+    }
+
+    #[must_use]
+    pub fn diagnostic(&self) -> Option<&ModelFailureDiagnostic> {
+        self.diagnostic.as_deref()
+    }
+
+    #[must_use]
+    pub fn with_unknown_outcome(mut self) -> Self {
+        self.inference_outcome = InferenceOutcome::Unknown;
+        self
+    }
 }
 
-/// What the caller can safely infer about a failed model invocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the caller can safely infer about whether provider inference ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum InferenceOutcome {
+    /// The provider rejected or never accepted the request.
+    KnownNotStarted,
+    /// The provider may already have dispatched or generated a response.
+    Unknown,
+}
+
+/// Provider-neutral failure category for one unsuccessful model invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ModelErrorKind {
-    /// The provider may have dispatched or generated the response.
-    OutcomeUnknown,
-    /// The provider rejected the request for exceeding its context window before inference.
+    Authentication,
+    RateLimited,
+    InvalidRequest,
     ContextWindowExceeded,
-    /// Credential resolution failed before the provider began inference.
-    AuthenticationFailed,
-    /// A first-event, idle, or total deadline expired.
+    Network,
     Timeout,
+    ProviderUnavailable,
+    Protocol,
+    StreamInterrupted,
+    Cancelled,
+    Unknown,
 }
 
-impl ModelErrorKind {
-    pub(crate) const fn is_known_before_inference(self) -> bool {
-        matches!(
-            self,
-            Self::ContextWindowExceeded | Self::AuthenticationFailed
-        )
-    }
+/// Redacted transport facts that traces and ACP diagnostics may consume.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelFailureDiagnostic {
+    pub provider: String,
+    pub model: String,
+    pub attempt_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_message: Option<String>,
 }
 
 pub type ModelEventStream<'a> = BoxStream<'a, Result<ModelEvent, ModelError>>;

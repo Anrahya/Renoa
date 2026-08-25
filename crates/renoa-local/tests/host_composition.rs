@@ -72,7 +72,7 @@ async fn local_host_resolves_the_complete_coding_runtime() {
 }
 
 const DESCRIBE_BRIDGE: &str = r#"
-if (process.env.RENOA_PI_ACTION !== "describe") {
+if (process.env.RENOA_MODEL_ACTION !== "describe") {
   process.stderr.write("unexpected bridge action");
   process.exit(1);
 }

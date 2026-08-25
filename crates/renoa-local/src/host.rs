@@ -11,8 +11,8 @@ use uuid::Uuid;
 use crate::alpha_session::AlphaSessionStorage;
 use crate::{
     AlphaError, AlphaSession, LocalRuntimeConfig, LocalRuntimeError, LocalSession,
-    LocalSessionError, LocalWorkspace, LocalWorkspaceError, PiModelConfigError, PiModelOption,
-    PiReasoningLevel, build_local_runtime, build_local_runtime_with_events, discover_pi_models,
+    LocalSessionError, LocalWorkspace, LocalWorkspaceError, ModelBridgeError, ModelChoice,
+    ReasoningLevel, build_local_runtime, build_local_runtime_with_events, discover_models,
     host_storage::{
         KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, delete_session_storage,
         read_manifest,
@@ -51,7 +51,7 @@ pub enum LocalHostError {
     #[error(transparent)]
     Runtime(#[from] LocalRuntimeError),
     #[error(transparent)]
-    Model(#[from] PiModelConfigError),
+    Model(#[from] ModelBridgeError),
     #[error(transparent)]
     Alpha(#[from] AlphaError),
     #[error(transparent)]
@@ -228,8 +228,8 @@ impl LocalHost {
         tokio::task::spawn_blocking(move || delete_session_storage(&sessions, session_id)).await?
     }
 
-    async fn models(&self) -> Result<Vec<PiModelOption>, LocalHostError> {
-        Ok(discover_pi_models(
+    async fn models(&self) -> Result<Vec<ModelChoice>, LocalHostError> {
+        Ok(discover_models(
             self.config.bridge.clone(),
             self.config.provider.clone(),
             self.config.credential_store.clone(),
@@ -239,8 +239,8 @@ impl LocalHost {
 
     async fn resolve_runtime(
         &self,
-        model: &PiModelOption,
-        reasoning: PiReasoningLevel,
+        model: &ModelChoice,
+        reasoning: ReasoningLevel,
         workspace: &LocalWorkspace,
         events: Option<Arc<dyn AgentEventSink>>,
     ) -> Result<renoa_kernel::Runtime, LocalHostError> {
@@ -250,8 +250,8 @@ impl LocalHost {
 
 pub(crate) async fn resolve_runtime(
     host: &HostConfig,
-    model: &PiModelOption,
-    reasoning: PiReasoningLevel,
+    model: &ModelChoice,
+    reasoning: ReasoningLevel,
     workspace: &LocalWorkspace,
     events: Option<Arc<dyn AgentEventSink>>,
 ) -> Result<renoa_kernel::Runtime, LocalHostError> {
@@ -271,9 +271,9 @@ pub(crate) async fn resolve_runtime(
 }
 
 pub(crate) fn initial_reasoning(
-    models: &[PiModelOption],
+    models: &[ModelChoice],
     configured_model: &str,
-) -> Result<PiReasoningLevel, LocalHostError> {
+) -> Result<ReasoningLevel, LocalHostError> {
     let model = require_model(models, configured_model, "configured")?;
     model.default_reasoning().ok_or_else(|| {
         LocalHostError::Configuration(format!(
@@ -282,18 +282,15 @@ pub(crate) fn initial_reasoning(
     })
 }
 
-pub(crate) fn selected_model<'a>(
-    models: &'a [PiModelOption],
-    id: &str,
-) -> Option<&'a PiModelOption> {
+pub(crate) fn selected_model<'a>(models: &'a [ModelChoice], id: &str) -> Option<&'a ModelChoice> {
     models.iter().find(|model| model.id() == id)
 }
 
 pub(crate) fn require_model<'a>(
-    models: &'a [PiModelOption],
+    models: &'a [ModelChoice],
     id: &str,
     source: &str,
-) -> Result<&'a PiModelOption, LocalHostError> {
+) -> Result<&'a ModelChoice, LocalHostError> {
     selected_model(models, id).ok_or_else(|| {
         LocalHostError::Configuration(format!(
             "{source} {id} model is not available from the authenticated provider"
@@ -302,9 +299,9 @@ pub(crate) fn require_model<'a>(
 }
 
 fn validate_selection<'a>(
-    models: &'a [PiModelOption],
+    models: &'a [ModelChoice],
     selection: &RuntimeSelection,
-) -> Result<&'a PiModelOption, LocalHostError> {
+) -> Result<&'a ModelChoice, LocalHostError> {
     let model = require_model(models, &selection.model, "saved")?;
     if !model.reasoning_levels().contains(&selection.reasoning) {
         return Err(LocalHostError::Configuration(format!(

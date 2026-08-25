@@ -429,6 +429,7 @@ fn is_model_diagnostic(event: &AgentEvent) -> bool {
             | AgentEvent::ModelRequestChunk { .. }
             | AgentEvent::ModelRequestEnd { .. }
             | AgentEvent::ModelRequestFailed { .. }
+            | AgentEvent::ModelRetryAttempt { .. }
     )
 }
 

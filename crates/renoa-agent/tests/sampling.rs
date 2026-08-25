@@ -8,9 +8,9 @@ use std::{
 
 use futures_util::{StreamExt, stream};
 use renoa_agent::{
-    AgentEvent, AgentEventSink, AssistantContent, AssistantDelta, BoxFuture, Model, ModelError,
-    ModelErrorKind, ModelEvent, ModelEventStream, ModelRequest, ModelResponse, SamplingError,
-    StopReason, sample_model,
+    AgentEvent, AgentEventSink, AssistantContent, AssistantDelta, AssistantMetadata, BoxFuture,
+    InferenceOutcome, Model, ModelError, ModelErrorKind, ModelEvent, ModelEventStream,
+    ModelRequest, ModelResponse, SamplingError, StopReason, sample_model,
 };
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -38,6 +38,135 @@ async fn a_pre_cancelled_sample_never_invokes_the_model() {
 
     assert!(matches!(error, SamplingError::Cancelled));
     assert_eq!(model.invocations.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn cancelling_before_provider_dispatch_is_cancelled() {
+    let sink = RecordingSink::default();
+    let cancellation = CancellationToken::new();
+    let request = ModelRequest {
+        system_prompt: "Be precise.".to_owned(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+    let sampling = sample_model(
+        &HangBeforeDispatchModel,
+        request,
+        cancellation.clone(),
+        Some(&sink),
+    );
+    let wait = async {
+        loop {
+            {
+                let events = sink.events.lock().expect("event sink lock");
+                if events
+                    .iter()
+                    .any(|event| matches!(event, AgentEvent::ModelRequestStart { .. }))
+                {
+                    break;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        cancellation.cancel();
+    };
+    let (result, ()) = tokio::join!(sampling, wait);
+    let Err(error) = result else {
+        panic!("pre-dispatch cancellation must fail");
+    };
+    assert!(matches!(error, SamplingError::Cancelled));
+}
+
+#[tokio::test]
+async fn cancelling_after_provider_dispatch_is_unknown() {
+    let sink = RecordingSink::default();
+    let cancellation = CancellationToken::new();
+    let request = ModelRequest {
+        system_prompt: "Be precise.".to_owned(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+    let sampling = sample_model(
+        &HangAfterDispatchModel,
+        request,
+        cancellation.clone(),
+        Some(&sink),
+    );
+    let wait = async {
+        loop {
+            {
+                let events = sink.events.lock().expect("event sink lock");
+                if events
+                    .iter()
+                    .any(|event| matches!(event, AgentEvent::ModelProviderRequest { .. }))
+                {
+                    break;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        cancellation.cancel();
+    };
+    let (result, ()) = tokio::join!(sampling, wait);
+    let Err(error) = result else {
+        panic!("in-flight cancellation must fail");
+    };
+    assert!(matches!(
+        error,
+        SamplingError::Model(error)
+            if error.kind() == ModelErrorKind::Cancelled
+                && error.inference_outcome() == InferenceOutcome::Unknown
+    ));
+}
+
+#[tokio::test]
+async fn a_completed_response_survives_cancellation_drain() {
+    let sink = RecordingSink::default();
+    let cancellation = CancellationToken::new();
+    let request = ModelRequest {
+        system_prompt: "Be precise.".to_owned(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+    };
+    let sampling = sample_model(
+        &CompletesAfterCancelModel,
+        request,
+        cancellation.clone(),
+        Some(&sink),
+    );
+    let wait = async {
+        loop {
+            {
+                let events = sink.events.lock().expect("event sink lock");
+                if events
+                    .iter()
+                    .any(|event| matches!(event, AgentEvent::ModelProviderRequest { .. }))
+                {
+                    break;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        cancellation.cancel();
+    };
+    let (result, ()) = tokio::join!(sampling, wait);
+    let sampled = result.expect("completed provider result must survive cancellation");
+    assert_eq!(
+        sampled.response.content,
+        vec![AssistantContent::text("definite")]
+    );
+    let events = sink.events.lock().expect("event sink lock");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ModelRequestEnd { .. }))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ModelRequestFailed { .. })),
+        "one invocation must not emit both ModelRequestEnd and ModelRequestFailed: {events:?}"
+    );
 }
 
 #[tokio::test]
@@ -75,7 +204,9 @@ async fn context_rejection_is_known_only_before_assistant_output_starts() {
     };
     assert!(matches!(
         error,
-        SamplingError::Model(error) if error.kind() == ModelErrorKind::OutcomeUnknown
+        SamplingError::Model(error)
+            if error.kind() == ModelErrorKind::ContextWindowExceeded
+                && error.inference_outcome() == InferenceOutcome::Unknown
     ));
 }
 
@@ -96,7 +227,7 @@ async fn authentication_failure_is_known_only_before_assistant_output_starts() {
     assert!(matches!(
         result,
         Err(SamplingError::Model(error))
-            if error.kind() == ModelErrorKind::AuthenticationFailed
+            if error.kind() == ModelErrorKind::Authentication
     ));
 
     let result = sample_model(
@@ -108,7 +239,9 @@ async fn authentication_failure_is_known_only_before_assistant_output_starts() {
     .await;
     assert!(matches!(
         result,
-        Err(SamplingError::Model(error)) if error.kind() == ModelErrorKind::OutcomeUnknown
+        Err(SamplingError::Model(error))
+            if error.kind() == ModelErrorKind::Authentication
+                && error.inference_outcome() == InferenceOutcome::Unknown
     ));
 }
 
@@ -207,6 +340,90 @@ impl Model for ContextRejectingModel {
 
 struct AuthenticationRejectingModel {
     emits_delta: bool,
+}
+
+struct HangBeforeDispatchModel;
+
+impl Model for HangBeforeDispatchModel {
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> ModelEventStream<'_> {
+        stream::once(async move {
+            cancellation.cancelled().await;
+            Err(ModelError::new("cancelled model stopped"))
+        })
+        .boxed()
+    }
+}
+
+struct CompletesAfterCancelModel;
+
+impl Model for CompletesAfterCancelModel {
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> ModelEventStream<'_> {
+        stream::unfold(0_u8, move |step| {
+            let cancellation = cancellation.clone();
+            async move {
+                match step {
+                    0 => Some((
+                        Ok(ModelEvent::ProviderRequest {
+                            payload: json!({ "dispatched": true }),
+                        }),
+                        1,
+                    )),
+                    1 => {
+                        cancellation.cancelled().await;
+                        Some((
+                            Ok(ModelEvent::Completed {
+                                response: ModelResponse {
+                                    content: vec![AssistantContent::text("definite")],
+                                    stop_reason: StopReason::Stop,
+                                    usage: None,
+                                    metadata: AssistantMetadata::default(),
+                                },
+                            }),
+                            2,
+                        ))
+                    }
+                    _ => None,
+                }
+            }
+        })
+        .boxed()
+    }
+}
+
+struct HangAfterDispatchModel;
+
+impl Model for HangAfterDispatchModel {
+    fn stream(
+        &self,
+        _request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> ModelEventStream<'_> {
+        stream::unfold(false, move |dispatched| {
+            let cancellation = cancellation.clone();
+            async move {
+                if dispatched {
+                    cancellation.cancelled().await;
+                    None
+                } else {
+                    Some((
+                        Ok(ModelEvent::ProviderRequest {
+                            payload: json!({ "dispatched": true }),
+                        }),
+                        true,
+                    ))
+                }
+            }
+        })
+        .boxed()
+    }
 }
 
 struct DiagnosticModel;

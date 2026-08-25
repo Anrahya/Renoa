@@ -231,8 +231,11 @@ fn configuration_cannot_change_during_an_active_prompt() {
         "method": "session/cancel",
         "params": { "sessionId": session_id }
     }));
-    let cancelled = process.read();
-    assert_eq!(cancelled["id"], 3);
+    let cancelled = process
+        .read_until_response(3)
+        .into_iter()
+        .find(|message| message["id"] == 3)
+        .expect("prompt response");
     assert_eq!(cancelled["result"]["stopReason"], "cancelled");
     process.finish();
     assert!(!data.join("model-completed").exists());

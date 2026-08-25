@@ -3,12 +3,12 @@ use std::{collections::HashSet, path::PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::pi_model::{PiBridgeConfig, PiModelConfigError, decode_response, run_bridge};
+use crate::model_bridge::{ModelBridgeConfig, ModelBridgeError, decode_response, run_bridge};
 
-/// A reasoning level understood by Pi's provider-neutral model API.
+/// A reasoning level understood by the provider-neutral model API.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
-pub enum PiReasoningLevel {
+pub enum ReasoningLevel {
     Off,
     Minimal,
     Low,
@@ -18,7 +18,7 @@ pub enum PiReasoningLevel {
     Max,
 }
 
-impl PiReasoningLevel {
+impl ReasoningLevel {
     #[must_use]
     pub fn from_id(value: &str) -> Option<Self> {
         match value {
@@ -60,16 +60,16 @@ impl PiReasoningLevel {
     }
 }
 
-/// One model that the configured Pi provider can resolve.
+/// One model that the configured provider can resolve.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-pub struct PiModelOption {
+pub struct ModelChoice {
     id: String,
     name: String,
-    reasoning_levels: Vec<PiReasoningLevel>,
+    reasoning_levels: Vec<ReasoningLevel>,
     model_spec: serde_json::Value,
 }
 
-impl PiModelOption {
+impl ModelChoice {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
@@ -81,16 +81,16 @@ impl PiModelOption {
     }
 
     #[must_use]
-    pub fn reasoning_levels(&self) -> &[PiReasoningLevel] {
+    pub fn reasoning_levels(&self) -> &[ReasoningLevel] {
         &self.reasoning_levels
     }
 
     /// The Host-owned default for a newly selected model.
     #[must_use]
-    pub fn default_reasoning(&self) -> Option<PiReasoningLevel> {
+    pub fn default_reasoning(&self) -> Option<ReasoningLevel> {
         self.reasoning_levels
-            .contains(&PiReasoningLevel::High)
-            .then_some(PiReasoningLevel::High)
+            .contains(&ReasoningLevel::High)
+            .then_some(ReasoningLevel::High)
             .or_else(|| self.reasoning_levels.first().copied())
     }
 
@@ -105,12 +105,12 @@ impl PiModelOption {
 /// # Errors
 ///
 /// Returns an error when provider configuration, authentication, or the bridge response is invalid.
-pub async fn discover_pi_models(
+pub async fn discover_models(
     bridge: impl Into<PathBuf>,
     provider: impl Into<String>,
     credential_store: impl Into<PathBuf>,
-) -> Result<Vec<PiModelOption>, PiModelConfigError> {
-    let config = PiBridgeConfig::for_provider(bridge, provider, credential_store)?;
+) -> Result<Vec<ModelChoice>, ModelBridgeError> {
+    let config = ModelBridgeConfig::for_provider(bridge, provider, credential_store)?;
     let encoded = run_bridge(
         config,
         "catalog",
@@ -119,18 +119,18 @@ pub async fn discover_pi_models(
         CancellationToken::new(),
     )
     .await
-    .map_err(PiModelConfigError::ModelResolution)?;
-    let catalog: PiModelCatalog =
-        decode_response(&encoded).map_err(PiModelConfigError::ModelResolution)?;
+    .map_err(ModelBridgeError::ModelResolution)?;
+    let catalog: BridgeModelCatalog =
+        decode_response(&encoded).map_err(ModelBridgeError::ModelResolution)?;
     validate_catalog(catalog.models)
 }
 
 #[derive(Deserialize)]
-struct PiModelCatalog {
-    models: Vec<PiModelOption>,
+struct BridgeModelCatalog {
+    models: Vec<ModelChoice>,
 }
 
-fn validate_catalog(models: Vec<PiModelOption>) -> Result<Vec<PiModelOption>, PiModelConfigError> {
+fn validate_catalog(models: Vec<ModelChoice>) -> Result<Vec<ModelChoice>, ModelBridgeError> {
     let mut ids = HashSet::with_capacity(models.len());
     for model in &models {
         let levels = model
@@ -149,11 +149,11 @@ fn validate_catalog(models: Vec<PiModelOption>) -> Result<Vec<PiModelOption>, Pi
                 != Some(model.id.as_str())
             || !ids.insert(model.id.as_str())
         {
-            return Err(PiModelConfigError::InvalidModelCatalog);
+            return Err(ModelBridgeError::InvalidModelCatalog);
         }
     }
     if models.is_empty() {
-        return Err(PiModelConfigError::InvalidModelCatalog);
+        return Err(ModelBridgeError::InvalidModelCatalog);
     }
     Ok(models)
 }

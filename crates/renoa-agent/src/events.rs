@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::{
-    AssistantDelta, BoxFuture, Message, MessageRole, ModelRequest, ModelResponse, ToolCall,
-    ToolOutcomeUnknown, ToolOutput, ToolResult,
+    AssistantDelta, BoxFuture, Message, MessageRole, ModelErrorKind, ModelFailureDiagnostic,
+    ModelRequest, ModelResponse, ToolCall, ToolOutcomeUnknown, ToolOutput, ToolResult,
 };
 
 /// Stable diagnostic category for one unsuccessful model invocation.
@@ -12,12 +12,18 @@ use crate::{
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ModelFailureCode {
-    OutcomeUnknown,
+    Authentication,
+    RateLimited,
+    InvalidRequest,
     ContextWindowExceeded,
-    AuthenticationFailed,
+    Network,
     Timeout,
+    ProviderUnavailable,
+    Protocol,
+    StreamInterrupted,
     Cancelled,
     IncompleteStream,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +68,15 @@ pub enum AgentEvent {
         code: ModelFailureCode,
         message: String,
         outcome_unknown: bool,
+        diagnostic: Option<ModelFailureDiagnostic>,
+    },
+    ModelRetryAttempt {
+        invocation_id: String,
+        attempt: u32,
+        next_attempt: u32,
+        category: ModelErrorKind,
+        delay_ms: u64,
+        cause_code: Option<String>,
     },
     ToolExecutionStart {
         call: ToolCall,

@@ -9,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    LocalHistoryEntry, LocalHostError, LocalSession, LocalTurnOutcome, LocalWorkspace,
-    PiModelOption, PiReasoningLevel,
+    LocalHistoryEntry, LocalHostError, LocalSession, LocalTurnOutcome, LocalWorkspace, ModelChoice,
+    ReasoningLevel,
     alpha_trace::finish_trace,
     host::{HostConfig, initial_reasoning, require_model, resolve_runtime, selected_model},
     selection::{RuntimeSelection, append_selection},
@@ -25,7 +25,7 @@ pub struct AlphaSession {
     workspace: PathBuf,
     selection_path: PathBuf,
     trace: TraceStore,
-    models: Vec<PiModelOption>,
+    models: Vec<ModelChoice>,
     state: Mutex<SessionState>,
     idle: tokio::sync::Notify,
 }
@@ -40,7 +40,7 @@ pub(crate) struct AlphaSessionStorage {
 
 struct SessionState {
     model: String,
-    reasoning: PiReasoningLevel,
+    reasoning: ReasoningLevel,
     accepting_work: bool,
     activity: Activity,
 }
@@ -50,7 +50,7 @@ struct TracedTurn<'a> {
     content: Vec<ContentBlock>,
     cancellation: CancellationToken,
     model_id: &'a str,
-    reasoning: PiReasoningLevel,
+    reasoning: ReasoningLevel,
     events: Arc<dyn AgentEventSink>,
     trace: &'a TraceRun,
 }
@@ -67,9 +67,9 @@ enum Activity {
 /// Owned model and reasoning choices for surface presentation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlphaSessionConfiguration {
-    pub models: Vec<PiModelOption>,
+    pub models: Vec<ModelChoice>,
     pub model: String,
-    pub reasoning: PiReasoningLevel,
+    pub reasoning: ReasoningLevel,
 }
 
 impl AlphaSession {
@@ -77,7 +77,7 @@ impl AlphaSession {
         id: Uuid,
         host: Arc<HostConfig>,
         storage: AlphaSessionStorage,
-        models: Vec<PiModelOption>,
+        models: Vec<ModelChoice>,
         selection: RuntimeSelection,
     ) -> Self {
         Self {
@@ -255,7 +255,7 @@ impl AlphaSession {
     /// # Errors
     ///
     /// Rejects unsupported or concurrent changes and preserves the prior selection on failure.
-    pub async fn set_reasoning(&self, reasoning: PiReasoningLevel) -> Result<(), LocalHostError> {
+    pub async fn set_reasoning(&self, reasoning: ReasoningLevel) -> Result<(), LocalHostError> {
         let guard = self.begin_configuration()?;
         let (model_id, current) = {
             let state = self.state()?;
@@ -312,15 +312,8 @@ impl AlphaSession {
     fn begin_prompt(
         &self,
         request_id: Uuid,
-    ) -> Result<
-        (
-            ActivityGuard<'_>,
-            CancellationToken,
-            String,
-            PiReasoningLevel,
-        ),
-        LocalHostError,
-    > {
+    ) -> Result<(ActivityGuard<'_>, CancellationToken, String, ReasoningLevel), LocalHostError>
+    {
         let mut state = self.state()?;
         if !state.accepting_work {
             return Err(LocalHostError::InvalidRequest(
@@ -372,8 +365,8 @@ impl AlphaSession {
 
     async fn validate_and_persist(
         &self,
-        model: &PiModelOption,
-        reasoning: PiReasoningLevel,
+        model: &ModelChoice,
+        reasoning: ReasoningLevel,
         model_id: String,
     ) -> Result<(), LocalHostError> {
         let workspace = LocalWorkspace::open(&self.workspace)?;

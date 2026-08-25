@@ -10,7 +10,7 @@
   "scripts": {
     "auth:opencode-go": "pnpm run build && node dist/src/auth-opencode-go.js",
     "auth:xai": "pnpm run build && node --dns-result-order=ipv4first dist/src/auth-xai.js",
-    "build": "tsc",
+    "build": "node ./scripts/clean-dist.mjs && tsc",
     "check": "tsc --noEmit",
     "start": "node --dns-result-order=ipv4first dist/src/main.js",
     "test": "pnpm run build && node --test dist/test/*.test.js"

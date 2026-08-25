@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use renoa_agent::{
-    AgentEvent, AgentEventSink, Model, ModelErrorKind, ModelRequest, SamplingError, Tool, ToolCall,
-    invoke_tool, sample_model,
+    AgentEvent, AgentEventSink, InferenceOutcome, Model, ModelErrorKind, ModelRequest,
+    SamplingError, Tool, ToolCall, invoke_tool, sample_model,
 };
 use renoa_kernel::{
     EffectAdapter, EffectCompletion, EffectFuture, EffectInvocation, EffectOutcome,
@@ -40,19 +40,25 @@ impl EffectAdapter for ModelAdapter {
                     response: result.response,
                 }),
                 Err(SamplingError::Model(error))
-                    if error.kind() == ModelErrorKind::ContextWindowExceeded =>
+                    if error.kind() == ModelErrorKind::ContextWindowExceeded
+                        && error.inference_outcome() == InferenceOutcome::KnownNotStarted =>
                 {
                     model_completion(ModelEffectOutput::ContextWindowExceeded {
                         message: error.to_string(),
                     })
                 }
-                Err(SamplingError::Model(error))
-                    if error.kind() == ModelErrorKind::AuthenticationFailed =>
-                {
-                    failure("model authentication failed", error)
+                Err(SamplingError::Cancelled) => EffectOutcome::Failure {
+                    message: "model sampling was cancelled".to_owned(),
                 }
-                // Every other current or future sampling failure is uncertain
-                // until its semantics are explicitly classified as pre-dispatch.
+                .into(),
+                Err(SamplingError::Model(error))
+                    if error.inference_outcome() == InferenceOutcome::KnownNotStarted =>
+                {
+                    EffectOutcome::Failure {
+                        message: error.to_string(),
+                    }
+                    .into()
+                }
                 Err(_) => EffectCompletion::OutcomeUnknown,
             }
         })

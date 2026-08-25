@@ -220,7 +220,7 @@ mod tests {
 
     use super::{KERNEL_DATABASE, create_session_storage, delete_session_storage, publish_session};
     use crate::{
-        LocalHostError, LocalSession, LocalSessionError, PiReasoningLevel,
+        LocalHostError, LocalSession, LocalSessionError, ReasoningLevel,
         selection::RuntimeSelection,
     };
 
@@ -281,7 +281,7 @@ mod tests {
             &RuntimeSelection {
                 provider: "test".to_owned(),
                 model: "test".to_owned(),
-                reasoning: PiReasoningLevel::High,
+                reasoning: ReasoningLevel::High,
             },
         )
         .expect("create session storage");

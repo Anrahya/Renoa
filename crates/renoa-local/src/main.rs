@@ -3,7 +3,7 @@ use std::{env, error::Error, io, path::Path};
 use renoa_agent::ContentBlock;
 use renoa_kernel::{AgentId, CommandId, SessionId};
 use renoa_local::{
-    LocalRuntimeConfig, LocalSession, LocalTurnOutcome, LocalWorkspace, PiReasoningLevel,
+    LocalRuntimeConfig, LocalSession, LocalTurnOutcome, LocalWorkspace, ReasoningLevel,
     build_local_runtime,
 };
 use tokio_util::sync::CancellationToken;
@@ -29,10 +29,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let workspace = LocalWorkspace::open(&arguments[1])?;
     let prompt = arguments[3..].join(" ");
     let mut runtime_config = LocalRuntimeConfig::for_alpha(
-        required_environment("RENOA_PI_BRIDGE")?,
-        required_environment("RENOA_PI_PROVIDER")?,
-        required_environment("RENOA_PI_MODEL")?,
-        required_environment("RENOA_PI_AUTH_STORE")?,
+        required_environment("RENOA_MODEL_BRIDGE")?,
+        required_environment("RENOA_MODEL_PROVIDER")?,
+        required_environment("RENOA_MODEL")?,
+        required_environment("RENOA_MODEL_AUTH_STORE")?,
         &workspace,
     )?;
     if let Some(reasoning) = optional_reasoning()? {
@@ -93,17 +93,17 @@ fn required_environment(name: &str) -> Result<String, Box<dyn Error>> {
         .map_err(Into::into)
 }
 
-fn optional_reasoning() -> Result<Option<PiReasoningLevel>, Box<dyn Error>> {
-    match env::var("RENOA_PI_REASONING") {
-        Ok(value) => PiReasoningLevel::from_id(&value).map(Some).ok_or_else(|| {
+fn optional_reasoning() -> Result<Option<ReasoningLevel>, Box<dyn Error>> {
+    match env::var("RENOA_MODEL_REASONING") {
+        Ok(value) => ReasoningLevel::from_id(&value).map(Some).ok_or_else(|| {
             io::Error::other(
-                "RENOA_PI_REASONING must be off, minimal, low, medium, high, xhigh, or max",
+                "RENOA_MODEL_REASONING must be off, minimal, low, medium, high, xhigh, or max",
             )
             .into()
         }),
         Err(env::VarError::NotPresent) => Ok(None),
         Err(env::VarError::NotUnicode(_)) => {
-            Err(io::Error::other("RENOA_PI_REASONING must be valid UTF-8").into())
+            Err(io::Error::other("RENOA_MODEL_REASONING must be valid UTF-8").into())
         }
     }
 }

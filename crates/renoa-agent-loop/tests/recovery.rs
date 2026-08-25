@@ -1,24 +1,15 @@
-use std::{
-    collections::VecDeque,
-    num::NonZeroU32,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
-use futures_util::{StreamExt, stream};
-use renoa_agent::{
-    AssistantContent, AssistantMetadata, BoxFuture, ContentBlock, Model, ModelError, ModelEvent,
-    ModelEventStream, ModelRequest, ModelResponse, StopReason, Tool, ToolCall, ToolError,
-    ToolOutput, ToolSpec, ToolUpdates,
-};
-use renoa_agent_loop::{
-    AgentCommand, AgentLoopConfig, AgentToolBinding, ContextBinding, ModelBinding, build_runtime,
-};
+use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{
-    AgentId, Command, CommandId, DriveResult, EffectRecovery, EffectStatus, EventCursor, Kernel,
-    OperationOutcome, OperationStatus, SessionId, SessionSnapshot,
+    DriveResult, EffectOutcome, EffectRecovery, EffectStatus, EventCursor, Kernel, KernelError,
+    OperationOutcome, OperationStatus,
 };
 use tempfile::tempdir;
-use tokio_util::sync::CancellationToken;
+
+#[path = "recovery/fakes.rs"]
+mod fakes;
+use fakes::*;
 
 #[tokio::test]
 async fn interrupted_model_replays_the_exact_persisted_request() {
@@ -185,6 +176,123 @@ async fn known_pre_inference_rejection_remains_a_definite_failure() {
 }
 
 #[tokio::test]
+async fn known_network_failure_before_inference_is_a_definite_failure() {
+    let (result, failed) = drive_one_model(Arc::new(NetworkRejectedModel)).await;
+    assert!(matches!(
+        result,
+        DriveResult::Finished {
+            outcome: OperationOutcome::Failed { ref reason },
+            ..
+        } if reason.contains("connection refused before dispatch (ECONNREFUSED)")
+    ));
+    assert_eq!(failed.operations[0].status, OperationStatus::Failed);
+    assert_eq!(
+        failed.operations[0].effects[0].status,
+        EffectStatus::Settled
+    );
+}
+
+#[tokio::test]
+async fn post_dispatch_reset_blocks_without_a_definite_failure() {
+    let (result, blocked) = drive_one_model(Arc::new(PostDispatchResetModel)).await;
+    assert!(matches!(result, DriveResult::Blocked { .. }));
+    assert_eq!(
+        blocked.operations[0].status,
+        OperationStatus::OutcomeUnknown
+    );
+    assert_eq!(
+        blocked.operations[0].effects[0].status,
+        EffectStatus::OutcomeUnknown
+    );
+    assert_eq!(blocked.operations[0].effects[0].outcome, None);
+}
+
+#[tokio::test]
+async fn a_completed_model_result_survives_kernel_cancellation() {
+    let directory = tempdir().expect("temporary directory");
+    let invoked = Arc::new(tokio::sync::Notify::new());
+    let kernel =
+        Arc::new(Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel"));
+    let session_id = create_session(&kernel);
+    submit_text(&kernel, session_id, "Return a definite result.");
+    let runtime = test_runtime(
+        Arc::new(CompletesAfterCancelModel {
+            invoked: Arc::clone(&invoked),
+        }),
+        Vec::new(),
+    );
+    let driver = Arc::clone(&kernel);
+    let drive = tokio::spawn(async move { driver.drive(session_id, &runtime).await });
+    invoked.notified().await;
+    let operation_id = kernel
+        .inspect(session_id)
+        .expect("inspect in-flight operation")
+        .operations[0]
+        .operation_id;
+    kernel
+        .request_cancellation(
+            session_id,
+            operation_id,
+            renoa_kernel::CancellationId::new(),
+        )
+        .expect("request cancellation");
+    let result = drive
+        .await
+        .expect("join drive")
+        .expect("drive completed result");
+    assert!(matches!(result, DriveResult::Finished { .. }), "{result:?}");
+    let snapshot = kernel
+        .inspect(session_id)
+        .expect("inspect completed result");
+    assert_eq!(
+        snapshot.operations[0].effects[0].status,
+        EffectStatus::Settled
+    );
+    let output = snapshot.operations[0].effects[0]
+        .outcome
+        .as_ref()
+        .expect("definite model result must settle");
+    let text = match output {
+        EffectOutcome::Success(value) => value.to_string(),
+        EffectOutcome::Failure { message } => message.clone(),
+        _ => format!("{output:?}"),
+    };
+    assert!(
+        text.contains("definite"),
+        "cancelled drain must keep the completed model output: {text}"
+    );
+}
+
+#[tokio::test]
+async fn a_frozen_pi_model_revision_cannot_execute_on_the_native_adapter_identity() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let kernel = Arc::new(Kernel::open(&database).expect("open kernel"));
+    let session_id = create_session(&kernel);
+    submit_text(&kernel, session_id, "Freeze this unfinished operation.");
+    let runtime = test_runtime_with_revision(
+        "pi/xai/grok-4.6/old-binding/reasoning-high",
+        Arc::new(PanickingModel),
+        Vec::new(),
+    );
+    let driver = Arc::clone(&kernel);
+    let task = tokio::spawn(async move { driver.drive(session_id, &runtime).await });
+    assert!(task.await.expect_err("model panic").is_panic());
+    drop(kernel);
+
+    let kernel = Kernel::open(&database).expect("reopen kernel");
+    let resumed = test_runtime_with_revision(
+        "renoa-model-provider-node/v1/xai/grok-4.6/old-binding/reasoning-high",
+        Arc::new(NeverCalledModel),
+        Vec::new(),
+    );
+    assert!(matches!(
+        kernel.drive(session_id, &resumed).await,
+        Err(KernelError::RuntimeMismatch)
+    ));
+}
+
+#[tokio::test]
 async fn uncertain_live_tool_outcome_blocks_without_recording_a_false_result() {
     let directory = tempdir().expect("temporary directory");
     let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
@@ -245,248 +353,4 @@ async fn uncertain_live_tool_outcome_blocks_without_recording_a_false_result() {
         messages[1],
         renoa_agent::Message::Assistant { .. }
     ));
-}
-
-async fn drive_one_model(model: Arc<dyn Model>) -> (DriveResult, SessionSnapshot) {
-    let directory = tempdir().expect("temporary directory");
-    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
-    let session_id = create_session(&kernel);
-    submit_text(&kernel, session_id, "Classify this model result honestly.");
-    let runtime = test_runtime(model, Vec::new());
-    let result = kernel
-        .drive(session_id, &runtime)
-        .await
-        .expect("drive model result");
-    let snapshot = kernel.inspect(session_id).expect("inspect model result");
-    (result, snapshot)
-}
-
-fn create_session(kernel: &Kernel) -> SessionId {
-    let agent_id = AgentId::new();
-    let session_id = SessionId::new();
-    kernel.create_agent(agent_id).expect("create agent");
-    kernel
-        .create_session(session_id, agent_id)
-        .expect("create session");
-    session_id
-}
-
-fn submit_text(kernel: &Kernel, session_id: SessionId, text: &str) {
-    let content = serde_json::to_value(AgentCommand::text(text)).expect("serialize command");
-    kernel
-        .submit(session_id, Command::new(CommandId::new(), content))
-        .expect("submit command");
-}
-
-fn test_runtime(model: Arc<dyn Model>, tools: Vec<AgentToolBinding>) -> renoa_kernel::Runtime {
-    build_runtime(
-        AgentLoopConfig::new(
-            "Recovery test.",
-            NonZeroU32::new(4).expect("non-zero model limit"),
-            NonZeroU32::new(4).expect("non-zero tool limit"),
-        ),
-        ContextBinding::full_history(),
-        ModelBinding::new("recovery-model-v1", model, EffectRecovery::SafeToReplay),
-        tools,
-    )
-    .expect("build runtime")
-}
-
-struct PanickingModel;
-
-impl Model for PanickingModel {
-    fn stream(
-        &self,
-        _request: ModelRequest,
-        _cancellation: CancellationToken,
-    ) -> ModelEventStream<'_> {
-        stream::once(async { panic!("injected model process loss") }).boxed()
-    }
-}
-
-struct NeverCalledModel;
-
-impl Model for NeverCalledModel {
-    fn stream(
-        &self,
-        _request: ModelRequest,
-        _cancellation: CancellationToken,
-    ) -> ModelEventStream<'_> {
-        panic!("model must not run while a tool outcome is unknown")
-    }
-}
-
-struct UncertainModel;
-
-impl Model for UncertainModel {
-    fn stream(
-        &self,
-        _request: ModelRequest,
-        _cancellation: CancellationToken,
-    ) -> ModelEventStream<'_> {
-        stream::once(async { Err(ModelError::new("provider connection was lost")) }).boxed()
-    }
-}
-
-struct IncompleteModel;
-
-impl Model for IncompleteModel {
-    fn stream(
-        &self,
-        _request: ModelRequest,
-        _cancellation: CancellationToken,
-    ) -> ModelEventStream<'_> {
-        stream::empty().boxed()
-    }
-}
-
-struct RejectedModel;
-
-impl Model for RejectedModel {
-    fn stream(
-        &self,
-        _request: ModelRequest,
-        _cancellation: CancellationToken,
-    ) -> ModelEventStream<'_> {
-        stream::once(async {
-            Err(ModelError::context_window_exceeded(
-                "model request exceeds its context window",
-            ))
-        })
-        .boxed()
-    }
-}
-
-struct RecordingModel {
-    responses: Mutex<VecDeque<ModelResponse>>,
-    requests: Arc<Mutex<Vec<ModelRequest>>>,
-}
-
-impl RecordingModel {
-    fn new(
-        responses: impl IntoIterator<Item = ModelResponse>,
-        requests: Arc<Mutex<Vec<ModelRequest>>>,
-    ) -> Self {
-        Self {
-            responses: Mutex::new(responses.into_iter().collect()),
-            requests,
-        }
-    }
-}
-
-impl Model for RecordingModel {
-    fn stream(
-        &self,
-        request: ModelRequest,
-        _cancellation: CancellationToken,
-    ) -> ModelEventStream<'_> {
-        self.requests.lock().expect("request lock").push(request);
-        let response = self
-            .responses
-            .lock()
-            .expect("response lock")
-            .pop_front()
-            .ok_or_else(|| ModelError::new("scripted model ran out of responses"));
-        stream::once(async move { response.map(|response| ModelEvent::Completed { response }) })
-            .boxed()
-    }
-}
-
-struct PanickingTool;
-
-impl Tool for PanickingTool {
-    fn spec(&self) -> &ToolSpec {
-        unsafe_tool_spec()
-    }
-
-    fn execute(
-        &self,
-        _call: ToolCall,
-        _cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(async { panic!("injected tool process loss") })
-    }
-}
-
-struct RecordingTool {
-    calls: Arc<Mutex<Vec<ToolCall>>>,
-}
-
-struct UncertainTool {
-    calls: Arc<Mutex<Vec<ToolCall>>>,
-}
-
-impl Tool for UncertainTool {
-    fn spec(&self) -> &ToolSpec {
-        unsafe_tool_spec()
-    }
-
-    fn execute(
-        &self,
-        call: ToolCall,
-        _cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        self.calls.lock().expect("tool calls lock").push(call);
-        Box::pin(std::future::ready(Err(ToolError::outcome_unknown(
-            "connection closed after dispatch",
-        ))))
-    }
-}
-
-impl Tool for RecordingTool {
-    fn spec(&self) -> &ToolSpec {
-        unsafe_tool_spec()
-    }
-
-    fn execute(
-        &self,
-        call: ToolCall,
-        _cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        self.calls.lock().expect("tool calls lock").push(call);
-        Box::pin(std::future::ready(Ok(ToolOutput {
-            content: vec![ContentBlock::text("done")],
-            details: None,
-        })))
-    }
-}
-
-fn unsafe_tool_spec() -> &'static ToolSpec {
-    static SPEC: std::sync::OnceLock<ToolSpec> = std::sync::OnceLock::new();
-    SPEC.get_or_init(|| ToolSpec {
-        name: "unsafe_action".to_owned(),
-        description: "Perform one unsafe test action.".to_owned(),
-        input_schema: serde_json::json!({"type": "object"}),
-    })
-}
-
-fn tool_call(id: &str, name: &str) -> ToolCall {
-    ToolCall {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        arguments: serde_json::json!({}),
-        thought_signature: None,
-        namespace: None,
-    }
-}
-
-fn tool_response(call: ToolCall) -> ModelResponse {
-    ModelResponse {
-        content: vec![AssistantContent::tool_call(call)],
-        stop_reason: StopReason::ToolUse,
-        usage: None,
-        metadata: AssistantMetadata::default(),
-    }
-}
-
-fn text_response(text: &str) -> ModelResponse {
-    ModelResponse {
-        content: vec![AssistantContent::text(text)],
-        stop_reason: StopReason::Stop,
-        usage: None,
-        metadata: AssistantMetadata::default(),
-    }
 }

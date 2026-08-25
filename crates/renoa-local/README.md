@@ -4,7 +4,7 @@
 coding runtime from:
 
 - Renoa Alpha's versioned coding behavior and workspace `AGENTS.md` rules;
-- Pi AI model routing through a small Node process adapter; and
+- the `@renoa/model-provider` process adapter for xAI and OpenCode Go; and
 - Renoa's durable model/tool loop and compaction strategy; and
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
   tools.
@@ -42,26 +42,33 @@ Host sessions use a stable top-level layout: `session.json` for identity,
 diagnostic timeline. Token/cache usage, exact provider payloads, stream chunks,
 durations, and tool diagnostics live only in the trace database.
 
-Build the Pi bridge first:
+Build the model-provider adapter first:
 
 ```sh
-pnpm --dir nodes/pi install --frozen-lockfile --ignore-scripts
-pnpm --dir nodes/pi build
+pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scripts
+pnpm --dir adapters/model-provider-node build
 ```
 
 Enroll provider credentials into an owner-only SQLite file before starting the
-host. SuperGrok uses `pnpm --dir nodes/pi auth:xai`. OpenCode Go uses the
-non-echoing piped-key flow documented in
-[`nodes/pi/README.md`](../../nodes/pi/README.md#run-with-opencode-go).
-
-Then configure one Pi model and run a turn:
+host. SuperGrok uses `pnpm --dir adapters/model-provider-node auth:xai`.
+OpenCode Go uses the non-echoing piped-key flow:
 
 ```sh
-export RENOA_PI_BRIDGE='/absolute/path/to/nodes/pi/dist/src/model-bridge-main.js'
-export RENOA_PI_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
-export RENOA_PI_PROVIDER='xai' # or opencode-go
-export RENOA_PI_MODEL='grok-4.6'
-export RENOA_PI_REASONING='high' # optional: off|minimal|low|medium|high|xhigh|max
+printf '%s' "$OPENCODE_API_KEY" | pnpm --dir adapters/model-provider-node auth:opencode-go
+```
+
+Existing `~/.config/renoa/pi-auth.sqlite` files remain the credential store.
+The architecture is recorded in
+[`docs/model-provider-v0.md`](../../docs/model-provider-v0.md).
+
+Then configure one model and run a turn:
+
+```sh
+export RENOA_MODEL_BRIDGE='/absolute/path/to/adapters/model-provider-node/dist/src/main.js'
+export RENOA_MODEL_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
+export RENOA_MODEL_PROVIDER='xai' # or opencode-go
+export RENOA_MODEL='grok-4.6'
+export RENOA_MODEL_REASONING='high' # optional: off|minimal|low|medium|high|xhigh|max
 
 cargo run -p renoa-local -- \
   /absolute/path/to/kernel.sqlite \
@@ -74,8 +81,8 @@ The command prints the stable session ID. Pass that ID instead of `new` to add
 the next turn to the same durable conversation. `Ctrl-C` requests ordered
 kernel cancellation and waits for active model or process work to stop.
 
-The normal runner always uses Renoa Alpha. Change `RENOA_PI_MODEL` or
-`RENOA_PI_REASONING` before the next command to change that operation's model
+The normal runner always uses Renoa Alpha. Change `RENOA_MODEL` or
+`RENOA_MODEL_REASONING` before the next command to change that operation's model
 behavior without replacing the session or its history. An active operation
 keeps the exact runtime already frozen by the kernel.
 
@@ -91,10 +98,9 @@ output limits, and current project instructions. Session creation and model
 selection changes also validate the runtime before acknowledging success.
 Authentication is resolved when the first model stream starts. A credential
 rejection proven to happen before inference fails the operation clearly and
-leaves the session usable; a failure after output starts remains uncertain. A
-packaged Pi model stays package-pinned; an xAI model
-absent from that package can be resolved from Pi's official live catalog. Renoa
-validates the provider, API, and xAI endpoint, then pins the exact model record
+leaves the session usable; a failure after output starts remains uncertain. The
+adapter advertises the pinned xAI and OpenCode Go catalogs only. Renoa
+validates the provider, API, and endpoint, then pins the exact model record
 and includes its SHA-256 identity in the runtime revision. The kernel freezes
 that revision with the loop, context configuration, instructions, and
 workspace-bound tools before an operation runs. An interrupted operation

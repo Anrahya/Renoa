@@ -367,7 +367,7 @@ not product policy or privileged kernel implementations.
 `renoa-agent` vocabulary. It reconstructs model history from versioned semantic
 message events, stores only its operational program counter in the opaque
 checkpoint, and expresses every model and tool call as a named kernel effect.
-`renoa-local` resolves the Pi model, durable context strategy, instructions,
+`renoa-local` resolves the model adapter, durable context strategy, instructions,
 and concrete workspace tools into the first complete local Host runtime. Its
 contract is recorded in [`renoa-host-v0.md`](renoa-host-v0.md). This preserves
 the intended dependency direction:

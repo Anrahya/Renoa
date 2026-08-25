@@ -257,7 +257,13 @@ impl Server {
                 }))
             }
             LocalTurnOutcome::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),
-            LocalTurnOutcome::Failed { reason } => Err(ServerError::Operation(reason)),
+            LocalTurnOutcome::Failed { reason } => match sink.last_model_failure()? {
+                Some(failure) if failure.cancelled => {
+                    Ok(PromptResponse::new(StopReason::Cancelled))
+                }
+                Some(failure) => Err(ServerError::Operation(failure.message)),
+                None => Err(ServerError::Operation(reason)),
+            },
             LocalTurnOutcome::WaitingForInput => Err(ServerError::Operation(
                 "the Alpha coding turn is waiting for unsupported external input".to_owned(),
             )),
@@ -282,7 +288,7 @@ impl Server {
                 session.set_model(&value.to_string()).await?;
             }
             "thought_level" => {
-                let reasoning = renoa_local::PiReasoningLevel::from_id(&value.to_string())
+                let reasoning = renoa_local::ReasoningLevel::from_id(&value.to_string())
                     .ok_or_else(|| {
                         ServerError::InvalidRequest("unknown reasoning level".to_owned())
                     })?;

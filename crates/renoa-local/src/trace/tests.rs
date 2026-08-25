@@ -58,6 +58,16 @@ async fn trace_records_exact_model_flow_and_normalized_usage() {
         })
         .await;
     trace
+        .emit(AgentEvent::ModelRetryAttempt {
+            invocation_id: invocation_id.clone(),
+            attempt: 1,
+            next_attempt: 2,
+            category: renoa_agent::ModelErrorKind::Network,
+            delay_ms: 250,
+            cause_code: Some("ECONNRESET".to_owned()),
+        })
+        .await;
+    trace
         .emit(AgentEvent::ModelProviderResponse {
             invocation_id: invocation_id.clone(),
             status: 200,
@@ -168,6 +178,15 @@ fn assert_model_diagnostics(path: &std::path::Path) {
         )
         .expect("read provider payload");
     assert!(provider_payload.contains("exact payload"));
+    let retry_payload: String = connection
+        .query_row(
+            "SELECT payload_json FROM events WHERE kind = 'retry_attempt'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read retry diagnostic");
+    assert!(retry_payload.contains("\"attempt\":1"));
+    assert!(retry_payload.contains("ECONNRESET"));
 }
 
 #[tokio::test]

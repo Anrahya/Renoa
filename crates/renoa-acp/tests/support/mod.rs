@@ -22,10 +22,10 @@ impl AcpProcess {
             .arg("acp")
             .current_dir(workspace)
             .env("RENOA_DATA_DIR", data)
-            .env("RENOA_PI_BRIDGE", bridge)
-            .env("RENOA_PI_PROVIDER", "xai")
-            .env("RENOA_PI_MODEL", "grok-test")
-            .env("RENOA_PI_AUTH_STORE", auth_store)
+            .env("RENOA_MODEL_BRIDGE", bridge)
+            .env("RENOA_MODEL_PROVIDER", "xai")
+            .env("RENOA_MODEL", "grok-test")
+            .env("RENOA_MODEL_AUTH_STORE", auth_store)
             .env("RENOA_TEST_STARTED", data.join("model-started"))
             .env("RENOA_TEST_COMPLETED", data.join("model-completed"))
             .env("RENOA_TEST_CONTINUE", data.join("model-continue"))
@@ -119,10 +119,16 @@ impl AcpProcess {
         (update, response)
     }
 
-    pub(crate) fn send_prompt(&mut self, session_id: &str, text: &str, turn_id: &str) {
+    pub(crate) fn send_prompt_id(
+        &mut self,
+        request_id: u64,
+        session_id: &str,
+        text: &str,
+        turn_id: &str,
+    ) {
         self.send(&json!({
             "jsonrpc": "2.0",
-            "id": 3,
+            "id": request_id,
             "method": "session/prompt",
             "params": {
                 "sessionId": session_id,
@@ -130,6 +136,10 @@ impl AcpProcess {
                 "_meta": { "requestId": turn_id, "promptId": turn_id }
             }
         }));
+    }
+
+    pub(crate) fn send_prompt(&mut self, session_id: &str, text: &str, turn_id: &str) {
+        self.send_prompt_id(3, session_id, text, turn_id);
     }
 
     pub(crate) fn read_until_response(&mut self, request_id: u64) -> Vec<Value> {
@@ -192,13 +202,13 @@ const models = [
     model_spec: { id: "grok-fast" }
   }
 ];
-if (process.env.RENOA_PI_ACTION === "catalog") {
+if (process.env.RENOA_MODEL_ACTION === "catalog") {
   process.stdout.write(JSON.stringify({ ok: true, response: { models } }));
   process.exit(0);
 }
-if (process.env.RENOA_PI_ACTION === "describe") {
-  const modelSpec = process.env.RENOA_PI_MODEL_SPEC;
-  if (modelSpec !== JSON.stringify({ id: process.env.RENOA_PI_MODEL })) {
+if (process.env.RENOA_MODEL_ACTION === "describe") {
+  const modelSpec = process.env.RENOA_MODEL_SPEC;
+  if (modelSpec !== JSON.stringify({ id: process.env.RENOA_MODEL })) {
     process.stdout.write(JSON.stringify({ ok: false, error: "selected model was not pinned" }));
     process.exit(0);
   }
@@ -209,7 +219,7 @@ if (process.env.RENOA_PI_ACTION === "describe") {
       max_output_tokens: 500000,
       model_spec: modelSpec,
       model_binding_id: createHash("sha256").update(modelSpec).digest("hex"),
-      reasoning_level: process.env.RENOA_PI_REASONING ?? "high"
+      reasoning_level: process.env.RENOA_MODEL_REASONING ?? "high"
     }
   }));
   process.exit(0);
@@ -218,7 +228,7 @@ const request = JSON.parse(input);
 process.stdout.write(JSON.stringify({
   event: "provider_request",
   payload: {
-    model: process.env.RENOA_PI_MODEL,
+    model: process.env.RENOA_MODEL,
     system_prompt: request.system_prompt,
     messages: request.messages,
     tools: request.tools
@@ -231,6 +241,56 @@ process.stdout.write(JSON.stringify({
 }) + "\n");
 const prompt = request.messages.findLast(message => message.role === "user").content[0].text;
 const toolResults = request.messages.filter(message => message.role === "tool");
+if (prompt === "FailContext") {
+  process.stdout.write(JSON.stringify({
+    event: "error",
+    error: "prompt is too long for the context window",
+    error_kind: "context_window_exceeded",
+    inference_outcome: "known_not_started"
+  }) + "\n");
+  process.exit(0);
+}
+if (prompt === "FailProvider") {
+  process.stdout.write(JSON.stringify({
+    event: "error",
+    error: "xAI request failed after 3 attempts: connection reset before an HTTP response (ECONNRESET).",
+    error_kind: "network",
+    inference_outcome: "known_not_started",
+    diagnostic: {
+      provider: "xai",
+      model: process.env.RENOA_MODEL,
+      attempt_count: 3,
+      cause_code: "ECONNRESET",
+      cause_message: "read ECONNRESET"
+    }
+  }) + "\n");
+  process.exit(0);
+}
+if (prompt === "FailAfterDispatch") {
+  process.stdout.write(JSON.stringify({
+    event: "retry_attempt",
+    attempt: 1,
+    next_attempt: 2,
+    category: "network",
+    delay_ms: 0,
+    cause_code: "ECONNRESET"
+  }) + "\n");
+  process.stdout.write(JSON.stringify({
+    event: "error",
+    error: "xAI request failed after 3 attempts: connection reset after the request may have been transmitted (ECONNRESET).",
+    error_kind: "network",
+    inference_outcome: "unknown",
+    diagnostic: {
+      provider: "xai",
+      model: process.env.RENOA_MODEL,
+      attempt_count: 3,
+      cause_code: "ECONNRESET",
+      cause_message: "socket destroyed after a complete request",
+      provider_message: "The upstream closed the connection after reading the chat completion request."
+    }
+  }) + "\n");
+  process.exit(0);
+}
 if (prompt === "Stream") {
   process.stdout.write(JSON.stringify({
     event: "content_delta",
@@ -252,7 +312,7 @@ if (prompt === "Stream") {
       content: [{ type: "text", text: "Hello world" }],
       stop_reason: "stop",
       usage: { input: 1, output: 2, cache_read: 0, cache_write: 0 },
-      metadata: { api: "test", provider: "xai", model: process.env.RENOA_PI_MODEL }
+      metadata: { api: "test", provider: "xai", model: process.env.RENOA_MODEL }
     }
   }) + "\n");
   process.exit(0);
@@ -275,12 +335,12 @@ if (prompt === "Hello") {
   !request.system_prompt.includes("Use the first instruction.")
 ) {
   content = [{ type: "text", text: "Instructions refreshed." }];
-} else if (prompt === "Configured" && process.env.RENOA_PI_REASONING === "low") {
+} else if (prompt === "Configured" && process.env.RENOA_MODEL_REASONING === "low") {
   content = [{ type: "text", text: "Reasoning configured." }];
 } else if (
   prompt === "Model configured" &&
-  process.env.RENOA_PI_MODEL === "grok-fast" &&
-  process.env.RENOA_PI_REASONING === "low"
+  process.env.RENOA_MODEL === "grok-fast" &&
+  process.env.RENOA_MODEL_REASONING === "low"
 ) {
   content = [{ type: "text", text: "Model configured." }];
 } else if (prompt === "First") {
@@ -365,7 +425,7 @@ process.stdout.write(JSON.stringify({
     content,
     stop_reason,
     usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
-    metadata: { api: "test", provider: "xai", model: process.env.RENOA_PI_MODEL }
+    metadata: { api: "test", provider: "xai", model: process.env.RENOA_MODEL }
   }
 }));
 "#;

@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf};
 
-use renoa_local::{LocalHost, LocalHostError, PiModelOption, discover_pi_models};
+use renoa_local::{LocalHost, LocalHostError, ModelChoice, discover_models};
 use serde::Serialize;
 
 use crate::ServerError;
@@ -67,19 +67,16 @@ impl Config {
 impl ProviderSettings {
     fn from_environment() -> Result<Self, ServerError> {
         Ok(Self {
-            bridge: required_path("RENOA_PI_BRIDGE")?,
-            provider: required("RENOA_PI_PROVIDER")?,
-            model: required("RENOA_PI_MODEL")?,
-            credential_store: required_path("RENOA_PI_AUTH_STORE")?,
+            bridge: required_path("RENOA_MODEL_BRIDGE")?,
+            provider: required("RENOA_MODEL_PROVIDER")?,
+            model: required("RENOA_MODEL")?,
+            credential_store: required_path("RENOA_MODEL_AUTH_STORE")?,
         })
     }
 }
 
 impl ModelCatalog {
-    fn from_models(
-        models: Vec<PiModelOption>,
-        configured_model: &str,
-    ) -> Result<Self, ServerError> {
+    fn from_models(models: Vec<ModelChoice>, configured_model: &str) -> Result<Self, ServerError> {
         if !models.iter().any(|model| model.id() == configured_model) {
             return Err(ServerError::Configuration(format!(
                 "configured {configured_model} model is not available from the authenticated provider"
@@ -122,7 +119,7 @@ impl ModelCatalog {
 /// Returns an error when provider settings, authentication, or the catalog are invalid.
 pub async fn configured_model_catalog() -> Result<ModelCatalog, ServerError> {
     let settings = ProviderSettings::from_environment()?;
-    let models = discover_pi_models(
+    let models = discover_models(
         settings.bridge,
         settings.provider,
         settings.credential_store,

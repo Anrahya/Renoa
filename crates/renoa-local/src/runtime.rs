@@ -14,7 +14,7 @@ use renoa_kernel::{EffectRecovery, Runtime};
 use thiserror::Error;
 
 use crate::{
-    AlphaError, LocalWorkspace, PiModel, PiModelConfigError, PiModelOption, PiReasoningLevel,
+    AlphaError, BridgeModel, LocalWorkspace, ModelBridgeError, ModelChoice, ReasoningLevel,
 };
 
 const MODEL_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(32).unwrap();
@@ -32,7 +32,7 @@ pub struct LocalRuntimeConfig {
     credential_store: PathBuf,
     instructions: String,
     model_spec: Option<String>,
-    reasoning: Option<PiReasoningLevel>,
+    reasoning: Option<ReasoningLevel>,
 }
 
 impl LocalRuntimeConfig {
@@ -60,14 +60,14 @@ impl LocalRuntimeConfig {
     }
 
     #[must_use]
-    pub fn with_discovered_model(mut self, model: &PiModelOption) -> Self {
+    pub fn with_discovered_model(mut self, model: &ModelChoice) -> Self {
         model.id().clone_into(&mut self.model);
         self.model_spec = Some(model.encoded_spec());
         self
     }
 
     #[must_use]
-    pub fn with_reasoning(mut self, reasoning: PiReasoningLevel) -> Self {
+    pub fn with_reasoning(mut self, reasoning: ReasoningLevel) -> Self {
         self.reasoning = Some(reasoning);
         self
     }
@@ -77,7 +77,7 @@ impl LocalRuntimeConfig {
 #[non_exhaustive]
 pub enum LocalRuntimeError {
     #[error(transparent)]
-    Model(#[from] PiModelConfigError),
+    Model(#[from] ModelBridgeError),
     #[error("model context reserve overflowed u64")]
     ContextReserveOverflow,
     #[error("model context is smaller than its output reserve")]
@@ -132,7 +132,7 @@ async fn build_local_runtime_inner(
     let resolved = resolve_model(config).await?;
     let context = context_binding(&resolved.model)?;
     let model_revision = format!(
-        "pi/{}/{}/{}/reasoning-{}",
+        "renoa-model-provider-node/v1/{}/{}/{}/reasoning-{}",
         resolved.provider,
         resolved.model_id,
         resolved.model.binding_id(),
@@ -152,12 +152,12 @@ struct ResolvedModel {
     provider: String,
     model_id: String,
     instructions: String,
-    model: Arc<PiModel>,
+    model: Arc<BridgeModel>,
 }
 
-async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, PiModelConfigError> {
+async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, ModelBridgeError> {
     let model = Arc::new(
-        PiModel::load_with_spec(
+        BridgeModel::load_with_spec(
             config.bridge,
             config.provider.as_str(),
             config.model.as_str(),
@@ -176,7 +176,7 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, PiMo
     })
 }
 
-fn context_binding(model: &Arc<PiModel>) -> Result<ContextBinding, LocalRuntimeError> {
+fn context_binding(model: &Arc<BridgeModel>) -> Result<ContextBinding, LocalRuntimeError> {
     let settings = compaction_settings(model.as_ref())?;
     let limits = CompactionLimits::new(
         settings.context,
@@ -211,7 +211,7 @@ struct CompactionSettings {
     max_summary: NonZeroU64,
 }
 
-fn compaction_settings(model: &PiModel) -> Result<CompactionSettings, LocalRuntimeError> {
+fn compaction_settings(model: &BridgeModel) -> Result<CompactionSettings, LocalRuntimeError> {
     let context = model.context_window_tokens();
     let safety = (context.get() / 50).max(MIN_CONTEXT_SAFETY_TOKENS);
     let reserved = u64::from(model.max_output_tokens().get())

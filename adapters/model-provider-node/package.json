@@ -1,0 +1,24 @@
+{
+  "name": "@renoa/model-provider",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0 OR MIT",
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "auth:opencode-go": "pnpm run build && node dist/src/auth-opencode-go.js",
+    "auth:xai": "pnpm run build && node --dns-result-order=ipv4first dist/src/auth-xai.js",
+    "build": "node ./scripts/clean-dist.mjs && tsc",
+    "check": "tsc --noEmit",
+    "test": "pnpm run build && node --test --test-reporter=spec dist/test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.91.1",
+    "openai": "6.40.0",
+    "partial-json": "0.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2"
+  }
+}
