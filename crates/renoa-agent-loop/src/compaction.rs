@@ -223,6 +223,15 @@ impl CompactionPlanner {
             Some(projector),
         )
     }
+
+    pub(crate) fn plan_explicit(
+        &self,
+        context: &ContextInput,
+        checkpoint: Option<CompactionCheckpoint<'_>>,
+        sizer: &dyn ContextSizer,
+    ) -> Result<Option<CompactionPlan>, CompactionPlanningError> {
+        planning::select_explicit_plan(context, checkpoint, self.limits, sizer)
+    }
 }
 
 pub(crate) fn validate_plan(
@@ -238,6 +247,21 @@ pub(crate) fn validate_plan(
         ));
     }
     planning::validate_boundary(context, plan.covered_through_sequence)
+}
+
+pub(crate) fn validate_explicit_plan(
+    context: &ContextInput,
+    plan: &CompactionPlan,
+) -> Result<(), CompactionPlanningError> {
+    validate_plan_shape(plan)?;
+    if context.active_checkpoint().is_some_and(|checkpoint| {
+        checkpoint.covered_through_sequence() >= plan.covered_through_sequence
+    }) {
+        return Err(CompactionPlanningError::InvalidPlan(
+            "covered boundary does not advance the active checkpoint".to_owned(),
+        ));
+    }
+    planning::validate_explicit_boundary(context, plan.covered_through_sequence)
 }
 
 fn validate_plan_shape(plan: &CompactionPlan) -> Result<(), CompactionPlanningError> {

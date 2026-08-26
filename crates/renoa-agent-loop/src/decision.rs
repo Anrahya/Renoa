@@ -16,7 +16,8 @@ use crate::{
     configuration::{AgentLoopConfig, MODEL_EFFECT_BINDING},
     context::{ContextPreparation, ContextStrategy},
     format::{
-        LoopPhase, ModelEffectOutput, checkpoint, context_input, message_event, message_events,
+        AgentCommandKind, LoopPhase, ModelEffectOutput, checkpoint, context_input, message_event,
+        message_events,
     },
 };
 
@@ -48,7 +49,7 @@ impl AgentLoop {
         }
     }
 
-    fn decide_initial(input: &LoopInput) -> Result<LoopDecision, LoopError> {
+    fn decide_initial(&self, input: &LoopInput) -> Result<LoopDecision, LoopError> {
         if input.effect.is_some() {
             return Err(LoopError::new(
                 "an uncheckpointed operation cannot have a settled effect",
@@ -65,10 +66,13 @@ impl AgentLoop {
                 });
             }
         };
-        Ok(LoopDecision::AppendEventsAndContinue {
-            checkpoint: checkpoint(LoopPhase::NeedModel { model_turns: 0 })?,
-            events: vec![message_event(command.into_message())?],
-        })
+        match command.into_kind() {
+            AgentCommandKind::Prompt(content) => Ok(LoopDecision::AppendEventsAndContinue {
+                checkpoint: checkpoint(LoopPhase::NeedModel { model_turns: 0 })?,
+                events: vec![message_event(Message::User { content })?],
+            }),
+            AgentCommandKind::Compact => self.request_explicit_compaction(input),
+        }
     }
 
     fn request_model(
@@ -272,6 +276,17 @@ impl AgentLoop {
         let input = self.build_context_input(active_operation_id, events, false)?;
         crate::compaction::validate_plan(&input, plan)
             .map_err(|error| LoopError::new(format!("context compaction plan is invalid: {error}")))
+    }
+
+    pub(super) fn validate_explicit_compaction_plan(
+        input: &crate::ContextInput,
+        plan: &crate::CompactionPlan,
+    ) -> Result<(), LoopError> {
+        crate::compaction::validate_explicit_plan(input, plan).map_err(|error| {
+            LoopError::new(format!(
+                "explicit context compaction plan is invalid: {error}"
+            ))
+        })
     }
 
     fn normal_model_request(

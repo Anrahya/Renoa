@@ -2,7 +2,7 @@ use std::{collections::HashSet, num::NonZeroU32};
 
 use renoa_agent::{ContentBlock, Message, ModelResponse, ToolSpec};
 use renoa_kernel::{Checkpoint, LoopError, NewEvent, SemanticEvent};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     CompactionPlan,
@@ -19,18 +19,66 @@ const MESSAGE_EVENT_PREFIX: &str = "renoa.agent.message.";
 /// Versioned semantic-event kind carrying one activated portable summary.
 pub const CONTEXT_CHECKPOINT_EVENT_KIND: &str = "renoa.agent.context-checkpoint.v1";
 const CONTEXT_CHECKPOINT_EVENT_PREFIX: &str = "renoa.agent.context-checkpoint.";
+/// Versioned semantic-event kind carrying the durable result of explicit compaction.
+pub const COMPACTION_RESULT_EVENT_KIND: &str = "renoa.agent.compaction-result.v1";
+const COMPACTION_RESULT_EVENT_PREFIX: &str = "renoa.agent.compaction-result.";
 
 /// Command content consumed by the model/tool loop.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommand {
+    kind: AgentCommandKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AgentCommandKind {
+    Prompt(Vec<ContentBlock>),
+    Compact,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum AgentCommandRef<'a> {
+    Prompt(PromptCommandRef<'a>),
+    Control(ControlCommand),
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct PromptCommandRef<'a> {
+    content: &'a [ContentBlock],
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum AgentCommandWire {
+    Prompt(PromptCommand),
+    Control(ControlCommand),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PromptCommand {
     content: Vec<ContentBlock>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlCommand {
+    control: ControlKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ControlKind {
+    Compact,
 }
 
 impl AgentCommand {
     #[must_use]
     pub fn new(content: Vec<ContentBlock>) -> Self {
-        Self { content }
+        Self {
+            kind: AgentCommandKind::Prompt(content),
+        }
     }
 
     #[must_use]
@@ -39,14 +87,55 @@ impl AgentCommand {
     }
 
     #[must_use]
-    pub fn content(&self) -> &[ContentBlock] {
-        &self.content
+    pub const fn compact() -> Self {
+        Self {
+            kind: AgentCommandKind::Compact,
+        }
     }
 
-    pub(crate) fn into_message(self) -> Message {
-        Message::User {
-            content: self.content,
+    /// Returns the model-visible prompt content, or an empty slice for a
+    /// control command that deliberately contributes no conversation message.
+    #[must_use]
+    pub fn content(&self) -> &[ContentBlock] {
+        match &self.kind {
+            AgentCommandKind::Prompt(content) => content,
+            AgentCommandKind::Compact => &[],
         }
+    }
+
+    pub(crate) fn into_kind(self) -> AgentCommandKind {
+        self.kind
+    }
+}
+
+impl Serialize for AgentCommand {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match &self.kind {
+            AgentCommandKind::Prompt(content) => {
+                AgentCommandRef::Prompt(PromptCommandRef { content }).serialize(serializer)
+            }
+            AgentCommandKind::Compact => AgentCommandRef::Control(ControlCommand {
+                control: ControlKind::Compact,
+            })
+            .serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentCommand {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        AgentCommandWire::deserialize(deserializer).map(|wire| match wire {
+            AgentCommandWire::Prompt(command) => Self::new(command.content),
+            AgentCommandWire::Control(ControlCommand {
+                control: ControlKind::Compact,
+            }) => Self::compact(),
+        })
     }
 }
 
@@ -61,6 +150,11 @@ pub(crate) enum LoopPhase {
     },
     AwaitingCompaction {
         model_turns: u32,
+        plan: CompactionPlan,
+        max_attempts: NonZeroU32,
+        attempt: NonZeroU32,
+    },
+    AwaitingExplicitCompaction {
         plan: CompactionPlan,
         max_attempts: NonZeroU32,
         attempt: NonZeroU32,
@@ -101,13 +195,20 @@ pub(crate) fn checkpoint(phase: LoopPhase) -> Result<Checkpoint, LoopError> {
 pub(crate) fn decode_checkpoint(checkpoint: &Checkpoint) -> Result<LoopPhase, LoopError> {
     let phase = serde_json::from_value(checkpoint.state().clone())
         .map_err(|error| LoopError::new(format!("agent checkpoint is invalid: {error}")))?;
-    if let LoopPhase::AwaitingCompaction {
-        max_attempts,
-        attempt,
-        ..
-    } = &phase
-        && attempt > max_attempts
-    {
+    let attempts = match &phase {
+        LoopPhase::AwaitingCompaction {
+            max_attempts,
+            attempt,
+            ..
+        }
+        | LoopPhase::AwaitingExplicitCompaction {
+            max_attempts,
+            attempt,
+            ..
+        } => Some((attempt, max_attempts)),
+        _ => None,
+    };
+    if attempts.is_some_and(|(attempt, max_attempts)| attempt > max_attempts) {
         return Err(LoopError::new(
             "agent checkpoint compaction attempt exceeds its maximum",
         ));
@@ -142,6 +243,28 @@ pub(crate) fn context_checkpoint_event(
     })
     .map(|payload| NewEvent::new(CONTEXT_CHECKPOINT_EVENT_KIND, payload))
     .map_err(|error| LoopError::new(format!("context checkpoint encoding failed: {error}")))
+}
+
+/// Durable context size estimated after an explicit compaction command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompactionResult {
+    estimated_input_tokens: u64,
+}
+
+impl CompactionResult {
+    #[must_use]
+    pub const fn estimated_input_tokens(self) -> u64 {
+        self.estimated_input_tokens
+    }
+}
+
+pub(crate) fn compaction_result_event(estimated_input_tokens: u64) -> Result<NewEvent, LoopError> {
+    serde_json::to_value(CompactionResult {
+        estimated_input_tokens,
+    })
+    .map(|payload| NewEvent::new(COMPACTION_RESULT_EVENT_KIND, payload))
+    .map_err(|error| LoopError::new(format!("compaction result encoding failed: {error}")))
 }
 
 pub(crate) fn context_input(
@@ -211,6 +334,20 @@ pub(crate) fn context_input(
                 "context checkpoint event kind `{}` is unsupported",
                 event.kind
             )));
+        } else if event.kind != COMPACTION_RESULT_EVENT_KIND
+            && event.kind.starts_with(COMPACTION_RESULT_EVENT_PREFIX)
+        {
+            return Err(LoopError::new(format!(
+                "compaction result event kind `{}` is unsupported",
+                event.kind
+            )));
+        } else if event.kind == COMPACTION_RESULT_EVENT_KIND {
+            serde_json::from_value::<CompactionResult>(event.payload.clone()).map_err(|error| {
+                LoopError::new(format!(
+                    "compaction result event {} cannot be decoded: {error}",
+                    event.event_id
+                ))
+            })?;
         }
     }
     Ok(ContextInput::new(

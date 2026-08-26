@@ -5,14 +5,14 @@ use agent_client_protocol::{
     schema::{
         ProtocolVersion,
         v1::{
-            AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse,
-            DeleteSessionRequest, DeleteSessionResponse, Implementation, InitializeRequest,
-            InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-            NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse,
-            SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
-            SessionConfigOptionCategory, SessionConfigSelectOption, SessionDeleteCapabilities,
-            SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
-            SetSessionConfigOptionResponse, StopReason,
+            AgentCapabilities, AvailableCommand, AvailableCommandsUpdate, CancelNotification,
+            CloseSessionRequest, CloseSessionResponse, DeleteSessionRequest, DeleteSessionResponse,
+            Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
+            LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptCapabilities,
+            PromptRequest, PromptResponse, SessionCapabilities, SessionCloseCapabilities,
+            SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
+            SessionDeleteCapabilities, SessionNotification, SessionUpdate,
+            SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason,
         },
     },
 };
@@ -60,9 +60,11 @@ pub(crate) async fn serve_stdio(config: Config) -> Result<(), ServerError> {
         .on_receive_request(
             {
                 let server = Arc::clone(&server);
-                move |request: NewSessionRequest, responder, _connection| {
+                move |request: NewSessionRequest, responder, connection| {
                     let server = Arc::clone(&server);
-                    async move { respond(responder, server.create_session(request).await) }
+                    async move {
+                        respond(responder, server.create_session(request, &connection).await)
+                    }
                 }
             },
             agent_client_protocol::on_receive_request!(),
@@ -140,6 +142,7 @@ impl Server {
     async fn create_session(
         &self,
         request: NewSessionRequest,
+        connection: &ConnectionTo<Client>,
     ) -> Result<NewSessionResponse, ServerError> {
         require_plain_local_session(&request.additional_directories, &request.mcp_servers)?;
         let mut active = self.active.lock().await;
@@ -153,6 +156,7 @@ impl Server {
             .await?;
         let id = session.id().to_string();
         let config_options = config_options(&session)?;
+        send_available_commands(connection, &id)?;
         *active = Some(session);
         Ok(NewSessionResponse::new(id).config_options(config_options))
     }
@@ -180,7 +184,9 @@ impl Server {
             &session.id().to_string(),
             session.history()?,
             session.context_window_tokens()?,
+            session.latest_context_tokens()?,
         )?;
+        send_available_commands(connection, &session.id().to_string())?;
         *active = Some(session);
         Ok(LoadSessionResponse::new().config_options(config_options))
     }
@@ -234,13 +240,43 @@ impl Server {
     ) -> Result<PromptResponse, ServerError> {
         let session = self.session(&request.session_id.to_string()).await?;
         let request_id = prompt::request_identity(request.meta.as_ref())?;
+        let action = prompt::action(request.prompt)?;
+        if matches!(action, prompt::PromptAction::Compact) {
+            let context_window_tokens = session.context_window_tokens()?;
+            let outcome =
+                prompt::execute(&session, action, request_id, prompt::silent_sink()).await?;
+            return match outcome {
+                LocalTurnOutcome::Compacted {
+                    estimated_input_tokens,
+                } => {
+                    events::send_context_usage(
+                        connection,
+                        &session.id().to_string(),
+                        estimated_input_tokens,
+                        context_window_tokens,
+                    )?;
+                    Ok(PromptResponse::new(StopReason::EndTurn))
+                }
+                LocalTurnOutcome::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),
+                LocalTurnOutcome::Failed { reason } => Err(ServerError::Operation(reason)),
+                LocalTurnOutcome::WaitingForInput => Err(ServerError::Operation(
+                    "explicit compaction is waiting for unsupported external input".to_owned(),
+                )),
+                LocalTurnOutcome::Completed { .. } => Err(ServerError::Operation(
+                    "explicit compaction returned an assistant response".to_owned(),
+                )),
+                _ => Err(ServerError::Operation(
+                    "explicit compaction returned an unsupported outcome".to_owned(),
+                )),
+            };
+        }
         let sink = Arc::new(AcpEventSink::new(
             connection.clone(),
             session.id().to_string(),
             session.context_window_tokens()?,
         ));
         let events: Arc<dyn AgentEventSink> = sink.clone();
-        let outcome = prompt::execute(&session, request, request_id, events).await?;
+        let outcome = prompt::execute(&session, action, request_id, events).await?;
         sink.ensure_delivery()?;
         match outcome {
             LocalTurnOutcome::Completed {
@@ -272,6 +308,9 @@ impl Server {
             },
             LocalTurnOutcome::WaitingForInput => Err(ServerError::Operation(
                 "the Alpha coding turn is waiting for unsupported external input".to_owned(),
+            )),
+            LocalTurnOutcome::Compacted { .. } => Err(ServerError::Operation(
+                "a normal prompt returned a compaction result".to_owned(),
             )),
             _ => Err(ServerError::Operation(
                 "the local Host returned an unsupported turn outcome".to_owned(),
@@ -375,6 +414,20 @@ fn config_options(session: &AlphaSession) -> Result<Vec<SessionConfigOption>, Se
 
 fn session_already_active() -> ServerError {
     ServerError::InvalidRequest("this ACP process already owns a session".to_owned())
+}
+
+fn send_available_commands(
+    connection: &ConnectionTo<Client>,
+    session_id: &str,
+) -> Result<(), ServerError> {
+    connection
+        .send_notification(SessionNotification::new(
+            session_id.to_owned(),
+            SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(vec![
+                AvailableCommand::new("compact", "Summarize durable conversation context now"),
+            ])),
+        ))
+        .map_err(ServerError::Transport)
 }
 
 fn initialize(_request: InitializeRequest) -> InitializeResponse {

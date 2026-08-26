@@ -165,6 +165,24 @@ pub enum ContextPreparation {
     },
 }
 
+/// Pure decision for one explicit, model-free-after-summary compaction turn.
+#[derive(Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ExplicitCompactionPreparation {
+    /// The active checkpoint already covers every durable conversation message.
+    UpToDate { estimated_input_tokens: u64 },
+    /// Persist and execute this summary request, then finish the control turn.
+    Compact {
+        plan: CompactionPlan,
+        max_attempts: NonZeroU32,
+    },
+    /// No safe summary prefix can be sent within the configured provider limit.
+    CapacityExceeded {
+        estimated_input_tokens: u64,
+        dispatch_limit_tokens: u64,
+    },
+}
+
 /// Pure policy for selecting the messages visible to the next model call.
 ///
 /// A strategy must be deterministic for the same input and binding revision.
@@ -191,6 +209,37 @@ pub trait ContextStrategy: Send + Sync {
     fn prepare(&self, input: ContextInput) -> Result<ContextPreparation, ContextStrategyError> {
         self.project(input)
             .map(|messages| ContextPreparation::Model { messages })
+    }
+
+    /// Plans a user-requested compaction turn without inventing a user message.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when this strategy does not support explicit compaction
+    /// or cannot safely project the durable transcript.
+    fn prepare_explicit_compaction(
+        &self,
+        _input: &ContextInput,
+    ) -> Result<ExplicitCompactionPreparation, ContextStrategyError> {
+        Err(ContextStrategyError::new(
+            "context strategy does not support explicit compaction",
+        ))
+    }
+
+    /// Estimates the exact idle model context after activating `summary` for `plan`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plan cannot be projected by this strategy.
+    fn estimate_after_explicit_compaction(
+        &self,
+        _input: &ContextInput,
+        _plan: &CompactionPlan,
+        _summary: &str,
+    ) -> Result<u64, ContextStrategyError> {
+        Err(ContextStrategyError::new(
+            "context strategy cannot estimate explicit compaction",
+        ))
     }
 
     /// Validates one complete response to a plan produced by this strategy.

@@ -38,7 +38,7 @@ async fn local_host_resolves_the_complete_coding_runtime() {
 
     let manifest = runtime.manifest();
     assert_eq!(manifest.loop_binding, "renoa.agent.model-tool-loop");
-    assert_eq!(manifest.checkpoint_schema_version, 2);
+    assert_eq!(manifest.checkpoint_schema_version, 3);
     assert_eq!(manifest.effect_bindings.len(), 7);
     assert!(manifest.effect_bindings.contains_key("renoa.agent.model"));
     for tool in [

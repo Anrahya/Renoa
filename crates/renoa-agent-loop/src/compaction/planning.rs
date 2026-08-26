@@ -50,6 +50,29 @@ pub(super) fn select_plan(
     CompactionPlan::new(summary_request, entries[cuts[selected]].sequence()).map(Some)
 }
 
+pub(super) fn select_explicit_plan(
+    context: &ContextInput,
+    checkpoint: Option<CompactionCheckpoint<'_>>,
+    limits: CompactionLimits,
+    sizer: &dyn ContextSizer,
+) -> Result<Option<CompactionPlan>, CompactionPlanningError> {
+    let all_entries = context.entries().collect::<Vec<_>>();
+    require_no_active_messages(&all_entries, context.active_operation_id())?;
+    let entries = entries_after_checkpoint(&all_entries, checkpoint)?;
+    let cuts = safe_cut_indices(entries, context.active_operation_id())?;
+    let Some((selected, summary_request)) = last_fitting_summary(
+        entries,
+        checkpoint,
+        &cuts,
+        limits.dispatch_limit_tokens().get(),
+        sizer,
+    )?
+    else {
+        return Ok(None);
+    };
+    CompactionPlan::new(summary_request, entries[cuts[selected]].sequence()).map(Some)
+}
+
 pub(super) fn validate_boundary(
     context: &ContextInput,
     covered_through_sequence: u64,
@@ -68,6 +91,39 @@ pub(super) fn validate_boundary(
             "covered boundary is not a safe transcript cut".to_owned(),
         ))
     }
+}
+
+pub(super) fn validate_explicit_boundary(
+    context: &ContextInput,
+    covered_through_sequence: u64,
+) -> Result<(), CompactionPlanningError> {
+    let all_entries = context.entries().collect::<Vec<_>>();
+    require_no_active_messages(&all_entries, context.active_operation_id())?;
+    let entries = entries_after_checkpoint(&all_entries, context.active_checkpoint())?;
+    let cuts = safe_cut_indices(entries, context.active_operation_id())?;
+    if cuts
+        .iter()
+        .any(|index| entries[*index].sequence() == covered_through_sequence)
+    {
+        Ok(())
+    } else {
+        Err(CompactionPlanningError::InvalidPlan(
+            "covered boundary is not a safe completed-operation cut".to_owned(),
+        ))
+    }
+}
+
+fn require_no_active_messages(
+    entries: &[ContextEntry<'_>],
+    active_operation_id: renoa_kernel::OperationId,
+) -> Result<(), CompactionPlanningError> {
+    if entries
+        .iter()
+        .any(|entry| entry.operation_id() == active_operation_id)
+    {
+        return invalid_history("explicit compaction operation contains conversation messages");
+    }
+    Ok(())
 }
 
 fn active_user_anchor<'a>(

@@ -1,6 +1,8 @@
 #[path = "durable_compaction/activation_recovery.rs"]
 mod activation_recovery;
 mod compaction_support;
+#[path = "durable_compaction/manual.rs"]
+mod manual;
 #[path = "durable_compaction/repeated_active_turn.rs"]
 mod repeated_active_turn;
 #[path = "durable_compaction/replaceability.rs"]

@@ -2,7 +2,50 @@ use renoa_agent::{Message, ModelRequest};
 use renoa_kernel::{Checkpoint, CommandId, EventId, OperationId, SemanticEvent};
 use serde_json::json;
 
-use super::{CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND, context_input, decode_checkpoint};
+use super::{
+    AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND, context_input,
+    decode_checkpoint,
+};
+
+#[test]
+fn prompt_command_wire_shape_remains_compatible() {
+    let command = AgentCommand::text("hello");
+    let encoded = serde_json::to_value(&command).expect("encode prompt command");
+
+    assert_eq!(
+        encoded,
+        json!({
+            "content": [{"type": "text", "text": "hello"}],
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<AgentCommand>(encoded).expect("decode prompt command"),
+        command
+    );
+}
+
+#[test]
+fn compact_command_has_one_unambiguous_wire_shape() {
+    let command = AgentCommand::compact();
+    assert!(command.content().is_empty());
+    let encoded = serde_json::to_value(&command).expect("encode compact command");
+
+    assert_eq!(encoded, json!({"control": "compact"}));
+    assert_eq!(
+        serde_json::from_value::<AgentCommand>(encoded).expect("decode compact command"),
+        command
+    );
+    for malformed in [
+        json!({"control": "compact", "content": []}),
+        json!({"control": "compact", "extra": true}),
+        json!({"control": "unknown"}),
+    ] {
+        assert!(
+            serde_json::from_value::<AgentCommand>(malformed).is_err(),
+            "ambiguous or unknown control command must fail closed"
+        );
+    }
+}
 
 #[test]
 fn compaction_attempt_cannot_exceed_its_persisted_bound() {

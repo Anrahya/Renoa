@@ -86,12 +86,27 @@ pub(crate) fn submit(
     session_id: SessionId,
     text: &str,
 ) -> renoa_kernel::OperationId {
+    submit_command(kernel, session_id, AgentCommand::text(text))
+}
+
+pub(crate) fn submit_compaction(
+    kernel: &Kernel,
+    session_id: SessionId,
+) -> renoa_kernel::OperationId {
+    submit_command(kernel, session_id, AgentCommand::compact())
+}
+
+fn submit_command(
+    kernel: &Kernel,
+    session_id: SessionId,
+    command: AgentCommand,
+) -> renoa_kernel::OperationId {
     kernel
         .submit(
             session_id,
             Command::new(
                 CommandId::new(),
-                serde_json::to_value(AgentCommand::text(text)).expect("serialize command"),
+                serde_json::to_value(command).expect("serialize command"),
             ),
         )
         .expect("submit command")

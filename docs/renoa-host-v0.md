@@ -176,17 +176,18 @@ added only when the first management flow consumes it.
 
 ## Command path
 
-The first real Host flow is:
+The first real Host flow accepts either an ordinary prompt or a typed compact
+control:
 
 ```text
 surface adapter or local caller
   -> LocalHost creates or loads AlphaSession
-  -> AlphaSession accepts one caller-identified turn
+  -> AlphaSession accepts one caller-identified command
        -> read current workspace rules
        -> resolve the selected model, context, loop, and tools
        -> LocalSession atomically admits the command
        -> drive that exact operation through the kernel
-       -> project durable semantic output
+       -> project a durable assistant or compaction result
 ```
 
 `Kernel::submit_exclusive` combines the unfinished-operation check and command
@@ -197,9 +198,20 @@ profiles. Exact redelivery remains idempotent; a different command is rejected
 without leaving ghost queued work.
 
 `LocalSession` remains the lower shared command boundary used by Alpha and the
-headless diagnostic runner. `AlphaSession` is the complete surface-facing Host
-boundary: it also owns runtime selection, persistence, fresh per-turn
+headless diagnostic runner. Its prompt and explicit-compaction methods share
+the same exclusive admission, stable command identity, drive, cancellation,
+and durable replay path. `LocalTurnOutcome::Compacted` carries the persisted
+post-compaction input estimate without pretending that a control operation
+produced an assistant message. `AlphaSession` is the complete surface-facing
+Host boundary: it also owns runtime selection, persistence, fresh per-turn
 composition, and cancellation coordination.
+
+The Host derives context usage from the newest semantic fact in journal order.
+A provider-reported assistant usage includes uncached input, cache reads, cache
+writes, and generated output because that output becomes part of the next
+request. A later compaction result replaces it with the exact projected idle
+estimate. A later assistant response without provider usage clears the prior
+estimate rather than showing stale surface telemetry.
 
 Surfaces do not call the kernel driver, loop, model, or tools directly. ACP
 uses this Host composition and command path. The UI surface consumes that
@@ -310,3 +322,8 @@ session, project instructions refresh per turn, session publication is atomic,
 and torn runtime logs remain appendable. Per-turn trace rows preserve ordered
 model/tool flow without entering kernel truth. The legacy harness crate is
 retired.
+
+The same Host path now admits explicit compaction as a typed control operation.
+Its summary, checkpoint activation, result projection, exact redelivery,
+cancellation, and post-restart usage restoration are kernel-backed; no surface
+owns or reconstructs that state.

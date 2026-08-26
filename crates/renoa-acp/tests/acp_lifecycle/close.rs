@@ -39,7 +39,10 @@ fn closing_a_session_releases_the_process_for_another_session() {
         "method": "session/new",
         "params": { "cwd": workspace, "mcpServers": [] }
     }));
-    let recreated = process.read();
+    let recreated = process
+        .read_until_response(4)
+        .pop()
+        .expect("second session response");
     assert_eq!(recreated["id"], 4);
     assert_ne!(recreated["result"]["sessionId"], first_session);
     process.finish();
@@ -109,7 +112,10 @@ fn closing_an_active_session_waits_until_provider_work_is_stopped() {
         "method": "session/new",
         "params": { "cwd": workspace, "mcpServers": [] }
     }));
-    let recreated = process.read();
+    let recreated = process
+        .read_until_response(5)
+        .pop()
+        .expect("second session response");
     assert_eq!(recreated["id"], 5);
     assert!(recreated["result"]["sessionId"].is_string());
     process.finish();

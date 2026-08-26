@@ -10,6 +10,37 @@ use uuid::Uuid;
 use super::support::{AcpProcess, BRIDGE};
 
 #[test]
+fn compact_is_advertised_after_new_and_load() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(&bridge, BRIDGE).expect("write model bridge");
+
+    let mut first = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    first.initialize();
+    let (updates, created) = first.create_session_with_updates(&workspace);
+    assert_eq!(updates.len(), 1);
+    assert_compact_command(&updates[0]);
+    let session_id = created["result"]["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+    first.finish();
+
+    let mut resumed = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    resumed.initialize();
+    let (updates, loaded) = resumed.load_session(&workspace, &session_id);
+    assert!(loaded["result"].is_object());
+    assert_eq!(updates.len(), 1);
+    assert_compact_command(&updates[0]);
+    resumed.finish();
+}
+
+#[test]
 fn image_prompt_content_crosses_acp_without_being_changed() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
@@ -95,7 +126,7 @@ fn a_new_process_resumes_the_same_durable_conversation() {
     let (history, loaded) = resumed.load_session(&workspace, &session_id);
     assert_eq!(loaded["id"], 2);
     assert!(loaded["result"].is_object());
-    assert_eq!(history.len(), 3);
+    assert_eq!(history.len(), 4);
     assert_eq!(
         history[0]["params"]["update"]["sessionUpdate"],
         "user_message_chunk"
@@ -121,6 +152,7 @@ fn a_new_process_resumes_the_same_durable_conversation() {
             "size": 500_000
         })
     );
+    assert_compact_command(&history[3]);
     for update in &history[..2] {
         let message_id = update["params"]["update"]["messageId"]
             .as_str()
@@ -138,6 +170,81 @@ fn a_new_process_resumes_the_same_durable_conversation() {
         "Continued from durable history."
     );
     assert_eq!(response["result"]["stopReason"], "end_turn");
+    resumed.finish();
+}
+
+#[test]
+fn compact_is_silent_idempotent_and_restores_its_durable_usage() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(&bridge, BRIDGE).expect("write model bridge");
+
+    let mut first = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    first.initialize();
+    let created = first.create_session(&workspace);
+    let session_id = created["result"]["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+    first.prompt(&session_id, "First", "670cb243-6fe7-4938-af3c-ae4f9a03cfb5");
+    let compact_id = "6b506cbb-287f-4fc9-a09a-dbe36eecf7c4";
+
+    first.send_prompt(&session_id, "/compact", compact_id);
+    let compact = first.read_until_response(3);
+    let used = assert_compaction_messages(&compact);
+    first.send_prompt(&session_id, "/compact", compact_id);
+    let replayed = first.read_until_response(3);
+    assert_eq!(assert_compaction_messages(&replayed), used);
+    assert_eq!(
+        fs::read_to_string(data.join("compaction-attempts"))
+            .expect("read compaction attempt count"),
+        "1",
+        "stable redelivery sampled the summary model twice"
+    );
+
+    first.send_prompt(
+        &session_id,
+        "/compact now",
+        "acda33c5-558a-43c1-a08d-1de92b26be58",
+    );
+    let rejected = first.read_until_response(3);
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0]["error"]["code"], -32602);
+    first.finish();
+
+    let mut resumed = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    resumed.initialize();
+    let (updates, loaded) = resumed.load_session(&workspace, &session_id);
+    assert!(loaded["result"].is_object());
+    assert_eq!(
+        updates
+            .iter()
+            .filter(|message| {
+                message["params"]["update"]["sessionUpdate"] == "user_message_chunk"
+            })
+            .count(),
+        1,
+        "the control command leaked into replayable conversation history"
+    );
+    assert!(
+        updates
+            .iter()
+            .all(|message| { message["params"]["update"]["content"]["text"] != "/compact" })
+    );
+    let restored_usage = updates
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "usage_update")
+        .expect("restored usage update");
+    assert_eq!(restored_usage["params"]["update"]["used"], used);
+    assert_eq!(restored_usage["params"]["update"]["size"], 500_000);
+    assert!(updates.iter().any(|message| {
+        message["params"]["update"]["sessionUpdate"] == "available_commands_update"
+    }));
     resumed.finish();
 }
 
@@ -202,4 +309,32 @@ fn wait_for_path(path: &std::path::Path) {
         assert!(Instant::now() < deadline, "model process did not start");
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn assert_compact_command(message: &serde_json::Value) {
+    assert_eq!(
+        message["params"]["update"],
+        json!({
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [{
+                "name": "compact",
+                "description": "Summarize durable conversation context now"
+            }]
+        })
+    );
+}
+
+fn assert_compaction_messages(messages: &[serde_json::Value]) -> u64 {
+    assert_eq!(messages.len(), 2, "compaction leaked internal model output");
+    assert_eq!(
+        messages[0]["params"]["update"]["sessionUpdate"],
+        "usage_update"
+    );
+    assert_eq!(messages[0]["params"]["update"]["size"], 500_000);
+    let used = messages[0]["params"]["update"]["used"]
+        .as_u64()
+        .expect("compacted token estimate");
+    assert!(used > 0);
+    assert_eq!(messages[1]["result"]["stopReason"], "end_turn");
+    used
 }
