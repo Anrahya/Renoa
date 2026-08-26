@@ -255,7 +255,14 @@ impl Server {
                         estimated_input_tokens,
                         context_window_tokens,
                     )?;
-                    Ok(PromptResponse::new(StopReason::EndTurn))
+                    Ok(PromptResponse::new(StopReason::EndTurn).meta(
+                        [(
+                            "renoa.controlResult".to_owned(),
+                            serde_json::Value::String("compact".to_owned()),
+                        )]
+                        .into_iter()
+                        .collect::<serde_json::Map<_, _>>(),
+                    ))
                 }
                 LocalTurnOutcome::Cancelled => Ok(PromptResponse::new(StopReason::Cancelled)),
                 LocalTurnOutcome::Failed { reason } => Err(ServerError::Operation(reason)),

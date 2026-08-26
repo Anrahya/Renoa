@@ -96,8 +96,10 @@ turn and freezes the result only when the kernel admits that operation.
   `usage_update`. `used` is that call's input, cache-read, cache-write, and
   output tokens; `size` is the active model's validated context window.
 - A successful `/compact` emits only the durable post-compaction
-  `usage_update`, then returns `end_turn`. Its internal summary stream is not
-  presented as an assistant message.
+  `usage_update`, then returns `end_turn` with
+  `_meta.renoa.controlResult = "compact"`. A surface can present that typed
+  result as status instead of inventing an assistant reply. The internal
+  summary stream is not presented as an assistant message.
 - `session/load` emits the newest durable provider usage or post-compaction
   estimate after replaying the transcript, so a restarted surface restores the
   meter without another model call.

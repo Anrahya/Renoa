@@ -336,5 +336,9 @@ fn assert_compaction_messages(messages: &[serde_json::Value]) -> u64 {
         .expect("compacted token estimate");
     assert!(used > 0);
     assert_eq!(messages[1]["result"]["stopReason"], "end_turn");
+    assert_eq!(
+        messages[1]["result"]["_meta"],
+        json!({ "renoa.controlResult": "compact" })
+    );
     used
 }
