@@ -5,11 +5,13 @@ Node reference client, not a stable public SDK and not an agent harness.
 
 It currently owns the surface-side continuity mechanics:
 
-- version 7 authentication and task discovery;
+- version 8 authentication and task discovery;
 - replay followed by live task events;
 - a SQLite cursor committed only after the surface callback succeeds;
 - a SQLite command outbox written before transmission;
 - exact command retry after an uncertain acknowledgement;
+- fully decoded baseline task activity with stable command-to-execution
+  causation;
 - typed RCP errors and observable disconnect reasons;
 - reattachment of completed in-memory subscriptions after a host-triggered
   reconnect.

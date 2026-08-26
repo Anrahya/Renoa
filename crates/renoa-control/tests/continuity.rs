@@ -108,8 +108,11 @@ mod task_view {
         ));
         assert!(matches!(
             mac_events.last().map(|event| &event.kind),
-            Some(TaskEventKind::ExecutionEvent { event })
-                if matches!(
+            Some(TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            })
+                if *cause == command_id && matches!(
                     &event.kind,
                     ExecutionEventKind::ExecutionTerminated {
                         terminal: ExecutionTerminal::Completed
@@ -182,10 +185,13 @@ mod event_stream {
             receive(&mut mac).await,
             ServerMessage::TaskEvent {
                 event: TaskEvent {
-                    kind: TaskEventKind::ExecutionEvent { event },
+                    kind: TaskEventKind::ExecutionEvent {
+                        command_id: cause,
+                        event,
+                    },
                     ..
                 }
-            } if event == first
+            } if cause == command_id && event == first
         ));
 
         let remainder = transcript.events[1..].to_vec();
@@ -215,7 +221,8 @@ mod event_stream {
                 event: ExecutionEvent {
                     kind: ExecutionEventKind::ExecutionTerminated { .. },
                     ..
-                }
+                },
+                ..
             })
         ));
 
@@ -265,10 +272,13 @@ mod event_stream {
                 receive(&mut mac).await,
                 ServerMessage::TaskEvent {
                     event: TaskEvent {
-                        kind: TaskEventKind::ExecutionEvent { event },
+                        kind: TaskEventKind::ExecutionEvent {
+                            command_id: cause,
+                            event,
+                        },
                         ..
                     }
-                } if event == *expected
+                } if cause == command_id && event == *expected
             ));
         }
         node.close(None)
@@ -1294,7 +1304,8 @@ async fn collect_through_terminal(socket: &mut Socket) -> Vec<TaskEvent> {
                 event: ExecutionEvent {
                     kind: ExecutionEventKind::ExecutionTerminated { .. },
                     ..
-                }
+                },
+                ..
             }
         );
         events.push(event);
@@ -1345,10 +1356,13 @@ async fn assert_replayed_prefix(
             receive(&mut observer).await,
             ServerMessage::TaskEvent {
                 event: TaskEvent {
-                    kind: TaskEventKind::ExecutionEvent { event },
+                    kind: TaskEventKind::ExecutionEvent {
+                        command_id: cause,
+                        event,
+                    },
                     ..
                 }
-            } if event == *expected
+            } if cause == command_id && event == *expected
         ));
     }
 }

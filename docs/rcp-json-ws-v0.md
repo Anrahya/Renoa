@@ -3,9 +3,9 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `7`.
+first implemented transport binding. The current binding version is `8`.
 
-The binding is a candidate contract, not a stable public release. Version `7`
+The binding is a candidate contract, not a stable public release. Version `8`
 is implemented by `renoa-control`, `renoa-node`, a headless TypeScript surface,
 and a TypeScript Pi node. Cross-language tests cover both authenticated roles,
 discovery and authorization, replay, live reattachment, offline-node rejection,
@@ -33,15 +33,20 @@ sent.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `7` with `version_mismatch` and ends the session.
+rejects any value other than `8` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `7` supersedes version `6` by removing harness configuration from RCP
-commands and execution delivery. Version `6` is rejected on new sessions;
+Version `8` supersedes version `7` by adding stable `commandId` causation to
+durable `execution_event` task records. Existing execution records are migrated
+by joining their execution identity to the coordinator's durable command
+binding without changing task-event identities or sequences.
+
+Version `7` superseded version `6` by removing harness configuration from RCP
+commands and execution delivery. Versions `6` and `7` are rejected on new sessions;
 stored commands and task events are migrated without changing their durable
 identities. The shared execution-event profile introduced in version `6`
 remains unchanged.
@@ -53,7 +58,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 7,
+  "version": 8,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -63,7 +68,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 7,
+  "version": 8,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -76,7 +81,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 7,
+  "version": 8,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -89,7 +94,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 7
+  "version": 8
 }
 ```
 
@@ -124,7 +129,7 @@ by `taskId`:
 ```
 
 An authorized principal with no tasks receives an empty `tasks` array. Version
-`7` defines no pagination or live directory update frame.
+`8` defines no pagination or live directory update frame.
 
 ### Attach
 
@@ -209,9 +214,34 @@ uncertain response.
 }
 ```
 
-The other current record kind is `execution_event`. Its nested value uses the
-same `ExecutionEvent` shape shown in the node publication below. It is shared by
-the Rust and Pi nodes and contains complete durable activity, not token deltas.
+The other current record kind is `execution_event`:
+
+```json
+{
+  "type": "task_event",
+  "event": {
+    "eventId": "00000000-0000-0000-0000-000000000031",
+    "taskId": "00000000-0000-0000-0000-000000000010",
+    "sequence": 20,
+    "kind": {
+      "type": "execution_event",
+      "commandId": "00000000-0000-0000-0000-000000000020",
+      "event": {
+        "eventId": "00000000-0000-0000-0000-000000000060",
+        "executionId": "00000000-0000-0000-0000-000000000070",
+        "sequence": 0,
+        "recordedAtMs": 1786137600000,
+        "kind": { "type": "execution_started" }
+      }
+    }
+  }
+}
+```
+
+`commandId` is the stable causation link to the admitted command. The nested
+value uses the same `ExecutionEvent` shape shown in the node publication below.
+It is shared by the Rust and Pi nodes and contains complete durable activity,
+not token deltas.
 
 ## Node frames
 
@@ -345,7 +375,7 @@ round.
 
 ## Binding exclusions
 
-Version `7` defines no task-list pagination, live directory updates, heartbeat,
+Version `8` defines no task-list pagination, live directory updates, heartbeat,
 cancellation, steering, approval, artifact, binary-frame, compression,
 HTTP/SSE, webhook, or public TLS deployment contract. Adding any of those
 requires an operation contract first, then a binding and tests.

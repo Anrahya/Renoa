@@ -177,10 +177,11 @@ gap, mutation, changed execution identity, invalid start, or post-terminal event
 rejected.
 
 New events become `TaskEvent` records with coordinator-assigned task sequences
-in the same transaction that advances the accepted source cursor. After commit,
-the coordinator returns `ExecutionEventsAccepted` with the highest durable
-execution sequence. A lost response is recovered by resending an overlapping
-batch.
+in the same transaction that advances the accepted source cursor. Each emitted
+record carries the stable `command_id` already bound to the execution so a
+surface can project turns safely after replay. After commit, the coordinator
+returns `ExecutionEventsAccepted` with the highest durable execution sequence.
+A lost response is recovered by resending an overlapping batch.
 
 The current durable event kinds are `ExecutionStarted`, `TurnStarted`,
 `AssistantMessage`, `ToolStarted`, `ToolFinished`, and `ExecutionTerminated`.
@@ -193,7 +194,8 @@ durable RCP records.
 The current task journal contains two record kinds:
 
 - `CommandSubmitted`, containing the normalized command;
-- `ExecutionEvent`, containing one event from the baseline activity profile.
+- `ExecutionEvent`, containing the causing command identity and one event from
+  the baseline activity profile.
 
 Every record has a stable event identity, task identity, coordinator-assigned
 task sequence, and payload. Surfaces deduplicate by stable identity and apply by

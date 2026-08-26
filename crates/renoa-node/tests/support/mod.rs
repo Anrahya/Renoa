@@ -403,7 +403,7 @@ async fn collect_until(
             continue;
         };
         let done = match &event.kind {
-            TaskEventKind::ExecutionEvent { event } => complete(event),
+            TaskEventKind::ExecutionEvent { event, .. } => complete(event),
             TaskEventKind::CommandSubmitted { .. } => false,
         };
         events.push(event);

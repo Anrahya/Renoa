@@ -1,5 +1,6 @@
 use renoa_control::{
-    ClientMessage, ErrorCode, JSON_WS_VERSION, ServerMessage, TaskId, TaskSummary,
+    ClientMessage, ErrorCode, JSON_WS_VERSION, ServerMessage, TaskEvent, TaskEventId,
+    TaskEventKind, TaskId, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
@@ -9,8 +10,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v7_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 7);
+fn json_websocket_v8_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 8);
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let submit = ClientMessage::Submit {
@@ -70,7 +71,7 @@ fn json_websocket_v7_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v7_encodes_task_discovery() {
+fn json_websocket_v8_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -112,7 +113,7 @@ fn json_websocket_v7_encodes_task_discovery() {
 }
 
 #[test]
-fn json_websocket_v7_encodes_harness_neutral_execution_events() {
+fn json_websocket_v8_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {
@@ -141,6 +142,58 @@ fn json_websocket_v7_encodes_harness_neutral_execution_events() {
                 "kind": { "type": "execution_started" }
             }]
         })
+    );
+}
+
+#[test]
+fn execution_task_records_carry_stable_command_causation() {
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let command_id = CommandId::from_uuid(Uuid::from_u128(2));
+    let message = ServerMessage::TaskEvent {
+        event: TaskEvent {
+            event_id: TaskEventId::from_uuid(Uuid::from_u128(3)),
+            task_id,
+            sequence: 4,
+            kind: TaskEventKind::ExecutionEvent {
+                command_id,
+                event: ExecutionEvent {
+                    event_id: ExecutionEventId::from_uuid(Uuid::from_u128(5)),
+                    execution_id: ExecutionId::from_uuid(Uuid::from_u128(6)),
+                    sequence: 0,
+                    recorded_at_ms: 7,
+                    kind: ExecutionEventKind::ExecutionStarted,
+                },
+            },
+        },
+    };
+    let expected = json!({
+        "type": "task_event",
+        "event": {
+            "eventId": "00000000-0000-0000-0000-000000000003",
+            "taskId": "00000000-0000-0000-0000-000000000001",
+            "sequence": 4,
+            "kind": {
+                "type": "execution_event",
+                "commandId": "00000000-0000-0000-0000-000000000002",
+                "event": {
+                    "eventId": "00000000-0000-0000-0000-000000000005",
+                    "executionId": "00000000-0000-0000-0000-000000000006",
+                    "sequence": 0,
+                    "recordedAtMs": 7,
+                    "kind": { "type": "execution_started" }
+                }
+            }
+        }
+    });
+
+    assert_eq!(
+        serde_json::to_value(&message).expect("serialize task execution event"),
+        expected
+    );
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(expected)
+            .expect("deserialize task execution event"),
+        message
     );
 }
 

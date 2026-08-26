@@ -140,6 +140,7 @@ fn admit_execution_event_batch(
     let appended = append_contiguous_execution_events(
         transaction,
         task_id,
+        command_id,
         events,
         &mut next_sequence,
         &mut terminal,
@@ -181,6 +182,7 @@ fn initial_execution_event_cursor(
 fn append_contiguous_execution_events(
     transaction: &Transaction<'_>,
     task_id: TaskId,
+    command_id: CommandId,
     events: &[ExecutionEvent],
     next_sequence: &mut u64,
     terminal: &mut bool,
@@ -189,6 +191,7 @@ fn append_contiguous_execution_events(
     for event in events {
         let source_id = format!("execution:{}", event.event_id);
         let kind = TaskEventKind::ExecutionEvent {
+            command_id,
             event: event.clone(),
         };
         let existing = load_source_event(transaction, &source_id)?;

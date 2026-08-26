@@ -124,10 +124,7 @@ function client(statePath = fixture.statePath): RcpSurfaceClient {
 }
 
 function commandId(event: TaskEvent): unknown {
-  const command = event.kind.command;
-  return typeof command === "object" && command !== null && "commandId" in command
-    ? command.commandId
-    : undefined;
+  return event.kind.type === "command_submitted" ? event.kind.command.commandId : undefined;
 }
 
 function isReplayRequired(error: unknown): boolean {

@@ -48,10 +48,19 @@ pub struct TaskEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum TaskEventKind {
-    CommandSubmitted { command: CommandEnvelope },
-    ExecutionEvent { event: ExecutionEvent },
+    CommandSubmitted {
+        command: CommandEnvelope,
+    },
+    ExecutionEvent {
+        command_id: CommandId,
+        event: ExecutionEvent,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

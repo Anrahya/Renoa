@@ -3,6 +3,30 @@
 Renoa is a new implementation with its own contracts. The following upstream
 projects are studied for established agent-runtime mechanics.
 
+## DeepSeek Harness
+
+- Repository snapshot: `47f943859bef60e4160492346772ded9b24f765a`
+- License: MIT, copyright DeepSeek; preserve the upstream license and applicable
+  third-party notices with any substantial copied or modified source.
+- Role: isolated reference checkout for evaluation. No DeepSeek Harness code or
+  architecture has been adopted into Renoa yet.
+
+## T3 Code
+
+- Repository snapshot: `2db08457f2f4eaaa713a067b2ea480ca2b583025`
+- License: MIT, copyright T3 Tools Inc.; the upstream license and applicable
+  third-party notices must remain with substantial copied or modified source.
+- Role: maintained upstream fork for Renoa's first user-facing surface, not a
+  visual reference or a source of independently recreated components.
+- Retained architecture: the web and desktop applications, shared client
+  runtime, contracts, and the server-side provider-driver extension point.
+- Renoa boundary: a Renoa provider driver connects the T3 surface backend to
+  RCP. RCP remains authoritative for task, command, execution, and delivery
+  continuity; the driver must not bypass it to call a Rust agent directly.
+- Upstream policy: keep upstream history, merge upstream regularly, isolate
+  routine Renoa work in added modules and narrow registration points, and
+  permit deliberate divergence when it materially improves Renoa.
+
 ## Pi
 
 - Repository snapshot: `a96fb984d8c8b065fc5d193309fc812a882adee0`
@@ -145,9 +169,10 @@ Reviewed on 2026-08-20.
   receipt, token, or reconciliation identifier is added now. No workflow-system
   source is copied.
 
-No source file is copied wholesale. If Renoa later incorporates substantial
-upstream code, the relevant license notice and modification history will be
-preserved with that code.
+The Pi, Codex, and Grok Build repositories above are studied references; their
+source is not copied wholesale. T3 Code is the explicit maintained-fork
+exception. Its license notice, applicable third-party notices, upstream source
+revision, and Renoa modification history are preserved with the fork.
 
 ## Interoperability standards checked
 

@@ -48,21 +48,33 @@ async fn a_surface_observes_durable_execution_events_while_the_model_is_still_ru
         ));
         assert!(live_events.iter().any(|event| matches!(
             &event.kind,
-            TaskEventKind::ExecutionEvent { event }
-                if matches!(event.kind, ExecutionEventKind::ExecutionStarted)
+            TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            }
+                if *cause == command_id
+                    && matches!(event.kind, ExecutionEventKind::ExecutionStarted)
         )));
         assert!(matches!(
             live_events.last().map(|event| &event.kind),
-            Some(TaskEventKind::ExecutionEvent { event })
-                if matches!(event.kind, ExecutionEventKind::TurnStarted)
+            Some(TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            })
+                if *cause == command_id
+                    && matches!(event.kind, ExecutionEventKind::TurnStarted)
         ));
 
         model.release();
         let terminal_events = collect_through_terminal(&mut surface).await;
         assert!(terminal_events.iter().any(|event| matches!(
             &event.kind,
-            TaskEventKind::ExecutionEvent { event }
-                if matches!(event.kind, ExecutionEventKind::AssistantMessage { .. })
+            TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            }
+                if *cause == command_id
+                    && matches!(event.kind, ExecutionEventKind::AssistantMessage { .. })
         )));
 
         node_shutdown.cancel();
@@ -126,8 +138,11 @@ async fn a_restarted_node_closes_an_interrupted_run_without_repeating_it() {
         let terminal_events = collect_through_terminal(&mut surface).await;
         assert!(matches!(
             terminal_events.last().map(|event| &event.kind),
-            Some(TaskEventKind::ExecutionEvent { event })
-                if matches!(
+            Some(TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            })
+                if *cause == command_id && matches!(
                     &event.kind,
                     ExecutionEventKind::ExecutionTerminated {
                         terminal: ExecutionTerminal::Failed { error }
@@ -184,8 +199,11 @@ async fn transport_reconnect_does_not_interrupt_the_running_engine() {
         .expect("node publishes the terminal suffix after reconnect");
         assert!(matches!(
             terminal_events.last().map(|event| &event.kind),
-            Some(TaskEventKind::ExecutionEvent { event })
-                if matches!(
+            Some(TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            })
+                if *cause == command_id && matches!(
                     &event.kind,
                     ExecutionEventKind::ExecutionTerminated {
                         terminal: ExecutionTerminal::Completed
@@ -194,8 +212,11 @@ async fn transport_reconnect_does_not_interrupt_the_running_engine() {
         ));
         assert!(terminal_events.iter().any(|event| matches!(
             &event.kind,
-            TaskEventKind::ExecutionEvent { event }
-                if matches!(
+            TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            }
+                if *cause == command_id && matches!(
                     &event.kind,
                     ExecutionEventKind::AssistantMessage { text }
                         if text == "finished live"
