@@ -1,8 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use renoa_agent::{
-    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolSpec,
-    ToolUpdates,
+    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -54,10 +53,6 @@ struct WriteFileInput {
 impl Tool for WriteFile {
     fn spec(&self) -> &ToolSpec {
         &self.spec
-    }
-
-    fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Sequential
     }
 
     fn execute(
@@ -332,10 +327,6 @@ struct EditFileInput {
 impl Tool for EditFile {
     fn spec(&self) -> &ToolSpec {
         &self.spec
-    }
-
-    fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Sequential
     }
 
     fn execute(

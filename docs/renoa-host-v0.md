@@ -24,11 +24,11 @@ Renoa Host
 ```
 
 `renoa-local` is the first Host implementation. Product surfaces are maintained
-outside this core repository and connect through ACP; the first graphical
-surface is a Rust/GPUI Zeron fork. ACP is the standard agent-facing surface
-protocol. Renoa-specific capability management will use a separate logical Host
-API whose transport is not selected until a real management consumer is
-implemented.
+outside this core repository and connect through ACP. The current graphical
+surface is the separate Renoa integration fork of Waku. ACP is the standard
+agent-facing surface protocol. Renoa-specific capability management will use a
+separate logical Host API whose transport is not selected until a real
+management consumer is implemented.
 
 The first concrete agent profile is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is

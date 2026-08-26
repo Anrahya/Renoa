@@ -6,15 +6,15 @@ This document defines the local durable kernel that every Renoa agent runtime
 will use. It is the implementation contract for `renoa-kernel`.
 
 [`rcp-v0.md`](rcp-v0.md) remains authoritative for cross-device admission,
-authorization, routing, and replay. [`harness-v0.md`](harness-v0.md) records
-the current model-and-tool harness and is implementation evidence, not the
-kernel API. [`kernel-v0.md`](kernel-v0.md) describes the older command-scoped
-RCP executor and does not define this kernel.
+authorization, routing, and replay. [`harness-v0.md`](harness-v0.md) archives
+the retired standalone harness reasoning and is not a current contract.
+[`kernel-v0.md`](kernel-v0.md) describes the older command-scoped RCP executor
+and does not define this kernel.
 
 The foundation slice implements one local SQLite kernel, a decision-only loop
 plugin boundary, generic effect adapters, durable cancellation, explicit
 abandonment of unknown effects, durable inspection, and cursor replay. The
-kernel crate intentionally does not integrate RCP, ACP, T3 Code, providers,
+kernel crate intentionally does not integrate RCP, ACP, surface shells, providers,
 tools, prompts, context policy, or workspaces. Its first external consumer,
 documented in
 [`renoa-agent-loop-v0.md`](renoa-agent-loop-v0.md), now proves a

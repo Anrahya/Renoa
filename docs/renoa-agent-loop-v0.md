@@ -361,8 +361,9 @@ transcript closure.
 
 The original kernel handoff's generic foundation, model/tool-loop adaptation,
 real local coding turn, and durable compaction migration are now complete.
-`renoa-local::build_local_runtime` now composes the loop, Pi provider,
-compaction strategy, and complete local tool set into the first product Host.
+`renoa-local::build_local_runtime` now composes the loop, Renoa-owned model
+provider adapter, compaction strategy, and complete local tool set into the
+first product Host.
 The headless local runner executes Renoa Alpha's versioned instructions and
 workspace rules through that kernel path. The Host contract is recorded in
 [`renoa-host-v0.md`](renoa-host-v0.md), and Alpha's contract and research

@@ -1,8 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use renoa_agent::{
-    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolSpec,
-    ToolUpdates,
+    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -79,10 +78,6 @@ where
 impl Tool for Bash {
     fn spec(&self) -> &ToolSpec {
         &self.spec
-    }
-
-    fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Sequential
     }
 
     fn execute(

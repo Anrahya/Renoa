@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::{
-    AssistantDelta, BoxFuture, Message, MessageRole, ModelErrorKind, ModelFailureDiagnostic,
-    ModelRequest, ModelResponse, ToolCall, ToolOutcomeUnknown, ToolOutput, ToolResult,
+    AssistantDelta, BoxFuture, MessageRole, ModelErrorKind, ModelFailureDiagnostic, ModelRequest,
+    ModelResponse, ToolCall, ToolOutcomeUnknown, ToolOutput, ToolResult,
 };
 
 /// Stable diagnostic category for one unsuccessful model invocation.
@@ -28,8 +28,6 @@ pub enum ModelFailureCode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentEvent {
-    AgentStart,
-    TurnStart,
     MessageStart {
         role: MessageRole,
     },
@@ -38,9 +36,6 @@ pub enum AgentEvent {
         delta: AssistantDelta,
     },
     MessageAbort,
-    MessageEnd {
-        message: Message,
-    },
     ModelRequestStart {
         invocation_id: String,
         request: ModelRequest,
@@ -93,8 +88,6 @@ pub enum AgentEvent {
         call: ToolCall,
         error: ToolOutcomeUnknown,
     },
-    TurnEnd,
-    AgentEnd,
 }
 
 /// Host-owned observer for transient model and tool progress.
@@ -110,31 +103,4 @@ pub(crate) async fn emit_event(sink: Option<&dyn AgentEventSink>, event: AgentEv
     if let Some(sink) = sink {
         sink.emit(event).await;
     }
-}
-
-pub(crate) async fn append_message(
-    sink: Option<&dyn AgentEventSink>,
-    messages: &mut Vec<Message>,
-    message: Message,
-) {
-    finish_message(sink, messages, message, false).await;
-}
-
-pub(crate) async fn finish_message(
-    sink: Option<&dyn AgentEventSink>,
-    messages: &mut Vec<Message>,
-    message: Message,
-    already_started: bool,
-) {
-    if !already_started {
-        emit_event(
-            sink,
-            AgentEvent::MessageStart {
-                role: message.role(),
-            },
-        )
-        .await;
-    }
-    messages.push(message.clone());
-    emit_event(sink, AgentEvent::MessageEnd { message }).await;
 }

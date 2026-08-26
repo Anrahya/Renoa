@@ -214,7 +214,6 @@ const fn failure_code(kind: ModelErrorKind) -> ModelFailureCode {
 #[non_exhaustive]
 pub struct SamplingResult {
     pub response: ModelResponse,
-    pub(crate) message_started: bool,
 }
 
 #[derive(Debug, Error)]
@@ -266,10 +265,7 @@ pub async fn sample_model(
                 let Some(response) = observer.record(event).await else {
                     continue;
                 };
-                return Ok(SamplingResult {
-                    response,
-                    message_started: observer.message_started,
-                });
+                return Ok(SamplingResult { response });
             }
             Some(Err(error)) => {
                 if cancellation.is_cancelled()
@@ -307,10 +303,7 @@ async fn drain_cancelled_stream(
         }
     }
     if let Some(response) = completed {
-        return Ok(SamplingResult {
-            response,
-            message_started: observer.message_started,
-        });
+        return Ok(SamplingResult { response });
     }
     let may_have_dispatched = observer.provider_traffic || observer.message_started;
     if may_have_dispatched {

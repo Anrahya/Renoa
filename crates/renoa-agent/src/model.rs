@@ -36,15 +36,6 @@ pub struct TokenUsage {
     pub cache_write: u64,
 }
 
-impl TokenUsage {
-    pub(crate) fn add(&mut self, usage: Self) {
-        self.input += usage.input;
-        self.output += usage.output;
-        self.cache_read += usage.cache_read;
-        self.cache_write += usage.cache_write;
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelResponse {
     pub content: Vec<AssistantContent>,
@@ -253,12 +244,15 @@ pub struct ModelFailureDiagnostic {
 pub type ModelEventStream<'a> = BoxStream<'a, Result<ModelEvent, ModelError>>;
 
 pub trait Model: Send + Sync {
-    /// Starts one provider invocation.
+    /// Starts one logical model effect for an exact provider-neutral request.
     ///
-    /// The returned stream owns the invocation. When `cancellation` fires it
-    /// must stop all started work, including descendant processes, and close
-    /// only after cleanup is complete. Dropping the stream must also initiate
-    /// cleanup; detached provider work is forbidden.
+    /// An adapter may expose bounded pre-output retries as [`ModelEvent::RetryAttempt`]
+    /// under its documented policy; they remain part of this one effect and may
+    /// not be hidden after assistant output starts. The returned stream owns all
+    /// attempts. When `cancellation` fires it must stop all started work,
+    /// including descendant processes, and close only after cleanup is
+    /// complete. Dropping the stream must also initiate cleanup; detached
+    /// provider work is forbidden.
     fn stream(
         &self,
         request: ModelRequest,

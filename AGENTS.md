@@ -13,14 +13,7 @@
   concrete invariant.
 - Prefer the standard library and existing dependencies over a new package.
 - Keep provider, surface, and product policy outside the kernel.
-- Keep Renoa-authored modules below 500 lines; split by responsibility, not
-  arbitrary size. Do not split unmodified files in the recorded T3 Code fork
-  solely to satisfy this limit. Prefer new integration modules over invasive
-  edits to oversized upstream files.
-- Maintain T3 Code as an upstream-tracking fork. Keep routine Renoa integration
-  changes concentrated in added modules and narrow registration points so
-  upstream merges stay reviewable. Deliberate product divergence is allowed;
-  avoid incidental renames, moves, or mass formatting.
+- Keep modules below 500 lines; split by responsibility, not arbitrary size.
 - Test the real execution path with deterministic boundaries.
 - Treat warnings as errors. Before handing off code, run:
   `cargo fmt --all -- --check`,

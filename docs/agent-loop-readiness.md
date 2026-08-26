@@ -16,7 +16,7 @@ no contract should be added until a real consumer needs it.
 | Unknown-effect closure | Ready | Explicit host action balances tool history without changing an unknown effect into a false result |
 | Durable user cancellation | Ready | Stable request identity, persist-before-signal, exact active-operation targeting, no new effects after cancellation wins, awaited cleanup, and loop-owned transcript closure |
 | Local coding proof | Ready | A deterministic model drives the real guarded file and Bash tools through the kernel path |
-| Local Host composition | Ready | Alpha's versioned prompt, bounded workspace rules, selected Pi model/reasoning, durable compaction, and all six local tools resolve into one frozen runtime; headless and ACP callers share one exact-turn Host path, and the headless path proves same-session selection changes |
+| Local Host composition | Ready | Alpha's versioned prompt, bounded workspace rules, selected native-adapter model/reasoning, durable compaction, and all six local tools resolve into one frozen runtime; headless and ACP callers share one exact-turn Host path, and the headless path proves same-session selection changes |
 | Transient model/tool progress | Ready | Model deltas and tool start/progress/end events flow from kernel-invoked effect adapters to a Host observer without entering the kernel contract; ACP proves live delivery before durable completion |
 | Local tool lifecycle | Ready | Every built-in tool has a total deadline; cancellation waits for cleanup; Bash, ripgrep, and model bridges stop process groups; write/edit use synced atomic replacement and stale-edit detection |
 | Diagnostic trace | Ready | Separate per-session SQLite records the real Host path with timestamps, durations, model TTFT, every chunk, exact translated provider payload, redacted response metadata, normalized usage/cache tokens, and typed tool flow; it is not recovery truth |
@@ -24,7 +24,7 @@ no contract should be added until a real consumer needs it.
 | Context projection and compaction | Ready | External strategies can construct typed plans; external projectors are sized before dispatch selection; safe-cut planning, exact persisted summaries, bounded validation, non-destructive activation, overflow fallback, typed manual compaction, capacity failure before sampling, stable redelivery, cancellation, uncertainty, and restart windows are proven through the real kernel and ACP paths |
 | Steering and follow-ups | Deferred | Ordering against active work and admitted commands needs a real surface consumer |
 | Approvals and permissions | Deferred | These remain host/product policy; a durable decision contract needs a concrete host flow |
-| Parallel tool batches | Deferred | The SDK can describe parallel-safe tools, but the durable loop intentionally executes source order sequentially |
+| Parallel tool batches | Deferred | The durable loop intentionally executes source order sequentially; add scheduling metadata only with a real consumer and crash-recovery proof |
 | Partial-stream recovery | Deferred | No durable prefix or partial tool-call contract exists; incomplete model streams remain uncertain |
 | Cross-session context and branches | Deferred | Session-tree direction is recorded in the kernel architecture, but provenance and snapshot contracts need the first branch consumer |
 | Remote continuity (RCP) | Separate | RCP remains a harness-independent connection system and is not part of loop readiness |

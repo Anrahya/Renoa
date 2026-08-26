@@ -1,262 +1,140 @@
-# Renoa Agent v0
+# Renoa agent contracts v0
 
 ## Purpose
 
-`renoa-agent` is a standalone Rust agent SDK. It owns one conversation and the
-bounded model-to-tool continuation loop. It can be embedded in a desktop app,
-VPS process, execution node, or another host without importing RCP, SQLite, or
-surface code.
+`renoa-agent` is Renoa's provider-neutral model, message, tool, and live-event
+vocabulary. It also supplies two leaf execution helpers: one model invocation
+and one tool invocation.
 
-The SDK is independent of `renoa-runtime`. The latter remains Renoa's durable
-RCP reference executor; neither crate wraps the other.
+It is deliberately not a second agent runtime. Conversation advancement,
+durable admission, recovery, context policy, and tool ordering belong to the
+kernel-backed loop in `renoa-agent-loop`. Every Renoa product agent uses the
+non-replaceable kernel for execution truth.
+
+The crate name is retained because these are the contracts from which an agent
+runtime is assembled. It does not imply that the crate owns an `Agent` object.
 
 ## Boundary
 
-- `Agent` owns conversation state, model continuation, tool dispatch, and run
-  limits.
-- `Model` is the provider-adapter port. Provider authentication and wire
-  formats stay in adapters. One `Model::stream` invocation represents one
-  inference attempt; a retry that may create another response or charge stays
-  visible to the Agent's host or future durable harness.
-- `Tool` is the external capability port. The SDK advertises host-selected
-  schemas and executes returned calls, but ships no filesystem, shell, search,
-  or product tools.
-- `AgentHandle` observes and aborts the active prompt without borrowing the
-  `Agent`. It also accepts steering and follow-up input while the Agent is
-  mutably borrowed by an active run.
-- `AgentEventSink` receives awaited lifecycle events for structured model
-  output and tool execution.
-- `ContextProjector` lets a host choose the active transcript independently for
-  every model request without rewriting authoritative Agent state.
-- `AgentState` contains the portable active transcript and any unresolved tool
-  outcomes, not the authoritative full session history. System instructions,
-  tools, model selection, and policy are supplied again by the host after
-  restoration. `AgentState::from_messages` asserts that the host-selected
-  transcript has no unresolved tool outcome.
+The crate owns:
 
-One `Agent` is one conversation. A host must not share it between unrelated
-tasks or principals.
+- ordered provider-neutral `Message` and content types;
+- the `Model` port, request, response, stream, error, and token types;
+- the `Tool` port, schema, call, output, error, and uncertainty types;
+- transient `AgentEvent` observation types; and
+- `sample_model` and `invoke_tool`, which execute exactly one external leaf
+  call each.
+
+It does not own:
+
+- conversation or session state;
+- a model-to-tool continuation loop;
+- persistence, checkpoints, recovery, or command admission;
+- context projection, compaction, memory, or token-budget policy;
+- tool-batch scheduling, steering, follow-ups, or subagents;
+- provider authentication, retries, catalogs, pricing, or wire formats; or
+- tools, permissions, approvals, workspaces, surfaces, ACP, or RCP.
+
+This split prevents an in-memory execution path from bypassing the kernel's
+persist-before-effect and recovery rules.
+
+## Message and model contract
+
+User and tool-result messages contain ordered text or image `ContentBlock`
+values. Assistant messages contain ordered visible text, reasoning, or tool
+calls plus a terminal `StopReason`, optional normalized `TokenUsage`, and
+provider-continuity metadata.
+
+Provider adapters retain opaque response IDs, response-model names, text and
+reasoning signatures, tool thought signatures, and namespaces when a later
+request needs them. Renoa stores those values without interpreting provider
+policy.
+
+One `Model::stream` call is one logical model effect for an exact request. Its
+stream may expose:
+
+- the exact translated provider request;
+- redacted response status and headers;
+- indexed visible, reasoning, or tool-call deltas;
+- adapter retry diagnostics; and
+- one completed response or one typed failure.
+
+`sample_model` assigns one correlation identity, awaits observations in order,
+and accepts only a completed response as settled output. A stream that ends
+without completion is uncertain. Cancellation before provider dispatch is
+known not to have started; cancellation or failure after provider traffic or
+assistant output begins is outcome-unknown unless the adapter proves a terminal
+result first.
+
+Adapters may perform bounded pre-output retries under their documented policy,
+but every attempt is observable through retry events and belongs to the same
+durable effect. Retrying after assistant output starts is forbidden.
+
+`TokenUsage` has separate uncached input, output, cache-read, and cache-write
+lanes. `None` means the provider did not report enough information; unknown
+usage must not become zero. Pricing and budgets remain Host policy.
+
+## Tool contract
+
+A `Tool` exposes one model-visible `ToolSpec` and executes one complete
+`ToolCall`. It must decode and validate raw arguments before effects. The JSON
+schema is what the model sees, not a second generic validator inside Renoa.
+
+The tool future must observe cancellation and resolve only after work it owns
+has stopped. A process tool must kill and reap its process group. Detached work
+violates the contract.
+
+`invoke_tool` has three outcomes:
+
+1. successful output becomes one `ToolResult`;
+2. a definite failure becomes a model-visible error result with a stable code
+   and partial-change flag; or
+3. an effect whose final outcome cannot be proven remains a typed
+   `ToolOutcomeUnknown` and must not be rewritten as an ordinary failure.
+
+Progress uses a bounded channel, is awaited in order, and stays transient.
+The durable `renoa-agent-loop` adapter owns tool start, terminal success, and
+unknown-outcome observations around `invoke_tool`. Tool batches are currently
+executed sequentially in model source order. No unused parallel-safety field is
+part of the tool contract.
+
+Empty or duplicate call identifiers are rejected by
+`validate_tool_call_ids` before a durable loop dispatches any call.
+
+## Observation contract
+
+`AgentEventSink` is a Host-owned observer for live presentation and diagnostic
+tracing. Emission is awaited to preserve order and backpressure. Events are not
+authoritative history and may stop without a terminal event if execution is
+lost.
+
+The kernel journal remains the source of truth. A surface reconnects from that
+durable history; it never reconstructs truth from transient deltas.
 
 ## Proven behavior
 
-The tests prove that:
+The crate's focused tests prove:
 
-1. ordered text/image user content reaches a provider-neutral `Model` with no
-   Renoa protocol or storage dependency;
-2. ordered lifecycle events expose text, reasoning, tool-call identity, and
-   JSON-argument deltas with their content-block index, while only the
-   completed model response enters conversation state;
-3. failed partial streams emit `MessageAbort` and do not persist partial output;
-4. an `AgentHandle` cancels an active prompt and remains busy until started
-   tools and the final awaited `AgentEnd` listener settle;
-5. serialized conversation state resumes under host-supplied system
-   instructions, which are never serialized into that state;
-6. image blocks, signed text, reasoning, tool-call signatures, response IDs,
-   and provider/model identity survive JSON state restoration;
-7. interleaved assistant text and tool-call blocks, plus structured tool
-   results, preserve source order through execution and continuation;
-8. missing tools and definite tool failures become model-visible error results,
-   while a tool that cannot prove its external outcome returns typed uncertainty
-   instead of inviting an unsafe retry;
-9. `length`-stopped calls with possibly truncated arguments never execute;
-10. duplicate tool names, empty or duplicate model tool-call identifiers,
-    oversized call batches, and runaway model continuation are rejected
-    explicitly, without losing reported usage from a rejected model response;
-11. bounded live tool updates stay transient while final text/image content and
-    structured details enter durable history exactly once;
-12. parallel-safe tool calls may finish out of order while their result messages
-    enter history in assistant source order; one sequential tool serializes the
-    entire batch;
-13. `resume()` retries an existing user or tool-result tail without duplicating
-    it, and rejects invalid empty or completed tails with typed errors;
-14. steering waits until the current assistant response and its complete tool
-    batch have entered history, then takes priority over follow-ups;
-15. follow-ups run only when the Agent would otherwise stop, with configurable
-    one-at-a-time or all-at-once draining;
-16. queued text/image input is bounded, remains queued when a run reaches its
-    turn limit, is claimed atomically when resuming a completed assistant tail,
-    and cannot be invalidated by lowering its configured bound;
-17. unresolved tool outcomes survive state restoration and block both new
-    prompts and resume before model or tool work; `reset()` explicitly clears
-    them with the transcript and queues while leaving configuration usable;
-18. successful provider outcomes and normalized token usage survive state
-    restoration, while complete multi-turn usage is summed for the run;
-19. host context projection runs before every model request without mutating the
-    full in-memory transcript; and
-20. model, instructions, and tools can change safely between runs, with an
-    invalid tool replacement leaving the previous set intact.
+- pre-dispatch cancellation does not invoke a model or tool;
+- post-dispatch model cancellation and incomplete streams remain uncertain;
+- a completed model response wins over later cancellation drain;
+- provider diagnostics preserve one correlation identity and typed failure
+  evidence;
+- definite, unavailable, and uncertain tool outcomes stay distinct;
+- bounded tool progress is delivered in order; and
+- tool-call identifiers must be non-empty and unique.
 
-Tool calls execute sequentially by default. A host may enable parallel batches;
-any configured tool can still declare itself sequential and force the whole
-assistant batch to run in order. This supports duplicate calls to the same
-parallel-safe tool without making side-effecting execution an implicit
-optimization.
+The real kernel path additionally proves complete model/tool/model turns,
+source-ordered sequential tools, cancellation, safe replay, unsafe-effect
+blocking, context compaction, and restart recovery. Those tests live in
+`renoa-agent-loop`, `renoa-local`, and `renoa-acp` because that is where the
+durability and product boundaries actually exist.
 
-## Message contract
+## Retired path
 
-User and tool-result messages contain ordered text or image `ContentBlock`
-values. Assistant messages contain ordered text, reasoning, or tool-call
-`AssistantContent` values, a terminal `StopReason`, optional provider-reported
-`TokenUsage`, and provider-continuity metadata. The separate flattened
-`text + tool_calls` representation no longer exists, so a response such as
-`text / tool call / text` reaches the next model request unchanged.
-
-Provider adapters must retain opaque response IDs, response-model names, text
-and reasoning signatures, tool thought signatures, and namespaces when their
-provider requires those values on later requests. The SDK stores these values
-but does not interpret them.
-
-`ModelEvent::ContentDelta` and `AgentEvent::MessageUpdate` carry a content index
-so consumers can keep simultaneous blocks distinct. `AssistantDelta` separates
-visible text, reasoning, tool-call identity, and incremental JSON arguments.
-Tool identity has an explicit start delta because an argument fragment cannot
-identify its call; text and reasoning need no redundant start/end events.
-`MessageStart` carries only the role because terminal outcome and usage do not
-exist yet while a response is streaming. Streaming updates remain transient;
-the completed ordered message is authoritative and is the only assistant
-output written to `AgentState`.
-
-`AgentRunResult::output` is a convenience string formed by concatenating the
-final assistant response's visible text blocks in source order; reasoning is
-excluded. Callers needing the full structure use Agent state or lifecycle
-events.
-
-Tool updates use a bounded channel and are emitted only as transient lifecycle
-events. `ToolOutput` final content and optional JSON details become the one
-model-visible `ToolResult`. A `Tool` must decode and validate raw JSON arguments
-before performing effects; `ToolSpec::input_schema` is the schema advertised to
-the model, not a second generic validator inside the Agent loop.
-
-`ToolError::new` is a definite, model-visible failure. A tool that dispatched an
-external action but cannot prove its final outcome must instead return
-`ToolError::outcome_unknown`. `invoke_tool` preserves that state as a typed
-`ToolOutcomeUnknown`; it never fabricates a failed `ToolResult`. The in-memory
-`Agent` stops the run and reports every uncertain call from an opt-in parallel
-batch. It stores those unresolved outcomes in `AgentState`, so state transfer
-cannot accidentally bypass the block. `prompt()` and `resume()` remain blocked
-until the host explicitly resets the lightweight Agent or reconstructs state
-from authoritative reconciled history. Durable callers map the same evidence
-into their own blocked state. Resetting clears the local guard; it does not
-prove what happened externally, so a host must not repeat the same action
-unless reconciliation or the tool's semantics make that safe.
-
-## Model outcome and accounting
-
-`StopReason` has three successful provider outcomes: `Stop`, `ToolUse`, and
-`Length`. Provider failures and cancellation remain typed Rust errors. Tool
-calls in a `Length` response are converted to model-visible errors and never
-execute because their arguments may be incomplete. Actual ordered tool-call
-content, rather than a provider's reason label, decides whether another model
-turn is needed; this tolerates imperfect compatibility adapters without
-weakening the `Length` safety rule.
-
-`TokenUsage` contains mutually exclusive input, output, cache-read, and
-cache-write counts. An adapter must subtract cached input from ordinary input
-when its provider reports an inclusive input total. Usage is optional because
-unknown usage must not become a misleading zero. Every completed assistant
-message keeps its own value. `AgentRunResult::usage` sums every model turn only
-when all turns reported usage; otherwise it is `None`, while known per-message
-values remain in `AgentState`. When a completed response is rejected by
-tool-call identity validation or the safety limit, its usage remains available
-on the typed error.
-
-The SDK stores counts, not money. A host can combine them with the model used
-for that run and a current or snapshotted price catalog to build token and cost
-views. Model identity, pricing, currencies, budgets, and billing policy stay
-outside the Agent SDK.
-
-## Control and scheduling
-
-`Agent::prompt()` starts with new user text. `Agent::resume()` samples the
-existing transcript without duplicating its tail; this is the Rust equivalent
-of Pi's `continue()` API. A user or tool-result tail can be retried directly. A
-completed assistant tail requires queued steering or follow-up input.
-
-An `AgentHandle` is clonable and remains usable while `Agent` is mutably
-borrowed by `prompt()` or `resume()`. It provides cancellation, idle waiting,
-and two FIFO input queues:
-
-- steering enters at the next turn boundary, after every tool call from the
-  current assistant message has produced a result;
-- follow-up input enters only when there are no tool calls or steering messages
-  left to process.
-
-Steering always drains before follow-ups. Each queue can drain one message or
-all available messages per boundary. Both queues share
-`AgentConfig::max_queued_messages`; the default is 64. Scheduling returns a
-typed error when that bound is full or the owning Agent has been dropped.
-Only ordered user `ContentBlock` values can be queued, so a surface can send
-text and images but cannot inject fabricated assistant or tool history through
-the scheduling API. Text-only convenience methods use this same path.
-`Agent::set_config` rejects a new limit below the number of messages already
-accepted instead of silently discarding them or violating the advertised bound.
-
-Queue contents are transient process state and are not part of `AgentState`.
-A durable host that accepts remote scheduling must journal that command before
-acknowledging it, then restore or redeliver it idempotently. That durability
-belongs to the host or RCP adapter, not this embedded SDK.
-
-These are deliberate safety differences from the studied Pi snapshot: Pi's
-queues are unbounded and owned directly by its Agent object. Renoa uses a
-bounded shared controller, closes orphaned handles, and claims assistant-tail
-input before awaiting lifecycle listeners. This prevents memory growth,
-invalid post-drop scheduling, and a clear-vs-resume race without adding network
-or persistence concerns to the SDK.
-
-The future returned by `prompt()` or `resume()` must be driven to completion.
-An embedding should cancel through `AgentHandle::abort()` and keep polling the
-run until it settles; dropping an arbitrary Rust future does not provide the
-ordered shutdown guarantees of an Agent lifecycle.
-
-Cancellation is cooperative at the `Tool` boundary. Once cancellation is
-observed, the Agent stops accepting progress but continues polling every
-started tool until it resolves. A tool must observe its cancellation token and
-return only after work it owns has stopped; a process tool must kill and reap
-its process group. A tool that ignores cancellation can keep the run busy
-indefinitely. Renoa deliberately has no timeout that would declare cancellation
-complete while side effects may still be running. The tool's settled success
-or error remains authoritative; cancellation decides whether the Agent starts
-another call or model turn.
-
-## Policy and durability
-
-The host chooses which `Tool` objects exist. A tool or its host adapter owns
-authorization, approvals, sandboxing, and target restrictions. The Agent SDK
-does not grant permissions, and RCP does not dictate them.
-
-`AgentState` serialization is state transfer, not crash consistency. A durable
-host must decide when state is committed and acknowledged. RCP's durable task
-journal and `renoa-runtime` run ledger remain separate concerns.
-
-Compaction is intentionally not an Agent SDK responsibility. A session host
-owns complete append-only history, token-budget policy, summary generation, and
-the compacted active transcript. `ContextProjector` can select that transcript
-before each request while `AgentState` remains unchanged. The SDK does not
-contain a compaction threshold, summarizer, or persistence mechanism.
-
-`Agent::set_model`, `set_system_prompt`, and `set_tools` reconfigure subsequent
-runs. Rust's mutable borrow prevents these mutations during an active
-`prompt()` or `resume()`. Provider-specific model settings remain inside the
-selected `Model` adapter.
-
-## Deferred extension points
-
-- custom host-only messages that need conversion before model requests;
-- generic pre/post-tool policy hooks;
-- graceful stop and mid-run model/tool replacement; and
-- tool-result termination hints.
-
-These are not required to embed the SDK or build the first Renoa harness. The
-harness comparison must prove a real consumer and exact semantics before any of
-them enter the core. Permission checks can already be enforced by wrapping a
-`Tool`; provider conversion belongs in `Model`; compaction belongs in
-`ContextProjector`.
-
-## Deliberately outside the Agent core
-
-- OpenAI, Anthropic, or other concrete provider adapters
-- provider pricing, currencies, and cost calculation
-- filesystem, shell, search, and other packaged tools
-
-Those belong to adapter or host crates. They are required for products built on
-the SDK, but are not Agent Core parity work.
+The former standalone in-memory `Agent`, portable `AgentState`, control queues,
+context projector, and parallel scheduler were removed when `main` was
+consolidated around the kernel-backed foundation. No current product path used
+them, and retaining them would create a second, weaker execution architecture.
+Their implementation and historical tests remain recoverable through Git
+history; they are not compatibility commitments.

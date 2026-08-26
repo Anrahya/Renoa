@@ -38,10 +38,6 @@ impl TraceState {
         elapsed_us: i64,
     ) -> TraceEntry {
         match event {
-            AgentEvent::AgentStart => lifecycle("agent_start", occurred_at_ms, elapsed_us),
-            AgentEvent::TurnStart => lifecycle("turn_start", occurred_at_ms, elapsed_us),
-            AgentEvent::TurnEnd => lifecycle("turn_end", occurred_at_ms, elapsed_us),
-            AgentEvent::AgentEnd => lifecycle("agent_end", occurred_at_ms, elapsed_us),
             AgentEvent::MessageStart { role } => {
                 TraceEntry::new("message", "start", occurred_at_ms, elapsed_us)
                     .name(role_name(role))
@@ -53,10 +49,6 @@ impl TraceState {
                 .payload(&json!({ "content_index": content_index, "delta": delta })),
             AgentEvent::MessageAbort => {
                 TraceEntry::new("message", "aborted", occurred_at_ms, elapsed_us)
-            }
-            AgentEvent::MessageEnd { message } => {
-                TraceEntry::new("message", "end", occurred_at_ms, elapsed_us)
-                    .payload(&to_value(message))
             }
             AgentEvent::ModelRequestStart { .. }
             | AgentEvent::ModelProviderRequest { .. }
@@ -319,10 +311,6 @@ pub(super) fn now_unix_ms() -> i64 {
         .unwrap_or_default()
         .as_millis();
     i64::try_from(millis).unwrap_or(i64::MAX)
-}
-
-fn lifecycle(kind: &str, occurred_at_ms: i64, elapsed_us: i64) -> TraceEntry {
-    TraceEntry::new("agent", kind, occurred_at_ms, elapsed_us)
 }
 
 const fn role_name(role: renoa_agent::MessageRole) -> &'static str {

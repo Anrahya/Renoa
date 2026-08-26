@@ -1,8 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use renoa_agent::{
-    BoxFuture, Tool, ToolCall, ToolError, ToolExecutionMode, ToolOutput, ToolSpec, ToolUpdates,
-};
+use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) const DEFAULT_TOOL_DEADLINE: Duration = Duration::from_mins(2);
@@ -31,10 +29,6 @@ impl DeadlineTool {
 impl Tool for DeadlineTool {
     fn spec(&self) -> &ToolSpec {
         self.inner.spec()
-    }
-
-    fn execution_mode(&self) -> ToolExecutionMode {
-        self.inner.execution_mode()
     }
 
     fn execute(

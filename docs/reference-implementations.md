@@ -3,30 +3,6 @@
 Renoa is a new implementation with its own contracts. The following upstream
 projects are studied for established agent-runtime mechanics.
 
-## DeepSeek Harness
-
-- Repository snapshot: `47f943859bef60e4160492346772ded9b24f765a`
-- License: MIT, copyright DeepSeek; preserve the upstream license and applicable
-  third-party notices with any substantial copied or modified source.
-- Role: isolated reference checkout for evaluation. No DeepSeek Harness code or
-  architecture has been adopted into Renoa yet.
-
-## T3 Code
-
-- Repository snapshot: `2db08457f2f4eaaa713a067b2ea480ca2b583025`
-- License: MIT, copyright T3 Tools Inc.; the upstream license and applicable
-  third-party notices must remain with substantial copied or modified source.
-- Role: maintained upstream fork for Renoa's first user-facing surface, not a
-  visual reference or a source of independently recreated components.
-- Retained architecture: the web and desktop applications, shared client
-  runtime, contracts, and the server-side provider-driver extension point.
-- Renoa boundary: a Renoa provider driver connects the T3 surface backend to
-  RCP. RCP remains authoritative for task, command, execution, and delivery
-  continuity; the driver must not bypass it to call a Rust agent directly.
-- Upstream policy: keep upstream history, merge upstream regularly, isolate
-  routine Renoa work in added modules and narrow registration points, and
-  permit deliberate divergence when it materially improves Renoa.
-
 ## Pi
 
 - Repository snapshot: `a96fb984d8c8b065fc5d193309fc812a882adee0`
@@ -34,57 +10,33 @@ projects are studied for established agent-runtime mechanics.
   (MIT)
 - Remote-catalog follow-up: `9d2ec7ffabe927bfad2214c1cee25b6632a78dcf`
   (MIT)
-- Runtime packages: `@earendil-works/pi-agent-core@0.84.1` and
-  `@earendil-works/pi-ai@0.84.1`, published from
-  `53fa77ccd8a279eb87e92294ef3687b03ff80112`
+- Runtime packages: `@earendil-works/pi-agent-core@0.84.2` and
+  `@earendil-works/pi-ai@0.84.2`, published from
+  `914cf1472e715297caa30db4b9535d534a9eb718`
 - License: MIT
 - Studied source: `pi/packages/agent/src/agent-loop.ts`,
-  `pi/packages/agent/docs/harness-v2.md`,
-  `pi/packages/agent/src/agent.ts`,
-  `pi/packages/ai/src/types.ts`,
+  `pi/packages/agent/docs/harness-v2.md`, `pi/packages/ai`,
   `pi/packages/coding-agent/src/core/remote-catalog-provider.ts`,
-  `pi/packages/protocol`, and `pi/packages/server`
-- Adopted ideas: the minimal model-to-tool continuation loop, a stateful Agent
-  around that reusable loop, awaited ordered lifecycle events, source-ordered
-  content blocks and tool-result reinjection, block-indexed streamed text with
-  explicit aborts, representing tool failures as model-visible results,
-  successful stop reasons, normalized per-response token usage, continuation
-  from an existing transcript, distinct steering and follow-up queues, host
-  context projection, rich tool results and progress, and explicit parallel
-  tool scheduling. Renoa also retains opaque provider continuation metadata
-  rather than flattening it out of the portable transcript.
-  Renoa keeps pricing outside conversation state and treats omitted usage as
-  unknown instead of Pi's zero-filled value. Renoa's Rust SDK defaults tool
-  execution to sequential, and makes queues and progress channels bounded.
-  Queues remain reachable through a clonable control handle rather than copying
-  Pi's unbounded Agent-owned implementation. The continuity proof also follows
-  Pi's explicit version handshake and separation of authoritative stored state
-  from transient connection progress. Renoa keeps JSON for v0 instead of
-  adopting Pi's CBOR framing. The first external node uses Pi directly and
-  projects only the durable event intersection into RCP; Pi messages and
-  provider events remain local. Its local workspace adapter reuses Pi's
-  packaged read, write, and edit tools and adds a target binding and
-  path-confinement check rather than reimplementing Pi's file behavior. That
-  tool configuration belongs to the Pi adapter, not RCP. The node also consumes
-  Pi's provider-owned OAuth/refresh contract through its own durable credential
-  store. Pi's CLI, TUI, and coding-agent package are not dependencies.
-  The standalone Rust coding host also calls Pi AI through a one-request local
-  process adapter. Pi performs provider authentication and wire translation;
-  Renoa's Rust harness remains the only conversation and tool loop.
-  Renoa's durable projector also commits its exact model request before
-  dispatch; Pi's in-memory `transformContext` does not provide that recovery
-  boundary. For xAI models newer than the installed Pi AI package, the local
-  adapter uses Pi's official live-catalog endpoint but accepts only a selected
-  record with the expected provider, supported API, and trusted xAI base URL.
-  The Rust host pins that exact record across its Node subprocesses and puts its
-  SHA-256 identity in the runtime revision. Pi's shipping loop treats ordinary
-  tool exceptions as results; its separate harness-v2 design proposes replaying
-  safe effects and inserting interrupted results for unsafe ones. Renoa adopts
-  the recovery distinction, not that unimplemented design or its code. Renoa
-  did not copy Pi's catalog provider or its persistence layer. The cancellation
-  follow-up confirmed Pi's turn-wide signal propagation and checks around
-  model and tool work; Renoa adds durable request identity and transaction
-  ordering instead of copying Pi's in-memory control path.
+  `pi/packages/protocol`, and `pi/packages/server`.
+- Adopted design evidence: a small model-to-tool continuation loop,
+  source-ordered content and tool-result reinjection, indexed streaming,
+  definite tool failures as model-visible results, rich progress, normalized
+  usage, turn-wide cancellation, and separation of authoritative state from
+  transient connection progress. Renoa adds mandatory kernel persistence,
+  exact effect identities, and honest unknown outcomes rather than copying
+  Pi's in-memory orchestration.
+- Current RCP proof: `nodes/pi` uses the pinned Pi packages directly, projects
+  only durable activity into RCP, and keeps Pi messages, provider events,
+  workspace policy, and credentials local to that node. Pi's CLI, TUI, and
+  coding-agent package are not dependencies.
+- Current Alpha provider path: `adapters/model-provider-node` is Renoa-owned and
+  has no Pi runtime-package dependency. It adapts the minimal xAI and OpenCode
+  Go provider source needed from Pi `v0.84.2`; exact copied files, removals,
+  modifications, source revision, and MIT notice are recorded beside the code
+  in `adapters/model-provider-node/UPSTREAM.md`.
+- Renoa deliberately does not adopt Pi's catalog persistence, unbounded queues,
+  hidden inference retries, or unfinished durable-harness proposal. Context
+  projection, compaction, recovery, and scheduling remain Renoa contracts.
 
 ## OpenAI Codex CLI
 
@@ -169,10 +121,11 @@ Reviewed on 2026-08-20.
   receipt, token, or reconciliation identifier is added now. No workflow-system
   source is copied.
 
-The Pi, Codex, and Grok Build repositories above are studied references; their
-source is not copied wholesale. T3 Code is the explicit maintained-fork
-exception. Its license notice, applicable third-party notices, upstream source
-revision, and Renoa modification history are preserved with the fork.
+The Pi, Codex, Grok Build, and DeepSeek Harness repositories above are studied
+references. Substantial Pi provider code adapted into Renoa is recorded with
+its exact source revision, modification scope, and license in
+`adapters/model-provider-node/UPSTREAM.md`; the other reviewed source is not
+copied wholesale.
 
 ## Interoperability standards checked
 

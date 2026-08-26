@@ -28,8 +28,8 @@ without turning the kernel into product policy or one giant plugin interface.
 - [`renoa-agent-loop`](crates/renoa-agent-loop) is the replaceable model/tool
   loop with durable, replaceable context compaction.
 - [`renoa-local`](crates/renoa-local/README.md) is the first Host. It composes
-  Renoa Alpha, Pi provider routing, the compaction strategy, and six local
-  coding tools.
+  Renoa Alpha, the Renoa-owned model-provider adapter, the compaction strategy,
+  and six local coding tools.
 - [`renoa-acp`](crates/renoa-acp) is a thin ACP v1 surface adapter. A compatible
   frontend launches `renoa-agent acp`; ACP translates UI messages and live
   updates but does not own agent composition or durability.

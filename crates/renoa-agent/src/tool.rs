@@ -14,14 +14,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock, events::emit_event};
 
-/// How calls in one assistant tool batch may be scheduled.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ToolExecutionMode {
-    #[default]
-    Sequential,
-    Parallel,
-}
-
 /// Provider-neutral definition advertised to the model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -309,11 +301,6 @@ impl ToolOutcomeUnknown {
 /// Host-provided behavior callable by the agent loop.
 pub trait Tool: Send + Sync {
     fn spec(&self) -> &ToolSpec;
-
-    /// Declares whether this tool can share a tool batch with concurrent work.
-    fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Parallel
-    }
 
     /// Returns ordered model-visible content, a definite model-visible error,
     /// or [`ToolError::outcome_unknown`] when the final external outcome cannot
