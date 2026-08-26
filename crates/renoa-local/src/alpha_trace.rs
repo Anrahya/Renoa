@@ -18,6 +18,17 @@ pub(crate) async fn finish_trace(
                 "stop_reason": stop_reason
             }),
         ),
+        Ok(LocalTurnOutcome::Compacted {
+            estimated_input_tokens,
+        }) => (
+            "completed",
+            None,
+            None,
+            serde_json::json!({
+                "outcome": "compacted",
+                "estimated_input_tokens": estimated_input_tokens
+            }),
+        ),
         Ok(LocalTurnOutcome::Cancelled) => (
             "cancelled",
             Some("cancelled"),

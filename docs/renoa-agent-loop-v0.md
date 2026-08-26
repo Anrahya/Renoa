@@ -69,6 +69,11 @@ bounded portable-summary policy using a host-supplied deterministic
 an active operation accepts only the frozen revision. Context preparation never
 mutates the semantic journal or performs external work.
 
+The same strategy boundary owns user-requested compaction. It borrows one
+already-decoded idle `ContextInput` and returns either an exact summary plan, an
+up-to-date estimate that requires no model call, or an explicit capacity
+failure. The loop, not the strategy, persists and executes a returned plan.
+
 Custom strategies construct their own typed `CompactionPlan` and the loop
 validates its request shape and durable cut before persistence. The built-in
 compactor also accepts a replaceable `ContextProjector`. It applies that
@@ -92,11 +97,22 @@ as a semantic event.
 
 ## Durable formats
 
-The loop accepts one versioned JSON command shape:
+The loop accepts two strict versioned JSON command shapes. The prompt shape is
+unchanged from earlier revisions:
 
 ```text
 AgentCommand { content: Vec<ContentBlock> }
 ```
+
+The control shape currently has one value:
+
+```json
+{ "control": "compact" }
+```
+
+Mixed fields, unknown controls, and unknown fields fail closed. A compact
+control contributes no user message to model-visible or replayed conversation
+history.
 
 Each model-visible message is a semantic event with kind:
 
@@ -121,13 +137,24 @@ strictly advance the previous boundary. Unknown versions under this namespace
 fail closed. They project history for the model; they never delete or rewrite
 the full message journal.
 
-Checkpoint schema 2 contains the loop program counter and in-flight compaction
+Each successfully settled explicit-compaction operation also records:
+
+```text
+renoa.agent.compaction-result.v1
+```
+
+Its payload contains the deterministic estimated input tokens for the exact
+idle request after checkpoint activation. It is durable surface telemetry, not
+conversation content. Unknown versions under this namespace fail closed.
+
+Checkpoint schema 3 contains the loop program counter and in-flight compaction
 intent:
 
 ```text
 NeedModel(model_turns)
 AwaitingModel(model_turns)
 AwaitingCompaction(model_turns, exact_plan, max_attempts, attempt)
+AwaitingExplicitCompaction(exact_plan, max_attempts, attempt)
 NeedTool(model_turns, calls, next_index)
 AwaitingTool(model_turns, calls, next_index)
 Terminal
@@ -140,13 +167,23 @@ may run. While compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 7 adds durable summary execution, checkpoint activation,
-and typed provider-overflow recovery. Revision 6 added durable message origins
+Loop binding revision 8 adds typed manual compaction, its durable result, and
+model-free completion after summary activation. Revision 7 added durable
+summary execution, checkpoint activation, and typed provider-overflow recovery.
+Revision 6 added durable message origins
 to context input and the pure bounded compaction planner. Revision 5 added
 replaceable, revision-frozen context projection. Revision 4 added loop-owned
 durable cancellation closure. Revision 3 added explicit, honest closure of
 unknown model and tool effects. Revision 2 added fail-closed tool-call identity
 validation and typed live tool uncertainty.
+
+Runtime revisions are forward-only for unfinished operations. The Host
+currently supplies only the current loop revision, while the kernel freezes the
+exact manifest per admitted operation. An operation left unfinished under
+revision 7 therefore returns `RuntimeMismatch` under a revision-8-only Host and
+must be finished with its original runtime; Renoa does not guess a migration.
+Terminal operations and their semantic history remain loadable. Likewise, a
+revision-7 loop cannot decode the new compact control command.
 
 ## Execution rules
 
@@ -167,6 +204,19 @@ command
   -> zero or more persisted sequential tool effects and tool-result events
   -> next model effect
   -> commit final assistant message and complete
+```
+
+An explicit compaction control follows a separate terminal path:
+
+```text
+compact control
+  -> reconstruct the idle durable transcript without appending a user message
+  -> if already covered: commit only the current compaction result
+  -> otherwise persist the exact safe summary request
+       -> model effect with no tools
+       -> validate the complete summary
+       -> atomically commit context-checkpoint and compaction-result events
+  -> complete without a normal assistant model call
 ```
 
 Before accepting a settled effect, the loop checks that its binding and exact
@@ -204,6 +254,11 @@ slice:
   rejection never invent or activate a checkpoint;
 - process loss replays an unsettled safe summary effect with the same identity,
   while a settled summary activates after restart without another model call;
+- explicit compaction never enters conversation history, never follows its
+  summary with a normal model call, and redelivery returns the same durable
+  result without resampling;
+- an explicit compaction whose summary input cannot fit the dispatch limit
+  fails before invoking the model and activates no partial checkpoint;
 - a typed provider context-window rejection triggers the same compaction path
   without repeating the known-oversized normal request;
 - durable cancellation balances every outstanding tool call in source order,

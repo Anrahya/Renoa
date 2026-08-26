@@ -4,22 +4,21 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use renoa_agent::{AgentEventSink, ContentBlock};
-use renoa_kernel::CommandId;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    LocalHistoryEntry, LocalHostError, LocalSession, LocalTurnOutcome, LocalWorkspace, ModelChoice,
-    ModelProvider, ReasoningLevel,
-    alpha_trace::finish_trace,
+    LocalHistoryEntry, LocalHostError, LocalSession, LocalWorkspace, ModelChoice, ModelProvider,
+    ReasoningLevel,
     host::{
         HostConfig, initial_reasoning, require_model, resolve_runtime,
         selected_model_by_selection_id,
     },
     selection::{RuntimeSelection, append_selection},
-    trace::{ObservedEventSink, TraceRun, TraceStore},
+    trace::TraceStore,
 };
+
+mod execution;
 
 /// One durable Alpha Agent instance assembled by the local Host.
 pub struct AlphaSession {
@@ -48,17 +47,6 @@ struct SessionState {
     reasoning: ReasoningLevel,
     accepting_work: bool,
     activity: Activity,
-}
-
-struct TracedTurn<'a> {
-    command_id: CommandId,
-    content: Vec<ContentBlock>,
-    cancellation: CancellationToken,
-    provider: ModelProvider,
-    model_id: &'a str,
-    reasoning: ReasoningLevel,
-    events: Arc<dyn AgentEventSink>,
-    trace: &'a TraceRun,
 }
 
 enum Activity {
@@ -146,97 +134,6 @@ impl AlphaSession {
             require_model(&self.models, state.provider, &state.model, "active")?
                 .context_window_tokens(),
         )
-    }
-
-    /// Runs one caller-identified turn through fresh Alpha composition.
-    ///
-    /// Workspace instructions are read for every newly admitted operation.
-    /// The resolved behavior then freezes in that operation's kernel manifest.
-    ///
-    /// # Errors
-    ///
-    /// Returns request coordination, runtime resolution, admission, or execution failures.
-    pub async fn execute_turn(
-        &self,
-        request_id: Uuid,
-        content: Vec<ContentBlock>,
-        events: Arc<dyn AgentEventSink>,
-    ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let (guard, cancellation, provider, model_id, reasoning) = self.begin_prompt(request_id)?;
-        let command_id = CommandId::from_uuid(request_id);
-        let trace = self
-            .trace
-            .start_run(
-                command_id,
-                &content,
-                provider.as_str(),
-                &model_id,
-                reasoning.as_str(),
-            )
-            .await?;
-        let observed: Arc<dyn AgentEventSink> =
-            Arc::new(ObservedEventSink::new(Arc::clone(&trace), events));
-        let result = self
-            .execute_traced_turn(TracedTurn {
-                command_id,
-                content,
-                cancellation,
-                provider,
-                model_id: &model_id,
-                reasoning,
-                events: observed,
-                trace: &trace,
-            })
-            .await;
-        finish_trace(&trace, &result).await;
-        drop(guard);
-        result
-    }
-
-    async fn execute_traced_turn(
-        &self,
-        turn: TracedTurn<'_>,
-    ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let TracedTurn {
-            command_id,
-            content,
-            cancellation,
-            provider,
-            model_id,
-            reasoning,
-            events,
-            trace,
-        } = turn;
-        trace
-            .record_host(
-                "turn_started",
-                Some("running"),
-                serde_json::json!({
-                    "command_id": command_id,
-                    "provider": provider.as_str(),
-                    "model": model_id,
-                    "reasoning": reasoning.as_str()
-                }),
-            )
-            .await?;
-        if let Some(outcome) = self.kernel.replay_settled_turn(command_id, &content)? {
-            trace
-                .record_host(
-                    "durable_replay",
-                    Some("completed"),
-                    serde_json::json!({ "command_id": command_id }),
-                )
-                .await?;
-            return Ok(outcome);
-        }
-        let workspace = LocalWorkspace::open(&self.workspace)?;
-        let model = require_model(&self.models, provider, model_id, "active")?;
-        let runtime =
-            resolve_runtime(&self.host, model, reasoning, &workspace, Some(events)).await?;
-        Ok(self
-            .kernel
-            .execute_turn(command_id, content, &runtime, cancellation)
-            .await?)
     }
 
     /// Signals the exact active turn, if any.

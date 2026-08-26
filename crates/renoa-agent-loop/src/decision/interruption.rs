@@ -13,7 +13,7 @@ use crate::format::{decode_checkpoint, message_events};
 impl LoopPlugin for AgentLoop {
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
         let Some(saved) = input.checkpoint.as_ref() else {
-            return Self::decide_initial(&input);
+            return self.decide_initial(&input);
         };
         match decode_checkpoint(saved)? {
             LoopPhase::NeedModel { model_turns } => self.request_model(model_turns, &input),
@@ -24,6 +24,11 @@ impl LoopPlugin for AgentLoop {
                 max_attempts,
                 attempt,
             } => self.settle_compaction(model_turns, plan, max_attempts, attempt, input),
+            LoopPhase::AwaitingExplicitCompaction {
+                plan,
+                max_attempts,
+                attempt,
+            } => self.settle_explicit_compaction(plan, max_attempts, attempt, input),
             LoopPhase::NeedTool {
                 model_turns,
                 calls,
@@ -46,7 +51,8 @@ impl LoopPlugin for AgentLoop {
     ) -> Result<UnknownEffectAbandonment, LoopError> {
         match decode_checkpoint(&input.checkpoint)? {
             LoopPhase::AwaitingModel { .. } => self.abandon_unknown_model(&input),
-            LoopPhase::AwaitingCompaction { plan, .. } => {
+            LoopPhase::AwaitingCompaction { plan, .. }
+            | LoopPhase::AwaitingExplicitCompaction { plan, .. } => {
                 Self::abandon_unknown_compaction(&plan, &input)
             }
             LoopPhase::AwaitingTool {
@@ -72,7 +78,10 @@ impl LoopPlugin for AgentLoop {
                 cancelled(Vec::new())
             }
             LoopPhase::AwaitingModel { .. } => self.cancel_model(&input),
-            LoopPhase::AwaitingCompaction { plan, .. } => Self::cancel_compaction(&plan, &input),
+            LoopPhase::AwaitingCompaction { plan, .. }
+            | LoopPhase::AwaitingExplicitCompaction { plan, .. } => {
+                Self::cancel_compaction(&plan, &input)
+            }
             LoopPhase::NeedTool {
                 calls, next_index, ..
             } => Self::cancel_planned_tools(&calls, next_index, &input),

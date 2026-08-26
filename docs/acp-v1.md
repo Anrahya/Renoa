@@ -79,9 +79,14 @@ turn and freezes the result only when the kernel admits that operation.
   is safe; deleting a session still owned by a process is rejected.
 - `session/new` and `session/load` return standard ACP `model` and
   `thought_level` select options.
+- `session/new` and `session/load` advertise `compact` through the standard
+  `available_commands_update` session update.
 - `session/set_config_option` changes the model or reasoning level and returns
   the complete, updated option set.
 - `session/prompt` accepts text, image, and resource-link blocks.
+- A sole text block equal to `/compact` after outer whitespace is a control
+  operation. Arguments or attachments are rejected; similarly named text such
+  as `/compactly` remains an ordinary prompt.
 - `session/cancel` durably cancels active model or tool work and stops its child
   process before returning `cancelled`.
 - Model text and reasoning deltas stream while inference is running.
@@ -90,9 +95,12 @@ turn and freezes the result only when the kernel admits that operation.
 - Every provider call with reported token usage emits the standard ACP
   `usage_update`. `used` is that call's input, cache-read, cache-write, and
   output tokens; `size` is the active model's validated context window.
-- `session/load` emits the latest usage stored in durable assistant history
-  after replaying the transcript, so a restarted surface restores the meter
-  without another model call.
+- A successful `/compact` emits only the durable post-compaction
+  `usage_update`, then returns `end_turn`. Its internal summary stream is not
+  presented as an assistant message.
+- `session/load` emits the newest durable provider usage or post-compaction
+  estimate after replaying the transcript, so a restarted surface restores the
+  meter without another model call.
 - The final prompt response is sent only after the kernel has durably settled
   the operation.
 
@@ -151,10 +159,10 @@ to rebuild model context or decide kernel recovery.
 
 An ACP client can send one UUID in `_meta.requestId` and `_meta.promptId` for
 each turn. Renoa reuses that UUID as the kernel command identity. A redelivered
-settled prompt therefore returns its existing durable outcome without another
-model call. If both fields are present, they must match. Clients that omit both
-fields receive a generated identity and do not get lost-request idempotency
-across processes.
+settled prompt or compact control therefore returns its existing durable
+outcome without another model call. If both fields are present, they must
+match. Clients that omit both fields receive a generated identity and do not
+get lost-request idempotency across processes.
 
 The command identity remains separate from ACP message identity. Live
 assistant messages receive one agent-generated `messageId` per message.
@@ -209,6 +217,10 @@ transcript as execution truth.
 - Earlier pre-release session manifests used storage versions 1 and 2. This
   adapter rejects them explicitly instead of guessing at an execution or trace
   migration.
+- Agent-loop revision 8 and checkpoint schema 3 are forward-only for unfinished
+  operations. A revision-7 operation needs its original runtime to finish; the
+  current Host does not migrate frozen manifests. An older binary also cannot
+  decode the new compact control command.
 - If the client loses the successful `session/new` response, stable ACP v1
   provides no caller-supplied creation identity or session-list operation for
   recovering that unknown UUID. The durable session can be orphaned. Turn

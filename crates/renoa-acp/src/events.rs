@@ -254,15 +254,9 @@ pub(crate) fn replay_history(
     session_id: &str,
     history: Vec<LocalHistoryEntry>,
     context_window_tokens: NonZeroU64,
+    latest_context_tokens: Option<u64>,
 ) -> Result<(), ServerError> {
-    let mut latest_usage = None;
     for entry in history {
-        if let Message::Assistant {
-            usage: Some(usage), ..
-        } = &entry.message
-        {
-            latest_usage = Some(*usage);
-        }
         let request_id = entry.command_id.to_string();
         for update in replay_message(entry.message, &entry.event_id, &request_id) {
             connection
@@ -270,18 +264,24 @@ pub(crate) fn replay_history(
                 .map_err(ServerError::Transport)?;
         }
     }
-    if let Some(usage) = latest_usage {
-        let used = context_tokens(usage).ok_or_else(|| {
-            ServerError::Operation("durable token usage overflowed u64".to_owned())
-        })?;
-        connection
-            .send_notification(SessionNotification::new(
-                session_id.to_owned(),
-                SessionUpdate::UsageUpdate(UsageUpdate::new(used, context_window_tokens.get())),
-            ))
-            .map_err(ServerError::Transport)?;
+    if let Some(used) = latest_context_tokens {
+        send_context_usage(connection, session_id, used, context_window_tokens)?;
     }
     Ok(())
+}
+
+pub(crate) fn send_context_usage(
+    connection: &ConnectionTo<Client>,
+    session_id: &str,
+    used: u64,
+    context_window_tokens: NonZeroU64,
+) -> Result<(), ServerError> {
+    connection
+        .send_notification(SessionNotification::new(
+            session_id.to_owned(),
+            SessionUpdate::UsageUpdate(UsageUpdate::new(used, context_window_tokens.get())),
+        ))
+        .map_err(ServerError::Transport)
 }
 
 fn context_tokens(usage: TokenUsage) -> Option<u64> {

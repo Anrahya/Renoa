@@ -17,6 +17,9 @@ pub use configuration::{
 };
 pub use context::{
     CompactionValidationError, ContextEntry, ContextInput, ContextPreparation, ContextProjector,
-    ContextStrategy, ContextStrategyError, FullHistoryStrategy,
+    ContextStrategy, ContextStrategyError, ExplicitCompactionPreparation, FullHistoryStrategy,
 };
-pub use format::{AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND};
+pub use format::{
+    AgentCommand, COMPACTION_RESULT_EVENT_KIND, CONTEXT_CHECKPOINT_EVENT_KIND, CompactionResult,
+    MESSAGE_EVENT_KIND,
+};

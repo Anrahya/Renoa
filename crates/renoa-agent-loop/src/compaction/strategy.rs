@@ -5,7 +5,7 @@ use renoa_agent::{Message, ModelRequest, ModelResponse, ToolSpec};
 use super::{CompactionLimits, CompactionPlanner, ContextSizer, checkpoint_message, validation};
 use crate::context::{
     CompactionValidationError, ContextInput, ContextPreparation, ContextProjector, ContextStrategy,
-    ContextStrategyError,
+    ContextStrategyError, ExplicitCompactionPreparation,
 };
 
 /// Renoa's researched portable-summary context strategy.
@@ -86,6 +86,43 @@ impl CompactingContextStrategy {
         );
         Ok(messages)
     }
+
+    fn projected_idle_messages(
+        &self,
+        input: &ContextInput,
+    ) -> Result<Vec<Message>, ContextStrategyError> {
+        let messages = match input.active_checkpoint() {
+            None => input.messages().to_vec(),
+            Some(checkpoint) => {
+                let mut messages = vec![checkpoint_message(checkpoint.summary())];
+                messages.extend(
+                    input
+                        .entries()
+                        .filter(|entry| entry.sequence() > checkpoint.covered_through_sequence())
+                        .map(|entry| entry.message().clone()),
+                );
+                messages
+            }
+        };
+        self.projector.project(messages)
+    }
+
+    fn estimate_request(&self, input: &ContextInput, messages: Vec<Message>) -> u64 {
+        self.sizer.estimate_input_tokens(&ModelRequest {
+            system_prompt: input.system_prompt().to_owned(),
+            messages,
+            tools: input.tools().to_vec(),
+        })
+    }
+
+    fn checkpoint_is_current(input: &ContextInput) -> bool {
+        let latest = input.entries().next_back().map(|entry| entry.sequence());
+        match (latest, input.active_checkpoint()) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(latest), Some(checkpoint)) => checkpoint.covered_through_sequence() >= latest,
+        }
+    }
 }
 
 impl ContextStrategy for CompactingContextStrategy {
@@ -128,6 +165,50 @@ impl ContextStrategy for CompactingContextStrategy {
                 dispatch_limit_tokens,
             },
         })
+    }
+
+    fn prepare_explicit_compaction(
+        &self,
+        input: &ContextInput,
+    ) -> Result<ExplicitCompactionPreparation, ContextStrategyError> {
+        let current = self.projected_idle_messages(input)?;
+        let estimated_input_tokens = self.estimate_request(input, current);
+        if Self::checkpoint_is_current(input) {
+            return Ok(ExplicitCompactionPreparation::UpToDate {
+                estimated_input_tokens,
+            });
+        }
+        let plan = self
+            .planner
+            .plan_explicit(input, input.active_checkpoint(), self.sizer.as_ref())
+            .map_err(|error| ContextStrategyError::new(error.to_string()))?;
+        Ok(match plan {
+            Some(plan) => ExplicitCompactionPreparation::Compact {
+                plan,
+                max_attempts: self.max_attempts,
+            },
+            None => ExplicitCompactionPreparation::CapacityExceeded {
+                estimated_input_tokens,
+                dispatch_limit_tokens: self.planner.limits.dispatch_limit_tokens().get(),
+            },
+        })
+    }
+
+    fn estimate_after_explicit_compaction(
+        &self,
+        input: &ContextInput,
+        plan: &super::CompactionPlan,
+        summary: &str,
+    ) -> Result<u64, ContextStrategyError> {
+        let mut messages = vec![checkpoint_message(summary)];
+        messages.extend(
+            input
+                .entries()
+                .filter(|entry| entry.sequence() > plan.covered_through_sequence())
+                .map(|entry| entry.message().clone()),
+        );
+        let messages = self.projector.project(messages)?;
+        Ok(self.estimate_request(input, messages))
     }
 
     fn validate_compaction(

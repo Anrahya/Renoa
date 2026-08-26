@@ -1,20 +1,62 @@
 use std::sync::Arc;
 
-use agent_client_protocol::schema::v1::{ContentBlock as AcpContentBlock, Meta, PromptRequest};
-use renoa_agent::{AgentEventSink, ContentBlock};
+use agent_client_protocol::schema::v1::{ContentBlock as AcpContentBlock, Meta};
+use renoa_agent::{AgentEventSink, BoxFuture, ContentBlock};
 use renoa_local::{AlphaSession, LocalTurnOutcome};
 use uuid::Uuid;
 
 use crate::ServerError;
 
+pub(crate) enum PromptAction {
+    Turn(Vec<ContentBlock>),
+    Compact,
+}
+
 pub(crate) async fn execute(
     session: &Arc<AlphaSession>,
-    request: PromptRequest,
+    action: PromptAction,
     request_id: Uuid,
     sink: Arc<dyn AgentEventSink>,
 ) -> Result<LocalTurnOutcome, ServerError> {
-    let content = prompt_content(request.prompt)?;
-    Ok(session.execute_turn(request_id, content, sink).await?)
+    Ok(match action {
+        PromptAction::Turn(content) => session.execute_turn(request_id, content, sink).await?,
+        PromptAction::Compact => session.execute_compaction(request_id, sink).await?,
+    })
+}
+
+pub(crate) fn action(blocks: Vec<AcpContentBlock>) -> Result<PromptAction, ServerError> {
+    if blocks.is_empty() {
+        return Err(ServerError::InvalidRequest(
+            "prompt must contain at least one content block".to_owned(),
+        ));
+    }
+    if blocks.len() == 1
+        && matches!(&blocks[0], AcpContentBlock::Text(text) if text.text.trim() == "/compact")
+    {
+        return Ok(PromptAction::Compact);
+    }
+    if blocks.iter().any(is_compact_invocation) {
+        return Err(ServerError::InvalidRequest(
+            "/compact does not accept arguments or attachments".to_owned(),
+        ));
+    }
+    blocks
+        .into_iter()
+        .map(content_block)
+        .collect::<Result<Vec<_>, _>>()
+        .map(PromptAction::Turn)
+}
+
+pub(crate) fn silent_sink() -> Arc<dyn AgentEventSink> {
+    Arc::new(SilentSink)
+}
+
+struct SilentSink;
+
+impl AgentEventSink for SilentSink {
+    fn emit(&self, _event: renoa_agent::AgentEvent) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 pub(crate) fn request_identity(meta: Option<&Meta>) -> Result<Uuid, ServerError> {
@@ -45,13 +87,13 @@ fn meta_identity<'a>(meta: &'a Meta, name: &str) -> Result<Option<&'a str>, Serv
     }
 }
 
-fn prompt_content(blocks: Vec<AcpContentBlock>) -> Result<Vec<ContentBlock>, ServerError> {
-    if blocks.is_empty() {
-        return Err(ServerError::InvalidRequest(
-            "prompt must contain at least one content block".to_owned(),
-        ));
-    }
-    blocks.into_iter().map(content_block).collect()
+fn is_compact_invocation(block: &AcpContentBlock) -> bool {
+    let AcpContentBlock::Text(text) = block else {
+        return false;
+    };
+    let text = text.text.trim();
+    text.strip_prefix("/compact")
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace))
 }
 
 fn content_block(block: AcpContentBlock) -> Result<ContentBlock, ServerError> {
@@ -75,5 +117,46 @@ fn content_block(block: AcpContentBlock) -> Result<ContentBlock, ServerError> {
         _ => Err(ServerError::InvalidRequest(
             "unknown ACP prompt content is not supported".to_owned(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_client_protocol::schema::v1::{
+        ContentBlock as AcpContentBlock, ImageContent, TextContent,
+    };
+
+    use super::{PromptAction, action};
+
+    #[test]
+    fn compact_requires_one_argument_free_text_block() {
+        assert!(matches!(
+            action(vec![AcpContentBlock::Text(TextContent::new(
+                "  /compact\n"
+            ))])
+            .expect("parse compact"),
+            PromptAction::Compact
+        ));
+        for prompt in [
+            vec![AcpContentBlock::Text(TextContent::new("/compact now"))],
+            vec![
+                AcpContentBlock::Text(TextContent::new("/compact")),
+                AcpContentBlock::Image(ImageContent::new("AAEC", "image/png")),
+            ],
+        ] {
+            assert!(
+                action(prompt).is_err(),
+                "arguments or attachments must not become model-visible text"
+            );
+        }
+    }
+
+    #[test]
+    fn similarly_named_slash_commands_remain_normal_prompts() {
+        assert!(matches!(
+            action(vec![AcpContentBlock::Text(TextContent::new("/compactly"))])
+                .expect("parse ordinary prompt"),
+            PromptAction::Turn(_)
+        ));
     }
 }
