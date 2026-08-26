@@ -5,9 +5,11 @@ coding runtime from:
 
 - Renoa Alpha's versioned coding behavior and workspace `AGENTS.md` rules;
 - the `@renoa/model-provider` process adapter for xAI and OpenCode Go; and
-- Renoa's durable model/tool loop and compaction strategy; and
+- Renoa's durable model/tool loop and compaction strategy;
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
-  tools.
+  tools; and
+- the first durable MCP integration, connection, catalog, and Alpha-selection
+  records. Selected MCP tools are not executable until the next vertical slice.
 
 Provider credentials and tool implementations stay outside the kernel.
 The host is intentionally all-allowed: registering a tool makes it available.
@@ -36,8 +38,9 @@ lower kernel command boundary also used by the headless diagnostic runner.
 Live ACP updates come from a presentation-only event observer in the model and
 tool adapters; the kernel remains the sole durable execution owner.
 
-Host sessions use a stable top-level layout: `session.json` for identity,
-`runtime.jsonl` for acknowledged provider/model/reasoning choices,
+The Host data root contains `host.sqlite3` for MCP catalog and profile-selection
+state plus `sessions/<session-id>/`. Each session uses `session.json` for
+identity, `runtime.jsonl` for acknowledged provider/model/reasoning choices,
 `kernel.sqlite3` for recovery truth, and `trace.sqlite3` for the ordered
 diagnostic timeline. Token/cache usage, exact provider payloads, stream chunks,
 durations, and tool diagnostics live only in the trace database.

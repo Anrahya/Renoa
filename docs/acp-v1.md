@@ -51,8 +51,12 @@ The process reads:
 - `RENOA_MODEL`
 - `RENOA_MODEL_AUTH_STORE`
 - optional `RENOA_DATA_DIR`
+- optional `RENOA_MCP_ADAPTER`
 
-Without `RENOA_DATA_DIR`, sessions use Renoa's platform data directory.
+Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
+`RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
+enables Host catalog refresh but does not itself select or expose a tool to an
+Alpha runtime.
 `RENOA_MODEL_PROVIDERS` is a comma-separated enabled set; when absent, it
 defaults to the single `RENOA_MODEL_PROVIDER`. `RENOA_MODEL_PROVIDER` and
 `RENOA_MODEL` select the default provider and raw model ID for a new session.

@@ -51,12 +51,13 @@ impl Config {
         let settings = ProviderSettings::from_environment()?;
         Ok(Self {
             host: LocalHost::new(
-                data_directory.join("sessions"),
+                data_directory,
                 settings.bridge,
                 settings.providers,
                 settings.default_provider,
                 settings.model,
                 settings.credential_store,
+                optional_path("RENOA_MCP_ADAPTER").as_deref(),
             )?,
         })
     }
@@ -200,6 +201,12 @@ fn required(name: &str) -> Result<String, ServerError> {
 
 fn required_path(name: &str) -> Result<PathBuf, ServerError> {
     required(name).map(PathBuf::from)
+}
+
+fn optional_path(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 fn data_directory() -> Result<PathBuf, ServerError> {

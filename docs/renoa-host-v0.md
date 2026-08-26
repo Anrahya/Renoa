@@ -34,6 +34,16 @@ The first concrete agent profile is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is
 `renoa.coding.alpha.v1`.
 
+The product direction for portable packages, external integrations,
+connections, profile selection, and agent-driven capability changes is recorded
+in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md). That
+document does not override this Host boundary or prematurely settle the open
+v0 storage, permission, and management contracts below.
+
+The first direct external-tool boundary is specified in
+[`renoa-mcp-v0.md`](renoa-mcp-v0.md). It resolves MCP tools through the existing
+Host and `AgentToolBinding` path rather than adding a parallel runtime.
+
 ## What lives where
 
 The same component has three distinct states:
@@ -125,10 +135,20 @@ permission-shaped fields are reserved in this slice.
 
 ## Current concrete composition
 
-`LocalHost` owns the provider configuration and durable session root.
+`LocalHost` owns the provider configuration, durable data root, and first MCP
+catalog. `host.sqlite3` keeps direct integration and connection identities,
+complete catalog snapshots, rejected entries, and Alpha's selected tool
+identities. Registration, discovery, and selection remain separate states.
+Catalog replacement is one transaction, and multi-query reads use one SQLite
+snapshot so runtime resolution cannot observe half of a concurrent refresh.
 `AlphaSession` owns one Agent/Session binding, canonical workspace, model
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
+
+The Host can resolve Alpha's selected MCP definitions after restart. It does
+not yet convert them into executable `renoa-agent::Tool` bindings; therefore
+the current Alpha runtime still exposes only the six local coding tools. That
+kernel-backed invocation path is the next MCP slice.
 
 `LocalRuntimeConfig` is the lower composition input used inside the Host. Every
 local product path selects Alpha's versioned instructions. The resolved inputs
@@ -229,14 +249,17 @@ operation fails without replaying the effect, and the next turn can proceed.
 This is Host policy using the kernel's explicit boundary; the kernel itself
 never abandons uncertainty automatically.
 
-New session state has one intentionally visible layout:
+Local Host state has one intentionally visible layout:
 
 ```text
-sessions/<session-uuid>/
-  session.json     durable identity and workspace/profile binding
-  runtime.jsonl    acknowledged provider/model/reasoning selections
-  kernel.sqlite3   authoritative execution and recovery truth
-  trace.sqlite3    ordered Host/model/tool diagnostics
+<data-root>/
+  host.sqlite3                  Host MCP integrations, connections, catalogs,
+                                and Alpha selections
+  sessions/<session-uuid>/
+    session.json                durable identity and workspace/profile binding
+    runtime.jsonl               acknowledged provider/model/reasoning selections
+    kernel.sqlite3              authoritative execution and recovery truth
+    trace.sqlite3               ordered Host/model/tool diagnostics
 ```
 
 Usage, cache counts, timings, provider payloads, streamed chunks, and tool
@@ -249,10 +272,14 @@ session UUID and syncs the parent directory. Initialization failure removes the
 staging directory, so a loadable session is never partially published. On Unix,
 the published session directory is owner-only because trace and history contain
 prompts, source text, and tool data.
+The global `host.sqlite3` catalog is also owner-only on Unix.
 `runtime.jsonl` recovery truncates an incomplete crash tail before any later
 append; future valid records can never be joined onto torn JSON.
 
 ## Agent-driven changes
+
+The full intended extension lifecycle and its staged proof plan are recorded in
+[`renoa-extensions-north-star.md`](renoa-extensions-north-star.md).
 
 The GUI is a surface, not the sole controller. A future human action or agent
 tool call will issue the same typed Host management command:
@@ -285,7 +312,7 @@ modification.
 
 ## Open decisions
 
-- durable profile and capability-library storage;
+- general profile and package-library storage beyond the first MCP selection;
 - profile inheritance and Agent Instance overrides;
 - permission vocabulary, scopes, approvals, and secret grants;
 - capability package discovery, installation, updates, and rollback;
@@ -327,3 +354,12 @@ The same Host path now admits explicit compaction as a typed control operation.
 Its summary, checkpoint activation, result projection, exact redelivery,
 cancellation, and post-restart usage restoration are kernel-backed; no surface
 owns or reconstructs that state.
+
+The first extension catalog slice is also durable. `LocalHost` registers one
+direct no-auth MCP integration and connection, runs the replaceable Node
+adapter for bounded discovery, atomically publishes one complete catalog,
+records one Alpha tool selection, and restores both after process restart.
+Exact registration retries converge, identity changes conflict, failed refresh
+publication preserves the previous snapshot, stored contents are checked
+against their digest, missing selected tools fail closed, and concurrent first
+startup produces one valid database. No kernel type or table changed.

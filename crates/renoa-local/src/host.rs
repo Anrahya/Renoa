@@ -9,6 +9,8 @@ use renoa_kernel::{AgentId, SessionId};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod mcp;
+
 use crate::alpha_session::AlphaSessionStorage;
 use crate::{
     AlphaError, AlphaSession, LocalRuntimeConfig, LocalRuntimeError, LocalSession,
@@ -19,6 +21,7 @@ use crate::{
         KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, delete_session_storage,
         read_manifest,
     },
+    mcp::{HOST_DATABASE, McpCatalogStore, McpHostError, resolve_adapter},
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
     trace::{TRACE_DATABASE, TraceError, TraceStore},
 };
@@ -35,6 +38,8 @@ pub(crate) struct HostConfig {
     pub(crate) initial_provider: ModelProvider,
     pub(crate) initial_model: String,
     pub(crate) credential_store: PathBuf,
+    pub(crate) mcp_catalog: McpCatalogStore,
+    pub(crate) mcp_adapter: Option<PathBuf>,
 }
 
 /// Failure while composing, storing, or running a local Agent instance.
@@ -59,6 +64,8 @@ pub enum LocalHostError {
     Alpha(#[from] AlphaError),
     #[error(transparent)]
     Session(#[from] LocalSessionError),
+    #[error(transparent)]
+    Mcp(#[from] McpHostError),
     #[error("local Host background storage task failed: {0}")]
     Background(#[from] tokio::task::JoinError),
     #[error("local Host session state lock was poisoned")]
@@ -80,18 +87,20 @@ impl From<TraceError> for LocalHostError {
 }
 
 impl LocalHost {
-    /// Creates the local Host around its enabled providers and durable session root.
+    /// Creates the local Host around its durable data root and enabled providers.
     ///
     /// # Errors
     ///
-    /// Returns a storage error when the session root cannot be created or resolved.
+    /// Returns when the data root, session root, MCP adapter, or Host catalog
+    /// cannot be initialized.
     pub fn new(
-        sessions: impl Into<PathBuf>,
+        data_directory: impl Into<PathBuf>,
         bridge: impl Into<PathBuf>,
         providers: Vec<ModelProvider>,
         initial_provider: ModelProvider,
         initial_model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
+        mcp_adapter: Option<&Path>,
     ) -> Result<Self, LocalHostError> {
         if providers.is_empty() {
             return Err(LocalHostError::Configuration(
@@ -108,9 +117,17 @@ impl LocalHost {
                 "default {initial_provider} provider is not enabled"
             )));
         }
-        let sessions = sessions.into();
+        let mcp_adapter = mcp_adapter
+            .map(resolve_adapter)
+            .transpose()
+            .map_err(McpHostError::from)?;
+        let data_directory = data_directory.into();
+        std::fs::create_dir_all(&data_directory)?;
+        let data_directory = std::fs::canonicalize(data_directory)?;
+        let sessions = data_directory.join("sessions");
         std::fs::create_dir_all(&sessions)?;
         let sessions = std::fs::canonicalize(sessions)?;
+        let mcp_catalog = McpCatalogStore::initialize(data_directory.join(HOST_DATABASE))?;
         Ok(Self {
             config: Arc::new(HostConfig {
                 sessions,
@@ -119,6 +136,8 @@ impl LocalHost {
                 initial_provider,
                 initial_model: initial_model.into(),
                 credential_store: credential_store.into(),
+                mcp_catalog,
+                mcp_adapter,
             }),
         })
     }

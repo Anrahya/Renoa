@@ -33,6 +33,10 @@ without turning the kernel into product policy or one giant plugin interface.
 - [`renoa-acp`](crates/renoa-acp) is a thin ACP v1 surface adapter. A compatible
   frontend launches `renoa-agent acp`; ACP translates UI messages and live
   updates but does not own agent composition or durability.
+- [`mcp-client-node`](adapters/mcp-client-node) is the replaceable modern MCP
+  process adapter. The Host now durably registers a direct no-auth connection,
+  publishes its complete catalog, and remembers Alpha's selected tools. The
+  selected tool is not executable by Alpha until the next vertical slice.
 
 Alpha currently has `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and
 `find`. Model and reasoning choices can change between operations. Workspace
@@ -73,6 +77,8 @@ conditions.
 Start with the current
 [`renoa-kernel` contract](docs/renoa-kernel-v0.md),
 [`Host architecture`](docs/renoa-host-v0.md),
+[`extension-system north star`](docs/renoa-extensions-north-star.md),
+[`direct MCP contract`](docs/renoa-mcp-v0.md),
 [`Alpha profile`](docs/renoa-alpha-v1.md),
 [`agent-loop contract`](docs/renoa-agent-loop-v0.md), and
 [`ACP adapter`](docs/acp-v1.md).

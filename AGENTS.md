@@ -14,6 +14,9 @@
 - Prefer the standard library and existing dependencies over a new package.
 - Keep provider, surface, and product policy outside the kernel.
 - Keep modules below 500 lines; split by responsibility, not arbitrary size.
+- Keep at most one canonical architecture document per module. Do not add
+  step, status, handoff, or implementation-summary documents; code and tests
+  are the execution truth.
 - Test the real execution path with deterministic boundaries.
 - Treat warnings as errors. Before handing off code, run:
   `cargo fmt --all -- --check`,

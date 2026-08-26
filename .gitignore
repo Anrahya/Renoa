@@ -2,6 +2,7 @@
 /clients/typescript/dist/
 /nodes/pi/dist/
 /adapters/model-provider-node/dist/
+/adapters/mcp-client-node/dist/
 node_modules/
 *.db
 *.db-journal

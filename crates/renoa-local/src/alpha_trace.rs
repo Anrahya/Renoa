@@ -83,6 +83,7 @@ const fn host_error_code(error: &LocalHostError) -> &'static str {
         LocalHostError::Model(_) => "model",
         LocalHostError::Alpha(_) => "alpha",
         LocalHostError::Session(_) => "session",
+        LocalHostError::Mcp(_) => "mcp",
         LocalHostError::Background(_) => "background",
         LocalHostError::StatePoisoned => "state_poisoned",
         LocalHostError::Trace(_) => "trace",
