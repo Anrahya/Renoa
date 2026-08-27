@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr as _, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use renoa_agent::{
     BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     SkillError,
-    registry::{SEARCH_RESULT_LIMIT, SkillReference, rank_skills},
+    registry::{SEARCH_RESULT_LIMIT, rank_skills},
     render,
     store::SkillStore,
 };
@@ -20,7 +20,7 @@ use crate::ALPHA_PROFILE_ID;
 pub(super) const SKILL_LOAD_TOOL: &str = "skill_load";
 const SKILL_SEARCH_TOOL: &str = "skill_search";
 pub(super) const ACTIVATION_DETAIL_KIND: &str = "renoa.skill.activation.v1";
-const REGISTRY_REVISION: &str = "renoa-skill-registry-v1";
+const REGISTRY_REVISION: &str = "renoa-skill-registry-v2";
 
 pub(crate) fn alpha_skill_bindings(
     store: SkillStore,
@@ -56,7 +56,7 @@ impl SearchTool {
             spec: ToolSpec {
                 name: SKILL_SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find Agent Skills available to Alpha without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} compact matches and immutable references. Use query `*` to browse, then call skill_load for one exact match. Local global/project .agents sources are rescanned on each call, so additions need no restart."
+                    "Find Agent Skills available to Alpha without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} matches containing only name and description. Use query `*` to browse, then call skill_load with one name. Local global/project .agents sources are rescanned on each call, so additions need no restart. A project skill overrides a global skill with the same name."
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -92,26 +92,15 @@ impl Tool for SearchTool {
             let workspace = self.workspace.clone();
             let query = input.query;
             let result = tokio::task::spawn_blocking(move || {
-                let sync = store.sync(ALPHA_PROFILE_ID, &workspace)?;
-                let ranked = rank_skills(store.summaries(ALPHA_PROFILE_ID, &workspace)?, &query)?;
-                let matches = ranked
-                    .matches
+                store.sync(ALPHA_PROFILE_ID, &workspace)?;
+                let matches = rank_skills(store.summaries(ALPHA_PROFILE_ID, &workspace)?, &query)?
                     .into_iter()
-                    .map(|skill| {
-                        Ok(SearchMatch {
-                            reference: skill.reference()?.to_string(),
-                            scope: skill.scope.as_str(),
-                            name: skill.name,
-                            description: skill.description,
-                        })
+                    .map(|skill| SearchMatch {
+                        name: skill.name,
+                        description: skill.description,
                     })
-                    .collect::<Result<Vec<_>, SkillError>>()?;
-                Ok::<_, SkillError>(SearchOutput {
-                    matches,
-                    total_matches: ranked.total_matches,
-                    available_skills: sync.available,
-                    rejected_entries: sync.rejected,
-                })
+                    .collect::<Vec<_>>();
+                Ok::<_, SkillError>(matches)
             })
             .await
             .map_err(|error| background_error(&error))?
@@ -144,13 +133,13 @@ impl LoadTool {
             command_id,
             spec: ToolSpec {
                 name: SKILL_LOAD_TOOL.to_owned(),
-                description: "Load and durably activate one exact reference returned by skill_search. The full instructions are available immediately, survive restart and compaction, and stay pinned to this immutable revision for the session. A skill supplies instructions; it does not grant tools or permissions.".to_owned(),
+                description: "Load and durably activate one skill name returned by skill_search. The Host resolves the current project-over-global selection and pins that exact immutable revision for the session. Full instructions are available immediately and survive restart and compaction. A skill supplies instructions; it does not grant tools or permissions.".to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "reference": {"type": "string"}
+                        "name": {"type": "string"}
                     },
-                    "required": ["reference"],
+                    "required": ["name"],
                     "additionalProperties": false
                 }),
             },
@@ -171,8 +160,6 @@ impl Tool for LoadTool {
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             let input: LoadInput = decode(&call, SKILL_LOAD_TOOL)?;
-            let reference =
-                SkillReference::from_str(&input.reference).map_err(|error| skill_error(&error))?;
             let command_id = self.command_id.ok_or_else(|| {
                 ToolError::internal("skill_load has no active Host command identity")
             })?;
@@ -180,7 +167,7 @@ impl Tool for LoadTool {
             let store = self.store.clone();
             let workspace = self.workspace.clone();
             let session_id = self.session_id;
-            let selected = reference.clone();
+            let selected = input.name;
             let skill = tokio::task::spawn_blocking(move || {
                 store.activate(
                     ALPHA_PROFILE_ID,
@@ -194,12 +181,13 @@ impl Tool for LoadTool {
             .map_err(|error| background_error(&error))?
             .map_err(|error| skill_error(&error))?;
             require_active(&cancellation, true)?;
+            let reference = render::reference(&skill).map_err(|error| skill_error(&error))?;
             let content = render::one(&skill).map_err(|error| skill_error(&error))?;
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(content)],
                 details: Some(json!({
                     "kind": ACTIVATION_DETAIL_KIND,
-                    "reference": reference.to_string(),
+                    "reference": reference,
                 })),
                 is_error: false,
             })
@@ -214,17 +202,7 @@ struct SearchInput {
 }
 
 #[derive(Serialize)]
-struct SearchOutput {
-    matches: Vec<SearchMatch>,
-    total_matches: usize,
-    available_skills: usize,
-    rejected_entries: usize,
-}
-
-#[derive(Serialize)]
 struct SearchMatch {
-    reference: String,
-    scope: &'static str,
     name: String,
     description: String,
 }
@@ -232,7 +210,7 @@ struct SearchMatch {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoadInput {
-    reference: String,
+    name: String,
 }
 
 fn decode<T: DeserializeOwned>(call: &ToolCall, expected: &str) -> Result<T, ToolError> {

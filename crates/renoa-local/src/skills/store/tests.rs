@@ -4,13 +4,7 @@ use renoa_kernel::{CommandId, SessionId};
 use tempfile::{TempDir, tempdir};
 
 use super::SkillStore;
-use crate::{
-    host::catalog,
-    skills::{
-        SkillError,
-        registry::{SkillReference, SkillScope, rank_skills},
-    },
-};
+use crate::{host::catalog, skills::SkillError};
 
 const PROFILE: &str = "renoa.coding.alpha.v1";
 
@@ -61,8 +55,7 @@ impl Fixture {
 #[test]
 fn hot_sync_keeps_collisions_exact_and_active_revisions_stable() {
     let fixture = Fixture::new();
-    let (project, first_project, first_digest, session_id) =
-        activate_initial_project_revision(&fixture);
+    let (project, first_digest, session_id) = activate_initial_project_revision(&fixture);
 
     write_skill(
         &project,
@@ -71,49 +64,49 @@ fn hot_sync_keeps_collisions_exact_and_active_revisions_stable() {
         "PROJECT_REVISION_TWO",
     );
     write_skill(&project, "hot-helper", "New helper.", "HOT_HELPER_BODY");
-    let second = fixture
+    fixture
         .store
         .sync(PROFILE, &fixture.workspace)
         .expect("hot sync changed source without restart");
-    assert_eq!(second.available, 3);
     let summaries = fixture
         .store
         .summaries(PROFILE, &fixture.workspace)
         .expect("changed summaries");
-    let changed = summaries
-        .iter()
-        .find(|skill| skill.scope == SkillScope::Workspace && skill.name == "review")
-        .expect("new project revision")
-        .reference()
-        .expect("new reference");
-    assert_ne!(changed.digest(), first_digest);
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(
+        summaries
+            .iter()
+            .find(|skill| skill.name == "review")
+            .expect("new project revision")
+            .description,
+        "Project review."
+    );
     assert!(fixture.packages.join(&first_digest).is_dir());
-    assert!(matches!(
-        fixture.store.activate(
-            PROFILE,
-            &fixture.workspace,
-            session_id,
-            CommandId::new(),
-            &changed,
-        ),
-        Err(SkillError::Conflict(_))
-    ));
-    fixture
+    let pinned = fixture
         .store
         .activate(
             PROFILE,
             &fixture.workspace,
             session_id,
             CommandId::new(),
-            &first_project,
+            "review",
         )
-        .expect("old active reference remains idempotent after source changes");
-    let helper = summaries
-        .iter()
-        .find(|skill| skill.name == "hot-helper")
-        .expect("hot-added helper")
-        .reference()
-        .expect("helper reference");
+        .expect("existing session keeps its active revision after source changes");
+    assert_eq!(pinned.digest, first_digest);
+    assert_eq!(pinned.body.trim(), "PROJECT_REVISION_ONE");
+
+    let current = fixture
+        .store
+        .activate(
+            PROFILE,
+            &fixture.workspace,
+            SessionId::new(),
+            CommandId::new(),
+            "review",
+        )
+        .expect("new session resolves the current project revision");
+    assert_ne!(current.digest, first_digest);
+    assert_eq!(current.body.trim(), "PROJECT_REVISION_TWO");
     fixture
         .store
         .activate(
@@ -121,7 +114,7 @@ fn hot_sync_keeps_collisions_exact_and_active_revisions_stable() {
             &fixture.workspace,
             session_id,
             CommandId::new(),
-            &helper,
+            "hot-helper",
         )
         .expect("activate hot-added helper");
 
@@ -150,9 +143,7 @@ fn hot_sync_keeps_collisions_exact_and_active_revisions_stable() {
     );
 }
 
-fn activate_initial_project_revision(
-    fixture: &Fixture,
-) -> (std::path::PathBuf, SkillReference, String, SessionId) {
+fn activate_initial_project_revision(fixture: &Fixture) -> (std::path::PathBuf, String, SessionId) {
     write_skill(
         &fixture.global,
         "review",
@@ -167,24 +158,17 @@ fn activate_initial_project_revision(
         "PROJECT_REVISION_ONE",
     );
 
-    let first = fixture
+    fixture
         .store
         .sync(PROFILE, &fixture.workspace)
         .expect("initial hot sync");
-    assert_eq!(first.available, 2);
-    let ranked = rank_skills(
-        fixture
-            .store
-            .summaries(PROFILE, &fixture.workspace)
-            .expect("initial summaries"),
-        "review",
-    )
-    .expect("rank collisions");
-    assert_eq!(ranked.matches.len(), 2);
-    assert_eq!(ranked.matches[0].scope, SkillScope::Workspace);
-    assert_ne!(ranked.matches[0].digest, ranked.matches[1].digest);
-    let first_project = ranked.matches[0].reference().expect("project reference");
-    let first_digest = first_project.digest().to_owned();
+    let summaries = fixture
+        .store
+        .summaries(PROFILE, &fixture.workspace)
+        .expect("initial summaries");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].name, "review");
+    assert_eq!(summaries[0].description, "Project review.");
     let session_id = SessionId::new();
     let command_id = CommandId::new();
     let active = fixture
@@ -194,9 +178,10 @@ fn activate_initial_project_revision(
             &fixture.workspace,
             session_id,
             command_id,
-            &first_project,
+            "review",
         )
-        .expect("activate first project revision");
+        .expect("activate selected project revision");
+    let first_digest = active.digest.clone();
     assert_eq!(active.body.trim(), "PROJECT_REVISION_ONE");
     assert!(
         fixture
@@ -215,7 +200,7 @@ fn activate_initial_project_revision(
         1,
         "the activation must become effective for the following command"
     );
-    (project, first_project, first_digest, session_id)
+    (project, first_digest, session_id)
 }
 
 #[test]
@@ -260,13 +245,18 @@ fn invalid_entries_are_reported_without_hiding_valid_skills() {
     )
     .expect("write unsupported skill");
 
-    let report = fixture
+    fixture
         .store
         .sync(PROFILE, &fixture.workspace)
         .expect("isolate unsupported entry");
 
-    assert_eq!(report.available, 1);
-    assert_eq!(report.rejected, 1);
+    assert_eq!(
+        fixture
+            .store
+            .rejection_count(PROFILE, &fixture.workspace)
+            .expect("count rejected skill entries"),
+        1
+    );
     assert_eq!(
         fixture
             .store
@@ -289,15 +279,6 @@ fn oversized_active_instructions_fail_instead_of_being_truncated() {
         .store
         .sync(PROFILE, &fixture.workspace)
         .expect("publish oversized but valid package");
-    let reference = fixture
-        .store
-        .summaries(PROFILE, &fixture.workspace)
-        .expect("load oversized summary")
-        .into_iter()
-        .next()
-        .expect("oversized skill exists")
-        .reference()
-        .expect("oversized reference");
     let session_id = SessionId::new();
 
     assert!(matches!(
@@ -306,7 +287,7 @@ fn oversized_active_instructions_fail_instead_of_being_truncated() {
             &fixture.workspace,
             session_id,
             CommandId::new(),
-            &reference,
+            "oversized",
         ),
         Err(SkillError::Conflict(_))
     ));
@@ -335,15 +316,15 @@ fn active_skill_count_fails_at_the_seventeenth_revision() {
         .store
         .sync(PROFILE, &fixture.workspace)
         .expect("publish bounded skills");
-    let references = fixture
+    let names = fixture
         .store
         .summaries(PROFILE, &fixture.workspace)
         .expect("load bounded skill summaries")
         .into_iter()
-        .map(|skill| skill.reference().expect("bounded skill reference"))
+        .map(|skill| skill.name)
         .collect::<Vec<_>>();
     let session_id = SessionId::new();
-    for reference in &references[..crate::skills::MAX_ACTIVE_SKILLS] {
+    for name in &names[..crate::skills::MAX_ACTIVE_SKILLS] {
         fixture
             .store
             .activate(
@@ -351,7 +332,7 @@ fn active_skill_count_fails_at_the_seventeenth_revision() {
                 &fixture.workspace,
                 session_id,
                 CommandId::new(),
-                reference,
+                name,
             )
             .expect("activate skill within count limit");
     }
@@ -362,7 +343,7 @@ fn active_skill_count_fails_at_the_seventeenth_revision() {
             &fixture.workspace,
             session_id,
             CommandId::new(),
-            &references[crate::skills::MAX_ACTIVE_SKILLS],
+            &names[crate::skills::MAX_ACTIVE_SKILLS],
         ),
         Err(SkillError::Conflict(_))
     ));

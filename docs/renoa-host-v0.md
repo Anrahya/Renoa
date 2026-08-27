@@ -174,19 +174,20 @@ The Host also adds exactly two Agent Skills tools: `skill_search` and
 `skill_load`. Search rescans global `~/.agents/skills` and the canonical
 workspace's `.agents/skills` on every call, imports each accepted directory into
 `skills/<sha256>`, atomically publishes one complete source snapshot, and
-returns at most five compact matches. A source-scan failure keeps the prior
-snapshot. Invalid individual entries are stored as rejections without hiding
-valid siblings. A workspace match ranks before an equally relevant global
-match, but both different revisions retain exact references rather than being
-silently overwritten.
+returns at most 200 matches containing only `name` and a short `description`. A
+source-scan failure keeps the prior snapshot. Invalid individual entries are
+stored as rejections without hiding valid siblings. A workspace skill
+deterministically overrides a same-named global skill for discovery; no digest,
+scope, file list, or other package detail enters the search result.
 
-Load verifies one `skill:<name>:<sha256>` reference against the Host-owned
-package, persists the activation, and returns its complete instructions and a
-bounded file sample. It is idempotent for the pinned revision. A session cannot
-activate a different revision under the same name. Skills never grant tools;
-the experimental `allowed-tools` field is rejected. Search and load are
-`SafeToReplay` because their writes converge on content identity and session
-uniqueness.
+Load accepts one selected name, resolves the project-over-global binding, and
+verifies the Host-owned package before persisting its exact digest. It returns
+the complete instructions and a bounded file sample. A concurrent source
+change fails instead of switching content during the call. Once activated,
+later loads by that name are idempotent for the session-pinned revision even if
+the source changes. Skills never grant tools; the experimental `allowed-tools`
+field is rejected. Search and load are `SafeToReplay` because their writes
+converge on content identity and session uniqueness.
 
 The activation records its originating command. That command receives the full
 instructions from the tool result, while a crash retry excludes its own new
@@ -443,10 +444,11 @@ kernel type or table changed.
 
 The standalone Agent Skills path is now complete. Alpha sees two additional
 constant schemas regardless of skill count. Search imports standard global and
-workspace `.agents/skills` directories on demand, preserves collisions as
-exact references, isolates invalid entries, and observes additions without a
-Host or surface restart. Load durably pins one immutable revision per name and
-reattaches its exact instructions on later operations. A real Alpha session
+workspace `.agents/skills` directories on demand, returns only up to 200
+name/description pairs, applies explicit workspace-over-global precedence,
+isolates invalid entries, and observes additions without a Host or surface
+restart. Load durably pins one immutable revision per name and reattaches its
+exact instructions on later operations. A real Alpha session
 loads a project skill, hot-loads a newly added skill, compacts, restarts the
 Host, and continues with both exact instruction sets. Historical tool results
 remain durable while model-facing duplicates become receipts. Schema v4 owns

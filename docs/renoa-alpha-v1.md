@@ -75,10 +75,12 @@ waste model context.
 ## Agent Skills
 
 Alpha does not receive a startup dump of every skill description or body. It
-uses `skill_search` to query compact metadata from the Host's global and
-workspace `.agents/skills` sources, then passes one unchanged immutable
-reference to `skill_load`. The loaded body, base directory, compatibility note,
-and bounded supporting-file sample are available immediately.
+uses `skill_search` to query at most 200 names and short descriptions from the
+Host's global and workspace `.agents/skills` sources, then passes one name to
+`skill_load`. A workspace skill deterministically overrides a global skill with
+the same name. The loaded body, exact immutable revision, base directory,
+compatibility note, and bounded supporting-file sample are available only after
+that invocation.
 
 Activation is durable session state owned by the Host. The activating command
 receives the complete instructions in the tool result; later operations append

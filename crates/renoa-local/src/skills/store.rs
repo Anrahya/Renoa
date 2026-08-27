@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehav
 use super::{
     MAX_ACTIVE_SKILL_INSTRUCTION_BYTES, MAX_ACTIVE_SKILLS, SkillError,
     package::{self, CapturedSkill, OwnedSkill, SourceSnapshot},
-    registry::{SkillReference, SkillScope, SkillSummary},
+    registry::{SkillScope, SkillSummary, validate_name},
     render,
 };
 
@@ -18,12 +18,6 @@ pub(crate) struct SkillStore {
     database: PathBuf,
     packages: PathBuf,
     global_source: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SkillSyncReport {
-    pub(crate) available: usize,
-    pub(crate) rejected: usize,
 }
 
 struct SourceSpec {
@@ -52,11 +46,7 @@ impl SkillStore {
         })
     }
 
-    pub(super) fn sync(
-        &self,
-        profile_id: &str,
-        workspace: &Path,
-    ) -> Result<SkillSyncReport, SkillError> {
+    pub(super) fn sync(&self, profile_id: &str, workspace: &Path) -> Result<(), SkillError> {
         let workspace = path_text(workspace, "workspace")?;
         let mut specs = Vec::new();
         if let Some(root) = &self.global_source {
@@ -86,12 +76,7 @@ impl SkillStore {
             replace_source(&transaction, profile_id, source)?;
         }
         transaction.commit()?;
-        let available = self.summaries(profile_id, Path::new(&workspace))?.len();
-        let rejected = self.rejection_count(profile_id, Path::new(&workspace))?;
-        Ok(SkillSyncReport {
-            available,
-            rejected,
-        })
+        Ok(())
     }
 
     pub(super) fn summaries(
@@ -102,8 +87,7 @@ impl SkillStore {
         let workspace = path_text(workspace, "workspace")?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT binding.scope_kind, revision.name, revision.description,
-                    revision.skill_digest
+            "SELECT binding.scope_kind, revision.name, revision.description
              FROM profile_skill_bindings AS binding
              JOIN skill_revisions AS revision
                ON revision.skill_digest = binding.skill_digest
@@ -113,32 +97,30 @@ impl SkillStore {
                     OR
                     (binding.scope_kind = 'workspace' AND binding.workspace = ?2)
                )
-             ORDER BY binding.scope_kind DESC, revision.name, revision.skill_digest",
+             ORDER BY revision.name,
+                      CASE binding.scope_kind WHEN 'workspace' THEN 0 ELSE 1 END,
+                      revision.skill_digest",
         )?;
         let rows = statement.query_map(params![profile_id, workspace], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
             ))
         })?;
         let mut observed = HashSet::new();
         let mut summaries = Vec::new();
         for row in rows {
-            let (scope, name, description, digest) = row?;
-            if observed.insert(digest.clone()) {
-                summaries.push(SkillSummary {
-                    scope: SkillScope::from_stored(&scope)?,
-                    name,
-                    description,
-                    digest,
-                });
+            let (scope, name, description) = row?;
+            SkillScope::from_stored(&scope)?;
+            if observed.insert(name.clone()) {
+                summaries.push(SkillSummary { name, description });
             }
         }
         Ok(summaries)
     }
 
+    #[cfg(test)]
     pub(super) fn rejection_count(
         &self,
         profile_id: &str,
@@ -168,16 +150,28 @@ impl SkillStore {
         workspace: &Path,
         session_id: SessionId,
         command_id: CommandId,
-        reference: &SkillReference,
+        name: &str,
     ) -> Result<OwnedSkill, SkillError> {
+        validate_name(name)?;
         let workspace = path_text(workspace, "workspace")?;
         let session_id = session_id.to_string();
-        let loaded = package::load_owned(&self.packages, reference.digest())?;
-        if loaded.metadata.name != reference.name() {
+        let candidate = active_or_selected_digest(
+            &self.connection()?,
+            profile_id,
+            &workspace,
+            &session_id,
+            name,
+        )?
+        .ok_or_else(|| {
+            SkillError::NotFound(format!(
+                "skill `{name}` is not available for this workspace"
+            ))
+        })?;
+        let loaded = package::load_owned(&self.packages, &candidate)?;
+        if loaded.metadata.name != name {
             return Err(SkillError::Conflict(format!(
-                "installed skill name `{}` differs from reference `{}`",
-                loaded.metadata.name,
-                reference.name()
+                "installed skill name `{}` differs from requested name `{name}`",
+                loaded.metadata.name
             )));
         }
         let instruction_bytes = render::one(&loaded)?.len();
@@ -186,35 +180,26 @@ impl SkillStore {
         })?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let eligible = reference_is_eligible_or_active(
-            &transaction,
-            profile_id,
-            &workspace,
-            &session_id,
-            reference,
-        )?;
-        if !eligible {
-            return Err(SkillError::NotFound(format!(
-                "{reference} is stale or is not selected for this workspace"
+        let resolved =
+            active_or_selected_digest(&transaction, profile_id, &workspace, &session_id, name)?
+                .ok_or_else(|| {
+                    SkillError::NotFound(format!(
+                        "skill `{name}` is not available for this workspace"
+                    ))
+                })?;
+        if resolved != candidate {
+            return Err(SkillError::Conflict(format!(
+                "skill `{name}` changed while it was being loaded; search and try again"
             )));
         }
         let active_digest = transaction
             .query_row(
                 "SELECT skill_digest FROM session_skills
                  WHERE session_id = ?1 AND skill_name = ?2",
-                params![session_id, reference.name()],
+                params![session_id, name],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
-        if active_digest
-            .as_deref()
-            .is_some_and(|digest| digest != reference.digest())
-        {
-            return Err(SkillError::Conflict(format!(
-                "session already pins a different revision of skill `{}`",
-                reference.name()
-            )));
-        }
         let already_active = active_digest.is_some();
         if !already_active {
             enforce_activation_limits(&transaction, &session_id, instruction_bytes)?;
@@ -226,8 +211,8 @@ impl SkillStore {
                 params![
                     session_id,
                     command_id.to_string(),
-                    reference.name(),
-                    reference.digest(),
+                    name,
+                    candidate,
                     stored_instruction_bytes,
                 ],
             )?;
@@ -362,41 +347,42 @@ fn ensure_revision(transaction: &Transaction<'_>, skill: &CapturedSkill) -> Resu
     Ok(())
 }
 
-fn reference_is_eligible_or_active(
-    transaction: &Transaction<'_>,
+fn active_or_selected_digest(
+    connection: &Connection,
     profile_id: &str,
     workspace: &str,
     session_id: &str,
-    reference: &SkillReference,
-) -> Result<bool, SkillError> {
-    Ok(transaction
+    name: &str,
+) -> Result<Option<String>, SkillError> {
+    let active = connection
         .query_row(
-            "SELECT 1
-             WHERE EXISTS (
-                SELECT 1 FROM profile_skill_bindings
-                WHERE profile_id = ?1
-                  AND skill_name = ?2
-                  AND skill_digest = ?3
-                  AND (
-                       (scope_kind = 'global' AND workspace IS NULL)
-                       OR
-                       (scope_kind = 'workspace' AND workspace = ?4)
-                  )
-             ) OR EXISTS (
-                SELECT 1 FROM session_skills
-                WHERE session_id = ?5 AND skill_name = ?2 AND skill_digest = ?3
-             )",
-            params![
-                profile_id,
-                reference.name(),
-                reference.digest(),
-                workspace,
-                session_id,
-            ],
-            |_| Ok(()),
+            "SELECT skill_digest FROM session_skills
+             WHERE session_id = ?1 AND skill_name = ?2",
+            params![session_id, name],
+            |row| row.get::<_, String>(0),
         )
-        .optional()?
-        .is_some())
+        .optional()?;
+    if active.is_some() {
+        return Ok(active);
+    }
+    connection
+        .query_row(
+            "SELECT skill_digest FROM profile_skill_bindings
+             WHERE profile_id = ?1
+               AND skill_name = ?2
+               AND (
+                    (scope_kind = 'global' AND workspace IS NULL)
+                    OR
+                    (scope_kind = 'workspace' AND workspace = ?3)
+               )
+             ORDER BY CASE scope_kind WHEN 'workspace' THEN 0 ELSE 1 END,
+                      skill_digest
+             LIMIT 1",
+            params![profile_id, name, workspace],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(Into::into)
 }
 
 fn enforce_activation_limits(

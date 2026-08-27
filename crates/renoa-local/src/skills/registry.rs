@@ -1,72 +1,11 @@
-use std::{cmp::Reverse, collections::HashSet, fmt, str::FromStr};
+use std::{cmp::Reverse, collections::HashSet};
 
 use super::SkillError;
 
-pub(crate) const SEARCH_RESULT_LIMIT: usize = 5;
+pub(crate) const SEARCH_RESULT_LIMIT: usize = 200;
 const QUERY_BYTES: usize = 256;
 const QUERY_TOKENS: usize = 12;
 const DESCRIPTION_SUMMARY_CHARS: usize = 320;
-const REFERENCE_PREFIX: &str = "skill";
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub(crate) struct SkillReference {
-    name: String,
-    digest: String,
-}
-
-impl SkillReference {
-    pub(crate) fn new(
-        name: impl Into<String>,
-        digest: impl Into<String>,
-    ) -> Result<Self, SkillError> {
-        let reference = Self {
-            name: name.into(),
-            digest: digest.into(),
-        };
-        validate_name(&reference.name)?;
-        validate_digest(&reference.digest)?;
-        Ok(reference)
-    }
-
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) fn digest(&self) -> &str {
-        &self.digest
-    }
-}
-
-impl fmt::Display for SkillReference {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{REFERENCE_PREFIX}:{}:{}",
-            self.name, self.digest
-        )
-    }
-}
-
-impl FromStr for SkillReference {
-    type Err = SkillError;
-
-    fn from_str(encoded: &str) -> Result<Self, Self::Err> {
-        let mut parts = encoded.split(':');
-        let prefix = parts.next();
-        let name = parts.next();
-        let digest = parts.next();
-        if prefix != Some(REFERENCE_PREFIX)
-            || name.is_none()
-            || digest.is_none()
-            || parts.next().is_some()
-        {
-            return Err(SkillError::Invalid(
-                "skill reference must be `skill:<name>:<content-digest>`".to_owned(),
-            ));
-        }
-        Self::new(name.unwrap_or_default(), digest.unwrap_or_default())
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SkillScope {
@@ -91,38 +30,18 @@ impl SkillScope {
             ))),
         }
     }
-
-    const fn rank(self) -> u8 {
-        match self {
-            Self::Workspace => 1,
-            Self::Global => 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SkillSummary {
-    pub(crate) scope: SkillScope,
     pub(crate) name: String,
     pub(crate) description: String,
-    pub(crate) digest: String,
-}
-
-impl SkillSummary {
-    pub(crate) fn reference(&self) -> Result<SkillReference, SkillError> {
-        SkillReference::new(self.name.clone(), self.digest.clone())
-    }
-}
-
-pub(crate) struct RankedSkills {
-    pub(crate) matches: Vec<SkillSummary>,
-    pub(crate) total_matches: usize,
 }
 
 pub(crate) fn rank_skills(
     skills: Vec<SkillSummary>,
     query: &str,
-) -> Result<RankedSkills, SkillError> {
+) -> Result<Vec<SkillSummary>, SkillError> {
     let query = query.trim();
     if query.is_empty() || query.len() > QUERY_BYTES {
         return Err(SkillError::Invalid(format!(
@@ -151,23 +70,16 @@ pub(crate) fn rank_skills(
     scored.sort_by(|left, right| {
         Reverse(left.0)
             .cmp(&Reverse(right.0))
-            .then_with(|| Reverse(left.1.scope.rank()).cmp(&Reverse(right.1.scope.rank())))
             .then_with(|| left.1.name.cmp(&right.1.name))
-            .then_with(|| left.1.digest.cmp(&right.1.digest))
     });
-    let total_matches = scored.len();
-    let matches = scored
+    Ok(scored
         .into_iter()
         .take(SEARCH_RESULT_LIMIT)
         .map(|(_, mut skill)| {
             skill.description = summarize(&skill.description);
             skill
         })
-        .collect();
-    Ok(RankedSkills {
-        matches,
-        total_matches,
-    })
+        .collect())
 }
 
 fn score(skill: &SkillSummary, phrase: &str, tokens: &[&str], browse: bool) -> Option<u32> {
@@ -239,7 +151,7 @@ pub(super) fn validate_digest(digest: &str) -> Result<(), SkillError> {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
         return Err(SkillError::Invalid(
-            "skill reference has an invalid content digest".to_owned(),
+            "skill has an invalid content digest".to_owned(),
         ));
     }
     Ok(())
@@ -247,52 +159,50 @@ pub(super) fn validate_digest(digest: &str) -> Result<(), SkillError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SkillReference, SkillScope, SkillSummary, rank_skills};
+    use super::{SEARCH_RESULT_LIMIT, SkillSummary, rank_skills};
 
     #[test]
-    fn exact_references_reject_ambiguous_names_or_digests() {
-        let reference = SkillReference::new("code-review", "a".repeat(64)).expect("reference");
-        assert_eq!(
-            reference.to_string().parse::<SkillReference>().unwrap(),
-            reference
-        );
-        assert!(
-            "skill:Code:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                .parse::<SkillReference>()
-                .is_err()
-        );
-        assert!("skill:code-review:a:b".parse::<SkillReference>().is_err());
-    }
-
-    #[test]
-    fn search_is_bounded_and_prefers_workspace_matches() {
-        let mut skills = vec![summary(SkillScope::Global, "review", "Review code")];
-        skills.push(summary(
-            SkillScope::Workspace,
-            "review",
-            "Review this project",
-        ));
+    fn search_ranks_matches_and_limits_descriptions() {
+        let mut skills = vec![summary("review", "Review code")];
         for index in 0..8 {
-            skills.push(summary(
-                SkillScope::Global,
-                &format!("review-{index}"),
-                "Review code",
-            ));
+            skills.push(summary(&format!("review-{index}"), "Review code"));
         }
+        let long_description = "x".repeat(400);
+        skills.push(summary("review-long", &long_description));
 
         let ranked = rank_skills(skills, "review").expect("rank skills");
 
-        assert_eq!(ranked.total_matches, 10);
-        assert_eq!(ranked.matches.len(), 5);
-        assert_eq!(ranked.matches[0].scope, SkillScope::Workspace);
+        assert_eq!(ranked.len(), 10);
+        assert_eq!(ranked[0].name, "review");
+        assert_eq!(
+            ranked
+                .iter()
+                .find(|skill| skill.name == "review-long")
+                .expect("long matching description")
+                .description
+                .chars()
+                .count(),
+            320
+        );
     }
 
-    fn summary(scope: SkillScope, name: &str, description: &str) -> SkillSummary {
+    #[test]
+    fn search_returns_two_hundred_matching_skill_summaries() {
+        let skills = (0..201)
+            .map(|index| summary(&format!("review-{index:03}"), "Review code."))
+            .collect();
+
+        let ranked = rank_skills(skills, "review").expect("rank skill summaries");
+
+        assert_eq!(ranked.len(), SEARCH_RESULT_LIMIT);
+        assert_eq!(ranked.first().expect("first match").name, "review-000");
+        assert_eq!(ranked.last().expect("last match").name, "review-199");
+    }
+
+    fn summary(name: &str, description: &str) -> SkillSummary {
         SkillSummary {
-            scope,
             name: name.to_owned(),
             description: description.to_owned(),
-            digest: "a".repeat(64),
         }
     }
 }

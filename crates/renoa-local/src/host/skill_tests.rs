@@ -220,6 +220,13 @@ const expectedTools = [
 if (request.tools.map(tool => tool.name).join(",") !== expectedTools.join(",")) {
   fail("unexpected model-visible tool set");
 }
+const skillLoad = request.tools.find(tool => tool.name === "skill_load");
+if (
+  !skillLoad ||
+  Object.keys(skillLoad.input_schema.properties).join(",") !== "name" ||
+  skillLoad.input_schema.required.join(",") !== "name" ||
+  skillLoad.input_schema.additionalProperties !== false
+) fail("skill_load does not advertise its name-only input");
 const promptIndex = request.messages.findLastIndex(message => message.role === "user");
 const prompt = request.messages[promptIndex].content[0].text;
 const results = request.messages.slice(promptIndex + 1).filter(message => message.role === "tool");
@@ -229,10 +236,13 @@ const search = (query, id) => complete([{
 }], "tool_use");
 const load = (result, expectedName, id) => {
   const found = JSON.parse(result.result.content[0].text);
-  const match = found.matches.find(entry => entry.name === expectedName);
-  if (!match || "body" in match || "instructions" in match) fail("invalid skill search result");
+  if (!Array.isArray(found)) fail("skill search result is not an array");
+  const match = found.find(entry => entry.name === expectedName);
+  if (!match || Object.keys(match).sort().join(",") !== "description,name") {
+    fail("skill search exposed more than name and description");
+  }
   complete([{ type: "tool_call", id, name: "skill_load", arguments: {
-    reference: match.reference
+    name: match.name
   } }], "tool_use");
 };
 if (prompt === "Activate the project workflow.") {

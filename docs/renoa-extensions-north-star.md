@@ -359,10 +359,12 @@ tool results; operational diagnostics and sensitive details remain in Host
 trace data.
 
 Alpha's first skill path searches compact name/description metadata through
-`skill_search` and activates one immutable reference through `skill_load`.
-Neither the complete catalog nor every skill body is injected up front. A load
-persists one exact revision for the session before returning its complete
-instructions. Later operations reattach that revision as standing
+`skill_search` and activates one selected name through `skill_load`. Search
+returns at most 200 matches and nothing per match beyond name and short
+description. A workspace skill explicitly overrides a same-named global skill.
+Neither the complete catalog nor any skill body is injected up front. A load
+resolves and persists one exact revision internally before returning its
+complete instructions. Later operations reattach that revision as standing
 instructions, including after restart or compaction, while the historical load
 result is projected to a short receipt for the model. The durable journal is
 never rewritten. The Host records the activating command so retrying an
@@ -561,11 +563,12 @@ operations, restart, and compaction.
 
 Proof gate: global and workspace collisions stay exact with workspace priority;
 invalid entries are isolated; failed source scans preserve the prior complete
-snapshot; hot additions are visible to an existing session; source edits cannot
-silently replace active content; duplicate names cannot activate two revisions;
-bounded context fails instead of truncating; full durable results remain intact
-while later model context uses receipts; and the real Alpha path survives
-compaction and Host restart with eleven constant tool schemas.
+snapshot; search returns up to 200 entries with exactly name and description;
+hot additions are visible to an existing session; source edits cannot silently
+replace active content; duplicate names cannot activate two revisions; bounded
+context fails instead of truncating; full durable results remain intact while
+later model context uses receipts; and the real Alpha path survives compaction
+and Host restart with eleven constant tool schemas.
 
 ### 8. Agent Plugins local loader
 
@@ -634,9 +637,9 @@ through the task journal.
 19. Skills are instructions and files, never an implicit tool or permission
     grant. The experimental Agent Skills `allowed-tools` field is rejected until
     Renoa has a real permission consumer.
-20. Skill search returns at most five metadata matches and immutable
-    `skill:<name>:<digest>` references. Full content enters context only after an
-    exact load.
+20. Skill search returns at most 200 matches containing only name and short
+    description. Full content and exact revision identity enter context only
+    after a load by name.
 21. Active skill revisions are Host-owned and session-pinned. Source edits are
     hot-discoverable but cannot silently replace an active revision.
 

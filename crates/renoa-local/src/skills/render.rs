@@ -3,7 +3,11 @@ use std::collections::HashSet;
 use sha2::{Digest as _, Sha256};
 
 use super::{MAX_ACTIVE_SKILL_INSTRUCTION_BYTES, MAX_ACTIVE_SKILLS};
-use super::{SkillError, package::OwnedSkill, registry::SkillReference};
+use super::{
+    SkillError,
+    package::OwnedSkill,
+    registry::{validate_digest, validate_name},
+};
 
 const FILE_SAMPLE_LIMIT: usize = 20;
 
@@ -19,7 +23,7 @@ pub(super) fn one(skill: &OwnedSkill) -> Result<String, SkillError> {
     output.push_str("<skill_content name=\"");
     output.push_str(&skill.metadata.name);
     output.push_str("\" reference=\"");
-    output.push_str(&reference.to_string());
+    output.push_str(&reference);
     output.push_str("\">\n");
     output.push_str("Base directory: ");
     output.push_str(skill.root.to_str().ok_or_else(|| {
@@ -71,7 +75,7 @@ pub(crate) fn active(skills: &[OwnedSkill]) -> Result<Option<ActiveSkillContext>
     hasher.update(b"renoa.active-skills.v1\0");
     let mut instruction_bytes = 0_usize;
     for skill in skills {
-        let reference = reference(skill)?.to_string();
+        let reference = reference(skill)?;
         hasher.update((reference.len() as u64).to_be_bytes());
         hasher.update(reference.as_bytes());
         references.insert(reference);
@@ -95,8 +99,10 @@ pub(crate) fn active(skills: &[OwnedSkill]) -> Result<Option<ActiveSkillContext>
     }))
 }
 
-pub(super) fn reference(skill: &OwnedSkill) -> Result<SkillReference, SkillError> {
-    SkillReference::new(skill.metadata.name.clone(), skill.digest.clone())
+pub(super) fn reference(skill: &OwnedSkill) -> Result<String, SkillError> {
+    validate_name(&skill.metadata.name)?;
+    validate_digest(&skill.digest)?;
+    Ok(format!("skill:{}:{}", skill.metadata.name, skill.digest))
 }
 
 fn hex(bytes: &[u8]) -> String {
