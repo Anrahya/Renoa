@@ -1,6 +1,6 @@
 use crate::{
     ALPHA_PROFILE_ID,
-    mcp::{AlphaMcpTool, McpCatalogSnapshot, discover},
+    mcp::{McpCatalogSnapshot, discover},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -111,58 +111,35 @@ impl LocalHost {
         Ok(snapshot)
     }
 
-    /// Selects one currently discovered MCP tool for the Alpha profile.
+    /// Enables one discovered MCP connection for Alpha's searchable registry.
     ///
     /// # Errors
     ///
     /// Returns when the connection or tool is missing or storage cannot commit.
-    pub async fn select_alpha_mcp_tool(
+    pub async fn enable_alpha_mcp_connection(
         &self,
         connection_id: &str,
-        tool_name: &str,
     ) -> Result<(), LocalHostError> {
         let store = self.config.mcp_catalog.clone();
         let connection_id = connection_id.to_owned();
-        let tool_name = tool_name.to_owned();
         tokio::task::spawn_blocking(move || {
-            store.select_alpha_tool(ALPHA_PROFILE_ID, &connection_id, &tool_name)
+            store.enable_alpha_connection(ALPHA_PROFILE_ID, &connection_id)
         })
         .await??;
         Ok(())
     }
 
-    /// Selects several discovered MCP tools for Alpha in one database transaction.
+    /// Lists the MCP connections currently enabled for Alpha.
     ///
     /// # Errors
     ///
-    /// If any requested tool is missing, none of this batch is selected.
-    pub async fn select_alpha_mcp_tools(
-        &self,
-        connection_id: &str,
-        tool_names: &[&str],
-    ) -> Result<(), LocalHostError> {
+    /// Returns invalid storage or background-task failures.
+    pub async fn alpha_mcp_connection_ids(&self) -> Result<Vec<String>, LocalHostError> {
         let store = self.config.mcp_catalog.clone();
-        let connection_id = connection_id.to_owned();
-        let tool_names = tool_names
-            .iter()
-            .map(|name| (*name).to_owned())
-            .collect::<Vec<_>>();
-        tokio::task::spawn_blocking(move || {
-            let borrowed = tool_names.iter().map(String::as_str).collect::<Vec<_>>();
-            store.select_alpha_tools(ALPHA_PROFILE_ID, &connection_id, &borrowed)
-        })
-        .await??;
-        Ok(())
-    }
-
-    /// Loads Alpha's selected MCP tools from the latest complete Host catalogs.
-    ///
-    /// # Errors
-    ///
-    /// Fails closed if a selected tool is absent or catalog storage is invalid.
-    pub async fn alpha_mcp_tools(&self) -> Result<Vec<AlphaMcpTool>, LocalHostError> {
-        let store = self.config.mcp_catalog.clone();
-        Ok(tokio::task::spawn_blocking(move || store.alpha_tools(ALPHA_PROFILE_ID)).await??)
+        Ok(
+            tokio::task::spawn_blocking(move || store.alpha_connection_ids(ALPHA_PROFILE_ID))
+                .await??,
+        )
     }
 
     /// Loads one connection's latest complete MCP catalog.

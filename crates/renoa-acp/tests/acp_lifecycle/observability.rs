@@ -110,8 +110,20 @@ fn assert_trace(path: &std::path::Path) {
         provider_payload["tools"]
             .as_array()
             .expect("tool array")
-            .len(),
-        6
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("tool name"))
+            .collect::<Vec<_>>(),
+        [
+            "read_file",
+            "edit_file",
+            "write_file",
+            "bash",
+            "grep",
+            "find",
+            "tool_search",
+            "tool_load",
+            "tool_execute",
+        ]
     );
 
     let response: (String, i64) = connection

@@ -23,7 +23,7 @@ mod model;
 use self::model::{read_json_lines, write_model_bridge};
 
 #[tokio::test]
-async fn selected_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart() {
+async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart() {
     let repository = workspace_root();
     let adapter = compiled_adapter(&repository);
     let directory = tempdir().expect("temporary directory");
@@ -120,7 +120,7 @@ async fn selected_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
         .expect("replay settled command from durable history");
 
     assert_eq!(replayed, outcome);
-    assert_eq!(read_json_lines(&model_requests).len(), 5);
+    assert_eq!(read_json_lines(&model_requests).len(), 11);
     assert_durable_tool_result(&restored.history().expect("reload durable history"));
 }
 
@@ -140,9 +140,9 @@ async fn configure_echo_mcp(host: &LocalHost, endpoint: &str) {
             .collect::<Vec<_>>(),
         ["echo", "unused"]
     );
-    host.select_alpha_mcp_tool("primary", "echo")
+    host.enable_alpha_mcp_connection("primary")
         .await
-        .expect("select only echo for Alpha");
+        .expect("enable fixture connection for Alpha");
 }
 
 async fn execute_tool_turn(
@@ -175,7 +175,7 @@ fn new_vertical_host(data: &Path, bridge: &Path, credentials: &Path, adapter: &P
 
 fn assert_model_context(path: &Path) {
     let requests = read_json_lines(path);
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 11);
     for request in &requests {
         let tools = request["tools"].as_array().expect("model tools array");
         assert_eq!(
@@ -190,65 +190,84 @@ fn assert_model_context(path: &Path) {
                 "bash",
                 "grep",
                 "find",
-                "echo",
+                "tool_search",
+                "tool_load",
+                "tool_execute",
             ]
         );
-        let echo = tools.last().expect("selected echo schema");
-        assert_eq!(echo["description"], "Echo one string.");
-        assert_eq!(echo["input_schema"]["required"], json!(["tenant", "text"]));
-        assert!(
-            echo["input_schema"]["properties"]["tenant"]
-                .get("x-mcp-header")
-                .is_none(),
-            "transport annotations must not enter model context"
-        );
-        let encoded = serde_json::to_string(echo).expect("encode model-visible tool");
+        let encoded_tools = serde_json::to_string(tools).expect("encode model-visible tools");
+        assert!(!encoded_tools.contains("Echo one string."));
+        assert!(!encoded_tools.contains("tenant"));
+        assert!(!encoded_tools.contains("unused"));
+        let encoded = serde_json::to_string(request).expect("encode model request");
         for forbidden in [
             "endpoint",
             "output_schema",
             "adapter_revision",
             "connection_id",
             "integration_id",
+            "x-mcp-header",
+            "Must stay outside model context",
         ] {
             assert!(
                 !encoded.contains(forbidden),
-                "model tool leaked {forbidden}"
+                "model request leaked {forbidden}"
             );
         }
-        assert!(tools.iter().all(|tool| tool["name"] != "unused"));
     }
+    assert!(
+        requests[0]["messages"]
+            .as_array()
+            .expect("first messages")
+            .iter()
+            .all(|message| !message.to_string().contains("Echo one string."))
+    );
+    let searched_messages = requests[1]["messages"].to_string();
+    assert!(searched_messages.contains("Echo one string."));
+    assert!(!searched_messages.contains("\\\"input_schema\\\""));
+    let loaded_messages = requests[2]["messages"].to_string();
+    assert!(loaded_messages.contains("\\\"input_schema\\\""));
+    assert!(loaded_messages.contains("\\\"tenant\\\""));
 }
 
 fn assert_durable_tool_result(history: &[renoa_local::LocalHistoryEntry]) {
     assert_eq!(
         history.len(),
-        11,
+        23,
         "durable replay must not duplicate history"
     );
-    let Message::Tool { result } = &history[2].message else {
-        panic!("third durable message must be the MCP result")
-    };
-    assert_eq!(result.name, "echo");
-    assert_eq!(result.call_id, "mcp-echo-1");
-    assert_eq!(result.content, vec![ContentBlock::text("echo: hello")]);
-    assert_eq!(result.details, Some(json!({"echoed": "hello"})));
-    assert!(!result.is_error);
     let Message::Tool { result } = &history[6].message else {
-        panic!("seventh durable message must be the MCP error result")
+        panic!("seventh durable message must be the MCP result")
     };
-    assert_eq!(result.name, "echo");
-    assert_eq!(result.call_id, "mcp-echo-denied");
+    assert_eq!(result.name, "tool_execute");
+    assert_eq!(result.call_id, "mcp-execute-ok");
+    assert_eq!(result.content, vec![ContentBlock::text("echo: hello")]);
+    assert_eq!(result.details.as_ref().unwrap()["mcp"]["tool_name"], "echo");
+    assert_eq!(
+        result.details.as_ref().unwrap()["mcp"]["structured_content"],
+        json!({"echoed": "hello"})
+    );
+    assert!(!result.is_error);
+    let Message::Tool { result } = &history[14].message else {
+        panic!("fifteenth durable message must be the MCP error result")
+    };
+    assert_eq!(result.name, "tool_execute");
+    assert_eq!(result.call_id, "mcp-execute-denied");
     assert_eq!(
         result.content,
         vec![ContentBlock::text("permission denied")]
     );
-    assert_eq!(result.details, Some(json!({"echoed": "denied"})));
+    assert_eq!(result.details.as_ref().unwrap()["mcp"]["tool_name"], "echo");
+    assert_eq!(
+        result.details.as_ref().unwrap()["mcp"]["structured_content"],
+        json!({"echoed": "denied"})
+    );
     assert!(result.is_error);
-    let Message::Tool { result } = &history[10].message else {
+    let Message::Tool { result } = &history[22].message else {
         panic!("unknown MCP outcome must leave balanced durable tool history")
     };
-    assert_eq!(result.name, "echo");
-    assert_eq!(result.call_id, "mcp-echo-lost");
+    assert_eq!(result.name, "tool_execute");
+    assert_eq!(result.call_id, "mcp-execute-lost");
     assert_eq!(
         result.content,
         vec![ContentBlock::text(
@@ -275,13 +294,28 @@ fn assert_frozen_mcp_binding(data: &Path, session_uuid: Uuid) {
         .expect("frozen runtime manifest");
     let revision = manifest
         .effect_bindings
-        .get("renoa.agent.tool/echo")
-        .expect("frozen MCP effect binding");
-    assert!(revision.starts_with("renoa-mcp-tool/v1/"));
+        .get("renoa.agent.tool/tool_execute")
+        .expect("frozen MCP execution binding");
+    assert!(revision.starts_with("renoa-mcp-registry-v1/execute/"));
+    assert!(
+        manifest
+            .effect_bindings
+            .contains_key("renoa.agent.tool/tool_search")
+    );
+    assert!(
+        manifest
+            .effect_bindings
+            .contains_key("renoa.agent.tool/tool_load")
+    );
+    assert!(
+        !manifest
+            .effect_bindings
+            .contains_key("renoa.agent.tool/echo")
+    );
     let effect = operation
         .effects
         .iter()
-        .find(|effect| effect.binding == "renoa.agent.tool/echo")
+        .find(|effect| effect.binding == "renoa.agent.tool/tool_execute")
         .expect("durable MCP effect");
     assert_eq!(effect.recovery, EffectRecovery::NeverReplay);
     assert_eq!(effect.dispatch_count, 1);
@@ -290,7 +324,7 @@ fn assert_frozen_mcp_binding(data: &Path, session_uuid: Uuid) {
         let effect = operation
             .effects
             .iter()
-            .find(|effect| effect.binding == "renoa.agent.tool/echo")
+            .find(|effect| effect.binding == "renoa.agent.tool/tool_execute")
             .expect("each operation has one durable MCP effect");
         assert_eq!(effect.recovery, EffectRecovery::NeverReplay);
         assert_eq!(effect.dispatch_count, 1);

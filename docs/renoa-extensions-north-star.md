@@ -33,7 +33,7 @@ agent or human identifies a missing capability
   -> an authorized decision approves or rejects that plan
   -> Host installs the package and establishes any required connection
   -> selected components become available to selected agent profiles
-  -> the next operation freezes and uses the new runtime
+  -> the next safe capability lookup or operation uses the approved change
 ```
 
 The agent may find, inspect, and request a capability through the same Host
@@ -220,14 +220,16 @@ source discovered
   -> connection configured/authenticated
   -> component catalog discovered
   -> profile binding selected
-  -> runtime resolved for the next operation
+  -> component becomes resolvable through a fixed registry or next runtime
   -> runtime frozen by the kernel
 ```
 
 Installation does not imply a connection. A connection does not imply profile
 selection. Profile selection does not bypass authorization. Catalog discovery
-does not make every schema part of model context. None of these mutable Host
-states changes an already admitted operation.
+does not make every schema part of model context. Mutable Host state never
+changes the frozen implementation of an admitted operation. A fixed registry
+tool may read a later committed snapshot, but an exact referenced invocation
+must reject schema drift rather than substitute it.
 
 ## End-to-end management flow
 
@@ -271,11 +273,12 @@ refreshes never become active.
 
 ### Select and resolve
 
-A profile chooses components by stable identity. The Host applies current
-scope and future policy, resolves the concrete adapters, and builds ordinary
-`AgentToolBinding` or other native bindings. Duplicate or unrepresentable
-model-visible names fail before command admission rather than silently hiding a
-tool.
+A profile chooses components or connections by stable identity. The Host
+applies current scope and future policy. Small static capabilities become
+ordinary resolved bindings for the next operation. Large MCP catalogs attach
+to a fixed search/load/execute registry; only an exact loaded schema enters
+history, and execution resolves its catalog-bound reference. These are two
+composition strategies, not two execution paths through the kernel.
 
 ### Execute
 
@@ -286,10 +289,11 @@ same intent-before-effect boundary as native tools.
 ### Update, disable, and remove
 
 An update installs another immutable digest; it does not rewrite the prior
-package in place. Profile changes apply at the next operation. Removal cannot
-delete content still required to recover an unfinished operation. Rollback is
-selection of a previously installed compatible digest, not restoration from
-mutable leftovers.
+package in place. Static runtime changes apply at the next operation. A
+registry attachment is visible at the next safe registry read without restart.
+Removal cannot delete content still required to recover an unfinished
+operation. Rollback is selection of a previously installed compatible digest,
+not restoration from mutable leftovers.
 
 ## Durable and security invariants
 
@@ -314,8 +318,9 @@ mutable leftovers.
    field.
 10. Manifests, source metadata, auth bookkeeping, runtime identities, recovery
    declarations, and unused tool schemas do not pollute model context.
-11. An active operation keeps its exact frozen runtime even if packages,
-    connections, catalogs, or profile selections change.
+11. An active operation keeps its exact frozen runtime. Fixed registry reads may
+    see later committed Host state, but every remote invocation carries an
+    immutable catalog reference and stale references fail before dispatch.
 12. Discovery and other proven read-only operations may retry under a bounded,
     cancellable policy. A possibly dispatched external tool call does not retry
     unless its adapter has a proven idempotence contract.
@@ -382,9 +387,9 @@ local credential sources
 
 This north star does not lock a general secret-store design. The direct MCP v0
 slice consumes `host.sqlite3` for integration, connection, non-secret `gh`
-account references, catalogs, and Alpha selections. Schema v1-to-v2 migration
-is proven; later package, permission, secret-source, and migration shapes remain
-open.
+account references, catalogs, and Alpha connection attachments. Schema
+v1/v2-to-v3 migration is proven; later package, permission, secret-source, and
+migration shapes remain open.
 
 `third_party` means that the service is external to Renoa. It does not assert
 that the named company authored, reviewed, or endorsed the package. Provenance
@@ -445,7 +450,8 @@ The extension path is streamlined when these statements are true:
    several connections, without copying the package.
 5. One discovered component may be selected by several profiles without
    duplicating its implementation or credentials.
-6. Adding or removing a component changes only future operation manifests.
+6. Static component changes affect future operation manifests; registry
+   attachments become visible at the next bounded lookup without restart.
 7. A package author uses the Agent Plugins schemas rather than a Renoa-only
    layout for portable skills and MCP servers.
 8. Invalid, incompatible, or unsupported components fail independently where
@@ -460,7 +466,7 @@ The extension path is streamlined when these statements are true:
 Each slice must leave the repository coherent and pass its proof gate before
 the next begins.
 
-Slices 1 through 5 are complete. Slice 6 is next.
+Slices 1 through 6 are complete. Slice 7 is next.
 
 ### 1. Integration contract
 
@@ -495,28 +501,40 @@ never become active, and catalog replacement is atomic.
 
 ### 4. Alpha and kernel vertical proof
 
-Resolve one selected MCP tool into the existing `renoa-agent::Tool` and
+Resolve one MCP tool into the existing `renoa-agent::Tool` and
 `AgentToolBinding` path. Use a deterministic model and local MCP server to run
 one complete Alpha operation through the real kernel.
 
-Proof gate: only the selected schema reaches the model, exact revisions are
-frozen, restart does not duplicate a settled call, a possibly dispatched call
-is never replayed, schema drift affects only a future operation, and useful
-tool errors return to the model.
+Proof gate: only an explicitly resolved schema reaches the model, exact
+references are persisted, restart does not duplicate a settled call, a
+possibly dispatched call is never replayed, schema drift never substitutes a
+new invocation, and useful tool errors return to the model.
 
 ### 5. Authenticated GitHub connection
 
 Add one real credential-backed connection without building a general secret
 store. The Host stores only an exact `github.com`/account reference, resolves
 the bearer token just in time through authenticated `gh`, and scopes it to
-GitHub's read-only remote MCP endpoint. Alpha selects only `get_me`,
-`get_file_contents`, and `search_code`.
+GitHub's read-only remote MCP endpoint.
 
 Proof gate: the token exists only at the credential/adapter boundary, is
 redacted from every returned value and diagnostic, never enters Host SQLite or
 model context, and the real endpoint catalog refresh succeeds.
 
-### 6. Agent Plugins local loader
+### 6. Deferred registry and hot loading
+
+Replace per-tool model advertisement with three fixed Host tools: bounded
+search without schemas, exact schema loading, and exact-reference execution.
+Attach whole connections to profiles, migrate existing per-tool selections,
+and read committed Host state on each registry call.
+
+Proof gate: 1,000 catalog entries still produce only three model API schemas;
+load returns only requested exact schemas; stale catalog references fail before
+dispatch; a live registry object sees a newly committed attachment; and the
+real MCP result, error, uncertainty, restart, and secret boundaries remain
+unchanged.
+
+### 7. Agent Plugins local loader
 
 Load and validate one local Agent Plugins 1.0 directory using locally pinned
 schemas. Enforce package containment and component-level failure boundaries,
@@ -528,18 +546,19 @@ Proof gate: malformed manifests, unsupported versions, path escapes, changed
 contents, crash during publication, and independent component failures are
 deterministic and leave no partially installed package.
 
-### 7. Shared Host management
+### 8. Shared Host management
 
 Define the typed Host management commands consumed by both Waku and an agent
 tool. The agent may inspect and request; an authorization boundary commits the
 exact approved plan. The resulting capability becomes available only at the
-next operation boundary.
+next safe registry lookup or operation boundary, according to its resolved
+component type.
 
 Proof gate: GUI and agent flows reach the same durable state transition, lost
 replies are idempotent, changed plans require renewed approval, and the agent
 cannot approve or broaden its own request.
 
-### 8. Later fabric work
+### 9. Later fabric work
 
 Only after the local path is mature should Renoa design node capability
 advertisement, package availability, or placement-aware resolution. That work
@@ -567,8 +586,9 @@ through the task journal.
 11. Human surfaces and authorized agents ultimately use the same typed Host
     management semantics.
 12. A request to extend Renoa is not approval to expand authority.
-13. Capability changes affect only future operations; the kernel freezes the
-    active operation's exact runtime.
+13. Capability changes never mutate the active runtime. Static bindings change
+    at a future operation; fixed registry tools may read later committed state
+    and must reject stale exact references.
 14. Only effective instructions and tool definitions enter model context.
 15. Secrets remain behind a dedicated credential boundary and are referenced,
     not copied, by Host records.

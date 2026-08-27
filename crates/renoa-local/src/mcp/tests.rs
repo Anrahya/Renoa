@@ -9,7 +9,8 @@ use tempfile::tempdir;
 
 use super::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
-    McpCatalogStore, McpCatalogTool, McpConnectionAuth, McpHostError, McpRejectedTool, hex_sha256,
+    McpCatalogStore, McpCatalogTool, McpConnectionAuth, McpHostError, McpRejectedTool,
+    McpToolReference, hex_sha256,
 };
 
 const PROFILE: &str = "renoa.coding.alpha.v1";
@@ -211,75 +212,83 @@ fn a_catalog_cannot_be_published_under_a_different_registered_endpoint() {
 }
 
 #[test]
-fn alpha_selection_survives_a_store_restart_without_duplicates() {
+fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() {
     let (directory, store) = store();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
     store
-        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
+        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo", "unused"]))
         .expect("publish catalog");
     store
-        .select_alpha_tool(PROFILE, "primary", "echo")
-        .expect("select tool");
+        .enable_alpha_connection(PROFILE, "primary")
+        .expect("enable connection");
     store
-        .select_alpha_tool(PROFILE, "primary", "echo")
-        .expect("repeat exact selection");
+        .enable_alpha_connection(PROFILE, "primary")
+        .expect("repeat exact enable");
     drop(store);
 
     let reopened = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("reopen Host catalog");
-    let selected = reopened.alpha_tools(PROFILE).expect("load Alpha tools");
+    let tools = reopened
+        .alpha_tool_summaries(PROFILE)
+        .expect("load searchable tools");
 
-    assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].integration_id(), "example");
-    assert_eq!(selected[0].connection_id(), "primary");
-    assert_eq!(selected[0].endpoint(), ENDPOINT);
-    assert_eq!(selected[0].tool().name(), "echo");
+    assert_eq!(reopened.alpha_connection_ids(PROFILE).unwrap(), ["primary"]);
+    assert_eq!(tools.len(), 2);
+    assert_eq!(tools[0].integration_id, "example");
+    assert_eq!(tools[0].connection_id, "primary");
+    assert_eq!(tools[0].name, "echo");
+    assert_eq!(tools[1].name, "unused");
 }
 
 #[test]
-fn multi_tool_selection_is_atomic_when_one_name_is_missing() {
+fn enabling_a_connection_requires_a_complete_catalog() {
     let (_directory, store) = store();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
-    store
-        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
-        .expect("publish catalog");
 
     let error = store
-        .select_alpha_tools(PROFILE, "primary", &["echo", "missing"])
-        .expect_err("missing tool rejects whole selection batch");
+        .enable_alpha_connection(PROFILE, "primary")
+        .expect_err("missing catalog rejects enable");
 
     assert!(matches!(error, McpHostError::NotFound(_)));
     assert!(
         store
-            .alpha_tools(PROFILE)
-            .expect("load empty selection")
+            .alpha_connection_ids(PROFILE)
+            .expect("load empty profile")
             .is_empty()
     );
 }
 
 #[test]
-fn a_removed_selected_tool_fails_closed_instead_of_disappearing() {
+fn catalog_refresh_is_hot_and_old_references_fail_closed() {
     let (_directory, store) = store();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
+    let original = snapshot("primary", ENDPOINT, &["echo"]);
+    store.publish_catalog(&original).expect("publish catalog");
     store
-        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
-        .expect("publish catalog");
-    store
-        .select_alpha_tool(PROFILE, "primary", "echo")
-        .expect("select tool");
+        .enable_alpha_connection(PROFILE, "primary")
+        .expect("enable connection");
+    let old_reference =
+        McpToolReference::new("primary", original.digest(), "echo").expect("old exact reference");
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["replacement"]))
         .expect("publish replacement catalog");
 
+    assert_eq!(
+        store
+            .alpha_tool_summaries(PROFILE)
+            .expect("load refreshed search catalog")[0]
+            .name,
+        "replacement"
+    );
     assert!(matches!(
-        store.alpha_tools(PROFILE),
-        Err(McpHostError::NotFound(_))
+        store.resolve_alpha_tools(PROFILE, &[old_reference]),
+        Err(McpHostError::Conflict(_))
     ));
 }
 
@@ -292,9 +301,12 @@ fn stored_catalog_contents_are_checked_against_their_digest() {
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
+    let catalog = store.load_catalog("primary").expect("load exact catalog");
     store
-        .select_alpha_tool(PROFILE, "primary", "echo")
-        .expect("select tool");
+        .enable_alpha_connection(PROFILE, "primary")
+        .expect("enable connection");
+    let reference =
+        McpToolReference::new("primary", catalog.digest(), "echo").expect("exact reference");
     Connection::open(store.path())
         .expect("open test mutation connection")
         .execute(
@@ -308,7 +320,7 @@ fn stored_catalog_contents_are_checked_against_their_digest() {
         Err(McpHostError::Invalid(_))
     ));
     assert!(matches!(
-        store.alpha_tools(PROFILE),
+        store.resolve_alpha_tools(PROFILE, &[reference]),
         Err(McpHostError::Invalid(_))
     ));
 }
@@ -320,7 +332,7 @@ fn a_newer_host_catalog_schema_is_rejected() {
     drop(store);
     Connection::open(&path)
         .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 3_u32)
+        .pragma_update(None, "user_version", 4_u32)
         .expect("advance schema version");
 
     assert!(matches!(
@@ -334,13 +346,13 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     let (directory, store) = store();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
-        .expect("register v2 connection");
+        .expect("register connection");
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
-        .expect("publish v2 catalog");
+        .expect("publish catalog");
     store
-        .select_alpha_tool(PROFILE, "primary", "echo")
-        .expect("select v2 tool");
+        .enable_alpha_connection(PROFILE, "primary")
+        .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
 
@@ -348,6 +360,16 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             CREATE TABLE profile_mcp_tools (
+                profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+                connection_id TEXT NOT NULL
+                    REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
+                tool_name TEXT NOT NULL CHECK (length(tool_name) > 0),
+                PRIMARY KEY (profile_id, connection_id, tool_name)
+             ) STRICT;
+             INSERT INTO profile_mcp_tools(profile_id, connection_id, tool_name)
+             VALUES ('renoa.coding.alpha.v1', 'primary', 'echo');
+             DROP TABLE profile_mcp_connections;
              CREATE TABLE mcp_connections_v1 (
                 connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
                 integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
@@ -364,7 +386,7 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     drop(connection);
 
     let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v1 to v2");
+        .expect("migrate schema v1 to v3");
     assert_eq!(
         migrated
             .connection_config("primary")
@@ -372,14 +394,50 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
             .auth,
         McpConnectionAuth::None
     );
+    assert_eq!(migrated.alpha_connection_ids(PROFILE).unwrap(), ["primary"]);
     assert_eq!(
-        migrated
-            .alpha_tools(PROFILE)
-            .expect("load migrated selection")[0]
-            .tool()
-            .name(),
+        migrated.alpha_tool_summaries(PROFILE).unwrap()[0].name,
         "echo"
     );
+}
+
+#[test]
+fn version_two_tool_selections_migrate_to_one_enabled_connection() {
+    let (directory, store) = store();
+    store
+        .register_direct_connection("example", "primary", ENDPOINT)
+        .expect("register connection");
+    store
+        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo", "unused"]))
+        .expect("publish catalog");
+    let path = store.path().to_owned();
+    drop(store);
+
+    Connection::open(&path)
+        .expect("open migration fixture")
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             CREATE TABLE profile_mcp_tools (
+                profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+                connection_id TEXT NOT NULL
+                    REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
+                tool_name TEXT NOT NULL CHECK (length(tool_name) > 0),
+                PRIMARY KEY (profile_id, connection_id, tool_name)
+             ) STRICT;
+             INSERT INTO profile_mcp_tools(profile_id, connection_id, tool_name)
+             VALUES
+                ('renoa.coding.alpha.v1', 'primary', 'echo'),
+                ('renoa.coding.alpha.v1', 'primary', 'unused');
+             DROP TABLE profile_mcp_connections;
+             UPDATE host_metadata SET schema_version = 2 WHERE singleton = 1;
+             PRAGMA user_version = 2;",
+        )
+        .expect("downgrade fixture to schema v2");
+
+    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
+        .expect("migrate schema v2 to v3");
+    assert_eq!(migrated.alpha_connection_ids(PROFILE).unwrap(), ["primary"]);
+    assert_eq!(migrated.alpha_tool_summaries(PROFILE).unwrap().len(), 2);
 }
 
 #[test]

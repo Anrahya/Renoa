@@ -189,7 +189,7 @@ if (prompt === "Hello") {
   request.system_prompt.startsWith("You are Alpha, Renoa's local coding agent.") &&
   request.system_prompt.includes("Keep the ACP kernel path exact.") &&
   request.tools.map(tool => tool.name).join(",") ===
-    "read_file,edit_file,write_file,bash,grep,find"
+    "read_file,edit_file,write_file,bash,grep,find,tool_search,tool_load,tool_execute"
 ) {
   content = [{ type: "text", text: "Alpha is kernel-backed." }];
 } else if (

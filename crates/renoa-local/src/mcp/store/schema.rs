@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
 
 use crate::mcp::McpHostError;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 const SCHEMA: &str = "
@@ -65,15 +65,14 @@ const SCHEMA: &str = "
         PRIMARY KEY (connection_id, source_index)
     ) STRICT;
 
-    CREATE TABLE profile_mcp_tools (
+    CREATE TABLE profile_mcp_connections (
         profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
         connection_id TEXT NOT NULL
             REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
-        tool_name TEXT NOT NULL CHECK (length(tool_name) > 0),
-        PRIMARY KEY (profile_id, connection_id, tool_name)
+        PRIMARY KEY (profile_id, connection_id)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 2);
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 3);
 ";
 
 const MIGRATE_V1_TO_V2: &str = "
@@ -103,6 +102,21 @@ const MIGRATE_V1_TO_V2: &str = "
     UPDATE host_metadata SET schema_version = 2 WHERE singleton = 1;
 ";
 
+const MIGRATE_V2_TO_V3: &str = "
+    CREATE TABLE profile_mcp_connections (
+        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+        connection_id TEXT NOT NULL
+            REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
+        PRIMARY KEY (profile_id, connection_id)
+    ) STRICT;
+
+    INSERT INTO profile_mcp_connections(profile_id, connection_id)
+    SELECT DISTINCT profile_id, connection_id FROM profile_mcp_tools;
+
+    DROP TABLE profile_mcp_tools;
+    UPDATE host_metadata SET schema_version = 3 WHERE singleton = 1;
+";
+
 pub(super) fn open(path: &Path) -> Result<Connection, McpHostError> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(5))?;
@@ -116,8 +130,8 @@ pub(super) fn open(path: &Path) -> Result<Connection, McpHostError> {
 pub(super) fn initialize(connection: &mut Connection) -> Result<(), McpHostError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if observed == 1 {
-        return migrate_v1(connection);
+    if matches!(observed, 1 | 2) {
+        return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version =
@@ -139,7 +153,7 @@ pub(super) fn initialize(connection: &mut Connection) -> Result<(), McpHostError
     }
 }
 
-fn migrate_v1(connection: &mut Connection) -> Result<(), McpHostError> {
+fn migrate(connection: &mut Connection) -> Result<(), McpHostError> {
     connection.pragma_update(None, "foreign_keys", false)?;
     let migration = (|| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -148,7 +162,16 @@ fn migrate_v1(connection: &mut Connection) -> Result<(), McpHostError> {
         match version {
             SCHEMA_VERSION => transaction.commit().map_err(McpHostError::from),
             1 => {
+                require_complete_selected_catalogs(&transaction)?;
                 transaction.execute_batch(MIGRATE_V1_TO_V2)?;
+                transaction.execute_batch(MIGRATE_V2_TO_V3)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                transaction.commit()?;
+                Ok(())
+            }
+            2 => {
+                require_complete_selected_catalogs(&transaction)?;
+                transaction.execute_batch(MIGRATE_V2_TO_V3)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -164,6 +187,27 @@ fn migrate_v1(connection: &mut Connection) -> Result<(), McpHostError> {
     migration?;
     foreign_keys?;
     verify(connection)
+}
+
+fn require_complete_selected_catalogs(connection: &Connection) -> Result<(), McpHostError> {
+    let missing = connection
+        .query_row(
+            "SELECT binding.connection_id
+             FROM profile_mcp_tools AS binding
+             LEFT JOIN mcp_catalogs AS catalog
+               ON catalog.connection_id = binding.connection_id
+             WHERE catalog.connection_id IS NULL
+             LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(connection_id) = missing {
+        return Err(McpHostError::Invalid(format!(
+            "selected connection '{connection_id}' has no complete catalog"
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn verify(connection: &Connection) -> Result<(), McpHostError> {

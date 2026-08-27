@@ -6,8 +6,9 @@ This document defines the first executable foundation for external Renoa
 integrations: direct MCP servers over modern Streamable HTTP. The replaceable
 Node process adapter implements this boundary under `adapters/mcp-client-node`.
 The Host durably registers connections, publishes complete catalog snapshots,
-selects tools for Alpha, resolves them into ordinary kernel-backed tools, and
-supports either no authentication or an exact GitHub CLI account reference.
+attaches connections to Alpha's searchable registry, resolves exact references
+into ordinary kernel-backed calls, and supports either no authentication or an
+exact GitHub CLI account reference.
 
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md) owns the
 broader extension direction. [`renoa-host-v0.md`](renoa-host-v0.md) owns runtime
@@ -28,18 +29,18 @@ Prove this complete path:
 ```text
 one exact Streamable HTTP endpoint
   -> discover one complete MCP tool catalog
-  -> select one tool for Alpha
-  -> resolve it as an ordinary renoa-agent::Tool
-  -> freeze it as an AgentToolBinding with NeverReplay
-  -> let the model call it
+  -> attach the connection to Alpha
+  -> search compact tool summaries without schemas
+  -> load only the exact schema needed now
+  -> execute an exact catalog-bound reference with NeverReplay
   -> persist the exact call and result through the kernel
   -> return useful bounded content or an honest unknown outcome
 ```
 
 The complete path is proved against a deterministic local server. The first
 real connection uses GitHub's read-only remote MCP endpoint at
-`https://api.githubcopilot.com/mcp/readonly` and exposes only `get_me`,
-`get_file_contents`, and `search_code` to Alpha.
+`https://api.githubcopilot.com/mcp/readonly`. Its complete accepted catalog is
+searchable, but none of those schemas is sent until Alpha explicitly loads one.
 
 ## Deliberate scope
 
@@ -63,8 +64,8 @@ be added later behind a new adapter revision after a real server requires it.
 | Owner | Responsibility in this slice |
 | --- | --- |
 | Kernel | Persist effect intent and dispatch before invocation, freeze the runtime, settle definite results, and preserve uncertainty |
-| Agent loop | Expose the selected `ToolSpec`, persist the exact `ToolCall`, and balance definite results into conversation history |
-| Local Host | Own endpoint configuration, catalog refresh, selection, runtime resolution, deadlines, and the adapter process lifecycle |
+| Agent loop | Expose three fixed registry `ToolSpec`s, persist each exact `ToolCall`, and balance definite results into conversation history |
+| Local Host | Own endpoint configuration, catalog refresh, profile attachment, search, exact-reference resolution, deadlines, and the adapter process lifecycle |
 | MCP Node adapter | Speak the pinned MCP revision through the official SDK, validate untrusted protocol data, and report dispatch certainty |
 | MCP server | Implement its tools, validate service inputs, and return protocol-compliant results |
 | Surface | Present Host state and operation outcomes; never own an MCP catalog or invoke the server directly |
@@ -81,14 +82,17 @@ These concepts are distinct even though the first proof uses one of each:
   no-auth or an exact `gh` hostname/account reference, never the token.
 - **Catalog snapshot:** one complete, validated result of discovery and every
   `tools/list` page.
-- **Tool selection:** a profile request for one tool from that connection and
-  catalog.
-- **Resolved tool binding:** the exact endpoint, protocol behavior, tool
-  definition, adapter revision, and recovery class offered to one operation.
+- **Profile attachment:** permission for Alpha's registry to search and resolve
+  one connection. It does not advertise every tool schema.
+- **Tool reference:** `mcp:<connection>:<catalog-digest>:<tool>`, returned by
+  search and valid only for that exact complete catalog.
+- **Resolved invocation:** the exact endpoint, protocol behavior, tool
+  definition, adapter revision, and recovery class used by `tool_execute`.
 
-Configuration does not imply discovery. Discovery does not imply selection.
-Selection does not mutate an admitted operation. The Host publishes only
-complete catalog snapshots and resolves selections only for the next operation.
+Configuration does not imply discovery. Discovery does not imply profile
+attachment. Attachment makes catalog entries searchable; it does not load
+schemas or authorize anything beyond v0's explicit full-access profile. The
+Host publishes only complete catalog snapshots.
 
 The first durable implementation keeps these states in separate SQLite tables
 under `host.sqlite3`; the SQL schema is internal Host storage, not a public
@@ -182,56 +186,47 @@ isolated catalog-entry failure.
 Host identity is the tuple of connection identity and exact MCP tool name.
 Self-reported `serverInfo.name` is never identity.
 
-For the first one-integration proof, the model-visible name is the exact MCP
-tool name. If the resolved runtime contains another tool with the same
-model-visible name, Host composition fails before command admission. V0 does
-not silently drop, overwrite, or invent a prefix. A later multi-integration
-naming design must preserve stable Host identity while solving presentation
-collisions explicitly.
+MCP names never become top-level model tool names. Alpha always sees three
+small, provider-neutral Host tools:
 
-The model-visible `ToolSpec` contains only:
+- `tool_search` searches names, services, and descriptions and returns at most
+  five compact matches with exact references, never schemas;
+- `tool_load` accepts one through three unchanged references and returns their
+  exact model-facing descriptions and input schemas, bounded to 64 KiB total;
+- `tool_execute` accepts one unchanged reference plus an argument object and
+  invokes that exact remote tool.
 
-- the exact accepted MCP tool name;
-- its description, or an empty description when absent; and
-- its validated `inputSchema` with transport-only `x-mcp-header` annotations
-  removed.
-
-Titles, icons, annotations, endpoint details, protocol metadata, catalog
-bookkeeping, and output schemas are not put in the model API tool field.
-The resolved binding retains the exact unmodified input schema so the adapter
-can implement required header projection and freeze that behavior without
-showing transport bookkeeping to the model.
+Search ranks deterministically and uses `*` for bounded browsing. A catalog may
+hold 1,024 entries, but the model API still receives only these three fixed
+schemas. Loading is explicit and atomic: an oversized group fails rather than
+truncating a JSON Schema. Transport-only `x-mcp-header` annotations, titles,
+icons, endpoints, protocol metadata, output schemas, and adapter bookkeeping
+remain outside model context. The resolved invocation retains the unmodified
+input schema so the adapter can project transport headers correctly.
 
 ## Frozen runtime identity
 
-Each resolved MCP tool becomes one `AgentToolBinding` with
-`EffectRecovery::NeverReplay`.
+The runtime freezes three ordinary `AgentToolBinding`s. Search and load are
+`SafeToReplay` Host reads. Execute is `NeverReplay`. Their revisions cover the
+registry contract, result projection, error mapping, MCP process wire,
+deadlines, and bounds. The agent-loop digest freezes their order, specs,
+recovery declarations, and revisions. No kernel field or MCP-specific path is
+added.
 
-Its binding revision must cover every fact that could change execution or
-recovery:
-
-- the MCP adapter implementation revision;
-- the pinned protocol revision and transport behavior;
-- the normalized endpoint identity;
-- the exact MCP tool name, input schema, and optional output schema;
-- result-projection and error-mapping behavior; and
-- all enforced deadlines and resource bounds.
-
-The existing agent-loop configuration digest additionally freezes tool order,
-model-visible specifications, recovery declarations, and binding revisions.
-No new kernel manifest field is required.
-
-A catalog refresh, endpoint edit, adapter update, or schema change can affect a
-future operation only. An unfinished operation can run only with an exactly
-compatible frozen binding.
+Mutable catalog data is not smuggled into those static revisions. Search reads
+one current SQLite snapshot. Load and execute resolve the reference against one
+current snapshot and reject a different digest as stale. The persisted
+`tool_execute` request therefore carries the exact catalog identity selected by
+the model; a refresh can never substitute a new schema or endpoint underneath
+it.
 
 ## Invocation
 
-Before HTTP dispatch, the Renoa tool verifies that the persisted call targets
-its exact selected name, that arguments are a JSON object, and that the encoded
-request is within the adapter bound. The server remains responsible for full
-JSON Schema and service-level validation in v0; Renoa does not ship a partial
-home-grown JSON Schema evaluator.
+Before HTTP dispatch, `tool_execute` verifies the reference syntax, Alpha
+attachment, current catalog digest, exact tool name, argument-object shape, and
+adapter request bound. It resolves credentials only after those local checks.
+The server remains responsible for full JSON Schema and service-level
+validation in v0; Renoa does not ship a partial home-grown evaluator.
 
 The adapter sends one `tools/call` with no automatic retry. It mirrors valid
 `x-mcp-header` values exactly as required by the pinned Streamable HTTP
@@ -355,10 +350,13 @@ not duplicate them.
 
 ## Context and observability
 
-Discovery never changes model context. Only profile-selected tool
-specifications enter the model API tool field for a newly resolved operation.
-Server instructions, endpoint URLs, catalog metadata, cache hints, output
-schemas, adapter bookkeeping, and unselected schemas remain outside it.
+Discovery and search never load schemas into model context. Every normal Alpha
+request carries the same three small registry specifications, independent of
+whether the Host has zero, ten, or one thousand external tools. Search returns
+at most five short summaries. Only a successful `tool_load` result inserts the
+requested model-facing schemas into conversation history, where normal context
+and compaction rules apply. Server instructions, endpoint URLs, cache hints,
+output schemas, adapter bookkeeping, and every unloaded schema remain outside.
 
 The exact `ToolCall` and settled `ToolResult` already belong to kernel-backed
 semantic history. Structured `ToolResult.details` remains available for Host
@@ -378,18 +376,25 @@ builds a fresh snapshot and atomically publishes it or changes nothing. V0 does
 not automatically retry one attempt; the caller may issue another explicit
 refresh.
 
+Every registry call opens current Host state instead of consulting a process
+cache. A connection attached or refreshed by a GUI, another local command, or
+the running agent becomes visible to the next `tool_search` call, including
+inside an already active Alpha turn. Waku, ACP, and Alpha do not restart. This
+does not alter an in-flight remote call. The stateless v0 MCP adapter also does
+not keep a subscription open for `notifications/tools/list_changed`; a Host
+refresh must publish that remote change first.
+
 Tool invocation is never replayed after possible dispatch. The kernel's
 existing `NeverReplay` recovery turns an interrupted dispatched effect into
 `OutcomeUnknown` without invoking the MCP adapter again. An explicitly
 abandoned unknown tool operation uses the existing balanced-history behavior;
 MCP adds no special transcript rule.
 
-A refresh cannot mutate the runtime object driving an already admitted
-operation. After process loss, however, an unfinished operation whose older
-binding is no longer reconstructible from the latest Host catalog fails with
-`RuntimeMismatch`; Renoa never substitutes the newer schema. Historical
-binding retention must be implemented before connection removal or automatic
-refresh is added.
+A refresh does not mutate the three frozen registry implementations. A search
+or load read that must be replayed may observe later committed registry state,
+like any safe external read. A not-yet-dispatched execute with an old digest
+fails stale; a possibly dispatched execute is never called again. Renoa never
+substitutes the newer catalog.
 
 ## Proven full Host path
 
@@ -412,9 +417,11 @@ and the real process boundary:
 12. a terminal result wins races with cancellation, stderr overflow, nonzero
     exit, and hung cleanup;
 13. diagnostics are bounded and redact sensitive header and URL forms;
-14. only the selected tool schema reaches the model;
-15. the runtime manifest changes when endpoint, schema, adapter behavior, or
-    bounds change; and
+14. every model request advertises only the three registry schemas, while
+    search over 1,000 entries returns no schema and load returns only requested
+    exact schemas;
+15. one live registry object sees a committed attachment without restart, and
+    catalog replacement makes prior references fail stale;
 16. restart never repeats a possibly dispatched tool call;
 17. an exact `gh` account reference resolves a token only at invocation, while
     adapter output, diagnostics, Host SQLite, and frozen bindings remain
@@ -432,11 +439,13 @@ and the real process boundary:
 - Discovery publishes only complete, bounded, deterministic catalog snapshots.
 - The stored Host identity is composite; self-reported server names are not
   identity.
-- One selected MCP tool becomes one ordinary `renoa-agent::Tool` and
-  `AgentToolBinding`.
-- Every MCP tool binding is `NeverReplay` in v0.
+- Alpha exposes three fixed registry tools rather than every external schema.
+- Search and load are `SafeToReplay`; exact remote execution is `NeverReplay`.
+- An exact catalog digest in every reference prevents silent schema changes.
+- Committed Host changes are visible on the next registry call without an
+  agent or surface restart.
 - No invocation layer performs an automatic retry.
-- Only exact selected tool specifications become model-visible.
+- Only explicitly loaded exact schemas become model-visible.
 - Existing kernel effect certainty, cancellation, and recovery semantics remain
   authoritative.
 
@@ -446,9 +455,6 @@ and the real process boundary:
 - Renoa-owned OAuth/API-key flows, general secret storage, and configured
   headers;
 - future Host schema migrations and typed management commands;
-- historical Host-binding retention for crash-resuming an unfinished operation
-  after an explicit catalog or profile change;
-- multi-integration model-visible name disambiguation;
 - automatic refresh, cache hints, and list-change subscriptions;
 - progress projection;
 - standards-complete client-side argument validation and any schema behavior
@@ -467,6 +473,9 @@ Reviewed on 2026-08-27. This contract copies no upstream source.
 - [MCP specification `2026-07-28` at `5f5440bb26a62e2cf3440b92da5a667efa03b267`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267), with the repository's Apache-2.0 transition, remaining MIT material, and CC-BY-4.0 documentation.
 - [MCP TypeScript SDK 2.0.0 at `cc4b41617ce3601b1290d67216ea0b194a3cd9ac`](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac). The published `@modelcontextprotocol/client@2.0.0` package declares MIT; the source repository records the broader MCP license transition.
 - [GitHub MCP server at `a00dc319edcb5f8a10f118b1dad649c94928aac4`](https://github.com/github/github-mcp-server/tree/a00dc319edcb5f8a10f118b1dad649c94928aac4), MIT. Renoa copied no server source; the reviewed endpoint and read-only tool catalog are consumed through MCP.
+- [OpenAI Agents SDK at `10cdae4a3c30a29c6e96c8ec14e6bf1c5f02940e`](https://github.com/openai/openai-agents-python/tree/10cdae4a3c30a29c6e96c8ec14e6bf1c5f02940e), MIT. Its deferred tool loading and namespaces were reviewed; no source was copied.
+- [DeepSeek Harness at `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e), MIT. Its single code-mode transport informed the constant-schema direction; no source was copied.
+- [Anthropic Tool Search documentation](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool). Its deferred-definition behavior and measured large-catalog context cost were reviewed; no source was copied.
 
 The SDK is an implementation dependency behind Renoa's adapter process, not
 Renoa's internal domain model or public Rust API.

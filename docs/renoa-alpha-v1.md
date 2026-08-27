@@ -41,10 +41,13 @@ surface requirements, not Alpha's internal design.
 4. The Host may select a different model or reasoning level for the next
    operation without changing Alpha, its session, or its history.
 5. An active operation never changes runtime. Its exact model, reasoning,
-   prompt, context, and tool revisions remain frozen by the kernel.
-6. The first profile has all six local tools plus the exact external tools
-   selected for it by the Host. Existing workspace boundaries and unrestricted
-   Bash behavior remain unchanged.
+   prompt, context, and tool revisions remain frozen by the kernel. The fixed
+   Host registry tools may read newly committed catalog state, but an exact
+   catalog reference can never change underneath an invocation.
+6. The first profile has all six local tools plus `tool_search`, `tool_load`,
+   and `tool_execute`. External schemas are loaded into history only when Alpha
+   requests them; catalog size never expands the model API tool list. Existing
+   workspace boundaries and unrestricted Bash behavior remain unchanged.
 7. Alpha has no plan mode. A question, review, plan, or implementation request
    is handled according to the user's intent by the same agent.
 
@@ -74,7 +77,8 @@ A normal Alpha request contains only:
 
 1. the Alpha base prompt and applicable project instructions;
 2. the durable, context-projected conversation; and
-3. the currently selected tool definitions in the model API's tool field.
+3. the six local tool definitions and three fixed extension-registry definitions
+   in the model API's tool field.
 
 Kernel command IDs, effect identities, recovery declarations, runtime
 manifests, and configuration digests are not prompt content.
@@ -97,8 +101,8 @@ The real headless product path must prove that:
 1. Alpha's base prompt and root project instructions reach the model;
 2. tool schemas and kernel bookkeeping are not duplicated in that prompt;
 3. one durable session continues after changing model and reasoning level;
-4. each operation freezes the exact selected model and reasoning revision; and
+4. each operation freezes the exact selected model and reasoning revision;
 5. the Alpha configuration digest remains stable across that selection change;
-   and
-6. only Host-selected external tools reach the model, and their exact bindings
-   are frozen per operation.
+6. a 1,000-tool external catalog adds no model API schema, search returns only
+   compact matches, and load returns only explicitly requested schemas; and
+7. exact external references fail stale instead of changing after refresh.

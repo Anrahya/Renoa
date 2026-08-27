@@ -21,8 +21,8 @@ use crate::{
         read_manifest,
     },
     mcp::{
-        HOST_DATABASE, McpCatalogStore, McpCredentialResolver, McpHostError, alpha_tool_binding,
-        resolve_adapter,
+        HOST_DATABASE, McpCatalogStore, McpCredentialResolver, McpHostError,
+        alpha_registry_bindings, resolve_adapter,
     },
     runtime::build_composed_local_runtime,
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
@@ -314,22 +314,11 @@ pub(crate) async fn resolve_runtime(
     workspace: &LocalWorkspace,
     events: Option<Arc<dyn AgentEventSink>>,
 ) -> Result<renoa_kernel::Runtime, LocalHostError> {
-    let store = host.mcp_catalog.clone();
-    let selected =
-        tokio::task::spawn_blocking(move || store.alpha_tools(crate::ALPHA_PROFILE_ID)).await??;
-    let extension_tools = if selected.is_empty() {
-        Vec::new()
-    } else {
-        let adapter = host.mcp_adapter.clone().ok_or_else(|| {
-            LocalHostError::Configuration(
-                "RENOA_MCP_ADAPTER must be set while Alpha has selected MCP tools".to_owned(),
-            )
-        })?;
-        selected
-            .into_iter()
-            .map(|tool| alpha_tool_binding(adapter.clone(), host.mcp_credentials.clone(), tool))
-            .collect::<Result<Vec<_>, _>>()?
-    };
+    let extension_tools = alpha_registry_bindings(
+        host.mcp_catalog.clone(),
+        host.mcp_adapter.clone(),
+        host.mcp_credentials.clone(),
+    );
     let config = LocalRuntimeConfig::for_alpha(
         host.bridge.clone(),
         model.provider().as_str(),

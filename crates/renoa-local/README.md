@@ -8,13 +8,16 @@ coding runtime from:
 - Renoa's durable model/tool loop and compaction strategy;
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
   tools; and
-- the first durable MCP integration, connection, catalog, and Alpha-selection
-  records. Selected MCP tools are not executable until the next vertical slice.
+- three fixed extension-registry tools over durable MCP integration,
+  connection, catalog, and Alpha-attachment records.
 
 Provider credentials and tool implementations stay outside the kernel.
-The host is intentionally all-allowed: registering a tool makes it available.
-Paths are confined to the configured workspace, but `bash` is unrestricted and
-this is not a sandbox for untrusted work.
+The host is intentionally all-allowed. Attaching a connection makes its tools
+searchable, but no external schema is advertised automatically. Alpha uses
+`tool_search`, `tool_load`, and `tool_execute`; those bindings read committed
+Host state on each call, so Waku and Alpha do not restart after a catalog
+change. Paths are confined to the configured workspace, but `bash` is
+unrestricted and this is not a sandbox for untrusted work.
 
 Model-visible output is bounded: file reads are paginated, `grep` returns at
 most 100 matches, `find` returns at most 1,000 paths, and process output keeps
@@ -38,7 +41,7 @@ lower kernel command boundary also used by the headless diagnostic runner.
 Live ACP updates come from a presentation-only event observer in the model and
 tool adapters; the kernel remains the sole durable execution owner.
 
-The Host data root contains `host.sqlite3` for MCP catalog and profile-selection
+The Host data root contains `host.sqlite3` for MCP catalog and profile-attachment
 state plus `sessions/<session-id>/`. Each session uses `session.json` for
 identity, `runtime.jsonl` for acknowledged provider/model/reasoning choices,
 `kernel.sqlite3` for recovery truth, and `trace.sqlite3` for the ordered

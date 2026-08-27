@@ -1,11 +1,12 @@
 mod load;
+mod registry;
 mod schema;
 
 use std::path::PathBuf;
 
 use super::{
-    AlphaMcpTool, McpCatalogSnapshot, McpCatalogTool, McpConnectionAuth, McpHostError,
-    validate_endpoint, validate_identity,
+    McpCatalogSnapshot, McpCatalogTool, McpConnectionAuth, McpHostError, validate_endpoint,
+    validate_identity,
 };
 use load::load_catalog;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -191,137 +192,7 @@ impl McpCatalogStore {
         Ok(catalog)
     }
 
-    pub(crate) fn select_alpha_tool(
-        &self,
-        profile_id: &str,
-        connection_id: &str,
-        tool_name: &str,
-    ) -> Result<(), McpHostError> {
-        self.select_alpha_tools(profile_id, connection_id, &[tool_name])
-    }
-
-    pub(crate) fn select_alpha_tools(
-        &self,
-        profile_id: &str,
-        connection_id: &str,
-        tool_names: &[&str],
-    ) -> Result<(), McpHostError> {
-        validate_identity("profile", profile_id)?;
-        validate_identity("connection", connection_id)?;
-        if tool_names.is_empty() {
-            return Err(McpHostError::Invalid(
-                "at least one MCP tool must be selected".to_owned(),
-            ));
-        }
-        let mut unique = std::collections::HashSet::with_capacity(tool_names.len());
-        for tool_name in tool_names {
-            validate_identity("tool", tool_name)?;
-            if !unique.insert(*tool_name) {
-                return Err(McpHostError::Invalid(format!(
-                    "MCP tool selection repeats '{tool_name}'"
-                )));
-            }
-        }
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        for tool_name in tool_names {
-            let exists = transaction
-                .query_row(
-                    "SELECT 1 FROM mcp_tools WHERE connection_id = ?1 AND name = ?2",
-                    params![connection_id, tool_name],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            if !exists {
-                return Err(McpHostError::NotFound(format!(
-                    "tool '{tool_name}' is absent from connection '{connection_id}'"
-                )));
-            }
-        }
-        for tool_name in tool_names {
-            transaction.execute(
-                "INSERT OR IGNORE INTO profile_mcp_tools(profile_id, connection_id, tool_name)
-                 VALUES (?1, ?2, ?3)",
-                params![profile_id, connection_id, tool_name],
-            )?;
-        }
-        transaction.commit()?;
-        Ok(())
-    }
-
-    pub(crate) fn alpha_tools(&self, profile_id: &str) -> Result<Vec<AlphaMcpTool>, McpHostError> {
-        validate_identity("profile", profile_id)?;
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
-        let mut statement = transaction.prepare(
-            "SELECT binding.connection_id, binding.tool_name, connection.integration_id,
-                    connection.auth_kind, connection.auth_hostname, connection.auth_account
-             FROM profile_mcp_tools AS binding
-             JOIN mcp_connections AS connection
-               ON connection.connection_id = binding.connection_id
-             WHERE binding.profile_id = ?1
-             ORDER BY binding.connection_id, binding.tool_name",
-        )?;
-        let bindings = statement
-            .query_map([profile_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        drop(statement);
-        let mut loaded_catalog: Option<(String, McpCatalogSnapshot)> = None;
-        let mut tools = Vec::with_capacity(bindings.len());
-        for (connection_id, tool_name, integration_id, auth_kind, auth_hostname, auth_account) in
-            bindings
-        {
-            if loaded_catalog
-                .as_ref()
-                .is_none_or(|(loaded_connection, _)| loaded_connection != &connection_id)
-            {
-                let catalog = load_catalog(&transaction, &connection_id)?.ok_or_else(|| {
-                    McpHostError::NotFound(format!(
-                        "selected connection '{connection_id}' has no complete catalog"
-                    ))
-                })?;
-                loaded_catalog = Some((connection_id.clone(), catalog));
-            }
-            let Some((_, catalog)) = loaded_catalog.as_ref() else {
-                return Err(McpHostError::Invalid(
-                    "selected MCP catalog was not loaded".to_owned(),
-                ));
-            };
-            let tool = catalog
-                .tools
-                .iter()
-                .find(|tool| tool.name() == tool_name)
-                .cloned()
-                .ok_or_else(|| {
-                    McpHostError::NotFound(format!(
-                        "selected tool '{connection_id}/{tool_name}' is absent from the latest complete catalog"
-                    ))
-                })?;
-            tools.push(AlphaMcpTool {
-                integration_id,
-                connection_id,
-                endpoint: catalog.endpoint.clone(),
-                protocol_version: catalog.protocol_version.clone(),
-                adapter_revision: catalog.adapter_revision.clone(),
-                auth: McpConnectionAuth::from_stored(&auth_kind, auth_hostname, auth_account)?,
-                tool,
-            });
-        }
-        transaction.commit()?;
-        Ok(tools)
-    }
-
-    fn connection(&self) -> Result<Connection, McpHostError> {
+    pub(super) fn connection(&self) -> Result<Connection, McpHostError> {
         let connection = schema::open(&self.path)?;
         schema::verify(&connection)?;
         Ok(connection)

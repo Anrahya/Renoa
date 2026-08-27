@@ -50,9 +50,10 @@ same Host data root and adapter configuration:
 renoa-agent mcp github install --account ACCOUNT
 ```
 
-This resolves the exact account through `gh`, refreshes the remote catalog, and
-selects `get_me`, `get_file_contents`, and `search_code` for Alpha. It stores
-the hostname/account reference, not the token.
+This resolves the exact account through `gh`, refreshes the complete remote
+catalog, and attaches that connection to Alpha's searchable registry. It stores
+the hostname/account reference, not the token. No GitHub schema is advertised
+until Alpha loads an exact search result.
 
 The process reads:
 
@@ -67,7 +68,8 @@ The process reads:
 Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
 enables Host catalog refresh and invocation. A tool reaches Alpha only after a
-Host selection such as the GitHub command above.
+Host profile attachment such as the GitHub command above. A committed change is
+visible on the next registry call without restarting ACP or the surface.
 `RENOA_MODEL_PROVIDERS` is a comma-separated enabled set; when absent, it
 defaults to the single `RENOA_MODEL_PROVIDER`. `RENOA_MODEL_PROVIDER` and
 `RENOA_MODEL` select the default provider and raw model ID for a new session.
@@ -227,9 +229,9 @@ transcript as execution truth.
 - All locally configured tools run without approval prompts. Permission policy
   remains a future Host/product feature, not an ACP rule.
 - No surface-supplied MCP servers, mode switching, account methods, or extra
-  workspace roots are advertised. Host-selected MCP tools are ordinary Alpha
-  tools. SuperGrok login is still performed before launch rather than through
-  ACP account methods.
+  workspace roots are advertised. MCP catalogs stay Host-owned; Alpha receives
+  only the fixed search/load/execute registry tools. SuperGrok login is still
+  performed before launch rather than through ACP account methods.
 - An active turn's live deltas are transient. Reload reconstructs settled local
   history; cross-device delivery continuity still belongs to RCP.
 - Earlier pre-release session manifests used storage versions 1 and 2. This

@@ -16,7 +16,7 @@ use tempfile::tempdir;
 mod vertical;
 
 #[tokio::test]
-async fn host_discovers_selects_and_restores_one_real_mcp_piece() {
+async fn host_discovers_enables_and_restores_one_real_mcp_connection() {
     let workspace = workspace_root();
     let adapter = compiled_adapter(&workspace);
     let directory = tempdir().expect("temporary directory");
@@ -40,9 +40,9 @@ async fn host_discovers_selects_and_restores_one_real_mcp_piece() {
     assert_eq!(refreshed.tools()[0].name(), "echo");
     assert_eq!(refreshed.rejected_tools().len(), 1);
     assert_eq!(refreshed.rejected_tools()[0].name(), Some("bad name"));
-    host.select_alpha_mcp_tool("primary", "echo")
+    host.enable_alpha_mcp_connection("primary")
         .await
-        .expect("select tool for Alpha");
+        .expect("enable connection for Alpha");
     drop(host);
 
     assert!(data.join("host.sqlite3").is_file());
@@ -55,15 +55,11 @@ async fn host_discovers_selects_and_restores_one_real_mcp_piece() {
             .expect("restore catalog"),
         refreshed
     );
-    let selected = reopened
-        .alpha_mcp_tools()
+    let enabled = reopened
+        .alpha_mcp_connection_ids()
         .await
-        .expect("restore Alpha selection");
-    assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].integration_id(), "fixture");
-    assert_eq!(selected[0].connection_id(), "primary");
-    assert_eq!(selected[0].endpoint(), endpoint);
-    assert_eq!(selected[0].tool().name(), "echo");
+        .expect("restore Alpha connection binding");
+    assert_eq!(enabled, ["primary"]);
 }
 
 #[tokio::test]

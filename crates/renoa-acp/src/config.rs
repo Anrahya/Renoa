@@ -9,7 +9,6 @@ const GITHUB_INTEGRATION_ID: &str = "github";
 const GITHUB_CONNECTION_ID: &str = "github";
 const GITHUB_ENDPOINT: &str = "https://api.githubcopilot.com/mcp/readonly";
 const GITHUB_HOSTNAME: &str = "github.com";
-const GITHUB_ALPHA_TOOLS: &[&str] = &["get_me", "get_file_contents", "search_code"];
 
 /// Process configuration for the local ACP adapter.
 pub struct Config {
@@ -27,7 +26,7 @@ pub struct GitHubMcpInstallation {
     connection_id: &'static str,
     endpoint: &'static str,
     account: String,
-    selected_tools: Vec<&'static str>,
+    tool_count: usize,
 }
 
 #[derive(Serialize)]
@@ -161,7 +160,7 @@ pub async fn configured_model_catalog() -> Result<ModelCatalog, ServerError> {
     ModelCatalog::from_models(models, settings.default_provider, &settings.model)
 }
 
-/// Registers, authenticates, discovers, and selects Renoa's first GitHub MCP tools.
+/// Registers, authenticates, discovers, and enables Renoa's GitHub MCP connection.
 ///
 /// The Host persists only the exact `gh` hostname and account reference. The
 /// credential itself crosses only the MCP adapter's standard input.
@@ -181,19 +180,19 @@ pub async fn install_github_mcp(account: &str) -> Result<GitHubMcpInstallation, 
             account,
         )
         .await?;
-    config
+    let catalog = config
         .host
         .refresh_mcp_catalog(GITHUB_CONNECTION_ID)
         .await?;
     config
         .host
-        .select_alpha_mcp_tools(GITHUB_CONNECTION_ID, GITHUB_ALPHA_TOOLS)
+        .enable_alpha_mcp_connection(GITHUB_CONNECTION_ID)
         .await?;
     Ok(GitHubMcpInstallation {
         connection_id: GITHUB_CONNECTION_ID,
         endpoint: GITHUB_ENDPOINT,
         account: account.to_owned(),
-        selected_tools: GITHUB_ALPHA_TOOLS.to_vec(),
+        tool_count: catalog.tools().len(),
     })
 }
 

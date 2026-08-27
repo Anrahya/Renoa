@@ -2,6 +2,7 @@ mod auth;
 mod call;
 mod error;
 mod process;
+mod registry;
 mod store;
 mod tool;
 
@@ -22,8 +23,11 @@ pub use error::{
 };
 
 pub(crate) use process::discover;
+pub(crate) use registry::{
+    LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, SEARCH_RESULT_LIMIT, rank_tools,
+};
 pub(crate) use store::{HOST_DATABASE, McpCatalogStore};
-pub(crate) use tool::alpha_tool_binding;
+pub(crate) use tool::alpha_registry_bindings;
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.2.0";
@@ -148,7 +152,7 @@ impl McpCatalogSnapshot {
     }
 }
 
-/// One Alpha-selected MCP tool resolved from the latest complete Host catalog.
+/// One exact catalog-bound MCP target resolved for Alpha execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlphaMcpTool {
     integration_id: String,

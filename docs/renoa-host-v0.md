@@ -78,7 +78,10 @@ Agent Instance + profile + installed capabilities + current scope
 ```
 
 The kernel freezes that runtime before execution. A later profile or component
-change can affect a later operation but cannot mutate the active one.
+change cannot replace its implementations. The fixed extension registry is an
+explicit exception for data visibility: it may read later committed Host state,
+but every executable reference is catalog-bound and fails stale rather than
+changing behavior.
 
 Profiles are declarative recipes. They do not execute effects and do not own
 session history. Installed availability does not imply future authorization;
@@ -90,9 +93,10 @@ permission system.
 Permission semantics are deliberately open. V0 does not introduce roles,
 levels, grants, approval records, or a permission trait.
 
-The local coding profile is all-allowed: every tool registered by its local
-workspace provider is advertised to the model and bound into the runtime. The
-current set is:
+The local coding profile is all-allowed. Every tool registered by its local
+workspace provider is advertised directly. External catalogs are reached
+through three fixed registry tools so catalog size does not become model
+context. The current top-level set is:
 
 ```text
 read_file
@@ -101,6 +105,9 @@ write_file
 bash
 grep
 find
+tool_search
+tool_load
+tool_execute
 ```
 
 Existing tool invariants remain in force. File tools stay within the configured
@@ -138,20 +145,28 @@ permission-shaped fields are reserved in this slice.
 `LocalHost` owns the provider configuration, durable data root, MCP catalog,
 and credential resolution boundary. `host.sqlite3` keeps direct integration and
 connection identities, non-secret credential references, complete catalog
-snapshots, rejected entries, and Alpha's selected tool identities. Registration,
-discovery, and selection remain separate states. Catalog replacement and batch
-selection are transactional, and multi-query reads use one SQLite snapshot so
-runtime resolution cannot observe half of a concurrent refresh.
+snapshots, rejected entries, and Alpha's attached connection identities.
+Registration, discovery, and profile attachment remain separate states.
+Catalog replacement and attachment are transactional, and multi-query reads use
+one SQLite snapshot so a registry call cannot observe half of a refresh.
 `AlphaSession` owns one Agent/Session binding, canonical workspace, model
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
-The Host resolves every selected MCP definition into an executable
-`renoa-agent::Tool` for the next Alpha operation. Each binding freezes the
-endpoint, schemas, adapter behavior, non-secret auth reference, result
-projection, bounds, and `NeverReplay` recovery. Unselected catalog schemas stay
-out of the model request, and a missing adapter fails composition instead of
-silently dropping selected tools.
+The Host adds three fixed extension-registry tools to every Alpha runtime:
+`tool_search`, `tool_load`, and `tool_execute`. Search returns at most five
+compact matches without schemas. Load returns only one through three explicitly
+requested model-facing schemas. Execute resolves one exact reference containing
+the current catalog digest, then reuses the proven MCP credential, adapter,
+result, and `NeverReplay` boundary. A missing adapter fails execution visibly;
+it does not prevent Alpha from starting or hide searchable catalog state.
+
+The registry tools open current `host.sqlite3` state for each call. A committed
+connection attachment or catalog refresh is therefore visible on the next
+search even when the ACP process, Alpha session, and current turn are already
+running. The runtime itself is unchanged: the kernel freezes the same three
+registry implementations, while exact references prevent a newer catalog from
+silently changing a selected invocation.
 
 `LocalRuntimeConfig` is the lower composition input used inside the Host. Every
 local product path selects Alpha's versioned instructions. The resolved inputs
@@ -160,7 +175,7 @@ are:
 - provider and model;
 - reasoning configuration;
 - Alpha's base prompt and bounded workspace `AGENTS.md` instructions; and
-- the six workspace tools plus selected external tool bindings.
+- the six workspace tools plus the three fixed extension-registry tools.
 
 `build_local_runtime` resolves that recipe with a `LocalWorkspace`:
 
@@ -169,7 +184,7 @@ LocalRuntimeConfig + Alpha v1
   + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
-  + selected Host extension tools
+  + Host extension registry tools
             |
             v
 renoa-agent-loop::build_runtime
@@ -208,9 +223,10 @@ renoa-agent mcp github install --account ACCOUNT
 ```
 
 It registers the exact `github.com` account reference, resolves its token with
-`gh` only for discovery, atomically publishes the catalog, and batch-selects
-`get_me`, `get_file_contents`, and `search_code` for future Alpha operations.
-Repeating the command converges on the same durable state.
+`gh` only for discovery, atomically publishes the complete catalog, and attaches
+the GitHub connection to Alpha. Repeating the command converges on the same
+durable state. The next registry search sees the connection without restarting
+Waku or Alpha; no GitHub schema is advertised until explicitly loaded.
 
 The first real Host flow accepts either an ordinary prompt or a typed compact
 control:
@@ -270,7 +286,7 @@ Local Host state has one intentionally visible layout:
 ```text
 <data-root>/
   host.sqlite3                  Host MCP integrations, non-secret connection
-                                references, catalogs, and Alpha selections
+                                references, catalogs, and Alpha attachments
   sessions/<session-uuid>/
     session.json                durable identity and workspace/profile binding
     runtime.jsonl               acknowledged provider/model/reasoning selections
@@ -328,8 +344,8 @@ modification.
 
 ## Open decisions
 
-- general profile and package-library storage beyond the first MCP selection;
-- future Host schema migrations beyond the proven v1-to-v2 migration;
+- general profile and package-library storage beyond the first MCP attachment;
+- future Host schema migrations beyond the proven v1/v2-to-v3 migrations;
 - historical resolved-binding retention across explicit catalog/profile
   changes for unfinished-operation recovery;
 - profile inheritance and Agent Instance overrides;
@@ -377,10 +393,13 @@ owns or reconstructs that state.
 The first extension path is also complete. `LocalHost` registers direct no-auth
 or exact `gh`-referenced MCP connections, runs the replaceable Node adapter for
 bounded discovery and invocation, atomically publishes catalogs and tool
-selections, and restores them after process restart. A selected tool travels
-through Alpha, the normal agent loop, and the kernel as a frozen `NeverReplay`
-effect. Exact registration retries converge, identity changes conflict, failed
-refresh publication preserves the previous snapshot, missing selections fail
-closed, structured details stay outside model context, unknown calls are not
-replayed, and schema v1 migrates to v2 without losing catalog state. No kernel
-type or table changed.
+attachments, and restores them after process restart. Alpha exposes three fixed
+registry tools regardless of catalog size. Search and load are bounded
+`SafeToReplay` reads; execute carries an exact catalog reference through the
+normal loop and kernel as a `NeverReplay` effect. Exact registration retries
+converge, identity changes conflict, failed refresh publication preserves the
+previous snapshot, stale references fail closed, structured details stay
+outside model context, unknown calls are not replayed, and schemas v1 and v2
+migrate to v3 without losing catalog state. A live registry object observes a
+newly committed attachment, and searching 1,000 tools exposes no schema. No
+kernel type or table changed.

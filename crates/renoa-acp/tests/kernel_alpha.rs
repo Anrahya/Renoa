@@ -56,7 +56,7 @@ fn acp_runs_the_frozen_alpha_profile_through_the_kernel() {
         .as_ref()
         .expect("frozen Alpha manifest");
     assert_eq!(manifest.loop_binding, "renoa.agent.model-tool-loop");
-    assert_eq!(manifest.effect_bindings.len(), 7);
+    assert_eq!(manifest.effect_bindings.len(), 10);
     assert!(manifest.effect_bindings.contains_key("renoa.agent.model"));
     for tool in [
         "read_file",
@@ -65,6 +65,9 @@ fn acp_runs_the_frozen_alpha_profile_through_the_kernel() {
         "bash",
         "grep",
         "find",
+        "tool_search",
+        "tool_load",
+        "tool_execute",
     ] {
         assert!(
             manifest
