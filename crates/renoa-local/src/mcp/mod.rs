@@ -26,7 +26,7 @@ pub(crate) use process::discover;
 pub(crate) use registry::{
     LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, SEARCH_RESULT_LIMIT, rank_tools,
 };
-pub(crate) use store::{HOST_DATABASE, McpCatalogStore};
+pub(crate) use store::McpCatalogStore;
 pub(crate) use tool::alpha_registry_bindings;
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";

@@ -193,6 +193,8 @@ fn assert_model_context(path: &Path) {
                 "tool_search",
                 "tool_load",
                 "tool_execute",
+                "skill_search",
+                "skill_load",
             ]
         );
         let encoded_tools = serde_json::to_string(tools).expect("encode model-visible tools");

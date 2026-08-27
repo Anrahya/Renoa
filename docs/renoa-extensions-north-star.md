@@ -346,7 +346,7 @@ not provide.
 Extension breadth must not become context pollution. For one resolved
 operation, the model receives only:
 
-1. the profile's instructions, a bounded index of eligible skills, and only
+1. the profile's instructions, two fixed skill-registry definitions, and only
    deliberately activated full skill content;
 2. the durable context projection; and
 3. the effective tool definitions required for that operation.
@@ -358,9 +358,17 @@ Tool failures that help the model recover are returned as bounded model-visible
 tool results; operational diagnostics and sensitive details remain in Host
 trace data.
 
-Profile selection makes a skill eligible; it does not require Renoa to inject
-every selected skill in full. The exact activation and lazy-loading mechanism
-remains open until the first skill vertical slice proves it.
+Alpha's first skill path searches compact name/description metadata through
+`skill_search` and activates one immutable reference through `skill_load`.
+Neither the complete catalog nor every skill body is injected up front. A load
+persists one exact revision for the session before returning its complete
+instructions. Later operations reattach that revision as standing
+instructions, including after restart or compaction, while the historical load
+result is projected to a short receipt for the model. The durable journal is
+never rewritten. The Host records the activating command so retrying an
+unfinished command reconstructs its original frozen binding instead of
+silently gaining the new revision. One session cannot activate two revisions
+of the same skill name.
 
 ## Physical ownership
 
@@ -376,9 +384,11 @@ renoa-plugins repository
   third_party/<plugin>/        packages for external services
 
 Renoa data directory
-  installed package store      immutable package digests
+  skills/<digest>/             immutable imported Agent Skill revisions
+  installed package store      future immutable Agent Plugin packages
   Host catalog                 installations, integrations, connections,
-                               discovered components, and profile bindings
+                               skill revisions, source/profile bindings,
+                               session activations, and other components
   sessions/<session>/          existing kernel and trace truth
 
 local credential sources
@@ -388,8 +398,10 @@ local credential sources
 This north star does not lock a general secret-store design. The direct MCP v0
 slice consumes `host.sqlite3` for integration, connection, non-secret `gh`
 account references, catalogs, and Alpha connection attachments. Schema
-v1/v2-to-v3 migration is proven; later package, permission, secret-source, and
-migration shapes remain open.
+v1/v2-to-v3 migration is proven. Schema v4 adds immutable skill revisions,
+global/workspace bindings, isolated source rejections, and session activation
+pins. Later general-package, permission, secret-source, and migration shapes
+remain open.
 
 `third_party` means that the service is external to Renoa. It does not assert
 that the named company authored, reviewed, or endorsed the package. Provenance
@@ -413,13 +425,17 @@ model prompts, tool schemas, or credentials as continuity data.
 
 ## Standards and implementation evidence
 
-Reviewed on 2026-08-27. No upstream source is copied by this documentation
-slice.
+Reviewed on 2026-08-27. Renoa copied no upstream implementation source for the
+skill path. The YAML parser is the pinned dependency recorded below.
 
 | Source | Exact revision | License evidence | Renoa use |
 | --- | --- | --- | --- |
 | [Agent Plugins 1.0](https://github.com/agentplugins/agent-plugins-spec/tree/ff8ab5e392cc87bd88d87c060815a87490e51003) | `ff8ab5e392cc87bd88d87c060815a87490e51003` | Specification and docs CC-BY-4.0; schemas and software Apache-2.0 | Portable package, skill, MCP, containment, discovery, and client-extension floor |
 | [Agent Skills](https://github.com/agentskills/agentskills/tree/69ef37e9424c0a7ea9dd2293b559e43ec8176379) | `69ef37e9424c0a7ea9dd2293b559e43ec8176379` | Code Apache-2.0; documentation CC-BY-4.0 | Portable `SKILL.md` structure and progressive-disclosure model |
+| [OpenCode v2](https://github.com/anomalyco/opencode/tree/f1521000ece5fdd9f372dcfbd126d3d89642f3ce) | `f1521000ece5fdd9f372dcfbd126d3d89642f3ce` | MIT | One narrow skill tool, metadata-first discovery, full body/base directory on demand, filesystem refresh, and durable activation evidence; Renoa does not adopt silent last-writer-wins identity |
+| [Claude Code skill lifecycle](https://code.claude.com/docs/en/slash-commands) | official documentation reviewed 2026-08-27 | Anthropic documentation terms | Evidence that invoked skill instructions must be deliberately carried across compaction; Renoa fails at its exact bound instead of truncating or dropping an active revision |
+| [Codex core skill loader](https://github.com/openai/codex/blob/main/codex-rs/core-skills/src/loader.rs) | `main` reviewed 2026-08-27 | Apache-2.0 repository | Bounded discovery, standard `.agents/skills` support, and explicit refresh behavior |
+| [serde-saphyr 1.1.0](https://github.com/bourumir-wyngs/serde-saphyr/tree/ad5c614bd437f9c3dbf65b158de24cb3a07cda9d) | tag commit `ad5c614bd437f9c3dbf65b158de24cb3a07cda9d` | MIT OR Apache-2.0 | Deserialize-only YAML frontmatter dependency with default features disabled; no source adapted |
 | [MCP 2026-07-28](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267) | tag commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` | Repository records an Apache-2.0 transition with remaining MIT material and CC-BY-4.0 documentation | Current remote tool protocol semantics |
 | [MCP TypeScript client 2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac) | tag commit `cc4b41617ce3601b1290d67216ea0b194a3cd9ac` | Published package declares MIT; source repository records the broader MCP license transition | Maintained implementation behind Renoa's narrow process adapter |
 | [GitHub MCP server](https://github.com/github/github-mcp-server/tree/a00dc319edcb5f8a10f118b1dad649c94928aac4) | `a00dc319edcb5f8a10f118b1dad649c94928aac4` | MIT | First real read-only remote connection; no upstream server source copied |
@@ -466,7 +482,7 @@ The extension path is streamlined when these statements are true:
 Each slice must leave the repository coherent and pass its proof gate before
 the next begins.
 
-Slices 1 through 6 are complete. Slice 7 is next.
+Slices 1 through 7 are complete. Slice 8 is next.
 
 ### 1. Integration contract
 
@@ -534,7 +550,24 @@ dispatch; a live registry object sees a newly committed attachment; and the
 real MCP result, error, uncertainty, restart, and secret boundaries remain
 unchanged.
 
-### 7. Agent Plugins local loader
+### 7. Host-owned Agent Skills path
+
+Import standard global `~/.agents/skills` and workspace `.agents/skills`
+directories into immutable Host-owned revisions. Expose two fixed model tools:
+bounded metadata search and exact activation. Rescan sources on every search so
+a live Alpha session can discover a new skill without restart. Pin activated
+revisions to the session and reattach their exact instructions across later
+operations, restart, and compaction.
+
+Proof gate: global and workspace collisions stay exact with workspace priority;
+invalid entries are isolated; failed source scans preserve the prior complete
+snapshot; hot additions are visible to an existing session; source edits cannot
+silently replace active content; duplicate names cannot activate two revisions;
+bounded context fails instead of truncating; full durable results remain intact
+while later model context uses receipts; and the real Alpha path survives
+compaction and Host restart with eleven constant tool schemas.
+
+### 8. Agent Plugins local loader
 
 Load and validate one local Agent Plugins 1.0 directory using locally pinned
 schemas. Enforce package containment and component-level failure boundaries,
@@ -546,7 +579,7 @@ Proof gate: malformed manifests, unsupported versions, path escapes, changed
 contents, crash during publication, and independent component failures are
 deterministic and leave no partially installed package.
 
-### 8. Shared Host management
+### 9. Shared Host management
 
 Define the typed Host management commands consumed by both Waku and an agent
 tool. The agent may inspect and request; an authorization boundary commits the
@@ -558,7 +591,7 @@ Proof gate: GUI and agent flows reach the same durable state transition, lost
 replies are idempotent, changed plans require renewed approval, and the agent
 cannot approve or broaden its own request.
 
-### 9. Later fabric work
+### 10. Later fabric work
 
 Only after the local path is mature should Renoa design node capability
 advertisement, package availability, or placement-aware resolution. That work
@@ -598,11 +631,19 @@ through the task journal.
     execution or credential distribution.
 18. Every slice is proved through the real boundary it introduces before the
     next layer is built.
+19. Skills are instructions and files, never an implicit tool or permission
+    grant. The experimental Agent Skills `allowed-tools` field is rejected until
+    Renoa has a real permission consumer.
+20. Skill search returns at most five metadata matches and immutable
+    `skill:<name>:<digest>` references. Full content enters context only after an
+    exact load.
+21. Active skill revisions are Host-owned and session-pinned. Source edits are
+    hot-discoverable but cannot silently replace an active revision.
 
 ## Open decisions
 
-- future Host schema migrations and storage for packages, general secret
-  sources, and permissions;
+- future Host schema migrations beyond v4 and storage for general packages,
+  secret sources, and permissions;
 - model-visible naming and collision handling for tools from many connections;
 - exact catalog freshness, cache-hint, and refresh policy;
 - secret-store implementation and account-recovery behavior;
@@ -615,7 +656,8 @@ through the task journal.
 - historical resolved-binding retention after catalog or profile changes;
 - when to add stdio MCP servers and how to constrain their process and
   filesystem authority;
-- skill selection, lazy loading, context budgets, and conflict resolution;
+- ancestor-directory skill discovery, explicit profile configuration, manual
+  revision upgrade, deactivation, and garbage collection;
 - support for MCP resources, prompts, apps, tasks, or future protocol
   extensions;
 - compatibility policy for pre-2026 MCP servers;
@@ -641,9 +683,10 @@ The first direct MCP slice does not implement:
 - package signatures or automatic updates;
 - cross-node capability synchronization;
 - RCP changes;
-- dynamic libraries, WASM, hot reload, or a service locator; or
+- dynamic libraries, WASM, hot code reload, or a service locator; or
 - a universal plugin trait.
 
 The proven base remains deliberately small: selected remote tools are resolved
-by the Host, invoked through MCP, and durably completed through the existing
-Alpha and kernel path. Portable package loading builds on that path next.
+through MCP, and Agent Skills are searched and activated through the Host; both
+run through the existing Alpha and kernel path. Portable Agent Plugin package
+loading builds on those paths next.

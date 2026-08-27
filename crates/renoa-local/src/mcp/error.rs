@@ -21,6 +21,8 @@ pub enum McpHostError {
     Io(#[from] std::io::Error),
     #[error("MCP Host catalog failed: {0}")]
     Database(#[from] rusqlite::Error),
+    #[error(transparent)]
+    HostCatalog(#[from] crate::host::catalog::HostCatalogError),
     #[error("MCP catalog JSON failed: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]

@@ -170,8 +170,16 @@ impl AlphaSession {
         }
         let workspace = LocalWorkspace::open(&self.workspace)?;
         let model = require_model(&self.models, provider, model_id, "active")?;
-        let runtime =
-            resolve_runtime(&self.host, model, reasoning, &workspace, Some(events)).await?;
+        let runtime = resolve_runtime(
+            &self.host,
+            renoa_kernel::SessionId::from_uuid(self.id),
+            Some(command_id),
+            model,
+            reasoning,
+            &workspace,
+            Some(events),
+        )
+        .await?;
         match command {
             SessionCommand::Prompt(content) => Ok(self
                 .kernel

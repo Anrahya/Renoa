@@ -302,7 +302,16 @@ impl AlphaSession {
         model_id: String,
     ) -> Result<(), LocalHostError> {
         let workspace = LocalWorkspace::open(&self.workspace)?;
-        resolve_runtime(&self.host, model, reasoning, &workspace, None).await?;
+        resolve_runtime(
+            &self.host,
+            renoa_kernel::SessionId::from_uuid(self.id),
+            None,
+            model,
+            reasoning,
+            &workspace,
+            None,
+        )
+        .await?;
         append_selection(
             self.selection_path.clone(),
             RuntimeSelection {

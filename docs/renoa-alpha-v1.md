@@ -44,10 +44,11 @@ surface requirements, not Alpha's internal design.
    prompt, context, and tool revisions remain frozen by the kernel. The fixed
    Host registry tools may read newly committed catalog state, but an exact
    catalog reference can never change underneath an invocation.
-6. The first profile has all six local tools plus `tool_search`, `tool_load`,
-   and `tool_execute`. External schemas are loaded into history only when Alpha
-   requests them; catalog size never expands the model API tool list. Existing
-   workspace boundaries and unrestricted Bash behavior remain unchanged.
+6. The first profile has all six local tools, `tool_search`, `tool_load`,
+   `tool_execute`, `skill_search`, and `skill_load`. External schemas and skill
+   bodies are loaded into history only when Alpha requests them; catalog size
+   never expands the model API tool list. Existing workspace boundaries and
+   unrestricted Bash behavior remain unchanged.
 7. Alpha has no plan mode. A question, review, plan, or implementation request
    is handled according to the user's intent by the same agent.
 
@@ -71,14 +72,33 @@ added only when the Host gains a distinct current-directory consumer. Loading
 every nested file eagerly would apply instructions outside their scope and
 waste model context.
 
+## Agent Skills
+
+Alpha does not receive a startup dump of every skill description or body. It
+uses `skill_search` to query compact metadata from the Host's global and
+workspace `.agents/skills` sources, then passes one unchanged immutable
+reference to `skill_load`. The loaded body, base directory, compatibility note,
+and bounded supporting-file sample are available immediately.
+
+Activation is durable session state owned by the Host. The activating command
+receives the complete instructions in the tool result; later operations append
+the same exact revision to Alpha's standing instructions. A crash retry of that
+same command deliberately excludes its own new activation so its frozen runtime
+does not change. Source edits are discoverable on the next search without
+restart but cannot replace an already active revision. Active instructions
+survive compaction and Host restart; historical full load results become short
+model-facing receipts so the body is not duplicated. A skill supplies
+instructions and files only. It cannot add a tool or permission.
+
 ## Model-visible request
 
 A normal Alpha request contains only:
 
 1. the Alpha base prompt and applicable project instructions;
-2. the durable, context-projected conversation; and
-3. the six local tool definitions and three fixed extension-registry definitions
-   in the model API's tool field.
+2. the exact Host-pinned active skill instructions;
+3. the durable, context-projected conversation; and
+4. the six local tool definitions, three fixed MCP-registry definitions, and
+   two fixed skill-registry definitions in the model API's tool field.
 
 Kernel command IDs, effect identities, recovery declarations, runtime
 manifests, and configuration digests are not prompt content.
@@ -104,5 +124,8 @@ The real headless product path must prove that:
 4. each operation freezes the exact selected model and reasoning revision;
 5. the Alpha configuration digest remains stable across that selection change;
 6. a 1,000-tool external catalog adds no model API schema, search returns only
-   compact matches, and load returns only explicitly requested schemas; and
-7. exact external references fail stale instead of changing after refresh.
+   compact matches, and load returns only explicitly requested schemas;
+7. exact external references fail stale instead of changing after refresh;
+8. a skill added during a live session is discoverable without restart; and
+9. activated exact skill revisions survive compaction and Host restart without
+   duplicating their full bodies in later model history.

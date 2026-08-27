@@ -1,11 +1,21 @@
 use std::{path::Path, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
+use thiserror::Error;
 
-use crate::mcp::McpHostError;
-
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum HostCatalogError {
+    #[error("Host catalog storage failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Host catalog database failed: {0}")]
+    Database(#[from] rusqlite::Error),
+    #[error("invalid Host catalog: {0}")]
+    Invalid(String),
+}
 
 const SCHEMA: &str = "
     CREATE TABLE host_metadata (
@@ -72,7 +82,61 @@ const SCHEMA: &str = "
         PRIMARY KEY (profile_id, connection_id)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 3);
+    CREATE TABLE skill_revisions (
+        skill_digest TEXT PRIMARY KEY CHECK (length(skill_digest) = 64),
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+        description TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
+        license TEXT,
+        compatibility TEXT,
+        UNIQUE (skill_digest, name)
+    ) STRICT;
+
+    CREATE TABLE profile_skill_bindings (
+        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
+        workspace TEXT,
+        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
+        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+        skill_digest TEXT NOT NULL,
+        FOREIGN KEY (skill_digest, skill_name)
+            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+        CHECK (
+            (scope_kind = 'global' AND workspace IS NULL)
+            OR
+            (scope_kind = 'workspace' AND length(workspace) > 0)
+        ),
+        PRIMARY KEY (profile_id, source_root, skill_name)
+    ) STRICT;
+
+    CREATE TABLE skill_source_rejections (
+        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
+        workspace TEXT,
+        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
+        entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
+        reason TEXT NOT NULL CHECK (length(reason) > 0),
+        CHECK (
+            (scope_kind = 'global' AND workspace IS NULL)
+            OR
+            (scope_kind = 'workspace' AND length(workspace) > 0)
+        ),
+        PRIMARY KEY (profile_id, source_root, entry_name)
+    ) STRICT;
+
+    CREATE TABLE session_skills (
+        activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
+        activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
+        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+        skill_digest TEXT NOT NULL,
+        instruction_bytes INTEGER NOT NULL CHECK (instruction_bytes > 0),
+        FOREIGN KEY (skill_digest, skill_name)
+            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+        UNIQUE (session_id, skill_name),
+        UNIQUE (session_id, skill_digest)
+    ) STRICT;
+
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 4);
 ";
 
 const MIGRATE_V1_TO_V2: &str = "
@@ -117,7 +181,77 @@ const MIGRATE_V2_TO_V3: &str = "
     UPDATE host_metadata SET schema_version = 3 WHERE singleton = 1;
 ";
 
-pub(super) fn open(path: &Path) -> Result<Connection, McpHostError> {
+const MIGRATE_V3_TO_V4: &str = "
+    CREATE TABLE skill_revisions (
+        skill_digest TEXT PRIMARY KEY CHECK (length(skill_digest) = 64),
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
+        description TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
+        license TEXT,
+        compatibility TEXT,
+        UNIQUE (skill_digest, name)
+    ) STRICT;
+
+    CREATE TABLE profile_skill_bindings (
+        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
+        workspace TEXT,
+        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
+        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+        skill_digest TEXT NOT NULL,
+        FOREIGN KEY (skill_digest, skill_name)
+            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+        CHECK (
+            (scope_kind = 'global' AND workspace IS NULL)
+            OR
+            (scope_kind = 'workspace' AND length(workspace) > 0)
+        ),
+        PRIMARY KEY (profile_id, source_root, skill_name)
+    ) STRICT;
+
+    CREATE TABLE skill_source_rejections (
+        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
+        workspace TEXT,
+        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
+        entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
+        reason TEXT NOT NULL CHECK (length(reason) > 0),
+        CHECK (
+            (scope_kind = 'global' AND workspace IS NULL)
+            OR
+            (scope_kind = 'workspace' AND length(workspace) > 0)
+        ),
+        PRIMARY KEY (profile_id, source_root, entry_name)
+    ) STRICT;
+
+    CREATE TABLE session_skills (
+        activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
+        activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
+        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+        skill_digest TEXT NOT NULL,
+        instruction_bytes INTEGER NOT NULL CHECK (instruction_bytes > 0),
+        FOREIGN KEY (skill_digest, skill_name)
+            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+        UNIQUE (session_id, skill_name),
+        UNIQUE (session_id, skill_digest)
+    ) STRICT;
+
+    UPDATE host_metadata SET schema_version = 4 WHERE singleton = 1;
+";
+
+pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
+    let mut connection = open(path)?;
+    restrict_database_permissions(path)?;
+    initialize_connection(&mut connection)
+}
+
+pub(crate) fn open_verified(path: &Path) -> Result<Connection, HostCatalogError> {
+    let connection = open(path)?;
+    verify(&connection)?;
+    Ok(connection)
+}
+
+fn open(path: &Path) -> Result<Connection, HostCatalogError> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(5))?;
     connection.execute_batch(
@@ -127,10 +261,10 @@ pub(super) fn open(path: &Path) -> Result<Connection, McpHostError> {
     Ok(connection)
 }
 
-pub(super) fn initialize(connection: &mut Connection) -> Result<(), McpHostError> {
+fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1 | 2) {
+    if matches!(observed, 1..=3) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -147,24 +281,25 @@ pub(super) fn initialize(connection: &mut Connection) -> Result<(), McpHostError
             transaction.commit()?;
             verify(connection)
         }
-        found => Err(McpHostError::Invalid(format!(
-            "Host catalog schema {found} is unsupported; expected {SCHEMA_VERSION}"
+        found => Err(HostCatalogError::Invalid(format!(
+            "schema {found} is unsupported; expected {SCHEMA_VERSION}"
         ))),
     }
 }
 
-fn migrate(connection: &mut Connection) -> Result<(), McpHostError> {
+fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
     connection.pragma_update(None, "foreign_keys", false)?;
     let migration = (|| {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let version =
             transaction.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
         match version {
-            SCHEMA_VERSION => transaction.commit().map_err(McpHostError::from),
+            SCHEMA_VERSION => transaction.commit().map_err(HostCatalogError::from),
             1 => {
                 require_complete_selected_catalogs(&transaction)?;
                 transaction.execute_batch(MIGRATE_V1_TO_V2)?;
                 transaction.execute_batch(MIGRATE_V2_TO_V3)?;
+                transaction.execute_batch(MIGRATE_V3_TO_V4)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -172,24 +307,31 @@ fn migrate(connection: &mut Connection) -> Result<(), McpHostError> {
             2 => {
                 require_complete_selected_catalogs(&transaction)?;
                 transaction.execute_batch(MIGRATE_V2_TO_V3)?;
+                transaction.execute_batch(MIGRATE_V3_TO_V4)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
             }
-            found => Err(McpHostError::Invalid(format!(
-                "Host catalog schema {found} is unsupported; expected {SCHEMA_VERSION}"
+            3 => {
+                transaction.execute_batch(MIGRATE_V3_TO_V4)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                transaction.commit()?;
+                Ok(())
+            }
+            found => Err(HostCatalogError::Invalid(format!(
+                "schema {found} is unsupported; expected {SCHEMA_VERSION}"
             ))),
         }
     })();
     let foreign_keys = connection
         .pragma_update(None, "foreign_keys", true)
-        .map_err(McpHostError::from);
+        .map_err(HostCatalogError::from);
     migration?;
     foreign_keys?;
     verify(connection)
 }
 
-fn require_complete_selected_catalogs(connection: &Connection) -> Result<(), McpHostError> {
+fn require_complete_selected_catalogs(connection: &Connection) -> Result<(), HostCatalogError> {
     let missing = connection
         .query_row(
             "SELECT binding.connection_id
@@ -203,14 +345,14 @@ fn require_complete_selected_catalogs(connection: &Connection) -> Result<(), Mcp
         )
         .optional()?;
     if let Some(connection_id) = missing {
-        return Err(McpHostError::Invalid(format!(
+        return Err(HostCatalogError::Invalid(format!(
             "selected connection '{connection_id}' has no complete catalog"
         )));
     }
     Ok(())
 }
 
-pub(super) fn verify(connection: &Connection) -> Result<(), McpHostError> {
+fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
     let version =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
     let metadata = connection
@@ -221,17 +363,30 @@ pub(super) fn verify(connection: &Connection) -> Result<(), McpHostError> {
         )
         .optional()?;
     if version != SCHEMA_VERSION || metadata != Some(SCHEMA_VERSION) {
-        return Err(McpHostError::Invalid(
-            "Host catalog metadata is missing or incompatible".to_owned(),
+        return Err(HostCatalogError::Invalid(
+            "metadata is missing or incompatible".to_owned(),
         ));
     }
     let violation = connection
         .query_row("PRAGMA foreign_key_check", [], |_| Ok(()))
         .optional()?;
     if violation.is_some() {
-        return Err(McpHostError::Invalid(
-            "Host catalog contains a foreign-key violation".to_owned(),
+        return Err(HostCatalogError::Invalid(
+            "foreign-key validation failed".to_owned(),
         ));
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_database_permissions(path: &Path) -> Result<(), HostCatalogError> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_database_permissions(_path: &Path) -> Result<(), HostCatalogError> {
     Ok(())
 }

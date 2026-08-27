@@ -143,9 +143,11 @@ permission-shaped fields are reserved in this slice.
 ## Current concrete composition
 
 `LocalHost` owns the provider configuration, durable data root, MCP catalog,
-and credential resolution boundary. `host.sqlite3` keeps direct integration and
-connection identities, non-secret credential references, complete catalog
-snapshots, rejected entries, and Alpha's attached connection identities.
+skill library, and credential resolution boundary. `host.sqlite3` keeps direct
+integration and connection identities, non-secret credential references,
+complete MCP catalog snapshots, Alpha's attached connection identities,
+immutable skill revisions, source/profile bindings, rejected skill entries,
+and session activation pins.
 Registration, discovery, and profile attachment remain separate states.
 Catalog replacement and attachment are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
@@ -168,14 +170,44 @@ running. The runtime itself is unchanged: the kernel freezes the same three
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
+The Host also adds exactly two Agent Skills tools: `skill_search` and
+`skill_load`. Search rescans global `~/.agents/skills` and the canonical
+workspace's `.agents/skills` on every call, imports each accepted directory into
+`skills/<sha256>`, atomically publishes one complete source snapshot, and
+returns at most five compact matches. A source-scan failure keeps the prior
+snapshot. Invalid individual entries are stored as rejections without hiding
+valid siblings. A workspace match ranks before an equally relevant global
+match, but both different revisions retain exact references rather than being
+silently overwritten.
+
+Load verifies one `skill:<name>:<sha256>` reference against the Host-owned
+package, persists the activation, and returns its complete instructions and a
+bounded file sample. It is idempotent for the pinned revision. A session cannot
+activate a different revision under the same name. Skills never grant tools;
+the experimental `allowed-tools` field is rejected. Search and load are
+`SafeToReplay` because their writes converge on content identity and session
+uniqueness.
+
+The activation records its originating command. That command receives the full
+instructions from the tool result, while a crash retry excludes its own new
+activation and therefore reconstructs the same frozen runtime manifest. The
+next operation reattaches every active exact revision above the durable
+conversation. Prior full `skill_load` results are projected to receipts for the
+model, but remain unchanged in kernel history. This survives explicit or
+automatic compaction and Host restart. Alpha accepts at most 16 active skills
+and 100 KiB of their complete rendered instruction content; a larger activation
+fails instead of truncating or silently dropping instructions.
+
 `LocalRuntimeConfig` is the lower composition input used inside the Host. Every
 local product path selects Alpha's versioned instructions. The resolved inputs
 are:
 
 - provider and model;
 - reasoning configuration;
-- Alpha's base prompt and bounded workspace `AGENTS.md` instructions; and
-- the six workspace tools plus the three fixed extension-registry tools.
+- Alpha's base prompt, bounded workspace `AGENTS.md`, and exact active skill
+  instructions; and
+- the six workspace tools plus three fixed MCP registry tools and two fixed
+  skill registry tools.
 
 `build_local_runtime` resolves that recipe with a `LocalWorkspace`:
 
@@ -184,7 +216,7 @@ LocalRuntimeConfig + Alpha v1
   + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
-  + Host extension registry tools
+  + Host MCP and skill registry tools
             |
             v
 renoa-agent-loop::build_runtime
@@ -285,8 +317,9 @@ Local Host state has one intentionally visible layout:
 
 ```text
 <data-root>/
-  host.sqlite3                  Host MCP integrations, non-secret connection
-                                references, catalogs, and Alpha attachments
+  host.sqlite3                  Host MCP state, skill revisions/bindings,
+                                source rejections, and session activations
+  skills/<sha256>/              immutable imported Agent Skill directory
   sessions/<session-uuid>/
     session.json                durable identity and workspace/profile binding
     runtime.jsonl               acknowledged provider/model/reasoning selections
@@ -304,7 +337,7 @@ session UUID and syncs the parent directory. Initialization failure removes the
 staging directory, so a loadable session is never partially published. On Unix,
 the published session directory is owner-only because trace and history contain
 prompts, source text, and tool data.
-The global `host.sqlite3` catalog is also owner-only on Unix.
+The global `host.sqlite3` catalog and `skills/` store are owner-only on Unix.
 `runtime.jsonl` recovery truncates an incomplete crash tail before any later
 append; future valid records can never be joined onto torn JSON.
 
@@ -344,10 +377,14 @@ modification.
 
 ## Open decisions
 
-- general profile and package-library storage beyond the first MCP attachment;
-- future Host schema migrations beyond the proven v1/v2-to-v3 migrations;
+- general profile and Agent Plugin package-library storage beyond the proven
+  MCP and standalone Agent Skills paths;
+- future Host schema migrations beyond the proven v1/v2-to-v3 and v3-to-v4
+  migrations;
 - historical resolved-binding retention across explicit catalog/profile
-  changes for unfinished-operation recovery;
+changes for unfinished-operation recovery;
+- explicit skill deactivation, active-revision upgrade, source configuration,
+  and immutable-package garbage collection;
 - profile inheritance and Agent Instance overrides;
 - permission vocabulary, scopes, approvals, and secret grants;
 - capability package discovery, installation, updates, and rollback;
@@ -403,3 +440,15 @@ outside model context, unknown calls are not replayed, and schemas v1 and v2
 migrate to v3 without losing catalog state. A live registry object observes a
 newly committed attachment, and searching 1,000 tools exposes no schema. No
 kernel type or table changed.
+
+The standalone Agent Skills path is now complete. Alpha sees two additional
+constant schemas regardless of skill count. Search imports standard global and
+workspace `.agents/skills` directories on demand, preserves collisions as
+exact references, isolates invalid entries, and observes additions without a
+Host or surface restart. Load durably pins one immutable revision per name and
+reattaches its exact instructions on later operations. A real Alpha session
+loads a project skill, hot-loads a newly added skill, compacts, restarts the
+Host, and continues with both exact instruction sets. Historical tool results
+remain durable while model-facing duplicates become receipts. Schema v4 owns
+the shared records; the kernel, ACP, Waku, and RCP receive no skill-specific
+storage or protocol path.

@@ -5,11 +5,14 @@ use std::{
 };
 
 use renoa_agent::AgentEventSink;
-use renoa_kernel::{AgentId, SessionId};
+use renoa_kernel::{AgentId, CommandId, SessionId};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub(crate) mod catalog;
 mod mcp;
+#[cfg(test)]
+mod skill_tests;
 
 use crate::alpha_session::AlphaSessionStorage;
 use crate::{
@@ -21,11 +24,15 @@ use crate::{
         read_manifest,
     },
     mcp::{
-        HOST_DATABASE, McpCatalogStore, McpCredentialResolver, McpHostError,
-        alpha_registry_bindings, resolve_adapter,
+        McpCatalogStore, McpCredentialResolver, McpHostError, alpha_registry_bindings,
+        resolve_adapter,
     },
     runtime::build_composed_local_runtime,
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
+    skills::{
+        SkillError, SkillStore, alpha_skill_bindings, default_global_source, runtime_context,
+        store_path,
+    },
     trace::{TRACE_DATABASE, TraceError, TraceStore},
 };
 
@@ -44,6 +51,18 @@ pub(crate) struct HostConfig {
     pub(crate) mcp_catalog: McpCatalogStore,
     pub(crate) mcp_adapter: Option<PathBuf>,
     pub(crate) mcp_credentials: McpCredentialResolver,
+    pub(crate) skill_store: SkillStore,
+}
+
+struct HostInitialization {
+    data_directory: PathBuf,
+    bridge: PathBuf,
+    providers: Vec<ModelProvider>,
+    initial_provider: ModelProvider,
+    initial_model: String,
+    credential_store: PathBuf,
+    mcp_adapter: Option<PathBuf>,
+    global_skill_source: Option<PathBuf>,
 }
 
 /// Failure while composing, storing, or running a local Agent instance.
@@ -70,6 +89,10 @@ pub enum LocalHostError {
     Session(#[from] LocalSessionError),
     #[error(transparent)]
     Mcp(#[from] McpHostError),
+    #[error(transparent)]
+    Skill(#[from] SkillError),
+    #[error(transparent)]
+    HostCatalog(#[from] catalog::HostCatalogError),
     #[error("local Host background storage task failed: {0}")]
     Background(#[from] tokio::task::JoinError),
     #[error("local Host session state lock was poisoned")]
@@ -106,6 +129,33 @@ impl LocalHost {
         credential_store: impl Into<PathBuf>,
         mcp_adapter: Option<&Path>,
     ) -> Result<Self, LocalHostError> {
+        let mcp_adapter = mcp_adapter
+            .map(resolve_adapter)
+            .transpose()
+            .map_err(McpHostError::from)?;
+        Self::assemble(HostInitialization {
+            data_directory: data_directory.into(),
+            bridge: bridge.into(),
+            providers,
+            initial_provider,
+            initial_model: initial_model.into(),
+            credential_store: credential_store.into(),
+            mcp_adapter,
+            global_skill_source: default_global_source(),
+        })
+    }
+
+    fn assemble(initialization: HostInitialization) -> Result<Self, LocalHostError> {
+        let HostInitialization {
+            data_directory,
+            bridge,
+            providers,
+            initial_provider,
+            initial_model,
+            credential_store,
+            mcp_adapter,
+            global_skill_source,
+        } = initialization;
         if providers.is_empty() {
             return Err(LocalHostError::Configuration(
                 "at least one model provider must be enabled".to_owned(),
@@ -121,28 +171,31 @@ impl LocalHost {
                 "default {initial_provider} provider is not enabled"
             )));
         }
-        let mcp_adapter = mcp_adapter
-            .map(resolve_adapter)
-            .transpose()
-            .map_err(McpHostError::from)?;
-        let data_directory = data_directory.into();
         std::fs::create_dir_all(&data_directory)?;
         let data_directory = std::fs::canonicalize(data_directory)?;
         let sessions = data_directory.join("sessions");
         std::fs::create_dir_all(&sessions)?;
         let sessions = std::fs::canonicalize(sessions)?;
-        let mcp_catalog = McpCatalogStore::initialize(data_directory.join(HOST_DATABASE))?;
+        let host_database = data_directory.join(catalog::HOST_DATABASE);
+        catalog::initialize(&host_database)?;
+        let mcp_catalog = McpCatalogStore::open(host_database.clone())?;
+        let skill_store = SkillStore::initialize(
+            host_database,
+            store_path(&data_directory),
+            global_skill_source,
+        )?;
         Ok(Self {
             config: Arc::new(HostConfig {
                 sessions,
-                bridge: bridge.into(),
+                bridge,
                 providers,
                 initial_provider,
-                initial_model: initial_model.into(),
-                credential_store: credential_store.into(),
+                initial_model,
+                credential_store,
                 mcp_catalog,
                 mcp_adapter,
                 mcp_credentials: McpCredentialResolver::default(),
+                skill_store,
             }),
         })
     }
@@ -171,11 +224,11 @@ impl LocalHost {
             &self.config.initial_model,
             "configured",
         )?;
-        self.resolve_runtime(model, reasoning, &workspace, None)
-            .await?;
         let agent_id = AgentId::new();
         let session_uuid = Uuid::new_v4();
         let session_id = SessionId::from_uuid(session_uuid);
+        self.resolve_runtime(session_id, None, model, reasoning, &workspace, None)
+            .await?;
         let selection = RuntimeSelection {
             provider: self.config.initial_provider,
             model: self.config.initial_model.clone(),
@@ -278,7 +331,11 @@ impl LocalHost {
     pub async fn delete_alpha_session(&self, session_uuid: Uuid) -> Result<(), LocalHostError> {
         let sessions = self.config.sessions.clone();
         let session_id = SessionId::from_uuid(session_uuid);
-        tokio::task::spawn_blocking(move || delete_session_storage(&sessions, session_id)).await?
+        tokio::task::spawn_blocking(move || delete_session_storage(&sessions, session_id))
+            .await??;
+        let skills = self.config.skill_store.clone();
+        tokio::task::spawn_blocking(move || skills.remove_session(session_id)).await??;
+        Ok(())
     }
 
     async fn models(&self) -> Result<Vec<ModelChoice>, LocalHostError> {
@@ -298,28 +355,51 @@ impl LocalHost {
 
     async fn resolve_runtime(
         &self,
+        session_id: SessionId,
+        command_id: Option<CommandId>,
         model: &ModelChoice,
         reasoning: ReasoningLevel,
         workspace: &LocalWorkspace,
         events: Option<Arc<dyn AgentEventSink>>,
     ) -> Result<renoa_kernel::Runtime, LocalHostError> {
-        resolve_runtime(&self.config, model, reasoning, workspace, events).await
+        resolve_runtime(
+            &self.config,
+            session_id,
+            command_id,
+            model,
+            reasoning,
+            workspace,
+            events,
+        )
+        .await
     }
 }
 
 pub(crate) async fn resolve_runtime(
     host: &HostConfig,
+    session_id: SessionId,
+    command_id: Option<CommandId>,
     model: &ModelChoice,
     reasoning: ReasoningLevel,
     workspace: &LocalWorkspace,
     events: Option<Arc<dyn AgentEventSink>>,
 ) -> Result<renoa_kernel::Runtime, LocalHostError> {
-    let extension_tools = alpha_registry_bindings(
+    let mut extension_tools = alpha_registry_bindings(
         host.mcp_catalog.clone(),
         host.mcp_adapter.clone(),
         host.mcp_credentials.clone(),
     );
-    let config = LocalRuntimeConfig::for_alpha(
+    extension_tools.extend(alpha_skill_bindings(
+        host.skill_store.clone(),
+        workspace.root().to_path_buf(),
+        session_id,
+        command_id,
+    ));
+    let skills = host.skill_store.clone();
+    let skill_context =
+        tokio::task::spawn_blocking(move || runtime_context(&skills, session_id, command_id))
+            .await??;
+    let mut config = LocalRuntimeConfig::for_alpha(
         host.bridge.clone(),
         model.provider().as_str(),
         model.id(),
@@ -328,6 +408,9 @@ pub(crate) async fn resolve_runtime(
     )?
     .with_discovered_model(model)
     .with_reasoning(reasoning);
+    if let Some(skill_context) = skill_context {
+        config = config.with_skill_context(skill_context);
+    }
     Ok(build_composed_local_runtime(config, workspace, extension_tools, events).await?)
 }
 

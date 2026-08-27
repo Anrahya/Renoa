@@ -21,6 +21,7 @@ mod runtime;
 mod search;
 mod selection;
 mod session;
+mod skills;
 mod tool_error;
 mod tool_input;
 mod trace;
@@ -31,6 +32,7 @@ mod model_adapter_process_tests;
 
 pub use alpha::{ALPHA_PROFILE_ID, AlphaError};
 pub use alpha_session::{AlphaSession, AlphaSessionConfiguration};
+pub use host::catalog::HostCatalogError;
 pub use host::{LocalHost, LocalHostError};
 pub use mcp::{
     AlphaMcpTool, McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError,
@@ -42,4 +44,5 @@ pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
 };
 pub use session::{LocalHistoryEntry, LocalSession, LocalSessionError, LocalTurnOutcome};
+pub use skills::SkillError;
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};

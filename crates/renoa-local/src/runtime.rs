@@ -15,6 +15,7 @@ use thiserror::Error;
 
 use crate::{
     AlphaError, BridgeModel, LocalWorkspace, ModelBridgeError, ModelChoice, ReasoningLevel,
+    skills::SkillRuntimeContext,
 };
 
 const MODEL_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(32).unwrap();
@@ -33,6 +34,7 @@ pub struct LocalRuntimeConfig {
     instructions: String,
     model_spec: Option<String>,
     reasoning: Option<ReasoningLevel>,
+    skill_context: Option<SkillRuntimeContext>,
 }
 
 impl LocalRuntimeConfig {
@@ -56,6 +58,7 @@ impl LocalRuntimeConfig {
             instructions: crate::alpha::system_prompt(workspace.root())?,
             model_spec: None,
             reasoning: None,
+            skill_context: None,
         })
     }
 
@@ -69,6 +72,11 @@ impl LocalRuntimeConfig {
     #[must_use]
     pub fn with_reasoning(mut self, reasoning: ReasoningLevel) -> Self {
         self.reasoning = Some(reasoning);
+        self
+    }
+
+    pub(crate) fn with_skill_context(mut self, context: SkillRuntimeContext) -> Self {
+        self.skill_context = Some(context);
         self
     }
 }
@@ -140,7 +148,7 @@ async fn build_local_runtime_inner(
     events: Option<Arc<dyn renoa_agent::AgentEventSink>>,
 ) -> Result<Runtime, LocalRuntimeError> {
     let resolved = resolve_model(config).await?;
-    let context = context_binding(&resolved.model)?;
+    let context = context_binding(&resolved.model, resolved.skill_context.as_ref())?;
     let model_revision = format!(
         "renoa-model-provider-node/v1/{}/{}/{}/reasoning-{}",
         resolved.provider,
@@ -164,9 +172,15 @@ struct ResolvedModel {
     model_id: String,
     instructions: String,
     model: Arc<BridgeModel>,
+    skill_context: Option<SkillRuntimeContext>,
 }
 
 async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, ModelBridgeError> {
+    let mut instructions = config.instructions;
+    if let Some(context) = &config.skill_context {
+        instructions.push_str("\n\n");
+        instructions.push_str(&context.instructions);
+    }
     let model = Arc::new(
         BridgeModel::load_with_spec(
             config.bridge,
@@ -182,12 +196,16 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
     Ok(ResolvedModel {
         provider: config.provider,
         model_id: config.model,
-        instructions: config.instructions,
+        instructions,
         model,
+        skill_context: config.skill_context,
     })
 }
 
-fn context_binding(model: &Arc<BridgeModel>) -> Result<ContextBinding, LocalRuntimeError> {
+fn context_binding(
+    model: &Arc<BridgeModel>,
+    skill_context: Option<&SkillRuntimeContext>,
+) -> Result<ContextBinding, LocalRuntimeError> {
     let settings = compaction_settings(model.as_ref())?;
     let limits = CompactionLimits::new(
         settings.context,
@@ -195,24 +213,28 @@ fn context_binding(model: &Arc<BridgeModel>) -> Result<ContextBinding, LocalRunt
         settings.target,
         settings.max_summary,
     )?;
+    let skill_revision = skill_context.map_or("none", |context| context.revision.as_str());
     let revision = format!(
-        "renoa.context.compaction.v1/context-{}/reserved-{}/target-{}/summary-{}/attempts-{}",
+        "renoa.context.compaction.v1/context-{}/reserved-{}/target-{}/summary-{}/attempts-{}/skills-{}",
         settings.context,
         settings.reserved,
         settings.target,
         settings.max_summary,
-        COMPACTION_ATTEMPT_LIMIT
+        COMPACTION_ATTEMPT_LIMIT,
+        skill_revision,
     );
     let concrete_sizer = Arc::clone(model);
     let sizer: Arc<dyn ContextSizer> = concrete_sizer;
-    Ok(ContextBinding::new(
-        revision,
-        Arc::new(CompactingContextStrategy::new(
+    let strategy = match skill_context {
+        Some(context) => CompactingContextStrategy::with_projector(
             limits,
             COMPACTION_ATTEMPT_LIMIT,
             sizer,
-        )),
-    ))
+            Arc::clone(&context.projector),
+        ),
+        None => CompactingContextStrategy::new(limits, COMPACTION_ATTEMPT_LIMIT, sizer),
+    };
+    Ok(ContextBinding::new(revision, Arc::new(strategy)))
 }
 
 struct CompactionSettings {

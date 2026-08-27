@@ -105,6 +105,10 @@ Alpha's deliberate full-access v0 policy. This is an intentional widening for
 the current profile, not a future permission rule; a later permission model
 must replace it rather than silently inheriting it.
 
+Host schema v4 adds the separate Agent Skills records. It does not change MCP
+identity, attachment, catalog, reference, or execution behavior; the v1/v2-to-v3
+MCP migration remains the same proven transformation.
+
 ## Endpoint boundary
 
 A v0 endpoint must be an absolute URL. Production endpoints use `https`.
@@ -461,7 +465,7 @@ and the real process boundary:
 - pre-2026 MCP compatibility and stdio transport;
 - Renoa-owned OAuth/API-key flows, general secret storage, and configured
   headers;
-- future Host schema migrations and typed management commands;
+- future Host schema migrations beyond v4 and typed management commands;
 - automatic refresh, cache hints, and list-change subscriptions;
 - progress projection;
 - standards-complete client-side argument validation and any schema behavior

@@ -1,7 +1,5 @@
 mod load;
 mod registry;
-mod schema;
-
 use std::path::PathBuf;
 
 use super::{
@@ -10,8 +8,6 @@ use super::{
 };
 use load::load_catalog;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
-
-pub(crate) use schema::HOST_DATABASE;
 
 #[derive(Clone)]
 pub(crate) struct McpCatalogStore {
@@ -24,10 +20,14 @@ pub(crate) struct McpConnectionConfig {
 }
 
 impl McpCatalogStore {
+    #[cfg(test)]
     pub(crate) fn initialize(path: PathBuf) -> Result<Self, McpHostError> {
-        let mut connection = schema::open(&path)?;
-        restrict_database_permissions(&path)?;
-        schema::initialize(&mut connection)?;
+        crate::host::catalog::initialize(&path)?;
+        Ok(Self { path })
+    }
+
+    pub(crate) fn open(path: PathBuf) -> Result<Self, McpHostError> {
+        crate::host::catalog::open_verified(&path)?;
         Ok(Self { path })
     }
 
@@ -193,28 +193,13 @@ impl McpCatalogStore {
     }
 
     pub(super) fn connection(&self) -> Result<Connection, McpHostError> {
-        let connection = schema::open(&self.path)?;
-        schema::verify(&connection)?;
-        Ok(connection)
+        Ok(crate::host::catalog::open_verified(&self.path)?)
     }
 
     #[cfg(test)]
     pub(super) fn path(&self) -> &std::path::Path {
         &self.path
     }
-}
-
-#[cfg(unix)]
-fn restrict_database_permissions(path: &std::path::Path) -> Result<(), McpHostError> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn restrict_database_permissions(_path: &std::path::Path) -> Result<(), McpHostError> {
-    Ok(())
 }
 
 fn ensure_integration(

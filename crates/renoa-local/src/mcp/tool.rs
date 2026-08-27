@@ -424,9 +424,10 @@ fn host_error(error: McpHostError) -> ToolError {
         McpHostError::Invalid(_) => ToolError::invalid_input(message),
         McpHostError::Conflict(_) => ToolError::conflict(message),
         McpHostError::NotFound(_) => ToolError::not_found(message),
-        McpHostError::Io(_) | McpHostError::Database(_) | McpHostError::Json(_) => {
-            ToolError::unavailable(message)
-        }
+        McpHostError::Io(_)
+        | McpHostError::Database(_)
+        | McpHostError::HostCatalog(_)
+        | McpHostError::Json(_) => ToolError::unavailable(message),
         McpHostError::Adapter(error) => definite_boundary_error(&error, false),
     }
 }
