@@ -5,7 +5,6 @@ use serde::Deserialize;
 use super::{CapturedFile, SkillMetadata};
 use crate::skills::{SkillError, registry::validate_name};
 
-const MAX_SKILL_MD_BYTES: usize = 256 * 1_024;
 const MAX_LICENSE_CHARS: usize = 1_024;
 const MAX_METADATA_ENTRIES: usize = 64;
 const MAX_METADATA_KEY_CHARS: usize = 256;
@@ -34,11 +33,6 @@ pub(super) fn parse(
         .iter()
         .find(|file| file.relative == "SKILL.md")
         .ok_or_else(|| SkillError::Invalid("skill has no root SKILL.md".to_owned()))?;
-    if skill_md.bytes.len() > MAX_SKILL_MD_BYTES {
-        return Err(SkillError::Invalid(format!(
-            "SKILL.md exceeds {MAX_SKILL_MD_BYTES} bytes"
-        )));
-    }
     let content = std::str::from_utf8(&skill_md.bytes)
         .map_err(|error| SkillError::Invalid(format!("SKILL.md is not UTF-8: {error}")))?;
     let (frontmatter, body) = split_frontmatter(content)?;

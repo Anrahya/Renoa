@@ -7,10 +7,9 @@ use renoa_kernel::{CommandId, SessionId};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 
 use super::{
-    MAX_ACTIVE_SKILL_INSTRUCTION_BYTES, MAX_ACTIVE_SKILLS, SkillError,
+    SkillError,
     package::{self, CapturedSkill, OwnedSkill, SourceSnapshot},
     registry::{SkillScope, SkillSummary, validate_name},
-    render,
 };
 
 #[derive(Clone)]
@@ -174,10 +173,6 @@ impl SkillStore {
                 loaded.metadata.name
             )));
         }
-        let instruction_bytes = render::one(&loaded)?.len();
-        let stored_instruction_bytes = i64::try_from(instruction_bytes).map_err(|error| {
-            SkillError::Invalid(format!("skill instruction size is invalid: {error}"))
-        })?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let resolved =
@@ -202,19 +197,11 @@ impl SkillStore {
             .optional()?;
         let already_active = active_digest.is_some();
         if !already_active {
-            enforce_activation_limits(&transaction, &session_id, instruction_bytes)?;
             transaction.execute(
                 "INSERT INTO session_skills(
-                    session_id, activation_command_id, skill_name, skill_digest,
-                    instruction_bytes
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    session_id,
-                    command_id.to_string(),
-                    name,
-                    candidate,
-                    stored_instruction_bytes,
-                ],
+                    session_id, activation_command_id, skill_name, skill_digest
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![session_id, command_id.to_string(), name, candidate,],
             )?;
         }
         transaction.commit()?;
@@ -383,34 +370,6 @@ fn active_or_selected_digest(
         )
         .optional()
         .map_err(Into::into)
-}
-
-fn enforce_activation_limits(
-    transaction: &Transaction<'_>,
-    session_id: &str,
-    added_instruction_bytes: usize,
-) -> Result<(), SkillError> {
-    let (count, bytes) = transaction.query_row(
-        "SELECT count(*), coalesce(sum(instruction_bytes), 0)
-         FROM session_skills WHERE session_id = ?1",
-        [session_id],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-    )?;
-    let count = usize::try_from(count)
-        .map_err(|error| SkillError::Invalid(format!("active skill count is invalid: {error}")))?;
-    let bytes = usize::try_from(bytes)
-        .map_err(|error| SkillError::Invalid(format!("active skill size is invalid: {error}")))?;
-    if count >= MAX_ACTIVE_SKILLS {
-        return Err(SkillError::Conflict(format!(
-            "session already has the {MAX_ACTIVE_SKILLS}-skill activation limit"
-        )));
-    }
-    if bytes.saturating_add(added_instruction_bytes) > MAX_ACTIVE_SKILL_INSTRUCTION_BYTES {
-        return Err(SkillError::Conflict(format!(
-            "active skill instructions would exceed {MAX_ACTIVE_SKILL_INSTRUCTION_BYTES} bytes"
-        )));
-    }
-    Ok(())
 }
 
 fn bounded_reason(reason: &str) -> String {

@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use sha2::{Digest as _, Sha256};
 
-use super::{MAX_ACTIVE_SKILL_INSTRUCTION_BYTES, MAX_ACTIVE_SKILLS};
 use super::{
     SkillError,
     package::OwnedSkill,
@@ -62,32 +61,18 @@ pub(crate) fn active(skills: &[OwnedSkill]) -> Result<Option<ActiveSkillContext>
     if skills.is_empty() {
         return Ok(None);
     }
-    if skills.len() > MAX_ACTIVE_SKILLS {
-        return Err(SkillError::Conflict(format!(
-            "session exceeds the {MAX_ACTIVE_SKILLS}-skill activation limit"
-        )));
-    }
     let mut instructions = String::from(
         "<active_skills>\nThese exact skill revisions are active for this session. Follow their instructions when relevant.\n\n",
     );
     let mut references = HashSet::with_capacity(skills.len());
     let mut hasher = Sha256::new();
     hasher.update(b"renoa.active-skills.v1\0");
-    let mut instruction_bytes = 0_usize;
     for skill in skills {
         let reference = reference(skill)?;
         hasher.update((reference.len() as u64).to_be_bytes());
         hasher.update(reference.as_bytes());
         references.insert(reference);
         let rendered = one(skill)?;
-        instruction_bytes = instruction_bytes
-            .checked_add(rendered.len())
-            .ok_or_else(|| SkillError::Conflict("active skill size overflowed".to_owned()))?;
-        if instruction_bytes > MAX_ACTIVE_SKILL_INSTRUCTION_BYTES {
-            return Err(SkillError::Conflict(format!(
-                "active skill instructions exceed {MAX_ACTIVE_SKILL_INSTRUCTION_BYTES} bytes"
-            )));
-        }
         instructions.push_str(&rendered);
         instructions.push_str("\n\n");
     }

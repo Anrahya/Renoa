@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
 use thiserror::Error;
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -129,14 +129,13 @@ const SCHEMA: &str = "
         activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
         skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
         skill_digest TEXT NOT NULL,
-        instruction_bytes INTEGER NOT NULL CHECK (instruction_bytes > 0),
         FOREIGN KEY (skill_digest, skill_name)
             REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
         UNIQUE (session_id, skill_name),
         UNIQUE (session_id, skill_digest)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 4);
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 5);
 ";
 
 const MIGRATE_V1_TO_V2: &str = "
@@ -239,6 +238,31 @@ const MIGRATE_V3_TO_V4: &str = "
     UPDATE host_metadata SET schema_version = 4 WHERE singleton = 1;
 ";
 
+const MIGRATE_V4_TO_V5: &str = "
+    CREATE TABLE session_skills_v5 (
+        activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
+        activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
+        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+        skill_digest TEXT NOT NULL,
+        FOREIGN KEY (skill_digest, skill_name)
+            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+        UNIQUE (session_id, skill_name),
+        UNIQUE (session_id, skill_digest)
+    ) STRICT;
+
+    INSERT INTO session_skills_v5(
+        activation_order, session_id, activation_command_id, skill_name, skill_digest
+    )
+    SELECT activation_order, session_id, activation_command_id, skill_name, skill_digest
+    FROM session_skills
+    ORDER BY activation_order;
+
+    DROP TABLE session_skills;
+    ALTER TABLE session_skills_v5 RENAME TO session_skills;
+    UPDATE host_metadata SET schema_version = 5 WHERE singleton = 1;
+";
+
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
     let mut connection = open(path)?;
     restrict_database_permissions(path)?;
@@ -264,7 +288,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=3) {
+    if matches!(observed, 1..=4) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -300,6 +324,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V1_TO_V2)?;
                 transaction.execute_batch(MIGRATE_V2_TO_V3)?;
                 transaction.execute_batch(MIGRATE_V3_TO_V4)?;
+                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -308,12 +333,20 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 require_complete_selected_catalogs(&transaction)?;
                 transaction.execute_batch(MIGRATE_V2_TO_V3)?;
                 transaction.execute_batch(MIGRATE_V3_TO_V4)?;
+                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
             }
             3 => {
                 transaction.execute_batch(MIGRATE_V3_TO_V4)?;
+                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                transaction.commit()?;
+                Ok(())
+            }
+            4 => {
+                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())

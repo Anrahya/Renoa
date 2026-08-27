@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::{Arc, Barrier},
     thread,
 };
@@ -19,7 +20,7 @@ fn a_newer_host_catalog_schema_is_rejected() {
     drop(store);
     Connection::open(&path)
         .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 5_u32)
+        .pragma_update(None, "user_version", 6_u32)
         .expect("advance schema version");
 
     assert!(matches!(
@@ -155,7 +156,7 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
 }
 
 #[test]
-fn version_three_catalog_adds_skill_state_without_changing_mcp_state() {
+fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
     let (directory, store) = store();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
@@ -183,7 +184,7 @@ fn version_three_catalog_adds_skill_state_without_changing_mcp_state() {
         .expect("downgrade fixture to schema v3");
 
     let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v3 to v4");
+        .expect("migrate schema v3 to current");
     assert_eq!(
         migrated
             .alpha_connection_ids(PROFILE)
@@ -200,7 +201,117 @@ fn version_three_catalog_adds_skill_state_without_changing_mcp_state() {
     Connection::open(migrated.path())
         .expect("open migrated catalog")
         .prepare("SELECT activation_command_id FROM session_skills")
-        .expect("schema v4 session skills include command ownership");
+        .expect("current session skills include command ownership");
+}
+
+#[test]
+fn version_four_catalog_removes_instruction_policy_without_losing_activations() {
+    let (_directory, store) = store();
+    let path = store.path().to_owned();
+    drop(store);
+
+    downgrade_to_v4_with_large_skill(&path);
+
+    let migrated = McpCatalogStore::initialize(path).expect("migrate schema v4 to current");
+    let connection = Connection::open(migrated.path()).expect("open migrated catalog");
+    let columns = connection
+        .prepare("PRAGMA table_info(session_skills)")
+        .expect("prepare session skill columns")
+        .query_map([], |row| row.get::<_, String>(1))
+        .expect("query session skill columns")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read session skill columns");
+    assert!(!columns.iter().any(|column| column == "instruction_bytes"));
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT activation_order, session_id, activation_command_id, skill_name,
+                        skill_digest
+                 FROM session_skills",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .expect("read migrated activation"),
+        (
+            7,
+            "session".to_owned(),
+            "command".to_owned(),
+            "large".to_owned(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        )
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO skill_revisions(
+                skill_digest, name, description, license, compatibility
+             ) VALUES (
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                'next', 'Next skill.', NULL, NULL
+             );
+             INSERT INTO session_skills(
+                session_id, activation_command_id, skill_name, skill_digest
+             ) VALUES (
+                'session', 'next-command', 'next',
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+             );",
+        )
+        .expect("insert activation after migration");
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT activation_order FROM session_skills WHERE skill_name = 'next'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("read next activation order"),
+        8
+    );
+}
+
+fn downgrade_to_v4_with_large_skill(path: &Path) {
+    Connection::open(path)
+        .expect("open migration fixture")
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DROP TABLE session_skills;
+             CREATE TABLE session_skills (
+                activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL CHECK (length(session_id) > 0),
+                activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
+                skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+                skill_digest TEXT NOT NULL,
+                instruction_bytes INTEGER NOT NULL CHECK (instruction_bytes > 0),
+                FOREIGN KEY (skill_digest, skill_name)
+                    REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+                UNIQUE (session_id, skill_name),
+                UNIQUE (session_id, skill_digest)
+             ) STRICT;
+             INSERT INTO skill_revisions(
+                skill_digest, name, description, license, compatibility
+             ) VALUES (
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'large', 'Large skill.', NULL, NULL
+             );
+             INSERT INTO session_skills(
+                activation_order, session_id, activation_command_id, skill_name,
+                skill_digest, instruction_bytes
+             ) VALUES (
+                7, 'session', 'command', 'large',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                102401
+             );
+             UPDATE host_metadata SET schema_version = 4 WHERE singleton = 1;
+             PRAGMA user_version = 4;",
+        )
+        .expect("downgrade fixture to schema v4");
 }
 
 #[test]

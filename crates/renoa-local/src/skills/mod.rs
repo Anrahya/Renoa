@@ -19,9 +19,6 @@ pub use error::SkillError;
 pub(crate) use store::SkillStore;
 pub(crate) use tool::alpha_skill_bindings;
 
-const MAX_ACTIVE_SKILLS: usize = 16;
-const MAX_ACTIVE_SKILL_INSTRUCTION_BYTES: usize = 100 * 1_024;
-
 pub(crate) struct SkillRuntimeContext {
     pub(crate) instructions: String,
     pub(crate) projector: Arc<dyn ContextProjector>,

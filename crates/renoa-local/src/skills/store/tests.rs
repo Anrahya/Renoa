@@ -270,41 +270,42 @@ fn invalid_entries_are_reported_without_hiding_valid_skills() {
 }
 
 #[test]
-fn oversized_active_instructions_fail_instead_of_being_truncated() {
+fn large_active_instructions_are_preserved_without_a_host_policy_limit() {
     let fixture = Fixture::new();
     let source = fixture.workspace.join(".agents/skills");
-    let body = "x".repeat(crate::skills::MAX_ACTIVE_SKILL_INSTRUCTION_BYTES);
-    write_skill(&source, "oversized", "Oversized instructions.", &body);
+    let body = "x".repeat(300 * 1_024);
+    write_skill(&source, "large", "Large instructions.", &body);
     fixture
         .store
         .sync(PROFILE, &fixture.workspace)
-        .expect("publish oversized but valid package");
+        .expect("publish large valid package");
     let session_id = SessionId::new();
 
-    assert!(matches!(
-        fixture.store.activate(
+    fixture
+        .store
+        .activate(
             PROFILE,
             &fixture.workspace,
             session_id,
             CommandId::new(),
-            "oversized",
-        ),
-        Err(SkillError::Conflict(_))
-    ));
-    assert!(
-        fixture
-            .store
-            .active(session_id, None)
-            .expect("load rejected activation state")
-            .is_empty()
-    );
+            "large",
+        )
+        .expect("activate instructions larger than the former Host limit");
+    let active = fixture
+        .store
+        .active(session_id, None)
+        .expect("load large active skill");
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].body, format!("{body}\n"));
 }
 
 #[test]
-fn active_skill_count_fails_at_the_seventeenth_revision() {
+fn more_than_sixteen_skills_can_be_active() {
+    const SKILL_COUNT: usize = 17;
+
     let fixture = Fixture::new();
     let source = fixture.workspace.join(".agents/skills");
-    for index in 0..=crate::skills::MAX_ACTIVE_SKILLS {
+    for index in 0..SKILL_COUNT {
         write_skill(
             &source,
             &format!("skill-{index}"),
@@ -324,7 +325,7 @@ fn active_skill_count_fails_at_the_seventeenth_revision() {
         .map(|skill| skill.name)
         .collect::<Vec<_>>();
     let session_id = SessionId::new();
-    for name in &names[..crate::skills::MAX_ACTIVE_SKILLS] {
+    for name in &names {
         fixture
             .store
             .activate(
@@ -334,26 +335,16 @@ fn active_skill_count_fails_at_the_seventeenth_revision() {
                 CommandId::new(),
                 name,
             )
-            .expect("activate skill within count limit");
+            .expect("activate skill without an arbitrary count policy");
     }
 
-    assert!(matches!(
-        fixture.store.activate(
-            PROFILE,
-            &fixture.workspace,
-            session_id,
-            CommandId::new(),
-            &names[crate::skills::MAX_ACTIVE_SKILLS],
-        ),
-        Err(SkillError::Conflict(_))
-    ));
     assert_eq!(
         fixture
             .store
             .active(session_id, None)
-            .expect("load bounded active skills")
+            .expect("load all active skills")
             .len(),
-        crate::skills::MAX_ACTIVE_SKILLS
+        SKILL_COUNT
     );
 }
 

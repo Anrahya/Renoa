@@ -195,9 +195,11 @@ activation and therefore reconstructs the same frozen runtime manifest. The
 next operation reattaches every active exact revision above the durable
 conversation. Prior full `skill_load` results are projected to receipts for the
 model, but remain unchanged in kernel history. This survives explicit or
-automatic compaction and Host restart. Alpha accepts at most 16 active skills
-and 100 KiB of their complete rendered instruction content; a larger activation
-fails instead of truncating or silently dropping instructions.
+automatic compaction and Host restart. The Host does not impose a policy limit
+on the number or total instruction size of skills the user chooses to activate.
+Their real cost is visible in the selected model's context usage, and an actual
+provider context limit is reported as a provider failure rather than disguised
+as a Renoa skill rule.
 
 `LocalRuntimeConfig` is the lower composition input used inside the Host. Every
 local product path selects Alpha's versioned instructions. The resolved inputs
