@@ -234,7 +234,12 @@ fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() 
         .alpha_tool_summaries(PROFILE)
         .expect("load searchable tools");
 
-    assert_eq!(reopened.alpha_connection_ids(PROFILE).unwrap(), ["primary"]);
+    assert_eq!(
+        reopened
+            .alpha_connection_ids(PROFILE)
+            .expect("load enabled Alpha connections"),
+        ["primary"]
+    );
     assert_eq!(tools.len(), 2);
     assert_eq!(tools[0].integration_id, "example");
     assert_eq!(tools[0].connection_id, "primary");
@@ -394,15 +399,23 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
             .auth,
         McpConnectionAuth::None
     );
-    assert_eq!(migrated.alpha_connection_ids(PROFILE).unwrap(), ["primary"]);
     assert_eq!(
-        migrated.alpha_tool_summaries(PROFILE).unwrap()[0].name,
+        migrated
+            .alpha_connection_ids(PROFILE)
+            .expect("load migrated Alpha connections"),
+        ["primary"]
+    );
+    assert_eq!(
+        migrated
+            .alpha_tool_summaries(PROFILE)
+            .expect("load migrated Alpha tools")[0]
+            .name,
         "echo"
     );
 }
 
 #[test]
-fn version_two_tool_selections_migrate_to_one_enabled_connection() {
+fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
     let (directory, store) = store();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
@@ -425,9 +438,7 @@ fn version_two_tool_selections_migrate_to_one_enabled_connection() {
                 PRIMARY KEY (profile_id, connection_id, tool_name)
              ) STRICT;
              INSERT INTO profile_mcp_tools(profile_id, connection_id, tool_name)
-             VALUES
-                ('renoa.coding.alpha.v1', 'primary', 'echo'),
-                ('renoa.coding.alpha.v1', 'primary', 'unused');
+             VALUES ('renoa.coding.alpha.v1', 'primary', 'echo');
              DROP TABLE profile_mcp_connections;
              UPDATE host_metadata SET schema_version = 2 WHERE singleton = 1;
              PRAGMA user_version = 2;",
@@ -436,8 +447,21 @@ fn version_two_tool_selections_migrate_to_one_enabled_connection() {
 
     let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("migrate schema v2 to v3");
-    assert_eq!(migrated.alpha_connection_ids(PROFILE).unwrap(), ["primary"]);
-    assert_eq!(migrated.alpha_tool_summaries(PROFILE).unwrap().len(), 2);
+    assert_eq!(
+        migrated
+            .alpha_connection_ids(PROFILE)
+            .expect("load migrated Alpha connections"),
+        ["primary"]
+    );
+    assert_eq!(
+        migrated
+            .alpha_tool_summaries(PROFILE)
+            .expect("load the full attached catalog")
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        ["echo", "unused"]
+    );
 }
 
 #[test]

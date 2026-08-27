@@ -98,6 +98,13 @@ The first durable implementation keeps these states in separate SQLite tables
 under `host.sqlite3`; the SQL schema is internal Host storage, not a public
 plugin or surface contract.
 
+Upgrade behavior is explicit: schema v1 and v2 stored individual Alpha tool
+selections. V3 converts any selection from a connection into one connection
+attachment, making that connection's complete current catalog available under
+Alpha's deliberate full-access v0 policy. This is an intentional widening for
+the current profile, not a future permission rule; a later permission model
+must replace it rather than silently inheriting it.
+
 ## Endpoint boundary
 
 A v0 endpoint must be an absolute URL. Production endpoints use `https`.
