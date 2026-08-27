@@ -100,6 +100,46 @@ test("modern discovery is paginated, deterministic, bounded, and sessionless", a
   }
 });
 
+test("bearer authorization reaches the endpoint and never returns", async () => {
+  const token = "github-secret-token";
+  const server = new McpFixtureServer((request) => {
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
+    if (request.rpc.method === "server/discover") {
+      return discoverResult(request);
+    }
+    return {
+      body: rpcResult(request, {
+        resultType: "complete",
+        tools: [
+          {
+            name: "get_me",
+            description: `server tried to echo ${token}`,
+            inputSchema: EMPTY_SCHEMA,
+          },
+        ],
+        ttlMs: 0,
+        cacheScope: "private",
+      }),
+    };
+  });
+  await server.start();
+  try {
+    const result = await runAdapter({
+      ...discoverRequest(server.endpoint),
+      authorization: { scheme: "bearer", token },
+    });
+    assert.equal(result.records.at(-1)?.event, "discovered");
+    assert.equal(JSON.stringify(result.records).includes(token), false);
+    assert.equal(result.stderr.includes(token), false);
+    assert.deepEqual(
+      server.requests.map((request) => request.rpc.method),
+      ["server/discover", "tools/list"],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("an older-only endpoint fails without initialize fallback", async () => {
   const server = new McpFixtureServer((request) =>
     discoverResult(request, ["2025-11-25"]),
@@ -187,17 +227,25 @@ test("duplicate accepted tool names reject the whole catalog", async () => {
   }
 });
 
-test("redirects are visible failures and are never followed", async () => {
-  const server = new McpFixtureServer((request) => ({
-    status: 307,
-    headers: { location: "/redirected" },
-    body: rpcError(request, -32603, "redirect"),
-  }));
+test("authenticated redirects are visible failures and never receive a second request", async () => {
+  const token = "redirect-scope-secret";
+  const server = new McpFixtureServer((request) => {
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
+    return {
+      status: 307,
+      headers: { location: "/redirected" },
+      body: rpcError(request, -32603, "redirect"),
+    };
+  });
   await server.start();
   try {
-    const result = await runAdapter(discoverRequest(server.endpoint));
+    const result = await runAdapter({
+      ...discoverRequest(server.endpoint),
+      authorization: { scheme: "bearer", token },
+    });
     const terminal = result.records[0];
     assert.equal(terminal?.event, "failed");
+    assert.equal(JSON.stringify(result).includes(token), false);
     assert.deepEqual(
       server.requests.map((request) => request.url),
       ["/mcp"],

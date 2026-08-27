@@ -8,10 +8,13 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{AdapterCatalog, McpAdapterError, McpCatalogSnapshot, McpHostError, McpRemoteFailure};
+use super::{
+    AdapterCatalog, McpAdapterError, McpAuthorization, McpCatalogSnapshot, McpHostError,
+    McpRemoteFailure,
+};
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
-const WIRE_VERSION: u32 = 1;
+const WIRE_VERSION: u32 = 2;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
@@ -20,14 +23,18 @@ pub(crate) async fn discover(
     adapter: &Path,
     connection_id: &str,
     endpoint: &str,
+    authorization: Option<&McpAuthorization>,
 ) -> Result<McpCatalogSnapshot, McpHostError> {
-    let request = serde_json::to_vec(&DiscoverRequest {
+    let mut request = serde_json::to_vec(&DiscoverRequest {
         wire_version: WIRE_VERSION,
         action: "discover",
         endpoint,
+        authorization: authorization.map(WireAuthorization::from),
     })
     .map_err(McpAdapterError::Encode)?;
-    let catalog = run_adapter(adapter, &request).await?;
+    let result = run_adapter(adapter, &request, authorization).await;
+    request.fill(0);
+    let catalog = result?;
     McpCatalogSnapshot::from_adapter(connection_id, catalog)
 }
 
@@ -36,9 +43,31 @@ struct DiscoverRequest<'a> {
     wire_version: u32,
     action: &'static str,
     endpoint: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    authorization: Option<WireAuthorization<'a>>,
 }
 
-async fn run_adapter(adapter: &Path, request: &[u8]) -> Result<AdapterCatalog, McpAdapterError> {
+#[derive(Serialize)]
+struct WireAuthorization<'a> {
+    scheme: &'static str,
+    token: &'a str,
+}
+
+impl<'a> From<&'a McpAuthorization> for WireAuthorization<'a> {
+    fn from(authorization: &'a McpAuthorization) -> Self {
+        Self {
+            scheme: "bearer",
+            token: authorization.bearer(),
+        }
+    }
+}
+
+async fn run_adapter(
+    adapter: &Path,
+    request: &[u8],
+    authorization: Option<&McpAuthorization>,
+) -> Result<AdapterCatalog, McpAdapterError> {
+    let deadline = tokio::time::Instant::now() + PROCESS_DEADLINE;
     let mut command = Command::new("node");
     command
         .arg("--dns-result-order=ipv4first")
@@ -48,7 +77,16 @@ async fn run_adapter(adapter: &Path, request: &[u8]) -> Result<AdapterCatalog, M
         .stderr(std::process::Stdio::piped());
     configure_process_group(&mut command);
     let mut child = command.spawn().map_err(McpAdapterError::Start)?;
-    let pid = child_pid_raw(&child).map_err(|error| McpAdapterError::Cleanup(error.to_string()))?;
+    let pid = match child_pid_raw(&child) {
+        Ok(pid) => pid,
+        Err(error) => {
+            child
+                .kill()
+                .await
+                .map_err(|cleanup| McpAdapterError::Cleanup(cleanup.to_string()))?;
+            return Err(McpAdapterError::Cleanup(error.to_string()));
+        }
+    };
     let pipes = (child.stdin.take(), child.stdout.take(), child.stderr.take());
     let (Some(mut stdin), Some(stdout), Some(stderr)) = pipes else {
         stop_process_group_raw(&mut child, pid)
@@ -60,21 +98,23 @@ async fn run_adapter(adapter: &Path, request: &[u8]) -> Result<AdapterCatalog, M
     let stdout = drain_head(stdout, MAX_STDOUT_BYTES, Some(terminal_sender));
     let stderr = drain_head(stderr, MAX_STDERR_BYTES, None);
 
-    if let Err(source) = stdin.write_all(request).await {
-        stop_and_capture(&mut child, pid, stdout, stderr).await?;
-        return Err(McpAdapterError::Write(source));
-    }
-    if let Err(source) = stdin.shutdown().await {
-        stop_and_capture(&mut child, pid, stdout, stderr).await?;
-        return Err(McpAdapterError::Write(source));
-    }
+    let write_result = write_before_deadline(&mut stdin, request, deadline).await;
     drop(stdin);
+    match write_result {
+        Some(Ok(())) => {}
+        Some(Err(source)) => {
+            stop_and_capture(&mut child, pid, stdout, stderr).await?;
+            return Err(McpAdapterError::Write(source));
+        }
+        None => {
+            stop_and_capture(&mut child, pid, stdout, stderr).await?;
+            return Err(McpAdapterError::Timeout);
+        }
+    }
 
     let signal = {
         let wait = child.wait();
         tokio::pin!(wait);
-        let deadline = tokio::time::sleep(PROCESS_DEADLINE);
-        tokio::pin!(deadline);
         tokio::select! {
             status = &mut wait => ProcessSignal::Exited(status),
             terminal = &mut terminal_receiver => if terminal.is_ok() {
@@ -82,10 +122,10 @@ async fn run_adapter(adapter: &Path, request: &[u8]) -> Result<AdapterCatalog, M
             } else {
                 tokio::select! {
                     status = &mut wait => ProcessSignal::Exited(status),
-                    () = &mut deadline => ProcessSignal::Deadline,
+                    () = tokio::time::sleep_until(deadline) => ProcessSignal::Deadline,
                 }
             },
-            () = &mut deadline => ProcessSignal::Deadline,
+            () = tokio::time::sleep_until(deadline) => ProcessSignal::Deadline,
         }
     };
     match signal {
@@ -95,36 +135,74 @@ async fn run_adapter(adapter: &Path, request: &[u8]) -> Result<AdapterCatalog, M
         }
         ProcessSignal::Exited(Ok(status)) => {
             let (stdout, stderr) = stop_and_capture(&mut child, pid, stdout, stderr).await?;
-            parse_captured(&stdout, &stderr, &format!("{status}"))
+            parse_captured(stdout, stderr, &format!("{status}"), authorization)
         }
         ProcessSignal::Terminal => {
             let (stdout, stderr) = stop_and_capture(&mut child, pid, stdout, stderr).await?;
-            parse_captured(&stdout, &stderr, "stopped after terminal record")
+            parse_captured(
+                stdout,
+                stderr,
+                "stopped after terminal record",
+                authorization,
+            )
         }
         ProcessSignal::Deadline => {
-            let (stdout, stderr) = stop_and_capture(&mut child, pid, stdout, stderr).await?;
+            let (mut stdout, mut stderr) =
+                stop_and_capture(&mut child, pid, stdout, stderr).await?;
             if stdout.bytes.contains(&b'\n') {
-                parse_captured(&stdout, &stderr, "stopped at Host deadline")
+                parse_captured(stdout, stderr, "stopped at Host deadline", authorization)
             } else {
+                stdout.bytes.fill(0);
+                stderr.bytes.fill(0);
                 Err(McpAdapterError::Timeout)
             }
         }
     }
 }
 
+async fn write_before_deadline(
+    stdin: &mut tokio::process::ChildStdin,
+    request: &[u8],
+    deadline: tokio::time::Instant,
+) -> Option<io::Result<()>> {
+    let write = async {
+        stdin.write_all(request).await?;
+        stdin.shutdown().await
+    };
+    tokio::pin!(write);
+    tokio::select! {
+        result = &mut write => Some(result),
+        () = tokio::time::sleep_until(deadline) => None,
+    }
+}
+
 fn parse_captured(
-    stdout: &CapturedHead,
-    stderr: &CapturedHead,
+    mut stdout: CapturedHead,
+    mut stderr: CapturedHead,
     status: &str,
+    authorization: Option<&McpAuthorization>,
 ) -> Result<AdapterCatalog, McpAdapterError> {
     if stdout.truncated {
+        stdout.bytes.fill(0);
+        stderr.bytes.fill(0);
         return Err(McpAdapterError::OutputLimit);
     }
     let terminal = parse_discovery_record(&stdout.bytes);
-    match terminal {
-        Ok(record) => record,
+    let result = match terminal {
+        Ok(Ok(mut catalog)) => {
+            catalog.redact_authorization(authorization);
+            Ok(catalog)
+        }
+        Ok(Err(McpAdapterError::Remote(mut failure))) => {
+            failure.redact_authorization(authorization);
+            Err(McpAdapterError::Remote(failure))
+        }
+        Ok(Err(error)) => Err(error),
         Err(protocol) => {
-            let diagnostic = String::from_utf8_lossy(&stderr.bytes);
+            let mut diagnostic = String::from_utf8_lossy(&stderr.bytes).into_owned();
+            if let Some(authorization) = authorization {
+                authorization.redact_text(&mut diagnostic);
+            }
             let suffix = if diagnostic.trim().is_empty() {
                 String::new()
             } else {
@@ -134,7 +212,10 @@ fn parse_captured(
                 "{protocol}{suffix}; process status {status}"
             )))
         }
-    }
+    };
+    stdout.bytes.fill(0);
+    stderr.bytes.fill(0);
+    result
 }
 
 async fn stop_and_capture(
@@ -183,8 +264,14 @@ fn parse_discovery_record(
             .map(|record| Ok(record.catalog))
             .map_err(|error| format!("decode discovered record: {error}")),
         "failed" => serde_json::from_slice::<FailedRecord>(record)
-            .map(|record| Err(McpAdapterError::Remote(record.failure)))
-            .map_err(|error| format!("decode failed record: {error}")),
+            .map_err(|error| format!("decode failed record: {error}"))
+            .and_then(|record| {
+                record
+                    .failure
+                    .validate_wire()
+                    .map_err(|error| format!("invalid failed record: {error}"))?;
+                Ok(Err(McpAdapterError::Remote(record.failure)))
+            }),
         event => Err(format!(
             "adapter returned unexpected '{event}' record for discovery"
         )),
@@ -232,6 +319,12 @@ enum FailedEvent {
 struct CapturedHead {
     bytes: Vec<u8>,
     truncated: bool,
+}
+
+impl Drop for CapturedHead {
+    fn drop(&mut self) {
+        self.bytes.fill(0);
+    }
 }
 
 fn drain_head(
@@ -284,7 +377,7 @@ mod tests {
     #[test]
     fn typed_remote_failure_survives_the_process_boundary() {
         let parsed = parse_discovery_record(
-            br#"{"wire_version":1,"event":"failed","failure":{"kind":"incompatible_protocol","certainty":"definite","message":"wrong revision","partial_changes_possible":false,"diagnostic":{"code":"protocol_version_mismatch","http_status":409,"detail":"server omitted the pinned revision"}}}
+            br#"{"wire_version":2,"event":"failed","failure":{"kind":"incompatible_protocol","certainty":"definite","message":"wrong revision","partial_changes_possible":false,"diagnostic":{"code":"protocol_version_mismatch","http_status":409,"detail":"server omitted the pinned revision"}}}
 "#,
         )
         .expect("valid terminal record");
@@ -300,19 +393,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_failure_class_is_not_accepted_as_a_wire_v1_record() {
+    fn unknown_failure_class_is_not_accepted_as_a_current_wire_record() {
         let error = parse_discovery_record(
-            br#"{"wire_version":1,"event":"failed","failure":{"kind":"maybe","certainty":"definite","message":"ambiguous","partial_changes_possible":false,"diagnostic":{"detail":"invalid class"}}}
+            br#"{"wire_version":2,"event":"failed","failure":{"kind":"maybe","certainty":"definite","message":"ambiguous","partial_changes_possible":false,"diagnostic":{"detail":"invalid class"}}}
 "#,
         )
-        .expect_err("wire v1 failure classes are closed");
+        .expect_err("current wire failure classes are closed");
 
         assert!(error.contains("decode failed record"));
     }
 
     #[test]
     fn discovery_accepts_exactly_one_terminal_record() {
-        let record = br#"{"wire_version":1,"event":"failed","failure":{"kind":"protocol","certainty":"definite","message":"bad","partial_changes_possible":false,"diagnostic":{"detail":"bad"}}}
+        let record = br#"{"wire_version":2,"event":"failed","failure":{"kind":"protocol","certainty":"definite","message":"bad","partial_changes_possible":false,"diagnostic":{"detail":"bad"}}}
 "#;
         let mut duplicated = record.to_vec();
         duplicated.extend_from_slice(record);
@@ -331,12 +424,12 @@ mod tests {
             &adapter,
             r#"
 const terminal = {
-  wire_version: 1,
+  wire_version: 2,
   event: "discovered",
   catalog: {
     endpoint: "https://example.com/mcp",
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.1.0",
+    adapter_revision: "mcp-client-node-v0.2.0",
     tools: [],
     rejected_tools: []
   }
@@ -349,7 +442,7 @@ await new Promise(() => {});
 
         let snapshot = tokio::time::timeout(
             Duration::from_secs(3),
-            discover(&adapter, "primary", "https://example.com/mcp"),
+            discover(&adapter, "primary", "https://example.com/mcp", None),
         )
         .await
         .expect("terminal should stop hung cleanup promptly")
@@ -367,12 +460,12 @@ await new Promise(() => {});
             &adapter,
             r#"
 const terminal = {
-  wire_version: 1,
+  wire_version: 2,
   event: "discovered",
   catalog: {
     endpoint: "https://example.com/mcp",
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.1.0",
+    adapter_revision: "mcp-client-node-v0.2.0",
     tools: [],
     rejected_tools: []
   }
@@ -386,7 +479,7 @@ await new Promise(() => {});
 
         let error = tokio::time::timeout(
             Duration::from_secs(3),
-            discover(&adapter, "primary", "https://example.com/mcp"),
+            discover(&adapter, "primary", "https://example.com/mcp", None),
         )
         .await
         .expect("duplicate terminal should stop the process promptly")

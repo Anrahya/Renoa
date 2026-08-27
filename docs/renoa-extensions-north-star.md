@@ -376,14 +376,15 @@ Renoa data directory
                                discovered components, and profile bindings
   sessions/<session>/          existing kernel and trace truth
 
-credential store
-  secret material keyed by opaque Host references
+local credential sources
+  secret material owned by a platform store or authenticated CLI
 ```
 
-This north star does not lock the broader Host database or secret-store design.
-The direct MCP v0 slice now consumes `host.sqlite3` for its integration,
-connection, catalog, and Alpha-selection records; later package, permission,
-credential, and migration shapes remain open.
+This north star does not lock a general secret-store design. The direct MCP v0
+slice consumes `host.sqlite3` for integration, connection, non-secret `gh`
+account references, catalogs, and Alpha selections. Schema v1-to-v2 migration
+is proven; later package, permission, secret-source, and migration shapes remain
+open.
 
 `third_party` means that the service is external to Renoa. It does not assert
 that the named company authored, reviewed, or endorsed the package. Provenance
@@ -416,6 +417,7 @@ slice.
 | [Agent Skills](https://github.com/agentskills/agentskills/tree/69ef37e9424c0a7ea9dd2293b559e43ec8176379) | `69ef37e9424c0a7ea9dd2293b559e43ec8176379` | Code Apache-2.0; documentation CC-BY-4.0 | Portable `SKILL.md` structure and progressive-disclosure model |
 | [MCP 2026-07-28](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267) | tag commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` | Repository records an Apache-2.0 transition with remaining MIT material and CC-BY-4.0 documentation | Current remote tool protocol semantics |
 | [MCP TypeScript client 2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac) | tag commit `cc4b41617ce3601b1290d67216ea0b194a3cd9ac` | Published package declares MIT; source repository records the broader MCP license transition | Maintained implementation behind Renoa's narrow process adapter |
+| [GitHub MCP server](https://github.com/github/github-mcp-server/tree/a00dc319edcb5f8a10f118b1dad649c94928aac4) | `a00dc319edcb5f8a10f118b1dad649c94928aac4` | MIT | First real read-only remote connection; no upstream server source copied |
 | [Cursor plugins](https://github.com/cursor/plugins/tree/bdf7aa355337897f167153e05069aca505dae17c) | `bdf7aa355337897f167153e05069aca505dae17c` | MIT at reviewed revision | One-directory-per-package marketplace organization; Cursor-specific manifests are not Renoa's portable contract |
 | [Executor](https://github.com/UsefulSoftwareCo/executor/tree/7c12aeea390225291ce4c97865b392237ee7934d) | `7c12aeea390225291ce4c97865b392237ee7934d` | MIT | Evidence for separating integrations, authenticated connections, discovered tools, and just-in-time secret resolution |
 
@@ -458,7 +460,7 @@ The extension path is streamlined when these statements are true:
 Each slice must leave the repository coherent and pass its proof gate before
 the next begins.
 
-Slices 1 through 3 are complete. Slice 4 is next.
+Slices 1 through 5 are complete. Slice 6 is next.
 
 ### 1. Integration contract
 
@@ -502,27 +504,29 @@ frozen, restart does not duplicate a settled call, a possibly dispatched call
 is never replayed, schema drift affects only a future operation, and useful
 tool errors return to the model.
 
-### 5. Agent Plugins local loader
+### 5. Authenticated GitHub connection
+
+Add one real credential-backed connection without building a general secret
+store. The Host stores only an exact `github.com`/account reference, resolves
+the bearer token just in time through authenticated `gh`, and scopes it to
+GitHub's read-only remote MCP endpoint. Alpha selects only `get_me`,
+`get_file_contents`, and `search_code`.
+
+Proof gate: the token exists only at the credential/adapter boundary, is
+redacted from every returned value and diagnostic, never enters Host SQLite or
+model context, and the real endpoint catalog refresh succeeds.
+
+### 6. Agent Plugins local loader
 
 Load and validate one local Agent Plugins 1.0 directory using locally pinned
 schemas. Enforce package containment and component-level failure boundaries,
 then publish an immutable content-addressed installation. Map its MCP entry onto
-the already proven integration path.
+the already proven integration path and create the separate `renoa-plugins`
+repository only when the first reviewed package is ready.
 
 Proof gate: malformed manifests, unsupported versions, path escapes, changed
 contents, crash during publication, and independent component failures are
 deterministic and leave no partially installed package.
-
-### 6. Authenticated connections and public packages
-
-Add one credential-backed connection, followed by OAuth only when its full
-flow has a real service consumer. Create the separate `renoa-plugins`
-repository and publish reviewed Agent Plugins packages there. Installation
-continues to pin exact source and content identity.
-
-Proof gate: secrets never enter package or model-visible data, concurrent or
-crashed auth cannot corrupt rotating credentials, multiple accounts remain
-isolated, and a catalog package adds no special-case core execution code.
 
 ### 7. Shared Host management
 
@@ -577,7 +581,8 @@ through the task journal.
 
 ## Open decisions
 
-- Host schema migrations and storage for packages, credentials, and permissions;
+- future Host schema migrations and storage for packages, general secret
+  sources, and permissions;
 - model-visible naming and collision handling for tools from many connections;
 - exact catalog freshness, cache-hint, and refresh policy;
 - secret-store implementation and account-recovery behavior;
@@ -587,6 +592,7 @@ through the task journal.
 - exact Host management command types and transport;
 - registry index, search, signing, trust, update, and review policy;
 - package garbage collection and unfinished-runtime retention policy;
+- historical resolved-binding retention after catalog or profile changes;
 - when to add stdio MCP servers and how to constrain their process and
   filesystem authority;
 - skill selection, lazy loading, context budgets, and conflict resolution;
@@ -597,16 +603,16 @@ through the task journal.
 - node capability advertisement and cross-node Host configuration; and
 - stronger service-specific idempotency, reconciliation, or callback contracts.
 
-These are not permission to postpone the first vertical proof. They are
-boundaries against guessing beyond it.
+The first vertical proof is complete. These remain boundaries against guessing
+beyond the next real consumer.
 
-## First-slice non-goals
+## Remaining v0 non-goals
 
 The first direct MCP slice does not implement:
 
 - package registries or marketplace browsing;
 - Agent Plugins loading;
-- OAuth, API keys, or secret storage;
+- Renoa-owned OAuth/API-key flows or general secret storage;
 - stdio MCP servers;
 - MCP resources, prompts, apps, tasks, sampling, or elicitation;
 - Waku settings or approval UI;
@@ -618,6 +624,6 @@ The first direct MCP slice does not implement:
 - dynamic libraries, WASM, hot reload, or a service locator; or
 - a universal plugin trait.
 
-The first success is deliberately smaller: one selected remote tool, resolved
+The proven base remains deliberately small: selected remote tools are resolved
 by the Host, invoked through MCP, and durably completed through the existing
-Alpha and kernel path.
+Alpha and kernel path. Portable package loading builds on that path next.

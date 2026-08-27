@@ -72,6 +72,7 @@ pub struct ToolResult {
     pub call_id: String,
     pub name: String,
     pub content: Vec<ContentBlock>,
+    /// Durable structured output for Host inspection, excluded from model requests.
     pub details: Option<Value>,
     pub is_error: bool,
 }
@@ -81,6 +82,12 @@ pub struct ToolResult {
 pub struct ToolOutput {
     pub content: Vec<ContentBlock>,
     pub details: Option<Value>,
+    /// Whether this completed output is a model-visible tool error.
+    ///
+    /// This is distinct from [`ToolError`]: a remote tool may complete with
+    /// useful ordered error content that must be preserved as its result.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_error: bool,
 }
 
 /// Bounded progress channel scoped to one tool execution.
@@ -385,7 +392,7 @@ pub async fn invoke_tool(
             name: call.name,
             content: output.content,
             details: output.details,
-            is_error: false,
+            is_error: output.is_error,
         }),
         Err(error) => match error.certainty {
             ToolErrorCertainty::Definite => Ok(error_tool_result(&call, &error)),

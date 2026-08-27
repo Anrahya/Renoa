@@ -179,12 +179,12 @@ export const HEADER_SCHEMA: JsonObject = {
 };
 
 export function discoverRequest(endpoint: string): AdapterRequest {
-  return { wire_version: 1, action: "discover", endpoint };
+  return { wire_version: 2, action: "discover", endpoint };
 }
 
 export function callRequest(endpoint: string): AdapterRequest {
   return {
-    wire_version: 1,
+    wire_version: 2,
     action: "call",
     endpoint,
     tool: {

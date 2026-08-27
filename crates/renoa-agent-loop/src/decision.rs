@@ -308,7 +308,7 @@ impl AgentLoop {
     fn model_request(&self, messages: Vec<Message>) -> ModelRequest {
         ModelRequest {
             system_prompt: self.config.system_prompt.clone(),
-            messages,
+            messages: crate::context::model_visible_messages(messages),
             tools: self.tools.iter().map(|tool| tool.spec.clone()).collect(),
         }
     }

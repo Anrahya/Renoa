@@ -311,7 +311,7 @@ fn tail_request(
     );
     ModelRequest {
         system_prompt: request_shape.system_prompt.to_owned(),
-        messages,
+        messages: crate::context::model_visible_messages(messages),
         tools: request_shape.tools.to_vec(),
     }
 }

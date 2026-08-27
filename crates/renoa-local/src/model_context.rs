@@ -67,8 +67,7 @@ fn message_tokens(message: &Message) -> u64 {
         }
         Message::Tool { result } => text(&result.call_id)
             .saturating_add(text(&result.name))
-            .saturating_add(content_tokens(&result.content))
-            .saturating_add(result.details.as_ref().map_or(0, json)),
+            .saturating_add(content_tokens(&result.content)),
     }
 }
 
@@ -155,6 +154,32 @@ mod tests {
         let large = image_request(&"a".repeat(1_000_000));
 
         assert_eq!(estimate_input_tokens(&small), estimate_input_tokens(&large));
+    }
+
+    #[test]
+    fn host_only_tool_details_do_not_count_toward_model_context() {
+        let without_details = request(
+            vec![Message::Tool {
+                result: renoa_agent::ToolResult {
+                    call_id: "call-1".to_owned(),
+                    name: "inspect".to_owned(),
+                    content: vec![ContentBlock::text("visible")],
+                    details: None,
+                    is_error: false,
+                },
+            }],
+            Vec::new(),
+        );
+        let mut with_details = without_details.clone();
+        let Message::Tool { result } = &mut with_details.messages[0] else {
+            panic!("test message must be a tool result");
+        };
+        result.details = Some(serde_json::json!({"private": "x".repeat(100_000)}));
+
+        assert_eq!(
+            estimate_input_tokens(&without_details),
+            estimate_input_tokens(&with_details)
+        );
     }
 
     fn request(messages: Vec<Message>, tools: Vec<ToolSpec>) -> ModelRequest {

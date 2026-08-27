@@ -58,6 +58,31 @@ async fn a_definite_tool_failure_becomes_a_model_visible_result() {
 }
 
 #[tokio::test]
+async fn a_completed_tool_error_preserves_its_content_and_details() {
+    let call = tool_call("remote-1", "remote");
+    let content = vec![
+        ContentBlock::text("permission denied"),
+        ContentBlock::image("aW1hZ2U=", "image/png"),
+    ];
+    let details = serde_json::json!({"service_code": "forbidden"});
+    let tool = CompletedToolError {
+        spec: tool_spec("remote"),
+        content: content.clone(),
+        details: details.clone(),
+    };
+
+    let result = invoke_tool(Some(&tool), call.clone(), CancellationToken::new(), None)
+        .await
+        .expect("a completed remote error is a settled tool result");
+
+    assert_eq!(result.call_id, call.id);
+    assert_eq!(result.name, call.name);
+    assert_eq!(result.content, content);
+    assert_eq!(result.details, Some(details));
+    assert!(result.is_error);
+}
+
+#[tokio::test]
 async fn an_unavailable_tool_becomes_a_typed_model_visible_result() {
     let call = tool_call("missing-1", "missing");
 
@@ -204,6 +229,32 @@ impl Tool for CountingTool {
         Box::pin(std::future::ready(Ok(ToolOutput {
             content: vec![ContentBlock::text("unexpected")],
             details: None,
+            is_error: false,
+        })))
+    }
+}
+
+struct CompletedToolError {
+    spec: ToolSpec,
+    content: Vec<ContentBlock>,
+    details: serde_json::Value,
+}
+
+impl Tool for CompletedToolError {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    fn execute(
+        &self,
+        _call: ToolCall,
+        _cancellation: CancellationToken,
+        _updates: ToolUpdates,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(std::future::ready(Ok(ToolOutput {
+            content: self.content.clone(),
+            details: Some(self.details.clone()),
+            is_error: true,
         })))
     }
 }
@@ -236,17 +287,20 @@ impl Tool for ProgressTool {
                 .emit(ToolOutput {
                     content: vec![ContentBlock::text("first")],
                     details: None,
+                    is_error: false,
                 })
                 .await;
             updates
                 .emit(ToolOutput {
                     content: vec![ContentBlock::text("second")],
                     details: None,
+                    is_error: false,
                 })
                 .await;
             Ok(ToolOutput {
                 content: vec![ContentBlock::text("done")],
                 details: None,
+                is_error: false,
             })
         })
     }

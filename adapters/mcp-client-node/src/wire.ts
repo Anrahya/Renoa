@@ -3,9 +3,10 @@ import type {
   FrozenMcpTool,
   JsonObject,
   JsonValue,
+  WireAuthorization,
 } from "./contract.js";
 import { AdapterProblem } from "./errors.js";
-import { WIRE_VERSION } from "./limits.js";
+import { MAX_AUTH_TOKEN_BYTES, WIRE_VERSION } from "./limits.js";
 
 export function parseAdapterRequest(value: unknown): AdapterRequest {
   const request = requireObject(value, "request");
@@ -15,30 +16,66 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
   if (request.action === "discover") {
     requireExactKeys(
       request,
-      ["wire_version", "action", "endpoint"],
+      ["wire_version", "action", "endpoint", "authorization"],
       "request",
+      ["authorization"],
     );
     return {
       wire_version: WIRE_VERSION,
       action: "discover",
       endpoint: requireString(request.endpoint, "request.endpoint"),
+      ...optionalAuthorization(request.authorization),
     };
   }
   if (request.action === "call") {
     requireExactKeys(
       request,
-      ["wire_version", "action", "endpoint", "tool", "arguments"],
+      [
+        "wire_version",
+        "action",
+        "endpoint",
+        "authorization",
+        "tool",
+        "arguments",
+      ],
       "request",
+      ["authorization"],
     );
     return {
       wire_version: WIRE_VERSION,
       action: "call",
       endpoint: requireString(request.endpoint, "request.endpoint"),
+      ...optionalAuthorization(request.authorization),
       tool: parseFrozenTool(request.tool),
       arguments: requireJsonObject(request.arguments, "request.arguments"),
     };
   }
   throw invalid("request.action must be 'discover' or 'call'");
+}
+
+function optionalAuthorization(
+  value: unknown,
+): { readonly authorization?: WireAuthorization } {
+  if (value === undefined) {
+    return {};
+  }
+  const authorization = requireObject(value, "request.authorization");
+  requireExactKeys(
+    authorization,
+    ["scheme", "token"],
+    "request.authorization",
+  );
+  if (authorization.scheme !== "bearer") {
+    throw invalid("request.authorization.scheme must be 'bearer'");
+  }
+  const token = requireString(authorization.token, "request.authorization.token");
+  if (
+    Buffer.byteLength(token, "utf8") > MAX_AUTH_TOKEN_BYTES ||
+    /[\s\u0000-\u001F\u007F]/u.test(token)
+  ) {
+    throw invalid("request.authorization.token is malformed or over limit");
+  }
+  return { authorization: { scheme: "bearer", token } };
 }
 
 function parseFrozenTool(value: unknown): FrozenMcpTool {

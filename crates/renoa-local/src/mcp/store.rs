@@ -4,8 +4,8 @@ mod schema;
 use std::path::PathBuf;
 
 use super::{
-    AlphaMcpTool, McpCatalogSnapshot, McpCatalogTool, McpHostError, validate_endpoint,
-    validate_identity,
+    AlphaMcpTool, McpCatalogSnapshot, McpCatalogTool, McpConnectionAuth, McpHostError,
+    validate_endpoint, validate_identity,
 };
 use load::load_catalog;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -15,6 +15,11 @@ pub(crate) use schema::HOST_DATABASE;
 #[derive(Clone)]
 pub(crate) struct McpCatalogStore {
     path: PathBuf,
+}
+
+pub(crate) struct McpConnectionConfig {
+    pub(crate) endpoint: String,
+    pub(crate) auth: McpConnectionAuth,
 }
 
 impl McpCatalogStore {
@@ -37,27 +42,74 @@ impl McpCatalogStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_integration(&transaction, integration_id, endpoint)?;
-        ensure_connection(&transaction, connection_id, integration_id)?;
+        ensure_connection(
+            &transaction,
+            connection_id,
+            integration_id,
+            &McpConnectionAuth::None,
+        )?;
         transaction.commit()?;
         Ok(())
     }
 
-    pub(crate) fn connection_endpoint(&self, connection_id: &str) -> Result<String, McpHostError> {
+    pub(crate) fn register_gh_cli_connection(
+        &self,
+        integration_id: &str,
+        connection_id: &str,
+        endpoint: &str,
+        hostname: &str,
+        account: &str,
+    ) -> Result<(), McpHostError> {
+        validate_identity("integration", integration_id)?;
         validate_identity("connection", connection_id)?;
-        self.connection()?
+        validate_endpoint(endpoint)?;
+        let auth = McpConnectionAuth::gh_cli(hostname, account)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_integration(&transaction, integration_id, endpoint)?;
+        ensure_connection(&transaction, connection_id, integration_id, &auth)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn connection_config(
+        &self,
+        connection_id: &str,
+    ) -> Result<McpConnectionConfig, McpHostError> {
+        validate_identity("connection", connection_id)?;
+        let stored = self
+            .connection()?
             .query_row(
-                "SELECT integration.endpoint
+                "SELECT integration.endpoint, connection.auth_kind,
+                        connection.auth_hostname, connection.auth_account
                  FROM mcp_connections AS connection
                  JOIN mcp_integrations AS integration
                    ON integration.integration_id = connection.integration_id
                  WHERE connection.connection_id = ?1",
                 [connection_id],
-                |row| row.get(0),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
             )
             .optional()?
             .ok_or_else(|| {
                 McpHostError::NotFound(format!("connection '{connection_id}' is not registered"))
-            })
+            })?;
+        Ok(McpConnectionConfig {
+            endpoint: stored.0,
+            auth: McpConnectionAuth::from_stored(&stored.1, stored.2, stored.3)?,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn connection_endpoint(&self, connection_id: &str) -> Result<String, McpHostError> {
+        self.connection_config(connection_id)
+            .map(|config| config.endpoint)
     }
 
     pub(crate) fn publish_catalog(
@@ -145,29 +197,55 @@ impl McpCatalogStore {
         connection_id: &str,
         tool_name: &str,
     ) -> Result<(), McpHostError> {
+        self.select_alpha_tools(profile_id, connection_id, &[tool_name])
+    }
+
+    pub(crate) fn select_alpha_tools(
+        &self,
+        profile_id: &str,
+        connection_id: &str,
+        tool_names: &[&str],
+    ) -> Result<(), McpHostError> {
         validate_identity("profile", profile_id)?;
         validate_identity("connection", connection_id)?;
-        validate_identity("tool", tool_name)?;
+        if tool_names.is_empty() {
+            return Err(McpHostError::Invalid(
+                "at least one MCP tool must be selected".to_owned(),
+            ));
+        }
+        let mut unique = std::collections::HashSet::with_capacity(tool_names.len());
+        for tool_name in tool_names {
+            validate_identity("tool", tool_name)?;
+            if !unique.insert(*tool_name) {
+                return Err(McpHostError::Invalid(format!(
+                    "MCP tool selection repeats '{tool_name}'"
+                )));
+            }
+        }
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let exists = transaction
-            .query_row(
-                "SELECT 1 FROM mcp_tools WHERE connection_id = ?1 AND name = ?2",
-                params![connection_id, tool_name],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        if !exists {
-            return Err(McpHostError::NotFound(format!(
-                "tool '{tool_name}' is absent from connection '{connection_id}'"
-            )));
+        for tool_name in tool_names {
+            let exists = transaction
+                .query_row(
+                    "SELECT 1 FROM mcp_tools WHERE connection_id = ?1 AND name = ?2",
+                    params![connection_id, tool_name],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !exists {
+                return Err(McpHostError::NotFound(format!(
+                    "tool '{tool_name}' is absent from connection '{connection_id}'"
+                )));
+            }
         }
-        transaction.execute(
-            "INSERT OR IGNORE INTO profile_mcp_tools(profile_id, connection_id, tool_name)
-             VALUES (?1, ?2, ?3)",
-            params![profile_id, connection_id, tool_name],
-        )?;
+        for tool_name in tool_names {
+            transaction.execute(
+                "INSERT OR IGNORE INTO profile_mcp_tools(profile_id, connection_id, tool_name)
+                 VALUES (?1, ?2, ?3)",
+                params![profile_id, connection_id, tool_name],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -177,7 +255,8 @@ impl McpCatalogStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
         let mut statement = transaction.prepare(
-            "SELECT binding.connection_id, binding.tool_name, connection.integration_id
+            "SELECT binding.connection_id, binding.tool_name, connection.integration_id,
+                    connection.auth_kind, connection.auth_hostname, connection.auth_account
              FROM profile_mcp_tools AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
@@ -190,13 +269,18 @@ impl McpCatalogStore {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
         let mut loaded_catalog: Option<(String, McpCatalogSnapshot)> = None;
         let mut tools = Vec::with_capacity(bindings.len());
-        for (connection_id, tool_name, integration_id) in bindings {
+        for (connection_id, tool_name, integration_id, auth_kind, auth_hostname, auth_account) in
+            bindings
+        {
             if loaded_catalog
                 .as_ref()
                 .is_none_or(|(loaded_connection, _)| loaded_connection != &connection_id)
@@ -229,6 +313,7 @@ impl McpCatalogStore {
                 endpoint: catalog.endpoint.clone(),
                 protocol_version: catalog.protocol_version.clone(),
                 adapter_revision: catalog.adapter_revision.clone(),
+                auth: McpConnectionAuth::from_stored(&auth_kind, auth_hostname, auth_account)?,
                 tool,
             });
         }
@@ -297,31 +382,49 @@ fn ensure_connection(
     transaction: &Transaction<'_>,
     connection_id: &str,
     integration_id: &str,
+    auth: &McpConnectionAuth,
 ) -> Result<(), McpHostError> {
     let existing = transaction
         .query_row(
-            "SELECT integration_id, auth_kind FROM mcp_connections WHERE connection_id = ?1",
+            "SELECT integration_id, auth_kind, auth_hostname, auth_account
+             FROM mcp_connections WHERE connection_id = ?1",
             [connection_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
         )
         .optional()?;
     match existing {
         None => {
             transaction.execute(
-                "INSERT INTO mcp_connections(connection_id, integration_id, auth_kind)
-                 VALUES (?1, ?2, 'none')",
-                params![connection_id, integration_id],
+                "INSERT INTO mcp_connections(
+                    connection_id, integration_id, auth_kind, auth_hostname, auth_account
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    connection_id,
+                    integration_id,
+                    auth.stored_kind(),
+                    auth.stored_hostname(),
+                    auth.stored_account(),
+                ],
             )?;
             Ok(())
         }
-        Some((stored_integration, auth_kind))
-            if stored_integration == integration_id && auth_kind == "none" =>
-        {
-            Ok(())
+        Some((stored_integration, auth_kind, hostname, account)) => {
+            let stored_auth = McpConnectionAuth::from_stored(&auth_kind, hostname, account)?;
+            if stored_integration == integration_id && stored_auth == *auth {
+                Ok(())
+            } else {
+                Err(McpHostError::Conflict(format!(
+                    "connection '{connection_id}' already has different configuration"
+                )))
+            }
         }
-        Some(_) => Err(McpHostError::Conflict(format!(
-            "connection '{connection_id}' already has different configuration"
-        ))),
     }
 }
 

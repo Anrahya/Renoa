@@ -32,7 +32,7 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 1,
+        wire_version: 2,
         action: "discover",
         endpoint: "https://example.com/mcp",
         surprise: true,
@@ -42,11 +42,31 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 1,
+        wire_version: 2,
         action: "call",
         endpoint: "https://example.com/mcp",
         tool: { name: "x", input_schema: { type: "object" } },
         arguments: [],
+      }),
+    AdapterProblem,
+  );
+});
+
+test("wire parser accepts only bounded bearer authorization", () => {
+  const parsed = parseAdapterRequest({
+    wire_version: 2,
+    action: "discover",
+    endpoint: "https://example.com/mcp",
+    authorization: { scheme: "bearer", token: "secret-token" },
+  });
+  assert.equal(parsed.authorization?.token, "secret-token");
+  assert.throws(
+    () =>
+      parseAdapterRequest({
+        wire_version: 2,
+        action: "discover",
+        endpoint: "https://example.com/mcp",
+        authorization: { scheme: "bearer", token: "bad\ntoken" },
       }),
     AdapterProblem,
   );

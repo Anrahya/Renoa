@@ -109,6 +109,7 @@ impl Tool for Grep {
                     "matches": output.items,
                     "truncated": output.truncated
                 })),
+                is_error: false,
             })
         })
     }
@@ -192,6 +193,7 @@ impl Tool for Find {
                     "results": output.items,
                     "truncated": output.truncated
                 })),
+                is_error: false,
             })
         })
     }

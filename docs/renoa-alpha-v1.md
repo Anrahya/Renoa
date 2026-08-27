@@ -42,8 +42,9 @@ surface requirements, not Alpha's internal design.
    operation without changing Alpha, its session, or its history.
 5. An active operation never changes runtime. Its exact model, reasoning,
    prompt, context, and tool revisions remain frozen by the kernel.
-6. The first profile has all six local tools. Existing workspace boundaries
-   and unrestricted Bash behavior remain unchanged.
+6. The first profile has all six local tools plus the exact external tools
+   selected for it by the Host. Existing workspace boundaries and unrestricted
+   Bash behavior remain unchanged.
 7. Alpha has no plan mode. A question, review, plan, or implementation request
    is handled according to the user's intent by the same agent.
 
@@ -81,11 +82,13 @@ manifests, and configuration digests are not prompt content.
 ## Deliberate omissions
 
 Alpha's profile contract does not define profile persistence, permission
-vocabulary, subagents, MCP, background jobs, repository maps, automatic test
-policy, surface protocol behavior, or a generic profile trait. ACP can expose
-Alpha without becoming part of Alpha. A later subagent capability may ask the
-Host to resolve another agent with its own session, delegated authority, tools,
-model, and instructions; it will reuse the same kernel and agent loop.
+vocabulary, subagents, MCP transport/catalog behavior, background jobs,
+repository maps, automatic test policy, surface protocol behavior, or a
+generic profile trait. The Host may resolve MCP-derived tools into Alpha
+without making MCP part of Alpha. ACP can expose Alpha without becoming part of
+Alpha. A later subagent capability may ask the Host to resolve another agent
+with its own session, delegated authority, tools, model, and instructions; it
+will reuse the same kernel and agent loop.
 
 ## Proof
 
@@ -95,4 +98,7 @@ The real headless product path must prove that:
 2. tool schemas and kernel bookkeeping are not duplicated in that prompt;
 3. one durable session continues after changing model and reasoning level;
 4. each operation freezes the exact selected model and reasoning revision; and
-5. the Alpha configuration digest remains stable across that selection change.
+5. the Alpha configuration digest remains stable across that selection change;
+   and
+6. only Host-selected external tools reach the model, and their exact bindings
+   are frozen per operation.

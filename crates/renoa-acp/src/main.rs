@@ -30,6 +30,21 @@ async fn run() -> Result<(), Box<dyn Error>> {
             stdout.write_all(b"\n")?;
             Ok(())
         }
-        _ => Err(io::Error::other("usage: renoa-agent <acp|models --json|--version>").into()),
+        [mcp, github, install, account_flag, account]
+            if mcp == "mcp"
+                && github == "github"
+                && install == "install"
+                && account_flag == "--account" =>
+        {
+            let installed = renoa_acp::install_github_mcp(account).await?;
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, &installed)?;
+            stdout.write_all(b"\n")?;
+            Ok(())
+        }
+        _ => Err(io::Error::other(
+            "usage: renoa-agent <acp|models --json|mcp github install --account ACCOUNT|--version>",
+        )
+        .into()),
     }
 }

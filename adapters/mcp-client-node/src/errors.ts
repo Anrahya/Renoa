@@ -222,7 +222,10 @@ export function toWireFailure(
   );
 }
 
-export function safeDiagnostic(error: unknown): string {
+export function safeDiagnostic(
+  error: unknown,
+  exactSecrets: readonly string[] = [],
+): string {
   const seen = new Set<object>();
   const parts: string[] = [];
   let current: unknown = error;
@@ -236,10 +239,13 @@ export function safeDiagnostic(error: unknown): string {
     parts.push(errorMessage(current));
     current = causeOf(current);
   }
-  return boundUtf8(
-    redact(parts.filter((part) => part.length > 0).join(": ")),
-    MAX_DIAGNOSTIC_BYTES,
-  );
+  let diagnostic = redact(parts.filter((part) => part.length > 0).join(": "));
+  for (const secret of exactSecrets) {
+    if (secret.length > 0) {
+      diagnostic = diagnostic.replaceAll(secret, "[REDACTED]");
+    }
+  }
+  return boundUtf8(diagnostic, MAX_DIAGNOSTIC_BYTES);
 }
 
 function failure(

@@ -12,6 +12,9 @@ use renoa_local::{LocalHost, LocalHostError, ModelProvider};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
+#[path = "mcp_host/vertical.rs"]
+mod vertical;
+
 #[tokio::test]
 async fn host_discovers_selects_and_restores_one_real_mcp_piece() {
     let workspace = workspace_root();

@@ -318,6 +318,7 @@ impl Tool for RecordingTool {
         Box::pin(std::future::ready(Ok(ToolOutput {
             content: vec![ContentBlock::text("done")],
             details: None,
+            is_error: false,
         })))
     }
 }

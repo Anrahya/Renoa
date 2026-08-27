@@ -135,20 +135,23 @@ permission-shaped fields are reserved in this slice.
 
 ## Current concrete composition
 
-`LocalHost` owns the provider configuration, durable data root, and first MCP
-catalog. `host.sqlite3` keeps direct integration and connection identities,
-complete catalog snapshots, rejected entries, and Alpha's selected tool
-identities. Registration, discovery, and selection remain separate states.
-Catalog replacement is one transaction, and multi-query reads use one SQLite
-snapshot so runtime resolution cannot observe half of a concurrent refresh.
+`LocalHost` owns the provider configuration, durable data root, MCP catalog,
+and credential resolution boundary. `host.sqlite3` keeps direct integration and
+connection identities, non-secret credential references, complete catalog
+snapshots, rejected entries, and Alpha's selected tool identities. Registration,
+discovery, and selection remain separate states. Catalog replacement and batch
+selection are transactional, and multi-query reads use one SQLite snapshot so
+runtime resolution cannot observe half of a concurrent refresh.
 `AlphaSession` owns one Agent/Session binding, canonical workspace, model
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
-The Host can resolve Alpha's selected MCP definitions after restart. It does
-not yet convert them into executable `renoa-agent::Tool` bindings; therefore
-the current Alpha runtime still exposes only the six local coding tools. That
-kernel-backed invocation path is the next MCP slice.
+The Host resolves every selected MCP definition into an executable
+`renoa-agent::Tool` for the next Alpha operation. Each binding freezes the
+endpoint, schemas, adapter behavior, non-secret auth reference, result
+projection, bounds, and `NeverReplay` recovery. Unselected catalog schemas stay
+out of the model request, and a missing adapter fails composition instead of
+silently dropping selected tools.
 
 `LocalRuntimeConfig` is the lower composition input used inside the Host. Every
 local product path selects Alpha's versioned instructions. The resolved inputs
@@ -157,7 +160,7 @@ are:
 - provider and model;
 - reasoning configuration;
 - Alpha's base prompt and bounded workspace `AGENTS.md` instructions; and
-- the concrete credential and adapter bindings.
+- the six workspace tools plus selected external tool bindings.
 
 `build_local_runtime` resolves that recipe with a `LocalWorkspace`:
 
@@ -166,6 +169,7 @@ LocalRuntimeConfig + Alpha v1
   + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
+  + selected Host extension tools
             |
             v
 renoa-agent-loop::build_runtime
@@ -195,6 +199,18 @@ This recipe is not yet a durable general profile schema. Persistence should be
 added only when the first management flow consumes it.
 
 ## Command path
+
+The first product-owned management command installs the read-only GitHub MCP
+connection without putting service policy in the generic Host API:
+
+```sh
+renoa-agent mcp github install --account ACCOUNT
+```
+
+It registers the exact `github.com` account reference, resolves its token with
+`gh` only for discovery, atomically publishes the catalog, and batch-selects
+`get_me`, `get_file_contents`, and `search_code` for future Alpha operations.
+Repeating the command converges on the same durable state.
 
 The first real Host flow accepts either an ordinary prompt or a typed compact
 control:
@@ -253,8 +269,8 @@ Local Host state has one intentionally visible layout:
 
 ```text
 <data-root>/
-  host.sqlite3                  Host MCP integrations, connections, catalogs,
-                                and Alpha selections
+  host.sqlite3                  Host MCP integrations, non-secret connection
+                                references, catalogs, and Alpha selections
   sessions/<session-uuid>/
     session.json                durable identity and workspace/profile binding
     runtime.jsonl               acknowledged provider/model/reasoning selections
@@ -313,6 +329,9 @@ modification.
 ## Open decisions
 
 - general profile and package-library storage beyond the first MCP selection;
+- future Host schema migrations beyond the proven v1-to-v2 migration;
+- historical resolved-binding retention across explicit catalog/profile
+  changes for unfinished-operation recovery;
 - profile inheritance and Agent Instance overrides;
 - permission vocabulary, scopes, approvals, and secret grants;
 - capability package discovery, installation, updates, and rollback;
@@ -355,11 +374,13 @@ Its summary, checkpoint activation, result projection, exact redelivery,
 cancellation, and post-restart usage restoration are kernel-backed; no surface
 owns or reconstructs that state.
 
-The first extension catalog slice is also durable. `LocalHost` registers one
-direct no-auth MCP integration and connection, runs the replaceable Node
-adapter for bounded discovery, atomically publishes one complete catalog,
-records one Alpha tool selection, and restores both after process restart.
-Exact registration retries converge, identity changes conflict, failed refresh
-publication preserves the previous snapshot, stored contents are checked
-against their digest, missing selected tools fail closed, and concurrent first
-startup produces one valid database. No kernel type or table changed.
+The first extension path is also complete. `LocalHost` registers direct no-auth
+or exact `gh`-referenced MCP connections, runs the replaceable Node adapter for
+bounded discovery and invocation, atomically publishes catalogs and tool
+selections, and restores them after process restart. A selected tool travels
+through Alpha, the normal agent loop, and the kernel as a frozen `NeverReplay`
+effect. Exact registration retries converge, identity changes conflict, failed
+refresh publication preserves the previous snapshot, missing selections fail
+closed, structured details stay outside model context, unknown calls are not
+replayed, and schema v1 migrates to v2 without losing catalog state. No kernel
+type or table changed.

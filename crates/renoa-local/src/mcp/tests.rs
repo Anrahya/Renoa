@@ -9,7 +9,7 @@ use tempfile::tempdir;
 
 use super::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
-    McpCatalogStore, McpCatalogTool, McpHostError, McpRejectedTool, hex_sha256,
+    McpCatalogStore, McpCatalogTool, McpConnectionAuth, McpHostError, McpRejectedTool, hex_sha256,
 };
 
 const PROFILE: &str = "renoa.coding.alpha.v1";
@@ -113,6 +113,50 @@ fn registration_is_idempotent_but_identity_reuse_cannot_change_configuration() {
 }
 
 #[test]
+fn gh_connection_persists_only_its_exact_credential_reference() {
+    let (_directory, store) = store();
+    store
+        .register_gh_cli_connection(
+            "github",
+            "github",
+            "https://api.githubcopilot.com/mcp/readonly",
+            "GitHub.COM",
+            "Anrahya",
+        )
+        .expect("register exact gh credential reference");
+    store
+        .register_gh_cli_connection(
+            "github",
+            "github",
+            "https://api.githubcopilot.com/mcp/readonly",
+            "github.com",
+            "Anrahya",
+        )
+        .expect("canonical hostname makes registration idempotent");
+
+    let config = store
+        .connection_config("github")
+        .expect("load credential reference");
+    assert_eq!(
+        config.auth,
+        McpConnectionAuth::GhCli {
+            hostname: "github.com".to_owned(),
+            account: "Anrahya".to_owned(),
+        }
+    );
+    assert!(matches!(
+        store.register_gh_cli_connection(
+            "github",
+            "github",
+            "https://api.githubcopilot.com/mcp/readonly",
+            "github.com",
+            "DifferentAccount",
+        ),
+        Err(McpHostError::Conflict(_))
+    ));
+}
+
+#[test]
 fn catalog_publication_is_atomic_when_a_late_tool_insert_fails() {
     let (_directory, store) = store();
     store
@@ -195,6 +239,29 @@ fn alpha_selection_survives_a_store_restart_without_duplicates() {
 }
 
 #[test]
+fn multi_tool_selection_is_atomic_when_one_name_is_missing() {
+    let (_directory, store) = store();
+    store
+        .register_direct_connection("example", "primary", ENDPOINT)
+        .expect("register connection");
+    store
+        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
+        .expect("publish catalog");
+
+    let error = store
+        .select_alpha_tools(PROFILE, "primary", &["echo", "missing"])
+        .expect_err("missing tool rejects whole selection batch");
+
+    assert!(matches!(error, McpHostError::NotFound(_)));
+    assert!(
+        store
+            .alpha_tools(PROFILE)
+            .expect("load empty selection")
+            .is_empty()
+    );
+}
+
+#[test]
 fn a_removed_selected_tool_fails_closed_instead_of_disappearing() {
     let (_directory, store) = store();
     store
@@ -253,13 +320,66 @@ fn a_newer_host_catalog_schema_is_rejected() {
     drop(store);
     Connection::open(&path)
         .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 2_u32)
+        .pragma_update(None, "user_version", 3_u32)
         .expect("advance schema version");
 
     assert!(matches!(
         McpCatalogStore::initialize(directory.path().join("host.sqlite3")),
         Err(McpHostError::Invalid(_))
     ));
+}
+
+#[test]
+fn version_one_catalog_migrates_without_losing_no_auth_state() {
+    let (directory, store) = store();
+    store
+        .register_direct_connection("example", "primary", ENDPOINT)
+        .expect("register v2 connection");
+    store
+        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
+        .expect("publish v2 catalog");
+    store
+        .select_alpha_tool(PROFILE, "primary", "echo")
+        .expect("select v2 tool");
+    let path = store.path().to_owned();
+    drop(store);
+
+    let connection = Connection::open(&path).expect("open migration fixture");
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             CREATE TABLE mcp_connections_v1 (
+                connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
+                integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
+                auth_kind TEXT NOT NULL CHECK (auth_kind = 'none')
+             ) STRICT;
+             INSERT INTO mcp_connections_v1(connection_id, integration_id, auth_kind)
+             SELECT connection_id, integration_id, auth_kind FROM mcp_connections;
+             DROP TABLE mcp_connections;
+             ALTER TABLE mcp_connections_v1 RENAME TO mcp_connections;
+             UPDATE host_metadata SET schema_version = 1 WHERE singleton = 1;
+             PRAGMA user_version = 1;",
+        )
+        .expect("downgrade fixture to schema v1");
+    drop(connection);
+
+    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
+        .expect("migrate schema v1 to v2");
+    assert_eq!(
+        migrated
+            .connection_config("primary")
+            .expect("load migrated connection")
+            .auth,
+        McpConnectionAuth::None
+    );
+    assert_eq!(
+        migrated
+            .alpha_tools(PROFILE)
+            .expect("load migrated selection")[0]
+            .tool()
+            .name(),
+        "echo"
+    );
 }
 
 #[test]

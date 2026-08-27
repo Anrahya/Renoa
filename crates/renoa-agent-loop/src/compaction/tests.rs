@@ -82,6 +82,48 @@ fn plan_cuts_only_after_a_complete_tool_group_and_preserves_the_active_user() {
 }
 
 #[test]
+fn summary_input_does_not_expose_host_only_tool_details() {
+    let prior = OperationId::new();
+    let active = OperationId::new();
+    let input = context(
+        active,
+        vec![
+            (prior, Message::user_text("inspect the result")),
+            (
+                prior,
+                assistant(
+                    vec![AssistantContent::tool_call(tool_call("call-1", "read"))],
+                    StopReason::ToolUse,
+                ),
+            ),
+            (
+                prior,
+                Message::Tool {
+                    result: ToolResult {
+                        call_id: "call-1".to_owned(),
+                        name: "read".to_owned(),
+                        content: vec![ContentBlock::text("model-visible output")],
+                        details: Some(json!({"host_only_marker": "must-not-leak"})),
+                        is_error: false,
+                    },
+                },
+            ),
+            (active, Message::user_text("continue")),
+        ],
+    );
+
+    let plan = planner()
+        .plan(&input, None, "system", &[], &BudgetSizer)
+        .expect("plan valid history")
+        .expect("history is compactable");
+    let encoded = serde_json::to_string(plan.summary_request()).expect("encode summary request");
+
+    assert!(encoded.contains("model-visible output"));
+    assert!(!encoded.contains("host_only_marker"));
+    assert!(!encoded.contains("must-not-leak"));
+}
+
+#[test]
 fn plan_chains_from_the_activated_checkpoint_without_resummarizing_it() {
     let first = OperationId::new();
     let second = OperationId::new();

@@ -1,6 +1,9 @@
+mod auth;
+mod call;
 mod error;
 mod process;
 mod store;
+mod tool;
 
 #[cfg(test)]
 mod tests;
@@ -11,15 +14,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+pub(crate) use auth::{McpAuthorization, McpConnectionAuth, McpCredentialResolver};
+
 pub use error::{
-    McpAdapterError, McpFailureKind, McpHostError, McpOutcomeCertainty, McpRemoteFailure,
+    McpAdapterError, McpCredentialError, McpFailureKind, McpHostError, McpOutcomeCertainty,
+    McpRemoteFailure,
 };
 
 pub(crate) use process::discover;
 pub(crate) use store::{HOST_DATABASE, McpCatalogStore};
+pub(crate) use tool::alpha_tool_binding;
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.1.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.2.0";
 const MAX_ENDPOINT_BYTES: usize = 8 * 1_024;
 const MAX_CATALOG_TOOLS: usize = 1_024;
 const MAX_TOOL_NAME_BYTES: usize = 128;
@@ -149,6 +156,7 @@ pub struct AlphaMcpTool {
     endpoint: String,
     protocol_version: String,
     adapter_revision: String,
+    auth: McpConnectionAuth,
     tool: McpCatalogTool,
 }
 
@@ -182,6 +190,10 @@ impl AlphaMcpTool {
     pub const fn tool(&self) -> &McpCatalogTool {
         &self.tool
     }
+
+    pub(crate) const fn auth(&self) -> &McpConnectionAuth {
+        &self.auth
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +204,29 @@ struct AdapterCatalog {
     adapter_revision: String,
     tools: Vec<McpCatalogTool>,
     rejected_tools: Vec<McpRejectedTool>,
+}
+
+impl AdapterCatalog {
+    fn redact_authorization(&mut self, authorization: Option<&McpAuthorization>) {
+        let Some(authorization) = authorization else {
+            return;
+        };
+        authorization.redact_text(&mut self.endpoint);
+        for tool in &mut self.tools {
+            authorization.redact_text(&mut tool.description);
+            authorization.redact_json(&mut tool.input_schema);
+            authorization.redact_json(&mut tool.model_input_schema);
+            if let Some(output_schema) = &mut tool.output_schema {
+                authorization.redact_json(output_schema);
+            }
+        }
+        for rejected in &mut self.rejected_tools {
+            if let Some(name) = &mut rejected.name {
+                authorization.redact_text(name);
+            }
+            authorization.redact_text(&mut rejected.reason);
+        }
+    }
 }
 
 impl McpCatalogSnapshot {

@@ -71,7 +71,10 @@ async fn kernel_drives_a_complete_model_tool_model_turn() {
     );
     assert_eq!(requests[1].messages.len(), 3);
     assert!(matches!(requests[1].messages[1], Message::Assistant { .. }));
-    assert!(matches!(requests[1].messages[2], Message::Tool { .. }));
+    assert!(matches!(
+        &requests[1].messages[2],
+        Message::Tool { result } if result.details.is_none()
+    ));
     drop(requests);
 
     assert_durable_turn(&kernel, session_id);
@@ -103,6 +106,7 @@ async fn kernel_drives_a_complete_model_tool_model_turn() {
             && update.content == vec![ContentBlock::text("Replacing value.")]
             && settled_call == call
             && result.call_id == call.id
+            && result.details == Some(serde_json::json!({"changed": true}))
             && !result.is_error
     ));
 }
@@ -171,7 +175,11 @@ fn assert_durable_turn(kernel: &Kernel, session_id: SessionId) {
         .collect::<Vec<_>>();
     assert_eq!(messages[0], Message::user_text("Replace old with new."));
     assert!(matches!(messages[1], Message::Assistant { .. }));
-    assert!(matches!(messages[2], Message::Tool { .. }));
+    assert!(matches!(
+        &messages[2],
+        Message::Tool { result }
+            if result.details == Some(serde_json::json!({"changed": true}))
+    ));
     assert!(matches!(messages[3], Message::Assistant { .. }));
 
     let snapshot = kernel.inspect(session_id).expect("inspect session");
@@ -410,6 +418,7 @@ impl Tool for ReplaceValue {
                 .emit(ToolOutput {
                     content: vec![ContentBlock::text("Replacing value.")],
                     details: None,
+                    is_error: false,
                 })
                 .await;
             Ok(ToolOutput {
@@ -418,7 +427,8 @@ impl Tool for ReplaceValue {
                     call.arguments["from"].as_str().unwrap_or_default(),
                     call.arguments["to"].as_str().unwrap_or_default()
                 ))],
-                details: None,
+                details: Some(serde_json::json!({"changed": true})),
+                is_error: false,
             })
         })
     }

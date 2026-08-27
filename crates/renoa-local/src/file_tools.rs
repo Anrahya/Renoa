@@ -73,6 +73,7 @@ impl Tool for WriteFile {
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(format!("Wrote {}", input.path))],
                 details: Some(json!({ "path": input.path })),
+                is_error: false,
             })
         })
     }
@@ -148,6 +149,7 @@ impl Tool for ReadFile {
                     "next_offset": page.next_offset,
                     "truncated": page.next_offset.is_some()
                 })),
+                is_error: false,
             })
         })
     }
@@ -379,6 +381,7 @@ impl Tool for EditFile {
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(format!("Edited {}", input.path))],
                 details: Some(json!({ "path": input.path })),
+                is_error: false,
             })
         })
     }

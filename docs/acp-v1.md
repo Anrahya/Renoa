@@ -43,6 +43,17 @@ This read-only command uses the same provider settings as ACP, marks the
 configured initial model and each model's default reasoning level, and does not
 create or modify durable session state.
 
+The product CLI can install Renoa's first read-only GitHub connection with the
+same Host data root and adapter configuration:
+
+```sh
+renoa-agent mcp github install --account ACCOUNT
+```
+
+This resolves the exact account through `gh`, refreshes the remote catalog, and
+selects `get_me`, `get_file_contents`, and `search_code` for Alpha. It stores
+the hostname/account reference, not the token.
+
 The process reads:
 
 - `RENOA_MODEL_BRIDGE`
@@ -55,8 +66,8 @@ The process reads:
 
 Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
-enables Host catalog refresh but does not itself select or expose a tool to an
-Alpha runtime.
+enables Host catalog refresh and invocation. A tool reaches Alpha only after a
+Host selection such as the GitHub command above.
 `RENOA_MODEL_PROVIDERS` is a comma-separated enabled set; when absent, it
 defaults to the single `RENOA_MODEL_PROVIDER`. `RENOA_MODEL_PROVIDER` and
 `RENOA_MODEL` select the default provider and raw model ID for a new session.
@@ -117,7 +128,7 @@ projected from durable semantic events before ACP returns success.
 
 The adapter advertises `loadSession`, `session/close`, `session/delete`, and
 image prompts. Audio, embedded resources, additional workspace directories,
-and MCP servers are rejected.
+and surface-supplied MCP server declarations are rejected.
 
 The model list comes from the Renoa-owned provider adapter's authenticated,
 pinned catalog. Renoa validates and pins the selected model specification
@@ -215,16 +226,17 @@ transcript as execution truth.
 - One session and one active prompt per process.
 - All locally configured tools run without approval prompts. Permission policy
   remains a future Host/product feature, not an ACP rule.
-- No MCP servers, mode switching, account methods, or extra workspace roots are
-  advertised. SuperGrok login is still performed before launch rather than
-  through ACP account methods.
+- No surface-supplied MCP servers, mode switching, account methods, or extra
+  workspace roots are advertised. Host-selected MCP tools are ordinary Alpha
+  tools. SuperGrok login is still performed before launch rather than through
+  ACP account methods.
 - An active turn's live deltas are transient. Reload reconstructs settled local
   history; cross-device delivery continuity still belongs to RCP.
 - Earlier pre-release session manifests used storage versions 1 and 2. This
   adapter rejects them explicitly instead of guessing at an execution or trace
   migration.
-- Agent-loop revision 8 and checkpoint schema 3 are forward-only for unfinished
-  operations. A revision-7 operation needs its original runtime to finish; the
+- Agent-loop revision 9 and checkpoint schema 3 are forward-only for unfinished
+  operations. A revision-8 operation needs its original runtime to finish; the
   current Host does not migrate frozen manifests. An older binary also cannot
   decode the new compact control command.
 - If the client loses the successful `session/new` response, stable ACP v1

@@ -16,16 +16,23 @@ export interface FrozenMcpTool {
   readonly output_schema?: JsonObject;
 }
 
+export interface WireAuthorization {
+  readonly scheme: "bearer";
+  readonly token: string;
+}
+
 export type AdapterRequest =
   | {
       readonly wire_version: typeof WIRE_VERSION;
       readonly action: "discover";
       readonly endpoint: string;
+      readonly authorization?: WireAuthorization;
     }
   | {
       readonly wire_version: typeof WIRE_VERSION;
       readonly action: "call";
       readonly endpoint: string;
+      readonly authorization?: WireAuthorization;
       readonly tool: FrozenMcpTool;
       readonly arguments: JsonObject;
     };

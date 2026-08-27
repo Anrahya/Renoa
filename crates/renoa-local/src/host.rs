@@ -15,13 +15,16 @@ use crate::alpha_session::AlphaSessionStorage;
 use crate::{
     AlphaError, AlphaSession, LocalRuntimeConfig, LocalRuntimeError, LocalSession,
     LocalSessionError, LocalWorkspace, LocalWorkspaceError, ModelBridgeError, ModelChoice,
-    ModelProvider, ReasoningLevel, build_local_runtime, build_local_runtime_with_events,
-    discover_models,
+    ModelProvider, ReasoningLevel, discover_models,
     host_storage::{
         KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, delete_session_storage,
         read_manifest,
     },
-    mcp::{HOST_DATABASE, McpCatalogStore, McpHostError, resolve_adapter},
+    mcp::{
+        HOST_DATABASE, McpCatalogStore, McpCredentialResolver, McpHostError, alpha_tool_binding,
+        resolve_adapter,
+    },
+    runtime::build_composed_local_runtime,
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
     trace::{TRACE_DATABASE, TraceError, TraceStore},
 };
@@ -40,6 +43,7 @@ pub(crate) struct HostConfig {
     pub(crate) credential_store: PathBuf,
     pub(crate) mcp_catalog: McpCatalogStore,
     pub(crate) mcp_adapter: Option<PathBuf>,
+    pub(crate) mcp_credentials: McpCredentialResolver,
 }
 
 /// Failure while composing, storing, or running a local Agent instance.
@@ -138,6 +142,7 @@ impl LocalHost {
                 credential_store: credential_store.into(),
                 mcp_catalog,
                 mcp_adapter,
+                mcp_credentials: McpCredentialResolver::default(),
             }),
         })
     }
@@ -309,6 +314,22 @@ pub(crate) async fn resolve_runtime(
     workspace: &LocalWorkspace,
     events: Option<Arc<dyn AgentEventSink>>,
 ) -> Result<renoa_kernel::Runtime, LocalHostError> {
+    let store = host.mcp_catalog.clone();
+    let selected =
+        tokio::task::spawn_blocking(move || store.alpha_tools(crate::ALPHA_PROFILE_ID)).await??;
+    let extension_tools = if selected.is_empty() {
+        Vec::new()
+    } else {
+        let adapter = host.mcp_adapter.clone().ok_or_else(|| {
+            LocalHostError::Configuration(
+                "RENOA_MCP_ADAPTER must be set while Alpha has selected MCP tools".to_owned(),
+            )
+        })?;
+        selected
+            .into_iter()
+            .map(|tool| alpha_tool_binding(adapter.clone(), host.mcp_credentials.clone(), tool))
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let config = LocalRuntimeConfig::for_alpha(
         host.bridge.clone(),
         model.provider().as_str(),
@@ -318,10 +339,7 @@ pub(crate) async fn resolve_runtime(
     )?
     .with_discovered_model(model)
     .with_reasoning(reasoning);
-    match events {
-        Some(events) => Ok(build_local_runtime_with_events(config, workspace, events).await?),
-        None => Ok(build_local_runtime(config, workspace).await?),
-    }
+    Ok(build_composed_local_runtime(config, workspace, extension_tools, events).await?)
 }
 
 pub(crate) fn initial_reasoning(

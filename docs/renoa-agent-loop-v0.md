@@ -167,8 +167,10 @@ may run. While compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 8 adds typed manual compaction, its durable result, and
-model-free completion after summary activation. Revision 7 added durable
+Loop binding revision 9 keeps durable structured tool details available to the
+Host while removing them from every normal and compaction model request.
+Revision 8 added typed manual compaction, its durable result, and model-free
+completion after summary activation. Revision 7 added durable
 summary execution, checkpoint activation, and typed provider-overflow recovery.
 Revision 6 added durable message origins
 to context input and the pure bounded compaction planner. Revision 5 added
@@ -180,10 +182,10 @@ validation and typed live tool uncertainty.
 Runtime revisions are forward-only for unfinished operations. The Host
 currently supplies only the current loop revision, while the kernel freezes the
 exact manifest per admitted operation. An operation left unfinished under
-revision 7 therefore returns `RuntimeMismatch` under a revision-8-only Host and
+revision 8 therefore returns `RuntimeMismatch` under a revision-9-only Host and
 must be finished with its original runtime; Renoa does not guess a migration.
 Terminal operations and their semantic history remain loadable. Likewise, a
-revision-7 loop cannot decode the new compact control command.
+pre-revision-8 loop cannot decode the compact control command.
 
 ## Execution rules
 

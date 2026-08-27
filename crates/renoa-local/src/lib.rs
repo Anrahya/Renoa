@@ -33,8 +33,8 @@ pub use alpha::{ALPHA_PROFILE_ID, AlphaError};
 pub use alpha_session::{AlphaSession, AlphaSessionConfiguration};
 pub use host::{LocalHost, LocalHostError};
 pub use mcp::{
-    AlphaMcpTool, McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpFailureKind,
-    McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure,
+    AlphaMcpTool, McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError,
+    McpFailureKind, McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure,
 };
 pub use model_bridge::{BridgeModel, ModelBridgeError};
 pub use model_catalog::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};

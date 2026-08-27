@@ -165,6 +165,7 @@ impl Tool for Bash {
                     "stdout_truncated": stdout.truncated(),
                     "stderr_truncated": stderr.truncated()
                 })),
+                is_error: false,
             })
         })
     }

@@ -281,6 +281,15 @@ pub trait ContextProjector: Send + Sync {
     fn project(&self, messages: Vec<Message>) -> Result<Vec<Message>, ContextStrategyError>;
 }
 
+pub(crate) fn model_visible_messages(mut messages: Vec<Message>) -> Vec<Message> {
+    for message in &mut messages {
+        if let Message::Tool { result } = message {
+            result.details = None;
+        }
+    }
+    messages
+}
+
 /// The built-in strategy that exposes every durable message in order.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FullHistoryStrategy;

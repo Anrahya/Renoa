@@ -5,8 +5,8 @@ use std::{
 };
 
 use renoa_agent_loop::{
-    AgentLoopBuildError, AgentLoopConfig, CompactingContextStrategy, CompactionLimits,
-    CompactionLimitsError, ContextBinding, ContextSizer, ModelBinding,
+    AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CompactingContextStrategy,
+    CompactionLimits, CompactionLimitsError, ContextBinding, ContextSizer, ModelBinding,
     build_runtime as build_agent_runtime,
     build_runtime_with_events as build_observed_agent_runtime,
 };
@@ -105,7 +105,7 @@ pub async fn build_local_runtime(
     config: LocalRuntimeConfig,
     workspace: &LocalWorkspace,
 ) -> Result<Runtime, LocalRuntimeError> {
-    build_local_runtime_inner(config, workspace, None).await
+    build_local_runtime_inner(config, workspace, Vec::new(), None).await
 }
 
 /// Resolves the same local runtime while forwarding transient model and tool events.
@@ -121,12 +121,22 @@ pub async fn build_local_runtime_with_events(
     workspace: &LocalWorkspace,
     events: Arc<dyn renoa_agent::AgentEventSink>,
 ) -> Result<Runtime, LocalRuntimeError> {
-    build_local_runtime_inner(config, workspace, Some(events)).await
+    build_local_runtime_inner(config, workspace, Vec::new(), Some(events)).await
+}
+
+pub(crate) async fn build_composed_local_runtime(
+    config: LocalRuntimeConfig,
+    workspace: &LocalWorkspace,
+    extension_tools: Vec<AgentToolBinding>,
+    events: Option<Arc<dyn renoa_agent::AgentEventSink>>,
+) -> Result<Runtime, LocalRuntimeError> {
+    build_local_runtime_inner(config, workspace, extension_tools, events).await
 }
 
 async fn build_local_runtime_inner(
     config: LocalRuntimeConfig,
     workspace: &LocalWorkspace,
+    extension_tools: Vec<AgentToolBinding>,
     events: Option<Arc<dyn renoa_agent::AgentEventSink>>,
 ) -> Result<Runtime, LocalRuntimeError> {
     let resolved = resolve_model(config).await?;
@@ -140,7 +150,8 @@ async fn build_local_runtime_inner(
     );
     let config = AgentLoopConfig::new(resolved.instructions, MODEL_ATTEMPT_LIMIT, TOOL_CALL_LIMIT);
     let model = ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay);
-    let tools = workspace.kernel_tool_bindings();
+    let mut tools = workspace.kernel_tool_bindings();
+    tools.extend(extension_tools);
     match events {
         Some(events) => build_observed_agent_runtime(config, context, model, tools, events),
         None => build_agent_runtime(config, context, model, tools),

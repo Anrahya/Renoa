@@ -113,6 +113,7 @@ impl Tool for CountingTool {
         Box::pin(std::future::ready(Ok(ToolOutput {
             content: vec![ContentBlock::text(format!("tool result {ordinal}"))],
             details: None,
+            is_error: false,
         })))
     }
 }

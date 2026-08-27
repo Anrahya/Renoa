@@ -2,8 +2,12 @@ use crate::{
     ALPHA_PROFILE_ID,
     mcp::{AlphaMcpTool, McpCatalogSnapshot, discover},
 };
+use tokio_util::sync::CancellationToken;
 
 use super::{LocalHost, LocalHostError};
+
+#[cfg(test)]
+mod tests;
 
 impl LocalHost {
     /// Durably registers one direct no-auth MCP integration and connection.
@@ -31,6 +35,41 @@ impl LocalHost {
         Ok(())
     }
 
+    /// Durably registers one MCP connection whose token is resolved from an exact `gh` account.
+    ///
+    /// Only the hostname and account reference are stored. The token is resolved
+    /// just in time and is never written to Host storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, conflict, storage, or background-task failures.
+    pub async fn register_gh_cli_mcp_connection(
+        &self,
+        integration_id: &str,
+        connection_id: &str,
+        endpoint: &str,
+        hostname: &str,
+        account: &str,
+    ) -> Result<(), LocalHostError> {
+        let store = self.config.mcp_catalog.clone();
+        let integration_id = integration_id.to_owned();
+        let connection_id = connection_id.to_owned();
+        let endpoint = endpoint.to_owned();
+        let hostname = hostname.to_owned();
+        let account = account.to_owned();
+        tokio::task::spawn_blocking(move || {
+            store.register_gh_cli_connection(
+                &integration_id,
+                &connection_id,
+                &endpoint,
+                &hostname,
+                &account,
+            )
+        })
+        .await??;
+        Ok(())
+    }
+
     /// Discovers and atomically publishes one connection's complete MCP catalog.
     ///
     /// A failed refresh leaves the previous complete snapshot unchanged.
@@ -44,15 +83,28 @@ impl LocalHost {
     ) -> Result<McpCatalogSnapshot, LocalHostError> {
         let store = self.config.mcp_catalog.clone();
         let stored_connection = connection_id.to_owned();
-        let endpoint =
-            tokio::task::spawn_blocking(move || store.connection_endpoint(&stored_connection))
+        let connection =
+            tokio::task::spawn_blocking(move || store.connection_config(&stored_connection))
                 .await??;
         let adapter = self.config.mcp_adapter.clone().ok_or_else(|| {
             LocalHostError::Configuration(
                 "RENOA_MCP_ADAPTER must be set before refreshing an MCP catalog".to_owned(),
             )
         })?;
-        let snapshot = discover(&adapter, connection_id, &endpoint).await?;
+        let authorization = self
+            .config
+            .mcp_credentials
+            .resolve(&connection.auth, CancellationToken::new())
+            .await
+            .map_err(crate::mcp::McpAdapterError::from)
+            .map_err(crate::mcp::McpHostError::from)?;
+        let snapshot = discover(
+            &adapter,
+            connection_id,
+            &connection.endpoint,
+            authorization.as_ref(),
+        )
+        .await?;
         let store = self.config.mcp_catalog.clone();
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || store.publish_catalog(&stored_snapshot)).await??;
@@ -74,6 +126,30 @@ impl LocalHost {
         let tool_name = tool_name.to_owned();
         tokio::task::spawn_blocking(move || {
             store.select_alpha_tool(ALPHA_PROFILE_ID, &connection_id, &tool_name)
+        })
+        .await??;
+        Ok(())
+    }
+
+    /// Selects several discovered MCP tools for Alpha in one database transaction.
+    ///
+    /// # Errors
+    ///
+    /// If any requested tool is missing, none of this batch is selected.
+    pub async fn select_alpha_mcp_tools(
+        &self,
+        connection_id: &str,
+        tool_names: &[&str],
+    ) -> Result<(), LocalHostError> {
+        let store = self.config.mcp_catalog.clone();
+        let connection_id = connection_id.to_owned();
+        let tool_names = tool_names
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<Vec<_>>();
+        tokio::task::spawn_blocking(move || {
+            let borrowed = tool_names.iter().map(String::as_str).collect::<Vec<_>>();
+            store.select_alpha_tools(ALPHA_PROFILE_ID, &connection_id, &borrowed)
         })
         .await??;
         Ok(())

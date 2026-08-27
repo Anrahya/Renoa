@@ -3,12 +3,11 @@
 ## Status and authority
 
 This document defines the first executable foundation for external Renoa
-integrations: one direct, unauthenticated MCP server over modern Streamable
-HTTP. The replaceable Node process adapter implements this boundary under
-`adapters/mcp-client-node`. The Host now durably registers the connection,
-publishes complete catalog snapshots, and remembers Alpha's selected tools.
-Converting one selection into an executable kernel-backed tool remains the next
-slice.
+integrations: direct MCP servers over modern Streamable HTTP. The replaceable
+Node process adapter implements this boundary under `adapters/mcp-client-node`.
+The Host durably registers connections, publishes complete catalog snapshots,
+selects tools for Alpha, resolves them into ordinary kernel-backed tools, and
+supports either no authentication or an exact GitHub CLI account reference.
 
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md) owns the
 broader extension direction. [`renoa-host-v0.md`](renoa-host-v0.md) owns runtime
@@ -37,9 +36,10 @@ one exact Streamable HTTP endpoint
   -> return useful bounded content or an honest unknown outcome
 ```
 
-The first successful server is deterministic and local to the test suite. No
-production service, account, marketplace, plugin package, or GUI is required
-to prove the boundary.
+The complete path is proved against a deterministic local server. The first
+real connection uses GitHub's read-only remote MCP endpoint at
+`https://api.githubcopilot.com/mcp/readonly` and exposes only `get_me`,
+`get_file_contents`, and `search_code` to Alpha.
 
 ## Deliberate scope
 
@@ -49,7 +49,7 @@ V0 supports exactly:
 - the modern, stateless lifecycle with per-request metadata;
 - Streamable HTTP `POST` responses as either JSON or request-scoped SSE;
 - `server/discover`, paginated `tools/list`, and `tools/call`;
-- one direct connection with no credentials or configured static headers;
+- direct no-auth connections and one exact `gh`-resolved bearer credential;
 - complete tool results containing ordered text and image blocks; and
 - optional bounded structured tool output when it can be preserved without
   changing its JSON value.
@@ -77,8 +77,8 @@ protocol versions, URLs, HTTP, catalogs, and server metadata remain outside it.
 These concepts are distinct even though the first proof uses one of each:
 
 - **Direct integration:** one reviewed Streamable HTTP endpoint definition.
-- **Connection:** one configured instance of that integration. It has no
-  credentials in v0.
+- **Connection:** one configured instance of that integration. It stores either
+  no-auth or an exact `gh` hostname/account reference, never the token.
 - **Catalog snapshot:** one complete, validated result of discovery and every
   `tools/list` page.
 - **Tool selection:** a profile request for one tool from that connection and
@@ -102,9 +102,13 @@ transport can be tested without weakening remote connections.
 
 User information and fragments are rejected. A query string is allowed but is
 treated as public configuration: it is shown during inspection, contributes to
-endpoint identity, and must never carry a credential. V0 sends no configured
-authorization or static custom headers. Standard MCP headers and valid
-argument-derived `x-mcp-header` values remain part of the transport contract.
+endpoint identity, and must never carry a credential. A GitHub bearer token is
+resolved just in time with `gh auth token --hostname HOST --user ACCOUNT`, sent
+to the adapter only through standard input, scoped to the exact configured URL,
+and wiped after use. It never enters Host storage, arguments, environment,
+catalog data, diagnostics, model context, or a runtime binding. Static custom
+headers remain unsupported. Standard MCP headers and valid argument-derived
+`x-mcp-header` values remain part of the transport contract.
 
 Redirects are not followed. A redirect is a visible configuration failure and
 the caller may review the target as a new endpoint. This keeps source identity,
@@ -303,8 +307,9 @@ full headers, giant bodies, and opaque server `_meta` never enter diagnostics.
 
 Discovery and invocation each have a finite total deadline. The Node adapter
 uses 30 seconds for discovery and 120 seconds for a call; Rust gives discovery
-a 35-second outer deadline so cancellation and process-group cleanup remain
-bounded. Invocation will encode its bounds in the executable binding revision.
+a 35-second outer deadline and invocation a 125-second outer deadline so
+cancellation and process-group cleanup remain bounded. Invocation bounds are
+part of the executable binding revision.
 
 Progress, if added later, may extend an idle deadline but never the total
 deadline. V0 has only the total deadline.
@@ -338,10 +343,11 @@ The first process contract has two actions:
   transition, then produce one terminal result, definite failure, or unknown
   outcome.
 
+The version-2 process request may carry one bounded bearer authorization value.
 Standard output is a bounded machine-readable record stream. Standard error is
-bounded, redacted diagnostic text and never part of the protocol. Exactly one
-terminal record is authoritative. Records after a terminal are invalid and
-cannot alter its result.
+bounded, redacted diagnostic text and never part of the protocol. The first
+valid terminal record is authoritative; later process output or cleanup failure
+cannot replace it.
 
 The exact versioned wire types and bounds live beside the adapter and Rust
 process boundary and are tested at both ends; this architecture document does
@@ -355,10 +361,12 @@ Server instructions, endpoint URLs, catalog metadata, cache hints, output
 schemas, adapter bookkeeping, and unselected schemas remain outside it.
 
 The exact `ToolCall` and settled `ToolResult` already belong to kernel-backed
-semantic history. Runtime tracing may additionally record bounded timing and
-protocol diagnostics, including discovery duration, invocation duration,
-dispatch transition, HTTP status, and terminal classification. It must not
-duplicate raw secret-bearing payloads.
+semantic history. Structured `ToolResult.details` remains available for Host
+inspection but is removed from every normal and compaction model request.
+Runtime tracing may additionally record bounded timing and protocol
+diagnostics, including discovery duration, invocation duration, dispatch
+transition, HTTP status, and terminal classification. It must not duplicate raw
+secret-bearing payloads.
 
 Surfaces observe existing agent tool lifecycle events and the final durable
 outcome. MCP does not create a second UI event authority.
@@ -376,11 +384,14 @@ existing `NeverReplay` recovery turns an interrupted dispatched effect into
 abandoned unknown tool operation uses the existing balanced-history behavior;
 MCP adds no special transcript rule.
 
-Removing or changing a connection cannot remove content required to resolve an
-unfinished frozen operation. No removal API exists yet; that retention rule
-must be proved before one is added.
+A refresh cannot mutate the runtime object driving an already admitted
+operation. After process loss, however, an unfinished operation whose older
+binding is no longer reconstructible from the latest Host catalog fails with
+`RuntimeMismatch`; Renoa never substitutes the newer schema. Historical
+binding retention must be implemented before connection removal or automatic
+refresh is added.
 
-## Proof required before the full Host path is called complete
+## Proven full Host path
 
 The complete vertical path must prove, through a deterministic local MCP server
 and the real process boundary:
@@ -404,14 +415,20 @@ and the real process boundary:
 14. only the selected tool schema reaches the model;
 15. the runtime manifest changes when endpoint, schema, adapter behavior, or
     bounds change; and
-16. restart never repeats a possibly dispatched tool call.
+16. restart never repeats a possibly dispatched tool call;
+17. an exact `gh` account reference resolves a token only at invocation, while
+    adapter output, diagnostics, Host SQLite, and frozen bindings remain
+    secret-free; and
+18. durable structured details remain Host-visible but never reach a normal or
+    compaction model request.
 
 ## Locked decisions
 
 - MCP is one replaceable tool adapter, not a kernel, loop, RCP, or surface
   protocol.
 - The first revision is modern MCP `2026-07-28` over Streamable HTTP only.
-- The first connection is direct and unauthenticated.
+- Connections are direct and use either no auth or one exact `gh` CLI account
+  reference; Renoa stores no GitHub token.
 - Discovery publishes only complete, bounded, deterministic catalog snapshots.
 - The stored Host identity is composite; self-reported server names are not
   identity.
@@ -426,8 +443,11 @@ and the real process boundary:
 ## Open decisions after this slice
 
 - pre-2026 MCP compatibility and stdio transport;
-- authenticated connections, OAuth, credential storage, and configured headers;
+- Renoa-owned OAuth/API-key flows, general secret storage, and configured
+  headers;
 - future Host schema migrations and typed management commands;
+- historical Host-binding retention for crash-resuming an unfinished operation
+  after an explicit catalog or profile change;
 - multi-integration model-visible name disambiguation;
 - automatic refresh, cache hints, and list-change subscriptions;
 - progress projection;
@@ -446,6 +466,7 @@ Reviewed on 2026-08-27. This contract copies no upstream source.
 
 - [MCP specification `2026-07-28` at `5f5440bb26a62e2cf3440b92da5a667efa03b267`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267), with the repository's Apache-2.0 transition, remaining MIT material, and CC-BY-4.0 documentation.
 - [MCP TypeScript SDK 2.0.0 at `cc4b41617ce3601b1290d67216ea0b194a3cd9ac`](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac). The published `@modelcontextprotocol/client@2.0.0` package declares MIT; the source repository records the broader MCP license transition.
+- [GitHub MCP server at `a00dc319edcb5f8a10f118b1dad649c94928aac4`](https://github.com/github/github-mcp-server/tree/a00dc319edcb5f8a10f118b1dad649c94928aac4), MIT. Renoa copied no server source; the reviewed endpoint and read-only tool catalog are consumed through MCP.
 
 The SDK is an implementation dependency behind Renoa's adapter process, not
 Renoa's internal domain model or public Rust API.

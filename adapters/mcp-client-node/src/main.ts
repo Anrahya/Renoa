@@ -11,11 +11,13 @@ async function main(): Promise<void> {
   process.once("SIGTERM", cancel);
 
   let cleanup: (() => Promise<void>) | undefined;
+  let credentialToken: string | undefined;
   let terminalWritten = false;
   try {
     let terminal: AdapterRecord;
     try {
       const request = parseAdapterRequest(await readRequest());
+      credentialToken = request.authorization?.token;
       terminal = await executeAdapterRequest(request, {
         signal: cancellation.signal,
         dispatchStarted: () =>
@@ -52,7 +54,7 @@ async function main(): Promise<void> {
         await cleanup();
       } catch (error) {
         process.stderr.write(
-          `MCP cleanup failed after terminal: ${safeDiagnostic(error)}\n`,
+          `MCP cleanup failed after terminal: ${safeDiagnostic(error, credentialToken === undefined ? [] : [credentialToken])}\n`,
         );
         if (terminalWritten) {
           process.exitCode = 1;

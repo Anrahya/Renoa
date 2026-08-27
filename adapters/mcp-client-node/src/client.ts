@@ -1,7 +1,6 @@
 import {
   Client,
   StreamableHTTPClientTransport,
-  type FetchLike,
   type ListToolsResult,
   type Tool,
 } from "@modelcontextprotocol/client";
@@ -15,10 +14,10 @@ import type {
   AdapterRequest,
   CatalogTool,
   RejectedTool,
+  WireAuthorization,
 } from "./contract.js";
 import {
   AdapterProblem,
-  type ExchangeEvidence,
   toWireFailure,
 } from "./errors.js";
 import { parseEndpoint } from "./endpoint.js";
@@ -27,13 +26,17 @@ import {
   MAX_CATALOG_TOOLS,
   MAX_CURSOR_BYTES,
   MAX_DISCOVERY_PAGES,
-  MAX_HTTP_RESPONSE_BYTES,
   MCP_ADAPTER_REVISION,
   MCP_PROTOCOL_VERSION,
   TOOL_CALL_TIMEOUT_MS,
   WIRE_VERSION,
 } from "./limits.js";
 import { projectToolResult } from "./result.js";
+import {
+  CallExchangeTracker,
+  Deadline,
+  guardedFetch,
+} from "./transport.js";
 
 export interface AdapterHooks {
   readonly signal: AbortSignal;
@@ -46,16 +49,23 @@ export async function executeAdapterRequest(
   hooks: AdapterHooks,
 ): Promise<AdapterRecord> {
   const tracker = new CallExchangeTracker();
+  let record: AdapterRecord;
   try {
     const endpoint = parseEndpoint(request.endpoint);
     if (request.action === "discover") {
-      const catalog = await discoverCatalog(endpoint, hooks, tracker);
-      return { wire_version: WIRE_VERSION, event: "discovered", catalog };
+      const catalog = await discoverCatalog(
+        endpoint,
+        hooks,
+        tracker,
+        request.authorization,
+      );
+      record = { wire_version: WIRE_VERSION, event: "discovered", catalog };
+    } else {
+      const result = await callTool(endpoint, request, hooks, tracker);
+      record = { wire_version: WIRE_VERSION, event: "completed", result };
     }
-    const result = await callTool(endpoint, request, hooks, tracker);
-    return { wire_version: WIRE_VERSION, event: "completed", result };
   } catch (error) {
-    return {
+    record = {
       wire_version: WIRE_VERSION,
       event: "failed",
       failure: toWireFailure(
@@ -65,12 +75,45 @@ export async function executeAdapterRequest(
       ),
     };
   }
+  return redactCredential(record, request.authorization?.token);
+}
+
+function redactCredential(
+  record: AdapterRecord,
+  token: string | undefined,
+): AdapterRecord {
+  if (token === undefined) {
+    return record;
+  }
+  const pending: unknown[] = [record];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    if (typeof current !== "object" || current === null) {
+      continue;
+    }
+    for (const [key, value] of Object.entries(current)) {
+      if (typeof value === "string" && value.includes(token)) {
+        (current as Record<string, unknown>)[key] = value.replaceAll(
+          token,
+          "[REDACTED]",
+        );
+      } else if (typeof value === "object" && value !== null) {
+        pending.push(value);
+      }
+    }
+  }
+  return record;
 }
 
 async function discoverCatalog(
   endpoint: URL,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
+  authorization: WireAuthorization | undefined,
 ) {
   const deadline = new Deadline(DISCOVERY_TIMEOUT_MS);
   const client = await connectClient(
@@ -79,6 +122,7 @@ async function discoverCatalog(
     deadline,
     hooks,
     tracker,
+    authorization,
   );
   const accepted: CatalogTool[] = [];
   const rejected: RejectedTool[] = [];
@@ -165,6 +209,7 @@ async function callTool(
     deadline,
     hooks,
     tracker,
+    request.authorization,
   );
   const toolDefinition: Tool = {
     name: selected.name,
@@ -200,12 +245,15 @@ async function connectClient(
   deadline: Deadline,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
+  authorization: WireAuthorization | undefined,
 ): Promise<Client> {
   const fetch = guardedFetch(
     action,
     tracker,
     hooks.dispatchStarted,
     hooks.signal,
+    endpoint,
+    authorization,
   );
   const transport = new StreamableHTTPClientTransport(endpoint, {
     fetch,
@@ -250,209 +298,4 @@ async function connectClient(
     );
   }
   return client;
-}
-
-function guardedFetch(
-  action: AdapterRequest["action"],
-  tracker: CallExchangeTracker,
-  dispatchStarted: () => Promise<void>,
-  operationSignal: AbortSignal,
-): FetchLike {
-  const nativeFetch = globalThis.fetch;
-  return async (input, init): Promise<Response> => {
-    const requestMethod = (init?.method ?? "GET").toUpperCase();
-    const mcpMethod = new Headers(init?.headers).get("mcp-method");
-    if (requestMethod !== "POST" || mcpMethod === null) {
-      tracker.reject(
-        new AdapterProblem(
-          "protocol",
-          "MCP adapter attempted a transport operation outside stateless POST requests.",
-          {
-            code: "unexpected_transport_request",
-            partialChangesPossible: tracker.dispatchStarted,
-          },
-        ),
-      );
-    }
-    const allowed =
-      mcpMethod === "server/discover" ||
-      (action === "discover" && mcpMethod === "tools/list") ||
-      (action === "call" && mcpMethod === "tools/call");
-    if (!allowed) {
-      tracker.reject(
-        new AdapterProblem(
-          "protocol",
-          `MCP adapter attempted unexpected method '${mcpMethod}'.`,
-          {
-            code: "unexpected_mcp_method",
-            partialChangesPossible: tracker.dispatchStarted,
-          },
-        ),
-      );
-    }
-
-    const isToolCall = mcpMethod === "tools/call";
-    if (isToolCall) {
-      if (tracker.callRequestCount !== 0) {
-        tracker.reject(
-          new AdapterProblem(
-            "protocol",
-            "MCP SDK attempted a hidden tools/call retry; Renoa blocked it.",
-            {
-              code: "hidden_retry_blocked",
-              partialChangesPossible: true,
-            },
-          ),
-        );
-      }
-      await dispatchStarted();
-      tracker.markDispatched();
-    }
-
-    const signal =
-      init?.signal == null
-        ? operationSignal
-        : AbortSignal.any([operationSignal, init.signal]);
-    const response = await nativeFetch(input, {
-      ...init,
-      redirect: "manual",
-      signal,
-    });
-    if (isToolCall) {
-      tracker.markResponseStarted();
-    }
-    if (response.headers.has("mcp-session-id")) {
-      tracker.reject(
-        new AdapterProblem(
-          "protocol",
-          "MCP endpoint attempted to create a session; Renoa v0 is stateless.",
-          {
-            code: "session_not_supported",
-            partialChangesPossible: isToolCall,
-            httpStatus: response.status,
-          },
-        ),
-      );
-    }
-    return boundResponse(response, isToolCall, tracker);
-  };
-}
-
-function boundResponse(
-  response: Response,
-  toolCall: boolean,
-  tracker: CallExchangeTracker,
-): Response {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength !== null) {
-    const parsed = Number(contentLength);
-    if (!Number.isSafeInteger(parsed) || parsed < 0) {
-      tracker.reject(
-        new AdapterProblem(
-          "protocol",
-          "MCP response has an invalid Content-Length.",
-          {
-            code: "invalid_content_length",
-            partialChangesPossible: toolCall,
-            httpStatus: response.status,
-          },
-        ),
-      );
-    }
-    if (parsed > MAX_HTTP_RESPONSE_BYTES) {
-      tracker.reject(responseLimit(toolCall, response.status));
-    }
-  }
-  if (response.body === null) {
-    return response;
-  }
-
-  let bytes = 0;
-  const limiter = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      bytes += chunk.byteLength;
-      if (bytes > MAX_HTTP_RESPONSE_BYTES) {
-        const problem = responseLimit(toolCall, response.status);
-        tracker.recordBoundaryProblem(problem);
-        throw problem;
-      }
-      controller.enqueue(chunk);
-    },
-  });
-  return new Response(response.body.pipeThrough(limiter), {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
-}
-
-function responseLimit(toolCall: boolean, status: number): AdapterProblem {
-  return new AdapterProblem(
-    "resource_limit",
-    `MCP response exceeds ${MAX_HTTP_RESPONSE_BYTES} bytes.`,
-    {
-      code: "http_response_limit",
-      partialChangesPossible: toolCall,
-      httpStatus: status,
-    },
-  );
-}
-
-class CallExchangeTracker {
-  callRequestCount = 0;
-  dispatchStarted = false;
-  responseStarted = false;
-  boundaryProblem: AdapterProblem | undefined;
-
-  markDispatched(): void {
-    this.callRequestCount += 1;
-    this.dispatchStarted = true;
-  }
-
-  markResponseStarted(): void {
-    this.responseStarted = true;
-  }
-
-  recordBoundaryProblem(problem: AdapterProblem): void {
-    this.boundaryProblem ??= problem;
-  }
-
-  reject(problem: AdapterProblem): never {
-    this.recordBoundaryProblem(problem);
-    throw problem;
-  }
-
-  evidence(): ExchangeEvidence {
-    return {
-      dispatchStarted: this.dispatchStarted,
-      responseStarted: this.responseStarted,
-    };
-  }
-}
-
-class Deadline {
-  readonly expiresAt: number;
-
-  constructor(durationMs: number) {
-    this.expiresAt = Date.now() + durationMs;
-  }
-
-  requestOptions(signal: AbortSignal) {
-    const remaining = this.expiresAt - Date.now();
-    if (remaining <= 0) {
-      throw new AdapterProblem(
-        "timeout",
-        "MCP operation exceeded its total deadline.",
-        {
-          code: "total_deadline",
-        },
-      );
-    }
-    return {
-      signal,
-      timeout: remaining,
-      maxTotalTimeout: remaining,
-      resetTimeoutOnProgress: false,
-    } as const;
-  }
 }
