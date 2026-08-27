@@ -13,6 +13,10 @@ import {
   validateModelSpec,
   type CatalogEntry,
 } from "./catalog.js";
+import {
+  loadOpenCodeCatalog,
+  type OpenCodeCatalogOptions,
+} from "./opencode-catalog.js";
 import { fromOauth, oauthCredential, xaiOAuth } from "./providers/xai.js";
 import type { Api, Model, SimpleStreamOptions } from "./upstream/types.js";
 import { streamSimple as streamAnthropic } from "./transports/anthropic-messages.js";
@@ -41,18 +45,28 @@ export interface LoadedRuntime {
   close(): void;
 }
 
-export function loadCatalog(
+export interface CatalogLoadOptions {
+  readonly credentialStore?: CredentialStoreOptions;
+  readonly openCode?: OpenCodeCatalogOptions;
+}
+
+export async function loadCatalog(
   provider: ProviderId,
   authStorePath: string,
-  options: CredentialStoreOptions = {},
+  options: CatalogLoadOptions = {},
 ) {
-  const credentials = new SqliteCredentialStore(authStorePath, options);
+  const credentials = new SqliteCredentialStore(authStorePath, options.credentialStore);
   try {
     requireCredential(credentials, provider);
-    return toWireCatalog(loadPinnedCatalog(provider));
   } finally {
     credentials.close();
   }
+  const pinned = loadPinnedCatalog(provider);
+  const catalog =
+    provider === "opencode-go"
+      ? await loadOpenCodeCatalog(authStorePath, pinned, options.openCode)
+      : pinned;
+  return toWireCatalog(catalog);
 }
 
 export function loadRuntime(options: RuntimeOptions): LoadedRuntime {

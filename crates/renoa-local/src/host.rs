@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 pub(crate) mod catalog;
 mod mcp;
+mod models;
 #[cfg(test)]
 mod skill_tests;
 
@@ -18,7 +19,7 @@ use crate::alpha_session::AlphaSessionStorage;
 use crate::{
     AlphaError, AlphaSession, LocalRuntimeConfig, LocalRuntimeError, LocalSession,
     LocalSessionError, LocalWorkspace, LocalWorkspaceError, ModelBridgeError, ModelChoice,
-    ModelProvider, ReasoningLevel, discover_models,
+    ModelProvider, ReasoningLevel,
     host_storage::{
         KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, delete_session_storage,
         read_manifest,
@@ -35,6 +36,8 @@ use crate::{
     },
     trace::{TRACE_DATABASE, TraceError, TraceStore},
 };
+
+pub(crate) use models::discover_enabled_models;
 
 /// Process-local configuration used to compose Renoa Alpha sessions.
 pub struct LocalHost {
@@ -339,18 +342,7 @@ impl LocalHost {
     }
 
     async fn models(&self) -> Result<Vec<ModelChoice>, LocalHostError> {
-        let mut models = Vec::new();
-        for provider in &self.config.providers {
-            models.extend(
-                discover_models(
-                    self.config.bridge.clone(),
-                    *provider,
-                    self.config.credential_store.clone(),
-                )
-                .await?,
-            );
-        }
-        Ok(models)
+        discover_enabled_models(&self.config).await
     }
 
     async fn resolve_runtime(

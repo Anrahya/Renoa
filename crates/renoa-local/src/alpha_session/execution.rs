@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use super::AlphaSession;
 use crate::{
-    LocalHostError, LocalTurnOutcome, LocalWorkspace,
+    LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice,
     alpha_trace::finish_trace,
-    host::{require_model, resolve_runtime},
+    host::resolve_runtime,
     trace::{ObservedEventSink, TraceRun},
 };
 
@@ -31,8 +31,7 @@ struct TracedTurn<'a> {
     command_id: CommandId,
     command: SessionCommand,
     cancellation: CancellationToken,
-    provider: crate::ModelProvider,
-    model_id: &'a str,
+    model: ModelChoice,
     reasoning: crate::ReasoningLevel,
     events: Arc<dyn AgentEventSink>,
     trace: &'a TraceRun,
@@ -89,7 +88,7 @@ impl AlphaSession {
         command: SessionCommand,
         events: Arc<dyn AgentEventSink>,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let (guard, cancellation, provider, model_id, reasoning) = self.begin_prompt(request_id)?;
+        let (guard, cancellation, model, reasoning) = self.begin_prompt(request_id)?;
         let command_id = CommandId::from_uuid(request_id);
         let compact_trace = [ContentBlock::text("/compact")];
         let trace_content = match &command {
@@ -101,8 +100,8 @@ impl AlphaSession {
             .start_run(
                 command_id,
                 trace_content,
-                provider.as_str(),
-                &model_id,
+                model.provider().as_str(),
+                model.id(),
                 reasoning.as_str(),
             )
             .await?;
@@ -113,8 +112,7 @@ impl AlphaSession {
                 command_id,
                 command,
                 cancellation,
-                provider,
-                model_id: &model_id,
+                model,
                 reasoning,
                 events: observed,
                 trace: &trace,
@@ -133,8 +131,7 @@ impl AlphaSession {
             command_id,
             command,
             cancellation,
-            provider,
-            model_id,
+            model,
             reasoning,
             events,
             trace,
@@ -146,8 +143,8 @@ impl AlphaSession {
                 serde_json::json!({
                     "command_id": command_id,
                     "command": command.name(),
-                    "provider": provider.as_str(),
-                    "model": model_id,
+                    "provider": model.provider().as_str(),
+                    "model": model.id(),
                     "reasoning": reasoning.as_str()
                 }),
             )
@@ -169,12 +166,11 @@ impl AlphaSession {
             return Ok(outcome);
         }
         let workspace = LocalWorkspace::open(&self.workspace)?;
-        let model = require_model(&self.models, provider, model_id, "active")?;
         let runtime = resolve_runtime(
             &self.host,
             renoa_kernel::SessionId::from_uuid(self.id),
             Some(command_id),
-            model,
+            &model,
             reasoning,
             &workspace,
             Some(events),

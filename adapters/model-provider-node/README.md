@@ -44,7 +44,8 @@ export RENOA_MODEL=deepseek-v4-pro
 ACP shows the combined catalog and stores the chosen provider and model with
 each session. `RENOA_MODEL_PROVIDER` and `RENOA_MODEL` only choose the default
 for a new session. Omit `RENOA_MODEL_PROVIDERS` to enable only that default
-provider.
+provider. OpenCode Go availability refreshes at catalog discovery; Renoa keeps
+a validated last-known-good cache and the bundled catalog as offline fallbacks.
 
 The process reads `RENOA_MODEL_ACTION` (`catalog` | `describe` | `stream`) from
 the Rust host. Do not set it by hand for normal Alpha use.

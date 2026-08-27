@@ -11,7 +11,7 @@ use crate::{
     LocalHistoryEntry, LocalHostError, LocalSession, LocalWorkspace, ModelChoice, ModelProvider,
     ReasoningLevel,
     host::{
-        HostConfig, initial_reasoning, require_model, resolve_runtime,
+        HostConfig, discover_enabled_models, initial_reasoning, require_model, resolve_runtime,
         selected_model_by_selection_id,
     },
     selection::{RuntimeSelection, append_selection},
@@ -28,7 +28,6 @@ pub struct AlphaSession {
     workspace: PathBuf,
     selection_path: PathBuf,
     trace: TraceStore,
-    models: Vec<ModelChoice>,
     state: Mutex<SessionState>,
     idle: tokio::sync::Notify,
 }
@@ -42,6 +41,7 @@ pub(crate) struct AlphaSessionStorage {
 }
 
 struct SessionState {
+    models: Vec<ModelChoice>,
     provider: ModelProvider,
     model: String,
     reasoning: ReasoningLevel,
@@ -81,8 +81,8 @@ impl AlphaSession {
             workspace: storage.workspace,
             selection_path: storage.selection_path,
             trace: storage.trace,
-            models,
             state: Mutex::new(SessionState {
+                models,
                 provider: selection.provider,
                 model: selection.model,
                 reasoning: selection.reasoning,
@@ -114,9 +114,9 @@ impl AlphaSession {
     /// Returns an error if a prior panic poisoned session coordination state.
     pub fn configuration(&self) -> Result<AlphaSessionConfiguration, LocalHostError> {
         let state = self.state()?;
-        let model = require_model(&self.models, state.provider, &state.model, "active")?;
+        let model = require_model(&state.models, state.provider, &state.model, "active")?;
         Ok(AlphaSessionConfiguration {
-            models: self.models.clone(),
+            models: state.models.clone(),
             model: model.selection_id(),
             reasoning: state.reasoning,
         })
@@ -131,7 +131,7 @@ impl AlphaSession {
     pub fn context_window_tokens(&self) -> Result<NonZeroU64, LocalHostError> {
         let state = self.state()?;
         Ok(
-            require_model(&self.models, state.provider, &state.model, "active")?
+            require_model(&state.models, state.provider, &state.model, "active")?
                 .context_window_tokens(),
         )
     }
@@ -178,21 +178,24 @@ impl AlphaSession {
     /// Rejects unsupported or concurrent changes and preserves the prior selection on failure.
     pub async fn set_reasoning(&self, reasoning: ReasoningLevel) -> Result<(), LocalHostError> {
         let guard = self.begin_configuration()?;
-        let (provider, model_id, current) = {
+        let (model, current) = {
             let state = self.state()?;
-            (state.provider, state.model.clone(), state.reasoning)
+            (
+                require_model(&state.models, state.provider, &state.model, "active")?.clone(),
+                state.reasoning,
+            )
         };
         if current == reasoning {
             return Ok(());
         }
-        let model = require_model(&self.models, provider, &model_id, "active")?;
         if !model.reasoning_levels().contains(&reasoning) {
             return Err(LocalHostError::InvalidRequest(format!(
-                "{model_id} does not support {} reasoning",
+                "{} does not support {} reasoning",
+                model.id(),
                 reasoning.as_str()
             )));
         }
-        self.validate_and_persist(model, reasoning, model_id.clone())
+        self.validate_and_persist(&model, reasoning, model.id().to_owned())
             .await?;
         self.state()?.reasoning = reasoning;
         drop(guard);
@@ -206,24 +209,30 @@ impl AlphaSession {
     /// Rejects unknown or concurrent changes and preserves the prior selection on failure.
     pub async fn set_model(&self, model_id: &str) -> Result<(), LocalHostError> {
         let guard = self.begin_configuration()?;
-        let (current_provider, current_model, current_reasoning) = {
+        let (current_selection, current_reasoning) = {
             let state = self.state()?;
-            (state.provider, state.model.clone(), state.reasoning)
+            (
+                require_model(&state.models, state.provider, &state.model, "active")?
+                    .selection_id(),
+                state.reasoning,
+            )
         };
-        let current = require_model(&self.models, current_provider, &current_model, "active")?;
-        if current.selection_id() == model_id {
+        if current_selection == model_id {
             return Ok(());
         }
-        let model = selected_model_by_selection_id(&self.models, model_id)
+        let models = discover_enabled_models(&self.host).await?;
+        let model = selected_model_by_selection_id(&models, model_id)
+            .cloned()
             .ok_or_else(|| LocalHostError::InvalidRequest("unknown model selection".to_owned()))?;
         let reasoning = if model.reasoning_levels().contains(&current_reasoning) {
             current_reasoning
         } else {
-            initial_reasoning(&self.models, model.provider(), model.id())?
+            initial_reasoning(&models, model.provider(), model.id())?
         };
-        self.validate_and_persist(model, reasoning, model.id().to_owned())
+        self.validate_and_persist(&model, reasoning, model.id().to_owned())
             .await?;
         let mut state = self.state()?;
+        state.models = models;
         state.provider = model.provider();
         model.id().clone_into(&mut state.model);
         state.reasoning = reasoning;
@@ -239,8 +248,7 @@ impl AlphaSession {
         (
             ActivityGuard<'_>,
             CancellationToken,
-            ModelProvider,
-            String,
+            ModelChoice,
             ReasoningLevel,
         ),
         LocalHostError,
@@ -256,17 +264,16 @@ impl AlphaSession {
                 "this Alpha session is busy".to_owned(),
             ));
         }
+        let model = require_model(&state.models, state.provider, &state.model, "active")?.clone();
         let cancellation = CancellationToken::new();
         state.activity = Activity::Prompt {
             request_id,
             cancellation: cancellation.clone(),
         };
-        let model = state.model.clone();
         let reasoning = state.reasoning;
         Ok((
             ActivityGuard::prompt(self, request_id),
             cancellation,
-            state.provider,
             model,
             reasoning,
         ))

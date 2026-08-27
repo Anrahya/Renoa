@@ -18,6 +18,12 @@ The Renoa-owned OpenCode Go catalog overlay also projects metadata from
 
 Full license text: `src/upstream/LICENSE-MODELS-DEV-MIT`.
 
+Live OpenCode Go discovery projects the same MIT-licensed schema from
+`https://models.dev/api.json`, verified against models.dev revision
+`826d9fe918d9d208791314dd6892f7327c1de5b2`. Availability and documented
+transport corrections come from OpenCode's official Go model endpoint and
+documentation, verified 2026-08-28. No OpenCode source code is copied.
+
 Relative imports in adapted TypeScript use `.js` specifiers for this package’s NodeNext tsconfig. Protocol logic is otherwise Pi’s.
 
 Catalog JSON files are gitignored in the Pi clone (`packages/ai/src/providers/data/`). They were copied from the published `@earendil-works/pi-ai@0.84.2` package (`dist/providers/data/`), which is the hydrated output of those source paths at the same version.

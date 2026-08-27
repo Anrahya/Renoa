@@ -13,7 +13,11 @@ export async function runBridgeAction(
   if (config.action === "catalog") {
     await emit({
       ok: true,
-      response: { models: loadCatalog(config.provider, config.authStorePath) },
+      response: {
+        models: await loadCatalog(config.provider, config.authStorePath, {
+          openCode: { signal },
+        }),
+      },
     });
     return;
   }

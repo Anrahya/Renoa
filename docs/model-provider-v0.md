@@ -26,20 +26,30 @@ compaction, ACP, Waku, and RCP. The Rust host launches this process for
 
 | Provider | Auth | Transports |
 | --- | --- | --- |
-| xAI | OAuth device flow | Chat Completions and Responses as advertised by the pinned catalog |
+| xAI | OAuth device flow | Chat Completions and Responses as advertised by the bundled catalog |
 | OpenCode Go | API key | Official Go transports only: Responses, Chat Completions, Anthropic Messages |
 
-OpenCode models are advertised only when an official transport is known and the
-pinned catalog supplies limits, tool support, and reasoning metadata. Transport
-is never inferred from a model name. Official-only models without that metadata
-are omitted. `minimax-m2.7` and `qwen3.6-plus` use Anthropic Messages per
-current OpenCode documentation; their binding IDs therefore differ from the
-previous Pi completions bindings.
+OpenCode availability comes from its official `/zen/go/v1/models` endpoint.
+Limits, modalities, tool support, costs, and reasoning levels come from the
+OpenCode-owned `models.dev` catalog. Renoa accepts only known SDK transports,
+constructs the destination from fixed trusted URLs, caps both response bodies,
+and times out each refresh. Explicit transport corrections keep documented
+Anthropic and Responses models off the default Chat Completions route; transport
+is never inferred from a model name.
 
-The catalog is the pinned JSON copied from Pi `v0.84.2`. It does not fetch
-`pi.dev`. Existing sessions store `{provider, model, reasoning}` and re-resolve
-the catalog on the next admitted turn. Frozen operations pin the adapter
-recovery identity
+The adapter conditionally revalidates `models.dev` with its ETag and atomically
+caches the last complete result beside the credential database. A bundled Pi
+`v0.84.2` catalog remains available even when the public inventory omits a
+previously supported or explicitly configured model. Bundled bindings always
+win, and the first validated binding learned for a new model is kept stable
+across automatic metadata refreshes. Code review, not an unannounced remote
+edit, changes an existing runtime binding.
+
+Alpha refreshes the catalog when a session is created or loaded and immediately
+before selecting a different model in an open session. Configuration changes
+remain excluded while a prompt is active. Existing sessions store
+`{provider, model, reasoning}`; each admitted operation freezes the selected
+binding in its kernel recovery identity
 
 ```text
 renoa-model-provider-node/v1/{provider}/{model}/{binding}/reasoning-{level}

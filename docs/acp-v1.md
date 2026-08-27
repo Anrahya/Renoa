@@ -132,10 +132,14 @@ The adapter advertises `loadSession`, `session/close`, `session/delete`, and
 image prompts. Audio, embedded resources, additional workspace directories,
 and surface-supplied MCP server declarations are rejected.
 
-The model list comes from the Renoa-owned provider adapter's authenticated,
-pinned catalog. Renoa validates and pins the selected model specification
-before building a runtime, so a newly discovered model is not fetched again
-between selection and use.
+The model list comes from the Renoa-owned provider adapter's authenticated
+catalog. OpenCode Go availability is refreshed from its official endpoint;
+validated last-known-good and bundled catalogs keep discovery usable offline.
+A surface can refresh `renoa-agent models --json` while a session remains open.
+When it sends a newly discovered choice through standard ACP session config,
+Alpha refreshes and validates the authoritative catalog before accepting it.
+The exact selected model specification is then frozen for each admitted
+operation, so a remote catalog cannot change a running turn.
 Reasoning choices come from that model's declared capability map. A model
 change keeps the current reasoning level when the new model supports it;
 otherwise it uses `high`, or the model's first supported level. Configuration

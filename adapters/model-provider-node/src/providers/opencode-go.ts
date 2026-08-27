@@ -2,9 +2,9 @@
  * Official OpenCode Go transports, verified 2026-08-25 against
  * https://dev.opencode.ai/docs/go/
  *
- * Models are advertised only when this table names a transport and the pinned
- * Pi catalog supplies limits, tool support, and reasoning metadata. Transport
- * is never inferred from a model id.
+ * This table records model-specific corrections from OpenCode's documentation.
+ * Live catalog entries otherwise use a known models.dev SDK transport. A model
+ * name or id is never used to guess its transport.
  */
 export type OpenCodeTransport = "openai-completions" | "openai-responses" | "anthropic-messages";
 
@@ -51,11 +51,13 @@ export const OPENCODE_GO_CATALOG_ADDITIONS: readonly Record<string, unknown>[] =
 
 export const OPENCODE_GO_TRANSPORTS: Readonly<Record<string, OpenCodeTransport>> = {
   "grok-4.5": "openai-responses",
+  "grok-4.6": "openai-responses",
   "gpt-5.6-luna": "openai-responses",
   "muse-spark-1.2-contributor": "openai-responses",
   "glm-5.1": "openai-completions",
   "glm-5.2": "openai-completions",
   "glm-5.3": "openai-completions",
+  "glm-5.3-flash": "openai-completions",
   "kimi-k3": "openai-completions",
   "kimi-k2.6": "openai-completions",
   "kimi-k2.7-code": "openai-completions",
@@ -76,6 +78,22 @@ export const OPENCODE_GO_TRANSPORTS: Readonly<Record<string, OpenCodeTransport>>
   "qwen3.6-plus": "anthropic-messages",
 };
 
-export function opencodeGoTransport(modelId: string): OpenCodeTransport | undefined {
-  return OPENCODE_GO_TRANSPORTS[modelId];
+export function opencodeGoTransport(
+  modelId: string,
+  npmPackage?: string,
+): OpenCodeTransport | undefined {
+  const documented = OPENCODE_GO_TRANSPORTS[modelId];
+  if (documented !== undefined) {
+    return documented;
+  }
+  switch (npmPackage) {
+    case "@ai-sdk/openai-compatible":
+      return "openai-completions";
+    case "@ai-sdk/openai":
+      return "openai-responses";
+    case "@ai-sdk/anthropic":
+      return "anthropic-messages";
+    default:
+      return undefined;
+  }
 }
