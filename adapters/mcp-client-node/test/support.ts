@@ -20,7 +20,7 @@ export interface FixtureRequest {
   readonly headers: IncomingHttpHeaders;
   readonly rpc: {
     readonly jsonrpc: "2.0";
-    readonly id: string | number;
+    readonly id?: string | number;
     readonly method: string;
     readonly params?: JsonObject;
   };
@@ -37,6 +37,11 @@ export interface FixtureResponse {
 
 export class McpFixtureServer {
   readonly requests: FixtureRequest[] = [];
+  readonly transportRequests: Array<{
+    readonly url: string;
+    readonly method: string;
+    readonly headers: IncomingHttpHeaders;
+  }> = [];
   readonly #server: Server;
   readonly #handler: (
     request: FixtureRequest,
@@ -89,9 +94,20 @@ export class McpFixtureServer {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
+    const transportRequest = {
+      url: request.url ?? "",
+      method: request.method ?? "",
+      headers: request.headers,
+    };
+    this.transportRequests.push(transportRequest);
+    if (transportRequest.method === "GET") {
+      response.writeHead(405, { "content-type": "text/plain" });
+      response.end("event stream unavailable");
+      return;
+    }
     const raw = await collectStream(request);
     const parsed = JSON.parse(raw) as unknown;
-    if (!isRpcRequest(parsed)) {
+    if (!isRpcMessage(parsed)) {
       response.writeHead(400, { "content-type": "text/plain" });
       response.end("invalid JSON-RPC request");
       return;
@@ -131,6 +147,9 @@ export function rpcResult(
   request: FixtureRequest,
   result: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
+  if (request.rpc.id === undefined) {
+    throw new Error(`notification '${request.rpc.method}' cannot receive a result`);
+  }
   return { jsonrpc: "2.0", id: request.rpc.id, result };
 }
 
@@ -139,6 +158,9 @@ export function rpcError(
   code: number,
   message: string,
 ): Readonly<Record<string, unknown>> {
+  if (request.rpc.id === undefined) {
+    throw new Error(`notification '${request.rpc.method}' cannot receive an error`);
+  }
   return { jsonrpc: "2.0", id: request.rpc.id, error: { code, message } };
 }
 
@@ -179,14 +201,18 @@ export const HEADER_SCHEMA: JsonObject = {
 };
 
 export function discoverRequest(endpoint: string): AdapterRequest {
-  return { wire_version: 2, action: "discover", endpoint };
+  return { wire_version: 4, action: "discover", endpoint };
 }
 
-export function callRequest(endpoint: string): AdapterRequest {
+export function callRequest(
+  endpoint: string,
+  protocolVersion = "2026-07-28",
+): AdapterRequest {
   return {
-    wire_version: 2,
+    wire_version: 4,
     action: "call",
     endpoint,
+    protocol_version: protocolVersion,
     tool: {
       name: "write_note",
       input_schema: HEADER_SCHEMA,
@@ -237,14 +263,16 @@ async function collectStream(stream: NodeJS.ReadableStream): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function isRpcRequest(value: unknown): value is FixtureRequest["rpc"] {
+function isRpcMessage(value: unknown): value is FixtureRequest["rpc"] {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
   const record = value as Record<string, unknown>;
   return (
     record.jsonrpc === "2.0" &&
-    (typeof record.id === "string" || typeof record.id === "number") &&
+    (record.id === undefined ||
+      typeof record.id === "string" ||
+      typeof record.id === "number") &&
     typeof record.method === "string" &&
     (record.params === undefined ||
       (typeof record.params === "object" &&

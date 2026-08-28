@@ -32,7 +32,7 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 2,
+        wire_version: 4,
         action: "discover",
         endpoint: "https://example.com/mcp",
         surprise: true,
@@ -42,9 +42,10 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 2,
+        wire_version: 4,
         action: "call",
         endpoint: "https://example.com/mcp",
+        protocol_version: "2026-07-28",
         tool: { name: "x", input_schema: { type: "object" } },
         arguments: [],
       }),
@@ -54,7 +55,7 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
 
 test("wire parser accepts only bounded bearer authorization", () => {
   const parsed = parseAdapterRequest({
-    wire_version: 2,
+    wire_version: 4,
     action: "discover",
     endpoint: "https://example.com/mcp",
     authorization: { scheme: "bearer", token: "secret-token" },
@@ -63,10 +64,40 @@ test("wire parser accepts only bounded bearer authorization", () => {
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 2,
+        wire_version: 4,
         action: "discover",
         endpoint: "https://example.com/mcp",
         authorization: { scheme: "bearer", token: "bad\ntoken" },
+      }),
+    AdapterProblem,
+  );
+});
+
+test("wire parser normalizes bounded public headers and blocks client-owned fields", () => {
+  const parsed = parseAdapterRequest({
+    wire_version: 4,
+    action: "discover",
+    endpoint: "https://example.com/mcp",
+    headers: { "X-Exa-Source": "agent-plugin" },
+  });
+  assert.deepEqual(parsed.headers, { "x-exa-source": "agent-plugin" });
+  assert.throws(
+    () =>
+      parseAdapterRequest({
+        wire_version: 4,
+        action: "discover",
+        endpoint: "https://example.com/mcp",
+        headers: { authorization: "Bearer package-secret" },
+      }),
+    AdapterProblem,
+  );
+  assert.throws(
+    () =>
+      parseAdapterRequest({
+        wire_version: 4,
+        action: "discover",
+        endpoint: "https://example.com/mcp",
+        headers: { Tenant: "one", tenant: "two" },
       }),
     AdapterProblem,
   );

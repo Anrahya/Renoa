@@ -7,8 +7,8 @@ integrations: direct MCP servers over modern Streamable HTTP. The replaceable
 Node process adapter implements this boundary under `adapters/mcp-client-node`.
 The Host durably registers connections, publishes complete catalog snapshots,
 attaches connections to Alpha's searchable registry, resolves exact references
-into ordinary kernel-backed calls, and supports either no authentication or an
-exact GitHub CLI account reference.
+into ordinary kernel-backed calls, and supports no authentication, an exact
+GitHub CLI account reference, or a named Secret Service bearer reference.
 
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md) owns the
 broader extension direction. [`renoa-host-v0.md`](renoa-host-v0.md) owns runtime
@@ -46,18 +46,25 @@ searchable, but none of those schemas is sent until Alpha explicitly loads one.
 
 V0 supports exactly:
 
-- MCP protocol revision `2026-07-28`;
-- the modern, stateless lifecycle with per-request metadata;
+- preferred MCP protocol revision `2026-07-28` plus the exact legacy revisions
+  supported by the pinned SDK (`2025-11-25`, `2025-06-18`, `2025-03-26`,
+  `2024-11-05`, and `2024-10-07`);
+- the modern stateless lifecycle and the SDK's legacy initialize/session
+  lifecycle, selected during discovery and then frozen in the catalog;
 - Streamable HTTP `POST` responses as either JSON or request-scoped SSE;
 - `server/discover`, paginated `tools/list`, and `tools/call`;
-- direct no-auth connections and one exact `gh`-resolved bearer credential;
+- direct no-auth connections, exact `gh`-resolved bearer credentials, and named
+  Secret Service bearer credentials;
+- bounded public request headers supplied by a reviewed integration or Agent
+  Plugin package;
 - complete tool results containing ordered text and image blocks; and
 - optional bounded structured tool output when it can be preserved without
   changing its JSON value.
 
-It does not fall back to an `initialize` handshake or an older transport. An
-incompatible server fails with a typed diagnostic. Backward compatibility can
-be added later behind a new adapter revision after a real server requires it.
+Discovery prefers modern negotiation and may fall back once to the SDK's
+legacy initialize handshake. A stored catalog call uses only that exact
+negotiated revision; it neither repeats discovery nor changes protocol. An
+unsupported server fails with a typed diagnostic.
 
 ## Ownership
 
@@ -78,8 +85,9 @@ protocol versions, URLs, HTTP, catalogs, and server metadata remain outside it.
 These concepts are distinct even though the first proof uses one of each:
 
 - **Direct integration:** one reviewed Streamable HTTP endpoint definition.
-- **Connection:** one configured instance of that integration. It stores either
-  no-auth or an exact `gh` hostname/account reference, never the token.
+- **Connection:** one configured instance of that integration. It stores
+  no-auth, an exact `gh` hostname/account reference, or a named Secret Service
+  credential reference, never the token.
 - **Catalog snapshot:** one complete, validated result of discovery and every
   `tools/list` page.
 - **Profile attachment:** permission for Alpha's registry to search and resolve
@@ -105,9 +113,13 @@ Alpha's deliberate full-access v0 policy. This is an intentional widening for
 the current profile, not a future permission rule; a later permission model
 must replace it rather than silently inheriting it.
 
-Host schema v4 adds the separate Agent Skills records. It does not change MCP
-identity, attachment, catalog, reference, or execution behavior; the v1/v2-to-v3
-MCP migration remains the same proven transformation.
+Host schema v4 adds the separate Agent Skills records. Schema v6 adds immutable
+Agent Plugin records, bounded public MCP headers, and named credential
+references. It stores no credential value. These additions do not change MCP
+tool identity, attachment, catalog-reference, or execution behavior; the
+v1/v2-to-v3 MCP migration remains the same proven transformation.
+Schema v7 preserves package homepage metadata and adds a plugin skill scope;
+neither changes the MCP wire or tool identity.
 
 ## Endpoint boundary
 
@@ -118,12 +130,19 @@ transport can be tested without weakening remote connections.
 User information and fragments are rejected. A query string is allowed but is
 treated as public configuration: it is shown during inspection, contributes to
 endpoint identity, and must never carry a credential. A GitHub bearer token is
-resolved just in time with `gh auth token --hostname HOST --user ACCOUNT`, sent
-to the adapter only through standard input, scoped to the exact configured URL,
-and wiped after use. It never enters Host storage, arguments, environment,
-catalog data, diagnostics, model context, or a runtime binding. Static custom
-headers remain unsupported. Standard MCP headers and valid argument-derived
-`x-mcp-header` values remain part of the transport contract.
+resolved just in time with `gh auth token --hostname HOST --user ACCOUNT`. A
+named API key is resolved just in time with `secret-tool lookup application
+renoa credential ID`. The Host sends either value to the adapter only through
+standard input, scopes it to the exact configured URL, and wipes it after use.
+It never enters Host storage, arguments, environment, catalog data,
+diagnostics, model context, or a runtime binding.
+
+An integration may supply bounded fixed public headers, such as Exa's source
+identifier. Renoa rejects authorization, API-key, cookie, MCP, content, and
+other client-owned header names so package data cannot impersonate a credential
+or change transport control. Standard MCP headers, the Host-resolved bearer,
+and valid argument-derived `x-mcp-header` values remain authoritative at the
+request boundary.
 
 Redirects are not followed. A redirect is a visible configuration failure and
 the caller may review the target as a new endpoint. This keeps source identity,
@@ -135,24 +154,29 @@ client certificates, proxies, and insecure TLS switches are outside v0.
 
 ## Protocol lifecycle
 
-The adapter pins modern MCP `2026-07-28`. Every request carries matching
-protocol metadata and required Streamable HTTP headers. Client identity is
-informational and stable for this adapter revision. Client capabilities are
-empty because v0 offers no optional MCP feature or extension.
+The adapter prefers modern MCP `2026-07-28`. Every modern request carries
+matching protocol metadata and required Streamable HTTP headers. Client
+identity is informational and stable for this adapter revision. Client
+capabilities are empty because v0 offers no optional MCP feature or extension.
 
 Discovery performs:
 
 ```text
 server/discover
-  -> require 2026-07-28 in supportedVersions
+  -> use 2026-07-28 when offered
+  -> otherwise perform one SDK legacy initialize/initialized exchange
   -> require the tools capability
   -> tools/list until nextCursor is absent
   -> validate and normalize one complete snapshot
 ```
 
-There is no `initialize`, `notifications/initialized`, `Mcp-Session-Id`, GET
-stream, DELETE teardown, SSE resumption, or `Last-Event-ID`. Each request is
-self-describing and independent at the MCP layer.
+Modern operation has no protocol session. Legacy operation permits only the
+SDK's exact initialize, initialized notification, negotiated session header,
+single event stream, and action-appropriate `tools/list` or `tools/call`
+sequence. The guarded transport rejects an invented or changed session ID,
+unexpected method, hidden `tools/call` retry, redirect, or second event stream.
+The negotiated revision is durable catalog data and every call request carries
+it back to the adapter.
 
 `server/discover` identity and instructions are untrusted presentation data.
 They do not select behavior, create security identity, or enter Alpha's model
@@ -295,14 +319,22 @@ falsely definite.
 | --- | --- |
 | Endpoint, argument, encoding, process-start, or protocol validation fails before possible HTTP dispatch | Definite failure; no remote change possible |
 | DNS, connection, or TLS evidence proves that no request bytes could have reached the endpoint | Definite unavailable failure |
-| A valid MCP JSON-RPC error response arrives | Definite failure; partial external changes may be possible |
+| An HTTP error response arrives, with or without a valid MCP terminal body | Definite model-visible failure containing the safe status and server message; partial external changes may be possible |
 | A complete `tools/call` result arrives | Definite success or model-visible tool error |
-| The connection, response stream, or adapter is lost after possible dispatch and before a valid terminal response | `OutcomeUnknown` |
+| The connection, response stream, or adapter is lost after possible dispatch and before a valid terminal response | Model-visible uncertain result stating that the call may or may not have succeeded |
 | A timeout or cancellation occurs before possible dispatch | Definite timeout or cancellation; no remote change possible |
-| A timeout or cancellation occurs after possible dispatch without a racing terminal response | `OutcomeUnknown` |
+| A timeout or cancellation occurs after possible dispatch without a racing terminal response | Model-visible uncertain result stating that the call may or may not have succeeded |
 
-Once dispatch may have happened, a plain HTTP error without a valid MCP
-terminal body is not proof that the tool did not run. It becomes unknown.
+An HTTP response is evidence that the server answered, so its safe status and
+message reach the model instead of being replaced by a generic lost-result
+error. `partial_changes_possible` remains true after dispatch because an error
+response does not prove that the server made no external change.
+
+If no terminal response arrives after dispatch, the Host settles an honest
+error result that says the call may or may not have succeeded. This keeps the
+model loop alive without pretending success or failure. No Renoa layer retries
+the call; the model must explain the uncertainty or verify state safely before
+deciding whether a new call is appropriate.
 
 Detailed safe diagnostics retain the phase, endpoint identity, HTTP status,
 JSON-RPC code, MCP request ID, adapter process status, and causal error when
@@ -346,10 +378,11 @@ The first process contract has two actions:
 - **discover:** accept one endpoint, produce one complete normalized catalog or
   one typed terminal failure;
 - **call:** accept one frozen endpoint/tool/request, report the dispatch
-  transition, then produce one terminal result, definite failure, or unknown
-  outcome.
+  transition, then produce one terminal result, definite failure, or typed
+  uncertain failure.
 
-The version-2 process request may carry one bounded bearer authorization value.
+The version-4 process request may carry one bounded bearer authorization value
+and bounded fixed public headers.
 Standard output is a bounded machine-readable record stream. Standard error is
 bounded, redacted diagnostic text and never part of the protocol. The first
 valid terminal record is authoritative; later process output or cleanup failure
@@ -397,9 +430,11 @@ refresh must publish that remote change first.
 
 Tool invocation is never replayed after possible dispatch. The kernel's
 existing `NeverReplay` recovery turns an interrupted dispatched effect into
-`OutcomeUnknown` without invoking the MCP adapter again. An explicitly
-abandoned unknown tool operation uses the existing balanced-history behavior;
-MCP adds no special transcript rule.
+`OutcomeUnknown` without invoking the MCP adapter again. During a live call,
+the Host converts a typed no-response outcome into a durable, model-visible
+uncertain tool result so Alpha can continue reasoning without replay. A process
+crash before that result is persisted still follows the kernel's conservative
+recovery boundary.
 
 A refresh does not mutate the three frozen registry implementations. A search
 or load read that must be replayed may observe later committed registry state,
@@ -412,8 +447,9 @@ substitutes the newer catalog.
 The complete vertical path must prove, through a deterministic local MCP server
 and the real process boundary:
 
-1. pinned modern discovery succeeds without `initialize` or session headers;
-2. an older-only server fails without fallback;
+1. preferred modern discovery succeeds without `initialize` or session headers;
+2. an older-only server falls back once, stores the exact negotiated revision,
+   and calls through that revision without modern rediscovery;
 3. pagination, deterministic ordering, duplicate names, cursor loops, malformed
    pages, and atomic refresh behave exactly as specified;
 4. JSON and SSE responses produce the same terminal result;
@@ -421,7 +457,8 @@ and the real process boundary:
 6. ordered text/image content and duplicate blocks survive unchanged;
 7. unsupported, malformed, and over-limit results fail atomically;
 8. `isError` content reaches the model as a settled tool result;
-9. pre-dispatch failures are definite while post-dispatch loss is unknown;
+9. received HTTP failures preserve their safe status and server message, while
+   post-dispatch loss becomes an honest model-visible uncertainty;
 10. no layer retries one `tools/call`;
 11. cancellation and deadlines stop and reap local work without claiming the
     remote action stopped;
@@ -434,19 +471,25 @@ and the real process boundary:
 15. one live registry object sees a committed attachment without restart, and
     catalog replacement makes prior references fail stale;
 16. restart never repeats a possibly dispatched tool call;
-17. an exact `gh` account reference resolves a token only at invocation, while
-    adapter output, diagnostics, Host SQLite, and frozen bindings remain
-    secret-free; and
-18. durable structured details remain Host-visible but never reach a normal or
+17. an exact `gh` account or named Secret Service reference resolves a token
+    only at invocation, while adapter output, diagnostics, Host SQLite, and
+    frozen bindings remain secret-free;
+18. an Exa-shaped package sends its reviewed public source header and
+    just-in-time bearer through the real adapter, and a live registry sees the
+    attached catalog without restart; and
+19. durable structured details remain Host-visible but never reach a normal or
     compaction model request.
 
 ## Locked decisions
 
 - MCP is one replaceable tool adapter, not a kernel, loop, RCP, or surface
   protocol.
-- The first revision is modern MCP `2026-07-28` over Streamable HTTP only.
-- Connections are direct and use either no auth or one exact `gh` CLI account
-  reference; Renoa stores no GitHub token.
+- The first revision prefers modern MCP `2026-07-28` and accepts only the
+  pinned SDK's enumerated legacy revisions over Streamable HTTP.
+- Connections are direct and use no auth, one exact `gh` CLI account reference,
+  or one named Secret Service bearer reference; Renoa stores no token.
+- Fixed integration headers are public, bounded data. Sensitive and
+  client-owned header names are rejected.
 - Discovery publishes only complete, bounded, deterministic catalog snapshots.
 - The stored Host identity is composite; self-reported server names are not
   identity.
@@ -462,10 +505,10 @@ and the real process boundary:
 
 ## Open decisions after this slice
 
-- pre-2026 MCP compatibility and stdio transport;
-- Renoa-owned OAuth/API-key flows, general secret storage, and configured
-  headers;
-- future Host schema migrations beyond v4 and typed management commands;
+- compatibility outside the enumerated MCP revisions and stdio transport;
+- Renoa-owned OAuth flows, GUI credential entry, and cross-platform secret
+  storage or synchronization;
+- future Host schema migrations beyond v7;
 - automatic refresh, cache hints, and list-change subscriptions;
 - progress projection;
 - standards-complete client-side argument validation and any schema behavior
@@ -475,11 +518,11 @@ and the real process boundary:
   reconciliation can prove its duplicate semantics;
 - process pooling or multiplexing;
 - tool approval and permission policy; and
-- package loading through Agent Plugins.
+- stdio or SSE Agent Plugin MCP entries.
 
 ## Evidence
 
-Reviewed on 2026-08-27. This contract copies no upstream source.
+Reviewed on 2026-08-28. This contract copies no upstream source.
 
 - [MCP specification `2026-07-28` at `5f5440bb26a62e2cf3440b92da5a667efa03b267`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267), with the repository's Apache-2.0 transition, remaining MIT material, and CC-BY-4.0 documentation.
 - [MCP TypeScript SDK 2.0.0 at `cc4b41617ce3601b1290d67216ea0b194a3cd9ac`](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac). The published `@modelcontextprotocol/client@2.0.0` package declares MIT; the source repository records the broader MCP license transition.
@@ -487,6 +530,8 @@ Reviewed on 2026-08-27. This contract copies no upstream source.
 - [OpenAI Agents SDK at `10cdae4a3c30a29c6e96c8ec14e6bf1c5f02940e`](https://github.com/openai/openai-agents-python/tree/10cdae4a3c30a29c6e96c8ec14e6bf1c5f02940e), MIT. Its deferred tool loading and namespaces were reviewed; no source was copied.
 - [DeepSeek Harness at `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e), MIT. Its single code-mode transport informed the constant-schema direction; no source was copied.
 - [Anthropic Tool Search documentation](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool). Its deferred-definition behavior and measured large-catalog context cost were reviewed; no source was copied.
+- [Agent Plugins 1.0 at `ff8ab5e392cc87bd88d87c060815a87490e51003`](https://github.com/agentplugins/agent-plugins-spec/tree/ff8ab5e392cc87bd88d87c060815a87490e51003), with CC-BY-4.0 specification text and Apache-2.0 schemas. Renoa consumes its package and MCP shapes without copying runtime source.
+- [Exa MCP server at `15ffb50519e719dc791cdc750ce5ed1934c0a1ed`](https://github.com/exa-labs/exa-mcp-server/tree/15ffb50519e719dc791cdc750ce5ed1934c0a1ed), MIT. Renoa copied no server source; its Agent Plugin endpoint, public source header, and bearer boundary form the first real package-shaped proof.
 
 The SDK is an implementation dependency behind Renoa's adapter process, not
 Renoa's internal domain model or public Rust API.

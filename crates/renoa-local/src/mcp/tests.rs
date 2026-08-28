@@ -66,6 +66,23 @@ fn rejected_tool_indexes_must_be_strictly_ordered_for_durable_round_trips() {
     assert!(matches!(error, McpHostError::Invalid(_)));
 }
 
+#[test]
+fn a_supported_legacy_protocol_is_preserved_in_the_catalog() {
+    let snapshot = McpCatalogSnapshot::from_adapter(
+        "legacy",
+        AdapterCatalog {
+            endpoint: ENDPOINT.to_owned(),
+            protocol_version: "2025-11-25".to_owned(),
+            adapter_revision: MCP_ADAPTER_REVISION.to_owned(),
+            tools: vec![tool("search")],
+            rejected_tools: Vec::new(),
+        },
+    )
+    .expect("supported legacy catalog");
+
+    assert_eq!(snapshot.protocol_version(), "2025-11-25");
+}
+
 fn snapshot(connection_id: &str, endpoint: &str, names: &[&str]) -> McpCatalogSnapshot {
     McpCatalogSnapshot::from_adapter(
         connection_id,
@@ -184,6 +201,52 @@ fn catalog_publication_is_atomic_when_a_late_tool_insert_fails() {
 
     let stored = store.load_catalog("primary").expect("load prior catalog");
     assert_eq!(stored, original);
+}
+
+#[test]
+fn plugin_connection_publication_rolls_back_every_row_on_a_late_failure() {
+    let (_directory, store) = store();
+    let connection = Connection::open(store.path()).expect("open test injection connection");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_zeta_plugin
+             BEFORE INSERT ON mcp_tools
+             WHEN NEW.name = 'zeta'
+             BEGIN
+                SELECT RAISE(ABORT, 'injected plugin publication failure');
+             END;",
+        )
+        .expect("install failure trigger");
+    let snapshot = snapshot("plugin", ENDPOINT, &["alpha", "zeta"]);
+
+    assert!(
+        store
+            .publish_plugin_connection(
+                "plugin.integration",
+                PROFILE,
+                &McpConnectionAuth::None,
+                &snapshot,
+            )
+            .is_err()
+    );
+    assert!(matches!(
+        store.connection_config("plugin"),
+        Err(McpHostError::NotFound(_))
+    ));
+    assert!(
+        store
+            .alpha_connection_ids(PROFILE)
+            .expect("load Alpha attachments")
+            .is_empty()
+    );
+    let persisted_integrations: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM mcp_integrations WHERE integration_id = 'plugin.integration'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count rolled-back integration rows");
+    assert_eq!(persisted_integrations, 0);
 }
 
 #[test]

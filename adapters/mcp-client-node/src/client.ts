@@ -1,5 +1,6 @@
 import {
   Client,
+  SUPPORTED_PROTOCOL_VERSIONS as LEGACY_PROTOCOL_VERSIONS,
   StreamableHTTPClientTransport,
   type ListToolsResult,
   type Tool,
@@ -57,6 +58,7 @@ export async function executeAdapterRequest(
         endpoint,
         hooks,
         tracker,
+        request.headers,
         request.authorization,
       );
       record = { wire_version: WIRE_VERSION, event: "discovered", catalog };
@@ -113,6 +115,7 @@ async function discoverCatalog(
   endpoint: URL,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
+  headers: AdapterRequest["headers"],
   authorization: WireAuthorization | undefined,
 ) {
   const deadline = new Deadline(DISCOVERY_TIMEOUT_MS);
@@ -122,8 +125,11 @@ async function discoverCatalog(
     deadline,
     hooks,
     tracker,
+    headers,
     authorization,
+    undefined,
   );
+  const protocolVersion = requireNegotiatedProtocolVersion(client);
   const accepted: CatalogTool[] = [];
   const rejected: RejectedTool[] = [];
   const seenCursors = new Set<string>();
@@ -187,7 +193,7 @@ async function discoverCatalog(
   return finalizeCatalog(
     {
       endpoint: endpoint.href,
-      protocol_version: MCP_PROTOCOL_VERSION,
+      protocol_version: protocolVersion,
       adapter_revision: MCP_ADAPTER_REVISION,
     },
     accepted,
@@ -209,7 +215,9 @@ async function callTool(
     deadline,
     hooks,
     tracker,
+    request.headers,
     request.authorization,
+    request.protocol_version,
   );
   const toolDefinition: Tool = {
     name: selected.name,
@@ -245,7 +253,9 @@ async function connectClient(
   deadline: Deadline,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
+  headers: AdapterRequest["headers"],
   authorization: WireAuthorization | undefined,
+  expectedProtocolVersion: string | undefined,
 ): Promise<Client> {
   const fetch = guardedFetch(
     action,
@@ -253,6 +263,7 @@ async function connectClient(
     hooks.dispatchStarted,
     hooks.signal,
     endpoint,
+    headers,
     authorization,
   );
   const transport = new StreamableHTTPClientTransport(endpoint, {
@@ -267,14 +278,15 @@ async function connectClient(
     onInsufficientScope: "throw",
     maxStepUpRetries: 0,
   });
+  const protocol = protocolSelection(expectedProtocolVersion);
   const client = new Client(
     { name: "renoa-mcp-client", version: "0.1.0" },
     {
       capabilities: {},
-      supportedProtocolVersions: [MCP_PROTOCOL_VERSION],
+      supportedProtocolVersions: protocol.supportedVersions,
       enforceStrictCapabilities: true,
       versionNegotiation: {
-        mode: { pin: MCP_PROTOCOL_VERSION },
+        mode: protocol.mode,
         probe: { maxRetries: 0 },
       },
       inputRequired: { autoFulfill: false },
@@ -283,10 +295,14 @@ async function connectClient(
   );
   hooks.registerCleanup(() => client.close());
   await client.connect(transport, deadline.requestOptions(hooks.signal));
-  if (client.getNegotiatedProtocolVersion() !== MCP_PROTOCOL_VERSION) {
+  const negotiated = requireNegotiatedProtocolVersion(client);
+  if (
+    expectedProtocolVersion !== undefined &&
+    negotiated !== expectedProtocolVersion
+  ) {
     throw new AdapterProblem(
       "incompatible_protocol",
-      `MCP endpoint did not negotiate ${MCP_PROTOCOL_VERSION}.`,
+      `MCP endpoint negotiated ${negotiated}, expected ${expectedProtocolVersion}.`,
       { code: "protocol_version_mismatch" },
     );
   }
@@ -298,4 +314,50 @@ async function connectClient(
     );
   }
   return client;
+}
+
+const SUPPORTED_PROTOCOL_VERSIONS = [
+  MCP_PROTOCOL_VERSION,
+  ...LEGACY_PROTOCOL_VERSIONS,
+] as const;
+const SUPPORTED_PROTOCOL_VERSION_SET = new Set<string>(
+  SUPPORTED_PROTOCOL_VERSIONS,
+);
+
+function protocolSelection(expected: string | undefined): {
+  readonly supportedVersions: string[];
+  readonly mode: "auto" | "legacy" | { readonly pin: string };
+} {
+  if (expected === undefined) {
+    return {
+      supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS],
+      mode: "auto",
+    };
+  }
+  if (!SUPPORTED_PROTOCOL_VERSION_SET.has(expected)) {
+    throw new AdapterProblem(
+      "incompatible_protocol",
+      `Renoa's MCP adapter does not support catalog protocol ${expected}.`,
+      { code: "unsupported_catalog_protocol" },
+    );
+  }
+  return {
+    supportedVersions: [expected],
+    mode: expected === MCP_PROTOCOL_VERSION ? { pin: expected } : "legacy",
+  };
+}
+
+function requireNegotiatedProtocolVersion(client: Client): string {
+  const negotiated = client.getNegotiatedProtocolVersion();
+  if (
+    negotiated === undefined ||
+    !SUPPORTED_PROTOCOL_VERSION_SET.has(negotiated)
+  ) {
+    throw new AdapterProblem(
+      "incompatible_protocol",
+      "The MCP endpoint negotiated an unsupported protocol version.",
+      { code: "unsupported_negotiated_protocol" },
+    );
+  }
+  return negotiated;
 }

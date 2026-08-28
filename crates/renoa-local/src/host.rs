@@ -10,6 +10,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub(crate) mod catalog;
+mod extensions;
 mod mcp;
 mod models;
 #[cfg(test)]
@@ -28,6 +29,10 @@ use crate::{
         McpCatalogStore, McpCredentialResolver, McpHostError, alpha_registry_bindings,
         resolve_adapter,
     },
+    plugins::{
+        IntegrationCatalog, PLUGIN_STORE_DIRECTORY, PluginError, PluginManager,
+        alpha_plugin_binding,
+    },
     runtime::build_composed_local_runtime,
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
     skills::{
@@ -37,11 +42,32 @@ use crate::{
     trace::{TRACE_DATABASE, TraceError, TraceStore},
 };
 
-pub(crate) use models::discover_enabled_models;
+use models::validate_selection;
+pub(crate) use models::{
+    discover_enabled_models, initial_reasoning, require_model, selected_model_by_selection_id,
+};
 
 /// Process-local configuration used to compose Renoa Alpha sessions.
 pub struct LocalHost {
     config: Arc<HostConfig>,
+}
+
+/// Optional replaceable process adapters used by the local Host.
+#[derive(Clone, Copy, Default)]
+pub struct LocalHostAdapters<'a> {
+    mcp: Option<&'a Path>,
+    integration_catalog: Option<&'a Path>,
+}
+
+impl<'a> LocalHostAdapters<'a> {
+    /// Selects the MCP runtime and discovery-only integration catalog adapters.
+    #[must_use]
+    pub const fn new(mcp: Option<&'a Path>, integration_catalog: Option<&'a Path>) -> Self {
+        Self {
+            mcp,
+            integration_catalog,
+        }
+    }
 }
 
 pub(crate) struct HostConfig {
@@ -55,6 +81,7 @@ pub(crate) struct HostConfig {
     pub(crate) mcp_adapter: Option<PathBuf>,
     pub(crate) mcp_credentials: McpCredentialResolver,
     pub(crate) skill_store: SkillStore,
+    pub(crate) plugins: PluginManager,
 }
 
 struct HostInitialization {
@@ -65,6 +92,7 @@ struct HostInitialization {
     initial_model: String,
     credential_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
+    integration_catalog_adapter: Option<PathBuf>,
     global_skill_source: Option<PathBuf>,
 }
 
@@ -94,6 +122,8 @@ pub enum LocalHostError {
     Mcp(#[from] McpHostError),
     #[error(transparent)]
     Skill(#[from] SkillError),
+    #[error(transparent)]
+    Plugin(#[from] PluginError),
     #[error(transparent)]
     HostCatalog(#[from] catalog::HostCatalogError),
     #[error("local Host background storage task failed: {0}")]
@@ -130,12 +160,18 @@ impl LocalHost {
         initial_provider: ModelProvider,
         initial_model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
-        mcp_adapter: Option<&Path>,
+        adapters: LocalHostAdapters<'_>,
     ) -> Result<Self, LocalHostError> {
-        let mcp_adapter = mcp_adapter
+        let mcp_adapter = adapters
+            .mcp
             .map(resolve_adapter)
             .transpose()
             .map_err(McpHostError::from)?;
+        let integration_catalog_adapter = adapters
+            .integration_catalog
+            .map(IntegrationCatalog::resolve_adapter)
+            .transpose()
+            .map_err(PluginError::from)?;
         Self::assemble(HostInitialization {
             data_directory: data_directory.into(),
             bridge: bridge.into(),
@@ -144,6 +180,7 @@ impl LocalHost {
             initial_model: initial_model.into(),
             credential_store: credential_store.into(),
             mcp_adapter,
+            integration_catalog_adapter,
             global_skill_source: default_global_source(),
         })
     }
@@ -157,6 +194,7 @@ impl LocalHost {
             initial_model,
             credential_store,
             mcp_adapter,
+            integration_catalog_adapter,
             global_skill_source,
         } = initialization;
         if providers.is_empty() {
@@ -182,10 +220,20 @@ impl LocalHost {
         let host_database = data_directory.join(catalog::HOST_DATABASE);
         catalog::initialize(&host_database)?;
         let mcp_catalog = McpCatalogStore::open(host_database.clone())?;
+        let mcp_credentials = McpCredentialResolver::default();
         let skill_store = SkillStore::initialize(
-            host_database,
+            host_database.clone(),
             store_path(&data_directory),
             global_skill_source,
+        )?;
+        let plugins = PluginManager::initialize(
+            host_database.clone(),
+            data_directory.join(PLUGIN_STORE_DIRECTORY),
+            mcp_catalog.clone(),
+            mcp_adapter.clone(),
+            mcp_credentials.clone(),
+            integration_catalog_adapter.map(IntegrationCatalog::new),
+            skill_store.clone(),
         )?;
         Ok(Self {
             config: Arc::new(HostConfig {
@@ -197,8 +245,9 @@ impl LocalHost {
                 credential_store,
                 mcp_catalog,
                 mcp_adapter,
-                mcp_credentials: McpCredentialResolver::default(),
+                mcp_credentials,
                 skill_store,
+                plugins,
             }),
         })
     }
@@ -381,6 +430,10 @@ pub(crate) async fn resolve_runtime(
         host.mcp_adapter.clone(),
         host.mcp_credentials.clone(),
     );
+    extension_tools.push(alpha_plugin_binding(
+        host.plugins.clone(),
+        workspace.root().to_path_buf(),
+    ));
     extension_tools.extend(alpha_skill_bindings(
         host.skill_store.clone(),
         workspace.root().to_path_buf(),
@@ -404,66 +457,6 @@ pub(crate) async fn resolve_runtime(
         config = config.with_skill_context(skill_context);
     }
     Ok(build_composed_local_runtime(config, workspace, extension_tools, events).await?)
-}
-
-pub(crate) fn initial_reasoning(
-    models: &[ModelChoice],
-    provider: ModelProvider,
-    configured_model: &str,
-) -> Result<ReasoningLevel, LocalHostError> {
-    let model = require_model(models, provider, configured_model, "configured")?;
-    model.default_reasoning().ok_or_else(|| {
-        LocalHostError::Configuration(format!(
-            "configured {configured_model} model has no supported reasoning level"
-        ))
-    })
-}
-
-pub(crate) fn selected_model<'a>(
-    models: &'a [ModelChoice],
-    provider: ModelProvider,
-    id: &str,
-) -> Option<&'a ModelChoice> {
-    models
-        .iter()
-        .find(|model| model.provider() == provider && model.id() == id)
-}
-
-pub(crate) fn selected_model_by_selection_id<'a>(
-    models: &'a [ModelChoice],
-    selection_id: &str,
-) -> Option<&'a ModelChoice> {
-    models
-        .iter()
-        .find(|model| model.selection_id() == selection_id)
-}
-
-pub(crate) fn require_model<'a>(
-    models: &'a [ModelChoice],
-    provider: ModelProvider,
-    id: &str,
-    source: &str,
-) -> Result<&'a ModelChoice, LocalHostError> {
-    selected_model(models, provider, id).ok_or_else(|| {
-        LocalHostError::Configuration(format!(
-            "{source} {provider}/{id} model is not available from the authenticated provider"
-        ))
-    })
-}
-
-fn validate_selection<'a>(
-    models: &'a [ModelChoice],
-    selection: &RuntimeSelection,
-) -> Result<&'a ModelChoice, LocalHostError> {
-    let model = require_model(models, selection.provider, &selection.model, "saved")?;
-    if !model.reasoning_levels().contains(&selection.reasoning) {
-        return Err(LocalHostError::Configuration(format!(
-            "saved {} model no longer supports {} reasoning",
-            selection.model,
-            selection.reasoning.as_str()
-        )));
-    }
-    Ok(model)
 }
 
 fn require_absolute(cwd: &Path) -> Result<(), LocalHostError> {

@@ -3,7 +3,14 @@ use std::{path::Path, time::Duration};
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
 use thiserror::Error;
 
-const SCHEMA_VERSION: u32 = 5;
+mod migrations;
+
+use migrations::{
+    MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4, MIGRATE_V4_TO_V5, MIGRATE_V5_TO_V6,
+    MIGRATE_V6_TO_V7,
+};
+
+const SCHEMA_VERSION: u32 = 7;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -26,21 +33,35 @@ const SCHEMA: &str = "
     CREATE TABLE mcp_integrations (
         integration_id TEXT PRIMARY KEY CHECK (length(integration_id) > 0),
         kind TEXT NOT NULL CHECK (kind = 'direct_streamable_http'),
-        endpoint TEXT NOT NULL CHECK (length(endpoint) > 0)
+        endpoint TEXT NOT NULL CHECK (length(endpoint) > 0),
+        request_headers_json TEXT NOT NULL CHECK (
+            json_valid(request_headers_json)
+            AND json_type(request_headers_json) = 'object'
+        )
     ) STRICT;
 
     CREATE TABLE mcp_connections (
         connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
         integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
-        auth_kind TEXT NOT NULL CHECK (auth_kind IN ('none', 'gh_cli')),
+        auth_kind TEXT NOT NULL CHECK (
+            auth_kind IN ('none', 'gh_cli', 'secret_service_bearer')
+        ),
         auth_hostname TEXT,
         auth_account TEXT,
+        auth_credential_id TEXT,
         CHECK (
-            (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL)
+            (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL
+             AND auth_credential_id IS NULL)
             OR
             (auth_kind = 'gh_cli'
              AND length(auth_hostname) > 0
-             AND length(auth_account) > 0)
+             AND length(auth_account) > 0
+             AND auth_credential_id IS NULL)
+            OR
+            (auth_kind = 'secret_service_bearer'
+             AND auth_hostname IS NULL
+             AND auth_account IS NULL
+             AND length(auth_credential_id) > 0)
         )
     ) STRICT;
 
@@ -48,6 +69,10 @@ const SCHEMA: &str = "
         connection_id TEXT PRIMARY KEY
             REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
         endpoint TEXT NOT NULL CHECK (length(endpoint) > 0),
+        request_headers_json TEXT NOT NULL CHECK (
+            json_valid(request_headers_json)
+            AND json_type(request_headers_json) = 'object'
+        ),
         protocol_version TEXT NOT NULL CHECK (length(protocol_version) > 0),
         adapter_revision TEXT NOT NULL CHECK (length(adapter_revision) > 0),
         catalog_digest TEXT NOT NULL CHECK (length(catalog_digest) = 64)
@@ -93,34 +118,38 @@ const SCHEMA: &str = "
 
     CREATE TABLE profile_skill_bindings (
         profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
+        scope_kind TEXT NOT NULL CHECK (
+            scope_kind IN ('global', 'workspace', 'plugin')
+        ),
         workspace TEXT,
-        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
+        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
         skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
         skill_digest TEXT NOT NULL,
         FOREIGN KEY (skill_digest, skill_name)
             REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
         CHECK (
-            (scope_kind = 'global' AND workspace IS NULL)
+            (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
             OR
             (scope_kind = 'workspace' AND length(workspace) > 0)
         ),
-        PRIMARY KEY (profile_id, source_root, skill_name)
+        PRIMARY KEY (profile_id, source_id, skill_name)
     ) STRICT;
 
     CREATE TABLE skill_source_rejections (
         profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
+        scope_kind TEXT NOT NULL CHECK (
+            scope_kind IN ('global', 'workspace', 'plugin')
+        ),
         workspace TEXT,
-        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
+        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
         entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
         reason TEXT NOT NULL CHECK (length(reason) > 0),
         CHECK (
-            (scope_kind = 'global' AND workspace IS NULL)
+            (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
             OR
             (scope_kind = 'workspace' AND length(workspace) > 0)
         ),
-        PRIMARY KEY (profile_id, source_root, entry_name)
+        PRIMARY KEY (profile_id, source_id, entry_name)
     ) STRICT;
 
     CREATE TABLE session_skills (
@@ -135,132 +164,30 @@ const SCHEMA: &str = "
         UNIQUE (session_id, skill_digest)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 5);
-";
-
-const MIGRATE_V1_TO_V2: &str = "
-    CREATE TABLE mcp_connections_v2 (
-        connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
-        integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
-        auth_kind TEXT NOT NULL CHECK (auth_kind IN ('none', 'gh_cli')),
-        auth_hostname TEXT,
-        auth_account TEXT,
-        CHECK (
-            (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL)
-            OR
-            (auth_kind = 'gh_cli'
-             AND length(auth_hostname) > 0
-             AND length(auth_account) > 0)
-        )
-    ) STRICT;
-
-    INSERT INTO mcp_connections_v2(
-        connection_id, integration_id, auth_kind, auth_hostname, auth_account
-    )
-    SELECT connection_id, integration_id, auth_kind, NULL, NULL
-    FROM mcp_connections;
-
-    DROP TABLE mcp_connections;
-    ALTER TABLE mcp_connections_v2 RENAME TO mcp_connections;
-    UPDATE host_metadata SET schema_version = 2 WHERE singleton = 1;
-";
-
-const MIGRATE_V2_TO_V3: &str = "
-    CREATE TABLE profile_mcp_connections (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        connection_id TEXT NOT NULL
-            REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
-        PRIMARY KEY (profile_id, connection_id)
-    ) STRICT;
-
-    INSERT INTO profile_mcp_connections(profile_id, connection_id)
-    SELECT DISTINCT profile_id, connection_id FROM profile_mcp_tools;
-
-    DROP TABLE profile_mcp_tools;
-    UPDATE host_metadata SET schema_version = 3 WHERE singleton = 1;
-";
-
-const MIGRATE_V3_TO_V4: &str = "
-    CREATE TABLE skill_revisions (
-        skill_digest TEXT PRIMARY KEY CHECK (length(skill_digest) = 64),
+    CREATE TABLE installed_plugins (
+        plugin_digest TEXT PRIMARY KEY CHECK (length(plugin_digest) = 64),
         name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
-        description TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 1024),
-        license TEXT,
-        compatibility TEXT,
-        UNIQUE (skill_digest, name)
+        version TEXT,
+        description TEXT,
+        homepage TEXT,
+        repository TEXT,
+        license TEXT
     ) STRICT;
 
-    CREATE TABLE profile_skill_bindings (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
-        workspace TEXT,
-        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
-        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-        skill_digest TEXT NOT NULL,
-        FOREIGN KEY (skill_digest, skill_name)
-            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-        CHECK (
-            (scope_kind = 'global' AND workspace IS NULL)
-            OR
-            (scope_kind = 'workspace' AND length(workspace) > 0)
+    CREATE TABLE plugin_mcp_servers (
+        plugin_digest TEXT NOT NULL
+            REFERENCES installed_plugins(plugin_digest) ON DELETE RESTRICT,
+        server_id TEXT NOT NULL CHECK (length(server_id) BETWEEN 1 AND 128),
+        transport TEXT NOT NULL CHECK (transport = 'streamable_http'),
+        endpoint TEXT NOT NULL CHECK (length(endpoint) > 0),
+        request_headers_json TEXT NOT NULL CHECK (
+            json_valid(request_headers_json)
+            AND json_type(request_headers_json) = 'object'
         ),
-        PRIMARY KEY (profile_id, source_root, skill_name)
+        PRIMARY KEY (plugin_digest, server_id)
     ) STRICT;
 
-    CREATE TABLE skill_source_rejections (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
-        workspace TEXT,
-        source_root TEXT NOT NULL CHECK (length(source_root) > 0),
-        entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
-        reason TEXT NOT NULL CHECK (length(reason) > 0),
-        CHECK (
-            (scope_kind = 'global' AND workspace IS NULL)
-            OR
-            (scope_kind = 'workspace' AND length(workspace) > 0)
-        ),
-        PRIMARY KEY (profile_id, source_root, entry_name)
-    ) STRICT;
-
-    CREATE TABLE session_skills (
-        activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
-        activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
-        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-        skill_digest TEXT NOT NULL,
-        instruction_bytes INTEGER NOT NULL CHECK (instruction_bytes > 0),
-        FOREIGN KEY (skill_digest, skill_name)
-            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-        UNIQUE (session_id, skill_name),
-        UNIQUE (session_id, skill_digest)
-    ) STRICT;
-
-    UPDATE host_metadata SET schema_version = 4 WHERE singleton = 1;
-";
-
-const MIGRATE_V4_TO_V5: &str = "
-    CREATE TABLE session_skills_v5 (
-        activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
-        activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
-        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-        skill_digest TEXT NOT NULL,
-        FOREIGN KEY (skill_digest, skill_name)
-            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-        UNIQUE (session_id, skill_name),
-        UNIQUE (session_id, skill_digest)
-    ) STRICT;
-
-    INSERT INTO session_skills_v5(
-        activation_order, session_id, activation_command_id, skill_name, skill_digest
-    )
-    SELECT activation_order, session_id, activation_command_id, skill_name, skill_digest
-    FROM session_skills
-    ORDER BY activation_order;
-
-    DROP TABLE session_skills;
-    ALTER TABLE session_skills_v5 RENAME TO session_skills;
-    UPDATE host_metadata SET schema_version = 5 WHERE singleton = 1;
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 7);
 ";
 
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
@@ -288,7 +215,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=4) {
+    if matches!(observed, 1..=6) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -325,6 +252,8 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V2_TO_V3)?;
                 transaction.execute_batch(MIGRATE_V3_TO_V4)?;
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
+                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
+                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -334,6 +263,8 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V2_TO_V3)?;
                 transaction.execute_batch(MIGRATE_V3_TO_V4)?;
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
+                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
+                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -341,12 +272,29 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
             3 => {
                 transaction.execute_batch(MIGRATE_V3_TO_V4)?;
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
+                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
+                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
             }
             4 => {
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
+                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
+                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                transaction.commit()?;
+                Ok(())
+            }
+            5 => {
+                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
+                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                transaction.commit()?;
+                Ok(())
+            }
+            6 => {
+                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())

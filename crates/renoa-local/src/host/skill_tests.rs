@@ -112,6 +112,7 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         initial_model: "fixture-model".to_owned(),
         credential_store: credentials.to_path_buf(),
         mcp_adapter: None,
+        integration_catalog_adapter: None,
         global_skill_source: Some(global.to_path_buf()),
     })
     .expect("assemble local Host with isolated skill sources")
@@ -215,7 +216,8 @@ Confirm restoration.` }]);
 }
 const expectedTools = [
   "read_file", "edit_file", "write_file", "bash", "grep", "find",
-  "tool_search", "tool_load", "tool_execute", "skill_search", "skill_load"
+  "tool_search", "tool_load", "tool_execute", "extension_manage",
+  "skill_search", "skill_load"
 ];
 if (request.tools.map(tool => tool.name).join(",") !== expectedTools.join(",")) {
   fail("unexpected model-visible tool set");

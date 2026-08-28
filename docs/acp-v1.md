@@ -64,12 +64,17 @@ The process reads:
 - `RENOA_MODEL_AUTH_STORE`
 - optional `RENOA_DATA_DIR`
 - optional `RENOA_MCP_ADAPTER`
+- optional `RENOA_INTEGRATION_CATALOG_ADAPTER`
 
 Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
 enables Host catalog refresh and invocation. A tool reaches Alpha only after a
 Host profile attachment such as the GitHub command above. A committed change is
 visible on the next registry call without restarting ACP or the surface.
+`RENOA_INTEGRATION_CATALOG_ADAPTER` is the absolute path to the built,
+replaceable discovery adapter. It lets `extension_manage` search integrations.sh
+and revalidate one selected public MCP candidate before the Host installs and
+connects it. Discovery failure never disables exact local package management.
 `RENOA_MODEL_PROVIDERS` is a comma-separated enabled set; when absent, it
 defaults to the single `RENOA_MODEL_PROVIDER`. `RENOA_MODEL_PROVIDER` and
 `RENOA_MODEL` select the default provider and raw model ID for a new session.

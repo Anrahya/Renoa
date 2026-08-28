@@ -108,6 +108,9 @@ find
 tool_search
 tool_load
 tool_execute
+extension_manage
+skill_search
+skill_load
 ```
 
 Existing tool invariants remain in force. File tools stay within the configured
@@ -142,9 +145,10 @@ permission-shaped fields are reserved in this slice.
 
 ## Current concrete composition
 
-`LocalHost` owns the provider configuration, durable data root, MCP catalog,
-skill library, and credential resolution boundary. `host.sqlite3` keeps direct
-integration and connection identities, non-secret credential references,
+`LocalHost` owns the provider configuration, durable data root, Agent Plugin
+library, MCP catalog, skill library, and credential resolution boundary.
+`host.sqlite3` keeps installed package metadata, supported package MCP entries,
+direct integration and connection identities, non-secret credential references,
 complete MCP catalog snapshots, Alpha's attached connection identities,
 immutable skill revisions, source/profile bindings, rejected skill entries,
 and session activation pins.
@@ -169,6 +173,35 @@ search even when the ACP process, Alpha session, and current turn are already
 running. The runtime itself is unchanged: the kernel freezes the same three
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
+
+The Host adds one fixed `extension_manage` tool. It accepts six typed actions:
+search the replaceable integrations.sh discovery adapter, add one exact
+refetched public candidate, one officially researched MCP definition, or one
+content-bound local Agent Plugins 1.0 directory; inspect a local package;
+install the exact inspected digest; list installed revisions; or connect one
+supported package MCP server to Alpha.
+Inspection and installation execute no package code. Installation publishes a
+full immutable tree at `plugins/<sha256>` before committing its durable record.
+Search returns bounded metadata rather than trusting a catalog as executable
+truth. A local package add requires the digest returned by inspection so a
+crash replay cannot read changed bytes from the same path. Add normalizes every
+accepted source into the same package path, installs it, loads supported
+package skills, and only then attempts the requested MCP connection. A catalog
+miss returns explicit web-research or local-package
+guidance; Renoa never guesses an endpoint. A connection or authentication
+failure returns the retained package digest, package notices, skill result, and
+safe exact service error instead of rolling back unrelated components.
+Connect accepts either no credential or one named Secret Service bearer
+reference, never a raw key. It discovers and attaches through the same MCP
+catalog path used by `LocalHost`; the next `tool_search` sees the connection
+without restarting the session or surface. Package skills enter the same skill
+registry under a lower-priority plugin scope; workspace overrides global, and
+global overrides plugin. A newer revision of the same plugin replaces its
+bindings, while a second plugin with the same skill name is visibly rejected.
+The next `skill_search` sees a committed package skill without restarting the
+session or surface. Model-facing management results use the same 50 KiB
+tool-output boundary as local tools and fail instead of silently truncating
+package facts.
 
 The Host also adds exactly two Agent Skills tools: `skill_search` and
 `skill_load`. Search rescans global `~/.agents/skills` and the canonical
@@ -209,8 +242,8 @@ are:
 - reasoning configuration;
 - Alpha's base prompt, bounded workspace `AGENTS.md`, and exact active skill
   instructions; and
-- the six workspace tools plus three fixed MCP registry tools and two fixed
-  skill registry tools.
+- the six workspace tools, three fixed MCP registry tools, one fixed extension
+  manager, and two fixed skill registry tools.
 
 `build_local_runtime` resolves that recipe with a `LocalWorkspace`:
 
@@ -219,7 +252,7 @@ LocalRuntimeConfig + Alpha v1
   + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
-  + Host MCP and skill registry tools
+  + Host MCP, extension manager, and skill registry tools
             |
             v
 renoa-agent-loop::build_runtime
@@ -310,18 +343,20 @@ not replace semantic history. ACP streams these transient events immediately,
 then derives final output from kernel events only after durable settlement.
 
 The local Host currently has no reconciliation UI for an effect whose outcome
-cannot be proven. It therefore makes one explicit kernel abandonment decision:
-the loop records an honest unavailable tool result where applicable, the
-operation fails without replaying the effect, and the next turn can proceed.
-This is Host policy using the kernel's explicit boundary; the kernel itself
-never abandons uncertainty automatically.
+cannot be proven. For a live MCP call that returns no terminal response, the
+Host records an honest model-visible tool result saying that the call may or
+may not have succeeded, does not replay it, and lets the same agent turn keep
+reasoning. If the process dies before that result is persisted, the kernel's
+conservative `OutcomeUnknown` recovery boundary still applies; the kernel
+never invents or replays an uncertain external result.
 
 Local Host state has one intentionally visible layout:
 
 ```text
 <data-root>/
-  host.sqlite3                  Host MCP state, skill revisions/bindings,
-                                source rejections, and session activations
+  host.sqlite3                  package metadata, MCP state, credential
+                                references, and skill/session bindings
+  plugins/<sha256>/             immutable Agent Plugin directory
   skills/<sha256>/              immutable imported Agent Skill directory
   sessions/<session-uuid>/
     session.json                durable identity and workspace/profile binding
@@ -340,7 +375,7 @@ session UUID and syncs the parent directory. Initialization failure removes the
 staging directory, so a loadable session is never partially published. On Unix,
 the published session directory is owner-only because trace and history contain
 prompts, source text, and tool data.
-The global `host.sqlite3` catalog and `skills/` store are owner-only on Unix.
+The global `host.sqlite3`, `plugins/`, and `skills/` stores are owner-only on Unix.
 `runtime.jsonl` recovery truncates an incomplete crash tail before any later
 append; future valid records can never be joined onto torn JSON.
 
@@ -349,19 +384,22 @@ append; future valid records can never be joined onto torn JSON.
 The full intended extension lifecycle and its staged proof plan are recorded in
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md).
 
-The GUI is a surface, not the sole controller. A future human action or agent
-tool call will issue the same typed Host management command:
+The GUI is a surface, not the sole controller. `LocalHost` methods and Alpha's
+`extension_manage` tool already reach the same `PluginManager`; a future Waku
+view will call that Host path rather than own extension state:
 
 ```text
 human surface --\
-                 -> Host change command -> authorization -> durable change
-running agent --/
+                 -> effective session/profile policy -> Host operation
+running agent --/                                      -> durable change
 ```
 
-An authorized agent may install, attach, update, or remove capabilities without
-requiring sidebar interaction. An agent may exercise delegated authority but
-must never grant itself greater authority. Capability changes produce a new
-runtime for a new operation boundary; they never mutate an active manifest.
+Alpha v1's deliberate full access permits inspect, install, list, and connect
+without a second plugin approval prompt. A later restricted profile will gate
+the same management binding through its one effective permission scope. An
+agent may exercise that authority but cannot broaden it. MCP registry
+attachments are visible at the next lookup; static runtime changes wait for a
+new operation and never mutate an active manifest.
 
 The kernel and the trusted Host enforcement path are outside agent-managed
 modification.
@@ -380,18 +418,14 @@ modification.
 
 ## Open decisions
 
-- general profile and Agent Plugin package-library storage beyond the proven
-  MCP and standalone Agent Skills paths;
-- future Host schema migrations beyond the proven v1/v2-to-v3 and v3-to-v4
-  migrations;
+- future Host schema migrations beyond the proven v1-through-v7 chain;
 - historical resolved-binding retention across explicit catalog/profile
 changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
   and immutable-package garbage collection;
 - profile inheritance and Agent Instance overrides;
-- permission vocabulary, scopes, approvals, and secret grants;
-- capability package discovery, installation, updates, and rollback;
-- the typed Host management command set;
+- permission vocabulary, scopes, policy inheritance, and enforcement;
+- remote package discovery, updates, rollback, removal, and garbage collection;
 - the Host management transport and presentation;
 - whether capability changes pause and continue a task through one or more
   internal operations; and
@@ -456,3 +490,17 @@ Host, and continues with both exact instruction sets. Historical tool results
 remain durable while model-facing duplicates become receipts. Schema v4 owns
 the shared records; the kernel, ACP, Waku, and RCP receive no skill-specific
 storage or protocol path.
+
+The first portable package path is complete. The Host validates Agent Plugins
+1.0 manifests locally, isolates invalid or unsupported MCP entries, denies
+symlinked fixed components, and publishes exact full trees under a verified
+content digest. One fixed `extension_manage` schema drives the same manager as
+the public `LocalHost` methods. Schema v6 stores package metadata, public MCP
+headers, and only named Secret Service references. Schema v7 preserves plugin
+homepage metadata and imports package skills without changing existing source
+bindings. An Exa-shaped package is
+inspected, installed, connected through the real Node adapter with its public
+header and just-in-time bearer, and observed by the existing live registry;
+the key never enters Host SQLite. A skill-bearing package is installed and
+becomes searchable live; invalid and colliding skills remain visible component
+failures. No kernel, loop, ACP, Waku, or RCP type was added.

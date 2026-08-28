@@ -1,5 +1,4 @@
 use std::{
-    path::Path,
     sync::{Arc, Barrier},
     thread,
 };
@@ -13,6 +12,10 @@ use crate::{
     mcp::{McpCatalogStore, McpConnectionAuth, McpHostError},
 };
 
+mod skills;
+
+use skills::downgrade_skill_sources_to_v6_shape;
+
 #[test]
 fn a_newer_host_catalog_schema_is_rejected() {
     let (directory, store) = store();
@@ -20,7 +23,7 @@ fn a_newer_host_catalog_schema_is_rejected() {
     drop(store);
     Connection::open(&path)
         .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 6_u32)
+        .pragma_update(None, "user_version", 8_u32)
         .expect("advance schema version");
 
     assert!(matches!(
@@ -48,6 +51,10 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE plugin_mcp_servers;
+             DROP TABLE installed_plugins;
+             ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
+             ALTER TABLE mcp_integrations DROP COLUMN request_headers_json;
              CREATE TABLE profile_mcp_tools (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
                 connection_id TEXT NOT NULL
@@ -117,6 +124,10 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
         .expect("open migration fixture")
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE plugin_mcp_servers;
+             DROP TABLE installed_plugins;
+             ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
+             ALTER TABLE mcp_integrations DROP COLUMN request_headers_json;
              CREATE TABLE profile_mcp_tools (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
                 connection_id TEXT NOT NULL
@@ -174,6 +185,10 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
         .expect("open migration fixture")
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE plugin_mcp_servers;
+             DROP TABLE installed_plugins;
+             ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
+             ALTER TABLE mcp_integrations DROP COLUMN request_headers_json;
              DROP TABLE session_skills;
              DROP TABLE skill_source_rejections;
              DROP TABLE profile_skill_bindings;
@@ -205,113 +220,80 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
 }
 
 #[test]
-fn version_four_catalog_removes_instruction_policy_without_losing_activations() {
-    let (_directory, store) = store();
+fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
+    let (directory, store) = store();
+    store
+        .register_direct_connection("example", "primary", ENDPOINT)
+        .expect("register connection");
+    store
+        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
+        .expect("publish catalog");
+    store
+        .enable_alpha_connection(PROFILE, "primary")
+        .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
 
-    downgrade_to_v4_with_large_skill(&path);
-
-    let migrated = McpCatalogStore::initialize(path).expect("migrate schema v4 to current");
-    let connection = Connection::open(migrated.path()).expect("open migrated catalog");
-    let columns = connection
-        .prepare("PRAGMA table_info(session_skills)")
-        .expect("prepare session skill columns")
-        .query_map([], |row| row.get::<_, String>(1))
-        .expect("query session skill columns")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read session skill columns");
-    assert!(!columns.iter().any(|column| column == "instruction_bytes"));
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT activation_order, session_id, activation_command_id, skill_name,
-                        skill_digest
-                 FROM session_skills",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ))
-                },
-            )
-            .expect("read migrated activation"),
-        (
-            7,
-            "session".to_owned(),
-            "command".to_owned(),
-            "large".to_owned(),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-        )
-    );
+    let connection = Connection::open(&path).expect("open migration fixture");
+    downgrade_skill_sources_to_v6_shape(&connection);
     connection
         .execute_batch(
-            "INSERT INTO skill_revisions(
-                skill_digest, name, description, license, compatibility
-             ) VALUES (
-                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-                'next', 'Next skill.', NULL, NULL
-             );
-             INSERT INTO session_skills(
-                session_id, activation_command_id, skill_name, skill_digest
-             ) VALUES (
-                'session', 'next-command', 'next',
-                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-             );",
-        )
-        .expect("insert activation after migration");
-    assert_eq!(
-        connection
-            .query_row(
-                "SELECT activation_order FROM session_skills WHERE skill_name = 'next'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("read next activation order"),
-        8
-    );
-}
-
-fn downgrade_to_v4_with_large_skill(path: &Path) {
-    Connection::open(path)
-        .expect("open migration fixture")
-        .execute_batch(
             "PRAGMA foreign_keys = OFF;
-             DROP TABLE session_skills;
-             CREATE TABLE session_skills (
-                activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL CHECK (length(session_id) > 0),
-                activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
-                skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-                skill_digest TEXT NOT NULL,
-                instruction_bytes INTEGER NOT NULL CHECK (instruction_bytes > 0),
-                FOREIGN KEY (skill_digest, skill_name)
-                    REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-                UNIQUE (session_id, skill_name),
-                UNIQUE (session_id, skill_digest)
+             DROP TABLE plugin_mcp_servers;
+             DROP TABLE installed_plugins;
+             ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
+             ALTER TABLE mcp_integrations DROP COLUMN request_headers_json;
+             CREATE TABLE mcp_connections_v5 (
+                connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
+                integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
+                auth_kind TEXT NOT NULL CHECK (auth_kind IN ('none', 'gh_cli')),
+                auth_hostname TEXT,
+                auth_account TEXT,
+                CHECK (
+                    (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL)
+                    OR
+                    (auth_kind = 'gh_cli'
+                     AND length(auth_hostname) > 0
+                     AND length(auth_account) > 0)
+                )
              ) STRICT;
-             INSERT INTO skill_revisions(
-                skill_digest, name, description, license, compatibility
-             ) VALUES (
-                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                'large', 'Large skill.', NULL, NULL
-             );
-             INSERT INTO session_skills(
-                activation_order, session_id, activation_command_id, skill_name,
-                skill_digest, instruction_bytes
-             ) VALUES (
-                7, 'session', 'command', 'large',
-                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                102401
-             );
-             UPDATE host_metadata SET schema_version = 4 WHERE singleton = 1;
-             PRAGMA user_version = 4;",
+             INSERT INTO mcp_connections_v5(
+                connection_id, integration_id, auth_kind, auth_hostname, auth_account
+             )
+             SELECT connection_id, integration_id, auth_kind, auth_hostname, auth_account
+             FROM mcp_connections;
+             DROP TABLE mcp_connections;
+             ALTER TABLE mcp_connections_v5 RENAME TO mcp_connections;
+             UPDATE host_metadata SET schema_version = 5 WHERE singleton = 1;
+             PRAGMA user_version = 5;",
         )
-        .expect("downgrade fixture to schema v4");
+        .expect("downgrade fixture to schema v5");
+
+    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
+        .expect("migrate schema v5 to current");
+    assert_eq!(
+        migrated
+            .alpha_connection_ids(PROFILE)
+            .expect("load migrated Alpha connections"),
+        ["primary"]
+    );
+    assert_eq!(
+        migrated
+            .load_catalog("primary")
+            .expect("load migrated catalog")
+            .tools()[0]
+            .name(),
+        "echo"
+    );
+    let connection = Connection::open(migrated.path()).expect("open migrated catalog");
+    connection
+        .prepare("SELECT plugin_digest FROM installed_plugins")
+        .expect("package tables exist after migration");
+    assert!(
+        connection
+            .prepare("SELECT auth_credential_id FROM mcp_connections")
+            .is_ok()
+    );
 }
 
 #[test]

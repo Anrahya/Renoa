@@ -23,6 +23,8 @@ use super::{
 use crate::ALPHA_PROFILE_ID;
 use execute::{definite_boundary_error, execution_details, map_failure};
 
+pub(crate) use execute::definite_boundary_error as adapter_tool_error;
+
 const SEARCH_TOOL: &str = "tool_search";
 const LOAD_TOOL: &str = "tool_load";
 const EXECUTE_TOOL: &str = "tool_execute";

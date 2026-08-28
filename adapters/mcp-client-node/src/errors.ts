@@ -85,6 +85,20 @@ export function toWireFailure(
     );
   }
 
+  if (error instanceof SdkHttpError) {
+    const kind: AdapterFailureKind =
+      error.status >= 500 ? "unavailable" : "protocol";
+    return failure(
+      kind,
+      "definite",
+      receivedHttpMessage(error),
+      evidence.dispatchStarted,
+      error,
+      code,
+      error.status,
+    );
+  }
+
   if (cancellationRequested || isCancellation(error)) {
     if (evidence.dispatchStarted) {
       return failure(
@@ -174,20 +188,6 @@ export function toWireFailure(
     }
   }
 
-  if (error instanceof SdkHttpError) {
-    const kind: AdapterFailureKind =
-      error.status >= 500 ? "unavailable" : "protocol";
-    return failure(
-      kind,
-      "definite",
-      `The MCP endpoint returned HTTP ${error.status} before any tool call was dispatched.`,
-      false,
-      error,
-      code,
-      error.status,
-    );
-  }
-
   if (error instanceof ProtocolError) {
     if (error.code === ProtocolErrorCode.UnsupportedProtocolVersion) {
       return failure(
@@ -220,6 +220,70 @@ export function toWireFailure(
     code,
     httpStatus,
   );
+}
+
+function receivedHttpMessage(error: SdkHttpError): string {
+  const prefix = `MCP server returned HTTP ${error.status}`;
+  const body =
+    typeof error.data.text === "string"
+      ? httpResponseSummary(error.data.text)
+      : undefined;
+  if (body !== undefined) {
+    return `${prefix}: ${body}`;
+  }
+  if (error.statusText !== undefined && error.statusText.trim().length > 0) {
+    return `${prefix} ${error.statusText.trim()}.`;
+  }
+  return `${prefix}.`;
+}
+
+function httpResponseSummary(body: string): string | undefined {
+  const trimmed = body.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(trimmed) as unknown;
+  } catch {
+    return trimmed;
+  }
+  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    return trimmed;
+  }
+  const record = decoded as Record<string, unknown>;
+  const rpcError = record.error;
+  if (typeof rpcError === "object" && rpcError !== null && !Array.isArray(rpcError)) {
+    const message = (rpcError as Record<string, unknown>).message;
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message.trim();
+    }
+  }
+  const result = record.result;
+  if (typeof result === "object" && result !== null && !Array.isArray(result)) {
+    const content = (result as Record<string, unknown>).content;
+    if (Array.isArray(content)) {
+      const text = content
+        .flatMap((block) => {
+          if (typeof block !== "object" || block === null || Array.isArray(block)) {
+            return [];
+          }
+          const candidate = block as Record<string, unknown>;
+          return candidate.type === "text" && typeof candidate.text === "string"
+            ? [candidate.text.trim()]
+            : [];
+        })
+        .filter((value) => value.length > 0)
+        .join("\n");
+      if (text.length > 0) {
+        return text;
+      }
+    }
+  }
+  if (typeof record.message === "string" && record.message.trim().length > 0) {
+    return record.message.trim();
+  }
+  return trimmed;
 }
 
 export function safeDiagnostic(

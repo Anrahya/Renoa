@@ -1,6 +1,7 @@
 mod auth;
 mod call;
 mod error;
+mod headers;
 mod process;
 mod registry;
 mod store;
@@ -16,21 +17,29 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
 pub(crate) use auth::{McpAuthorization, McpConnectionAuth, McpCredentialResolver};
+pub(crate) use headers::McpRequestHeaders;
 
 pub use error::{
     McpAdapterError, McpCredentialError, McpFailureKind, McpHostError, McpOutcomeCertainty,
     McpRemoteFailure,
 };
 
-pub(crate) use process::discover;
+pub(crate) use process::{discover, discover_cancellable};
 pub(crate) use registry::{
     LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, SEARCH_RESULT_LIMIT, rank_tools,
 };
 pub(crate) use store::McpCatalogStore;
-pub(crate) use tool::alpha_registry_bindings;
+pub(crate) use tool::{adapter_tool_error, alpha_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.2.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.4.0";
+const MCP_LEGACY_PROTOCOL_VERSIONS: &[&str] = &[
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+    "2024-10-07",
+];
 const MAX_ENDPOINT_BYTES: usize = 8 * 1_024;
 const MAX_CATALOG_TOOLS: usize = 1_024;
 const MAX_TOOL_NAME_BYTES: usize = 128;
@@ -108,6 +117,7 @@ impl McpRejectedTool {
 pub struct McpCatalogSnapshot {
     connection_id: String,
     endpoint: String,
+    request_headers: McpRequestHeaders,
     protocol_version: String,
     adapter_revision: String,
     digest: String,
@@ -124,6 +134,11 @@ impl McpCatalogSnapshot {
     #[must_use]
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    #[must_use]
+    pub fn request_headers(&self) -> &std::collections::BTreeMap<String, String> {
+        self.request_headers.values()
     }
 
     #[must_use]
@@ -158,6 +173,7 @@ pub struct AlphaMcpTool {
     integration_id: String,
     connection_id: String,
     endpoint: String,
+    request_headers: McpRequestHeaders,
     protocol_version: String,
     adapter_revision: String,
     auth: McpConnectionAuth,
@@ -178,6 +194,10 @@ impl AlphaMcpTool {
     #[must_use]
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    pub(crate) fn request_headers(&self) -> &McpRequestHeaders {
+        &self.request_headers
     }
 
     #[must_use]
@@ -234,12 +254,23 @@ impl AdapterCatalog {
 }
 
 impl McpCatalogSnapshot {
+    #[cfg(test)]
     fn from_adapter(connection_id: &str, catalog: AdapterCatalog) -> Result<Self, McpHostError> {
+        Self::from_adapter_with_headers(connection_id, McpRequestHeaders::default(), catalog)
+    }
+
+    fn from_adapter_with_headers(
+        connection_id: &str,
+        request_headers: McpRequestHeaders,
+        catalog: AdapterCatalog,
+    ) -> Result<Self, McpHostError> {
         validate_identity("connection", connection_id)?;
         validate_endpoint(&catalog.endpoint)?;
-        if catalog.protocol_version != MCP_PROTOCOL_VERSION {
+        if catalog.protocol_version != MCP_PROTOCOL_VERSION
+            && !MCP_LEGACY_PROTOCOL_VERSIONS.contains(&catalog.protocol_version.as_str())
+        {
             return Err(McpHostError::Invalid(format!(
-                "adapter returned protocol {}, expected {MCP_PROTOCOL_VERSION}",
+                "adapter returned unsupported protocol {}",
                 catalog.protocol_version
             )));
         }
@@ -293,10 +324,11 @@ impl McpCatalogSnapshot {
             }
             previous_rejection = Some(rejected.index);
         }
-        let digest = catalog_digest(&catalog)?;
+        let digest = catalog_digest(&request_headers, &catalog)?;
         Ok(Self {
             connection_id: connection_id.to_owned(),
             endpoint: catalog.endpoint,
+            request_headers,
             protocol_version: catalog.protocol_version,
             adapter_revision: catalog.adapter_revision,
             digest,
@@ -366,10 +398,14 @@ fn validate_schema(kind: &str, schema: &Value) -> Result<(), McpHostError> {
     Ok(())
 }
 
-fn catalog_digest(catalog: &AdapterCatalog) -> Result<String, serde_json::Error> {
+fn catalog_digest(
+    request_headers: &McpRequestHeaders,
+    catalog: &AdapterCatalog,
+) -> Result<String, serde_json::Error> {
     #[derive(Serialize)]
     struct DigestCatalog<'a> {
         endpoint: &'a str,
+        request_headers: &'a McpRequestHeaders,
         protocol_version: &'a str,
         adapter_revision: &'a str,
         tools: &'a [McpCatalogTool],
@@ -378,6 +414,7 @@ fn catalog_digest(catalog: &AdapterCatalog) -> Result<String, serde_json::Error>
 
     let encoded = serde_json::to_vec(&DigestCatalog {
         endpoint: &catalog.endpoint,
+        request_headers,
         protocol_version: &catalog.protocol_version,
         adapter_revision: &catalog.adapter_revision,
         tools: &catalog.tools,

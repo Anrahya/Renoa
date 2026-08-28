@@ -3,8 +3,8 @@ mod registry;
 use std::path::PathBuf;
 
 use super::{
-    McpCatalogSnapshot, McpCatalogTool, McpConnectionAuth, McpHostError, validate_endpoint,
-    validate_identity,
+    McpCatalogSnapshot, McpCatalogTool, McpConnectionAuth, McpHostError, McpRequestHeaders,
+    validate_endpoint, validate_identity,
 };
 use load::load_catalog;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -16,6 +16,7 @@ pub(crate) struct McpCatalogStore {
 
 pub(crate) struct McpConnectionConfig {
     pub(crate) endpoint: String,
+    pub(crate) request_headers: McpRequestHeaders,
     pub(crate) auth: McpConnectionAuth,
 }
 
@@ -40,17 +41,13 @@ impl McpCatalogStore {
         validate_identity("integration", integration_id)?;
         validate_identity("connection", connection_id)?;
         validate_endpoint(endpoint)?;
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_integration(&transaction, integration_id, endpoint)?;
-        ensure_connection(
-            &transaction,
-            connection_id,
+        self.register_connection(
             integration_id,
+            connection_id,
+            endpoint,
+            &McpRequestHeaders::default(),
             &McpConnectionAuth::None,
-        )?;
-        transaction.commit()?;
-        Ok(())
+        )
     }
 
     pub(crate) fn register_gh_cli_connection(
@@ -65,10 +62,30 @@ impl McpCatalogStore {
         validate_identity("connection", connection_id)?;
         validate_endpoint(endpoint)?;
         let auth = McpConnectionAuth::gh_cli(hostname, account)?;
+        self.register_connection(
+            integration_id,
+            connection_id,
+            endpoint,
+            &McpRequestHeaders::default(),
+            &auth,
+        )
+    }
+
+    fn register_connection(
+        &self,
+        integration_id: &str,
+        connection_id: &str,
+        endpoint: &str,
+        request_headers: &McpRequestHeaders,
+        auth: &McpConnectionAuth,
+    ) -> Result<(), McpHostError> {
+        validate_identity("integration", integration_id)?;
+        validate_identity("connection", connection_id)?;
+        validate_endpoint(endpoint)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_integration(&transaction, integration_id, endpoint)?;
-        ensure_connection(&transaction, connection_id, integration_id, &auth)?;
+        ensure_integration(&transaction, integration_id, endpoint, request_headers)?;
+        ensure_connection(&transaction, connection_id, integration_id, auth)?;
         transaction.commit()?;
         Ok(())
     }
@@ -81,8 +98,9 @@ impl McpCatalogStore {
         let stored = self
             .connection()?
             .query_row(
-                "SELECT integration.endpoint, connection.auth_kind,
-                        connection.auth_hostname, connection.auth_account
+                "SELECT integration.endpoint, integration.request_headers_json,
+                        connection.auth_kind, connection.auth_hostname,
+                        connection.auth_account, connection.auth_credential_id
                  FROM mcp_connections AS connection
                  JOIN mcp_integrations AS integration
                    ON integration.integration_id = connection.integration_id
@@ -92,8 +110,10 @@ impl McpCatalogStore {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(2)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
@@ -103,7 +123,8 @@ impl McpCatalogStore {
             })?;
         Ok(McpConnectionConfig {
             endpoint: stored.0,
-            auth: McpConnectionAuth::from_stored(&stored.1, stored.2, stored.3)?,
+            request_headers: McpRequestHeaders::from_stored(&stored.1)?,
+            auth: McpConnectionAuth::from_stored(&stored.2, stored.3, stored.4, stored.5)?,
         })
     }
 
@@ -119,59 +140,45 @@ impl McpCatalogStore {
     ) -> Result<(), McpHostError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let configured_endpoint =
-            require_connection_endpoint(&transaction, snapshot.connection_id())?;
-        if configured_endpoint != snapshot.endpoint() {
+        let (configured_endpoint, configured_headers) =
+            require_connection_configuration(&transaction, snapshot.connection_id())?;
+        if configured_endpoint != snapshot.endpoint()
+            || configured_headers.values() != snapshot.request_headers()
+        {
             return Err(McpHostError::Invalid(format!(
-                "catalog endpoint for connection '{}' differs from its registered endpoint",
+                "catalog transport configuration for connection '{}' differs from its registration",
                 snapshot.connection_id()
             )));
         }
-        transaction.execute(
-            "INSERT INTO mcp_catalogs(
-                connection_id, endpoint, protocol_version, adapter_revision, catalog_digest
-             ) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(connection_id) DO UPDATE SET
-                endpoint = excluded.endpoint,
-                protocol_version = excluded.protocol_version,
-                adapter_revision = excluded.adapter_revision,
-                catalog_digest = excluded.catalog_digest",
-            params![
-                snapshot.connection_id.as_str(),
-                snapshot.endpoint.as_str(),
-                snapshot.protocol_version.as_str(),
-                snapshot.adapter_revision.as_str(),
-                snapshot.digest.as_str(),
-            ],
+        store_catalog(&transaction, snapshot)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn publish_plugin_connection(
+        &self,
+        integration_id: &str,
+        profile_id: &str,
+        auth: &McpConnectionAuth,
+        snapshot: &McpCatalogSnapshot,
+    ) -> Result<(), McpHostError> {
+        validate_identity("integration", integration_id)?;
+        validate_identity("profile", profile_id)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure_integration(
+            &transaction,
+            integration_id,
+            snapshot.endpoint(),
+            &snapshot.request_headers,
         )?;
+        ensure_connection(&transaction, snapshot.connection_id(), integration_id, auth)?;
+        store_catalog(&transaction, snapshot)?;
         transaction.execute(
-            "DELETE FROM mcp_tools WHERE connection_id = ?1",
-            [snapshot.connection_id()],
+            "INSERT OR IGNORE INTO profile_mcp_connections(profile_id, connection_id)
+             VALUES (?1, ?2)",
+            params![profile_id, snapshot.connection_id()],
         )?;
-        transaction.execute(
-            "DELETE FROM mcp_rejected_tools WHERE connection_id = ?1",
-            [snapshot.connection_id()],
-        )?;
-        for tool in &snapshot.tools {
-            insert_tool(&transaction, snapshot.connection_id(), tool)?;
-        }
-        for rejected in &snapshot.rejected_tools {
-            transaction.execute(
-                "INSERT INTO mcp_rejected_tools(
-                    connection_id, source_index, name, reason
-                 ) VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    snapshot.connection_id.as_str(),
-                    i64::try_from(rejected.index).map_err(|error| {
-                        McpHostError::Invalid(format!(
-                            "rejected tool index cannot be stored: {error}"
-                        ))
-                    })?,
-                    rejected.name.as_deref(),
-                    rejected.reason.as_str(),
-                ],
-            )?;
-        }
         transaction.commit()?;
         Ok(())
     }
@@ -202,29 +209,93 @@ impl McpCatalogStore {
     }
 }
 
+fn store_catalog(
+    transaction: &Transaction<'_>,
+    snapshot: &McpCatalogSnapshot,
+) -> Result<(), McpHostError> {
+    transaction.execute(
+        "INSERT INTO mcp_catalogs(
+                connection_id, endpoint, request_headers_json, protocol_version,
+                adapter_revision, catalog_digest
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(connection_id) DO UPDATE SET
+                endpoint = excluded.endpoint,
+                request_headers_json = excluded.request_headers_json,
+                protocol_version = excluded.protocol_version,
+                adapter_revision = excluded.adapter_revision,
+                catalog_digest = excluded.catalog_digest",
+        params![
+            snapshot.connection_id.as_str(),
+            snapshot.endpoint.as_str(),
+            snapshot.request_headers.encoded()?,
+            snapshot.protocol_version.as_str(),
+            snapshot.adapter_revision.as_str(),
+            snapshot.digest.as_str(),
+        ],
+    )?;
+    transaction.execute(
+        "DELETE FROM mcp_tools WHERE connection_id = ?1",
+        [snapshot.connection_id()],
+    )?;
+    transaction.execute(
+        "DELETE FROM mcp_rejected_tools WHERE connection_id = ?1",
+        [snapshot.connection_id()],
+    )?;
+    for tool in &snapshot.tools {
+        insert_tool(transaction, snapshot.connection_id(), tool)?;
+    }
+    for rejected in &snapshot.rejected_tools {
+        transaction.execute(
+            "INSERT INTO mcp_rejected_tools(
+                    connection_id, source_index, name, reason
+                 ) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                snapshot.connection_id.as_str(),
+                i64::try_from(rejected.index).map_err(|error| {
+                    McpHostError::Invalid(format!("rejected tool index cannot be stored: {error}"))
+                })?,
+                rejected.name.as_deref(),
+                rejected.reason.as_str(),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 fn ensure_integration(
     transaction: &Transaction<'_>,
     integration_id: &str,
     endpoint: &str,
+    request_headers: &McpRequestHeaders,
 ) -> Result<(), McpHostError> {
     let existing = transaction
         .query_row(
-            "SELECT kind, endpoint FROM mcp_integrations WHERE integration_id = ?1",
+            "SELECT kind, endpoint, request_headers_json
+             FROM mcp_integrations WHERE integration_id = ?1",
             [integration_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
         )
         .optional()?;
     match existing {
         None => {
             transaction.execute(
-                "INSERT INTO mcp_integrations(integration_id, kind, endpoint)
-                 VALUES (?1, 'direct_streamable_http', ?2)",
-                params![integration_id, endpoint],
+                "INSERT INTO mcp_integrations(
+                    integration_id, kind, endpoint, request_headers_json
+                 ) VALUES (?1, 'direct_streamable_http', ?2, ?3)",
+                params![integration_id, endpoint, request_headers.encoded()?],
             )?;
             Ok(())
         }
-        Some((kind, stored_endpoint))
-            if kind == "direct_streamable_http" && stored_endpoint == endpoint =>
+        Some((kind, stored_endpoint, stored_headers))
+            if kind == "direct_streamable_http"
+                && stored_endpoint == endpoint
+                && McpRequestHeaders::from_stored(&stored_headers)? == *request_headers =>
         {
             Ok(())
         }
@@ -242,7 +313,8 @@ fn ensure_connection(
 ) -> Result<(), McpHostError> {
     let existing = transaction
         .query_row(
-            "SELECT integration_id, auth_kind, auth_hostname, auth_account
+            "SELECT integration_id, auth_kind, auth_hostname, auth_account,
+                    auth_credential_id
              FROM mcp_connections WHERE connection_id = ?1",
             [connection_id],
             |row| {
@@ -251,6 +323,7 @@ fn ensure_connection(
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
@@ -259,20 +332,23 @@ fn ensure_connection(
         None => {
             transaction.execute(
                 "INSERT INTO mcp_connections(
-                    connection_id, integration_id, auth_kind, auth_hostname, auth_account
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+                    auth_credential_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     connection_id,
                     integration_id,
                     auth.stored_kind(),
                     auth.stored_hostname(),
                     auth.stored_account(),
+                    auth.stored_credential_id(),
                 ],
             )?;
             Ok(())
         }
-        Some((stored_integration, auth_kind, hostname, account)) => {
-            let stored_auth = McpConnectionAuth::from_stored(&auth_kind, hostname, account)?;
+        Some((stored_integration, auth_kind, hostname, account, credential_id)) => {
+            let stored_auth =
+                McpConnectionAuth::from_stored(&auth_kind, hostname, account, credential_id)?;
             if stored_integration == integration_id && stored_auth == *auth {
                 Ok(())
             } else {
@@ -284,24 +360,25 @@ fn ensure_connection(
     }
 }
 
-fn require_connection_endpoint(
+fn require_connection_configuration(
     transaction: &Transaction<'_>,
     connection_id: &str,
-) -> Result<String, McpHostError> {
+) -> Result<(String, McpRequestHeaders), McpHostError> {
     transaction
         .query_row(
-            "SELECT integration.endpoint
+            "SELECT integration.endpoint, integration.request_headers_json
              FROM mcp_connections AS connection
              JOIN mcp_integrations AS integration
                ON integration.integration_id = connection.integration_id
              WHERE connection.connection_id = ?1",
             [connection_id],
-            |row| row.get(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()?
         .ok_or_else(|| {
             McpHostError::NotFound(format!("connection '{connection_id}' is not registered"))
         })
+        .and_then(|(endpoint, headers)| Ok((endpoint, McpRequestHeaders::from_stored(&headers)?)))
 }
 
 fn insert_tool(

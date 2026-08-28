@@ -77,37 +77,53 @@ pub enum McpAdapterError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum McpCredentialError {
-    #[error("GitHub CLI credential source could not start: {0}")]
-    Start(#[source] std::io::Error),
-    #[error("GitHub CLI credential source has no configured output pipe")]
-    MissingPipe,
-    #[error("GitHub CLI credential source could not be waited: {0}")]
-    Wait(#[source] std::io::Error),
-    #[error("GitHub CLI credential source cleanup failed: {0}")]
-    Cleanup(String),
-    #[error("GitHub CLI credential source {stream} reader failed: {source}")]
+    #[error("{source_name} credential source could not start: {source}")]
+    Start {
+        source_name: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{0} credential source has no configured output pipe")]
+    MissingPipe(&'static str),
+    #[error("{source_name} credential source could not be waited: {source}")]
+    Wait {
+        source_name: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{source_name} credential source cleanup failed: {detail}")]
+    Cleanup {
+        source_name: &'static str,
+        detail: String,
+    },
+    #[error("{source_name} credential source {stream} reader failed: {source}")]
     Read {
+        source_name: &'static str,
         stream: &'static str,
         #[source]
         source: std::io::Error,
     },
-    #[error("GitHub CLI credential source {0} reader task failed")]
-    ReaderTask(&'static str, #[source] tokio::task::JoinError),
-    #[error("GitHub CLI credential lookup exceeded its deadline")]
-    Timeout,
-    #[error("GitHub CLI credential lookup was cancelled")]
+    #[error("{source_name} credential source {stream} reader task failed")]
+    ReaderTask {
+        source_name: &'static str,
+        stream: &'static str,
+        #[source]
+        source: tokio::task::JoinError,
+    },
+    #[error("{0} credential lookup exceeded its deadline")]
+    Timeout(&'static str),
+    #[error("credential lookup was cancelled")]
     Cancelled,
-    #[error("GitHub CLI credential output exceeded its boundary")]
-    OutputLimit,
-    #[error("GitHub CLI returned an invalid credential token")]
-    InvalidOutput,
-    #[error(
-        "GitHub CLI has no usable token for account `{account}` on `{hostname}` ({status}); run `gh auth status --hostname {hostname}`"
-    )]
+    #[error("{0} credential output exceeded its boundary")]
+    OutputLimit(&'static str),
+    #[error("{0} returned an invalid credential token")]
+    InvalidOutput(&'static str),
+    #[error("{source_name} has no usable credential for {reference} ({status}); {guidance}")]
     Unavailable {
-        hostname: String,
-        account: String,
+        source_name: &'static str,
+        reference: String,
         status: String,
+        guidance: String,
     },
 }
 

@@ -9,6 +9,7 @@ const DESCRIPTION_SUMMARY_CHARS: usize = 320;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SkillScope {
+    Plugin,
     Global,
     Workspace,
 }
@@ -16,6 +17,7 @@ pub(crate) enum SkillScope {
 impl SkillScope {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
+            Self::Plugin => "plugin",
             Self::Global => "global",
             Self::Workspace => "workspace",
         }
@@ -23,6 +25,7 @@ impl SkillScope {
 
     pub(crate) fn from_stored(value: &str) -> Result<Self, SkillError> {
         match value {
+            "plugin" => Ok(Self::Plugin),
             "global" => Ok(Self::Global),
             "workspace" => Ok(Self::Workspace),
             _ => Err(SkillError::Invalid(format!(

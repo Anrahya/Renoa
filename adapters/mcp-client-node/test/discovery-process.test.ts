@@ -140,25 +140,94 @@ test("bearer authorization reaches the endpoint and never returns", async () => 
   }
 });
 
-test("an older-only endpoint fails without initialize fallback", async () => {
-  const server = new McpFixtureServer((request) =>
-    discoverResult(request, ["2025-11-25"]),
-  );
+test("fixed public headers reach every request without overriding client headers", async () => {
+  const server = new McpFixtureServer((request) => {
+    assert.equal(request.headers["x-exa-source"], "agent-plugin");
+    assert.equal(request.headers["mcp-method"] === "package-value", false);
+    if (request.rpc.method === "server/discover") {
+      return discoverResult(request);
+    }
+    return {
+      body: rpcResult(request, {
+        resultType: "complete",
+        tools: [],
+        ttlMs: 0,
+        cacheScope: "private",
+      }),
+    };
+  });
+  await server.start();
+  try {
+    const result = await runAdapter({
+      ...discoverRequest(server.endpoint),
+      headers: { "x-exa-source": "agent-plugin" },
+    });
+    assert.equal(result.records.at(-1)?.event, "discovered");
+    assert.deepEqual(
+      server.requests.map((request) => request.rpc.method),
+      ["server/discover", "tools/list"],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("discovery falls back once to the legacy initialize handshake", async () => {
+  const sessionId = "legacy-discovery-session";
+  const server = new McpFixtureServer((request) => {
+    if (request.rpc.method === "server/discover") {
+      return {
+        status: 400,
+        body: rpcError(request, -32601, "Method not found"),
+      };
+    }
+    if (request.rpc.method === "initialize") {
+      assert.equal(request.headers["mcp-protocol-version"], undefined);
+      return {
+        headers: { "mcp-session-id": sessionId },
+        body: rpcResult(request, {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+          serverInfo: { name: "legacy-fixture", version: "1.0.0" },
+        }),
+      };
+    }
+    assert.equal(request.headers["mcp-session-id"], sessionId);
+    if (request.rpc.method === "notifications/initialized") {
+      return { status: 202, body: {} };
+    }
+    assert.equal(request.rpc.method, "tools/list");
+    return {
+      body: rpcResult(request, {
+        tools: [{ name: "legacy_search", inputSchema: EMPTY_SCHEMA }],
+      }),
+    };
+  });
   await server.start();
   try {
     const result = await runAdapter(discoverRequest(server.endpoint));
-    const terminal = result.records.at(-1);
-    assert.equal(terminal?.event, "failed");
-    if (terminal?.event !== "failed") return;
-    assert.equal(
-      terminal.failure.kind,
-      "incompatible_protocol",
-      JSON.stringify(terminal),
+    assert.equal(result.exitCode, 0, result.stderr);
+    const terminal = result.records[0];
+    assert.equal(terminal?.event, "discovered", JSON.stringify(terminal));
+    if (terminal?.event !== "discovered") return;
+    assert.equal(terminal.catalog.protocol_version, "2025-11-25");
+    assert.deepEqual(
+      terminal.catalog.tools.map((tool) => tool.name),
+      ["legacy_search"],
     );
-    assert.equal(terminal.failure.certainty, "definite");
     assert.deepEqual(
       server.requests.map((request) => request.rpc.method),
-      ["server/discover"],
+      [
+        "server/discover",
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
+      ],
+    );
+    assert.equal(
+      server.transportRequests.filter((request) => request.method === "GET")
+        .length,
+      1,
     );
   } finally {
     await server.close();

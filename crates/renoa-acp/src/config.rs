@@ -1,6 +1,8 @@
 use std::{collections::HashSet, env, path::PathBuf};
 
-use renoa_local::{LocalHost, LocalHostError, ModelChoice, ModelProvider, discover_models};
+use renoa_local::{
+    LocalHost, LocalHostAdapters, LocalHostError, ModelChoice, ModelProvider, discover_models,
+};
 use serde::Serialize;
 
 use crate::ServerError;
@@ -70,7 +72,10 @@ impl Config {
                 settings.default_provider,
                 settings.model,
                 settings.credential_store,
-                optional_path("RENOA_MCP_ADAPTER").as_deref(),
+                LocalHostAdapters::new(
+                    optional_path("RENOA_MCP_ADAPTER").as_deref(),
+                    optional_path("RENOA_INTEGRATION_CATALOG_ADAPTER").as_deref(),
+                ),
             )?,
         })
     }

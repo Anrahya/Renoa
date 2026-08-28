@@ -15,6 +15,8 @@ mod model_catalog;
 mod model_context;
 mod model_stream;
 mod output;
+mod package_tree;
+mod plugins;
 mod process;
 mod ripgrep;
 mod runtime;
@@ -33,13 +35,17 @@ mod model_adapter_process_tests;
 pub use alpha::{ALPHA_PROFILE_ID, AlphaError};
 pub use alpha_session::{AlphaSession, AlphaSessionConfiguration};
 pub use host::catalog::HostCatalogError;
-pub use host::{LocalHost, LocalHostError};
+pub use host::{LocalHost, LocalHostAdapters, LocalHostError};
 pub use mcp::{
     AlphaMcpTool, McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError,
     McpFailureKind, McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure,
 };
 pub use model_bridge::{BridgeModel, ModelBridgeError};
 pub use model_catalog::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
+pub use plugins::{
+    CatalogDiagnostic, CatalogError, CatalogFailure, CatalogFailureKind, InstalledPlugin,
+    PluginCredential, PluginError, PluginInspection, PluginMcpServer, PluginMetadata, PluginNotice,
+};
 pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
 };

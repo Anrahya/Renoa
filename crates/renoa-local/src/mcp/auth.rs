@@ -16,6 +16,8 @@ use crate::process::{child_pid_raw, configure_process_group, stop_process_group_
 mod tests;
 
 const GH_DEADLINE: Duration = Duration::from_secs(10);
+const GH_SOURCE: &str = "GitHub CLI";
+const SECRET_SERVICE_SOURCE: &str = "Secret Service";
 const MAX_TOKEN_BYTES: usize = 16 * 1_024;
 const MAX_STDERR_BYTES: usize = 4 * 1_024;
 
@@ -24,6 +26,7 @@ const MAX_STDERR_BYTES: usize = 4 * 1_024;
 pub(crate) enum McpConnectionAuth {
     None,
     GhCli { hostname: String, account: String },
+    SecretServiceBearer { credential_id: String },
 }
 
 impl McpConnectionAuth {
@@ -36,14 +39,25 @@ impl McpConnectionAuth {
         })
     }
 
+    pub(crate) fn secret_service_bearer(credential_id: &str) -> Result<Self, McpHostError> {
+        super::validate_identity("credential", credential_id)?;
+        Ok(Self::SecretServiceBearer {
+            credential_id: credential_id.to_owned(),
+        })
+    }
+
     pub(crate) fn from_stored(
         kind: &str,
         hostname: Option<String>,
         account: Option<String>,
+        credential_id: Option<String>,
     ) -> Result<Self, McpHostError> {
-        match (kind, hostname, account) {
-            ("none", None, None) => Ok(Self::None),
-            ("gh_cli", Some(hostname), Some(account)) => Self::gh_cli(&hostname, &account),
+        match (kind, hostname, account, credential_id) {
+            ("none", None, None, None) => Ok(Self::None),
+            ("gh_cli", Some(hostname), Some(account), None) => Self::gh_cli(&hostname, &account),
+            ("secret_service_bearer", None, None, Some(credential_id)) => {
+                Self::secret_service_bearer(&credential_id)
+            }
             _ => Err(McpHostError::Invalid(
                 "stored MCP credential reference is malformed".to_owned(),
             )),
@@ -54,20 +68,28 @@ impl McpConnectionAuth {
         match self {
             Self::None => "none",
             Self::GhCli { .. } => "gh_cli",
+            Self::SecretServiceBearer { .. } => "secret_service_bearer",
         }
     }
 
     pub(crate) fn stored_hostname(&self) -> Option<&str> {
         match self {
-            Self::None => None,
             Self::GhCli { hostname, .. } => Some(hostname),
+            Self::None | Self::SecretServiceBearer { .. } => None,
         }
     }
 
     pub(crate) fn stored_account(&self) -> Option<&str> {
         match self {
-            Self::None => None,
             Self::GhCli { account, .. } => Some(account),
+            Self::None | Self::SecretServiceBearer { .. } => None,
+        }
+    }
+
+    pub(crate) fn stored_credential_id(&self) -> Option<&str> {
+        match self {
+            Self::SecretServiceBearer { credential_id } => Some(credential_id),
+            Self::None | Self::GhCli { .. } => None,
         }
     }
 }
@@ -75,12 +97,14 @@ impl McpConnectionAuth {
 #[derive(Clone)]
 pub(crate) struct McpCredentialResolver {
     gh_executable: PathBuf,
+    secret_tool_executable: PathBuf,
 }
 
 impl Default for McpCredentialResolver {
     fn default() -> Self {
         Self {
             gh_executable: PathBuf::from("gh"),
+            secret_tool_executable: PathBuf::from("secret-tool"),
         }
     }
 }
@@ -90,6 +114,15 @@ impl McpCredentialResolver {
     pub(crate) fn with_gh_executable(path: PathBuf) -> Self {
         Self {
             gh_executable: path,
+            secret_tool_executable: PathBuf::from("secret-tool"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_executables(gh: PathBuf, secret_tool: PathBuf) -> Self {
+        Self {
+            gh_executable: gh,
+            secret_tool_executable: secret_tool,
         }
     }
 
@@ -104,6 +137,10 @@ impl McpCredentialResolver {
                 .resolve_gh_token(hostname, account, cancellation)
                 .await
                 .map(|token| Some(McpAuthorization { token })),
+            McpConnectionAuth::SecretServiceBearer { credential_id } => self
+                .resolve_secret_service_token(credential_id, cancellation)
+                .await
+                .map(|token| Some(McpAuthorization { token })),
         }
     }
 
@@ -113,34 +150,84 @@ impl McpCredentialResolver {
         account: &str,
         cancellation: CancellationToken,
     ) -> Result<SecretToken, McpCredentialError> {
+        self.resolve_command_token(
+            GH_SOURCE,
+            &self.gh_executable,
+            ["auth", "token", "--hostname", hostname, "--user", account],
+            format!("account `{account}` on `{hostname}`"),
+            format!("run `gh auth status --hostname {hostname}`"),
+            cancellation,
+        )
+        .await
+    }
+
+    async fn resolve_secret_service_token(
+        &self,
+        credential_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<SecretToken, McpCredentialError> {
+        self.resolve_command_token(
+            SECRET_SERVICE_SOURCE,
+            &self.secret_tool_executable,
+            ["lookup", "application", "renoa", "credential", credential_id],
+            format!("credential `{credential_id}`"),
+            format!(
+                "store it with `secret-tool store --label='Renoa {credential_id}' application renoa credential {credential_id}`"
+            ),
+            cancellation,
+        )
+        .await
+    }
+
+    async fn resolve_command_token<const N: usize>(
+        &self,
+        source_name: &'static str,
+        executable: &std::path::Path,
+        arguments: [&str; N],
+        reference: String,
+        guidance: String,
+        cancellation: CancellationToken,
+    ) -> Result<SecretToken, McpCredentialError> {
         if cancellation.is_cancelled() {
             return Err(McpCredentialError::Cancelled);
         }
-        let mut command = Command::new(&self.gh_executable);
+        let mut command = Command::new(executable);
         command
-            .args(["auth", "token", "--hostname", hostname, "--user", account])
+            .args(arguments)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         configure_process_group(&mut command);
-        let mut child = command.spawn().map_err(McpCredentialError::Start)?;
+        let mut child = command
+            .spawn()
+            .map_err(|source| McpCredentialError::Start {
+                source_name,
+                source,
+            })?;
         let pid = match child_pid_raw(&child) {
             Ok(pid) => pid,
             Err(error) => {
                 child
                     .kill()
                     .await
-                    .map_err(|cleanup| McpCredentialError::Cleanup(cleanup.to_string()))?;
-                return Err(McpCredentialError::Cleanup(format!(
-                    "credential process has no identity: {error}"
-                )));
+                    .map_err(|cleanup| McpCredentialError::Cleanup {
+                        source_name,
+                        detail: cleanup.to_string(),
+                    })?;
+                return Err(McpCredentialError::Cleanup {
+                    source_name,
+                    detail: format!("credential process has no identity: {error}"),
+                });
             }
         };
         let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
             stop_process_group_raw(&mut child, pid)
                 .await
-                .map_err(|error| McpCredentialError::Cleanup(error.to_string()))?;
-            return Err(McpCredentialError::MissingPipe);
+                .map_err(|error| McpCredentialError::Cleanup {
+                    source_name,
+                    detail: error.to_string(),
+                })?;
+            return Err(McpCredentialError::MissingPipe(source_name));
         };
         let stdout = drain_bounded(stdout, MAX_TOKEN_BYTES.saturating_add(2));
         let stderr = drain_bounded(stderr, MAX_STDERR_BYTES);
@@ -154,15 +241,18 @@ impl McpCredentialResolver {
         };
         let cleanup = stop_process_group_raw(&mut child, pid)
             .await
-            .map_err(|error| McpCredentialError::Cleanup(error.to_string()));
+            .map_err(|error| McpCredentialError::Cleanup {
+                source_name,
+                detail: error.to_string(),
+            });
         let (stdout, stderr) = tokio::join!(stdout, stderr);
         cleanup?;
-        let mut stdout = joined(stdout, "stdout")?;
-        let mut stderr = joined(stderr, "stderr")?;
+        let mut stdout = joined(stdout, source_name, "stdout")?;
+        let mut stderr = joined(stderr, source_name, "stderr")?;
         stderr.bytes.fill(0);
         if stdout.truncated {
             stdout.bytes.fill(0);
-            return Err(McpCredentialError::OutputLimit);
+            return Err(McpCredentialError::OutputLimit(source_name));
         }
         match signal {
             CredentialSignal::Cancelled => {
@@ -171,22 +261,26 @@ impl McpCredentialResolver {
             }
             CredentialSignal::Deadline => {
                 stdout.bytes.fill(0);
-                Err(McpCredentialError::Timeout)
+                Err(McpCredentialError::Timeout(source_name))
             }
             CredentialSignal::Exited(Err(error)) => {
                 stdout.bytes.fill(0);
-                Err(McpCredentialError::Wait(error))
+                Err(McpCredentialError::Wait {
+                    source_name,
+                    source: error,
+                })
             }
             CredentialSignal::Exited(Ok(status)) if !status.success() => {
                 stdout.bytes.fill(0);
                 Err(McpCredentialError::Unavailable {
-                    hostname: hostname.to_owned(),
-                    account: account.to_owned(),
+                    source_name,
+                    reference,
                     status: status.to_string(),
+                    guidance,
                 })
             }
             CredentialSignal::Exited(Ok(_)) => {
-                SecretToken::from_command_output(std::mem::take(&mut stdout.bytes))
+                SecretToken::from_command_output(std::mem::take(&mut stdout.bytes), source_name)
             }
         }
     }
@@ -206,7 +300,7 @@ impl McpAuthorization {
     #[cfg(test)]
     pub(crate) fn for_test(token: &str) -> Self {
         Self {
-            token: SecretToken::from_command_output(token.as_bytes().to_vec())
+            token: SecretToken::from_command_output(token.as_bytes().to_vec(), "test source")
                 .expect("test authorization token is valid"),
         }
     }
@@ -244,7 +338,10 @@ struct SecretToken {
 }
 
 impl SecretToken {
-    fn from_command_output(mut bytes: Vec<u8>) -> Result<Self, McpCredentialError> {
+    fn from_command_output(
+        mut bytes: Vec<u8>,
+        source_name: &'static str,
+    ) -> Result<Self, McpCredentialError> {
         if bytes.ends_with(b"\n") {
             bytes.pop();
             if bytes.ends_with(b"\r") {
@@ -257,7 +354,7 @@ impl SecretToken {
             && str::from_utf8(&bytes).is_ok();
         if !valid {
             bytes.fill(0);
-            return Err(McpCredentialError::InvalidOutput);
+            return Err(McpCredentialError::InvalidOutput(source_name));
         }
         Ok(Self { bytes })
     }
@@ -306,11 +403,17 @@ fn drain_bounded(
 
 fn joined(
     result: Result<io::Result<BoundedOutput>, tokio::task::JoinError>,
+    source_name: &'static str,
     stream: &'static str,
 ) -> Result<BoundedOutput, McpCredentialError> {
     result
-        .map_err(|error| McpCredentialError::ReaderTask(stream, error))?
+        .map_err(|source| McpCredentialError::ReaderTask {
+            source_name,
+            stream,
+            source,
+        })?
         .map_err(|error| McpCredentialError::Read {
+            source_name,
             stream,
             source: error,
         })

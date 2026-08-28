@@ -3,6 +3,7 @@
 /nodes/pi/dist/
 /adapters/model-provider-node/dist/
 /adapters/mcp-client-node/dist/
+/adapters/integration-catalog-node/dist/
 node_modules/
 *.db
 *.db-journal

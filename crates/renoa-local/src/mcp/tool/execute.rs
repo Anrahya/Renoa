@@ -30,9 +30,19 @@ pub(super) fn map_failure(
     let (source, certainty, partial_changes_possible) = failure.into_parts();
     let target = format!("{}/{}", selected.connection_id(), selected.tool().name());
     if certainty == McpOutcomeCertainty::Unknown {
-        return Err(ToolError::outcome_unknown(format!(
-            "MCP tool `{target}` has an unknown remote outcome: {source}"
-        )));
+        return Ok(ToolOutput {
+            content: vec![ContentBlock::text(format!(
+                "Renoa received no final response from MCP tool `{target}`. The call may or may not have succeeded. Renoa did not replay it. Do not retry blindly; explain the uncertainty or verify state with a safe read before deciding what to do. Boundary error: {source}"
+            ))],
+            details: Some(failure_details(
+                reference,
+                selected,
+                &source,
+                certainty,
+                partial_changes_possible,
+            )),
+            is_error: true,
+        });
     }
     if let McpAdapterError::Remote(remote) = &source {
         return Ok(ToolOutput {
@@ -40,31 +50,61 @@ pub(super) fn map_failure(
                 "MCP tool `{target}` failed: {}",
                 remote.message()
             ))],
-            details: Some(json!({
-                "mcp": {
-                    "reference": reference.to_string(),
-                    "integration_id": selected.integration_id(),
-                    "connection_id": selected.connection_id(),
-                    "tool_name": selected.tool().name(),
-                    "failure": {
-                        "kind": remote.kind().as_str(),
-                        "certainty": remote.certainty().as_str(),
-                        "partial_changes_possible": remote.partial_changes_possible(),
-                        "diagnostic": {
-                            "code": remote.diagnostic_code(),
-                            "http_status": remote.diagnostic_http_status(),
-                            "detail": remote.diagnostic_detail()
-                        }
-                    }
-                }
-            })),
+            details: Some(failure_details(
+                reference,
+                selected,
+                &source,
+                certainty,
+                partial_changes_possible,
+            )),
             is_error: true,
         });
     }
     Err(definite_boundary_error(&source, partial_changes_possible))
 }
 
-pub(super) fn definite_boundary_error(
+fn failure_details(
+    reference: &McpToolReference,
+    selected: &AlphaMcpTool,
+    source: &McpAdapterError,
+    certainty: McpOutcomeCertainty,
+    partial_changes_possible: bool,
+) -> Value {
+    let (kind, code, http_status, detail) = match source {
+        McpAdapterError::Remote(remote) => (
+            remote.kind().as_str(),
+            remote.diagnostic_code(),
+            remote.diagnostic_http_status(),
+            remote.diagnostic_detail(),
+        ),
+        _ => (
+            "adapter_boundary",
+            None,
+            None,
+            "No terminal adapter response.",
+        ),
+    };
+    json!({
+        "mcp": {
+            "reference": reference.to_string(),
+            "integration_id": selected.integration_id(),
+            "connection_id": selected.connection_id(),
+            "tool_name": selected.tool().name(),
+            "failure": {
+                "kind": kind,
+                "certainty": certainty.as_str(),
+                "partial_changes_possible": partial_changes_possible,
+                "diagnostic": {
+                    "code": code,
+                    "http_status": http_status,
+                    "detail": detail
+                }
+            }
+        }
+    })
+}
+
+pub(crate) fn definite_boundary_error(
     source: &McpAdapterError,
     partial_changes_possible: bool,
 ) -> ToolError {
@@ -76,20 +116,20 @@ pub(super) fn definite_boundary_error(
         McpAdapterError::Credential(McpCredentialError::Cancelled) => {
             ToolError::cancelled(message, false)
         }
-        McpAdapterError::Credential(McpCredentialError::Timeout) => {
+        McpAdapterError::Credential(McpCredentialError::Timeout(_)) => {
             ToolError::timeout(message, false)
         }
         McpAdapterError::Credential(
-            McpCredentialError::Unavailable { .. } | McpCredentialError::InvalidOutput,
+            McpCredentialError::Unavailable { .. } | McpCredentialError::InvalidOutput(_),
         ) => ToolError::permission_denied(message),
         McpAdapterError::Credential(
-            McpCredentialError::Start(_)
-            | McpCredentialError::MissingPipe
-            | McpCredentialError::Wait(_)
-            | McpCredentialError::Cleanup(_)
+            McpCredentialError::Start { .. }
+            | McpCredentialError::MissingPipe(_)
+            | McpCredentialError::Wait { .. }
+            | McpCredentialError::Cleanup { .. }
             | McpCredentialError::Read { .. }
-            | McpCredentialError::ReaderTask(_, _)
-            | McpCredentialError::OutputLimit,
+            | McpCredentialError::ReaderTask { .. }
+            | McpCredentialError::OutputLimit(_),
         ) => ToolError::unavailable(message),
         McpAdapterError::OutputLimit => ToolError::output_limit(message),
         McpAdapterError::Start(_) | McpAdapterError::Resolve(_) | McpAdapterError::NotFile(_) => {

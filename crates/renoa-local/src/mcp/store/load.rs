@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use super::super::{
     AdapterCatalog, McpCatalogSnapshot, McpCatalogTool, McpHostError, McpRejectedTool,
+    McpRequestHeaders,
 };
 
 pub(super) fn load_catalog(
@@ -11,7 +12,8 @@ pub(super) fn load_catalog(
 ) -> Result<Option<McpCatalogSnapshot>, McpHostError> {
     let metadata = connection
         .query_row(
-            "SELECT endpoint, protocol_version, adapter_revision, catalog_digest
+            "SELECT endpoint, request_headers_json, protocol_version, adapter_revision,
+                    catalog_digest
              FROM mcp_catalogs WHERE connection_id = ?1",
             [connection_id],
             |row| {
@@ -20,11 +22,13 @@ pub(super) fn load_catalog(
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             },
         )
         .optional()?;
-    let Some((endpoint, protocol_version, adapter_revision, digest)) = metadata else {
+    let Some((endpoint, request_headers, protocol_version, adapter_revision, digest)) = metadata
+    else {
         return Ok(None);
     };
     let tools = load_tools(connection, connection_id)?;
@@ -47,8 +51,9 @@ pub(super) fn load_catalog(
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let snapshot = McpCatalogSnapshot::from_adapter(
+    let snapshot = McpCatalogSnapshot::from_adapter_with_headers(
         connection_id,
+        McpRequestHeaders::from_stored(&request_headers)?,
         AdapterCatalog {
             endpoint,
             protocol_version,

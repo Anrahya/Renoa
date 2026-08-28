@@ -79,8 +79,9 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
         execute_tool_turn(&session, lost_request_id, lost_prompt.clone(), address).await;
     assert_eq!(
         lost_outcome,
-        LocalTurnOutcome::Failed {
-            reason: "effect outcome is unknown; operation was abandoned without replay".to_owned(),
+        LocalTurnOutcome::Completed {
+            output: "MCP uncertainty handled.".to_owned(),
+            stop_reason: renoa_agent::StopReason::Stop,
         }
     );
 
@@ -103,7 +104,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
         .await
         .expect("replay the abandoned outcome without another tool call");
     assert_eq!(replayed_lost, lost_outcome);
-    assert_model_context(&model_requests);
+    assert_model_context(&model_requests, &endpoint);
     assert_durable_tool_result(&session.history().expect("load durable history"));
 
     drop(session);
@@ -120,7 +121,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
         .expect("replay settled command from durable history");
 
     assert_eq!(replayed, outcome);
-    assert_eq!(read_json_lines(&model_requests).len(), 11);
+    assert_eq!(read_json_lines(&model_requests).len(), 12);
     assert_durable_tool_result(&restored.history().expect("reload durable history"));
 }
 
@@ -168,14 +169,14 @@ fn new_vertical_host(data: &Path, bridge: &Path, credentials: &Path, adapter: &P
         ModelProvider::Xai,
         "fixture-model",
         credentials,
-        Some(adapter),
+        renoa_local::LocalHostAdapters::new(Some(adapter), None),
     )
     .expect("create local Host")
 }
 
-fn assert_model_context(path: &Path) {
+fn assert_model_context(path: &Path, configured_endpoint: &str) {
     let requests = read_json_lines(path);
-    assert_eq!(requests.len(), 11);
+    assert_eq!(requests.len(), 12);
     for request in &requests {
         let tools = request["tools"].as_array().expect("model tools array");
         assert_eq!(
@@ -193,6 +194,7 @@ fn assert_model_context(path: &Path) {
                 "tool_search",
                 "tool_load",
                 "tool_execute",
+                "extension_manage",
                 "skill_search",
                 "skill_load",
             ]
@@ -202,8 +204,11 @@ fn assert_model_context(path: &Path) {
         assert!(!encoded_tools.contains("tenant"));
         assert!(!encoded_tools.contains("unused"));
         let encoded = serde_json::to_string(request).expect("encode model request");
+        assert!(
+            !encoded.contains(configured_endpoint),
+            "model request leaked the configured MCP endpoint"
+        );
         for forbidden in [
-            "endpoint",
             "output_schema",
             "adapter_revision",
             "connection_id",
@@ -235,7 +240,7 @@ fn assert_model_context(path: &Path) {
 fn assert_durable_tool_result(history: &[renoa_local::LocalHistoryEntry]) {
     assert_eq!(
         history.len(),
-        23,
+        24,
         "durable replay must not duplicate history"
     );
     let Message::Tool { result } = &history[6].message else {
@@ -257,12 +262,18 @@ fn assert_durable_tool_result(history: &[renoa_local::LocalHistoryEntry]) {
     assert_eq!(result.call_id, "mcp-execute-denied");
     assert_eq!(
         result.content,
-        vec![ContentBlock::text("permission denied")]
+        vec![ContentBlock::text(
+            "MCP tool `primary/echo` failed: MCP server returned HTTP 401: permission denied"
+        )]
     );
     assert_eq!(result.details.as_ref().unwrap()["mcp"]["tool_name"], "echo");
     assert_eq!(
-        result.details.as_ref().unwrap()["mcp"]["structured_content"],
-        json!({"echoed": "denied"})
+        result.details.as_ref().unwrap()["mcp"]["failure"]["certainty"],
+        "definite"
+    );
+    assert_eq!(
+        result.details.as_ref().unwrap()["mcp"]["failure"]["diagnostic"]["http_status"],
+        401
     );
     assert!(result.is_error);
     let Message::Tool { result } = &history[22].message else {
@@ -273,8 +284,16 @@ fn assert_durable_tool_result(history: &[renoa_local::LocalHistoryEntry]) {
     assert_eq!(
         result.content,
         vec![ContentBlock::text(
-            "This tool may have finished, but Renoa could not recover its result. It was not run again."
+            "Renoa received no final response from MCP tool `primary/echo`. The call may or may not have succeeded. Renoa did not replay it. Do not retry blindly; explain the uncertainty or verify state with a safe read before deciding what to do. Boundary error: MCP adapter reported a remote failure: transport: The MCP response was lost after dispatch; the tool outcome is unknown."
         )]
+    );
+    assert_eq!(
+        result.details.as_ref().unwrap()["mcp"]["failure"]["certainty"],
+        "unknown"
+    );
+    assert_eq!(
+        result.details.as_ref().unwrap()["mcp"]["failure"]["partial_changes_possible"],
+        true
     );
     assert!(result.is_error);
 }
@@ -361,41 +380,47 @@ fn serve_vertical_mcp(listener: &TcpListener) -> Vec<String> {
         let method = rpc["method"].as_str().expect("MCP method");
         assert_eq!(method, expected_method);
         methods.push(method.to_owned());
-        let result = match method {
-            "server/discover" => json!({
-                "resultType": "complete",
-                "supportedVersions": ["2026-07-28"],
-                "capabilities": {"tools": {}}
-            }),
-            "tools/list" => json!({
-                "resultType": "complete",
-                "tools": [
-                    {
-                        "name": "unused",
-                        "description": "Must stay outside model context.",
-                        "inputSchema": {"type": "object", "properties": {}}
-                    },
-                    {
-                        "name": "echo",
-                        "description": "Echo one string.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "tenant": {"type": "string", "x-mcp-header": "Tenant"},
-                                "text": {"type": "string"}
-                            },
-                            "required": ["tenant", "text"]
+        let (status, result) = match method {
+            "server/discover" => (
+                200,
+                json!({
+                    "resultType": "complete",
+                    "supportedVersions": ["2026-07-28"],
+                    "capabilities": {"tools": {}}
+                }),
+            ),
+            "tools/list" => (
+                200,
+                json!({
+                    "resultType": "complete",
+                    "tools": [
+                        {
+                            "name": "unused",
+                            "description": "Must stay outside model context.",
+                            "inputSchema": {"type": "object", "properties": {}}
                         },
-                        "outputSchema": {
-                            "type": "object",
-                            "properties": {"echoed": {"type": "string"}},
-                            "required": ["echoed"]
+                        {
+                            "name": "echo",
+                            "description": "Echo one string.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "tenant": {"type": "string", "x-mcp-header": "Tenant"},
+                                    "text": {"type": "string"}
+                                },
+                                "required": ["tenant", "text"]
+                            },
+                            "outputSchema": {
+                                "type": "object",
+                                "properties": {"echoed": {"type": "string"}},
+                                "required": ["echoed"]
+                            }
                         }
-                    }
-                ],
-                "ttlMs": 0,
-                "cacheScope": "private"
-            }),
+                    ],
+                    "ttlMs": 0,
+                    "cacheScope": "private"
+                }),
+            ),
             "tools/call" => match tool_call_result(&rpc, &headers) {
                 Some(result) => result,
                 None => continue,
@@ -410,7 +435,8 @@ fn serve_vertical_mcp(listener: &TcpListener) -> Vec<String> {
         .expect("encode MCP response");
         write!(
             stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            if status == 200 { "OK" } else { "Unauthorized" },
             response.len()
         )
         .expect("write MCP response headers");
@@ -420,7 +446,7 @@ fn serve_vertical_mcp(listener: &TcpListener) -> Vec<String> {
     methods
 }
 
-fn tool_call_result(rpc: &Value, headers: &str) -> Option<Value> {
+fn tool_call_result(rpc: &Value, headers: &str) -> Option<(u16, Value)> {
     assert_eq!(rpc["params"]["name"], "echo");
     assert_eq!(rpc["params"]["arguments"]["tenant"], "alpha");
     let text = rpc["params"]["arguments"]["text"]
@@ -436,15 +462,18 @@ fn tool_call_result(rpc: &Value, headers: &str) -> Option<Value> {
     if text == "lost" {
         return None;
     }
-    Some(json!({
-        "resultType": "complete",
-        "content": [{
-            "type": "text",
-            "text": if text == "hello" { "echo: hello" } else { "permission denied" }
-        }],
-        "structuredContent": {"echoed": text},
-        "isError": text == "denied"
-    }))
+    Some((
+        if text == "denied" { 401 } else { 200 },
+        json!({
+            "resultType": "complete",
+            "content": [{
+                "type": "text",
+                "text": if text == "hello" { "echo: hello" } else { "permission denied" }
+            }],
+            "structuredContent": {"echoed": text},
+            "isError": text == "denied"
+        }),
+    ))
 }
 
 struct NoopEvents;

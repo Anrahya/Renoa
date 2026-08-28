@@ -102,6 +102,7 @@ impl LocalHost {
             &adapter,
             connection_id,
             &connection.endpoint,
+            &connection.request_headers,
             authorization.as_ref(),
         )
         .await?;

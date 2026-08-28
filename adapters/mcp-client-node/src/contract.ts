@@ -21,17 +21,22 @@ export interface WireAuthorization {
   readonly token: string;
 }
 
+export type WireHeaders = Readonly<Record<string, string>>;
+
 export type AdapterRequest =
   | {
       readonly wire_version: typeof WIRE_VERSION;
       readonly action: "discover";
       readonly endpoint: string;
+      readonly headers?: WireHeaders;
       readonly authorization?: WireAuthorization;
     }
   | {
       readonly wire_version: typeof WIRE_VERSION;
       readonly action: "call";
       readonly endpoint: string;
+      readonly protocol_version: string;
+      readonly headers?: WireHeaders;
       readonly authorization?: WireAuthorization;
       readonly tool: FrozenMcpTool;
       readonly arguments: JsonObject;

@@ -7,14 +7,18 @@ use tokio::{
     sync::oneshot,
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 use super::{
     AdapterCatalog, McpAdapterError, McpAuthorization, McpCatalogSnapshot, McpHostError,
-    McpRemoteFailure,
+    McpRemoteFailure, McpRequestHeaders,
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
-const WIRE_VERSION: u32 = 2;
+#[cfg(test)]
+mod tests;
+
+const WIRE_VERSION: u32 = 4;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
@@ -23,19 +27,43 @@ pub(crate) async fn discover(
     adapter: &Path,
     connection_id: &str,
     endpoint: &str,
+    request_headers: &McpRequestHeaders,
     authorization: Option<&McpAuthorization>,
 ) -> Result<McpCatalogSnapshot, McpHostError> {
+    discover_cancellable(
+        adapter,
+        connection_id,
+        endpoint,
+        request_headers,
+        authorization,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+pub(crate) async fn discover_cancellable(
+    adapter: &Path,
+    connection_id: &str,
+    endpoint: &str,
+    request_headers: &McpRequestHeaders,
+    authorization: Option<&McpAuthorization>,
+    cancellation: CancellationToken,
+) -> Result<McpCatalogSnapshot, McpHostError> {
+    if cancellation.is_cancelled() {
+        return Err(McpAdapterError::Cancelled.into());
+    }
     let mut request = serde_json::to_vec(&DiscoverRequest {
         wire_version: WIRE_VERSION,
         action: "discover",
         endpoint,
+        headers: request_headers,
         authorization: authorization.map(WireAuthorization::from),
     })
     .map_err(McpAdapterError::Encode)?;
-    let result = run_adapter(adapter, &request, authorization).await;
+    let result = run_adapter(adapter, &request, authorization, cancellation).await;
     request.fill(0);
     let catalog = result?;
-    McpCatalogSnapshot::from_adapter(connection_id, catalog)
+    McpCatalogSnapshot::from_adapter_with_headers(connection_id, request_headers.clone(), catalog)
 }
 
 #[derive(Serialize)]
@@ -43,6 +71,8 @@ struct DiscoverRequest<'a> {
     wire_version: u32,
     action: &'static str,
     endpoint: &'a str,
+    #[serde(skip_serializing_if = "McpRequestHeaders::is_empty")]
+    headers: &'a McpRequestHeaders,
     #[serde(skip_serializing_if = "Option::is_none")]
     authorization: Option<WireAuthorization<'a>>,
 }
@@ -66,6 +96,7 @@ async fn run_adapter(
     adapter: &Path,
     request: &[u8],
     authorization: Option<&McpAuthorization>,
+    cancellation: CancellationToken,
 ) -> Result<AdapterCatalog, McpAdapterError> {
     let deadline = tokio::time::Instant::now() + PROCESS_DEADLINE;
     let mut command = Command::new("node");
@@ -98,36 +129,25 @@ async fn run_adapter(
     let stdout = drain_head(stdout, MAX_STDOUT_BYTES, Some(terminal_sender));
     let stderr = drain_head(stderr, MAX_STDERR_BYTES, None);
 
-    let write_result = write_before_deadline(&mut stdin, request, deadline).await;
+    let write_result = write_before_deadline(&mut stdin, request, deadline, &cancellation).await;
     drop(stdin);
     match write_result {
-        Some(Ok(())) => {}
-        Some(Err(source)) => {
-            stop_and_capture(&mut child, pid, stdout, stderr).await?;
+        WriteSignal::Complete(Ok(())) => {}
+        WriteSignal::Complete(Err(source)) => {
+            stop_and_discard(&mut child, pid, stdout, stderr).await?;
             return Err(McpAdapterError::Write(source));
         }
-        None => {
-            stop_and_capture(&mut child, pid, stdout, stderr).await?;
+        WriteSignal::Deadline => {
+            stop_and_discard(&mut child, pid, stdout, stderr).await?;
             return Err(McpAdapterError::Timeout);
+        }
+        WriteSignal::Cancelled => {
+            stop_and_discard(&mut child, pid, stdout, stderr).await?;
+            return Err(McpAdapterError::Cancelled);
         }
     }
 
-    let signal = {
-        let wait = child.wait();
-        tokio::pin!(wait);
-        tokio::select! {
-            status = &mut wait => ProcessSignal::Exited(status),
-            terminal = &mut terminal_receiver => if terminal.is_ok() {
-                ProcessSignal::Terminal
-            } else {
-                tokio::select! {
-                    status = &mut wait => ProcessSignal::Exited(status),
-                    () = tokio::time::sleep_until(deadline) => ProcessSignal::Deadline,
-                }
-            },
-            () = tokio::time::sleep_until(deadline) => ProcessSignal::Deadline,
-        }
-    };
+    let signal = wait_for_signal(&mut child, &mut terminal_receiver, deadline, &cancellation).await;
     match signal {
         ProcessSignal::Exited(Err(source)) => {
             stop_and_capture(&mut child, pid, stdout, stderr).await?;
@@ -157,6 +177,36 @@ async fn run_adapter(
                 Err(McpAdapterError::Timeout)
             }
         }
+        ProcessSignal::Cancelled => {
+            stop_and_discard(&mut child, pid, stdout, stderr).await?;
+            Err(McpAdapterError::Cancelled)
+        }
+    }
+}
+
+async fn wait_for_signal(
+    child: &mut tokio::process::Child,
+    terminal: &mut oneshot::Receiver<()>,
+    deadline: tokio::time::Instant,
+    cancellation: &CancellationToken,
+) -> ProcessSignal {
+    let wait = child.wait();
+    tokio::pin!(wait);
+    tokio::select! {
+        biased;
+        terminal = terminal => if terminal.is_ok() {
+            ProcessSignal::Terminal
+        } else {
+            tokio::select! {
+                biased;
+                status = &mut wait => ProcessSignal::Exited(status),
+                () = cancellation.cancelled() => ProcessSignal::Cancelled,
+                () = tokio::time::sleep_until(deadline) => ProcessSignal::Deadline,
+            }
+        },
+        status = &mut wait => ProcessSignal::Exited(status),
+        () = cancellation.cancelled() => ProcessSignal::Cancelled,
+        () = tokio::time::sleep_until(deadline) => ProcessSignal::Deadline,
     }
 }
 
@@ -164,16 +214,25 @@ async fn write_before_deadline(
     stdin: &mut tokio::process::ChildStdin,
     request: &[u8],
     deadline: tokio::time::Instant,
-) -> Option<io::Result<()>> {
+    cancellation: &CancellationToken,
+) -> WriteSignal {
     let write = async {
         stdin.write_all(request).await?;
         stdin.shutdown().await
     };
     tokio::pin!(write);
     tokio::select! {
-        result = &mut write => Some(result),
-        () = tokio::time::sleep_until(deadline) => None,
+        biased;
+        result = &mut write => WriteSignal::Complete(result),
+        () = cancellation.cancelled() => WriteSignal::Cancelled,
+        () = tokio::time::sleep_until(deadline) => WriteSignal::Deadline,
     }
+}
+
+enum WriteSignal {
+    Complete(io::Result<()>),
+    Deadline,
+    Cancelled,
 }
 
 fn parse_captured(
@@ -233,10 +292,23 @@ async fn stop_and_capture(
     Ok((stdout?, stderr?))
 }
 
+async fn stop_and_discard(
+    child: &mut tokio::process::Child,
+    pid: u32,
+    stdout: JoinHandle<io::Result<CapturedHead>>,
+    stderr: JoinHandle<io::Result<CapturedHead>>,
+) -> Result<(), McpAdapterError> {
+    let (mut stdout, mut stderr) = stop_and_capture(child, pid, stdout, stderr).await?;
+    stdout.bytes.fill(0);
+    stderr.bytes.fill(0);
+    Ok(())
+}
+
 enum ProcessSignal {
     Exited(io::Result<std::process::ExitStatus>),
     Terminal,
     Deadline,
+    Cancelled,
 }
 
 fn parse_discovery_record(
@@ -363,131 +435,4 @@ async fn join_capture(
     task.await
         .map_err(|source| McpAdapterError::ReaderTask(stream, source))?
         .map_err(|source| McpAdapterError::Read { stream, source })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{fs, time::Duration};
-
-    use tempfile::tempdir;
-
-    use super::{McpAdapterError, McpHostError, discover, parse_discovery_record};
-    use crate::mcp::{McpFailureKind, McpOutcomeCertainty};
-
-    #[test]
-    fn typed_remote_failure_survives_the_process_boundary() {
-        let parsed = parse_discovery_record(
-            br#"{"wire_version":2,"event":"failed","failure":{"kind":"incompatible_protocol","certainty":"definite","message":"wrong revision","partial_changes_possible":false,"diagnostic":{"code":"protocol_version_mismatch","http_status":409,"detail":"server omitted the pinned revision"}}}
-"#,
-        )
-        .expect("valid terminal record");
-        let Err(McpAdapterError::Remote(failure)) = parsed else {
-            panic!("expected typed remote failure");
-        };
-
-        assert_eq!(failure.kind(), McpFailureKind::IncompatibleProtocol);
-        assert_eq!(failure.certainty(), McpOutcomeCertainty::Definite);
-        assert!(!failure.partial_changes_possible());
-        assert_eq!(failure.diagnostic_code(), Some("protocol_version_mismatch"));
-        assert_eq!(failure.diagnostic_http_status(), Some(409));
-    }
-
-    #[test]
-    fn unknown_failure_class_is_not_accepted_as_a_current_wire_record() {
-        let error = parse_discovery_record(
-            br#"{"wire_version":2,"event":"failed","failure":{"kind":"maybe","certainty":"definite","message":"ambiguous","partial_changes_possible":false,"diagnostic":{"detail":"invalid class"}}}
-"#,
-        )
-        .expect_err("current wire failure classes are closed");
-
-        assert!(error.contains("decode failed record"));
-    }
-
-    #[test]
-    fn discovery_accepts_exactly_one_terminal_record() {
-        let record = br#"{"wire_version":2,"event":"failed","failure":{"kind":"protocol","certainty":"definite","message":"bad","partial_changes_possible":false,"diagnostic":{"detail":"bad"}}}
-"#;
-        let mut duplicated = record.to_vec();
-        duplicated.extend_from_slice(record);
-
-        assert_eq!(
-            parse_discovery_record(&duplicated).expect_err("duplicate terminal record"),
-            "adapter returned more than one discovery record"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_valid_terminal_catalog_survives_hung_adapter_cleanup() {
-        let directory = tempdir().expect("temporary adapter directory");
-        let adapter = directory.path().join("adapter.mjs");
-        fs::write(
-            &adapter,
-            r#"
-const terminal = {
-  wire_version: 2,
-  event: "discovered",
-  catalog: {
-    endpoint: "https://example.com/mcp",
-    protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.2.0",
-    tools: [],
-    rejected_tools: []
-  }
-};
-process.stdout.write(`${JSON.stringify(terminal)}\n`);
-await new Promise(() => {});
-"#,
-        )
-        .expect("write hanging adapter");
-
-        let snapshot = tokio::time::timeout(
-            Duration::from_secs(3),
-            discover(&adapter, "primary", "https://example.com/mcp", None),
-        )
-        .await
-        .expect("terminal should stop hung cleanup promptly")
-        .expect("preserve valid terminal catalog");
-
-        assert_eq!(snapshot.connection_id(), "primary");
-        assert!(snapshot.tools().is_empty());
-    }
-
-    #[tokio::test]
-    async fn records_after_a_terminal_are_rejected_at_the_real_process_boundary() {
-        let directory = tempdir().expect("temporary adapter directory");
-        let adapter = directory.path().join("adapter.mjs");
-        fs::write(
-            &adapter,
-            r#"
-const terminal = {
-  wire_version: 2,
-  event: "discovered",
-  catalog: {
-    endpoint: "https://example.com/mcp",
-    protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.2.0",
-    tools: [],
-    rejected_tools: []
-  }
-};
-const line = JSON.stringify(terminal);
-process.stdout.write(`${line}\n${line}\n`);
-await new Promise(() => {});
-"#,
-        )
-        .expect("write duplicate-terminal adapter");
-
-        let error = tokio::time::timeout(
-            Duration::from_secs(3),
-            discover(&adapter, "primary", "https://example.com/mcp", None),
-        )
-        .await
-        .expect("duplicate terminal should stop the process promptly")
-        .expect_err("duplicate terminal must fail");
-        let McpHostError::Adapter(McpAdapterError::Protocol(message)) = error else {
-            panic!("expected process protocol failure");
-        };
-
-        assert!(message.contains("more than one discovery record"));
-    }
 }

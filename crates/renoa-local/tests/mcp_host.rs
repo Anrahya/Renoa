@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use renoa_local::{LocalHost, LocalHostError, ModelProvider};
+use renoa_local::{LocalHost, LocalHostAdapters, LocalHostError, ModelProvider};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
@@ -86,7 +86,7 @@ fn new_host(data: &Path, adapter: Option<&Path>) -> LocalHost {
         ModelProvider::Xai,
         "unused-model",
         data.join("unused-credentials.sqlite3"),
-        adapter,
+        LocalHostAdapters::new(adapter, None),
     )
     .expect("create local Host")
 }

@@ -1,6 +1,6 @@
 use std::fs;
 
-use renoa_local::{LocalHost, LocalHostError, ModelProvider};
+use renoa_local::{LocalHost, LocalHostAdapters, LocalHostError, ModelProvider};
 use tempfile::tempdir;
 
 #[tokio::test]
@@ -25,7 +25,7 @@ async fn an_open_alpha_session_can_select_a_newly_discovered_model() {
         ModelProvider::Xai,
         "model-a",
         &credentials,
-        None,
+        LocalHostAdapters::default(),
     )
     .expect("assemble Host");
 

@@ -45,10 +45,11 @@ surface requirements, not Alpha's internal design.
    Host registry tools may read newly committed catalog state, but an exact
    catalog reference can never change underneath an invocation.
 6. The first profile has all six local tools, `tool_search`, `tool_load`,
-   `tool_execute`, `skill_search`, and `skill_load`. External schemas and skill
-   bodies are loaded into history only when Alpha requests them; catalog size
-   never expands the model API tool list. Existing workspace boundaries and
-   unrestricted Bash behavior remain unchanged.
+   `tool_execute`, `extension_manage`, `skill_search`, and `skill_load`.
+   External schemas, installed-package metadata, and skill bodies are loaded
+   into history only when Alpha requests them; their quantity never expands the
+   model API tool list. Existing workspace boundaries and unrestricted Bash
+   behavior remain unchanged.
 7. Alpha has no plan mode. A question, review, plan, or implementation request
    is handled according to the user's intent by the same agent.
 
@@ -76,9 +77,10 @@ waste model context.
 
 Alpha does not receive a startup dump of every skill description or body. It
 uses `skill_search` to query at most 200 names and short descriptions from the
-Host's global and workspace `.agents/skills` sources, then passes one name to
-`skill_load`. A workspace skill deterministically overrides a global skill with
-the same name. The loaded body, exact immutable revision, base directory,
+Host's global and workspace `.agents/skills` sources plus installed Agent
+Plugins, then passes one name to `skill_load`. Precedence is workspace, global,
+then plugin. Different plugins cannot silently compete for the same skill name.
+The loaded body, exact immutable revision, base directory,
 compatibility note, and bounded supporting-file sample are available only after
 that invocation.
 
@@ -92,6 +94,28 @@ survive compaction and Host restart; historical full load results become short
 model-facing receipts so the body is not duplicated. A skill supplies
 instructions and files only. It cannot add a tool or permission.
 
+## Extension management
+
+Alpha receives one fixed `extension_manage` tool rather than one management
+schema per package. It can search the replaceable discovery source, add one
+exact refetched catalog candidate, one officially researched MCP definition,
+or one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local package; install exact
+content; list installed revisions; and connect a supported package MCP server
+to Alpha. Every add source becomes the same immutable package. Supported skills
+hot-load first, then Renoa attempts the connection. Discovery is a hint: the
+Host revalidates catalog data and the real endpoint, while a miss directs Alpha
+to official web research or an exact local package instead of guessing. Alpha
+v1's deliberate full-access policy permits those actions; the tool does not
+create a second approval system or expand the agent's authority.
+
+Packages never contain credentials. A connection may name a Secret Service
+bearer credential, which the Host resolves only at the request boundary. The
+key is not returned to Alpha or stored in Renoa SQLite. A successful connection
+is visible to the next `tool_search` call without restarting Alpha or its
+surface. A connection failure remains model-visible and preserves the installed
+package and any successfully loaded skills. A package-provided skill is visible
+to the next `skill_search` call without restart.
+
 ## Model-visible request
 
 A normal Alpha request contains only:
@@ -99,8 +123,9 @@ A normal Alpha request contains only:
 1. the Alpha base prompt and applicable project instructions;
 2. the exact Host-pinned active skill instructions;
 3. the durable, context-projected conversation; and
-4. the six local tool definitions, three fixed MCP-registry definitions, and
-   two fixed skill-registry definitions in the model API's tool field.
+4. the six local tool definitions, three fixed MCP-registry definitions, one
+   fixed extension-manager definition, and two fixed skill-registry definitions
+   in the model API's tool field.
 
 Kernel command IDs, effect identities, recovery declarations, runtime
 manifests, and configuration digests are not prompt content.
@@ -128,6 +153,10 @@ The real headless product path must prove that:
 6. a 1,000-tool external catalog adds no model API schema, search returns only
    compact matches, and load returns only explicitly requested schemas;
 7. exact external references fail stale instead of changing after refresh;
-8. a skill added during a live session is discoverable without restart; and
+8. a skill added during a live session is discoverable without restart;
 9. activated exact skill revisions survive compaction and Host restart without
-   duplicating their full bodies in later model history.
+   duplicating their full bodies in later model history; and
+10. an Exa-shaped package is content-bound through inspect and install, sends
+    its public header and a just-in-time bearer through the real MCP boundary,
+    becomes searchable without restart, and never stores the key or adds an
+    external schema to the normal model request.

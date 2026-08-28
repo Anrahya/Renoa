@@ -1,5 +1,9 @@
 import type { FetchLike } from "@modelcontextprotocol/client";
-import type { AdapterRequest, WireAuthorization } from "./contract.js";
+import type {
+  AdapterRequest,
+  WireAuthorization,
+  WireHeaders,
+} from "./contract.js";
 import { AdapterProblem, type ExchangeEvidence } from "./errors.js";
 import { MAX_HTTP_RESPONSE_BYTES } from "./limits.js";
 
@@ -7,6 +11,9 @@ export class CallExchangeTracker {
   callRequestCount = 0;
   dispatchStarted = false;
   responseStarted = false;
+  legacyInitialized = false;
+  legacyStreamRequestCount = 0;
+  legacySessionId: string | undefined;
   boundaryProblem: AdapterProblem | undefined;
 
   markDispatched(): void {
@@ -16,6 +23,18 @@ export class CallExchangeTracker {
 
   markResponseStarted(): void {
     this.responseStarted = true;
+  }
+
+  markLegacyInitialized(): void {
+    this.legacyInitialized = true;
+  }
+
+  markLegacyStreamRequest(): void {
+    this.legacyStreamRequestCount += 1;
+  }
+
+  recordLegacySession(sessionId: string | null): void {
+    this.legacySessionId = sessionId ?? undefined;
   }
 
   recordBoundaryProblem(problem: AdapterProblem): void {
@@ -66,6 +85,7 @@ export function guardedFetch(
   dispatchStarted: () => Promise<void>,
   operationSignal: AbortSignal,
   endpoint: URL,
+  configuredHeaders: WireHeaders | undefined,
   authorization: WireAuthorization | undefined,
 ): FetchLike {
   const nativeFetch = globalThis.fetch;
@@ -83,7 +103,10 @@ export function guardedFetch(
         ),
       );
     }
-    const headers = new Headers(input instanceof Request ? input.headers : undefined);
+    const headers = new Headers(configuredHeaders);
+    new Headers(input instanceof Request ? input.headers : undefined).forEach(
+      (value, name) => headers.set(name, value),
+    );
     new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
     if (headers.has("authorization")) {
       tracker.reject(
@@ -101,12 +124,44 @@ export function guardedFetch(
       headers.set("authorization", `Bearer ${authorization.token}`);
     }
     const requestMethod = (init?.method ?? "GET").toUpperCase();
-    const mcpMethod = headers.get("mcp-method");
-    if (requestMethod !== "POST" || mcpMethod === null) {
+    const modernMethod = headers.get("mcp-method");
+    if (requestMethod === "GET") {
+      if (
+        !tracker.legacyInitialized ||
+        tracker.legacyStreamRequestCount !== 0
+      ) {
+        tracker.reject(
+          new AdapterProblem(
+            "protocol",
+            "MCP adapter attempted an unexpected legacy event stream.",
+            {
+              code: "unexpected_transport_request",
+              partialChangesPossible: tracker.dispatchStarted,
+            },
+          ),
+        );
+      }
+      requireLegacySessionHeader(headers, tracker);
+      tracker.markLegacyStreamRequest();
+      return boundResponse(
+        await nativeFetch(input, {
+          ...init,
+          headers,
+          redirect: "manual",
+          signal:
+            init?.signal == null
+              ? operationSignal
+              : AbortSignal.any([operationSignal, init.signal]),
+        }),
+        false,
+        tracker,
+      );
+    }
+    if (requestMethod !== "POST") {
       tracker.reject(
         new AdapterProblem(
           "protocol",
-          "MCP adapter attempted a transport operation outside stateless POST requests.",
+          "MCP adapter attempted an unsupported transport request.",
           {
             code: "unexpected_transport_request",
             partialChangesPossible: tracker.dispatchStarted,
@@ -114,15 +169,33 @@ export function guardedFetch(
         ),
       );
     }
-    const allowed =
-      mcpMethod === "server/discover" ||
-      (action === "discover" && mcpMethod === "tools/list") ||
-      (action === "call" && mcpMethod === "tools/call");
+    const bodyMethod = rpcMethod(init?.body, tracker);
+    if (modernMethod !== null && modernMethod !== bodyMethod) {
+      tracker.reject(
+        new AdapterProblem(
+          "protocol",
+          "MCP method header does not match the JSON-RPC request body.",
+          {
+            code: "mcp_method_mismatch",
+            partialChangesPossible: tracker.dispatchStarted,
+          },
+        ),
+      );
+    }
+    const legacy = modernMethod === null;
+    const allowed = legacy
+      ? bodyMethod === "initialize" ||
+        bodyMethod === "notifications/initialized" ||
+        (action === "discover" && bodyMethod === "tools/list") ||
+        (action === "call" && bodyMethod === "tools/call")
+      : bodyMethod === "server/discover" ||
+        (action === "discover" && bodyMethod === "tools/list") ||
+        (action === "call" && bodyMethod === "tools/call");
     if (!allowed) {
       tracker.reject(
         new AdapterProblem(
           "protocol",
-          `MCP adapter attempted unexpected method '${mcpMethod}'.`,
+          `MCP adapter attempted unexpected method '${bodyMethod}'.`,
           {
             code: "unexpected_mcp_method",
             partialChangesPossible: tracker.dispatchStarted,
@@ -131,7 +204,26 @@ export function guardedFetch(
       );
     }
 
-    const isToolCall = mcpMethod === "tools/call";
+    if (legacy) {
+      if (bodyMethod === "initialize") {
+        if (headers.has("mcp-session-id")) {
+          tracker.reject(
+            new AdapterProblem(
+              "protocol",
+              "Legacy MCP initialize unexpectedly carried a session id.",
+              { code: "unexpected_session_id" },
+            ),
+          );
+        }
+      } else {
+        requireLegacySessionHeader(headers, tracker);
+      }
+      if (bodyMethod === "notifications/initialized") {
+        tracker.markLegacyInitialized();
+      }
+    }
+
+    const isToolCall = bodyMethod === "tools/call";
     if (isToolCall) {
       if (tracker.callRequestCount !== 0) {
         tracker.reject(
@@ -156,14 +248,29 @@ export function guardedFetch(
       redirect: "manual",
       signal,
     });
-    if (isToolCall) {
-      tracker.markResponseStarted();
-    }
-    if (response.headers.has("mcp-session-id")) {
+    if (!isToolCall && response.status >= 300 && response.status < 400) {
       tracker.reject(
         new AdapterProblem(
           "protocol",
-          "MCP endpoint attempted to create a session; Renoa v0 is stateless.",
+          "MCP endpoint redirects are not followed across the credential boundary.",
+          {
+            code: "redirect_blocked",
+            partialChangesPossible: isToolCall,
+            httpStatus: response.status,
+          },
+        ),
+      );
+    }
+    if (isToolCall) {
+      tracker.markResponseStarted();
+    }
+    if (legacy && bodyMethod === "initialize" && response.ok) {
+      tracker.recordLegacySession(response.headers.get("mcp-session-id"));
+    } else if (!legacy && response.headers.has("mcp-session-id")) {
+      tracker.reject(
+        new AdapterProblem(
+          "protocol",
+          "Modern MCP endpoint attempted to create a legacy session.",
           {
             code: "session_not_supported",
             partialChangesPossible: isToolCall,
@@ -174,6 +281,77 @@ export function guardedFetch(
     }
     return boundResponse(response, isToolCall, tracker);
   };
+}
+
+function rpcMethod(
+  body: BodyInit | null | undefined,
+  tracker: CallExchangeTracker,
+): string {
+  if (typeof body !== "string") {
+    return tracker.reject(
+      new AdapterProblem(
+        "protocol",
+        "MCP SDK emitted a POST body Renoa could not inspect.",
+        {
+          code: "uninspectable_request_body",
+          partialChangesPossible: tracker.dispatchStarted,
+        },
+      ),
+    );
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(body) as unknown;
+  } catch (error) {
+    return tracker.reject(
+      new AdapterProblem(
+        "protocol",
+        "MCP SDK emitted an invalid JSON request body.",
+        {
+          code: "invalid_sdk_request_body",
+          partialChangesPossible: tracker.dispatchStarted,
+          cause: error,
+        },
+      ),
+    );
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    typeof (value as { readonly method?: unknown }).method !== "string"
+  ) {
+    return tracker.reject(
+      new AdapterProblem(
+        "protocol",
+        "MCP SDK emitted a request without one JSON-RPC method.",
+        {
+          code: "invalid_sdk_request_shape",
+          partialChangesPossible: tracker.dispatchStarted,
+        },
+      ),
+    );
+  }
+  return (value as { readonly method: string }).method;
+}
+
+function requireLegacySessionHeader(
+  headers: Headers,
+  tracker: CallExchangeTracker,
+): void {
+  const observed = headers.get("mcp-session-id") ?? undefined;
+  if (observed !== tracker.legacySessionId) {
+    tracker.reject(
+      new AdapterProblem(
+        "protocol",
+        "MCP SDK changed or invented the negotiated legacy session id.",
+        {
+          code: "session_id_mismatch",
+          partialChangesPossible: tracker.dispatchStarted,
+        },
+      ),
+    );
+  }
 }
 
 function boundResponse(

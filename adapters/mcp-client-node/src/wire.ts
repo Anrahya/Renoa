@@ -4,9 +4,33 @@ import type {
   JsonObject,
   JsonValue,
   WireAuthorization,
+  WireHeaders,
 } from "./contract.js";
 import { AdapterProblem } from "./errors.js";
-import { MAX_AUTH_TOKEN_BYTES, WIRE_VERSION } from "./limits.js";
+import {
+  MAX_AUTH_TOKEN_BYTES,
+  MAX_REQUEST_HEADER_BYTES,
+  MAX_REQUEST_HEADERS,
+  WIRE_VERSION,
+} from "./limits.js";
+
+const HEADER_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const CLIENT_OWNED_HEADERS = new Set([
+  "accept",
+  "authorization",
+  "connection",
+  "content-length",
+  "content-type",
+  "cookie",
+  "host",
+  "mcp-method",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "proxy-authorization",
+  "set-cookie",
+  "transfer-encoding",
+  "x-api-key",
+]);
 
 export function parseAdapterRequest(value: unknown): AdapterRequest {
   const request = requireObject(value, "request");
@@ -16,14 +40,15 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
   if (request.action === "discover") {
     requireExactKeys(
       request,
-      ["wire_version", "action", "endpoint", "authorization"],
+      ["wire_version", "action", "endpoint", "headers", "authorization"],
       "request",
-      ["authorization"],
+      ["headers", "authorization"],
     );
     return {
       wire_version: WIRE_VERSION,
       action: "discover",
       endpoint: requireString(request.endpoint, "request.endpoint"),
+      ...optionalHeaders(request.headers),
       ...optionalAuthorization(request.authorization),
     };
   }
@@ -34,23 +59,72 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         "wire_version",
         "action",
         "endpoint",
+        "protocol_version",
+        "headers",
         "authorization",
         "tool",
         "arguments",
       ],
       "request",
-      ["authorization"],
+      ["headers", "authorization"],
     );
     return {
       wire_version: WIRE_VERSION,
       action: "call",
       endpoint: requireString(request.endpoint, "request.endpoint"),
+      protocol_version: requireString(
+        request.protocol_version,
+        "request.protocol_version",
+      ),
+      ...optionalHeaders(request.headers),
       ...optionalAuthorization(request.authorization),
       tool: parseFrozenTool(request.tool),
       arguments: requireJsonObject(request.arguments, "request.arguments"),
     };
   }
   throw invalid("request.action must be 'discover' or 'call'");
+}
+
+function optionalHeaders(
+  value: unknown,
+): { readonly headers?: WireHeaders } {
+  if (value === undefined) {
+    return {};
+  }
+  const input = requireObject(value, "request.headers");
+  const entries = Object.entries(input);
+  if (entries.length > MAX_REQUEST_HEADERS) {
+    throw invalid(`request.headers exceeds ${MAX_REQUEST_HEADERS} entries`);
+  }
+  const normalized = new Map<string, string>();
+  let bytes = 0;
+  for (const [name, unknownValue] of entries) {
+    const lower = name.toLowerCase();
+    if (!HEADER_TOKEN.test(name) || CLIENT_OWNED_HEADERS.has(lower)) {
+      throw invalid(`request.headers contains forbidden name '${name}'`);
+    }
+    if (normalized.has(lower)) {
+      throw invalid(`request.headers repeats '${name}' case-insensitively`);
+    }
+    if (typeof unknownValue !== "string") {
+      throw invalid(`request.headers.${name} must be a string`);
+    }
+    try {
+      new Headers([[name, unknownValue]]);
+    } catch (error) {
+      throw new AdapterProblem(
+        "invalid_request",
+        `request.headers.${name} is not a valid HTTP header value`,
+        { code: "invalid_wire_request", cause: error },
+      );
+    }
+    bytes += Buffer.byteLength(name, "utf8") + Buffer.byteLength(unknownValue, "utf8");
+    if (bytes > MAX_REQUEST_HEADER_BYTES) {
+      throw invalid(`request.headers exceeds ${MAX_REQUEST_HEADER_BYTES} bytes`);
+    }
+    normalized.set(lower, unknownValue);
+  }
+  return { headers: Object.fromEntries(normalized) };
 }
 
 function optionalAuthorization(

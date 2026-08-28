@@ -10,10 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     output::{MAX_TOOL_OUTPUT_BYTES, MAX_TOOL_OUTPUT_LINES, tail},
-    process::{
-        CapturedTail, child_pid, configure, drain_tail, join_tail, stop_process_group,
-        wait_for_process_group,
-    },
+    process::{CapturedTail, child_pid, configure, drain_tail, join_tail, stop_process_group},
     tool_error::io_error,
     tool_input::{decode, non_empty},
 };
@@ -99,14 +96,13 @@ impl Tool for Bash {
                 .spawn()
                 .map_err(|error| io_error("start shell", &error, false))?;
             let pid = child_pid(&child)?;
-            let stdout = child
-                .stdout
-                .take()
-                .ok_or_else(|| ToolError::outcome_unknown("shell stdout was not piped"))?;
-            let stderr = child
-                .stderr
-                .take()
-                .ok_or_else(|| ToolError::outcome_unknown("shell stderr was not piped"))?;
+            let pipes = (child.stdout.take(), child.stderr.take());
+            let (Some(stdout), Some(stderr)) = pipes else {
+                stop_process_group(&mut child, pid).await?;
+                return Err(ToolError::outcome_unknown(
+                    "shell did not expose its configured output pipes",
+                ));
+            };
             let stdout = drain_tail(stdout);
             let stderr = drain_tail(stderr);
             let deadline = tokio::time::sleep(Duration::from_secs(timeout_seconds));
@@ -127,16 +123,17 @@ impl Tool for Bash {
             };
             let status = match exit {
                 ProcessExit::Cancelled => {
-                    collect_completion(pid, stdout, stderr).await?;
+                    collect_completion(stdout, stderr).await?;
                     return Err(cancelled_error());
                 }
                 ProcessExit::TimedOut => {
-                    let (stdout, stderr) = collect_completion(pid, stdout, stderr).await?;
+                    let (stdout, stderr) = collect_completion(stdout, stderr).await?;
                     return Err(timeout_error(timeout_seconds, &stdout, &stderr));
                 }
                 ProcessExit::Finished(status) => status,
             };
-            let completion = collect_completion(pid, stdout, stderr);
+            stop_process_group(&mut child, pid).await?;
+            let completion = collect_completion(stdout, stderr);
             tokio::pin!(completion);
             let (stdout, stderr) = tokio::select! {
                 biased;
@@ -188,16 +185,10 @@ fn resolve_timeout(requested: Option<u64>) -> Result<u64, ToolError> {
 }
 
 async fn collect_completion(
-    pid: u32,
     stdout: JoinHandle<std::io::Result<CapturedTail>>,
     stderr: JoinHandle<std::io::Result<CapturedTail>>,
 ) -> Result<(CapturedTail, CapturedTail), ToolError> {
-    let (group, stdout, stderr) = tokio::join!(
-        wait_for_process_group(pid),
-        join_tail(stdout),
-        join_tail(stderr)
-    );
-    group?;
+    let (stdout, stderr) = tokio::join!(join_tail(stdout), join_tail(stderr));
     Ok((stdout?, stderr?))
 }
 
@@ -388,5 +379,38 @@ mod tests {
             panic!("bash did not return one text block")
         };
         assert!(text.contains("hidden-marker"));
+    }
+
+    #[tokio::test]
+    async fn a_finished_shell_cannot_leave_background_descendants_or_hold_output_open() {
+        let directory = tempdir().expect("temporary directory");
+        let bash = Bash::new(std::sync::Arc::new(directory.path().to_path_buf()));
+        let call = ToolCall {
+            id: "bash-background-descendant".to_owned(),
+            name: "bash".to_owned(),
+            arguments: serde_json::json!({
+                "command": "bash -c 'trap \"\" TERM; exec sleep 60' & child=$!; printf '%s' \"$child\" > child.pid"
+            }),
+            thought_signature: None,
+            namespace: None,
+        };
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            invoke_tool(Some(&bash), call, CancellationToken::new(), None),
+        )
+        .await
+        .expect("finished shell must clean descendants promptly")
+        .expect("descendant cleanup has a definite result");
+
+        assert!(!result.is_error);
+        let pid = fs::read_to_string(directory.path().join("child.pid"))
+            .expect("read descendant pid")
+            .parse::<i32>()
+            .expect("parse descendant pid");
+        assert_eq!(
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None),
+            Err(nix::errno::Errno::ESRCH)
+        );
     }
 }

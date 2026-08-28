@@ -20,7 +20,7 @@ use crate::ALPHA_PROFILE_ID;
 pub(super) const SKILL_LOAD_TOOL: &str = "skill_load";
 const SKILL_SEARCH_TOOL: &str = "skill_search";
 pub(super) const ACTIVATION_DETAIL_KIND: &str = "renoa.skill.activation.v1";
-const REGISTRY_REVISION: &str = "renoa-skill-registry-v2";
+const REGISTRY_REVISION: &str = "renoa-skill-registry-v3";
 
 pub(crate) fn alpha_skill_bindings(
     store: SkillStore,
@@ -56,7 +56,7 @@ impl SearchTool {
             spec: ToolSpec {
                 name: SKILL_SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find Agent Skills available to Alpha without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} matches containing only name and description. Use query `*` to browse, then call skill_load with one name. Local global/project .agents sources are rescanned on each call, so additions need no restart. A project skill overrides a global skill with the same name."
+                    "Find Agent Skills available to Alpha without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} matches containing only name and description. Use query `*` to browse, then call skill_load with one name. Local global/project .agents sources are rescanned on each call, and installed Agent Plugin skills are hot-loaded. Precedence is project, global, then plugin; different plugins cannot silently compete for one name."
                 ),
                 input_schema: json!({
                     "type": "object",

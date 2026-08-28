@@ -28,14 +28,14 @@ use super::{
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
-const WIRE_VERSION: u32 = 2;
+const WIRE_VERSION: u32 = 4;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(125);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
 
 pub(super) const CALL_BOUNDARY_REVISION: &str =
-    "rust-call-v1/wire-2/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
+    "rust-call-v1/wire-4/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
 
 #[derive(Debug)]
 pub(super) struct McpCallFailure {
@@ -88,6 +88,8 @@ pub(super) async fn call_tool(
         wire_version: WIRE_VERSION,
         action: "call",
         endpoint: selected.endpoint(),
+        protocol_version: selected.protocol_version(),
+        headers: selected.request_headers(),
         authorization: authorization.map(WireAuthorization::from),
         tool: FrozenTool {
             name: selected.tool().name(),
@@ -111,6 +113,9 @@ struct CallRequest<'a> {
     wire_version: u32,
     action: &'static str,
     endpoint: &'a str,
+    protocol_version: &'a str,
+    #[serde(skip_serializing_if = "super::McpRequestHeaders::is_empty")]
+    headers: &'a super::McpRequestHeaders,
     #[serde(skip_serializing_if = "Option::is_none")]
     authorization: Option<WireAuthorization<'a>>,
     tool: FrozenTool<'a>,

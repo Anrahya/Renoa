@@ -270,6 +270,118 @@ fn invalid_entries_are_reported_without_hiding_valid_skills() {
 }
 
 #[test]
+fn plugin_skills_hot_load_replace_the_same_plugin_and_reject_cross_plugin_collisions() {
+    let fixture = Fixture::new();
+    let first = fixture.workspace.join("plugin-one-v1");
+    write_skill(
+        &first.join("skills"),
+        "review",
+        "First plugin review.",
+        "PLUGIN_ONE_V1",
+    );
+
+    let first_report = fixture
+        .store
+        .sync_plugin(PROFILE, "plugin-one", &first)
+        .expect("load first plugin skills");
+    assert_eq!(first_report.accepted, ["review"]);
+    assert!(first_report.rejected.is_empty());
+    assert_eq!(
+        fixture
+            .store
+            .summaries(PROFILE, &fixture.workspace)
+            .expect("read hot-loaded plugin skill")[0]
+            .description,
+        "First plugin review."
+    );
+
+    let second = fixture.workspace.join("plugin-one-v2");
+    write_skill(
+        &second.join("skills"),
+        "review",
+        "Second plugin review.",
+        "PLUGIN_ONE_V2",
+    );
+    fixture
+        .store
+        .sync_plugin(PROFILE, "plugin-one", &second)
+        .expect("replace one plugin's skill revision");
+    let loaded = fixture
+        .store
+        .activate(
+            PROFILE,
+            &fixture.workspace,
+            SessionId::new(),
+            CommandId::new(),
+            "review",
+        )
+        .expect("activate replacement plugin skill");
+    assert_eq!(loaded.body.trim(), "PLUGIN_ONE_V2");
+
+    let competing = fixture.workspace.join("plugin-two");
+    write_skill(
+        &competing.join("skills"),
+        "review",
+        "Competing review.",
+        "PLUGIN_TWO",
+    );
+    let conflict = fixture
+        .store
+        .sync_plugin(PROFILE, "plugin-two", &competing)
+        .expect("isolate a plugin skill collision");
+    assert!(conflict.accepted.is_empty());
+    assert_eq!(conflict.rejected.len(), 1);
+    assert_eq!(conflict.rejected[0].entry(), "review");
+    assert!(conflict.rejected[0].reason().contains("plugin-one"));
+
+    let replay = fixture
+        .store
+        .sync_plugin(PROFILE, "plugin-one", &second)
+        .expect("replay the same plugin revision");
+    assert_eq!(replay.accepted, ["review"]);
+    assert!(replay.rejected.is_empty());
+}
+
+#[test]
+fn project_and_global_skills_override_plugin_skills_without_mutating_the_plugin() {
+    let fixture = Fixture::new();
+    let plugin = fixture.workspace.join("plugin");
+    write_skill(&plugin.join("skills"), "review", "Plugin review.", "PLUGIN");
+    fixture
+        .store
+        .sync_plugin(PROFILE, "plugin", &plugin)
+        .expect("load plugin skill");
+    write_skill(&fixture.global, "review", "Global review.", "GLOBAL");
+    fixture
+        .store
+        .sync(PROFILE, &fixture.workspace)
+        .expect("load global override");
+    assert_eq!(
+        fixture
+            .store
+            .summaries(PROFILE, &fixture.workspace)
+            .expect("resolve global precedence")[0]
+            .description,
+        "Global review."
+    );
+
+    let project = fixture.workspace.join(".agents/skills");
+    write_skill(&project, "review", "Project review.", "PROJECT");
+    fixture
+        .store
+        .sync(PROFILE, &fixture.workspace)
+        .expect("load project override");
+    assert_eq!(
+        fixture
+            .store
+            .summaries(PROFILE, &fixture.workspace)
+            .expect("resolve project precedence")[0]
+            .description,
+        "Project review."
+    );
+}
+
+#[test]
 fn large_active_instructions_are_preserved_without_a_host_policy_limit() {
     let fixture = Fixture::new();
     let source = fixture.workspace.join(".agents/skills");

@@ -63,7 +63,76 @@ test("one frozen call emits dispatch first and preserves ordered mixed content",
   }
 });
 
-test("a redirect after tool dispatch is unknown and is not followed", async () => {
+test("a legacy catalog call skips discovery and uses its exact stored version", async () => {
+  const sessionId = "legacy-call-session";
+  const server = new McpFixtureServer((request) => {
+    if (request.rpc.method === "initialize") {
+      return {
+        headers: { "mcp-session-id": sessionId },
+        body: rpcResult(request, {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+          serverInfo: { name: "legacy-fixture", version: "1.0.0" },
+        }),
+      };
+    }
+    assert.equal(request.headers["mcp-session-id"], sessionId);
+    if (request.rpc.method === "notifications/initialized") {
+      return { status: 202, body: {} };
+    }
+    assert.equal(request.rpc.method, "tools/call");
+    return {
+      body: rpcResult(request, {
+        content: [{ type: "text", text: "legacy result" }],
+      }),
+    };
+  });
+  await server.start();
+  try {
+    const result = await runAdapter(
+      callRequest(server.endpoint, "2025-11-25"),
+    );
+    assert.deepEqual(
+      result.records.map((record) => record.event),
+      ["dispatch_started", "completed"],
+    );
+    assert.deepEqual(
+      server.requests.map((request) => request.rpc.method),
+      ["initialize", "notifications/initialized", "tools/call"],
+    );
+    assert.equal(
+      server.requests.some(
+        (request) => request.rpc.method === "server/discover",
+      ),
+      false,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("an unsupported stored protocol fails before network dispatch", async () => {
+  const server = new McpFixtureServer(() => {
+    throw new Error("unsupported catalog version must not reach the endpoint");
+  });
+  await server.start();
+  try {
+    const result = await runAdapter(callRequest(server.endpoint, "2099-01-01"));
+    const terminal = result.records.at(-1);
+    assert.equal(terminal?.event, "failed");
+    if (terminal?.event !== "failed") return;
+    assert.equal(terminal.failure.kind, "incompatible_protocol");
+    assert.equal(
+      terminal.failure.diagnostic.code,
+      "unsupported_catalog_protocol",
+    );
+    assert.equal(server.transportRequests.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a redirect response after tool dispatch is definite and is not followed", async () => {
   const server = new McpFixtureServer((request) => {
     if (request.rpc.method === "server/discover") {
       return discoverResult(request);
@@ -80,10 +149,60 @@ test("a redirect after tool dispatch is unknown and is not followed", async () =
     const terminal = result.records.at(-1);
     assert.equal(terminal?.event, "failed");
     if (terminal?.event !== "failed") return;
-    assert.equal(terminal.failure.certainty, "unknown");
+    assert.equal(terminal.failure.certainty, "definite");
+    assert.equal(terminal.failure.diagnostic.http_status, 307);
+    assert.match(terminal.failure.message, /HTTP 307/);
     assert.deepEqual(
       server.requests.map((request) => request.url),
       ["/mcp", "/mcp"],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("an HTTP authentication response reaches the caller without a retry", async () => {
+  const server = new McpFixtureServer((request) => {
+    if (request.rpc.method === "server/discover") {
+      return discoverResult(request);
+    }
+    assert.equal(request.rpc.method, "tools/call");
+    return {
+      status: 401,
+      body: rpcResult(request, {
+        content: [
+          {
+            type: "text",
+            text: "Request is missing required authentication credential.",
+          },
+        ],
+        isError: true,
+      }),
+    };
+  });
+  await server.start();
+  try {
+    const result = await runAdapter(callRequest(server.endpoint));
+    assert.deepEqual(
+      result.records.map((record) => record.event),
+      ["dispatch_started", "failed"],
+    );
+    const terminal = result.records[1];
+    assert.equal(terminal?.event, "failed");
+    if (terminal?.event !== "failed") return;
+    assert.equal(terminal.failure.kind, "protocol");
+    assert.equal(terminal.failure.certainty, "definite");
+    assert.equal(terminal.failure.partial_changes_possible, true);
+    assert.equal(terminal.failure.diagnostic.http_status, 401);
+    assert.match(terminal.failure.message, /HTTP 401/);
+    assert.match(
+      terminal.failure.message,
+      /Request is missing required authentication credential/,
+    );
+    assert.equal(
+      server.requests.filter((request) => request.rpc.method === "tools/call")
+        .length,
+      1,
     );
   } finally {
     await server.close();

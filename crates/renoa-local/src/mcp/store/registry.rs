@@ -108,8 +108,7 @@ impl McpCatalogStore {
         let mut catalogs = HashMap::new();
         let mut tools = Vec::with_capacity(references.len());
         for reference in references {
-            let (integration_id, auth_kind, auth_hostname, auth_account) =
-                enabled_connection(&transaction, profile_id, reference.connection_id())?;
+            let enabled = enabled_connection(&transaction, profile_id, reference.connection_id())?;
             if !catalogs.contains_key(reference.connection_id()) {
                 let catalog =
                     load_catalog(&transaction, reference.connection_id())?.ok_or_else(|| {
@@ -143,12 +142,18 @@ impl McpCatalogStore {
                     ))
                 })?;
             tools.push(AlphaMcpTool {
-                integration_id,
+                integration_id: enabled.integration_id,
                 connection_id: reference.connection_id().to_owned(),
                 endpoint: catalog.endpoint().to_owned(),
+                request_headers: catalog.request_headers.clone(),
                 protocol_version: catalog.protocol_version().to_owned(),
                 adapter_revision: catalog.adapter_revision().to_owned(),
-                auth: McpConnectionAuth::from_stored(&auth_kind, auth_hostname, auth_account)?,
+                auth: McpConnectionAuth::from_stored(
+                    &enabled.auth_kind,
+                    enabled.auth_hostname,
+                    enabled.auth_account,
+                    enabled.auth_credential_id,
+                )?,
                 tool,
             });
         }
@@ -157,21 +162,38 @@ impl McpCatalogStore {
     }
 }
 
+struct EnabledConnection {
+    integration_id: String,
+    auth_kind: String,
+    auth_hostname: Option<String>,
+    auth_account: Option<String>,
+    auth_credential_id: Option<String>,
+}
+
 fn enabled_connection(
     transaction: &Transaction<'_>,
     profile_id: &str,
     connection_id: &str,
-) -> Result<(String, String, Option<String>, Option<String>), McpHostError> {
+) -> Result<EnabledConnection, McpHostError> {
     transaction
         .query_row(
             "SELECT connection.integration_id, connection.auth_kind,
-                    connection.auth_hostname, connection.auth_account
+                    connection.auth_hostname, connection.auth_account,
+                    connection.auth_credential_id
              FROM profile_mcp_connections AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
              WHERE binding.profile_id = ?1 AND binding.connection_id = ?2",
             params![profile_id, connection_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok(EnabledConnection {
+                    integration_id: row.get(0)?,
+                    auth_kind: row.get(1)?,
+                    auth_hostname: row.get(2)?,
+                    auth_account: row.get(3)?,
+                    auth_credential_id: row.get(4)?,
+                })
+            },
         )
         .optional()?
         .ok_or_else(|| {

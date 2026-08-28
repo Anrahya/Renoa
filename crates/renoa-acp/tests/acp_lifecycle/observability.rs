@@ -123,6 +123,7 @@ fn assert_trace(path: &std::path::Path) {
             "tool_search",
             "tool_load",
             "tool_execute",
+            "extension_manage",
             "skill_search",
             "skill_load",
         ]

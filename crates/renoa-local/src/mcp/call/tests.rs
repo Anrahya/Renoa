@@ -19,10 +19,15 @@ async fn a_valid_terminal_result_survives_nonzero_hung_cleanup() {
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
-if (request.action !== "call" || request.tool.name !== "echo" || request.arguments.text !== "hello") process.exit(2);
-process.stdout.write(JSON.stringify({ wire_version: 2, event: "dispatch_started" }) + "\n");
+if (
+  request.action !== "call" ||
+  request.protocol_version !== "2026-07-28" ||
+  request.tool.name !== "echo" ||
+  request.arguments.text !== "hello"
+) process.exit(2);
+process.stdout.write(JSON.stringify({ wire_version: 4, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 2,
+  wire_version: 4,
   event: "completed",
   result: {
     content: [{ type: "text", text: "hello" }],
@@ -63,7 +68,7 @@ async fn cancellation_after_dispatch_is_an_unknown_outcome_and_reaps_the_adapter
             r#"
 import {{ writeFileSync }} from "node:fs";
 for await (const _chunk of process.stdin) {{}}
-process.stdout.write(JSON.stringify({{ wire_version: 2, event: "dispatch_started" }}) + "\n");
+process.stdout.write(JSON.stringify({{ wire_version: 4, event: "dispatch_started" }}) + "\n");
 writeFileSync({}, String(process.pid));
 await new Promise(() => {{}});
 "#,
@@ -145,9 +150,9 @@ if (
   process.argv.slice(2).length !== 0 ||
   Object.values(process.env).some(value => value?.includes(token))
 ) process.exit(9);
-process.stdout.write(JSON.stringify({ wire_version: 2, event: "dispatch_started" }) + "\n");
+process.stdout.write(JSON.stringify({ wire_version: 4, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 2,
+  wire_version: 4,
   event: "completed",
   result: {
     content: [{ type: "text", text: `server echoed ${token}` }],
@@ -191,6 +196,7 @@ fn selected_tool(endpoint: &str) -> AlphaMcpTool {
         integration_id: "fixture".to_owned(),
         connection_id: "primary".to_owned(),
         endpoint: endpoint.to_owned(),
+        request_headers: crate::mcp::McpRequestHeaders::default(),
         protocol_version: MCP_PROTOCOL_VERSION.to_owned(),
         adapter_revision: MCP_ADAPTER_REVISION.to_owned(),
         auth: McpConnectionAuth::None,

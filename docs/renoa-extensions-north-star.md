@@ -4,8 +4,9 @@
 
 This document defines the intended product and architecture direction for
 installing, connecting, selecting, and using replaceable Renoa capabilities.
-It is the north star for extension work, not yet a storage schema, wire
-protocol, permission model, or public package-registry contract.
+It is the north star for extension work and the canonical contract for the
+implemented local Agent Plugins path. It is not a public package-registry,
+general permission, or cross-node distribution contract.
 
 [`renoa-kernel-v0.md`](renoa-kernel-v0.md) remains authoritative for durable
 local execution. [`renoa-host-v0.md`](renoa-host-v0.md) remains authoritative
@@ -28,18 +29,18 @@ When an agent discovers that it lacks a capability, the intended experience is:
 
 ```text
 agent or human identifies a missing capability
-  -> Host inspects an exact source
-  -> Host produces an immutable installation and connection plan
-  -> an authorized decision approves or rejects that plan
+  -> Host searches a replaceable discovery source or inspects an exact source
+  -> the current agent/session policy permits or rejects the requested change
   -> Host installs the package and establishes any required connection
   -> selected components become available to selected agent profiles
-  -> the next safe capability lookup or operation uses the approved change
+  -> the next safe capability lookup or operation uses the committed change
 ```
 
-The agent may find, inspect, and request a capability through the same Host
-semantics used by the GUI. It must not treat its own request as approval to
-increase its authority. The GUI is a convenient surface for understanding and
-approving changes, not the sole controller of Renoa.
+The agent and GUI use the same Host semantics. Capability management is covered
+by the agent/session's one effective permission scope; it does not invent a
+second plugin-specific approval system. Alpha v1 currently has deliberate full
+access, so it may perform these changes directly. A credential prompt or OAuth
+consent is service authentication, not another Renoa permission decision.
 
 ## Product outcome
 
@@ -138,6 +139,26 @@ No Renoa-specific marketplace index is defined before a browsing or update
 consumer needs one. Early installs may identify an exact repository, path, and
 commit directly.
 
+The first implemented discovery source is the public integrations.sh REST API
+behind `adapters/integration-catalog-node`. It is a replaceable hint source,
+not a package registry or runtime dependency. Search returns bounded normalized
+MCP candidates. Add refetches the selected record and verifies its exact
+content reference before generating a standard Agent Plugin package. A
+missing, stale, malformed, or unavailable record produces explicit guidance to
+use official web research or an exact local Agent Plugin package; Renoa never
+guesses an endpoint.
+
+The implemented `add` operation has three source forms: one exact catalog
+reference, one MCP definition backed by an official HTTPS documentation URL,
+or one local Agent Plugins directory bound to the digest returned by `inspect`.
+All three converge on the same immutable package store and component loaders.
+The digest requirement prevents a crash replay from observing different bytes
+at the same mutable path. Package installation and skill loading happen before
+any MCP connection attempt. A missing credential, authorization failure,
+unsupported server choice, or unreachable endpoint therefore leaves the
+package installed and returns that exact partial state; it never makes the
+package disappear or fabricates a successful connection.
+
 ## Vocabulary
 
 ### Plugin package
@@ -214,7 +235,7 @@ These states must never collapse into one boolean such as `enabled`:
 ```text
 source discovered
   -> source inspected
-  -> plan approved
+  -> effective agent/session policy permits the change
   -> package installed immutably
   -> integration definition registered
   -> connection configured/authenticated
@@ -237,24 +258,25 @@ must reject schema drift rather than substitute it.
 
 The Host resolves an exact local or remote source without executing package
 code. It validates the package boundary and manifest version, records source
-and license evidence, and enumerates the files and components it understands.
-Installing a package never grants permission to execute its scripts or start
-its servers.
+and license evidence, and reports the manifest, supported MCP entries, and
+package-level notices it understands. Skill components are validated from the
+immutable installed tree before they are bound. Installing a package never
+grants permission to execute its scripts or start its servers.
 
-### Plan
+### Content-bound request
 
-The Host produces an immutable content-bound plan showing at least the package
-identity and digest, source revision, supported and unsupported components,
-commands or executables, network endpoints, requested connection inputs, and
-the profile changes requested by the caller. Exact plan fields remain a later
-contract decision.
+Inspection returns the exact package digest, portable metadata, supported MCP
+entries, public endpoints and headers, and isolated component notices. The
+digest is the install precondition: changed source requires another inspection.
+Renoa does not create a second durable approval object in this slice.
 
-### Approve and install
+### Authorize and install
 
-Approval targets that exact plan. Installation copies package contents through
-a staging location into an immutable content-addressed store, then durably
+The effective agent/session permission policy authorizes or rejects the
+management tool itself. Installation copies the inspected contents through a
+staging location into an immutable content-addressed store, then durably
 publishes the installed record before acknowledging success. A changed source
-requires a new plan and approval.
+requires a new digest. V0 full access permits this operation.
 
 ### Connect
 
@@ -349,19 +371,25 @@ operation, the model receives only:
 1. the profile's instructions, two fixed skill-registry definitions, and only
    deliberately activated full skill content;
 2. the durable context projection; and
-3. the effective tool definitions required for that operation.
+3. the six local tools, three fixed MCP-registry tools, and one fixed
+   `extension_manage` definition required for the current full-access profile.
 
 Package manifests, marketplace descriptions, setup instructions, connection
 state, OAuth scopes, environment variables, secret references, process
 bookkeeping, schema hashes, and runtime manifests remain outside model context.
 Tool failures that help the model recover are returned as bounded model-visible
 tool results; operational diagnostics and sensitive details remain in Host
-trace data.
+trace data. The current manager fails rather than truncates an encoded result
+that exceeds the local 50 KiB tool-output boundary.
 
 Alpha's first skill path searches compact name/description metadata through
 `skill_search` and activates one selected name through `skill_load`. Search
 returns at most 200 matches and nothing per match beyond name and short
-description. A workspace skill explicitly overrides a same-named global skill.
+description. A workspace skill explicitly overrides a same-named global skill,
+and a global skill overrides a package-provided skill. A newer revision of the
+same plugin replaces that plugin's bindings. Two different plugins with the
+same skill name do not get an arbitrary digest-based winner: the first binding
+remains available and the other plugin receives a visible component rejection.
 Neither the complete catalog nor any skill body is injected up front. A load
 resolves and persists one exact revision internally before returning its
 complete instructions. Later operations reattach that revision as standing
@@ -380,6 +408,8 @@ The intended physical separation is:
 Renoa repository
   crates/renoa-local/          Host library, assembly, and management semantics
   adapters/mcp-client-node/    replaceable MCP protocol implementation
+  adapters/integration-catalog-node/
+                               replaceable discovery-only REST adapter
 
 renoa-plugins repository
   official/<plugin>/           Renoa-owned packages
@@ -387,7 +417,7 @@ renoa-plugins repository
 
 Renoa data directory
   skills/<digest>/             immutable imported Agent Skill revisions
-  installed package store      future immutable Agent Plugin packages
+  plugins/<digest>/            immutable Agent Plugin packages
   Host catalog                 installations, integrations, connections,
                                skill revisions, source/profile bindings,
                                session activations, and other components
@@ -397,13 +427,13 @@ local credential sources
   secret material owned by a platform store or authenticated CLI
 ```
 
-This north star does not lock a general secret-store design. The direct MCP v0
-slice consumes `host.sqlite3` for integration, connection, non-secret `gh`
-account references, catalogs, and Alpha connection attachments. Schema
-v1/v2-to-v3 migration is proven. Schema v4 adds immutable skill revisions,
-global/workspace bindings, isolated source rejections, and session activation
-pins. Later general-package, permission, secret-source, and migration shapes
-remain open.
+Schema v6 adds installed Agent Plugin metadata, supported MCP entries, public
+request headers, and named Secret Service bearer references. Schema v7
+preserves standard plugin homepage provenance and adds the package-skill scope
+without changing existing global or workspace bindings. Secret values are
+resolved just in time and never enter `host.sqlite3`. The general
+cross-platform secret-store, OAuth, permission, package-registry, update, and
+removal designs remain open.
 
 `third_party` means that the service is external to Renoa. It does not assert
 that the named company authored, reviewed, or endorsed the package. Provenance
@@ -427,8 +457,8 @@ model prompts, tool schemas, or credentials as continuity data.
 
 ## Standards and implementation evidence
 
-Reviewed on 2026-08-27. Renoa copied no upstream implementation source for the
-skill path. The YAML parser is the pinned dependency recorded below.
+Reviewed on 2026-08-28. Renoa copied no upstream implementation source for the
+skill or Agent Plugin paths. The YAML and URL parsers are pinned dependencies.
 
 | Source | Exact revision | License evidence | Renoa use |
 | --- | --- | --- | --- |
@@ -441,8 +471,10 @@ skill path. The YAML parser is the pinned dependency recorded below.
 | [MCP 2026-07-28](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267) | tag commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` | Repository records an Apache-2.0 transition with remaining MIT material and CC-BY-4.0 documentation | Current remote tool protocol semantics |
 | [MCP TypeScript client 2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac) | tag commit `cc4b41617ce3601b1290d67216ea0b194a3cd9ac` | Published package declares MIT; source repository records the broader MCP license transition | Maintained implementation behind Renoa's narrow process adapter |
 | [GitHub MCP server](https://github.com/github/github-mcp-server/tree/a00dc319edcb5f8a10f118b1dad649c94928aac4) | `a00dc319edcb5f8a10f118b1dad649c94928aac4` | MIT | First real read-only remote connection; no upstream server source copied |
+| [Exa MCP server](https://github.com/exa-labs/exa-mcp-server/tree/15ffb50519e719dc791cdc750ce5ed1934c0a1ed) | `15ffb50519e719dc791cdc750ce5ed1934c0a1ed` | MIT | First real Agent Plugins/API-key package shape; endpoint and public source header consumed through the generic loader, with no server source copied |
 | [Cursor plugins](https://github.com/cursor/plugins/tree/bdf7aa355337897f167153e05069aca505dae17c) | `bdf7aa355337897f167153e05069aca505dae17c` | MIT at reviewed revision | One-directory-per-package marketplace organization; Cursor-specific manifests are not Renoa's portable contract |
 | [Executor](https://github.com/UsefulSoftwareCo/executor/tree/7c12aeea390225291ce4c97865b392237ee7934d) | `7c12aeea390225291ce4c97865b392237ee7934d` | MIT | Evidence for separating integrations, authenticated connections, discovered tools, and just-in-time secret resolution |
+| [integrations.sh](https://github.com/UsefulSoftwareCo/integrations/tree/5219a70601c8c356146aa1bc7429e571cf64fbf1) | `5219a70601c8c356146aa1bc7429e571cf64fbf1` | MIT | Replaceable ground-zero MCP metadata discovery through the public REST API; no runtime source copied and no catalog record becomes authoritative without refetch, validation, MCP discovery, and Host publication |
 
 Agent Plugins 1.0 standardizes only skills and MCP server entries. It explicitly
 leaves registries, installation, permissions, trust, caching, and product UX to
@@ -451,9 +483,11 @@ the portable manifest with accidental product policy.
 
 MCP 2026-07-28 removes protocol-level sessions and makes each request
 self-describing. The official TypeScript SDK v2 supports the revision, but
-modern version negotiation is an explicit client choice. Renoa pins the modern
-revision and tests that an older-only endpoint fails without fallback rather
-than assuming that installing v2 changes the wire automatically.
+modern version negotiation is an explicit client choice. Renoa prefers the
+modern revision and uses the SDK's reviewed legacy negotiation only when the
+modern probe proves that fallback is required. The exact negotiated revision
+is stored with the complete catalog and reused for calls; a call never
+renegotiates to a different revision or retries `tools/call`.
 
 ## Definition of streamlined
 
@@ -474,17 +508,18 @@ The extension path is streamlined when these statements are true:
    layout for portable skills and MCP servers.
 8. Invalid, incompatible, or unsupported components fail independently where
    the standard permits, with exact diagnostics.
-9. The user can understand source, code, endpoints, requested access, selected
-   profiles, and expected changes before approval.
-10. An authorized agent can drive the same inspect-and-request flow as the GUI
-    without modifying Host or kernel files directly.
+9. The user can understand source, code, endpoints, credential references,
+   selected profiles, and expected changes before installation.
+10. An agent whose effective permission scope allows capability management can
+    drive the same Host flow as the GUI without modifying Host or kernel files.
 
 ## Implementation sequence and proof gates
 
 Each slice must leave the repository coherent and pass its proof gate before
 the next begins.
 
-Slices 1 through 7 are complete. Slice 8 is next.
+Slices 1 through 8 are complete. Slice 9 has its local Host and agent-tool path;
+the first surface consumer and general permission policy remain open.
 
 ### 1. Integration contract
 
@@ -568,31 +603,47 @@ hot additions are visible to an existing session; source edits cannot silently
 replace active content; duplicate names cannot activate two revisions; bounded
 context fails instead of truncating; full durable results remain intact while
 later model context uses receipts; and the real Alpha path survives compaction
-and Host restart with eleven constant tool schemas.
+and Host restart with the constant tool set.
 
 ### 8. Agent Plugins local loader
 
 Load and validate one local Agent Plugins 1.0 directory using locally pinned
 schemas. Enforce package containment and component-level failure boundaries,
-then publish an immutable content-addressed installation. Map its MCP entry onto
-the already proven integration path and create the separate `renoa-plugins`
-repository only when the first reviewed package is ready.
+then publish an immutable content-addressed installation. Map its skills onto
+the existing Agent Skills registry and its MCP entries onto the already proven
+integration path. Create the separate `renoa-plugins` repository only when the
+first reviewed package is ready.
 
-Proof gate: malformed manifests, unsupported versions, path escapes, changed
-contents, crash during publication, and independent component failures are
-deterministic and leave no partially installed package.
+Proof gate: malformed manifests, unsupported versions, denied symlinks, changed
+contents, immutable publication, and independent component failures are
+deterministic and leave no partially installed durable record. An Exa-shaped
+package reaches the real MCP adapter with its public header and a just-in-time
+Secret Service bearer without persisting the key. Valid package skills hot-load
+without restart, invalid skills are isolated, and cross-plugin name collisions
+are reported instead of resolved by storage order.
 
 ### 9. Shared Host management
 
-Define the typed Host management commands consumed by both Waku and an agent
-tool. The agent may inspect and request; an authorization boundary commits the
-exact approved plan. The resulting capability becomes available only at the
-next safe registry lookup or operation boundary, according to its resolved
-component type.
+Define typed Host management operations consumed by both a surface and one
+fixed agent tool. The effective agent/session policy governs those operations;
+there is no nested plugin approval path. The resulting capability becomes
+available only at the next safe registry lookup or operation boundary,
+according to its resolved component type.
 
-Proof gate: GUI and agent flows reach the same durable state transition, lost
-replies are idempotent, changed plans require renewed approval, and the agent
-cannot approve or broaden its own request.
+Current proof: `LocalHost` and `extension_manage` call the same manager;
+inspect/install retries are content-bound and idempotent; local package adds
+require the inspected digest; connect reuses the
+existing catalog/attachment path; search and add use a replaceable
+integrations.sh REST adapter; catalog, officially researched MCP, and local
+package sources all normalize into one immutable installation path; standard
+package skills enter the existing skill registry; and connection discovery
+runs only after installation. Connection failure reports the retained package,
+skill result, package notices, exact safe service error, and any known
+connection identity. One live `skill_search` or `tool_search` registry observes
+the committed component without restart. Retrying the same source converges on
+the same digest and connection identity.
+Remaining proof: wire the first GUI consumer and resolve the general permission
+vocabulary without letting an agent broaden its own effective scope.
 
 ### 10. Later fabric work
 
@@ -621,7 +672,8 @@ through the task journal.
 10. Direct exact-source installation works without a marketplace.
 11. Human surfaces and authorized agents ultimately use the same typed Host
     management semantics.
-12. A request to extend Renoa is not approval to expand authority.
+12. Capability management is governed by the agent/session's effective
+    permission scope; it never expands that scope.
 13. Capability changes never mutate the active runtime. Static bindings change
     at a future operation; fixed registry tools may read later committed state
     and must reject stale exact references.
@@ -642,18 +694,24 @@ through the task journal.
     after a load by name.
 21. Active skill revisions are Host-owned and session-pinned. Source edits are
     hot-discoverable but cannot silently replace an active revision.
+22. Package-provided skills reuse the Agent Skills registry. Precedence is
+    workspace, then global, then plugin; different plugins never resolve a
+    same-named skill by arbitrary digest order.
+23. OAuth remains a Host-owned connection/authentication flow. It may not be
+    added to the replay-safe management binding until a stable effect identity,
+    resumable user-action state, and process-death recovery path are consumed by
+    the implementation and tests.
 
 ## Open decisions
 
-- future Host schema migrations beyond v4 and storage for general packages,
-  secret sources, and permissions;
+- future Host schema migrations beyond v7 and storage for permissions;
 - model-visible naming and collision handling for tools from many connections;
 - exact catalog freshness, cache-hint, and refresh policy;
-- secret-store implementation and account-recovery behavior;
+- cross-platform secret-store selection, account recovery, and secret sync;
 - OAuth client metadata, browser redirect, and headless-device flows;
-- permission vocabulary, scopes, policy inheritance, and approval records;
+- permission vocabulary, scopes, policy inheritance, and enforcement;
 - profile persistence, inheritance, and Agent Instance overrides;
-- exact Host management command types and transport;
+- Host management transport for surfaces;
 - registry index, search, signing, trust, update, and review policy;
 - package garbage collection and unfinished-runtime retention policy;
 - historical resolved-binding retention after catalog or profile changes;
@@ -663,7 +721,7 @@ through the task journal.
   revision upgrade, deactivation, and garbage collection;
 - support for MCP resources, prompts, apps, tasks, or future protocol
   extensions;
-- compatibility policy for pre-2026 MCP servers;
+- compatibility policy beyond the SDK-supported legacy MCP revisions;
 - process lifetime and multiplexing for the MCP adapter;
 - node capability advertisement and cross-node Host configuration; and
 - stronger service-specific idempotency, reconciliation, or callback contracts.
@@ -675,13 +733,12 @@ beyond the next real consumer.
 
 The first direct MCP slice does not implement:
 
-- package registries or marketplace browsing;
-- Agent Plugins loading;
-- Renoa-owned OAuth/API-key flows or general secret storage;
+- a general package registry, marketplace, remote package download, or archive
+  extraction inside the manager;
+- OAuth flows, GUI credential entry, or general secret synchronization;
 - stdio MCP servers;
 - MCP resources, prompts, apps, tasks, sampling, or elicitation;
-- Waku settings or approval UI;
-- agent-driven installation;
+- Waku extension settings or management UI;
 - a general permission system;
 - package signatures or automatic updates;
 - cross-node capability synchronization;
@@ -689,7 +746,9 @@ The first direct MCP slice does not implement:
 - dynamic libraries, WASM, hot code reload, or a service locator; or
 - a universal plugin trait.
 
-The proven base remains deliberately small: selected remote tools are resolved
-through MCP, and Agent Skills are searched and activated through the Host; both
-run through the existing Alpha and kernel path. Portable Agent Plugin package
-loading builds on those paths next.
+The proven base remains deliberately small: one generic Agent Plugins manager
+normalizes catalog, researched MCP, and local package sources; installs their
+immutable content; imports standard package skills; and connects supported
+remote MCP entries through the existing deferred registry. Standalone Agent
+Skills keep their global/workspace path and higher precedence. Everything runs
+through Alpha and the ordinary kernel tool boundary.

@@ -4,13 +4,18 @@ use std::{
 };
 
 use renoa_kernel::{CommandId, SessionId};
-use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
+use serde::Serialize;
 
 use super::{
     SkillError,
-    package::{self, CapturedSkill, OwnedSkill, SourceSnapshot},
+    package::{self, OwnedSkill, RejectedSkill, SourceSnapshot},
     registry::{SkillScope, SkillSummary, validate_name},
 };
+
+mod source;
+
+use source::{PreparedSource, SourceSpec, replace_source};
 
 #[derive(Clone)]
 pub(crate) struct SkillStore {
@@ -19,15 +24,36 @@ pub(crate) struct SkillStore {
     global_source: Option<PathBuf>,
 }
 
-struct SourceSpec {
-    scope: SkillScope,
-    workspace: Option<String>,
-    root: PathBuf,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SkillComponentReport {
+    accepted: Vec<String>,
+    rejected: Vec<SkillComponentRejection>,
 }
 
-struct PreparedSource {
-    spec: SourceSpec,
-    snapshot: SourceSnapshot,
+impl SkillComponentReport {
+    fn new(accepted: Vec<String>, rejected: Vec<SkillComponentRejection>) -> Self {
+        Self { accepted, rejected }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SkillComponentRejection {
+    entry: String,
+    reason: String,
+}
+
+impl SkillComponentRejection {
+    fn new(entry: String, reason: String) -> Self {
+        Self { entry, reason }
+    }
+
+    pub(crate) fn entry(&self) -> &str {
+        &self.entry
+    }
+
+    pub(crate) fn reason(&self) -> &str {
+        &self.reason
+    }
 }
 
 impl SkillStore {
@@ -53,12 +79,15 @@ impl SkillStore {
                 scope: SkillScope::Global,
                 workspace: None,
                 root: root.clone(),
+                id: path_text(root, "global skill source")?,
             });
         }
+        let root = Path::new(&workspace).join(".agents/skills");
         specs.push(SourceSpec {
             scope: SkillScope::Workspace,
             workspace: Some(workspace.clone()),
-            root: Path::new(&workspace).join(".agents/skills"),
+            id: path_text(&root, "workspace skill source")?,
+            root,
         });
 
         let mut prepared = Vec::with_capacity(specs.len());
@@ -78,7 +107,44 @@ impl SkillStore {
         Ok(())
     }
 
-    pub(super) fn summaries(
+    pub(crate) fn sync_plugin(
+        &self,
+        profile_id: &str,
+        plugin_name: &str,
+        plugin_root: &Path,
+    ) -> Result<SkillComponentReport, SkillError> {
+        let root = plugin_root.join("skills");
+        let snapshot = match package::inspect_source(&root) {
+            Ok(snapshot) => snapshot,
+            Err(SkillError::Invalid(reason) | SkillError::Conflict(reason)) => SourceSnapshot {
+                skills: Vec::new(),
+                rejections: vec![RejectedSkill {
+                    entry_name: "skills".to_owned(),
+                    reason,
+                }],
+            },
+            Err(error) => return Err(error),
+        };
+        for skill in &snapshot.skills {
+            package::publish(&self.packages, skill)?;
+        }
+        let prepared = PreparedSource {
+            spec: SourceSpec {
+                scope: SkillScope::Plugin,
+                workspace: None,
+                root,
+                id: format!("agent-plugin:{plugin_name}"),
+            },
+            snapshot,
+        };
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let report = replace_source(&transaction, profile_id, &prepared)?;
+        transaction.commit()?;
+        Ok(report)
+    }
+
+    pub(crate) fn summaries(
         &self,
         profile_id: &str,
         workspace: &Path,
@@ -92,12 +158,17 @@ impl SkillStore {
                ON revision.skill_digest = binding.skill_digest
              WHERE binding.profile_id = ?1
                AND (
-                    (binding.scope_kind = 'global' AND binding.workspace IS NULL)
+                    (binding.scope_kind = 'plugin' AND binding.workspace IS NULL)
+                    OR (binding.scope_kind = 'global' AND binding.workspace IS NULL)
                     OR
                     (binding.scope_kind = 'workspace' AND binding.workspace = ?2)
                )
              ORDER BY revision.name,
-                      CASE binding.scope_kind WHEN 'workspace' THEN 0 ELSE 1 END,
+                      CASE binding.scope_kind
+                        WHEN 'workspace' THEN 0
+                        WHEN 'global' THEN 1
+                        ELSE 2
+                      END,
                       revision.skill_digest",
         )?;
         let rows = statement.query_map(params![profile_id, workspace], |row| {
@@ -245,95 +316,6 @@ impl SkillStore {
     }
 }
 
-fn replace_source(
-    transaction: &Transaction<'_>,
-    profile_id: &str,
-    source: &PreparedSource,
-) -> Result<(), SkillError> {
-    let root = path_text(&source.spec.root, "skill source")?;
-    transaction.execute(
-        "DELETE FROM profile_skill_bindings WHERE profile_id = ?1 AND source_root = ?2",
-        params![profile_id, root],
-    )?;
-    transaction.execute(
-        "DELETE FROM skill_source_rejections WHERE profile_id = ?1 AND source_root = ?2",
-        params![profile_id, root],
-    )?;
-    for skill in &source.snapshot.skills {
-        ensure_revision(transaction, skill)?;
-        transaction.execute(
-            "INSERT INTO profile_skill_bindings(
-                profile_id, scope_kind, workspace, source_root, skill_name, skill_digest
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                profile_id,
-                source.spec.scope.as_str(),
-                source.spec.workspace.as_deref(),
-                root,
-                skill.metadata.name,
-                skill.digest,
-            ],
-        )?;
-    }
-    for rejection in &source.snapshot.rejections {
-        transaction.execute(
-            "INSERT INTO skill_source_rejections(
-                profile_id, scope_kind, workspace, source_root, entry_name, reason
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                profile_id,
-                source.spec.scope.as_str(),
-                source.spec.workspace.as_deref(),
-                root,
-                rejection.entry_name,
-                bounded_reason(&rejection.reason),
-            ],
-        )?;
-    }
-    Ok(())
-}
-
-fn ensure_revision(transaction: &Transaction<'_>, skill: &CapturedSkill) -> Result<(), SkillError> {
-    transaction.execute(
-        "INSERT OR IGNORE INTO skill_revisions(
-            skill_digest, name, description, license, compatibility
-         ) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            skill.digest,
-            skill.metadata.name,
-            skill.metadata.description,
-            skill.metadata.license,
-            skill.metadata.compatibility,
-        ],
-    )?;
-    let stored = transaction.query_row(
-        "SELECT name, description, license, compatibility
-         FROM skill_revisions WHERE skill_digest = ?1",
-        [&skill.digest],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-            ))
-        },
-    )?;
-    let expected = (
-        skill.metadata.name.clone(),
-        skill.metadata.description.clone(),
-        skill.metadata.license.clone(),
-        skill.metadata.compatibility.clone(),
-    );
-    if stored != expected {
-        return Err(SkillError::Conflict(format!(
-            "skill digest {} already has different metadata",
-            skill.digest
-        )));
-    }
-    Ok(())
-}
-
 fn active_or_selected_digest(
     connection: &Connection,
     profile_id: &str,
@@ -358,11 +340,16 @@ fn active_or_selected_digest(
              WHERE profile_id = ?1
                AND skill_name = ?2
                AND (
-                    (scope_kind = 'global' AND workspace IS NULL)
+                    (scope_kind = 'plugin' AND workspace IS NULL)
+                    OR (scope_kind = 'global' AND workspace IS NULL)
                     OR
                     (scope_kind = 'workspace' AND workspace = ?3)
                )
-             ORDER BY CASE scope_kind WHEN 'workspace' THEN 0 ELSE 1 END,
+             ORDER BY CASE scope_kind
+                        WHEN 'workspace' THEN 0
+                        WHEN 'global' THEN 1
+                        ELSE 2
+                      END,
                       skill_digest
              LIMIT 1",
             params![profile_id, name, workspace],
@@ -370,16 +357,6 @@ fn active_or_selected_digest(
         )
         .optional()
         .map_err(Into::into)
-}
-
-fn bounded_reason(reason: &str) -> String {
-    const LIMIT: usize = 1_024;
-    if reason.chars().count() <= LIMIT {
-        return reason.to_owned();
-    }
-    let mut bounded = reason.chars().take(LIMIT - 1).collect::<String>();
-    bounded.push('…');
-    bounded
 }
 
 fn path_text(path: &Path, kind: &str) -> Result<String, SkillError> {

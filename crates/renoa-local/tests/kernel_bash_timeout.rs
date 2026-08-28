@@ -37,7 +37,7 @@ async fn bash_timeout_stops_the_process_tree_and_reaches_the_model_durably() {
                     "command": concat!(
                         "printf 'before-timeout\\n'; ",
                         "(trap '' TERM; exec sleep 30) & ",
-                        "printf '%s\\n' $! > child.pid; exit 0"
+                        "child=$!; printf '%s\\n' \"$child\" > child.pid; wait \"$child\""
                     ),
                     "timeout_seconds": 1
                 }),

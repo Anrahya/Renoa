@@ -64,6 +64,40 @@ fn main() {
 }
 
 #[tokio::test]
+async fn secret_service_resolution_uses_only_the_exact_credential_reference() {
+    let directory = tempdir().expect("temporary credential fixture");
+    let arguments = directory.path().join("arguments.txt");
+    let executable = compile_fixture(
+        directory.path(),
+        &format!(
+            r#"
+fn main() {{
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>().join("\n");
+    std::fs::write({arguments:?}, arguments).expect("write arguments");
+    println!("exa-fixture-secret");
+}}
+"#
+        ),
+    );
+    let resolver =
+        McpCredentialResolver::with_executables(directory.path().join("unused-gh"), executable);
+    let reference = McpConnectionAuth::secret_service_bearer("exa.default")
+        .expect("valid Secret Service reference");
+
+    let authorization = resolver
+        .resolve(&reference, CancellationToken::new())
+        .await
+        .expect("resolve fixture credential")
+        .expect("Secret Service reference resolves authorization");
+
+    assert_eq!(authorization.bearer(), "exa-fixture-secret");
+    assert_eq!(
+        fs::read_to_string(arguments).expect("read exact secret-tool arguments"),
+        "lookup\napplication\nrenoa\ncredential\nexa.default"
+    );
+}
+
+#[tokio::test]
 async fn cancelling_gh_lookup_stops_the_credential_process_before_returning() {
     let directory = tempdir().expect("temporary credential fixture");
     let started = directory.path().join("started");
@@ -106,16 +140,29 @@ fn main() {{
 
 #[test]
 fn stored_credential_references_fail_closed() {
-    assert!(McpConnectionAuth::from_stored("none", None, None).is_ok());
+    assert!(McpConnectionAuth::from_stored("none", None, None, None).is_ok());
     assert!(
         McpConnectionAuth::from_stored(
             "gh_cli",
             Some("github.com".to_owned()),
             Some("Anrahya".to_owned()),
+            None,
         )
         .is_ok()
     );
-    assert!(McpConnectionAuth::from_stored("gh_cli", Some("github.com".to_owned()), None).is_err());
+    assert!(
+        McpConnectionAuth::from_stored("gh_cli", Some("github.com".to_owned()), None, None,)
+            .is_err()
+    );
+    assert!(
+        McpConnectionAuth::from_stored(
+            "secret_service_bearer",
+            None,
+            None,
+            Some("exa.default".to_owned()),
+        )
+        .is_ok()
+    );
     assert!(McpConnectionAuth::gh_cli("github.com/bad", "Anrahya").is_err());
 }
 

@@ -106,11 +106,23 @@ if (toolResults.length === 0) {
   prompt === "Use the denied echo tool." &&
   toolResults.length === 3 &&
   toolResults[2].result.name === "tool_execute" &&
-  toolResults[2].result.content[0].text === "permission denied" &&
+  toolResults[2].result.content[0].text.includes("HTTP 401") &&
+  toolResults[2].result.content[0].text.includes("permission denied") &&
   toolResults[2].result.details === null &&
   toolResults[2].result.is_error === true
 ) {
   content = [{ type: "text", text: "MCP error handled." }];
+  stopReason = "stop";
+} else if (
+  prompt === "Use the lost echo tool." &&
+  toolResults.length === 3 &&
+  toolResults[2].result.name === "tool_execute" &&
+  toolResults[2].result.content[0].text.includes("may or may not have succeeded") &&
+  toolResults[2].result.content[0].text.includes("did not replay it") &&
+  toolResults[2].result.details === null &&
+  toolResults[2].result.is_error === true
+) {
+  content = [{ type: "text", text: "MCP uncertainty handled." }];
   stopReason = "stop";
 } else {
   process.exit(3);

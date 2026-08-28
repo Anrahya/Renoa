@@ -33,10 +33,13 @@ without turning the kernel into product policy or one giant plugin interface.
 - [`renoa-acp`](crates/renoa-acp) is a thin ACP v1 surface adapter. A compatible
   frontend launches `renoa-agent acp`; ACP translates UI messages and live
   updates but does not own agent composition or durability.
-- [`mcp-client-node`](adapters/mcp-client-node) is the replaceable modern MCP
-  process adapter. The Host now durably registers a direct no-auth connection,
-  publishes its complete catalog, and remembers Alpha's selected tools. The
-  selected tool is not executable by Alpha until the next vertical slice.
+- [`mcp-client-node`](adapters/mcp-client-node) is the replaceable MCP
+  process adapter. The Host durably registers connections, publishes complete
+  catalogs, and exposes only deferred search/load/execute schemas to Alpha.
+- [`integration-catalog-node`](adapters/integration-catalog-node) is the
+  replaceable discovery-only adapter. It uses integrations.sh as a ground-zero
+  REST source, while the Host remains authoritative for validation,
+  installation, connection, profile attachment, and hot loading.
 
 Alpha currently has `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and
 `find`. Model and reasoning choices can change between operations. Workspace
