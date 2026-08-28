@@ -25,8 +25,53 @@ pub enum McpHostError {
     HostCatalog(#[from] crate::host::catalog::HostCatalogError),
     #[error("MCP catalog JSON failed: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("MCP Host background task failed: {0}")]
+    Background(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    OAuth(#[from] McpOAuthError),
     #[error(transparent)]
     Adapter(#[from] McpAdapterError),
+}
+
+/// Failure while the Host owns an MCP OAuth lifecycle.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum McpOAuthError {
+    #[error(
+        "MCP connection '{0}' requires browser authorization; call extension_manage with action 'authorize'"
+    )]
+    AuthorizationRequired(String),
+    #[error("MCP OAuth configuration is invalid: {0}")]
+    Invalid(String),
+    #[error("MCP OAuth for connection '{0}' is already running; wait for that flow to finish")]
+    InProgress(String),
+    #[error(
+        "MCP OAuth outcome for connection '{connection}' is unknown; Renoa did not retry the credential exchange. Call extension_manage authorize with restart=true. Boundary error: {detail}"
+    )]
+    OutcomeUnknown { connection: String, detail: String },
+    #[error(
+        "MCP OAuth already completed for this recovered operation on connection '{0}', but its credential is no longer usable; start a new extension_manage authorize call"
+    )]
+    ReceiptUnavailable(String),
+    #[error(
+        "MCP OAuth previously returned a definite credential failure for this recovered operation on connection '{0}'; Renoa did not repeat the authorization flow. Start a new extension_manage authorize call to try again"
+    )]
+    ReceiptFailure(String),
+    #[error("MCP OAuth callback expired; call extension_manage authorize with restart=true")]
+    CallbackExpired,
+    #[error("MCP OAuth callback was cancelled")]
+    Cancelled,
+    #[error("MCP OAuth authorization was rejected by the service: {0}")]
+    CallbackRejected(String),
+    #[error("MCP OAuth callback cannot resume: {0}")]
+    CallbackUnavailable(String),
+    #[error("could not open the MCP authorization page: {source}")]
+    Browser {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("browser command did not open the MCP authorization page ({status})")]
+    BrowserStatus { status: String },
 }
 
 /// Failure at the replaceable MCP process boundary.
@@ -87,6 +132,12 @@ pub enum McpCredentialError {
     MissingPipe(&'static str),
     #[error("{source_name} credential source could not be waited: {source}")]
     Wait {
+        source_name: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{source_name} credential source input could not be written: {source}")]
+    Write {
         source_name: &'static str,
         #[source]
         source: std::io::Error,
@@ -218,6 +269,19 @@ impl McpRemoteFailure {
             authorization.redact_text(code);
         }
         authorization.redact_text(&mut self.diagnostic.detail);
+    }
+
+    pub(super) fn redact_exact_secrets<'a>(&mut self, secrets: impl IntoIterator<Item = &'a str>) {
+        for secret in secrets {
+            if secret.is_empty() {
+                continue;
+            }
+            self.message = self.message.replace(secret, "[REDACTED]");
+            if let Some(code) = &mut self.diagnostic.code {
+                *code = code.replace(secret, "[REDACTED]");
+            }
+            self.diagnostic.detail = self.diagnostic.detail.replace(secret, "[REDACTED]");
+        }
     }
 
     pub(super) fn validate_wire(&self) -> Result<(), String> {

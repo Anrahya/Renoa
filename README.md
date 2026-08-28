@@ -35,7 +35,8 @@ without turning the kernel into product policy or one giant plugin interface.
   updates but does not own agent composition or durability.
 - [`mcp-client-node`](adapters/mcp-client-node) is the replaceable MCP
   process adapter. The Host durably registers connections, publishes complete
-  catalogs, and exposes only deferred search/load/execute schemas to Alpha.
+  catalogs, owns optional browser OAuth and refresh, and exposes only deferred
+  search/load/execute schemas to Alpha.
 - [`integration-catalog-node`](adapters/integration-catalog-node) is the
   replaceable discovery-only adapter. It uses integrations.sh as a ground-zero
   REST source, while the Host remains authoritative for validation,

@@ -46,7 +46,7 @@ export function parseEndpoint(value: string): URL {
   );
 }
 
-function isLoopbackHost(hostname: string): boolean {
+export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (host === "localhost" || host === "[::1]") {
     return true;

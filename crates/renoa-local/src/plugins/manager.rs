@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use renoa_agent::ToolUpdates;
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
@@ -11,8 +12,9 @@ use super::{
 use crate::{
     ALPHA_PROFILE_ID,
     mcp::{
-        McpAdapterError, McpCatalogSnapshot, McpCatalogStore, McpConnectionAuth,
-        McpCredentialResolver, McpHostError, discover_cancellable,
+        McpAdapterError, McpAuthorizationResolver, McpCatalogSnapshot, McpCatalogStore,
+        McpConnectionAuth, McpCredentialResolver, McpHostError, McpOAuthAuthorizationRequest,
+        discover_cancellable,
     },
     skills::{SkillComponentReport, SkillStore},
 };
@@ -22,7 +24,7 @@ pub(crate) struct PluginManager {
     store: PluginStore,
     mcp_catalog: McpCatalogStore,
     mcp_adapter: Option<PathBuf>,
-    credentials: McpCredentialResolver,
+    authorizations: McpAuthorizationResolver,
     catalog: Option<IntegrationCatalog>,
     skills: SkillStore,
 }
@@ -37,11 +39,13 @@ impl PluginManager {
         catalog: Option<IntegrationCatalog>,
         skills: SkillStore,
     ) -> Result<Self, PluginError> {
+        let authorizations =
+            McpAuthorizationResolver::new(&mcp_catalog, mcp_adapter.clone(), credentials);
         Ok(Self {
             store: PluginStore::initialize(database, packages)?,
             mcp_catalog,
             mcp_adapter,
-            credentials,
+            authorizations,
             catalog,
             skills,
         })
@@ -91,6 +95,7 @@ impl PluginManager {
     pub(crate) async fn add_alpha(
         &self,
         request: ExtensionAddRequest,
+        operation_id: &str,
         cancellation: CancellationToken,
     ) -> Result<ExtensionAddOutcome, PluginError> {
         let connection_request = request.connection;
@@ -147,8 +152,14 @@ impl PluginManager {
             }
         };
         let skills = self.sync_skills(&prepared.installed).await?;
-        self.connect_prepared(prepared, skills, connection_request, cancellation)
-            .await
+        self.connect_prepared(
+            prepared,
+            skills,
+            connection_request,
+            operation_id,
+            cancellation,
+        )
+        .await
     }
 
     async fn sync_skills(
@@ -173,6 +184,7 @@ impl PluginManager {
         prepared: PreparedExtension,
         skills: SkillComponentReport,
         request: Option<ExtensionConnectionRequest>,
+        operation_id: &str,
         cancellation: CancellationToken,
     ) -> Result<ExtensionAddOutcome, PluginError> {
         if request.is_none() && !prepared.connect_by_default {
@@ -213,11 +225,12 @@ impl PluginManager {
         let connection =
             id.unwrap_or_else(|| default_connection_id(prepared.installed.digest(), &server));
         let outcome = match self
-            .connect_alpha(
+            .connect_alpha_operation(
                 prepared.installed.digest(),
                 &server,
                 &connection,
                 credential,
+                operation_id,
                 cancellation,
             )
             .await
@@ -249,6 +262,27 @@ impl PluginManager {
         credential: PluginCredential,
         cancellation: CancellationToken,
     ) -> Result<McpCatalogSnapshot, PluginError> {
+        let operation_id = format!("host-connect.{}", uuid::Uuid::new_v4());
+        self.connect_alpha_operation(
+            package_digest,
+            server_id,
+            connection_id,
+            credential,
+            &operation_id,
+            cancellation,
+        )
+        .await
+    }
+
+    pub(crate) async fn connect_alpha_operation(
+        &self,
+        package_digest: &str,
+        server_id: &str,
+        connection_id: &str,
+        credential: PluginCredential,
+        operation_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<McpCatalogSnapshot, PluginError> {
         let store = self.store.clone();
         let digest = package_digest.to_owned();
         let plugin = tokio::task::spawn_blocking(move || store.load(&digest)).await??;
@@ -268,16 +302,7 @@ impl PluginManager {
                 "RENOA_MCP_ADAPTER must be set before connecting a package MCP server".to_owned(),
             )
         })?;
-        let auth = credential_auth(credential)?;
-        let authorization = self
-            .credentials
-            .resolve(&auth, cancellation.clone())
-            .await
-            .map_err(McpAdapterError::from)
-            .map_err(McpHostError::from)?;
-        if cancellation.is_cancelled() {
-            return Err(McpHostError::from(McpAdapterError::Cancelled).into());
-        }
+        let auth = credential_auth(credential, connection_id, server.endpoint())?;
         let integration_id = integration_id(plugin.digest(), server.id());
         let registered_headers = crate::mcp::McpRequestHeaders::new(
             server
@@ -285,6 +310,35 @@ impl PluginManager {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone())),
         )?;
+        let catalog = self.mcp_catalog.clone();
+        let registered_integration = integration_id.clone();
+        let registered_connection = connection_id.to_owned();
+        let registered_endpoint = server.endpoint().to_owned();
+        let registered_headers_copy = registered_headers.clone();
+        let registered_auth = auth.clone();
+        tokio::task::spawn_blocking(move || {
+            catalog.register_connection(
+                &registered_integration,
+                &registered_connection,
+                &registered_endpoint,
+                &registered_headers_copy,
+                &registered_auth,
+            )
+        })
+        .await??;
+        let authorization = self
+            .authorizations
+            .resolve(
+                connection_id,
+                server.endpoint(),
+                &auth,
+                operation_id,
+                cancellation.clone(),
+            )
+            .await?;
+        if cancellation.is_cancelled() {
+            return Err(McpHostError::from(McpAdapterError::Cancelled).into());
+        }
         let snapshot = discover_cancellable(
             &adapter,
             connection_id,
@@ -297,12 +351,57 @@ impl PluginManager {
         let catalog = self.mcp_catalog.clone();
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || {
-            catalog.publish_plugin_connection(
-                &integration_id,
-                ALPHA_PROFILE_ID,
-                &auth,
-                &stored_snapshot,
+            catalog.publish_and_enable_connection(ALPHA_PROFILE_ID, &stored_snapshot)
+        })
+        .await??;
+        Ok(snapshot)
+    }
+
+    pub(crate) async fn authorize_alpha(
+        &self,
+        connection_id: &str,
+        operation_id: &str,
+        restart: bool,
+        updates: Option<&ToolUpdates>,
+        cancellation: CancellationToken,
+    ) -> Result<McpCatalogSnapshot, PluginError> {
+        let catalog = self.mcp_catalog.clone();
+        let stored_connection = connection_id.to_owned();
+        let connection =
+            tokio::task::spawn_blocking(move || catalog.connection_config(&stored_connection))
+                .await??;
+        let authorization = self
+            .authorizations
+            .authorize(
+                McpOAuthAuthorizationRequest {
+                    connection_id,
+                    endpoint: &connection.endpoint,
+                    reference: &connection.auth,
+                    operation_id,
+                    restart,
+                    updates,
+                },
+                cancellation.clone(),
             )
+            .await?;
+        let adapter = self.mcp_adapter.as_deref().ok_or_else(|| {
+            PluginError::Unavailable(
+                "RENOA_MCP_ADAPTER must be set before authorizing a package MCP server".to_owned(),
+            )
+        })?;
+        let snapshot = discover_cancellable(
+            adapter,
+            connection_id,
+            &connection.endpoint,
+            &connection.request_headers,
+            Some(&authorization),
+            cancellation,
+        )
+        .await?;
+        let catalog = self.mcp_catalog.clone();
+        let stored_snapshot = snapshot.clone();
+        tokio::task::spawn_blocking(move || {
+            catalog.publish_and_enable_connection(ALPHA_PROFILE_ID, &stored_snapshot)
         })
         .await??;
         Ok(snapshot)
@@ -343,12 +442,17 @@ pub(crate) enum ExtensionConnectionOutcome {
     },
 }
 
-fn credential_auth(credential: PluginCredential) -> Result<McpConnectionAuth, PluginError> {
+fn credential_auth(
+    credential: PluginCredential,
+    connection_id: &str,
+    endpoint: &str,
+) -> Result<McpConnectionAuth, PluginError> {
     match credential {
         PluginCredential::None => Ok(McpConnectionAuth::None),
         PluginCredential::SecretServiceBearer { credential_id } => {
             Ok(McpConnectionAuth::secret_service_bearer(&credential_id)?)
         }
+        PluginCredential::OAuth => Ok(McpConnectionAuth::oauth(connection_id, endpoint)?),
     }
 }
 

@@ -2,10 +2,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
 use renoa_agent_loop::AgentToolBinding;
-use renoa_kernel::EffectRecovery;
+use renoa_kernel::{CommandId, EffectRecovery, SessionId};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
+mod actions;
 mod contract;
 mod output;
 #[cfg(test)]
@@ -15,22 +16,26 @@ use super::catalog::CatalogError;
 use super::{
     CatalogCandidate, ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential,
     PluginError, PluginManager,
-    manager::{ExtensionConnectionOutcome, ExtensionSourceReceipt},
 };
-use crate::mcp::{McpAdapterError, McpHostError};
+use crate::mcp::oauth_operation_id;
+use actions::{ConnectRequest, ExtensionInvocation};
 use contract::{ManageInput, manage_tool_spec, resolve_source};
-use output::{
-    InstalledConnectionFailure, catalog_failure_output, installed_connection_failure_output,
-    json_output, plugin_error, remote_mcp_error_output,
-};
+use output::{catalog_failure_output, json_output, plugin_error};
 
 const TOOL_NAME: &str = "extension_manage";
-const BINDING_REVISION: &str = "renoa-extension-manager-v2";
+const BINDING_REVISION: &str = "renoa-extension-manager-v3";
 
-pub(crate) fn alpha_plugin_binding(manager: PluginManager, workspace: PathBuf) -> AgentToolBinding {
+pub(crate) fn alpha_plugin_binding(
+    manager: PluginManager,
+    workspace: PathBuf,
+    session_id: SessionId,
+    command_id: Option<CommandId>,
+) -> AgentToolBinding {
     AgentToolBinding::new(
         BINDING_REVISION,
-        Arc::new(ManageTool::new(manager, workspace)),
+        Arc::new(ManageTool::for_session(
+            manager, workspace, session_id, command_id,
+        )),
         EffectRecovery::SafeToReplay,
     )
 }
@@ -38,16 +43,30 @@ pub(crate) fn alpha_plugin_binding(manager: PluginManager, workspace: PathBuf) -
 struct ManageTool {
     manager: PluginManager,
     workspace: PathBuf,
+    session_id: SessionId,
+    command_id: Option<CommandId>,
     spec: ToolSpec,
 }
 
 impl ManageTool {
-    fn new(manager: PluginManager, workspace: PathBuf) -> Self {
+    fn for_session(
+        manager: PluginManager,
+        workspace: PathBuf,
+        session_id: SessionId,
+        command_id: Option<CommandId>,
+    ) -> Self {
         Self {
             manager,
             workspace,
+            session_id,
+            command_id,
             spec: manage_tool_spec(TOOL_NAME),
         }
+    }
+
+    #[cfg(test)]
+    fn new(manager: PluginManager, workspace: PathBuf) -> Self {
+        Self::for_session(manager, workspace, SessionId::new(), Some(CommandId::new()))
     }
 }
 
@@ -60,7 +79,7 @@ impl Tool for ManageTool {
         &self,
         call: ToolCall,
         cancellation: CancellationToken,
-        _updates: ToolUpdates,
+        updates: ToolUpdates,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
             if call.name != TOOL_NAME {
@@ -69,13 +88,15 @@ impl Tool for ManageTool {
                     call.name
                 )));
             }
+            let operation_id = oauth_operation_id(self.session_id, self.command_id, &call.id);
             let input: ManageInput = serde_json::from_value(call.arguments).map_err(|error| {
                 ToolError::invalid_input(format!(
                     "{TOOL_NAME} arguments are invalid for the selected action: {error}"
                 ))
             })?;
             require_active(&cancellation)?;
-            self.execute_input(input, cancellation).await
+            self.execute_input(input, &operation_id, cancellation, updates)
+                .await
         })
     }
 }
@@ -84,7 +105,9 @@ impl ManageTool {
     async fn execute_input(
         &self,
         input: ManageInput,
+        operation_id: &str,
         cancellation: CancellationToken,
+        updates: ToolUpdates,
     ) -> Result<ToolOutput, ToolError> {
         match input {
             ManageInput::Search { query } => self.search(&query, cancellation).await,
@@ -105,8 +128,12 @@ impl ManageTool {
                 } else {
                     None
                 };
-                self.add(ExtensionAddRequest::new(source, connection), cancellation)
-                    .await
+                actions::add(
+                    self,
+                    ExtensionAddRequest::new(source, connection),
+                    ExtensionInvocation::new(operation_id, cancellation, &updates),
+                )
+                .await
             }
             ManageInput::Inspect { source_path } => {
                 let source = resolve_source(&self.workspace, source_path)?;
@@ -143,31 +170,29 @@ impl ManageTool {
                 connection,
                 credential,
             } => {
-                let snapshot = match self
-                    .manager
-                    .connect_alpha(
-                        &package_digest,
-                        &server,
-                        &connection,
-                        credential.map_or(PluginCredential::None, Into::into),
-                        cancellation,
-                    )
-                    .await
-                {
-                    Ok(snapshot) => snapshot,
-                    Err(PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(
-                        remote,
-                    )))) => return remote_mcp_error_output(&remote),
-                    Err(error) => return Err(plugin_error(error, true)),
-                };
-                json_output(&ConnectionOutput {
-                    package_digest,
-                    server,
+                actions::connect(
+                    self,
+                    ConnectRequest {
+                        package_digest,
+                        server,
+                        connection,
+                        credential: credential.map_or(PluginCredential::None, Into::into),
+                    },
+                    ExtensionInvocation::new(operation_id, cancellation, &updates),
+                )
+                .await
+            }
+            ManageInput::Authorize {
+                connection,
+                restart,
+            } => {
+                actions::authorize(
+                    self,
                     connection,
-                    catalog_digest: snapshot.digest().to_owned(),
-                    tools: snapshot.tools().len(),
-                    rejected_tools: snapshot.rejected_tools().len(),
-                })
+                    restart,
+                    ExtensionInvocation::new(operation_id, cancellation, &updates),
+                )
+                .await
             }
         }
     }
@@ -194,65 +219,6 @@ impl ManageTool {
             candidates,
             next_action,
         })
-    }
-
-    async fn add(
-        &self,
-        request: ExtensionAddRequest,
-        cancellation: CancellationToken,
-    ) -> Result<ToolOutput, ToolError> {
-        let added = match self.manager.add_alpha(request, cancellation).await {
-            Ok(added) => added,
-            Err(PluginError::Catalog(CatalogError::Remote(failure))) => {
-                return catalog_failure_output(&failure);
-            }
-            Err(error) => return Err(plugin_error(error, true)),
-        };
-        let (source, candidate, name) = source_output(&added.source);
-        match added.connection {
-            ExtensionConnectionOutcome::NotRequested => json_output(&InstalledOutput {
-                status: "installed",
-                source,
-                candidate,
-                name,
-                package_digest: added.installed.digest(),
-                metadata: added.installed.metadata(),
-                mcp_servers: added.installed.mcp_servers(),
-                notices: added.installed.notices(),
-                skills: &added.skills,
-            }),
-            ExtensionConnectionOutcome::Connected {
-                id,
-                server,
-                snapshot,
-            } => json_output(&ConnectedOutput {
-                status: "connected",
-                source,
-                candidate,
-                name,
-                package_digest: added.installed.digest(),
-                connection: &id,
-                server: &server,
-                catalog_digest: snapshot.digest(),
-                tools: snapshot.tools().len(),
-                rejected_tools: snapshot.rejected_tools().len(),
-                notices: added.installed.notices(),
-                skills: &added.skills,
-            }),
-            ExtensionConnectionOutcome::Failed { id, server, error } => {
-                installed_connection_failure_output(
-                    &InstalledConnectionFailure {
-                        source,
-                        package_digest: added.installed.digest(),
-                        connection: id.as_deref(),
-                        server: server.as_deref(),
-                        notices: added.installed.notices(),
-                        skills: &added.skills,
-                    },
-                    error,
-                )
-            }
-        }
     }
 }
 
@@ -306,6 +272,15 @@ struct ConnectionOutput {
     rejected_tools: usize,
 }
 
+#[derive(Serialize)]
+struct AuthorizedOutput {
+    status: &'static str,
+    connection: String,
+    catalog_digest: String,
+    tools: usize,
+    rejected_tools: usize,
+}
+
 fn require_active(cancellation: &CancellationToken) -> Result<(), ToolError> {
     if cancellation.is_cancelled() {
         Err(ToolError::cancelled(
@@ -314,15 +289,5 @@ fn require_active(cancellation: &CancellationToken) -> Result<(), ToolError> {
         ))
     } else {
         Ok(())
-    }
-}
-
-fn source_output(receipt: &ExtensionSourceReceipt) -> (&'static str, Option<&str>, Option<&str>) {
-    match receipt {
-        ExtensionSourceReceipt::Catalog { reference, name } => {
-            ("integrations.sh", Some(reference), Some(name))
-        }
-        ExtensionSourceReceipt::Mcp => ("mcp", None, None),
-        ExtensionSourceReceipt::Package => ("package", None, None),
     }
 }

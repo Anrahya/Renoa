@@ -255,3 +255,79 @@ pub(super) const MIGRATE_V6_TO_V7: &str = "
 
     UPDATE host_metadata SET schema_version = 7 WHERE singleton = 1;
 ";
+
+pub(super) const MIGRATE_V7_TO_V8: &str = "
+    CREATE TABLE mcp_connections_v8 (
+        connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
+        integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
+        auth_kind TEXT NOT NULL CHECK (
+            auth_kind IN ('none', 'gh_cli', 'secret_service_bearer', 'oauth')
+        ),
+        auth_hostname TEXT,
+        auth_account TEXT,
+        auth_credential_id TEXT,
+        CHECK (
+            (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL
+             AND auth_credential_id IS NULL)
+            OR
+            (auth_kind = 'gh_cli'
+             AND length(auth_hostname) > 0
+             AND length(auth_account) > 0
+             AND auth_credential_id IS NULL)
+            OR
+            (auth_kind IN ('secret_service_bearer', 'oauth')
+             AND auth_hostname IS NULL
+             AND auth_account IS NULL
+             AND length(auth_credential_id) > 0)
+        )
+    ) STRICT;
+
+    INSERT INTO mcp_connections_v8(
+        connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+        auth_credential_id
+    )
+    SELECT connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+           auth_credential_id
+    FROM mcp_connections;
+
+    DROP TABLE mcp_connections;
+    ALTER TABLE mcp_connections_v8 RENAME TO mcp_connections;
+
+    CREATE TABLE mcp_oauth_flows (
+        connection_id TEXT PRIMARY KEY
+            REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
+        operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 512),
+        phase TEXT NOT NULL CHECK (
+            phase IN (
+                'begin_in_flight', 'awaiting_callback', 'callback_ready',
+                'exchange_in_flight', 'refresh_in_flight', 'unknown'
+            )
+        ),
+        callback_port INTEGER,
+        expires_at_ms INTEGER,
+        CHECK (
+            (phase IN ('begin_in_flight', 'awaiting_callback', 'callback_ready',
+                       'exchange_in_flight')
+             AND callback_port BETWEEN 1 AND 65535
+             AND expires_at_ms > 0)
+            OR
+            (phase IN ('refresh_in_flight', 'unknown')
+             AND callback_port IS NULL
+             AND expires_at_ms IS NULL)
+        )
+    ) STRICT;
+
+    CREATE TABLE mcp_oauth_receipts (
+        connection_id TEXT NOT NULL
+            REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
+        operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 512),
+        outcome_json TEXT NOT NULL CHECK (
+            length(outcome_json) BETWEEN 1 AND 16384
+            AND json_valid(outcome_json)
+            AND json_type(outcome_json) = 'object'
+        ),
+        PRIMARY KEY (connection_id, operation_id)
+    ) STRICT;
+
+    UPDATE host_metadata SET schema_version = 8 WHERE singleton = 1;
+";

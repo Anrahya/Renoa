@@ -1,7 +1,7 @@
 use renoa_agent::{ContentBlock, ToolErrorCode};
 use serde_json::{Value, json};
 
-use super::super::{json_output, remote_mcp_error_output};
+use super::super::output::{json_output, remote_mcp_error_output};
 use crate::{mcp::McpRemoteFailure, output::MAX_TOOL_OUTPUT_BYTES};
 
 #[test]

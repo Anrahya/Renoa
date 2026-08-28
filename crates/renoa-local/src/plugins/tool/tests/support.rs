@@ -50,12 +50,12 @@ let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 process.stdout.write(JSON.stringify({
-  wire_version: 4,
+  wire_version: 5,
   event: 'discovered',
   catalog: {
     endpoint: request.endpoint,
     protocol_version: '2026-07-28',
-    adapter_revision: 'mcp-client-node-v0.4.0',
+    adapter_revision: 'mcp-client-node-v0.5.0',
     tools: [{
       name: 'web_search_exa',
       description: 'Search the web.',
@@ -110,7 +110,7 @@ pub(super) fn write_failed_mcp_adapter(path: &Path) {
         r"
 for await (const _chunk of process.stdin) {}
 process.stdout.write(JSON.stringify({
-  wire_version: 4,
+  wire_version: 5,
   event: 'failed',
   failure: {
     kind: 'incompatible_protocol',

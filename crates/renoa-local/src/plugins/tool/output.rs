@@ -267,7 +267,8 @@ pub(super) fn plugin_error(error: PluginError, partial_changes_possible: bool) -
             McpHostError::Io(_)
             | McpHostError::Database(_)
             | McpHostError::HostCatalog(_)
-            | McpHostError::Json(_),
+            | McpHostError::Json(_)
+            | McpHostError::Background(_),
         )
         | PluginError::Catalog(
             CatalogError::Resolve(_)
@@ -289,6 +290,24 @@ pub(super) fn plugin_error(error: PluginError, partial_changes_possible: bool) -
         PluginError::Mcp(McpHostError::Adapter(error)) => {
             adapter_tool_error(&error, partial_changes_possible)
         }
+        PluginError::Mcp(McpHostError::OAuth(error)) => match error {
+            crate::mcp::McpOAuthError::AuthorizationRequired(_) => {
+                ToolError::permission_denied(message)
+            }
+            crate::mcp::McpOAuthError::InProgress(_)
+            | crate::mcp::McpOAuthError::ReceiptUnavailable(_) => ToolError::conflict(message),
+            crate::mcp::McpOAuthError::OutcomeUnknown { .. } => ToolError::outcome_unknown(message),
+            crate::mcp::McpOAuthError::ReceiptFailure(_) => {
+                ToolError::process_failed(message, false)
+            }
+            crate::mcp::McpOAuthError::CallbackExpired => ToolError::timeout(message, false),
+            crate::mcp::McpOAuthError::Cancelled => ToolError::cancelled(message, false),
+            crate::mcp::McpOAuthError::Invalid(_) => ToolError::invalid_input(message),
+            crate::mcp::McpOAuthError::CallbackRejected(_) => ToolError::permission_denied(message),
+            crate::mcp::McpOAuthError::CallbackUnavailable(_)
+            | crate::mcp::McpOAuthError::Browser { .. }
+            | crate::mcp::McpOAuthError::BrowserStatus { .. } => ToolError::unavailable(message),
+        },
         PluginError::Catalog(CatalogError::Cancelled) => {
             ToolError::cancelled(message, partial_changes_possible)
         }

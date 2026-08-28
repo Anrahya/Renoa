@@ -25,9 +25,9 @@ if (
   request.tool.name !== "echo" ||
   request.arguments.text !== "hello"
 ) process.exit(2);
-process.stdout.write(JSON.stringify({ wire_version: 4, event: "dispatch_started" }) + "\n");
+process.stdout.write(JSON.stringify({ wire_version: 5, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 4,
+  wire_version: 5,
   event: "completed",
   result: {
     content: [{ type: "text", text: "hello" }],
@@ -68,7 +68,7 @@ async fn cancellation_after_dispatch_is_an_unknown_outcome_and_reaps_the_adapter
             r#"
 import {{ writeFileSync }} from "node:fs";
 for await (const _chunk of process.stdin) {{}}
-process.stdout.write(JSON.stringify({{ wire_version: 4, event: "dispatch_started" }}) + "\n");
+process.stdout.write(JSON.stringify({{ wire_version: 5, event: "dispatch_started" }}) + "\n");
 writeFileSync({}, String(process.pid));
 await new Promise(() => {{}});
 "#,
@@ -150,9 +150,9 @@ if (
   process.argv.slice(2).length !== 0 ||
   Object.values(process.env).some(value => value?.includes(token))
 ) process.exit(9);
-process.stdout.write(JSON.stringify({ wire_version: 4, event: "dispatch_started" }) + "\n");
+process.stdout.write(JSON.stringify({ wire_version: 5, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 4,
+  wire_version: 5,
   event: "completed",
   result: {
     content: [{ type: "text", text: `server echoed ${token}` }],

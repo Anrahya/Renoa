@@ -13,6 +13,7 @@ import type {
   AdapterRequest,
   JsonObject,
 } from "../src/contract.js";
+import { WIRE_VERSION } from "../src/limits.js";
 
 export interface FixtureRequest {
   readonly url: string;
@@ -200,16 +201,18 @@ export const HEADER_SCHEMA: JsonObject = {
   required: ["tenant"],
 };
 
-export function discoverRequest(endpoint: string): AdapterRequest {
-  return { wire_version: 4, action: "discover", endpoint };
+export function discoverRequest(
+  endpoint: string,
+): Extract<AdapterRequest, { readonly action: "discover" }> {
+  return { wire_version: WIRE_VERSION, action: "discover", endpoint };
 }
 
 export function callRequest(
   endpoint: string,
   protocolVersion = "2026-07-28",
-): AdapterRequest {
+): Extract<AdapterRequest, { readonly action: "call" }> {
   return {
-    wire_version: 4,
+    wire_version: WIRE_VERSION,
     action: "call",
     endpoint,
     protocol_version: protocolVersion,

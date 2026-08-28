@@ -33,11 +33,17 @@ import {
   WIRE_VERSION,
 } from "./limits.js";
 import { projectToolResult } from "./result.js";
+import { executeOAuthRequest, isOAuthRequest } from "./oauth.js";
 import {
   CallExchangeTracker,
   Deadline,
   guardedFetch,
 } from "./transport.js";
+
+type RuntimeRequest = Extract<
+  AdapterRequest,
+  { readonly action: "discover" | "call" }
+>;
 
 export interface AdapterHooks {
   readonly signal: AbortSignal;
@@ -49,6 +55,9 @@ export async function executeAdapterRequest(
   request: AdapterRequest,
   hooks: AdapterHooks,
 ): Promise<AdapterRecord> {
+  if (isOAuthRequest(request)) {
+    return executeOAuthRequest(request, hooks.signal);
+  }
   const tracker = new CallExchangeTracker();
   let record: AdapterRecord;
   try {
@@ -115,7 +124,7 @@ async function discoverCatalog(
   endpoint: URL,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
-  headers: AdapterRequest["headers"],
+  headers: RuntimeRequest["headers"],
   authorization: WireAuthorization | undefined,
 ) {
   const deadline = new Deadline(DISCOVERY_TIMEOUT_MS);
@@ -249,11 +258,11 @@ async function callTool(
 
 async function connectClient(
   endpoint: URL,
-  action: AdapterRequest["action"],
+  action: RuntimeRequest["action"],
   deadline: Deadline,
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
-  headers: AdapterRequest["headers"],
+  headers: RuntimeRequest["headers"],
   authorization: WireAuthorization | undefined,
   expectedProtocolVersion: string | undefined,
 ): Promise<Client> {

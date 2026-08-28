@@ -1,0 +1,440 @@
+use renoa_agent::ToolUpdates;
+use tokio_util::sync::CancellationToken;
+
+use super::{
+    INTERACTIVE_LOCK_WAIT, McpOAuthAuthorizationRequest, OAuthCoordinator,
+    adapter_may_have_dispatched, browser,
+    callback::OAuthCallbackListener,
+    lock, process,
+    process::OAuthResult,
+    resolution::unknown,
+    secret::{OAuthSecretBundle, PendingCallback},
+    store::{OAuthFlow, OAuthPhase},
+};
+use crate::mcp::{McpAuthorization, McpHostError, McpOAuthError};
+
+mod support;
+
+use support::{
+    authorization_url, emit_redirect, random_state, state_string, validate_state_identity,
+};
+
+struct InteractiveAuthorization<'a> {
+    connection_id: &'a str,
+    endpoint: &'a str,
+    credential_id: &'a str,
+    operation_id: &'a str,
+    restart: bool,
+    updates: Option<&'a ToolUpdates>,
+    cancellation: CancellationToken,
+}
+
+impl OAuthCoordinator {
+    pub(super) async fn authorize(
+        &self,
+        request: McpOAuthAuthorizationRequest<'_>,
+        cancellation: CancellationToken,
+    ) -> Result<McpAuthorization, McpHostError> {
+        let credential_id = Self::credential_id(request.reference)?;
+        let _lock = lock::acquire(
+            self.locks.clone(),
+            request.connection_id,
+            INTERACTIVE_LOCK_WAIT,
+            &cancellation,
+        )
+        .await?;
+        if let Some(authorization) = self
+            .replay_receipt(
+                request.connection_id,
+                request.endpoint,
+                credential_id,
+                request.operation_id,
+                cancellation.clone(),
+            )
+            .await?
+        {
+            return Ok(authorization);
+        }
+        let bundle = self
+            .secrets
+            .load(credential_id, cancellation.clone())
+            .await?;
+        if request.restart {
+            self.flows.delete(request.connection_id).await?;
+        }
+        let authorization = InteractiveAuthorization {
+            connection_id: request.connection_id,
+            endpoint: request.endpoint,
+            credential_id,
+            operation_id: request.operation_id,
+            restart: request.restart,
+            updates: request.updates,
+            cancellation,
+        };
+        let flow = self.flows.load(request.connection_id).await?;
+        match flow {
+            Some(flow) => self.resume(&authorization, flow, bundle).await,
+            None => {
+                self.begin(&authorization, authorization.restart, bundle)
+                    .await
+            }
+        }
+    }
+
+    async fn begin(
+        &self,
+        context: &InteractiveAuthorization<'_>,
+        force_reauthorization: bool,
+        prior: Option<OAuthSecretBundle>,
+    ) -> Result<McpAuthorization, McpHostError> {
+        let listener = OAuthCallbackListener::bind_new().await?;
+        let csrf_state = random_state()?;
+        let redirect_uri = listener.redirect_uri();
+        let flow = OAuthFlow::interactive(
+            context.connection_id,
+            context.operation_id,
+            OAuthPhase::BeginInFlight,
+            listener.port(),
+            listener.expires_at_ms(),
+        )?;
+        self.flows.put(&flow).await?;
+        let result = process::begin(
+            self.adapter()?,
+            context.endpoint,
+            &csrf_state,
+            &redirect_uri,
+            force_reauthorization,
+            prior.as_ref().map(|bundle| &bundle.adapter_state),
+            context.cancellation.clone(),
+        )
+        .await;
+        match result {
+            Ok(OAuthResult::Redirect {
+                authorization_url,
+                state,
+            }) => {
+                validate_state_identity(&state, &csrf_state, &redirect_uri)?;
+                let bundle = OAuthSecretBundle::new(state);
+                if let Err(error) = self
+                    .secrets
+                    .store(context.credential_id, &bundle, context.cancellation.clone())
+                    .await
+                {
+                    self.mark_unknown(context.connection_id, context.operation_id)
+                        .await?;
+                    return Err(unknown(context.connection_id, &error.to_string()));
+                }
+                let waiting = flow.with_phase(OAuthPhase::AwaitingCallback)?;
+                self.flows.put(&waiting).await?;
+                self.wait_for_callback(context, waiting, bundle, authorization_url, listener)
+                    .await
+            }
+            Ok(OAuthResult::Authorized {
+                authorization,
+                state,
+                ..
+            }) => {
+                self.complete_authorized(
+                    &flow,
+                    context.credential_id,
+                    context.operation_id,
+                    authorization,
+                    state,
+                    context.cancellation.clone(),
+                )
+                .await
+            }
+            Ok(OAuthResult::Failed { failure, state }) => {
+                self.complete_failure(
+                    &flow,
+                    context.credential_id,
+                    context.operation_id,
+                    failure,
+                    state,
+                    context.cancellation.clone(),
+                )
+                .await
+            }
+            Ok(OAuthResult::RefreshRequired { .. }) => {
+                self.mark_unknown(context.connection_id, context.operation_id)
+                    .await?;
+                Err(unknown(
+                    context.connection_id,
+                    "OAuth begin returned an impossible refresh-only result",
+                ))
+            }
+            Err(error) if adapter_may_have_dispatched(&error) => {
+                self.mark_unknown(context.connection_id, context.operation_id)
+                    .await?;
+                Err(unknown(context.connection_id, &error.to_string()))
+            }
+            Err(error) => {
+                self.flows.delete(context.connection_id).await?;
+                Err(error.into())
+            }
+        }
+    }
+
+    async fn resume(
+        &self,
+        context: &InteractiveAuthorization<'_>,
+        mut flow: OAuthFlow,
+        bundle: Option<OAuthSecretBundle>,
+    ) -> Result<McpAuthorization, McpHostError> {
+        if flow.phase == OAuthPhase::Unknown {
+            return Err(unknown(context.connection_id, "previous exchange"));
+        }
+        if flow.phase == OAuthPhase::RefreshInFlight {
+            return self
+                .recover_refresh(
+                    context.connection_id,
+                    context.endpoint,
+                    context.credential_id,
+                    &flow,
+                    context.cancellation.clone(),
+                )
+                .await;
+        }
+        let Some(bundle) = bundle else {
+            self.mark_unknown(context.connection_id, &flow.operation_id)
+                .await?;
+            return Err(unknown(
+                context.connection_id,
+                "durable OAuth state is missing",
+            ));
+        };
+        match flow.phase {
+            OAuthPhase::BeginInFlight => {
+                if bundle.adapter_state.get("authorization_url").is_none() {
+                    return self
+                        .recover_completed_begin(
+                            context.endpoint,
+                            context.credential_id,
+                            flow,
+                            bundle,
+                            context.operation_id,
+                            context.cancellation.clone(),
+                        )
+                        .await;
+                }
+                if validate_saved_callback(&flow, &bundle).is_err() {
+                    self.mark_unknown(context.connection_id, &flow.operation_id)
+                        .await?;
+                    return Err(unknown(
+                        context.connection_id,
+                        "client registration finished without matching durable redirect state",
+                    ));
+                }
+                flow = flow.with_phase(OAuthPhase::AwaitingCallback)?;
+                self.flows.put(&flow).await?;
+                self.resume_callback(context, flow, bundle).await
+            }
+            OAuthPhase::AwaitingCallback if bundle.pending_callback.is_some() => {
+                flow = flow.with_phase(OAuthPhase::CallbackReady)?;
+                self.flows.put(&flow).await?;
+                self.exchange_pending(
+                    context.endpoint,
+                    context.credential_id,
+                    flow,
+                    bundle,
+                    context.operation_id,
+                    context.cancellation.clone(),
+                )
+                .await
+            }
+            OAuthPhase::AwaitingCallback => self.resume_callback(context, flow, bundle).await,
+            OAuthPhase::CallbackReady => {
+                self.exchange_pending(
+                    context.endpoint,
+                    context.credential_id,
+                    flow,
+                    bundle,
+                    context.operation_id,
+                    context.cancellation.clone(),
+                )
+                .await
+            }
+            OAuthPhase::ExchangeInFlight => {
+                self.recover_exchange(
+                    context.endpoint,
+                    context.credential_id,
+                    flow,
+                    bundle,
+                    context.operation_id,
+                    context.cancellation.clone(),
+                )
+                .await
+            }
+            OAuthPhase::RefreshInFlight | OAuthPhase::Unknown => Err(McpHostError::Invalid(
+                "MCP OAuth phase changed while resuming authorization".to_owned(),
+            )),
+        }
+    }
+
+    async fn resume_callback(
+        &self,
+        context: &InteractiveAuthorization<'_>,
+        flow: OAuthFlow,
+        bundle: OAuthSecretBundle,
+    ) -> Result<McpAuthorization, McpHostError> {
+        if validate_saved_callback(&flow, &bundle).is_err() {
+            self.mark_unknown(&flow.connection_id, &flow.operation_id)
+                .await?;
+            return Err(unknown(
+                &flow.connection_id,
+                "durable callback state does not match its saved listener",
+            ));
+        }
+        let port = flow
+            .callback_port
+            .ok_or_else(|| McpOAuthError::Invalid("OAuth callback port is missing".to_owned()))?;
+        let expiry = flow
+            .expires_at_ms
+            .ok_or_else(|| McpOAuthError::Invalid("OAuth callback expiry is missing".to_owned()))?;
+        let listener = OAuthCallbackListener::resume(port, expiry)
+            .await
+            .map_err(|error| match error {
+                McpHostError::Io(_) => McpHostError::OAuth(McpOAuthError::CallbackUnavailable(
+                    "saved callback port is unavailable; retry later or call extension_manage authorize with restart=true"
+                        .to_owned(),
+                )),
+                error => error,
+            })?;
+        let url = authorization_url(&bundle.adapter_state)?.to_owned();
+        self.wait_for_callback(context, flow, bundle, url, listener)
+            .await
+    }
+
+    async fn wait_for_callback(
+        &self,
+        context: &InteractiveAuthorization<'_>,
+        flow: OAuthFlow,
+        mut bundle: OAuthSecretBundle,
+        authorization_url: String,
+        listener: OAuthCallbackListener,
+    ) -> Result<McpAuthorization, McpHostError> {
+        emit_redirect(
+            context.updates,
+            &flow.connection_id,
+            &authorization_url,
+            flow.expires_at_ms,
+        )
+        .await;
+        browser::open(&self.browser, &authorization_url, &context.cancellation).await?;
+        let csrf_state = state_string(&bundle.adapter_state, "csrf_state")?;
+        let mut received = match listener.receive(csrf_state, &context.cancellation).await {
+            Ok(received) => received,
+            Err(McpHostError::OAuth(McpOAuthError::CallbackRejected(error))) => {
+                return self
+                    .complete_callback_rejection(&flow, context.operation_id, error)
+                    .await;
+            }
+            Err(error) => return Err(error),
+        };
+        bundle.pending_callback = Some(PendingCallback {
+            authorization_code: std::mem::take(&mut received.authorization_code),
+            issuer: received.issuer.take(),
+        });
+        self.secrets
+            .store(context.credential_id, &bundle, context.cancellation.clone())
+            .await?;
+        let ready = flow.with_phase(OAuthPhase::CallbackReady)?;
+        self.flows.put(&ready).await?;
+        received.acknowledge().await;
+        self.exchange_pending(
+            context.endpoint,
+            context.credential_id,
+            ready,
+            bundle,
+            context.operation_id,
+            context.cancellation.clone(),
+        )
+        .await
+    }
+
+    async fn exchange_pending(
+        &self,
+        endpoint: &str,
+        credential_id: &str,
+        flow: OAuthFlow,
+        bundle: OAuthSecretBundle,
+        current_operation_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<McpAuthorization, McpHostError> {
+        let pending = bundle.pending_callback.as_ref().ok_or_else(|| {
+            McpOAuthError::Invalid("durable OAuth callback code is missing".to_owned())
+        })?;
+        let in_flight = flow.with_phase(OAuthPhase::ExchangeInFlight)?;
+        self.flows.put(&in_flight).await?;
+        let result = process::exchange(
+            self.adapter()?,
+            endpoint,
+            &pending.authorization_code,
+            pending.issuer.as_deref(),
+            &bundle.adapter_state,
+            cancellation.clone(),
+        )
+        .await;
+        match result {
+            Ok(OAuthResult::Authorized {
+                authorization,
+                state,
+                ..
+            }) => {
+                self.complete_authorized(
+                    &flow,
+                    credential_id,
+                    current_operation_id,
+                    authorization,
+                    state,
+                    cancellation,
+                )
+                .await
+            }
+            Ok(OAuthResult::Failed { failure, state }) => {
+                self.complete_failure(
+                    &flow,
+                    credential_id,
+                    current_operation_id,
+                    failure,
+                    state,
+                    cancellation,
+                )
+                .await
+            }
+            Ok(OAuthResult::Redirect { state, .. } | OAuthResult::RefreshRequired { state }) => {
+                self.complete_authorization_required(
+                    &flow,
+                    credential_id,
+                    current_operation_id,
+                    state,
+                    cancellation,
+                )
+                .await
+            }
+            Err(error) if adapter_may_have_dispatched(&error) => {
+                self.mark_unknown(&flow.connection_id, &flow.operation_id)
+                    .await?;
+                Err(unknown(&flow.connection_id, &error.to_string()))
+            }
+            Err(error) => {
+                self.flows.delete(&flow.connection_id).await?;
+                Err(error.into())
+            }
+        }
+    }
+}
+
+fn validate_saved_callback(
+    flow: &OAuthFlow,
+    bundle: &OAuthSecretBundle,
+) -> Result<(), McpHostError> {
+    let port = flow
+        .callback_port
+        .ok_or_else(|| McpOAuthError::Invalid("OAuth callback port is missing".to_owned()))?;
+    let expected_redirect = format!("http://127.0.0.1:{port}/oauth/callback");
+    let csrf_state = state_string(&bundle.adapter_state, "csrf_state")?;
+    validate_state_identity(&bundle.adapter_state, csrf_state, &expected_redirect)?;
+    authorization_url(&bundle.adapter_state)?;
+    Ok(())
+}

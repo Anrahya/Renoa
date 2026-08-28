@@ -71,7 +71,7 @@ impl McpCatalogStore {
         )
     }
 
-    fn register_connection(
+    pub(crate) fn register_connection(
         &self,
         integration_id: &str,
         connection_id: &str,
@@ -82,6 +82,7 @@ impl McpCatalogStore {
         validate_identity("integration", integration_id)?;
         validate_identity("connection", connection_id)?;
         validate_endpoint(endpoint)?;
+        auth.validate_oauth_binding(connection_id, endpoint)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_integration(&transaction, integration_id, endpoint, request_headers)?;
@@ -121,10 +122,13 @@ impl McpCatalogStore {
             .ok_or_else(|| {
                 McpHostError::NotFound(format!("connection '{connection_id}' is not registered"))
             })?;
+        let endpoint = stored.0;
+        let auth = McpConnectionAuth::from_stored(&stored.2, stored.3, stored.4, stored.5)?;
+        auth.validate_oauth_binding(connection_id, &endpoint)?;
         Ok(McpConnectionConfig {
-            endpoint: stored.0,
+            endpoint,
             request_headers: McpRequestHeaders::from_stored(&stored.1)?,
-            auth: McpConnectionAuth::from_stored(&stored.2, stored.3, stored.4, stored.5)?,
+            auth,
         })
     }
 
@@ -155,24 +159,24 @@ impl McpCatalogStore {
         Ok(())
     }
 
-    pub(crate) fn publish_plugin_connection(
+    pub(crate) fn publish_and_enable_connection(
         &self,
-        integration_id: &str,
         profile_id: &str,
-        auth: &McpConnectionAuth,
         snapshot: &McpCatalogSnapshot,
     ) -> Result<(), McpHostError> {
-        validate_identity("integration", integration_id)?;
         validate_identity("profile", profile_id)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_integration(
-            &transaction,
-            integration_id,
-            snapshot.endpoint(),
-            &snapshot.request_headers,
-        )?;
-        ensure_connection(&transaction, snapshot.connection_id(), integration_id, auth)?;
+        let (configured_endpoint, configured_headers) =
+            require_connection_configuration(&transaction, snapshot.connection_id())?;
+        if configured_endpoint != snapshot.endpoint()
+            || configured_headers.values() != snapshot.request_headers()
+        {
+            return Err(McpHostError::Invalid(format!(
+                "catalog transport configuration for connection '{}' differs from its registration",
+                snapshot.connection_id()
+            )));
+        }
         store_catalog(&transaction, snapshot)?;
         transaction.execute(
             "INSERT OR IGNORE INTO profile_mcp_connections(profile_id, connection_id)
@@ -203,8 +207,7 @@ impl McpCatalogStore {
         Ok(crate::host::catalog::open_verified(&self.path)?)
     }
 
-    #[cfg(test)]
-    pub(super) fn path(&self) -> &std::path::Path {
+    pub(crate) fn path(&self) -> &std::path::Path {
         &self.path
     }
 }

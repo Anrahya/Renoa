@@ -172,6 +172,44 @@ fn gh_connection_persists_only_its_exact_credential_reference() {
 }
 
 #[test]
+fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
+    let (_directory, store) = store();
+    let auth = McpConnectionAuth::oauth("oauth", ENDPOINT).expect("OAuth reference");
+    store
+        .register_connection(
+            "oauth-integration",
+            "oauth",
+            ENDPOINT,
+            &super::McpRequestHeaders::default(),
+            &auth,
+        )
+        .expect("register OAuth connection");
+    let catalog = snapshot("oauth", ENDPOINT, &["search"]);
+    store
+        .publish_and_enable_connection(PROFILE, &catalog)
+        .expect("publish OAuth catalog");
+    let reference = McpToolReference::new("oauth", catalog.digest(), "search")
+        .expect("exact OAuth tool reference");
+    let wrong = McpConnectionAuth::oauth("oauth", "https://other.example/mcp")
+        .expect("different endpoint reference")
+        .stored_credential_id()
+        .expect("OAuth has credential reference")
+        .to_owned();
+    Connection::open(store.path())
+        .expect("open test mutation connection")
+        .execute(
+            "UPDATE mcp_connections SET auth_credential_id = ?1 WHERE connection_id = 'oauth'",
+            [&wrong],
+        )
+        .expect("mutate stored OAuth reference");
+
+    assert!(matches!(
+        store.resolve_alpha_tools(PROFILE, &[reference]),
+        Err(McpHostError::Invalid(_))
+    ));
+}
+
+#[test]
 fn catalog_publication_is_atomic_when_a_late_tool_insert_fails() {
     let (_directory, store) = store();
     store
@@ -204,8 +242,17 @@ fn catalog_publication_is_atomic_when_a_late_tool_insert_fails() {
 }
 
 #[test]
-fn plugin_connection_publication_rolls_back_every_row_on_a_late_failure() {
+fn registered_plugin_catalog_publication_rolls_back_catalog_and_attachment() {
     let (_directory, store) = store();
+    store
+        .register_connection(
+            "plugin.integration",
+            "plugin",
+            ENDPOINT,
+            &super::McpRequestHeaders::default(),
+            &McpConnectionAuth::None,
+        )
+        .expect("register plugin connection before discovery");
     let connection = Connection::open(store.path()).expect("open test injection connection");
     connection
         .execute_batch(
@@ -221,18 +268,10 @@ fn plugin_connection_publication_rolls_back_every_row_on_a_late_failure() {
 
     assert!(
         store
-            .publish_plugin_connection(
-                "plugin.integration",
-                PROFILE,
-                &McpConnectionAuth::None,
-                &snapshot,
-            )
+            .publish_and_enable_connection(PROFILE, &snapshot)
             .is_err()
     );
-    assert!(matches!(
-        store.connection_config("plugin"),
-        Err(McpHostError::NotFound(_))
-    ));
+    assert!(store.connection_config("plugin").is_ok());
     assert!(
         store
             .alpha_connection_ids(PROFILE)
@@ -246,7 +285,7 @@ fn plugin_connection_publication_rolls_back_every_row_on_a_late_failure() {
             |row| row.get(0),
         )
         .expect("count rolled-back integration rows");
-    assert_eq!(persisted_integrations, 0);
+    assert_eq!(persisted_integrations, 1);
 }
 
 #[test]

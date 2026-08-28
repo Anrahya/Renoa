@@ -149,9 +149,9 @@ permission-shaped fields are reserved in this slice.
 library, MCP catalog, skill library, and credential resolution boundary.
 `host.sqlite3` keeps installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
-complete MCP catalog snapshots, Alpha's attached connection identities,
-immutable skill revisions, source/profile bindings, rejected skill entries,
-and session activation pins.
+durable non-secret OAuth phases and terminal receipts, complete MCP catalog
+snapshots, Alpha's attached connection identities, immutable skill revisions,
+source/profile bindings, rejected skill entries, and session activation pins.
 Registration, discovery, and profile attachment remain separate states.
 Catalog replacement and attachment are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
@@ -174,12 +174,13 @@ running. The runtime itself is unchanged: the kernel freezes the same three
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. It accepts six typed actions:
+The Host adds one fixed `extension_manage` tool. It accepts seven typed actions:
 search the replaceable integrations.sh discovery adapter, add one exact
 refetched public candidate, one officially researched MCP definition, or one
 content-bound local Agent Plugins 1.0 directory; inspect a local package;
-install the exact inspected digest; list installed revisions; or connect one
-supported package MCP server to Alpha.
+install the exact inspected digest; list installed revisions; connect one
+supported package MCP server to Alpha; or authorize or explicitly restart one
+registered OAuth connection.
 Inspection and installation execute no package code. Installation publishes a
 full immutable tree at `plugins/<sha256>` before committing its durable record.
 Search returns bounded metadata rather than trusting a catalog as executable
@@ -191,8 +192,16 @@ miss returns explicit web-research or local-package
 guidance; Renoa never guesses an endpoint. A connection or authentication
 failure returns the retained package digest, package notices, skill result, and
 safe exact service error instead of rolling back unrelated components.
-Connect accepts either no credential or one named Secret Service bearer
-reference, never a raw key. It discovers and attaches through the same MCP
+Connect accepts no credential, one named Secret Service bearer reference, or
+Host-owned OAuth, never a raw key. OAuth opens an exact loopback browser flow,
+keeps client state and tokens in the desktop Secret Service, and stores only a
+deterministic reference, non-secret flow phase, and semantic terminal receipt
+in SQLite. It automatically refreshes an expired token under a cross-process
+connection lock. A possibly dispatched code exchange or refresh is not retried
+after process loss; replay of an already settled management operation reads its
+receipt without opening another browser. Explicit `authorize` with `restart:
+true` abandons an expired or unknown flow only for a new operation. The Host
+discovers and attaches through the same MCP
 catalog path used by `LocalHost`; the next `tool_search` sees the connection
 without restarting the session or surface. Package skills enter the same skill
 registry under a lower-priority plugin scope; workspace overrides global, and
@@ -356,6 +365,7 @@ Local Host state has one intentionally visible layout:
 <data-root>/
   host.sqlite3                  package metadata, MCP state, credential
                                 references, and skill/session bindings
+  oauth-locks/<sha256>.lock     process-crash-safe per-connection OAuth lock
   plugins/<sha256>/             immutable Agent Plugin directory
   skills/<sha256>/              immutable imported Agent Skill directory
   sessions/<session-uuid>/
@@ -394,10 +404,11 @@ human surface --\
 running agent --/                                      -> durable change
 ```
 
-Alpha v1's deliberate full access permits inspect, install, list, and connect
-without a second plugin approval prompt. A later restricted profile will gate
-the same management binding through its one effective permission scope. An
-agent may exercise that authority but cannot broaden it. MCP registry
+Alpha v1's deliberate full access permits inspect, install, list, connect, and
+authorize without a second plugin approval prompt. Service OAuth consent is
+authentication, not another Renoa permission decision. A later restricted
+profile will gate the same management binding through its one effective
+permission scope. An agent may exercise that authority but cannot broaden it. MCP registry
 attachments are visible at the next lookup; static runtime changes wait for a
 new operation and never mutate an active manifest.
 
@@ -415,10 +426,13 @@ modification.
 7. V0 exposes all configured local tools and adds no permission model.
 8. Provider, workspace, surface, and future permission policy stay outside the
    kernel.
+9. The Host owns OAuth coordination and secret references; the MCP adapter
+   speaks the protocol, while packages, surfaces, the loop, and kernel never
+   own credentials.
 
 ## Open decisions
 
-- future Host schema migrations beyond the proven v1-through-v7 chain;
+- future Host schema migrations beyond the proven v1-through-v8 chain;
 - historical resolved-binding retention across explicit catalog/profile
 changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
@@ -477,6 +491,19 @@ outside model context, unknown calls are not replayed, and schemas v1 and v2
 migrate to v3 without losing catalog state. A live registry object observes a
 newly committed attachment, and searching 1,000 tools exposes no schema. No
 kernel type or table changed.
+
+The first OAuth connection path is also complete. One `extension_manage`
+invocation can register an OAuth package connection, open PKCE browser
+authorization, persist the callback before acknowledgement, perform one code
+exchange, discover and attach the authenticated catalog, and make it visible
+without a restart. Credential state is bound to the exact MCP endpoint and
+stored only in Secret Service. Browser cancellation resumes without repeating
+registration; concurrent sessions perform one rotating refresh; and a lost
+credential exchange becomes durable unknown instead of being replayed. A
+completed or definitely failed management operation is receipt-backed, so the
+same session/command/tool-call identity causes no second authorization flow.
+Host schema v8 adds only the connection kind, non-secret recovery phases, and
+bounded semantic receipts; no kernel or RCP type changed.
 
 The standalone Agent Skills path is now complete. Alpha sees two additional
 constant schemas regardless of skill count. Search imports standard global and

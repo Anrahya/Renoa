@@ -2,6 +2,7 @@ import { executeAdapterRequest } from "./client.js";
 import type { AdapterRecord } from "./contract.js";
 import { AdapterProblem, safeDiagnostic, toWireFailure } from "./errors.js";
 import { MAX_RECORD_BYTES, MAX_STDIN_BYTES, WIRE_VERSION } from "./limits.js";
+import { isOAuthRequest, oauthSecrets } from "./oauth.js";
 import { parseAdapterRequest } from "./wire.js";
 
 async function main(): Promise<void> {
@@ -11,13 +12,27 @@ async function main(): Promise<void> {
   process.once("SIGTERM", cancel);
 
   let cleanup: (() => Promise<void>) | undefined;
-  let credentialToken: string | undefined;
+  let exactSecrets: string[] = [];
   let terminalWritten = false;
   try {
     let terminal: AdapterRecord;
     try {
       const request = parseAdapterRequest(await readRequest());
-      credentialToken = request.authorization?.token;
+      if (isOAuthRequest(request)) {
+        if (request.action === "oauth_begin") {
+          exactSecrets = [request.csrf_state];
+          if (request.oauth_state !== undefined) {
+            exactSecrets.push(...oauthSecrets(request.oauth_state));
+          }
+        } else {
+          exactSecrets = oauthSecrets(request.oauth_state);
+          if (request.action === "oauth_exchange") {
+            exactSecrets.push(request.authorization_code);
+          }
+        }
+      } else if (request.authorization !== undefined) {
+        exactSecrets = [request.authorization.token];
+      }
       terminal = await executeAdapterRequest(request, {
         signal: cancellation.signal,
         dispatchStarted: () =>
@@ -54,7 +69,7 @@ async function main(): Promise<void> {
         await cleanup();
       } catch (error) {
         process.stderr.write(
-          `MCP cleanup failed after terminal: ${safeDiagnostic(error, credentialToken === undefined ? [] : [credentialToken])}\n`,
+          `MCP cleanup failed after terminal: ${safeDiagnostic(error, exactSecrets)}\n`,
         );
         if (terminalWritten) {
           process.exitCode = 1;

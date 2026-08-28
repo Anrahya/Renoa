@@ -1,6 +1,6 @@
 use crate::{
     ALPHA_PROFILE_ID,
-    mcp::{McpCatalogSnapshot, discover},
+    mcp::{McpAuthorizationResolver, McpCatalogSnapshot, discover},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -91,13 +91,21 @@ impl LocalHost {
                 "RENOA_MCP_ADAPTER must be set before refreshing an MCP catalog".to_owned(),
             )
         })?;
-        let authorization = self
-            .config
-            .mcp_credentials
-            .resolve(&connection.auth, CancellationToken::new())
-            .await
-            .map_err(crate::mcp::McpAdapterError::from)
-            .map_err(crate::mcp::McpHostError::from)?;
+        let operation_id = format!("host-refresh.{}", uuid::Uuid::new_v4());
+        let authorizations = McpAuthorizationResolver::new(
+            &self.config.mcp_catalog,
+            self.config.mcp_adapter.clone(),
+            self.config.mcp_credentials.clone(),
+        );
+        let authorization = authorizations
+            .resolve(
+                connection_id,
+                &connection.endpoint,
+                &connection.auth,
+                &operation_id,
+                CancellationToken::new(),
+            )
+            .await?;
         let snapshot = discover(
             &adapter,
             connection_id,

@@ -141,6 +141,13 @@ impl McpCatalogStore {
                         reference.tool_name()
                     ))
                 })?;
+            let auth = McpConnectionAuth::from_stored(
+                &enabled.auth_kind,
+                enabled.auth_hostname,
+                enabled.auth_account,
+                enabled.auth_credential_id,
+            )?;
+            auth.validate_oauth_binding(reference.connection_id(), catalog.endpoint())?;
             tools.push(AlphaMcpTool {
                 integration_id: enabled.integration_id,
                 connection_id: reference.connection_id().to_owned(),
@@ -148,12 +155,7 @@ impl McpCatalogStore {
                 request_headers: catalog.request_headers.clone(),
                 protocol_version: catalog.protocol_version().to_owned(),
                 adapter_revision: catalog.adapter_revision().to_owned(),
-                auth: McpConnectionAuth::from_stored(
-                    &enabled.auth_kind,
-                    enabled.auth_hostname,
-                    enabled.auth_account,
-                    enabled.auth_credential_id,
-                )?,
+                auth,
                 tool,
             });
         }

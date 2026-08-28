@@ -1611,6 +1611,7 @@ name = "renoa-local"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "getrandom 0.4.3",
  "globset",
  "nix",
  "renoa-agent",

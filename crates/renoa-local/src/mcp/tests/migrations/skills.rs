@@ -15,6 +15,8 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
     connection
         .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE mcp_oauth_receipts;
+             DROP TABLE mcp_oauth_flows;
              ALTER TABLE installed_plugins DROP COLUMN homepage;
              INSERT INTO skill_revisions(
                 skill_digest, name, description, license, compatibility
@@ -176,6 +178,8 @@ fn downgrade_to_v4_with_large_skill(path: &Path) {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE mcp_oauth_receipts;
+             DROP TABLE mcp_oauth_flows;
              DROP TABLE plugin_mcp_servers;
              DROP TABLE installed_plugins;
              ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;

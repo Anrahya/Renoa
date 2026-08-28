@@ -11,7 +11,7 @@ use crate::mcp::{McpFailureKind, McpOutcomeCertainty, McpRequestHeaders};
 #[test]
 fn typed_remote_failure_survives_the_process_boundary() {
     let parsed = parse_discovery_record(
-        br#"{"wire_version":4,"event":"failed","failure":{"kind":"incompatible_protocol","certainty":"definite","message":"wrong revision","partial_changes_possible":false,"diagnostic":{"code":"protocol_version_mismatch","http_status":409,"detail":"server omitted the pinned revision"}}}
+        br#"{"wire_version":5,"event":"failed","failure":{"kind":"incompatible_protocol","certainty":"definite","message":"wrong revision","partial_changes_possible":false,"diagnostic":{"code":"protocol_version_mismatch","http_status":409,"detail":"server omitted the pinned revision"}}}
 "#,
     )
     .expect("valid terminal record");
@@ -29,7 +29,7 @@ fn typed_remote_failure_survives_the_process_boundary() {
 #[test]
 fn unknown_failure_class_is_not_accepted_as_a_current_wire_record() {
     let error = parse_discovery_record(
-        br#"{"wire_version":4,"event":"failed","failure":{"kind":"maybe","certainty":"definite","message":"ambiguous","partial_changes_possible":false,"diagnostic":{"detail":"invalid class"}}}
+        br#"{"wire_version":5,"event":"failed","failure":{"kind":"maybe","certainty":"definite","message":"ambiguous","partial_changes_possible":false,"diagnostic":{"detail":"invalid class"}}}
 "#,
     )
     .expect_err("current wire failure classes are closed");
@@ -39,7 +39,7 @@ fn unknown_failure_class_is_not_accepted_as_a_current_wire_record() {
 
 #[test]
 fn discovery_accepts_exactly_one_terminal_record() {
-    let record = br#"{"wire_version":4,"event":"failed","failure":{"kind":"protocol","certainty":"definite","message":"bad","partial_changes_possible":false,"diagnostic":{"detail":"bad"}}}
+    let record = br#"{"wire_version":5,"event":"failed","failure":{"kind":"protocol","certainty":"definite","message":"bad","partial_changes_possible":false,"diagnostic":{"detail":"bad"}}}
 "#;
     let mut duplicated = record.to_vec();
     duplicated.extend_from_slice(record);
@@ -58,12 +58,12 @@ async fn a_valid_terminal_catalog_survives_hung_adapter_cleanup() {
         &adapter,
         r#"
 const terminal = {
-  wire_version: 4,
+  wire_version: 5,
   event: "discovered",
   catalog: {
     endpoint: "https://example.com/mcp",
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.4.0",
+    adapter_revision: "mcp-client-node-v0.5.0",
     tools: [],
     rejected_tools: []
   }
@@ -100,12 +100,12 @@ async fn records_after_a_terminal_are_rejected_at_the_real_process_boundary() {
         &adapter,
         r#"
 const terminal = {
-  wire_version: 4,
+  wire_version: 5,
   event: "discovered",
   catalog: {
     endpoint: "https://example.com/mcp",
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.4.0",
+    adapter_revision: "mcp-client-node-v0.5.0",
     tools: [],
     rejected_tools: []
   }

@@ -274,7 +274,7 @@ async fn connection_failures_keep_actionable_model_facts_and_host_diagnostics() 
         r#"
 for await (const _chunk of process.stdin) {}
 process.stdout.write(JSON.stringify({
-  wire_version: 4,
+  wire_version: 5,
   event: "failed",
   failure: {
     kind: "incompatible_protocol",
@@ -357,15 +357,23 @@ process.stdout.write(JSON.stringify({
         details["mcp"]["failure"]["diagnostic"]["detail"],
         "server offered 2023-01-01"
     );
-    assert!(matches!(
-        mcp.connection_config("exa"),
-        Err(crate::mcp::McpHostError::NotFound(_))
-    ));
+    assert_failed_connection_is_registered_without_a_catalog(&mcp);
     assert!(
         mcp.alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read Alpha registry")
             .is_empty()
     );
+}
+
+fn assert_failed_connection_is_registered_without_a_catalog(mcp: &McpCatalogStore) {
+    let connection = mcp
+        .connection_config("exa")
+        .expect("failed discovery keeps the registered connection configuration");
+    assert_eq!(connection.endpoint, "https://example.com/mcp");
+    assert!(matches!(
+        mcp.load_catalog("exa"),
+        Err(crate::mcp::McpHostError::NotFound(_))
+    ));
 }
 
 #[tokio::test]

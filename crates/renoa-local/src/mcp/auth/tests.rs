@@ -164,6 +164,19 @@ fn stored_credential_references_fail_closed() {
         .is_ok()
     );
     assert!(McpConnectionAuth::gh_cli("github.com/bad", "Anrahya").is_err());
+
+    let oauth = McpConnectionAuth::oauth("search.default", "https://first.example/mcp")
+        .expect("create endpoint-bound OAuth reference");
+    assert!(
+        oauth
+            .validate_oauth_binding("search.default", "https://first.example/mcp")
+            .is_ok()
+    );
+    assert!(
+        oauth
+            .validate_oauth_binding("search.default", "https://second.example/mcp")
+            .is_err()
+    );
 }
 
 fn compile_fixture(directory: &Path, source: &str) -> std::path::PathBuf {

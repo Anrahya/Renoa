@@ -8,7 +8,8 @@ Node process adapter implements this boundary under `adapters/mcp-client-node`.
 The Host durably registers connections, publishes complete catalog snapshots,
 attaches connections to Alpha's searchable registry, resolves exact references
 into ordinary kernel-backed calls, and supports no authentication, an exact
-GitHub CLI account reference, or a named Secret Service bearer reference.
+GitHub CLI account reference, a named Secret Service bearer reference, or a
+Host-owned OAuth 2.1 browser flow.
 
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md) owns the
 broader extension direction. [`renoa-host-v0.md`](renoa-host-v0.md) owns runtime
@@ -55,6 +56,8 @@ V0 supports exactly:
 - `server/discover`, paginated `tools/list`, and `tools/call`;
 - direct no-auth connections, exact `gh`-resolved bearer credentials, and named
   Secret Service bearer credentials;
+- Host-owned OAuth 2.1 authorization-code flows with PKCE for remote HTTP MCP
+  servers, followed by automatic just-in-time refresh;
 - bounded public request headers supplied by a reviewed integration or Agent
   Plugin package;
 - complete tool results containing ordered text and image blocks; and
@@ -72,7 +75,7 @@ unsupported server fails with a typed diagnostic.
 | --- | --- |
 | Kernel | Persist effect intent and dispatch before invocation, freeze the runtime, settle definite results, and preserve uncertainty |
 | Agent loop | Expose three fixed registry `ToolSpec`s, persist each exact `ToolCall`, and balance definite results into conversation history |
-| Local Host | Own endpoint configuration, catalog refresh, profile attachment, search, exact-reference resolution, deadlines, and the adapter process lifecycle |
+| Local Host | Own endpoint configuration, catalog refresh, profile attachment, search, exact-reference resolution, OAuth coordination, deadlines, and adapter process lifecycles |
 | MCP Node adapter | Speak the pinned MCP revision through the official SDK, validate untrusted protocol data, and report dispatch certainty |
 | MCP server | Implement its tools, validate service inputs, and return protocol-compliant results |
 | Surface | Present Host state and operation outcomes; never own an MCP catalog or invoke the server directly |
@@ -87,7 +90,9 @@ These concepts are distinct even though the first proof uses one of each:
 - **Direct integration:** one reviewed Streamable HTTP endpoint definition.
 - **Connection:** one configured instance of that integration. It stores
   no-auth, an exact `gh` hostname/account reference, or a named Secret Service
-  credential reference, never the token.
+  credential reference. OAuth connections store only a deterministic secret
+  reference, durable non-secret flow phase, and semantic terminal receipt in
+  SQLite, never a token.
 - **Catalog snapshot:** one complete, validated result of discovery and every
   `tools/list` page.
 - **Profile attachment:** permission for Alpha's registry to search and resolve
@@ -120,6 +125,12 @@ tool identity, attachment, catalog-reference, or execution behavior; the
 v1/v2-to-v3 MCP migration remains the same proven transformation.
 Schema v7 preserves package homepage metadata and adds a plugin skill scope;
 neither changes the MCP wire or tool identity.
+Schema v8 adds the OAuth connection kind, durable flow phases, and terminal
+operation receipts. A receipt is keyed by stable session, command, and
+tool-call identity and contains only the semantic outcome needed to replay the
+same management effect without opening another browser or repeating an OAuth
+POST. OAuth client state, PKCE verifiers, authorization codes, access tokens,
+refresh tokens, client secrets, and remote failure text remain outside SQLite.
 
 ## Endpoint boundary
 
@@ -137,6 +148,12 @@ standard input, scopes it to the exact configured URL, and wipes it after use.
 It never enters Host storage, arguments, environment, catalog data,
 diagnostics, model context, or a runtime binding.
 
+An OAuth credential bundle is bound to the exact configured MCP endpoint at
+both the Node and Rust process boundaries. Its Secret Service reference is
+derived from the connection and endpoint identity. This prevents a token from
+being reused for another service even if separate local data stores reuse a
+connection name.
+
 An integration may supply bounded fixed public headers, such as Exa's source
 identifier. Renoa rejects authorization, API-key, cookie, MCP, content, and
 other client-owned header names so package data cannot impersonate a credential
@@ -151,6 +168,52 @@ approved connection.
 
 The adapter uses the platform trust store. Custom certificate authorities,
 client certificates, proxies, and insecure TLS switches are outside v0.
+
+## OAuth lifecycle
+
+OAuth remains Host connection policy, not MCP tool behavior and not kernel
+state. `extension_manage` can add or connect a package with `credential.kind =
+"oauth"`; the Host registers the connection before authentication but publishes
+and attaches its catalog only after authorization and authenticated discovery
+both succeed. `authorize` resumes an existing flow. `restart: true` is the
+explicit instruction to abandon an expired or unknown flow and discard cached
+tokens before starting again.
+
+The Host binds an exact `127.0.0.1` callback on an ephemeral port, creates a
+cryptographically random state value, persists the callback identity and phase,
+then asks the pinned MCP client SDK to perform protected-resource and
+authorization-server discovery. The SDK uses PKCE and either advertised client
+metadata or Dynamic Client Registration. Renoa opens the authorization URL with
+`xdg-open` as an argument, never through a shell. The callback accepts one
+bounded GET from loopback, requires the exact Host header and state, records the
+code in Secret Service before acknowledging the browser, and validates `iss`
+when the server advertises it. The callback expires after ten minutes.
+
+Credential-side POST requests are never retried inside one adapter operation.
+The Host records `begin`, code exchange, and refresh as explicit durable phases.
+After process loss, a committed terminal credential state may be reconciled; an
+exchange that may have reached the authorization server without a durable
+terminal becomes `unknown` and is never repeated automatically. Access-token
+inspection is local. Expired tokens refresh under a process-crash-safe file
+lock, so concurrent sessions share one rotating refresh-token exchange. A
+revoked but unexpired token produces the server's ordinary model-visible 401;
+the agent can then invoke explicit reauthorization.
+
+`extension_manage` is safe to replay only because the Host also commits a
+bounded terminal receipt before returning. Re-entry with the same stable
+session/command/tool-call identity reads that receipt and performs no remote
+OAuth mutation. An authorized receipt is accepted only while its endpoint-bound
+credential still resolves locally; otherwise the operation fails closed and a
+new command must explicitly authorize again. Definite remote failure receipts
+record only their class, not the server message or diagnostics. Receipts remain
+until their connection is removed; garbage collection after kernel settlement
+is deferred until the Host has a proven settlement boundary.
+
+Authorization URLs may be emitted as surface progress while the browser is
+waiting. Raw OAuth state and credentials never enter tool arguments, model
+context, Host SQLite, environment variables, or package content. V0 requires a
+desktop Secret Service (`secret-tool`) and a browser opener on the executing
+node. Packages are portable; connections and credentials remain node-local.
 
 ## Protocol lifecycle
 
@@ -373,15 +436,20 @@ The maintained MCP SDK remains behind a narrow Node process adapter under
 `adapters/`. Rust owns process supervision and exposes only native Renoa
 types inward.
 
-The first process contract has two actions:
+The process contract has six actions:
 
 - **discover:** accept one endpoint, produce one complete normalized catalog or
   one typed terminal failure;
 - **call:** accept one frozen endpoint/tool/request, report the dispatch
   transition, then produce one terminal result, definite failure, or typed
-  uncertain failure.
+  uncertain failure;
+- **oauth_begin:** discover OAuth metadata and produce either an authorization
+  redirect, an existing usable credential, or one typed failure;
+- **oauth_exchange:** exchange exactly one saved callback code;
+- **oauth_token:** inspect saved token state without network mutation; and
+- **oauth_refresh:** perform exactly one refresh attempt.
 
-The version-4 process request may carry one bounded bearer authorization value
+The version-5 process request may carry one bounded bearer authorization value
 and bounded fixed public headers.
 Standard output is a bounded machine-readable record stream. Standard error is
 bounded, redacted diagnostic text and never part of the protocol. The first
@@ -478,7 +546,16 @@ and the real process boundary:
     just-in-time bearer through the real adapter, and a live registry sees the
     attached catalog without restart; and
 19. durable structured details remain Host-visible but never reach a normal or
-    compaction model request.
+    compaction model request;
+20. a cancelled browser flow resumes against the exact saved callback without
+    repeating registration, while SQLite contains no code, token, or state;
+21. concurrent expired-token reads perform one rotating refresh and a lost
+    refresh becomes durable unknown rather than being replayed; and
+22. explicit reauthorization drops cached tokens, endpoint-bound state cannot
+    cross services, callback state is exact, and provider failures are bounded
+    and redacted; and
+23. replay of the same settled OAuth management operation reads its terminal
+    receipt without a second browser flow or credential POST.
 
 ## Locked decisions
 
@@ -487,7 +564,11 @@ and the real process boundary:
 - The first revision prefers modern MCP `2026-07-28` and accepts only the
   pinned SDK's enumerated legacy revisions over Streamable HTTP.
 - Connections are direct and use no auth, one exact `gh` CLI account reference,
-  or one named Secret Service bearer reference; Renoa stores no token.
+  one named Secret Service bearer reference, or Host-owned OAuth; Renoa stores
+  no token in SQLite or package data.
+- OAuth uses PKCE, exact loopback callbacks, endpoint-bound Secret Service
+  state, explicit durable phases, one credential POST per adapter operation,
+  and no automatic replay after an uncertain exchange.
 - Fixed integration headers are public, bounded data. Sensitive and
   client-owned header names are rejected.
 - Discovery publishes only complete, bounded, deterministic catalog snapshots.
@@ -506,10 +587,10 @@ and the real process boundary:
 ## Open decisions after this slice
 
 - compatibility outside the enumerated MCP revisions and stdio transport;
-- Renoa-owned OAuth flows, GUI credential entry, and cross-platform secret
-  storage or synchronization;
-- future Host schema migrations beyond v7;
-- automatic refresh, cache hints, and list-change subscriptions;
+- headless/device authorization, GUI credential entry, credential revocation,
+  cross-platform secret stores, and cross-node secret synchronization;
+- future Host schema migrations beyond v8;
+- catalog cache hints and list-change subscriptions;
 - progress projection;
 - standards-complete client-side argument validation and any schema behavior
   beyond the pinned SDK's structured-output validation;
@@ -522,7 +603,7 @@ and the real process boundary:
 
 ## Evidence
 
-Reviewed on 2026-08-28. This contract copies no upstream source.
+Reviewed on 2026-08-29. This contract copies no upstream source.
 
 - [MCP specification `2026-07-28` at `5f5440bb26a62e2cf3440b92da5a667efa03b267`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267), with the repository's Apache-2.0 transition, remaining MIT material, and CC-BY-4.0 documentation.
 - [MCP TypeScript SDK 2.0.0 at `cc4b41617ce3601b1290d67216ea0b194a3cd9ac`](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac). The published `@modelcontextprotocol/client@2.0.0` package declares MIT; the source repository records the broader MCP license transition.

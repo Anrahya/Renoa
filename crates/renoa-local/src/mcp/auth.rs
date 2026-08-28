@@ -27,6 +27,7 @@ pub(crate) enum McpConnectionAuth {
     None,
     GhCli { hostname: String, account: String },
     SecretServiceBearer { credential_id: String },
+    OAuth { credential_id: String },
 }
 
 impl McpConnectionAuth {
@@ -46,6 +47,15 @@ impl McpConnectionAuth {
         })
     }
 
+    pub(crate) fn oauth(connection_id: &str, endpoint: &str) -> Result<Self, McpHostError> {
+        super::validate_identity("connection", connection_id)?;
+        super::validate_endpoint(endpoint)?;
+        let digest = super::hex_sha256(format!("{connection_id}\0{endpoint}").as_bytes());
+        Ok(Self::OAuth {
+            credential_id: format!("oauth.{digest}"),
+        })
+    }
+
     pub(crate) fn from_stored(
         kind: &str,
         hostname: Option<String>,
@@ -58,6 +68,10 @@ impl McpConnectionAuth {
             ("secret_service_bearer", None, None, Some(credential_id)) => {
                 Self::secret_service_bearer(&credential_id)
             }
+            ("oauth", None, None, Some(credential_id)) => {
+                super::validate_identity("credential", &credential_id)?;
+                Ok(Self::OAuth { credential_id })
+            }
             _ => Err(McpHostError::Invalid(
                 "stored MCP credential reference is malformed".to_owned(),
             )),
@@ -69,28 +83,51 @@ impl McpConnectionAuth {
             Self::None => "none",
             Self::GhCli { .. } => "gh_cli",
             Self::SecretServiceBearer { .. } => "secret_service_bearer",
+            Self::OAuth { .. } => "oauth",
         }
     }
 
     pub(crate) fn stored_hostname(&self) -> Option<&str> {
         match self {
             Self::GhCli { hostname, .. } => Some(hostname),
-            Self::None | Self::SecretServiceBearer { .. } => None,
+            Self::None | Self::SecretServiceBearer { .. } | Self::OAuth { .. } => None,
         }
     }
 
     pub(crate) fn stored_account(&self) -> Option<&str> {
         match self {
             Self::GhCli { account, .. } => Some(account),
-            Self::None | Self::SecretServiceBearer { .. } => None,
+            Self::None | Self::SecretServiceBearer { .. } | Self::OAuth { .. } => None,
         }
     }
 
     pub(crate) fn stored_credential_id(&self) -> Option<&str> {
         match self {
-            Self::SecretServiceBearer { credential_id } => Some(credential_id),
+            Self::SecretServiceBearer { credential_id } | Self::OAuth { credential_id } => {
+                Some(credential_id)
+            }
             Self::None | Self::GhCli { .. } => None,
         }
+    }
+
+    pub(crate) fn oauth_credential_id(&self) -> Option<&str> {
+        match self {
+            Self::OAuth { credential_id } => Some(credential_id),
+            Self::None | Self::GhCli { .. } | Self::SecretServiceBearer { .. } => None,
+        }
+    }
+
+    pub(crate) fn validate_oauth_binding(
+        &self,
+        connection_id: &str,
+        endpoint: &str,
+    ) -> Result<(), McpHostError> {
+        if matches!(self, Self::OAuth { .. }) && *self != Self::oauth(connection_id, endpoint)? {
+            return Err(McpHostError::Invalid(
+                "stored MCP OAuth credential reference does not match its connection".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -110,6 +147,10 @@ impl Default for McpCredentialResolver {
 }
 
 impl McpCredentialResolver {
+    pub(super) fn secret_tool_executable(&self) -> PathBuf {
+        self.secret_tool_executable.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn with_gh_executable(path: PathBuf) -> Self {
         Self {
@@ -141,6 +182,12 @@ impl McpCredentialResolver {
                 .resolve_secret_service_token(credential_id, cancellation)
                 .await
                 .map(|token| Some(McpAuthorization { token })),
+            McpConnectionAuth::OAuth { .. } => Err(McpCredentialError::Unavailable {
+                source_name: "OAuth",
+                reference: "an interactive MCP connection".to_owned(),
+                status: "authorization required".to_owned(),
+                guidance: "authorize the connection through extension_manage".to_owned(),
+            }),
         }
     }
 
@@ -297,6 +344,10 @@ pub(crate) struct McpAuthorization {
 }
 
 impl McpAuthorization {
+    pub(super) fn from_token(mut token: String) -> Result<Self, McpCredentialError> {
+        let bytes = std::mem::take(&mut token).into_bytes();
+        SecretToken::from_command_output(bytes, "OAuth").map(|token| Self { token })
+    }
     #[cfg(test)]
     pub(crate) fn for_test(token: &str) -> Self {
         Self {

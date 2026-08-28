@@ -42,7 +42,10 @@ Live ACP updates come from a presentation-only event observer in the model and
 tool adapters; the kernel remains the sole durable execution owner.
 
 The Host data root contains `host.sqlite3` for MCP catalog and profile-attachment
-state plus `sessions/<session-id>/`. Each session uses `session.json` for
+state, non-secret OAuth phases and terminal receipts, and `oauth-locks/` for
+per-connection refresh coordination, plus `sessions/<session-id>/`. OAuth credential bundles live in
+the desktop Secret Service, not this data root; the current desktop flow
+requires `secret-tool` and `xdg-open`. Each session uses `session.json` for
 identity, `runtime.jsonl` for acknowledged provider/model/reasoning choices,
 `kernel.sqlite3` for recovery truth, and `trace.sqlite3` for the ordered
 diagnostic timeline. Token/cache usage, exact provider payloads, stream chunks,

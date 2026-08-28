@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { parseEndpoint } from "../src/endpoint.js";
 import { AdapterProblem, toWireFailure } from "../src/errors.js";
+import { WIRE_VERSION } from "../src/limits.js";
 import { parseAdapterRequest } from "../src/wire.js";
 
 test("endpoint validation allows HTTPS and explicit loopback HTTP only", () => {
@@ -32,7 +33,7 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 4,
+        wire_version: WIRE_VERSION,
         action: "discover",
         endpoint: "https://example.com/mcp",
         surprise: true,
@@ -42,7 +43,7 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 4,
+        wire_version: WIRE_VERSION,
         action: "call",
         endpoint: "https://example.com/mcp",
         protocol_version: "2026-07-28",
@@ -55,16 +56,18 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
 
 test("wire parser accepts only bounded bearer authorization", () => {
   const parsed = parseAdapterRequest({
-    wire_version: 4,
+    wire_version: WIRE_VERSION,
     action: "discover",
     endpoint: "https://example.com/mcp",
     authorization: { scheme: "bearer", token: "secret-token" },
   });
+  assert.equal(parsed.action, "discover");
+  if (parsed.action !== "discover") return;
   assert.equal(parsed.authorization?.token, "secret-token");
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 4,
+        wire_version: WIRE_VERSION,
         action: "discover",
         endpoint: "https://example.com/mcp",
         authorization: { scheme: "bearer", token: "bad\ntoken" },
@@ -75,16 +78,18 @@ test("wire parser accepts only bounded bearer authorization", () => {
 
 test("wire parser normalizes bounded public headers and blocks client-owned fields", () => {
   const parsed = parseAdapterRequest({
-    wire_version: 4,
+    wire_version: WIRE_VERSION,
     action: "discover",
     endpoint: "https://example.com/mcp",
     headers: { "X-Exa-Source": "agent-plugin" },
   });
+  assert.equal(parsed.action, "discover");
+  if (parsed.action !== "discover") return;
   assert.deepEqual(parsed.headers, { "x-exa-source": "agent-plugin" });
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 4,
+        wire_version: WIRE_VERSION,
         action: "discover",
         endpoint: "https://example.com/mcp",
         headers: { authorization: "Bearer package-secret" },
@@ -94,7 +99,7 @@ test("wire parser normalizes bounded public headers and blocks client-owned fiel
   assert.throws(
     () =>
       parseAdapterRequest({
-        wire_version: 4,
+        wire_version: WIRE_VERSION,
         action: "discover",
         endpoint: "https://example.com/mcp",
         headers: { Tenant: "one", tenant: "two" },

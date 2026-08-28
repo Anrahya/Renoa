@@ -71,6 +71,12 @@ Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
 enables Host catalog refresh and invocation. A tool reaches Alpha only after a
 Host profile attachment such as the GitHub command above. A committed change is
 visible on the next registry call without restarting ACP or the surface.
+OAuth MCP connections additionally require the desktop `secret-tool` command
+and `xdg-open`. Alpha invokes the same `extension_manage` tool over ACP; the
+Host opens the browser, streams an authorization-required tool update, waits
+for its exact loopback callback, and publishes the catalog only after
+authenticated discovery succeeds. ACP and Waku never store or replay OAuth
+state.
 `RENOA_INTEGRATION_CATALOG_ADAPTER` is the absolute path to the built,
 replaceable discovery adapter. It lets `extension_manage` search integrations.sh
 and revalidate one selected public MCP candidate before the Host installs and

@@ -99,18 +99,26 @@ instructions and files only. It cannot add a tool or permission.
 Alpha receives one fixed `extension_manage` tool rather than one management
 schema per package. It can search the replaceable discovery source, add one
 exact refetched catalog candidate, one officially researched MCP definition,
-or one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local package; install exact
-content; list installed revisions; and connect a supported package MCP server
-to Alpha. Every add source becomes the same immutable package. Supported skills
-hot-load first, then Renoa attempts the connection. Discovery is a hint: the
+or one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local
+package; install exact content; list installed revisions; and connect a
+supported package MCP server to Alpha. It can also authorize or explicitly
+restart a registered OAuth connection. Every add source becomes the same
+immutable package. Supported skills hot-load first, then Renoa attempts the
+connection. Discovery is a hint: the
 Host revalidates catalog data and the real endpoint, while a miss directs Alpha
 to official web research or an exact local package instead of guessing. Alpha
 v1's deliberate full-access policy permits those actions; the tool does not
 create a second approval system or expand the agent's authority.
 
 Packages never contain credentials. A connection may name a Secret Service
-bearer credential, which the Host resolves only at the request boundary. The
-key is not returned to Alpha or stored in Renoa SQLite. A successful connection
+bearer credential or select Host-owned OAuth. Named keys resolve only at the
+request boundary. OAuth client state and tokens stay in Secret Service while
+SQLite stores only a reference, non-secret recovery phase, and semantic
+terminal receipt keyed by stable session/command/tool-call identity. Neither
+kind of secret or remote failure text is returned to Alpha through that receipt
+or stored in Renoa SQLite. Browser consent is
+service authentication under Alpha's existing full-access scope, not a second
+Renoa approval system. A successful connection
 is visible to the next `tool_search` call without restarting Alpha or its
 surface. A connection failure remains model-visible and preserves the installed
 package and any successfully loaded skills. A package-provided skill is visible
@@ -159,4 +167,9 @@ The real headless product path must prove that:
 10. an Exa-shaped package is content-bound through inspect and install, sends
     its public header and a just-in-time bearer through the real MCP boundary,
     becomes searchable without restart, and never stores the key or adds an
-    external schema to the normal model request.
+    external schema to the normal model request; and
+11. an OAuth package connection completes through the same `extension_manage`
+    surface, survives callback cancellation and Host restart safely, refreshes
+    once across concurrent sessions, replays a settled management call without
+    a second browser or OAuth POST, and never exposes credential state to the
+    model.

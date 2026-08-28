@@ -18,7 +18,7 @@ use crate::process::{child_pid_raw, configure_process_group, stop_process_group_
 #[cfg(test)]
 mod tests;
 
-const WIRE_VERSION: u32 = 4;
+const WIRE_VERSION: u32 = 5;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;

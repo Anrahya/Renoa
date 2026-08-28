@@ -7,10 +7,10 @@ mod migrations;
 
 use migrations::{
     MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4, MIGRATE_V4_TO_V5, MIGRATE_V5_TO_V6,
-    MIGRATE_V6_TO_V7,
+    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8,
 };
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -44,7 +44,7 @@ const SCHEMA: &str = "
         connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
         integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
         auth_kind TEXT NOT NULL CHECK (
-            auth_kind IN ('none', 'gh_cli', 'secret_service_bearer')
+            auth_kind IN ('none', 'gh_cli', 'secret_service_bearer', 'oauth')
         ),
         auth_hostname TEXT,
         auth_account TEXT,
@@ -58,7 +58,7 @@ const SCHEMA: &str = "
              AND length(auth_account) > 0
              AND auth_credential_id IS NULL)
             OR
-            (auth_kind = 'secret_service_bearer'
+            (auth_kind IN ('secret_service_bearer', 'oauth')
              AND auth_hostname IS NULL
              AND auth_account IS NULL
              AND length(auth_credential_id) > 0)
@@ -105,6 +105,42 @@ const SCHEMA: &str = "
         connection_id TEXT NOT NULL
             REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
         PRIMARY KEY (profile_id, connection_id)
+    ) STRICT;
+
+    CREATE TABLE mcp_oauth_flows (
+        connection_id TEXT PRIMARY KEY
+            REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
+        operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 512),
+        phase TEXT NOT NULL CHECK (
+            phase IN (
+                'begin_in_flight', 'awaiting_callback', 'callback_ready',
+                'exchange_in_flight', 'refresh_in_flight', 'unknown'
+            )
+        ),
+        callback_port INTEGER,
+        expires_at_ms INTEGER,
+        CHECK (
+            (phase IN ('begin_in_flight', 'awaiting_callback', 'callback_ready',
+                       'exchange_in_flight')
+             AND callback_port BETWEEN 1 AND 65535
+             AND expires_at_ms > 0)
+            OR
+            (phase IN ('refresh_in_flight', 'unknown')
+             AND callback_port IS NULL
+             AND expires_at_ms IS NULL)
+        )
+    ) STRICT;
+
+    CREATE TABLE mcp_oauth_receipts (
+        connection_id TEXT NOT NULL
+            REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
+        operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 512),
+        outcome_json TEXT NOT NULL CHECK (
+            length(outcome_json) BETWEEN 1 AND 16384
+            AND json_valid(outcome_json)
+            AND json_type(outcome_json) = 'object'
+        ),
+        PRIMARY KEY (connection_id, operation_id)
     ) STRICT;
 
     CREATE TABLE skill_revisions (
@@ -187,7 +223,7 @@ const SCHEMA: &str = "
         PRIMARY KEY (plugin_digest, server_id)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 7);
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 8);
 ";
 
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
@@ -215,7 +251,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=6) {
+    if matches!(observed, 1..=7) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -254,6 +290,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -265,6 +302,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -274,6 +312,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -282,6 +321,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V4_TO_V5)?;
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -289,12 +329,20 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
             5 => {
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
             }
             6 => {
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
+                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                transaction.commit()?;
+                Ok(())
+            }
+            7 => {
+                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())

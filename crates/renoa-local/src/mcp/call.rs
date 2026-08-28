@@ -28,14 +28,14 @@ use super::{
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
-const WIRE_VERSION: u32 = 4;
+const WIRE_VERSION: u32 = 5;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(125);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
 
 pub(super) const CALL_BOUNDARY_REVISION: &str =
-    "rust-call-v1/wire-4/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
+    "rust-call-v1/wire-5/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
 
 #[derive(Debug)]
 pub(super) struct McpCallFailure {

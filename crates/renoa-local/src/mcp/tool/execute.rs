@@ -124,6 +124,7 @@ pub(crate) fn definite_boundary_error(
         ) => ToolError::permission_denied(message),
         McpAdapterError::Credential(
             McpCredentialError::Start { .. }
+            | McpCredentialError::Write { .. }
             | McpCredentialError::MissingPipe(_)
             | McpCredentialError::Wait { .. }
             | McpCredentialError::Cleanup { .. }

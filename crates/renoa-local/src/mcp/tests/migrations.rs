@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::{Arc, Barrier},
     thread,
 };
@@ -9,7 +10,7 @@ use tempfile::tempdir;
 use super::{ENDPOINT, PROFILE, snapshot, store};
 use crate::{
     host::catalog::HostCatalogError,
-    mcp::{McpCatalogStore, McpConnectionAuth, McpHostError},
+    mcp::{McpCatalogStore, McpConnectionAuth, McpHostError, McpRequestHeaders},
 };
 
 mod skills;
@@ -23,7 +24,7 @@ fn a_newer_host_catalog_schema_is_rejected() {
     drop(store);
     Connection::open(&path)
         .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 8_u32)
+        .pragma_update(None, "user_version", 9_u32)
         .expect("advance schema version");
 
     assert!(matches!(
@@ -51,6 +52,8 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE mcp_oauth_receipts;
+             DROP TABLE mcp_oauth_flows;
              DROP TABLE plugin_mcp_servers;
              DROP TABLE installed_plugins;
              ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
@@ -124,6 +127,8 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
         .expect("open migration fixture")
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE mcp_oauth_receipts;
+             DROP TABLE mcp_oauth_flows;
              DROP TABLE plugin_mcp_servers;
              DROP TABLE installed_plugins;
              ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
@@ -185,6 +190,8 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
         .expect("open migration fixture")
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE mcp_oauth_receipts;
+             DROP TABLE mcp_oauth_flows;
              DROP TABLE plugin_mcp_servers;
              DROP TABLE installed_plugins;
              ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
@@ -239,6 +246,8 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE mcp_oauth_receipts;
+             DROP TABLE mcp_oauth_flows;
              DROP TABLE plugin_mcp_servers;
              DROP TABLE installed_plugins;
              ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
@@ -294,6 +303,119 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
             .prepare("SELECT auth_credential_id FROM mcp_connections")
             .is_ok()
     );
+}
+
+#[test]
+fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
+    let (directory, store) = store();
+    store
+        .register_direct_connection("example", "primary", ENDPOINT)
+        .expect("register existing connection");
+    let existing = snapshot("primary", ENDPOINT, &["search"]);
+    store
+        .publish_and_enable_connection(PROFILE, &existing)
+        .expect("publish and attach existing catalog");
+    let path = store.path().to_owned();
+    drop(store);
+
+    Connection::open(&path)
+        .expect("open migration fixture")
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DROP TABLE mcp_oauth_receipts;
+             DROP TABLE mcp_oauth_flows;
+             CREATE TABLE mcp_connections_v7 (
+                connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
+                integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
+                auth_kind TEXT NOT NULL CHECK (
+                    auth_kind IN ('none', 'gh_cli', 'secret_service_bearer')
+                ),
+                auth_hostname TEXT,
+                auth_account TEXT,
+                auth_credential_id TEXT,
+                CHECK (
+                    (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL
+                     AND auth_credential_id IS NULL)
+                    OR
+                    (auth_kind = 'gh_cli'
+                     AND length(auth_hostname) > 0
+                     AND length(auth_account) > 0
+                     AND auth_credential_id IS NULL)
+                    OR
+                    (auth_kind = 'secret_service_bearer'
+                     AND auth_hostname IS NULL
+                     AND auth_account IS NULL
+                     AND length(auth_credential_id) > 0)
+                )
+             ) STRICT;
+             INSERT INTO mcp_connections_v7(
+                connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+                auth_credential_id
+             )
+             SELECT connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+                    auth_credential_id
+             FROM mcp_connections;
+             DROP TABLE mcp_connections;
+             ALTER TABLE mcp_connections_v7 RENAME TO mcp_connections;
+             UPDATE host_metadata SET schema_version = 7 WHERE singleton = 1;
+             PRAGMA user_version = 7;",
+        )
+        .expect("downgrade fixture to schema v7");
+
+    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
+        .expect("migrate schema v7 to current");
+    assert_eq!(
+        migrated
+            .connection_config("primary")
+            .expect("load existing connection")
+            .auth,
+        McpConnectionAuth::None
+    );
+    assert_eq!(
+        migrated
+            .load_catalog("primary")
+            .expect("load existing catalog after migration")
+            .digest(),
+        existing.digest()
+    );
+    assert_eq!(
+        migrated
+            .alpha_tool_summaries(PROFILE)
+            .expect("load existing attachment after migration")
+            .len(),
+        1
+    );
+    let oauth = McpConnectionAuth::oauth("oauth", "https://example.com/oauth-mcp")
+        .expect("create OAuth reference");
+    migrated
+        .register_connection(
+            "oauth-integration",
+            "oauth",
+            "https://example.com/oauth-mcp",
+            &McpRequestHeaders::default(),
+            &oauth,
+        )
+        .expect("register OAuth connection after migration");
+    assert_eq!(
+        migrated
+            .connection_config("oauth")
+            .expect("load OAuth connection")
+            .auth,
+        oauth
+    );
+    assert_oauth_tables(migrated.path());
+}
+
+fn assert_oauth_tables(path: &Path) {
+    let connection = Connection::open(path).expect("open migrated catalog");
+    for (table, column) in [
+        ("mcp_oauth_flows", "phase"),
+        ("mcp_oauth_receipts", "outcome_json"),
+    ] {
+        connection
+            .prepare(&format!("SELECT {column} FROM {table}"))
+            .unwrap_or_else(|error| panic!("OAuth table {table} is missing: {error}"));
+    }
 }
 
 #[test]

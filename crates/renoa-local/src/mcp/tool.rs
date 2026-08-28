@@ -9,16 +9,16 @@ use renoa_agent::{
     BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::AgentToolBinding;
-use renoa_kernel::EffectRecovery;
+use renoa_kernel::{CommandId, EffectRecovery, SessionId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpAdapterError, McpCatalogStore,
+    LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpAuthorizationResolver, McpCatalogStore,
     McpCredentialResolver, McpHostError, McpToolReference, SEARCH_RESULT_LIMIT,
     call::{CALL_BOUNDARY_REVISION, call_tool},
-    rank_tools,
+    oauth_operation_id, rank_tools,
 };
 use crate::ALPHA_PROFILE_ID;
 use execute::{definite_boundary_error, execution_details, map_failure};
@@ -34,7 +34,10 @@ pub(crate) fn alpha_registry_bindings(
     store: McpCatalogStore,
     adapter: Option<PathBuf>,
     credentials: McpCredentialResolver,
+    session_id: SessionId,
+    command_id: Option<CommandId>,
 ) -> Vec<AgentToolBinding> {
+    let authorizations = McpAuthorizationResolver::new(&store, adapter.clone(), credentials);
     vec![
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/search"),
@@ -48,7 +51,13 @@ pub(crate) fn alpha_registry_bindings(
         ),
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/execute/{CALL_BOUNDARY_REVISION}"),
-            Arc::new(ExecuteTool::new(store, adapter, credentials)),
+            Arc::new(ExecuteTool::new(
+                store,
+                adapter,
+                authorizations,
+                session_id,
+                command_id,
+            )),
             EffectRecovery::NeverReplay,
         ),
     ]
@@ -219,7 +228,9 @@ impl Tool for LoadTool {
 struct ExecuteTool {
     store: McpCatalogStore,
     adapter: Option<PathBuf>,
-    credentials: McpCredentialResolver,
+    authorizations: McpAuthorizationResolver,
+    session_id: SessionId,
+    command_id: Option<CommandId>,
     spec: ToolSpec,
 }
 
@@ -227,12 +238,16 @@ impl ExecuteTool {
     fn new(
         store: McpCatalogStore,
         adapter: Option<PathBuf>,
-        credentials: McpCredentialResolver,
+        authorizations: McpAuthorizationResolver,
+        session_id: SessionId,
+        command_id: Option<CommandId>,
     ) -> Self {
         Self {
             store,
             adapter,
-            credentials,
+            authorizations,
+            session_id,
+            command_id,
             spec: ToolSpec {
                 name: EXECUTE_TOOL.to_owned(),
                 description: "Execute one extension tool using an unchanged reference from tool_search after reading its schema with tool_load. Arguments must match that loaded schema. Stale references fail and must be searched again.".to_owned(),
@@ -287,12 +302,18 @@ impl Tool for ExecuteTool {
                     "RENOA_MCP_ADAPTER must be set before an extension tool can execute",
                 )
             })?;
+            let operation_id = oauth_operation_id(self.session_id, self.command_id, &call.id);
             let authorization = self
-                .credentials
-                .resolve(selected.auth(), cancellation.clone())
+                .authorizations
+                .resolve(
+                    selected.connection_id(),
+                    selected.endpoint(),
+                    selected.auth(),
+                    &operation_id,
+                    cancellation.clone(),
+                )
                 .await
-                .map_err(McpAdapterError::from)
-                .map_err(|error| definite_boundary_error(&error, false))?;
+                .map_err(host_error)?;
             match call_tool(
                 adapter,
                 &selected,
@@ -424,12 +445,41 @@ fn host_error(error: McpHostError) -> ToolError {
     let message = error.to_string();
     match error {
         McpHostError::Invalid(_) => ToolError::invalid_input(message),
-        McpHostError::Conflict(_) => ToolError::conflict(message),
+        McpHostError::Conflict(_)
+        | McpHostError::OAuth(
+            crate::mcp::McpOAuthError::InProgress(_)
+            | crate::mcp::McpOAuthError::ReceiptUnavailable(_),
+        ) => ToolError::conflict(message),
         McpHostError::NotFound(_) => ToolError::not_found(message),
         McpHostError::Io(_)
         | McpHostError::Database(_)
         | McpHostError::HostCatalog(_)
-        | McpHostError::Json(_) => ToolError::unavailable(message),
+        | McpHostError::Json(_)
+        | McpHostError::Background(_)
+        | McpHostError::OAuth(
+            crate::mcp::McpOAuthError::CallbackUnavailable(_)
+            | crate::mcp::McpOAuthError::Browser { .. }
+            | crate::mcp::McpOAuthError::BrowserStatus { .. },
+        ) => ToolError::unavailable(message),
+        McpHostError::OAuth(
+            crate::mcp::McpOAuthError::AuthorizationRequired(_)
+            | crate::mcp::McpOAuthError::CallbackRejected(_),
+        ) => ToolError::permission_denied(message),
+        McpHostError::OAuth(crate::mcp::McpOAuthError::OutcomeUnknown { .. }) => {
+            ToolError::outcome_unknown(message)
+        }
+        McpHostError::OAuth(crate::mcp::McpOAuthError::ReceiptFailure(_)) => {
+            ToolError::process_failed(message, false)
+        }
+        McpHostError::OAuth(crate::mcp::McpOAuthError::CallbackExpired) => {
+            ToolError::timeout(message, false)
+        }
+        McpHostError::OAuth(crate::mcp::McpOAuthError::Cancelled) => {
+            ToolError::cancelled(message, false)
+        }
+        McpHostError::OAuth(crate::mcp::McpOAuthError::Invalid(_)) => {
+            ToolError::invalid_input(message)
+        }
         McpHostError::Adapter(error) => definite_boundary_error(&error, false),
     }
 }

@@ -21,6 +21,13 @@ export interface WireAuthorization {
   readonly token: string;
 }
 
+export interface WireOAuthState extends JsonObject {
+  readonly schema_version: 1;
+  readonly mcp_endpoint: string;
+  readonly csrf_state: string;
+  readonly redirect_uri: string;
+}
+
 export type WireHeaders = Readonly<Record<string, string>>;
 
 export type AdapterRequest =
@@ -40,6 +47,29 @@ export type AdapterRequest =
       readonly authorization?: WireAuthorization;
       readonly tool: FrozenMcpTool;
       readonly arguments: JsonObject;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly action: "oauth_begin";
+      readonly endpoint: string;
+      readonly csrf_state: string;
+      readonly redirect_uri: string;
+      readonly force_reauthorization: boolean;
+      readonly oauth_state?: WireOAuthState;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly action: "oauth_exchange";
+      readonly endpoint: string;
+      readonly authorization_code: string;
+      readonly issuer?: string;
+      readonly oauth_state: WireOAuthState;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly action: "oauth_token" | "oauth_refresh";
+      readonly endpoint: string;
+      readonly oauth_state: WireOAuthState;
     };
 
 export interface CatalogTool {
@@ -127,4 +157,27 @@ export type AdapterRecord =
       readonly wire_version: typeof WIRE_VERSION;
       readonly event: "failed";
       readonly failure: WireFailure;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly event: "oauth_redirect";
+      readonly authorization_url: string;
+      readonly oauth_state: WireOAuthState;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly event: "oauth_authorized";
+      readonly authorization: WireAuthorization;
+      readonly oauth_state: WireOAuthState;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly event: "oauth_refresh_required";
+      readonly oauth_state: WireOAuthState;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly event: "oauth_failed";
+      readonly failure: WireFailure;
+      readonly oauth_state: WireOAuthState;
     };

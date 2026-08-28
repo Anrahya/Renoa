@@ -9,13 +9,13 @@ use crate::plugins::{ExtensionSource, PluginCredential, RemoteMcpSource};
 pub(super) fn manage_tool_spec(name: &str) -> ToolSpec {
     ToolSpec {
         name: name.to_owned(),
-        description: "Find and add extensions through one Host-owned path. Add accepts an exact catalog result, an MCP definition verified from official documentation, or a local Agent Plugins 1.0 package. Renoa installs the immutable package before attempting a connection, keeps credentials outside package data, and hot-loads supported skills and a successful MCP connection.".to_owned(),
+        description: "Find, add, connect, and authorize extensions through one Host-owned path. Add accepts an exact catalog result, an MCP definition verified from official documentation, or a local Agent Plugins 1.0 package. Renoa installs the immutable package before attempting a connection, keeps credentials outside package data, and hot-loads supported skills and successful MCP connections. Use OAuth when the official server supports browser authorization; Renoa opens the browser and waits for its loopback callback.".to_owned(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["search", "add", "inspect", "install", "list", "connect"],
+                    "enum": ["search", "add", "inspect", "install", "list", "connect", "authorize"],
                     "description": "Operation to perform. Use search, then add the exact catalog result. If no reliable catalog result exists, research official MCP documentation and add an mcp source."
                 },
                 "query": {
@@ -75,14 +75,30 @@ pub(super) fn manage_tool_spec(name: &str) -> ToolSpec {
                     "description": "Required for connect. Optional for add; Renoa otherwise derives one stable default connection id from the installed package and server."
                 },
                 "credential": {
-                    "type": "object",
-                    "properties": {
-                        "kind": {"const": "secret_service_bearer"},
-                        "credential_id": {"type": "string"}
-                    },
-                    "required": ["kind", "credential_id"],
-                    "additionalProperties": false,
-                    "description": "Optional for connect: reference to an existing Host credential. Never include a raw secret."
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"const": "secret_service_bearer"},
+                                "credential_id": {"type": "string"}
+                            },
+                            "required": ["kind", "credential_id"],
+                            "additionalProperties": false
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"const": "oauth"}
+                            },
+                            "required": ["kind"],
+                            "additionalProperties": false
+                        }
+                    ],
+                    "description": "Optional for add/connect. secret_service_bearer requires credential_id. oauth has no credential_id: Renoa derives the secure Host reference and runs browser authorization. Never include a raw secret."
+                },
+                "restart": {
+                    "type": "boolean",
+                    "description": "Only for authorize. Set true only after Renoa reports an expired, unknown, or unusable prior OAuth flow; this explicitly abandons that flow and starts again."
                 }
             },
             "required": ["action"],
@@ -120,6 +136,11 @@ pub(super) enum ManageInput {
         connection: String,
         #[serde(default)]
         credential: Option<CredentialInput>,
+    },
+    Authorize {
+        connection: String,
+        #[serde(default)]
+        restart: bool,
     },
 }
 
@@ -190,6 +211,7 @@ pub(super) struct HeaderInput {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum CredentialInput {
     SecretServiceBearer { credential_id: String },
+    OAuth,
 }
 
 impl From<CredentialInput> for PluginCredential {
@@ -198,6 +220,7 @@ impl From<CredentialInput> for PluginCredential {
             CredentialInput::SecretServiceBearer { credential_id } => {
                 Self::SecretServiceBearer { credential_id }
             }
+            CredentialInput::OAuth => Self::OAuth,
         }
     }
 }

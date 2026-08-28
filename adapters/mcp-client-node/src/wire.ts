@@ -9,6 +9,8 @@ import type {
 import { AdapterProblem } from "./errors.js";
 import {
   MAX_AUTH_TOKEN_BYTES,
+  MAX_OAUTH_STATE_BYTES,
+  MAX_OAUTH_VALUE_BYTES,
   MAX_REQUEST_HEADER_BYTES,
   MAX_REQUEST_HEADERS,
   WIRE_VERSION,
@@ -82,7 +84,171 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
       arguments: requireJsonObject(request.arguments, "request.arguments"),
     };
   }
-  throw invalid("request.action must be 'discover' or 'call'");
+  if (request.action === "oauth_begin") {
+    requireExactKeys(
+      request,
+      [
+        "wire_version",
+        "action",
+        "endpoint",
+        "csrf_state",
+        "redirect_uri",
+        "force_reauthorization",
+        "oauth_state",
+      ],
+      "request",
+      ["oauth_state"],
+    );
+    return {
+      wire_version: WIRE_VERSION,
+      action: "oauth_begin",
+      endpoint: requireString(request.endpoint, "request.endpoint"),
+      csrf_state: requireBoundedString(
+        request.csrf_state,
+        "request.csrf_state",
+        MAX_OAUTH_VALUE_BYTES,
+      ),
+      redirect_uri: requireBoundedString(
+        request.redirect_uri,
+        "request.redirect_uri",
+        MAX_OAUTH_VALUE_BYTES,
+      ),
+      force_reauthorization: requireBoolean(
+        request.force_reauthorization,
+        "request.force_reauthorization",
+      ),
+      ...(request.oauth_state === undefined
+        ? {}
+        : { oauth_state: parseOAuthState(request.oauth_state) }),
+    };
+  }
+  if (request.action === "oauth_exchange") {
+    requireExactKeys(
+      request,
+      [
+        "wire_version",
+        "action",
+        "endpoint",
+        "authorization_code",
+        "issuer",
+        "oauth_state",
+      ],
+      "request",
+      ["issuer"],
+    );
+    return {
+      wire_version: WIRE_VERSION,
+      action: "oauth_exchange",
+      endpoint: requireString(request.endpoint, "request.endpoint"),
+      authorization_code: requireBoundedString(
+        request.authorization_code,
+        "request.authorization_code",
+        MAX_OAUTH_VALUE_BYTES,
+      ),
+      ...(request.issuer === undefined
+        ? {}
+        : {
+            issuer: requireBoundedString(
+              request.issuer,
+              "request.issuer",
+              MAX_OAUTH_VALUE_BYTES,
+            ),
+          }),
+      oauth_state: parseOAuthState(request.oauth_state),
+    };
+  }
+  if (request.action === "oauth_token" || request.action === "oauth_refresh") {
+    requireExactKeys(
+      request,
+      ["wire_version", "action", "endpoint", "oauth_state"],
+      "request",
+    );
+    return {
+      wire_version: WIRE_VERSION,
+      action: request.action,
+      endpoint: requireString(request.endpoint, "request.endpoint"),
+      oauth_state: parseOAuthState(request.oauth_state),
+    };
+  }
+  throw invalid(
+    "request.action must be 'discover', 'call', 'oauth_begin', 'oauth_exchange', 'oauth_token', or 'oauth_refresh'",
+  );
+}
+
+function parseOAuthState(value: unknown): import("./contract.js").WireOAuthState {
+  const state = requireObject(value, "request.oauth_state");
+  requireExactKeys(
+    state,
+    [
+      "schema_version",
+      "mcp_endpoint",
+      "csrf_state",
+      "redirect_uri",
+      "authorization_url",
+      "authorization_server_url",
+      "client_information",
+      "code_verifier",
+      "discovery_state",
+      "resource_url",
+      "tokens",
+      "tokens_saved_at_ms",
+    ],
+    "request.oauth_state",
+    [
+      "authorization_url",
+      "authorization_server_url",
+      "client_information",
+      "code_verifier",
+      "discovery_state",
+      "resource_url",
+      "tokens",
+      "tokens_saved_at_ms",
+    ],
+  );
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(state);
+  } catch (error) {
+    throw new AdapterProblem(
+      "invalid_request",
+      "request.oauth_state is not valid JSON",
+      { code: "invalid_wire_request", cause: error },
+    );
+  }
+  if (Buffer.byteLength(encoded, "utf8") > MAX_OAUTH_STATE_BYTES) {
+    throw invalid(`request.oauth_state exceeds ${MAX_OAUTH_STATE_BYTES} bytes`);
+  }
+  if (state.schema_version !== 1) {
+    throw invalid("request.oauth_state.schema_version must be 1");
+  }
+  requireBoundedString(
+    state.mcp_endpoint,
+    "request.oauth_state.mcp_endpoint",
+    MAX_OAUTH_VALUE_BYTES,
+  );
+  requireBoundedString(
+    state.csrf_state,
+    "request.oauth_state.csrf_state",
+    MAX_OAUTH_VALUE_BYTES,
+  );
+  requireBoundedString(
+    state.redirect_uri,
+    "request.oauth_state.redirect_uri",
+    MAX_OAUTH_VALUE_BYTES,
+  );
+  return state as import("./contract.js").WireOAuthState;
+}
+
+function requireBoundedString(
+  value: unknown,
+  path: string,
+  maxBytes: number,
+): string {
+  const text = requireString(value, path);
+  if (Buffer.byteLength(text, "utf8") > maxBytes) {
+    throw invalid(`${path} exceeds ${maxBytes} bytes`);
+  }
+  return text;
 }
 
 function optionalHeaders(
@@ -225,6 +391,13 @@ function requireObject(value: unknown, path: string): Record<string, unknown> {
 function requireString(value: unknown, path: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw invalid(`${path} must be a non-empty string`);
+  }
+  return value;
+}
+
+function requireBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") {
+    throw invalid(`${path} must be a boolean`);
   }
   return value;
 }

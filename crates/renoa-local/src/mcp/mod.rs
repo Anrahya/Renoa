@@ -2,6 +2,7 @@ mod auth;
 mod call;
 mod error;
 mod headers;
+mod oauth;
 mod process;
 mod registry;
 mod store;
@@ -18,10 +19,13 @@ use sha2::{Digest as _, Sha256};
 
 pub(crate) use auth::{McpAuthorization, McpConnectionAuth, McpCredentialResolver};
 pub(crate) use headers::McpRequestHeaders;
+pub(crate) use oauth::{
+    McpAuthorizationResolver, McpOAuthAuthorizationRequest, operation_id as oauth_operation_id,
+};
 
 pub use error::{
-    McpAdapterError, McpCredentialError, McpFailureKind, McpHostError, McpOutcomeCertainty,
-    McpRemoteFailure,
+    McpAdapterError, McpCredentialError, McpFailureKind, McpHostError, McpOAuthError,
+    McpOutcomeCertainty, McpRemoteFailure,
 };
 
 pub(crate) use process::{discover, discover_cancellable};
@@ -32,7 +36,7 @@ pub(crate) use store::McpCatalogStore;
 pub(crate) use tool::{adapter_tool_error, alpha_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.4.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.5.0";
 const MCP_LEGACY_PROTOCOL_VERSIONS: &[&str] = &[
     "2025-11-25",
     "2025-06-18",
@@ -423,7 +427,7 @@ fn catalog_digest(
     Ok(hex_sha256(&encoded))
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
+pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
 
     Sha256::digest(bytes)

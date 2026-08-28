@@ -53,13 +53,29 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
     assert_eq!(schema["required"], json!(["action"]));
     assert_eq!(
         schema["properties"]["action"]["enum"],
-        json!(["search", "add", "inspect", "install", "list", "connect"])
+        json!([
+            "search",
+            "add",
+            "inspect",
+            "install",
+            "list",
+            "connect",
+            "authorize"
+        ])
     );
     assert!(schema.get("oneOf").is_none());
     assert_eq!(schema["properties"]["source"]["type"], "object");
     assert_eq!(
         schema["properties"]["source"]["properties"]["kind"]["enum"],
         json!(["catalog", "mcp", "package"])
+    );
+    assert_eq!(
+        schema["properties"]["credential"]["oneOf"][0]["required"],
+        json!(["kind", "credential_id"])
+    );
+    assert_eq!(
+        schema["properties"]["credential"]["oneOf"][1]["properties"]["kind"]["const"],
+        "oauth"
     );
     assert!(schema["properties"].get("candidate").is_none());
     assert!(!schema.to_string().contains("connection_id"));

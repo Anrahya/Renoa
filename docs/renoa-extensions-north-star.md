@@ -430,9 +430,12 @@ local credential sources
 Schema v6 adds installed Agent Plugin metadata, supported MCP entries, public
 request headers, and named Secret Service bearer references. Schema v7
 preserves standard plugin homepage provenance and adds the package-skill scope
-without changing existing global or workspace bindings. Secret values are
-resolved just in time and never enter `host.sqlite3`. The general
-cross-platform secret-store, OAuth, permission, package-registry, update, and
+without changing existing global or workspace bindings. Schema v8 adds OAuth
+connection references, non-secret recovery phases, and bounded terminal
+receipts keyed by stable session/command/tool-call identity. OAuth client state,
+tokens, and remote failure text never enter `host.sqlite3`; all secret values
+are resolved just in time from Secret Service. Cross-platform secret stores,
+cross-node credential placement, permission, package-registry, update, and
 removal designs remain open.
 
 `third_party` means that the service is external to Renoa. It does not assert
@@ -457,7 +460,7 @@ model prompts, tool schemas, or credentials as continuity data.
 
 ## Standards and implementation evidence
 
-Reviewed on 2026-08-28. Renoa copied no upstream implementation source for the
+Reviewed on 2026-08-29. Renoa copied no upstream implementation source for the
 skill or Agent Plugin paths. The YAML and URL parsers are pinned dependencies.
 
 | Source | Exact revision | License evidence | Renoa use |
@@ -487,7 +490,10 @@ modern version negotiation is an explicit client choice. Renoa prefers the
 modern revision and uses the SDK's reviewed legacy negotiation only when the
 modern probe proves that fallback is required. The exact negotiated revision
 is stored with the complete catalog and reused for calls; a call never
-renegotiates to a different revision or retries `tools/call`.
+renegotiates to a different revision or retries `tools/call`. The same pinned
+client owns OAuth discovery, PKCE, client registration, code exchange, and
+refresh behind Renoa's bounded adapter process; the Host remains authoritative
+for durable phase, endpoint binding, secret placement, and replay decisions.
 
 ## Definition of streamlined
 
@@ -537,7 +543,9 @@ and non-goal without adding production fields or dependencies.
 Build a narrow Node adapter using the pinned official MCP TypeScript client.
 Support current Streamable HTTP, deterministic discovery, one tool call,
 bounded ordered results, cancellation, process supervision, and typed terminal
-errors. Do not add auth, stdio, resources, prompts, apps, or tasks.
+errors. The initial proof is unauthenticated; the later Host-management slice
+adds OAuth without adding a second adapter. Do not add stdio, resources,
+prompts, apps, or tasks.
 
 Proof gate: deterministic local-server tests cover negotiation, discovery,
 invocation, malformed responses, timeouts before and after dispatch,
@@ -641,7 +649,11 @@ runs only after installation. Connection failure reports the retained package,
 skill result, package notices, exact safe service error, and any known
 connection identity. One live `skill_search` or `tool_search` registry observes
 the committed component without restart. Retrying the same source converges on
-the same digest and connection identity.
+the same digest and connection identity. OAuth connections use that same path:
+the Host owns exact loopback browser authorization and refresh, Secret Service
+owns credential values, SQLite owns only the connection reference and durable
+phase plus semantic terminal receipts, and uncertain exchanges are never
+replayed.
 Remaining proof: wire the first GUI consumer and resolve the general permission
 vocabulary without letting an agent broaden its own effective scope.
 
@@ -697,23 +709,27 @@ through the task journal.
 22. Package-provided skills reuse the Agent Skills registry. Precedence is
     workspace, then global, then plugin; different plugins never resolve a
     same-named skill by arbitrary digest order.
-23. OAuth remains a Host-owned connection/authentication flow. It may not be
-    added to the replay-safe management binding until a stable effect identity,
-    resumable user-action state, and process-death recovery path are consumed by
-    the implementation and tests.
+23. OAuth remains a Host-owned connection/authentication flow. The replay-safe
+    management binding may carry it only with the stable
+    session/command/tool-call identity, resumable callback state,
+    endpoint-bound Secret Service bundle, terminal receipt, and process-death
+    recovery path now consumed by implementation and tests.
 
 ## Open decisions
 
-- future Host schema migrations beyond v7 and storage for permissions;
+- future Host schema migrations beyond v8 and storage for permissions;
 - model-visible naming and collision handling for tools from many connections;
 - exact catalog freshness, cache-hint, and refresh policy;
-- cross-platform secret-store selection, account recovery, and secret sync;
-- OAuth client metadata, browser redirect, and headless-device flows;
+- cross-platform secret-store selection, account recovery, revocation, and
+  secret sync;
+- headless/device OAuth flows and non-Linux browser launchers;
 - permission vocabulary, scopes, policy inheritance, and enforcement;
 - profile persistence, inheritance, and Agent Instance overrides;
 - Host management transport for surfaces;
 - registry index, search, signing, trust, update, and review policy;
 - package garbage collection and unfinished-runtime retention policy;
+- OAuth terminal-receipt garbage collection after a proven Host/kernel
+  settlement boundary;
 - historical resolved-binding retention after catalog or profile changes;
 - when to add stdio MCP servers and how to constrain their process and
   filesystem authority;
@@ -735,7 +751,7 @@ The first direct MCP slice does not implement:
 
 - a general package registry, marketplace, remote package download, or archive
   extraction inside the manager;
-- OAuth flows, GUI credential entry, or general secret synchronization;
+- GUI credential entry, headless OAuth, or general secret synchronization;
 - stdio MCP servers;
 - MCP resources, prompts, apps, tasks, sampling, or elicitation;
 - Waku extension settings or management UI;

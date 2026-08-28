@@ -283,6 +283,7 @@ impl InstalledPlugin {
 pub enum PluginCredential {
     None,
     SecretServiceBearer { credential_id: String },
+    OAuth,
 }
 
 #[derive(Debug)]

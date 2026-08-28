@@ -429,10 +429,14 @@ pub(crate) async fn resolve_runtime(
         host.mcp_catalog.clone(),
         host.mcp_adapter.clone(),
         host.mcp_credentials.clone(),
+        session_id,
+        command_id,
     );
     extension_tools.push(alpha_plugin_binding(
         host.plugins.clone(),
         workspace.root().to_path_buf(),
+        session_id,
+        command_id,
     ));
     extension_tools.extend(alpha_skill_bindings(
         host.skill_store.clone(),
