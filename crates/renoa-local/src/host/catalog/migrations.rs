@@ -331,3 +331,52 @@ pub(super) const MIGRATE_V7_TO_V8: &str = "
 
     UPDATE host_metadata SET schema_version = 8 WHERE singleton = 1;
 ";
+
+pub(super) const MIGRATE_V8_TO_V9: &str = "
+    CREATE TABLE mcp_connections_v9 (
+        connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
+        integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
+        auth_kind TEXT NOT NULL CHECK (
+            auth_kind IN ('none', 'gh_cli', 'secret_service_bearer', 'oauth')
+        ),
+        auth_hostname TEXT,
+        auth_account TEXT,
+        auth_credential_id TEXT,
+        oauth_registration_json TEXT,
+        CHECK (
+            (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL
+             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL)
+            OR
+            (auth_kind = 'gh_cli'
+             AND length(auth_hostname) > 0
+             AND length(auth_account) > 0
+             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL)
+            OR
+            (auth_kind = 'secret_service_bearer'
+             AND auth_hostname IS NULL
+             AND auth_account IS NULL
+             AND length(auth_credential_id) > 0
+             AND oauth_registration_json IS NULL)
+            OR
+            (auth_kind = 'oauth'
+             AND auth_hostname IS NULL
+             AND auth_account IS NULL
+             AND length(auth_credential_id) > 0
+             AND json_valid(oauth_registration_json)
+             AND json_type(oauth_registration_json) = 'object')
+        )
+    ) STRICT;
+
+    INSERT INTO mcp_connections_v9(
+        connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+        auth_credential_id, oauth_registration_json
+    )
+    SELECT connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+           auth_credential_id,
+           CASE WHEN auth_kind = 'oauth' THEN '{\"mode\":\"dynamic\"}' ELSE NULL END
+    FROM mcp_connections;
+
+    DROP TABLE mcp_connections;
+    ALTER TABLE mcp_connections_v9 RENAME TO mcp_connections;
+    UPDATE host_metadata SET schema_version = 9 WHERE singleton = 1;
+";

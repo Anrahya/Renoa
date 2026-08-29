@@ -28,6 +28,19 @@ export interface WireOAuthState extends JsonObject {
   readonly redirect_uri: string;
 }
 
+export type WireOAuthRegistration =
+  | { readonly mode: "dynamic" }
+  | {
+      readonly mode: "client_metadata";
+      readonly client_metadata_url: string;
+    }
+  | {
+      readonly mode: "pre_registered";
+      readonly issuer: string;
+      readonly client_id: string;
+      readonly client_secret?: string;
+    };
+
 export type WireHeaders = Readonly<Record<string, string>>;
 
 export type AdapterRequest =
@@ -55,6 +68,7 @@ export type AdapterRequest =
       readonly csrf_state: string;
       readonly redirect_uri: string;
       readonly force_reauthorization: boolean;
+      readonly registration: WireOAuthRegistration;
       readonly oauth_state?: WireOAuthState;
     }
   | {
@@ -63,12 +77,20 @@ export type AdapterRequest =
       readonly endpoint: string;
       readonly authorization_code: string;
       readonly issuer?: string;
+      readonly registration: WireOAuthRegistration;
       readonly oauth_state: WireOAuthState;
     }
   | {
       readonly wire_version: typeof WIRE_VERSION;
-      readonly action: "oauth_token" | "oauth_refresh";
+      readonly action: "oauth_token";
       readonly endpoint: string;
+      readonly oauth_state: WireOAuthState;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly action: "oauth_refresh";
+      readonly endpoint: string;
+      readonly registration: WireOAuthRegistration;
       readonly oauth_state: WireOAuthState;
     };
 

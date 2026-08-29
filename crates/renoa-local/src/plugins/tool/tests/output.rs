@@ -43,3 +43,43 @@ fn an_unknown_mcp_discovery_result_stays_model_visible() {
         "unknown"
     );
 }
+
+#[test]
+fn unsupported_oauth_registration_reports_the_credential_boundary() {
+    let remote: McpRemoteFailure = serde_json::from_value(json!({
+        "kind": "protocol",
+        "certainty": "definite",
+        "message": "The authorization server does not support the selected OAuth client registration mode.",
+        "partial_changes_possible": false,
+        "diagnostic": {
+            "code": "oauth_registration_required",
+            "detail": "Configure this connection with pre_registered OAuth credentials or an official Client ID Metadata Document URL."
+        }
+    }))
+    .expect("decode OAuth registration failure");
+
+    let output = remote_mcp_error_output(&remote).expect("failure remains model-visible");
+
+    assert!(output.is_error);
+    let [ContentBlock::Text { text }] = output.content.as_slice() else {
+        panic!("OAuth setup failure must be one model-visible text block")
+    };
+    let model: Value = serde_json::from_str(text).expect("decode model-visible setup failure");
+    assert_eq!(model["code"], "oauth_registration_required");
+    assert_eq!(model["retryable"], false);
+    assert_eq!(
+        model["message"],
+        "The authorization server does not support the selected OAuth client registration mode."
+    );
+    let next_action = model["next_action"]
+        .as_str()
+        .expect("setup failure has a next action");
+    assert!(next_action.contains("Do not retry dynamic registration"));
+    assert!(next_action.contains("outside the agent context"));
+    assert!(next_action.contains("has no credential-entry UI"));
+    assert!(next_action.contains("never ask the user to paste credential material"));
+    assert_eq!(
+        output.details.unwrap()["mcp"]["failure"]["diagnostic"]["code"],
+        "oauth_registration_required"
+    );
+}

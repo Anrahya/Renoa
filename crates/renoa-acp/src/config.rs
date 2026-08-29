@@ -72,10 +72,8 @@ impl Config {
                 settings.default_provider,
                 settings.model,
                 settings.credential_store,
-                LocalHostAdapters::new(
-                    optional_path("RENOA_MCP_ADAPTER").as_deref(),
-                    optional_path("RENOA_INTEGRATION_CATALOG_ADAPTER").as_deref(),
-                ),
+                LocalHostAdapters::new(optional_path("RENOA_MCP_ADAPTER").as_deref())
+                    .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref()),
             )?,
         })
     }

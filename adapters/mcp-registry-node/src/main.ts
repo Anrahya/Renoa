@@ -1,6 +1,6 @@
 import { execute } from "./client.js";
 import type { AdapterRecord } from "./contract.js";
-import { CatalogProblem, failure, safeDiagnostic } from "./errors.js";
+import { RegistryProblem, safeDiagnostic, toWireFailure } from "./errors.js";
 import { MAX_RECORD_BYTES, MAX_STDIN_BYTES, WIRE_VERSION } from "./limits.js";
 import { parseRequest } from "./wire.js";
 
@@ -13,7 +13,7 @@ async function main(): Promise<void> {
     let record: AdapterRecord;
     try {
       const request = parseRequest(await readRequest());
-      const baseUrl = process.env.RENOA_INTEGRATIONS_BASE_URL;
+      const baseUrl = process.env.RENOA_MCP_REGISTRY_BASE_URL;
       record = await execute(request, {
         ...(baseUrl === undefined ? {} : { baseUrl }),
         signal: cancellation.signal,
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
       record = {
         wire_version: WIRE_VERSION,
         event: "failed",
-        failure: failure(error),
+        failure: toWireFailure(error),
       };
     }
     await writeRecord(record);
@@ -40,25 +40,27 @@ async function readRequest(): Promise<unknown> {
     bytes += buffer.byteLength;
     if (bytes > MAX_STDIN_BYTES) {
       process.stdin.destroy();
-      throw new CatalogProblem(
+      throw new RegistryProblem(
         "resource_limit",
-        `integration catalog request exceeds ${MAX_STDIN_BYTES} bytes`,
+        `MCP Registry adapter request exceeds ${MAX_STDIN_BYTES} bytes.`,
         { code: "stdin_limit" },
       );
     }
     chunks.push(buffer);
   }
   if (bytes === 0) {
-    throw new CatalogProblem("invalid_request", "integration catalog request is empty", {
-      code: "empty_request",
-    });
+    throw new RegistryProblem(
+      "invalid_request",
+      "MCP Registry adapter request is empty.",
+      { code: "empty_request" },
+    );
   }
   try {
     return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
   } catch (error) {
-    throw new CatalogProblem(
+    throw new RegistryProblem(
       "invalid_request",
-      "integration catalog request is not valid JSON",
+      "MCP Registry adapter request is not valid JSON.",
       { code: "invalid_json", cause: error },
     );
   }
@@ -68,7 +70,11 @@ function writeRecord(record: AdapterRecord): Promise<void> {
   const encoded = `${JSON.stringify(record)}\n`;
   if (Buffer.byteLength(encoded, "utf8") > MAX_RECORD_BYTES) {
     return Promise.reject(
-      new Error(`integration catalog record exceeds ${MAX_RECORD_BYTES} bytes`),
+      new RegistryProblem(
+        "resource_limit",
+        `MCP Registry adapter record exceeds ${MAX_RECORD_BYTES} bytes.`,
+        { code: "record_limit" },
+      ),
     );
   }
   return new Promise((resolve, reject) => {

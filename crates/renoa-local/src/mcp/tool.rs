@@ -28,6 +28,7 @@ pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 const SEARCH_TOOL: &str = "tool_search";
 const LOAD_TOOL: &str = "tool_load";
 const EXECUTE_TOOL: &str = "tool_execute";
+const SEARCH_REVISION: &str = "renoa-mcp-registry-v2/search";
 const REGISTRY_REVISION: &str = "renoa-mcp-registry-v1";
 
 pub(crate) fn alpha_registry_bindings(
@@ -40,7 +41,7 @@ pub(crate) fn alpha_registry_bindings(
     let authorizations = McpAuthorizationResolver::new(&store, adapter.clone(), credentials);
     vec![
         AgentToolBinding::new(
-            format!("{REGISTRY_REVISION}/search"),
+            SEARCH_REVISION,
             Arc::new(SearchTool::new(store.clone())),
             EffectRecovery::SafeToReplay,
         ),
@@ -121,8 +122,6 @@ impl Tool for SearchTool {
                 .map(|tool| {
                     Ok(SearchMatch {
                         reference: tool.reference()?.to_string(),
-                        integration: tool.integration_id,
-                        connection: tool.connection_id,
                         name: tool.name,
                         description: tool.description,
                     })
@@ -366,8 +365,6 @@ struct SearchOutput {
 #[derive(Serialize)]
 struct SearchMatch {
     reference: String,
-    integration: String,
-    connection: String,
     name: String,
     description: String,
 }

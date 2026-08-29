@@ -9,7 +9,8 @@ The Host durably registers connections, publishes complete catalog snapshots,
 attaches connections to Alpha's searchable registry, resolves exact references
 into ordinary kernel-backed calls, and supports no authentication, an exact
 GitHub CLI account reference, a named Secret Service bearer reference, or a
-Host-owned OAuth 2.1 browser flow.
+Host-owned OAuth 2.1 browser flow using Client ID Metadata Documents,
+pre-registered client credentials, or Dynamic Client Registration.
 
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md) owns the
 broader extension direction. [`renoa-host-v0.md`](renoa-host-v0.md) owns runtime
@@ -57,7 +58,8 @@ V0 supports exactly:
 - direct no-auth connections, exact `gh`-resolved bearer credentials, and named
   Secret Service bearer credentials;
 - Host-owned OAuth 2.1 authorization-code flows with PKCE for remote HTTP MCP
-  servers, followed by automatic just-in-time refresh;
+  servers, all three standard client registration approaches, issuer-bound
+  credentials, and automatic just-in-time refresh;
 - bounded public request headers supplied by a reviewed integration or Agent
   Plugin package;
 - complete tool results containing ordered text and image blocks; and
@@ -90,9 +92,11 @@ These concepts are distinct even though the first proof uses one of each:
 - **Direct integration:** one reviewed Streamable HTTP endpoint definition.
 - **Connection:** one configured instance of that integration. It stores
   no-auth, an exact `gh` hostname/account reference, or a named Secret Service
-  credential reference. OAuth connections store only a deterministic secret
-  reference, durable non-secret flow phase, and semantic terminal receipt in
-  SQLite, never a token.
+  credential reference. OAuth connections also store the selected registration
+  policy: a CIMD URL, a named pre-registered client reference, or explicit DCR.
+  They store only a deterministic token-bundle reference, durable non-secret
+  flow phase, and semantic terminal receipt in SQLite, never a token or client
+  secret.
 - **Catalog snapshot:** one complete, validated result of discovery and every
   `tools/list` page.
 - **Profile attachment:** permission for Alpha's registry to search and resolve
@@ -131,6 +135,15 @@ tool-call identity and contains only the semantic outcome needed to replay the
 same management effect without opening another browser or repeating an OAuth
 POST. OAuth client state, PKCE verifiers, authorization codes, access tokens,
 refresh tokens, client secrets, and remote failure text remain outside SQLite.
+Schema v9 adds the explicit OAuth registration policy. Existing v8 OAuth
+connections migrate to DCR because that is the only behavior the v8 runtime
+implemented. Their connection identity, catalog, profile attachment, flow, and
+receipt records remain intact.
+Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, and v0.5
+remain readable by the v0.6 Host. The two early revisions retain their original
+headerless digest encoding, so their durable references remain exact rather
+than being silently rewritten during an upgrade. New discovery always publishes
+the current revision.
 
 ## Endpoint boundary
 
@@ -154,6 +167,13 @@ derived from the connection and endpoint identity. This prevents a token from
 being reused for another service even if separate local data stores reuse a
 connection name.
 
+A pre-registered client uses a separate named Secret Service item containing
+strict JSON with `schema_version`, `issuer`, `client_id`, and an optional
+`client_secret`. The issuer is required because OAuth client identifiers are
+authorization-server-specific. The Host resolves this item just in time and
+passes it only over adapter standard input. CIMD URLs and DCR policy are public
+configuration; client IDs, client secrets, and tokens are not model arguments.
+
 An integration may supply bounded fixed public headers, such as Exa's source
 identifier. Renoa rejects authorization, API-key, cookie, MCP, content, and
 other client-owned header names so package data cannot impersonate a credential
@@ -173,21 +193,31 @@ client certificates, proxies, and insecure TLS switches are outside v0.
 
 OAuth remains Host connection policy, not MCP tool behavior and not kernel
 state. `extension_manage` can add or connect a package with `credential.kind =
-"oauth"`; the Host registers the connection before authentication but publishes
-and attaches its catalog only after authorization and authenticated discovery
-both succeed. `authorize` resumes an existing flow. `restart: true` is the
-explicit instruction to abandon an expired or unknown flow and discard cached
-tokens before starting again.
+"oauth"` and an explicit `registration` object. `client_metadata` supplies an
+HTTPS CIMD URL, `pre_registered` supplies a named Secret Service reference, and
+`dynamic` explicitly permits DCR. The Host registers the connection before
+authentication but publishes and attaches its catalog only after authorization
+and authenticated discovery both succeed. `authorize` resumes an existing
+flow. `restart: true` is the explicit instruction to abandon an expired or
+unknown flow and discard cached tokens before starting again.
 
 The Host binds an exact `127.0.0.1` callback on an ephemeral port, creates a
 cryptographically random state value, persists the callback identity and phase,
 then asks the pinned MCP client SDK to perform protected-resource and
-authorization-server discovery. The SDK uses PKCE and either advertised client
-metadata or Dynamic Client Registration. Renoa opens the authorization URL with
-`xdg-open` as an argument, never through a shell. The callback accepts one
-bounded GET from loopback, requires the exact Host header and state, records the
-code in Secret Service before acknowledging the browser, and validates `iss`
-when the server advertises it. The callback expires after ten minutes.
+authorization-server discovery. The SDK uses a pre-registered client when one
+was configured, otherwise uses CIMD when the server advertises it, and may fall
+back from configured CIMD to advertised DCR. Explicit DCR fails with actionable
+setup guidance when the server does not advertise a registration endpoint.
+Renoa opens the authorization URL with `xdg-open` as an argument, never through
+a shell. The callback accepts one bounded GET from loopback, requires the exact
+Host header and state, records the code in Secret Service before acknowledging
+the browser, and validates `iss` when the server advertises it. The callback
+expires after ten minutes.
+
+Persisted dynamically registered clients and tokens are returned only for the
+same validated authorization-server issuer that produced them. Pre-registered
+credentials are rejected when discovery resolves a different issuer. A changed
+authorization server therefore cannot inherit another server's client or token.
 
 Credential-side POST requests are never retried inside one adapter operation.
 The Host records `begin`, code exchange, and refresh as explicit durable phases.
@@ -214,6 +244,22 @@ waiting. Raw OAuth state and credentials never enter tool arguments, model
 context, Host SQLite, environment variables, or package content. V0 requires a
 desktop Secret Service (`secret-tool`) and a browser opener on the executing
 node. Packages are portable; connections and credentials remain node-local.
+
+An existing connection remains immutable by default. `replace: true` on
+`add` or `connect` is the explicit repair path for a wrong endpoint or
+credential policy. Replacement is one Host transaction: the old attachment,
+catalog, OAuth flow, and terminal receipts disappear before the new connection
+is registered. Repeating the same replacement is a no-op and preserves its
+catalog. A successful unauthenticated discovery reports `catalog_loaded`; only
+a completed OAuth flow reports `authorized`.
+
+`extension_manage disconnect` is narrower than replacement or removal. It
+deletes only Alpha's profile attachment in one transaction and is idempotent.
+The durable connection, catalog, package, credential reference, OAuth state,
+and receipts remain available for recovery and later reattachment. List output
+therefore reports registration, authentication kind, catalog presence, and
+Alpha attachment as separate facts; it never infers that an OAuth token is
+currently valid merely because the connection is registered.
 
 ## Protocol lifecycle
 
@@ -288,7 +334,8 @@ MCP names never become top-level model tool names. Alpha always sees three
 small, provider-neutral Host tools:
 
 - `tool_search` searches names, services, and descriptions and returns at most
-  five compact matches with exact references, never schemas;
+  200 compact matches containing only names, descriptions, and exact
+  references, never schemas;
 - `tool_load` accepts one through three unchanged references and returns their
   exact model-facing descriptions and input schemas, bounded to 64 KiB total;
 - `tool_execute` accepts one unchanged reference plus an argument object and
@@ -449,8 +496,13 @@ The process contract has six actions:
 - **oauth_token:** inspect saved token state without network mutation; and
 - **oauth_refresh:** perform exactly one refresh attempt.
 
-The version-5 process request may carry one bounded bearer authorization value
-and bounded fixed public headers.
+The version-6 process request may carry one bounded bearer authorization value
+and bounded fixed public headers. OAuth begin, exchange, and refresh requests
+carry one exact registration object. A pre-registered object includes its
+issuer and resolved client fields only for the lifetime of that adapter
+process. Local `oauth_token` inspection carries no registration credential.
+The version-6 call wire is also part of the frozen `tool_execute` binding, so an
+unfinished version-5 execution cannot resume under changed process semantics.
 Standard output is a bounded machine-readable record stream. Standard error is
 bounded, redacted diagnostic text and never part of the protocol. The first
 valid terminal record is authoritative; later process output or cleanup failure
@@ -465,7 +517,7 @@ not duplicate them.
 Discovery and search never load schemas into model context. Every normal Alpha
 request carries the same three small registry specifications, independent of
 whether the Host has zero, ten, or one thousand external tools. Search returns
-at most five short summaries. Only a successful `tool_load` result inserts the
+at most 200 short summaries. Only a successful `tool_load` result inserts the
 requested model-facing schemas into conversation history, where normal context
 and compaction rules apply. Server instructions, endpoint URLs, cache hints,
 output schemas, adapter bookkeeping, and every unloaded schema remain outside.
@@ -544,7 +596,7 @@ and the real process boundary:
     frozen bindings remain secret-free;
 18. an Exa-shaped package sends its reviewed public source header and
     just-in-time bearer through the real adapter, and a live registry sees the
-    attached catalog without restart; and
+    attached catalog without restart;
 19. durable structured details remain Host-visible but never reach a normal or
     compaction model request;
 20. a cancelled browser flow resumes against the exact saved callback without
@@ -553,9 +605,19 @@ and the real process boundary:
     refresh becomes durable unknown rather than being replayed; and
 22. explicit reauthorization drops cached tokens, endpoint-bound state cannot
     cross services, callback state is exact, and provider failures are bounded
-    and redacted; and
+    and redacted;
 23. replay of the same settled OAuth management operation reads its terminal
-    receipt without a second browser flow or credential POST.
+    receipt without a second browser flow or credential POST;
+24. CIMD uses no registration POST when advertised and falls back once to DCR
+    when supported, while explicit DCR without an endpoint fails actionably;
+25. a pre-registered client skips DCR, authenticates the token exchange, never
+    crosses to a different issuer, and never appears in adapter output;
+26. v8 OAuth connections migrate to explicit DCR without losing durable Host
+    state, and explicit replacement drops stale tools but is idempotent; and
+27. one corrupt installed package is reported separately without hiding valid
+    packages from `extension_manage list`; and
+28. disconnect immediately removes search and execution access, survives
+    replay, and retains the exact complete catalog for later reattachment.
 
 ## Locked decisions
 
@@ -567,7 +629,8 @@ and the real process boundary:
   one named Secret Service bearer reference, or Host-owned OAuth; Renoa stores
   no token in SQLite or package data.
 - OAuth uses PKCE, exact loopback callbacks, endpoint-bound Secret Service
-  state, explicit durable phases, one credential POST per adapter operation,
+  state, explicit client registration policy, authorization-server issuer
+  binding, explicit durable phases, one credential POST per adapter operation,
   and no automatic replay after an uncertain exchange.
 - Fixed integration headers are public, bounded data. Sensitive and
   client-owned header names are rejected.
@@ -589,7 +652,7 @@ and the real process boundary:
 - compatibility outside the enumerated MCP revisions and stdio transport;
 - headless/device authorization, GUI credential entry, credential revocation,
   cross-platform secret stores, and cross-node secret synchronization;
-- future Host schema migrations beyond v8;
+- future Host schema migrations beyond v9;
 - catalog cache hints and list-change subscriptions;
 - progress projection;
 - standards-complete client-side argument validation and any schema behavior

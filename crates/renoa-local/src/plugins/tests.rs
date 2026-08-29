@@ -156,8 +156,8 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
         directory.path().join("plugins"),
         mcp.clone(),
         Some(adapter),
-        resolver,
         None,
+        resolver,
         skills,
     )
     .expect("initialize plugin manager");

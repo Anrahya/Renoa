@@ -7,6 +7,70 @@ use super::{PluginError, store::PluginStore, tests::write_exa_plugin};
 use crate::host::catalog;
 
 #[test]
+fn a_pre_v7_missing_homepage_is_recovered_from_the_immutable_package() {
+    let directory = tempdir().expect("temporary legacy plugin store");
+    let database = directory.path().join("host.sqlite3");
+    catalog::initialize(&database).expect("initialize Host catalog");
+    let packages = directory.path().join("packages");
+    let source = directory.path().join("source");
+    fs::create_dir(&source).expect("create plugin source");
+    write_exa_plugin(&source, "https://mcp.exa.ai/mcp");
+    let manifest_path = source.join("plugin.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("read source manifest"))
+            .expect("decode source manifest");
+    manifest["homepage"] = Value::String("https://exa.ai/docs".to_owned());
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&manifest).expect("encode source manifest"),
+    )
+    .expect("add fixture homepage");
+    let store =
+        PluginStore::initialize(database.clone(), packages).expect("initialize plugin store");
+    let inspected = super::inspect::inspect(&source)
+        .expect("inspect source")
+        .inspection;
+    store
+        .install(&source, inspected.digest())
+        .expect("install source with homepage");
+    let connection = rusqlite::Connection::open(&database).expect("open legacy metadata fixture");
+    connection
+        .execute(
+            "UPDATE installed_plugins SET homepage = NULL WHERE plugin_digest = ?1",
+            [inspected.digest()],
+        )
+        .expect("reproduce pre-v7 missing homepage");
+
+    let loaded = store
+        .load(inspected.digest())
+        .expect("recover homepage from immutable package");
+
+    assert_eq!(loaded.metadata().homepage(), Some("https://exa.ai/docs"));
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT homepage FROM installed_plugins WHERE plugin_digest = ?1",
+                [inspected.digest()],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("read recovered durable homepage"),
+        "https://exa.ai/docs"
+    );
+
+    connection
+        .execute(
+            "UPDATE installed_plugins SET homepage = 'https://wrong.example' \
+             WHERE plugin_digest = ?1",
+            [inspected.digest()],
+        )
+        .expect("inject a non-legacy metadata conflict");
+    assert!(matches!(
+        store.load(inspected.digest()),
+        Err(PluginError::Conflict(_))
+    ));
+}
+
+#[test]
 fn installation_is_content_addressed_idempotent_and_source_bound() {
     let directory = tempdir().expect("temporary plugin store");
     let database = directory.path().join("host.sqlite3");
@@ -54,6 +118,12 @@ fn installation_is_content_addressed_idempotent_and_source_bound() {
         store.load(inspected.digest()),
         Err(PluginError::Conflict(_) | PluginError::Invalid(_))
     ));
+    let report = store
+        .list_report()
+        .expect("one corrupt package does not hide the rest of the list");
+    assert!(report.installed.is_empty());
+    assert_eq!(report.rejected.len(), 1);
+    assert_eq!(report.rejected[0].package_digest, inspected.digest());
 }
 
 #[cfg(unix)]

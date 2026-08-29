@@ -30,8 +30,6 @@ pub enum PluginError {
     Mcp(#[from] crate::mcp::McpHostError),
     #[error(transparent)]
     Skill(#[from] crate::skills::SkillError),
-    #[error(transparent)]
-    Catalog(#[from] super::catalog::CatalogError),
     #[error("Agent Plugin background task failed: {0}")]
     Background(#[from] tokio::task::JoinError),
 }

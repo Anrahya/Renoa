@@ -8,10 +8,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::{CatalogError, CatalogRecord, WIRE_VERSION};
+use super::{RegistryError, WIRE_VERSION, contract::AdapterRecord};
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
-const PROCESS_DEADLINE: Duration = Duration::from_secs(20);
+const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_STDOUT_BYTES: usize = 512 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
 
@@ -19,11 +19,11 @@ pub(super) async fn run(
     adapter: &Path,
     request: &impl Serialize,
     cancellation: CancellationToken,
-) -> Result<CatalogRecord, CatalogError> {
+) -> Result<AdapterRecord, RegistryError> {
     if cancellation.is_cancelled() {
-        return Err(CatalogError::Cancelled);
+        return Err(RegistryError::Cancelled);
     }
-    let encoded = serde_json::to_vec(request).map_err(CatalogError::Encode)?;
+    let encoded = serde_json::to_vec(request).map_err(RegistryError::Encode)?;
     let mut command = Command::new("node");
     command
         .arg("--dns-result-order=ipv4first")
@@ -32,23 +32,23 @@ pub(super) async fn run(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     configure_process_group(&mut command);
-    let mut child = command.spawn().map_err(CatalogError::Start)?;
+    let mut child = command.spawn().map_err(RegistryError::Start)?;
     let pid = match child_pid_raw(&child) {
         Ok(pid) => pid,
         Err(error) => {
             child
                 .kill()
                 .await
-                .map_err(|cleanup| CatalogError::Cleanup(cleanup.to_string()))?;
-            return Err(CatalogError::Cleanup(error.to_string()));
+                .map_err(|cleanup| RegistryError::Cleanup(cleanup.to_string()))?;
+            return Err(RegistryError::Cleanup(error.to_string()));
         }
     };
     let pipes = (child.stdin.take(), child.stdout.take(), child.stderr.take());
     let (Some(stdin), Some(stdout), Some(stderr)) = pipes else {
         stop_process_group_raw(&mut child, pid)
             .await
-            .map_err(|error| CatalogError::Cleanup(error.to_string()))?;
-        return Err(CatalogError::MissingPipe("configured standard-I/O pipe"));
+            .map_err(|error| RegistryError::Cleanup(error.to_string()))?;
+        return Err(RegistryError::MissingPipe("configured standard-I/O pipe"));
     };
     let stdout = drain_bounded(stdout, MAX_STDOUT_BYTES);
     let stderr = drain_bounded(stderr, MAX_STDERR_BYTES);
@@ -57,9 +57,9 @@ pub(super) async fn run(
     let write = write_request(stdin, &encoded);
     tokio::pin!(write);
     let write_result = tokio::select! {
-        result = &mut write => result.map_err(CatalogError::Write),
-        () = cancellation.cancelled() => Err(CatalogError::Cancelled),
-        () = tokio::time::sleep_until(deadline) => Err(CatalogError::Timeout),
+        result = &mut write => result.map_err(RegistryError::Write),
+        () = cancellation.cancelled() => Err(RegistryError::Cancelled),
+        () = tokio::time::sleep_until(deadline) => Err(RegistryError::Timeout),
     };
     if let Err(error) = write_result {
         stop_and_discard(&mut child, pid, stdout, stderr).await?;
@@ -67,9 +67,9 @@ pub(super) async fn run(
     }
 
     let status = tokio::select! {
-        result = child.wait() => result.map_err(CatalogError::Wait),
-        () = cancellation.cancelled() => Err(CatalogError::Cancelled),
-        () = tokio::time::sleep_until(deadline) => Err(CatalogError::Timeout),
+        result = child.wait() => result.map_err(RegistryError::Wait),
+        () = cancellation.cancelled() => Err(RegistryError::Cancelled),
+        () = tokio::time::sleep_until(deadline) => Err(RegistryError::Timeout),
     };
     let (stdout, stderr) = stop_and_capture(&mut child, pid, stdout, stderr).await?;
     status?;
@@ -86,10 +86,10 @@ async fn stop_and_capture(
     pid: u32,
     stdout: JoinHandle<io::Result<Captured>>,
     stderr: JoinHandle<io::Result<Captured>>,
-) -> Result<(Captured, Captured), CatalogError> {
+) -> Result<(Captured, Captured), RegistryError> {
     let cleanup = stop_process_group_raw(child, pid)
         .await
-        .map_err(|error| CatalogError::Cleanup(error.to_string()));
+        .map_err(|error| RegistryError::Cleanup(error.to_string()));
     let stdout = join(stdout, "stdout").await;
     let stderr = join(stderr, "stderr").await;
     cleanup?;
@@ -101,7 +101,7 @@ async fn stop_and_discard(
     pid: u32,
     stdout: JoinHandle<io::Result<Captured>>,
     stderr: JoinHandle<io::Result<Captured>>,
-) -> Result<(), CatalogError> {
+) -> Result<(), RegistryError> {
     match stop_and_capture(child, pid, stdout, stderr).await {
         Ok((mut stdout, mut stderr)) => {
             stdout.bytes.fill(0);
@@ -112,37 +112,37 @@ async fn stop_and_discard(
     }
 }
 
-fn parse(mut stdout: Captured, mut stderr: Captured) -> Result<CatalogRecord, CatalogError> {
+fn parse(mut stdout: Captured, mut stderr: Captured) -> Result<AdapterRecord, RegistryError> {
     if stdout.truncated {
         stdout.bytes.fill(0);
         stderr.bytes.fill(0);
-        return Err(CatalogError::OutputLimit);
+        return Err(RegistryError::OutputLimit);
     }
-    let value = super::super::json::parse(&stdout.bytes, "integration catalog output")
+    let value = super::super::json::parse(&stdout.bytes, "MCP Registry adapter output")
         .map_err(|message| protocol_with_stderr(message, &stderr.bytes));
     let record = value.and_then(|value| {
-        serde_json::from_value::<CatalogRecord>(value)
+        serde_json::from_value::<AdapterRecord>(value)
             .map_err(|error| protocol_with_stderr(error.to_string(), &stderr.bytes))
     });
     stdout.bytes.fill(0);
     stderr.bytes.fill(0);
     let record = record?;
     if record.wire_version() != WIRE_VERSION {
-        return Err(CatalogError::Protocol(format!(
-            "catalog adapter wire version is {}, expected {WIRE_VERSION}",
+        return Err(RegistryError::Protocol(format!(
+            "MCP Registry adapter wire version is {}, expected {WIRE_VERSION}",
             record.wire_version()
         )));
     }
     Ok(record)
 }
 
-fn protocol_with_stderr(message: String, stderr: &[u8]) -> CatalogError {
+fn protocol_with_stderr(message: String, stderr: &[u8]) -> RegistryError {
     let diagnostic = String::from_utf8_lossy(stderr);
     let diagnostic = diagnostic.trim();
     if diagnostic.is_empty() {
-        CatalogError::Protocol(message)
+        RegistryError::Protocol(message)
     } else {
-        CatalogError::Protocol(format!("{message}; stderr: {diagnostic}"))
+        RegistryError::Protocol(format!("{message}; stderr: {diagnostic}"))
     }
 }
 
@@ -176,8 +176,8 @@ fn drain_bounded(
 async fn join(
     task: JoinHandle<io::Result<Captured>>,
     stream: &str,
-) -> Result<Captured, CatalogError> {
+) -> Result<Captured, RegistryError> {
     task.await
-        .map_err(|error| CatalogError::Reader(format!("{stream} task failed: {error}")))?
-        .map_err(|error| CatalogError::Reader(format!("{stream} read failed: {error}")))
+        .map_err(|error| RegistryError::Reader(format!("{stream} task failed: {error}")))?
+        .map_err(|error| RegistryError::Reader(format!("{stream} read failed: {error}")))
 }

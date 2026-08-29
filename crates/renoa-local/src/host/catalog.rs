@@ -7,10 +7,10 @@ mod migrations;
 
 use migrations::{
     MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4, MIGRATE_V4_TO_V5, MIGRATE_V5_TO_V6,
-    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8,
+    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8, MIGRATE_V8_TO_V9,
 };
 
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -49,19 +49,28 @@ const SCHEMA: &str = "
         auth_hostname TEXT,
         auth_account TEXT,
         auth_credential_id TEXT,
+        oauth_registration_json TEXT,
         CHECK (
             (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL
-             AND auth_credential_id IS NULL)
+             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL)
             OR
             (auth_kind = 'gh_cli'
              AND length(auth_hostname) > 0
              AND length(auth_account) > 0
-             AND auth_credential_id IS NULL)
+             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL)
             OR
-            (auth_kind IN ('secret_service_bearer', 'oauth')
+            (auth_kind = 'secret_service_bearer'
              AND auth_hostname IS NULL
              AND auth_account IS NULL
-             AND length(auth_credential_id) > 0)
+             AND length(auth_credential_id) > 0
+             AND oauth_registration_json IS NULL)
+            OR
+            (auth_kind = 'oauth'
+             AND auth_hostname IS NULL
+             AND auth_account IS NULL
+             AND length(auth_credential_id) > 0
+             AND json_valid(oauth_registration_json)
+             AND json_type(oauth_registration_json) = 'object')
         )
     ) STRICT;
 
@@ -223,7 +232,7 @@ const SCHEMA: &str = "
         PRIMARY KEY (plugin_digest, server_id)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 8);
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 9);
 ";
 
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
@@ -251,7 +260,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=7) {
+    if matches!(observed, 1..=8) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -291,6 +300,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -303,6 +313,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -313,6 +324,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -322,6 +334,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -330,6 +343,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 transaction.execute_batch(MIGRATE_V5_TO_V6)?;
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -337,12 +351,20 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
             6 => {
                 transaction.execute_batch(MIGRATE_V6_TO_V7)?;
                 transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
             }
             7 => {
                 transaction.execute_batch(MIGRATE_V7_TO_V8)?;
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
+                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                transaction.commit()?;
+                Ok(())
+            }
+            8 => {
+                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())

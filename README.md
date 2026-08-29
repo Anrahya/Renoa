@@ -37,10 +37,12 @@ without turning the kernel into product policy or one giant plugin interface.
   process adapter. The Host durably registers connections, publishes complete
   catalogs, owns optional browser OAuth and refresh, and exposes only deferred
   search/load/execute schemas to Alpha.
-- [`integration-catalog-node`](adapters/integration-catalog-node) is the
-  replaceable discovery-only adapter. It uses integrations.sh as a ground-zero
-  REST source, while the Host remains authoritative for validation,
-  installation, connection, profile attachment, and hot loading.
+- [`mcp-registry-node`](adapters/mcp-registry-node) is the replaceable,
+  read-only downstream adapter for official MCP Registry discovery.
+  `extension_manage` can search names and inspect one exact published version,
+  but Registry metadata never becomes an installation input. Alpha must still
+  verify the provider's official documentation before adding the normalized
+  MCP definition. Exact local Agent Plugin packages use the same Host manager.
 
 Alpha currently has `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and
 `find`. Model and reasoning choices can change between operations. Workspace

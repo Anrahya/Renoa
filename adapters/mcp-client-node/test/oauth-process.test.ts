@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { once } from "node:events";
 import test from "node:test";
-import type { AdapterRequest, WireOAuthState } from "../src/contract.js";
+import type { WireOAuthState } from "../src/contract.js";
 import { WIRE_VERSION } from "../src/limits.js";
 import { OAuthExchangeTracker } from "../src/oauth-transport.js";
+import {
+  begin,
+  beginRequest,
+  CALLBACK,
+  CSRF,
+  exchange,
+  OAuthFixture,
+} from "./oauth-fixture.js";
 import { runAdapter } from "./support.js";
-
-const CALLBACK = "http://127.0.0.1:45831/oauth/callback";
-const CSRF = "host-generated-state-with-enough-entropy";
-type OAuthBeginRequest = Extract<AdapterRequest, { readonly action: "oauth_begin" }>;
 
 test("OAuth certainty tracks the credential POST, not earlier discovery responses", () => {
   const tracker = new OAuthExchangeTracker();
@@ -48,6 +50,140 @@ test("OAuth begins with discovery, one registration, PKCE, and a durable redirec
   }
 });
 
+test("Client ID Metadata Documents skip dynamic registration when advertised", async () => {
+  const server = new OAuthFixture({
+    omitRegistrationEndpoint: true,
+    clientMetadataSupported: true,
+  });
+  await server.start();
+  try {
+    const clientMetadataUrl = "https://renoa.example/oauth/client-metadata.json";
+    const result = await runAdapter({
+      ...beginRequest(server.endpoint),
+      registration: {
+        mode: "client_metadata",
+        client_metadata_url: clientMetadataUrl,
+      },
+    });
+    const record = result.records[0];
+    assert.equal(record?.event, "oauth_redirect", JSON.stringify(record));
+    if (record?.event !== "oauth_redirect") return;
+    assert.equal(
+      new URL(record.authorization_url).searchParams.get("client_id"),
+      clientMetadataUrl,
+    );
+    assert.equal(server.registrationRequests, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Client ID Metadata Documents fall back to dynamic registration when supported", async () => {
+  const server = new OAuthFixture();
+  await server.start();
+  try {
+    const result = await runAdapter({
+      ...beginRequest(server.endpoint),
+      registration: {
+        mode: "client_metadata",
+        client_metadata_url: "https://renoa.example/oauth/client-metadata.json",
+      },
+    });
+    const record = result.records[0];
+    assert.equal(record?.event, "oauth_redirect", JSON.stringify(record));
+    assert.equal(server.registrationRequests, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("pre-registered clients skip registration and authenticate the token exchange", async () => {
+  const server = new OAuthFixture({
+    omitRegistrationEndpoint: true,
+    tokenAuthMethods: ["client_secret_basic"],
+  });
+  await server.start();
+  const registration = {
+    mode: "pre_registered" as const,
+    issuer: server.origin,
+    client_id: "google-desktop-client",
+    client_secret: "google-client-secret",
+  };
+  try {
+    const started = await runAdapter({
+      ...beginRequest(server.endpoint),
+      registration,
+    });
+    const redirect = started.records[0];
+    assert.equal(redirect?.event, "oauth_redirect", JSON.stringify(redirect));
+    if (redirect?.event !== "oauth_redirect") return;
+    assert.equal(
+      new URL(redirect.authorization_url).searchParams.get("client_id"),
+      registration.client_id,
+    );
+    assert.equal(server.registrationRequests, 0);
+
+    const exchanged = await runAdapter({
+      wire_version: WIRE_VERSION,
+      action: "oauth_exchange",
+      endpoint: server.endpoint,
+      authorization_code: "one-time-code",
+      issuer: server.origin,
+      registration,
+      oauth_state: redirect.oauth_state,
+    });
+    assert.equal(exchanged.records[0]?.event, "oauth_authorized");
+    assert.equal(
+      server.tokenAuthorization,
+      `Basic ${Buffer.from(`${registration.client_id}:${registration.client_secret}`).toString("base64")}`,
+    );
+    assert.equal(server.registrationRequests, 0);
+    assert.equal(
+      JSON.stringify(exchanged.records[0]).includes(registration.client_secret),
+      false,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("pre-registered clients are rejected for a different issuer", async () => {
+  const server = new OAuthFixture({ omitRegistrationEndpoint: true });
+  await server.start();
+  try {
+    const result = await runAdapter({
+      ...beginRequest(server.endpoint),
+      registration: {
+        mode: "pre_registered",
+        issuer: "https://different.example",
+        client_id: "wrong-server-client",
+      },
+    });
+    const record = result.records[0];
+    assert.equal(record?.event, "oauth_failed", JSON.stringify(record));
+    assert.equal(server.registrationRequests, 0);
+    assert.equal(server.tokenRequests, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("dynamic registration reports the required setup when the server has no endpoint", async () => {
+  const server = new OAuthFixture({ omitRegistrationEndpoint: true });
+  await server.start();
+  try {
+    const result = await runAdapter(beginRequest(server.endpoint));
+    const record = result.records[0];
+    assert.equal(record?.event, "oauth_failed", JSON.stringify(record));
+    if (record?.event !== "oauth_failed") return;
+    assert.equal(record.failure.diagnostic.code, "oauth_registration_required");
+    assert.equal(record.failure.partial_changes_possible, false);
+    assert.equal(server.registrationRequests, 0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("OAuth exchanges one code and a later local token read performs no network request", async () => {
   const server = new OAuthFixture();
   await server.start();
@@ -59,6 +195,7 @@ test("OAuth exchanges one code and a later local token read performs no network 
       endpoint: server.endpoint,
       authorization_code: "one-time-code",
       issuer: server.origin,
+      registration: { mode: "dynamic" },
       oauth_state: state,
     });
     const authorized = exchanged.records[0];
@@ -102,6 +239,7 @@ test("OAuth refresh rotates once and returns the replacement state", async () =>
       wire_version: WIRE_VERSION,
       action: "oauth_refresh",
       endpoint: server.endpoint,
+      registration: { mode: "dynamic" },
       oauth_state: expired,
     });
     const terminal = refreshed.records[0];
@@ -156,6 +294,115 @@ test("stored OAuth credentials cannot be read for a different MCP endpoint", asy
   }
 });
 
+test("stored OAuth tokens cannot cross authorization-server issuers", async () => {
+  const server = new OAuthFixture();
+  await server.start();
+  try {
+    const authorized = await exchange(server);
+    const rebound = structuredClone(authorized.oauth_state) as WireOAuthState & {
+      authorization_server_url: string;
+    };
+    rebound.authorization_server_url = "https://attacker.example";
+    const result = await runAdapter({
+      wire_version: WIRE_VERSION,
+      action: "oauth_token",
+      endpoint: server.endpoint,
+      oauth_state: rebound,
+    });
+    const record = result.records[0];
+    assert.equal(record?.event, "failed", JSON.stringify(record));
+    if (record?.event !== "failed") return;
+    assert.equal(record.failure.diagnostic.code, "invalid_oauth_state");
+  } finally {
+    await server.close();
+  }
+});
+
+test("version-5 OAuth state is bound to its validated issuer without reauthorization", async () => {
+  const server = new OAuthFixture();
+  await server.start();
+  try {
+    const authorized = await exchange(server);
+    const legacy = structuredClone(authorized.oauth_state) as unknown as {
+      authorization_server_url: string;
+      client_information: { issuer?: string };
+      tokens: { issuer?: string };
+    };
+    delete legacy.client_information.issuer;
+    delete legacy.tokens.issuer;
+
+    const result = await runAdapter({
+      wire_version: WIRE_VERSION,
+      action: "oauth_token",
+      endpoint: server.endpoint,
+      oauth_state: legacy as unknown as WireOAuthState,
+    });
+    const record = result.records[0];
+    assert.equal(record?.event, "oauth_authorized", JSON.stringify(record));
+    if (record?.event !== "oauth_authorized") return;
+    const migrated = record.oauth_state as unknown as {
+      client_information: { issuer?: string };
+      tokens: { issuer?: string };
+    };
+    assert.equal(migrated.client_information.issuer, server.origin);
+    assert.equal(migrated.tokens.issuer, server.origin);
+  } finally {
+    await server.close();
+  }
+});
+
+test("unbound legacy OAuth tokens are never used without a validated issuer", async () => {
+  const server = new OAuthFixture();
+  await server.start();
+  try {
+    const authorized = await exchange(server);
+    const unbound = structuredClone(authorized.oauth_state) as unknown as {
+      authorization_server_url?: string;
+      client_information: { issuer?: string };
+      tokens: { issuer?: string };
+    };
+    delete unbound.authorization_server_url;
+    delete unbound.client_information.issuer;
+    delete unbound.tokens.issuer;
+
+    const result = await runAdapter({
+      wire_version: WIRE_VERSION,
+      action: "oauth_token",
+      endpoint: server.endpoint,
+      oauth_state: unbound as unknown as WireOAuthState,
+    });
+    assert.equal(result.records[0]?.event, "oauth_refresh_required");
+  } finally {
+    await server.close();
+  }
+});
+
+test("a malformed stored callback is an invalid OAuth state", async () => {
+  const server = new OAuthFixture();
+  await server.start();
+  try {
+    const authorized = await exchange(server);
+    const malformed = structuredClone(authorized.oauth_state) as WireOAuthState & {
+      redirect_uri: string;
+    };
+    malformed.redirect_uri = "not a URL";
+
+    const result = await runAdapter({
+      wire_version: WIRE_VERSION,
+      action: "oauth_token",
+      endpoint: server.endpoint,
+      oauth_state: malformed,
+    });
+    const record = result.records[0];
+    assert.equal(record?.event, "failed", JSON.stringify(record));
+    if (record?.event !== "failed") return;
+    assert.equal(record.failure.kind, "invalid_request");
+    assert.equal(record.failure.diagnostic.code, "invalid_oauth_state");
+  } finally {
+    await server.close();
+  }
+});
+
 test("OAuth never repeats a failed registration inside one adapter request", async () => {
   const server = new OAuthFixture({ rejectRegistration: true });
   await server.start();
@@ -183,6 +430,7 @@ test("OAuth callback issuer mismatch fails before sending the code", async () =>
       endpoint: server.endpoint,
       authorization_code: "must-not-be-sent",
       issuer: "https://attacker.example",
+      registration: { mode: "dynamic" },
       oauth_state: state,
     });
     const terminal = result.records[0];
@@ -193,171 +441,3 @@ test("OAuth callback issuer mismatch fails before sending the code", async () =>
     await server.close();
   }
 });
-
-async function begin(server: OAuthFixture): Promise<WireOAuthState> {
-  const result = await runAdapter(beginRequest(server.endpoint));
-  const record = result.records[0];
-  assert.equal(record?.event, "oauth_redirect", JSON.stringify(record));
-  if (record?.event !== "oauth_redirect") throw new Error("OAuth did not redirect");
-  return record.oauth_state;
-}
-
-async function exchange(
-  server: OAuthFixture,
-): Promise<Extract<(Awaited<ReturnType<typeof runAdapter>>)["records"][number], { event: "oauth_authorized" }>> {
-  const state = await begin(server);
-  const result = await runAdapter({
-    wire_version: WIRE_VERSION,
-    action: "oauth_exchange",
-    endpoint: server.endpoint,
-    authorization_code: "one-time-code",
-    issuer: server.origin,
-    oauth_state: state,
-  });
-  const record = result.records[0];
-  assert.equal(record?.event, "oauth_authorized", JSON.stringify(record));
-  if (record?.event !== "oauth_authorized") throw new Error("OAuth did not authorize");
-  return record;
-}
-
-function beginRequest(endpoint: string): OAuthBeginRequest {
-  return {
-    wire_version: WIRE_VERSION,
-    action: "oauth_begin",
-    endpoint,
-    csrf_state: CSRF,
-    redirect_uri: CALLBACK,
-    force_reauthorization: false,
-  };
-}
-
-interface OAuthFixtureOptions {
-  readonly rejectRegistration?: boolean;
-  readonly advertiseIssuerResponse?: boolean;
-}
-
-class OAuthFixture {
-  registrationRequests = 0;
-  tokenRequests = 0;
-  refreshRequests = 0;
-  requests = 0;
-  readonly #server = createServer((request, response) => {
-    void this.#respond(request, response).catch((error: unknown) => {
-      response.writeHead(500, { "content-type": "text/plain" });
-      response.end(error instanceof Error ? error.message : String(error));
-    });
-  });
-  readonly #options: OAuthFixtureOptions;
-  #origin: string | undefined;
-
-  constructor(options: OAuthFixtureOptions = {}) {
-    this.#options = options;
-  }
-
-  get origin(): string {
-    if (this.#origin === undefined) throw new Error("fixture is not started");
-    return this.#origin;
-  }
-
-  get endpoint(): string {
-    return `${this.origin}/mcp`;
-  }
-
-  async start(): Promise<void> {
-    this.#server.listen(0, "127.0.0.1");
-    await once(this.#server, "listening");
-    const address = this.#server.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("fixture did not bind");
-    }
-    this.#origin = `http://127.0.0.1:${address.port}`;
-  }
-
-  async close(): Promise<void> {
-    this.#server.closeAllConnections();
-    await new Promise<void>((resolve, reject) => {
-      this.#server.close((error) => error === undefined ? resolve() : reject(error));
-    });
-  }
-
-  async #respond(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    this.requests += 1;
-    const url = new URL(request.url ?? "/", this.origin);
-    if (url.pathname.includes(".well-known/oauth-protected-resource")) {
-      return json(response, 200, {
-        resource: this.endpoint,
-        authorization_servers: [this.origin],
-        scopes_supported: ["search"],
-      });
-    }
-    if (url.pathname.includes(".well-known/oauth-authorization-server")) {
-      return json(response, 200, {
-        issuer: this.origin,
-        authorization_endpoint: `${this.origin}/authorize`,
-        token_endpoint: `${this.origin}/token`,
-        registration_endpoint: `${this.origin}/register`,
-        response_types_supported: ["code"],
-        grant_types_supported: ["authorization_code", "refresh_token"],
-        scopes_supported: ["search"],
-        code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["none"],
-        ...(this.#options.advertiseIssuerResponse === true
-          ? { authorization_response_iss_parameter_supported: true }
-          : {}),
-      });
-    }
-    if (url.pathname === "/register") {
-      this.registrationRequests += 1;
-      const registration = JSON.parse(await body(request)) as Record<string, unknown>;
-      if (this.#options.rejectRegistration === true) {
-        return json(response, 400, {
-          error: "invalid_client",
-          error_description: "server-client-secret",
-        });
-      }
-      return json(response, 201, {
-        ...registration,
-        client_id: "renoa-fixture-client",
-      });
-    }
-    if (url.pathname === "/token") {
-      this.tokenRequests += 1;
-      const params = new URLSearchParams(await body(request));
-      if (params.get("grant_type") === "refresh_token") {
-        this.refreshRequests += 1;
-        assert.equal(params.get("refresh_token"), "refresh-one");
-        return json(response, 200, {
-          access_token: "access-two",
-          refresh_token: "refresh-two",
-          token_type: "Bearer",
-          expires_in: 3600,
-          scope: "search",
-        });
-      }
-      assert.equal(params.get("code"), "one-time-code");
-      assert.equal(params.get("redirect_uri"), CALLBACK);
-      assert.notEqual(params.get("code_verifier"), null);
-      return json(response, 200, {
-        access_token: "access-one",
-        refresh_token: "refresh-one",
-        token_type: "Bearer",
-        expires_in: 3600,
-        scope: "search",
-      });
-    }
-    return json(response, 404, { error: "not_found" });
-  }
-}
-
-function json(response: ServerResponse, status: number, value: unknown): void {
-  response.writeHead(status, { "content-type": "application/json" });
-  response.end(JSON.stringify(value));
-}
-
-async function body(request: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}

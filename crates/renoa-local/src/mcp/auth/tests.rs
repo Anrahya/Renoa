@@ -140,18 +140,19 @@ fn main() {{
 
 #[test]
 fn stored_credential_references_fail_closed() {
-    assert!(McpConnectionAuth::from_stored("none", None, None, None).is_ok());
+    assert!(McpConnectionAuth::from_stored("none", None, None, None, None).is_ok());
     assert!(
         McpConnectionAuth::from_stored(
             "gh_cli",
             Some("github.com".to_owned()),
             Some("Anrahya".to_owned()),
             None,
+            None,
         )
         .is_ok()
     );
     assert!(
-        McpConnectionAuth::from_stored("gh_cli", Some("github.com".to_owned()), None, None,)
+        McpConnectionAuth::from_stored("gh_cli", Some("github.com".to_owned()), None, None, None,)
             .is_err()
     );
     assert!(
@@ -160,13 +161,18 @@ fn stored_credential_references_fail_closed() {
             None,
             None,
             Some("exa.default".to_owned()),
+            None,
         )
         .is_ok()
     );
     assert!(McpConnectionAuth::gh_cli("github.com/bad", "Anrahya").is_err());
 
-    let oauth = McpConnectionAuth::oauth("search.default", "https://first.example/mcp")
-        .expect("create endpoint-bound OAuth reference");
+    let oauth = McpConnectionAuth::oauth(
+        "search.default",
+        "https://first.example/mcp",
+        super::McpOAuthRegistration::dynamic(),
+    )
+    .expect("create endpoint-bound OAuth reference");
     assert!(
         oauth
             .validate_oauth_binding("search.default", "https://first.example/mcp")

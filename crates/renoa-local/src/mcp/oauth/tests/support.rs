@@ -4,7 +4,10 @@ use tempfile::{TempDir, tempdir};
 use tokio_util::sync::CancellationToken;
 
 use super::super::{McpAuthorizationResolver, secret::OAuthSecretBundle};
-use crate::mcp::{McpCatalogStore, McpConnectionAuth, McpCredentialResolver, McpRequestHeaders};
+use crate::mcp::{
+    McpCatalogStore, McpConnectionAuth, McpCredentialResolver, McpOAuthRegistration,
+    McpRequestHeaders,
+};
 
 pub(super) const CONNECTION: &str = "oauth-fixture";
 pub(super) const ENDPOINT: &str = "https://mcp.example.test/mcp";
@@ -24,8 +27,8 @@ impl Fixture {
         let directory = tempdir().expect("temporary OAuth fixture");
         let database = directory.path().join("host.sqlite3");
         let store = McpCatalogStore::initialize(database).expect("initialize Host catalog");
-        let auth =
-            McpConnectionAuth::oauth(CONNECTION, ENDPOINT).expect("OAuth connection reference");
+        let auth = McpConnectionAuth::oauth(CONNECTION, ENDPOINT, McpOAuthRegistration::dynamic())
+            .expect("OAuth connection reference");
         store
             .register_connection(
                 "oauth-integration",
@@ -127,7 +130,7 @@ if (request.action === 'oauth_begin') {{
     authorization_url: authorization.href
   }};
   send({{
-    wire_version: 5,
+    wire_version: 6,
     event: 'oauth_redirect',
     authorization_url: authorization.href,
     oauth_state: state
@@ -136,7 +139,7 @@ if (request.action === 'oauth_begin') {{
   if (request.authorization_code !== 'code-one') process.exit(11);
   if (request.oauth_state.reject_exchange === true) {{
     send({{
-      wire_version: 5,
+      wire_version: 6,
       event: 'oauth_failed',
       failure: {{
         kind: 'protocol',
@@ -155,7 +158,7 @@ if (request.action === 'oauth_begin') {{
     needs_refresh: false
   }};
   send({{
-    wire_version: 5,
+    wire_version: 6,
     event: 'oauth_authorized',
     authorization: {{scheme: 'bearer', token: 'access-one'}},
     oauth_state: state
@@ -163,13 +166,13 @@ if (request.action === 'oauth_begin') {{
 }} else if (request.action === 'oauth_token') {{
   if (request.oauth_state.needs_refresh === true) {{
     send({{
-      wire_version: 5,
+      wire_version: 6,
       event: 'oauth_refresh_required',
       oauth_state: request.oauth_state
     }});
   }} else {{
     send({{
-      wire_version: 5,
+      wire_version: 6,
       event: 'oauth_authorized',
       authorization: {{scheme: 'bearer', token: request.oauth_state.access_token}},
       oauth_state: request.oauth_state
@@ -183,7 +186,7 @@ if (request.action === 'oauth_begin') {{
     needs_refresh: false
   }};
   send({{
-    wire_version: 5,
+    wire_version: 6,
     event: 'oauth_authorized',
     authorization: {{scheme: 'bearer', token: 'access-two'}},
     oauth_state: state
@@ -224,7 +227,11 @@ fn main() {
     )
 }
 
-fn compile_secret_tool(directory: &Path, data: &Path, writes: &Path) -> std::path::PathBuf {
+pub(super) fn compile_secret_tool(
+    directory: &Path,
+    data: &Path,
+    writes: &Path,
+) -> std::path::PathBuf {
     compile(
         directory,
         "oauth-secret-tool",

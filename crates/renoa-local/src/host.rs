@@ -30,8 +30,7 @@ use crate::{
         resolve_adapter,
     },
     plugins::{
-        IntegrationCatalog, PLUGIN_STORE_DIRECTORY, PluginError, PluginManager,
-        alpha_plugin_binding,
+        OfficialRegistry, PLUGIN_STORE_DIRECTORY, PluginError, PluginManager, alpha_plugin_binding,
     },
     runtime::build_composed_local_runtime,
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
@@ -56,17 +55,24 @@ pub struct LocalHost {
 #[derive(Clone, Copy, Default)]
 pub struct LocalHostAdapters<'a> {
     mcp: Option<&'a Path>,
-    integration_catalog: Option<&'a Path>,
+    mcp_registry: Option<&'a Path>,
 }
 
 impl<'a> LocalHostAdapters<'a> {
-    /// Selects the MCP runtime and discovery-only integration catalog adapters.
+    /// Selects the MCP runtime adapter.
     #[must_use]
-    pub const fn new(mcp: Option<&'a Path>, integration_catalog: Option<&'a Path>) -> Self {
+    pub const fn new(mcp: Option<&'a Path>) -> Self {
         Self {
             mcp,
-            integration_catalog,
+            mcp_registry: None,
         }
+    }
+
+    /// Selects the official MCP Registry discovery adapter.
+    #[must_use]
+    pub const fn with_mcp_registry(mut self, registry: Option<&'a Path>) -> Self {
+        self.mcp_registry = registry;
+        self
     }
 }
 
@@ -92,7 +98,7 @@ struct HostInitialization {
     initial_model: String,
     credential_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
-    integration_catalog_adapter: Option<PathBuf>,
+    mcp_registry_adapter: Option<PathBuf>,
     global_skill_source: Option<PathBuf>,
 }
 
@@ -167,11 +173,11 @@ impl LocalHost {
             .map(resolve_adapter)
             .transpose()
             .map_err(McpHostError::from)?;
-        let integration_catalog_adapter = adapters
-            .integration_catalog
-            .map(IntegrationCatalog::resolve_adapter)
+        let mcp_registry_adapter = adapters
+            .mcp_registry
+            .map(OfficialRegistry::resolve_adapter)
             .transpose()
-            .map_err(PluginError::from)?;
+            .map_err(|error| PluginError::Unavailable(error.to_string()))?;
         Self::assemble(HostInitialization {
             data_directory: data_directory.into(),
             bridge: bridge.into(),
@@ -180,7 +186,7 @@ impl LocalHost {
             initial_model: initial_model.into(),
             credential_store: credential_store.into(),
             mcp_adapter,
-            integration_catalog_adapter,
+            mcp_registry_adapter,
             global_skill_source: default_global_source(),
         })
     }
@@ -194,7 +200,7 @@ impl LocalHost {
             initial_model,
             credential_store,
             mcp_adapter,
-            integration_catalog_adapter,
+            mcp_registry_adapter,
             global_skill_source,
         } = initialization;
         if providers.is_empty() {
@@ -231,8 +237,8 @@ impl LocalHost {
             data_directory.join(PLUGIN_STORE_DIRECTORY),
             mcp_catalog.clone(),
             mcp_adapter.clone(),
+            mcp_registry_adapter,
             mcp_credentials.clone(),
-            integration_catalog_adapter.map(IntegrationCatalog::new),
             skill_store.clone(),
         )?;
         Ok(Self {

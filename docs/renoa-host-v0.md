@@ -160,7 +160,7 @@ catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
 The Host adds three fixed extension-registry tools to every Alpha runtime:
-`tool_search`, `tool_load`, and `tool_execute`. Search returns at most five
+`tool_search`, `tool_load`, and `tool_execute`. Search returns at most 200
 compact matches without schemas. Load returns only one through three explicitly
 requested model-facing schemas. Execute resolves one exact reference containing
 the current catalog digest, then reuses the proven MCP credential, adapter,
@@ -174,24 +174,29 @@ running. The runtime itself is unchanged: the kernel freezes the same three
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. It accepts seven typed actions:
-search the replaceable integrations.sh discovery adapter, add one exact
-refetched public candidate, one officially researched MCP definition, or one
-content-bound local Agent Plugins 1.0 directory; inspect a local package;
-install the exact inspected digest; list installed revisions; connect one
-supported package MCP server to Alpha; or authorize or explicitly restart one
-registered OAuth connection.
+The Host adds one fixed `extension_manage` tool. Its v7 binding accepts nine
+typed actions:
+search compact publisher metadata in the official MCP Registry; lookup one
+exact published Registry name/version; add one MCP definition independently
+verified against the provider's official documentation or one content-bound
+local Agent Plugins 1.0 directory; inspect a local package; install the exact
+inspected digest; list package integrity and durable connection state; connect
+one supported package MCP server to Alpha; authorize or explicitly restart one
+registered OAuth connection; or disconnect one connection from Alpha without
+deleting its durable package, registration, catalog, or credential reference.
 Inspection and installation execute no package code. Installation publishes a
 full immutable tree at `plugins/<sha256>` before committing its durable record.
-Search returns bounded metadata rather than trusting a catalog as executable
-truth. A local package add requires the digest returned by inspection so a
+Official Registry discovery is a replaceable read-only input to this management
+boundary, never executable truth. It verifies publisher namespace control only,
+returns explicit coverage, and cannot flow directly into `add`. A local package
+add requires the digest returned by inspection so a
 crash replay cannot read changed bytes from the same path. Add normalizes every
 accepted source into the same package path, installs it, loads supported
-package skills, and only then attempts the requested MCP connection. A catalog
-miss returns explicit web-research or local-package
-guidance; Renoa never guesses an endpoint. A connection or authentication
-failure returns the retained package digest, package notices, skill result, and
-safe exact service error instead of rolling back unrelated components.
+package skills, and only then attempts the requested MCP connection. MCP
+discovery validates the real endpoint before any tools are published. A
+connection or authentication failure returns the retained package digest,
+package notices, skill result, and safe exact service error instead of rolling
+back unrelated components.
 Connect accepts no credential, one named Secret Service bearer reference, or
 Host-owned OAuth, never a raw key. OAuth opens an exact loopback browser flow,
 keeps client state and tokens in the desktop Secret Service, and stores only a
@@ -203,8 +208,10 @@ receipt without opening another browser. Explicit `authorize` with `restart:
 true` abandons an expired or unknown flow only for a new operation. The Host
 discovers and attaches through the same MCP
 catalog path used by `LocalHost`; the next `tool_search` sees the connection
-without restarting the session or surface. Package skills enter the same skill
-registry under a lower-priority plugin scope; workspace overrides global, and
+without restarting the session or surface. Disconnect is idempotent and the
+next search stops exposing its tools while the verified catalog remains
+available for recovery or later reattachment. Package skills enter the same
+skill registry under a lower-priority plugin scope; workspace overrides global, and
 global overrides plugin. A newer revision of the same plugin replaces its
 bindings, while a second plugin with the same skill name is visibly rejected.
 The next `skill_search` sees a committed package skill without restarting the
@@ -404,13 +411,13 @@ human surface --\
 running agent --/                                      -> durable change
 ```
 
-Alpha v1's deliberate full access permits inspect, install, list, connect, and
-authorize without a second plugin approval prompt. Service OAuth consent is
+Alpha v1's deliberate full access permits search, lookup, inspect, install,
+list, connect, and authorize without a second plugin approval prompt. Service OAuth consent is
 authentication, not another Renoa permission decision. A later restricted
 profile will gate the same management binding through its one effective
-permission scope. An agent may exercise that authority but cannot broaden it. MCP registry
-attachments are visible at the next lookup; static runtime changes wait for a
-new operation and never mutate an active manifest.
+permission scope. An agent may exercise that authority but cannot broaden it.
+MCP registry attachments are visible at the next lookup; static runtime changes
+wait for a new operation and never mutate an active manifest.
 
 The kernel and the trusted Host enforcement path are outside agent-managed
 modification.
@@ -426,13 +433,13 @@ modification.
 7. V0 exposes all configured local tools and adds no permission model.
 8. Provider, workspace, surface, and future permission policy stay outside the
    kernel.
-9. The Host owns OAuth coordination and secret references; the MCP adapter
-   speaks the protocol, while packages, surfaces, the loop, and kernel never
-   own credentials.
+9. The Host owns OAuth coordination, client-registration policy, and secret
+   references; the MCP adapter speaks the protocol, while packages, surfaces,
+   the loop, and kernel never own credentials.
 
 ## Open decisions
 
-- future Host schema migrations beyond the proven v1-through-v8 chain;
+- future Host schema migrations beyond the proven v1-through-v9 chain;
 - historical resolved-binding retention across explicit catalog/profile
 changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
@@ -502,8 +509,10 @@ registration; concurrent sessions perform one rotating refresh; and a lost
 credential exchange becomes durable unknown instead of being replayed. A
 completed or definitely failed management operation is receipt-backed, so the
 same session/command/tool-call identity causes no second authorization flow.
-Host schema v8 adds only the connection kind, non-secret recovery phases, and
-bounded semantic receipts; no kernel or RCP type changed.
+Host schema v8 adds the connection kind, non-secret recovery phases, and bounded
+semantic receipts. Schema v9 adds explicit CIMD, pre-registered-client, and DCR
+policy while preserving existing OAuth connections as DCR. Client credentials
+remain named Secret Service references; no kernel or RCP type changed.
 
 The standalone Agent Skills path is now complete. Alpha sees two additional
 constant schemas regardless of skill count. Search imports standard global and
@@ -531,3 +540,15 @@ header and just-in-time bearer, and observed by the existing live registry;
 the key never enters Host SQLite. A skill-bearing package is installed and
 becomes searchable live; invalid and colliding skills remain visible component
 failures. No kernel, loop, ACP, Waku, or RCP type was added.
+
+The first public discovery path is also complete. The Host supervises a
+replaceable Node adapter over one bounded versioned process contract.
+`extension_manage search` queries the official MCP Registry's stable `v0.1`
+API with deterministic multi-word normalization, cursor bounds, no cache, and
+no retry; `lookup` accepts only one exact name/version. The Rust boundary
+revalidates every normalized result and fixed trust statement. Search exposes
+no endpoint, lookup never installs, unsupported transports and packages stay
+explicitly blocked, concrete URL credentials are rejected, and safe HTTP
+status facts reach Alpha without an untrusted response body. The frozen
+extension binding is revision 7; connection status and disconnect remain Host
+behavior, and no kernel, ACP, Waku, or RCP type changed.

@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 mod output;
 mod packages;
+mod registry;
 mod support;
 
 use super::{ManageTool, TOOL_NAME};
@@ -14,143 +15,9 @@ use crate::plugins::tests::test_skill_store;
 use crate::{
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
-    plugins::{IntegrationCatalog, PluginManager},
+    plugins::PluginManager,
 };
-use support::{
-    write_catalog_adapter, write_failed_mcp_adapter, write_mcp_adapter,
-    write_single_candidate_catalog_adapter,
-};
-
-const CATALOG_REFERENCE: &str = "integrations.sh/exa.ai/exa-mcp-server/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-
-#[tokio::test]
-async fn plain_language_discovery_can_add_and_hot_load_a_public_mcp() {
-    let directory = tempdir().expect("temporary catalog extension fixture");
-    let database = directory.path().join("host.sqlite3");
-    catalog::initialize(&database).expect("initialize Host catalog");
-    let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
-    let actions = directory.path().join("catalog-actions");
-    let catalog_adapter = directory.path().join("catalog.mjs");
-    write_catalog_adapter(&catalog_adapter, &actions);
-    let mcp_adapter = directory.path().join("mcp.mjs");
-    write_mcp_adapter(&mcp_adapter);
-    let skills = test_skill_store(&database, directory.path());
-    let manager = PluginManager::initialize(
-        database,
-        directory.path().join("installed"),
-        mcp.clone(),
-        Some(mcp_adapter),
-        McpCredentialResolver::default(),
-        Some(IntegrationCatalog::new(catalog_adapter)),
-        skills,
-    )
-    .expect("initialize extension manager");
-    let tool = ManageTool::new(manager.clone(), directory.path().to_path_buf());
-
-    let searched = call(
-        &tool,
-        json!({"action": "search", "query": "web search with Exa"}),
-    )
-    .await;
-    let reference = searched["candidates"][0]["reference"]
-        .as_str()
-        .expect("search returned candidate")
-        .to_owned();
-    let add_request = json!({
-        "action": "add",
-        "source": {"kind": "catalog", "candidate": reference}
-    });
-    let added = call(&tool, add_request.clone()).await;
-    let replayed = call(&tool, add_request).await;
-
-    assert_eq!(added["status"], "connected");
-    assert_eq!(added["name"], "Exa MCP Server");
-    assert_eq!(added["tools"], 1);
-    assert_eq!(replayed["package_digest"], added["package_digest"]);
-    assert_eq!(replayed["connection"], added["connection"]);
-    assert_eq!(
-        fs::read_to_string(actions).expect("read catalog actions"),
-        "search\nresolve\nresolve\n"
-    );
-    assert_eq!(
-        manager
-            .list()
-            .await
-            .expect("list idempotent catalog package")
-            .len(),
-        1
-    );
-    let tools = mcp
-        .alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
-        .expect("read hot-loaded tools");
-    assert_eq!(tools.len(), 1);
-}
-
-#[tokio::test]
-async fn failed_catalog_connection_keeps_the_package_but_does_not_enable_tools() {
-    let directory = tempdir().expect("temporary failed catalog addition fixture");
-    let database = directory.path().join("host.sqlite3");
-    catalog::initialize(&database).expect("initialize Host catalog");
-    let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
-    let catalog_adapter = directory.path().join("catalog.mjs");
-    write_single_candidate_catalog_adapter(&catalog_adapter, CATALOG_REFERENCE);
-    let mcp_adapter = directory.path().join("failed-mcp.mjs");
-    write_failed_mcp_adapter(&mcp_adapter);
-    let skills = test_skill_store(&database, directory.path());
-    let manager = PluginManager::initialize(
-        database,
-        directory.path().join("installed"),
-        mcp.clone(),
-        Some(mcp_adapter),
-        McpCredentialResolver::default(),
-        Some(IntegrationCatalog::new(catalog_adapter)),
-        skills,
-    )
-    .expect("initialize extension manager");
-    let tool = ManageTool::new(manager.clone(), directory.path().to_path_buf());
-
-    let result = invoke_tool(
-        Some(&tool),
-        ToolCall {
-            id: "failed-catalog-add".to_owned(),
-            name: TOOL_NAME.to_owned(),
-            arguments: json!({
-                "action": "add",
-                "source": {"kind": "catalog", "candidate": CATALOG_REFERENCE}
-            }),
-            thought_signature: None,
-            namespace: None,
-        },
-        CancellationToken::new(),
-        None,
-    )
-    .await
-    .expect("remote discovery failure is definite");
-
-    assert!(result.is_error);
-    let [ContentBlock::Text { text }] = result.content.as_slice() else {
-        panic!("failed addition must return one model-visible error")
-    };
-    let error: Value = serde_json::from_str(text)
-        .unwrap_or_else(|source| panic!("decode addition error from {text:?}: {source}"));
-    assert_eq!(error["code"], "mcp_incompatible_protocol");
-    assert_eq!(
-        error["message"],
-        "The endpoint supports no usable MCP version."
-    );
-    assert_eq!(error["status"], "installed_connection_failed");
-    let package_digest = error["package_digest"]
-        .as_str()
-        .expect("failed connection reports the installed package");
-    let installed = manager.list().await.expect("list installed packages");
-    assert_eq!(installed.len(), 1);
-    assert_eq!(installed[0].digest(), package_digest);
-    assert!(
-        mcp.alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
-            .expect("read Alpha registry")
-            .is_empty()
-    );
-}
+use support::write_mcp_adapter;
 
 #[tokio::test]
 async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
@@ -166,8 +33,8 @@ async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
         directory.path().join("installed"),
         mcp.clone(),
         Some(mcp_adapter),
-        McpCredentialResolver::default(),
         None,
+        McpCredentialResolver::default(),
         skills.clone(),
     )
     .expect("initialize extension manager");
@@ -189,9 +56,13 @@ async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
     )
     .await;
 
-    assert_eq!(added["status"], "connected");
+    assert_eq!(added["status"], "catalog_loaded");
     assert_eq!(added["source"], "mcp");
     assert_eq!(added["tools"], 1);
+    let connection = added["connection"]
+        .as_str()
+        .expect("generated connection id")
+        .to_owned();
     let installed = manager.list().await.expect("list researched package");
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].metadata().name(), "exa-research");
@@ -205,6 +76,39 @@ async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
             .len(),
         1
     );
+
+    let listed = call(&tool, json!({"action": "list"})).await;
+    assert_eq!(listed["installed"].as_array().map(Vec::len), Some(1));
+    assert_eq!(listed["rejected"], json!([]));
+    assert_eq!(listed["connections"].as_array().map(Vec::len), Some(1));
+    assert_eq!(listed["connections"][0]["connection"], connection);
+    assert_eq!(listed["connections"][0]["registered"], true);
+    assert_eq!(listed["connections"][0]["catalog_loaded"], true);
+    assert_eq!(listed["connections"][0]["enabled_for_alpha"], true);
+
+    let disconnected = call(
+        &tool,
+        json!({"action": "disconnect", "connection": connection}),
+    )
+    .await;
+    assert_eq!(disconnected["status"], "disconnected");
+    assert_eq!(disconnected["catalog_retained"], true);
+    assert_eq!(disconnected["enabled_for_alpha"], false);
+    let repeated = call(
+        &tool,
+        json!({"action": "disconnect", "connection": connection}),
+    )
+    .await;
+    assert_eq!(repeated, disconnected);
+    assert!(
+        mcp.alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .expect("read tools after disconnect")
+            .is_empty()
+    );
+    assert!(mcp.load_catalog(&connection).is_ok());
+    let listed = call(&tool, json!({"action": "list"})).await;
+    assert_eq!(listed["connections"][0]["catalog_loaded"], true);
+    assert_eq!(listed["connections"][0]["enabled_for_alpha"], false);
 }
 
 #[tokio::test]
@@ -219,8 +123,8 @@ async fn researched_mcp_public_headers_cannot_smuggle_a_credential_into_a_packag
         directory.path().join("installed"),
         mcp,
         None,
-        McpCredentialResolver::default(),
         None,
+        McpCredentialResolver::default(),
         skills,
     )
     .expect("initialize extension manager");
@@ -274,7 +178,7 @@ async fn connection_failures_keep_actionable_model_facts_and_host_diagnostics() 
         r#"
 for await (const _chunk of process.stdin) {}
 process.stdout.write(JSON.stringify({
-  wire_version: 5,
+  wire_version: 6,
   event: "failed",
   failure: {
     kind: "incompatible_protocol",
@@ -297,8 +201,8 @@ process.stdout.write(JSON.stringify({
         directory.path().join("installed"),
         mcp.clone(),
         Some(adapter),
-        McpCredentialResolver::default(),
         None,
+        McpCredentialResolver::default(),
         skills,
     )
     .expect("initialize extension manager");
@@ -374,72 +278,6 @@ fn assert_failed_connection_is_registered_without_a_catalog(mcp: &McpCatalogStor
         mcp.load_catalog("exa"),
         Err(crate::mcp::McpHostError::NotFound(_))
     ));
-}
-
-#[tokio::test]
-async fn catalog_failures_keep_the_safe_exact_message_and_recovery_hint() {
-    let directory = tempdir().expect("temporary catalog error fixture");
-    let database = directory.path().join("host.sqlite3");
-    catalog::initialize(&database).expect("initialize Host catalog");
-    let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
-    let adapter = directory.path().join("failed-catalog.mjs");
-    fs::write(
-        &adapter,
-        r"
-for await (const _chunk of process.stdin) {}
-process.stdout.write(JSON.stringify({
-  wire_version: 1,
-  event: 'failed',
-  failure: {
-    kind: 'unavailable',
-    message: 'integrations.sh returned HTTP 503.',
-    diagnostic: {code: 'catalog_http_error', http_status: 503, detail: 'service unavailable'}
-  }
-}) + '\n');
-",
-    )
-    .expect("write failed catalog adapter");
-    let skills = test_skill_store(&database, directory.path());
-    let manager = PluginManager::initialize(
-        database,
-        directory.path().join("installed"),
-        mcp,
-        None,
-        McpCredentialResolver::default(),
-        Some(IntegrationCatalog::new(adapter)),
-        skills,
-    )
-    .expect("initialize extension manager");
-    let tool = ManageTool::new(manager, directory.path().to_path_buf());
-
-    let result = invoke_tool(
-        Some(&tool),
-        ToolCall {
-            id: "catalog-error".to_owned(),
-            name: TOOL_NAME.to_owned(),
-            arguments: json!({"action": "search", "query": "web search"}),
-            thought_signature: None,
-            namespace: None,
-        },
-        CancellationToken::new(),
-        None,
-    )
-    .await
-    .expect("catalog failure is definite");
-
-    assert!(result.is_error);
-    let [ContentBlock::Text { text }] = result.content.as_slice() else {
-        panic!("catalog error must return one text block")
-    };
-    let model: Value = serde_json::from_str(text).expect("decode model-visible catalog error");
-    assert_eq!(model["code"], "integration_catalog_unavailable");
-    assert_eq!(model["message"], "integrations.sh returned HTTP 503.");
-    assert_eq!(model["retryable"], true);
-    let details = result.details.expect("catalog error keeps Host details");
-    assert_eq!(
-        details["integration_catalog"]["failure"]["diagnostic"]["http_status"],
-        503
-    );
 }
 
 async fn call(tool: &ManageTool, arguments: Value) -> Value {

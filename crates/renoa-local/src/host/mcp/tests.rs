@@ -26,7 +26,7 @@ async fn gh_reference_resolves_only_for_adapter_stdin_and_never_enters_host_stat
         ModelProvider::Xai,
         "unused-model",
         fixtures.join("unused-credentials.sqlite3"),
-        LocalHostAdapters::new(Some(&adapter), None),
+        LocalHostAdapters::new(Some(&adapter)),
     )
     .expect("create Host");
     Arc::get_mut(&mut host.config)
@@ -116,7 +116,7 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 if (
-  request.wire_version !== 5 ||
+  request.wire_version !== 6 ||
   request.action !== "discover" ||
   request.authorization?.scheme !== "bearer" ||
   request.authorization?.token !== {token} ||
@@ -124,12 +124,12 @@ if (
   Object.values(process.env).some(value => value?.includes({token}))
 ) process.exit(9);
 process.stdout.write(JSON.stringify({{
-  wire_version: 5,
+  wire_version: 6,
   event: "discovered",
   catalog: {{
     endpoint: request.endpoint,
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.5.0",
+    adapter_revision: "mcp-client-node-v0.6.0",
     tools: [{{
       name: "get_me",
       description: `token ${{request.authorization.token}}`,

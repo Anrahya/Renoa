@@ -10,13 +10,15 @@ use crate::{
     process::{child_pid_raw, configure_process_group, stop_process_group_raw},
 };
 
+use super::SensitiveString;
+
 mod capture;
 mod record;
 
 use capture::{drain, stop_and_capture, stop_and_discard};
 use record::parse_record;
 
-const WIRE_VERSION: u32 = 5;
+const WIRE_VERSION: u32 = 6;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
@@ -42,13 +44,50 @@ pub(super) enum OAuthResult {
     },
 }
 
+#[derive(Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub(super) enum OAuthRegistration {
+    Dynamic,
+    ClientMetadata {
+        client_metadata_url: String,
+    },
+    PreRegistered {
+        issuer: String,
+        client_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_secret: Option<SensitiveString>,
+    },
+}
+
+impl OAuthRegistration {
+    fn exact_secret(&self) -> Option<&str> {
+        match self {
+            Self::PreRegistered {
+                client_secret: Some(secret),
+                ..
+            } => Some(secret.expose()),
+            Self::Dynamic
+            | Self::ClientMetadata { .. }
+            | Self::PreRegistered {
+                client_secret: None,
+                ..
+            } => None,
+        }
+    }
+}
+
+pub(super) struct OAuthBegin<'a> {
+    pub(super) endpoint: &'a str,
+    pub(super) csrf_state: &'a str,
+    pub(super) redirect_uri: &'a str,
+    pub(super) force_reauthorization: bool,
+    pub(super) registration: &'a OAuthRegistration,
+    pub(super) prior: Option<&'a Value>,
+}
+
 pub(super) async fn begin(
     adapter: &Path,
-    endpoint: &str,
-    csrf_state: &str,
-    redirect_uri: &str,
-    force_reauthorization: bool,
-    prior: Option<&Value>,
+    request: OAuthBegin<'_>,
     cancellation: CancellationToken,
 ) -> Result<OAuthResult, McpAdapterError> {
     run(
@@ -56,11 +95,12 @@ pub(super) async fn begin(
         &OAuthRequest::Begin {
             wire_version: WIRE_VERSION,
             action: "oauth_begin",
-            endpoint,
-            csrf_state,
-            redirect_uri,
-            force_reauthorization,
-            oauth_state: prior,
+            endpoint: request.endpoint,
+            csrf_state: request.csrf_state,
+            redirect_uri: request.redirect_uri,
+            force_reauthorization: request.force_reauthorization,
+            registration: request.registration,
+            oauth_state: request.prior,
         },
         cancellation,
     )
@@ -72,6 +112,7 @@ pub(super) async fn exchange(
     endpoint: &str,
     authorization_code: &str,
     issuer: Option<&str>,
+    registration: &OAuthRegistration,
     state: &Value,
     cancellation: CancellationToken,
 ) -> Result<OAuthResult, McpAdapterError> {
@@ -83,6 +124,7 @@ pub(super) async fn exchange(
             endpoint,
             authorization_code,
             issuer,
+            registration,
             oauth_state: state,
         },
         cancellation,
@@ -98,7 +140,7 @@ pub(super) async fn token(
 ) -> Result<OAuthResult, McpAdapterError> {
     run(
         adapter,
-        &OAuthRequest::State {
+        &OAuthRequest::Token {
             wire_version: WIRE_VERSION,
             action: "oauth_token",
             endpoint,
@@ -112,15 +154,17 @@ pub(super) async fn token(
 pub(super) async fn refresh(
     adapter: &Path,
     endpoint: &str,
+    registration: &OAuthRegistration,
     state: &Value,
     cancellation: CancellationToken,
 ) -> Result<OAuthResult, McpAdapterError> {
     run(
         adapter,
-        &OAuthRequest::State {
+        &OAuthRequest::Refresh {
             wire_version: WIRE_VERSION,
             action: "oauth_refresh",
             endpoint,
+            registration,
             oauth_state: state,
         },
         cancellation,
@@ -138,6 +182,7 @@ enum OAuthRequest<'a> {
         csrf_state: &'a str,
         redirect_uri: &'a str,
         force_reauthorization: bool,
+        registration: &'a OAuthRegistration,
         #[serde(skip_serializing_if = "Option::is_none")]
         oauth_state: Option<&'a Value>,
     },
@@ -148,12 +193,20 @@ enum OAuthRequest<'a> {
         authorization_code: &'a str,
         #[serde(skip_serializing_if = "Option::is_none")]
         issuer: Option<&'a str>,
+        registration: &'a OAuthRegistration,
         oauth_state: &'a Value,
     },
-    State {
+    Token {
         wire_version: u32,
         action: &'static str,
         endpoint: &'a str,
+        oauth_state: &'a Value,
+    },
+    Refresh {
+        wire_version: u32,
+        action: &'static str,
+        endpoint: &'a str,
+        registration: &'a OAuthRegistration,
         oauth_state: &'a Value,
     },
 }
@@ -163,12 +216,17 @@ impl OAuthRequest<'_> {
         match self {
             Self::Begin { endpoint, .. }
             | Self::Exchange { endpoint, .. }
-            | Self::State { endpoint, .. } => endpoint,
+            | Self::Token { endpoint, .. }
+            | Self::Refresh { endpoint, .. } => endpoint,
         }
     }
 
     fn exact_secrets(&self) -> Vec<&str> {
-        let mut secrets = Vec::new();
+        let mut secrets = self
+            .registration()
+            .and_then(OAuthRegistration::exact_secret)
+            .into_iter()
+            .collect::<Vec<_>>();
         match self {
             Self::Begin {
                 csrf_state,
@@ -188,11 +246,20 @@ impl OAuthRequest<'_> {
                 secrets.push(*authorization_code);
                 collect_state_secrets(oauth_state, &mut secrets);
             }
-            Self::State { oauth_state, .. } => {
+            Self::Token { oauth_state, .. } | Self::Refresh { oauth_state, .. } => {
                 collect_state_secrets(oauth_state, &mut secrets);
             }
         }
         secrets
+    }
+
+    const fn registration(&self) -> Option<&OAuthRegistration> {
+        match self {
+            Self::Begin { registration, .. }
+            | Self::Exchange { registration, .. }
+            | Self::Refresh { registration, .. } => Some(registration),
+            Self::Token { .. } => None,
+        }
     }
 }
 

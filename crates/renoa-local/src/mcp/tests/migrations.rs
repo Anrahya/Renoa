@@ -10,9 +10,12 @@ use tempfile::tempdir;
 use super::{ENDPOINT, PROFILE, snapshot, store};
 use crate::{
     host::catalog::HostCatalogError,
-    mcp::{McpCatalogStore, McpConnectionAuth, McpHostError, McpRequestHeaders},
+    mcp::{
+        McpCatalogStore, McpConnectionAuth, McpHostError, McpOAuthRegistration, McpRequestHeaders,
+    },
 };
 
+mod registration;
 mod skills;
 
 use skills::downgrade_skill_sources_to_v6_shape;
@@ -24,7 +27,7 @@ fn a_newer_host_catalog_schema_is_rejected() {
     drop(store);
     Connection::open(&path)
         .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 9_u32)
+        .pragma_update(None, "user_version", 10_u32)
         .expect("advance schema version");
 
     assert!(matches!(
@@ -385,8 +388,12 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
             .len(),
         1
     );
-    let oauth = McpConnectionAuth::oauth("oauth", "https://example.com/oauth-mcp")
-        .expect("create OAuth reference");
+    let oauth = McpConnectionAuth::oauth(
+        "oauth",
+        "https://example.com/oauth-mcp",
+        McpOAuthRegistration::dynamic(),
+    )
+    .expect("create OAuth reference");
     migrated
         .register_connection(
             "oauth-integration",

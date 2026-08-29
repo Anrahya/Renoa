@@ -1,19 +1,16 @@
-export type ProblemKind =
-  | "invalid_request"
-  | "not_found"
-  | "conflict"
-  | "unavailable"
-  | "protocol"
-  | "resource_limit"
-  | "internal";
+import type { FailureKind, WireFailure } from "./contract.js";
+import {
+  MAX_DIAGNOSTIC_BYTES,
+  MAX_FAILURE_MESSAGE_BYTES,
+} from "./limits.js";
 
-export class CatalogProblem extends Error {
-  readonly kind: ProblemKind;
+export class RegistryProblem extends Error {
+  readonly kind: FailureKind;
   readonly code?: string;
   readonly httpStatus?: number;
 
   constructor(
-    kind: ProblemKind,
+    kind: FailureKind,
     message: string,
     options: {
       readonly code?: string;
@@ -25,7 +22,7 @@ export class CatalogProblem extends Error {
       message,
       options.cause === undefined ? undefined : { cause: options.cause },
     );
-    this.name = "CatalogProblem";
+    this.name = "RegistryProblem";
     this.kind = kind;
     if (options.code !== undefined) {
       this.code = options.code;
@@ -36,29 +33,34 @@ export class CatalogProblem extends Error {
   }
 }
 
-export function failure(error: unknown): {
-  readonly kind: ProblemKind;
-  readonly message: string;
-  readonly diagnostic: { readonly code?: string; readonly http_status?: number; readonly detail: string };
-} {
-  const problem = error instanceof CatalogProblem ? error : undefined;
-  const detail = safeDiagnostic(error);
+export function toWireFailure(error: unknown): WireFailure {
+  const problem = error instanceof RegistryProblem ? error : undefined;
   return {
     kind: problem?.kind ?? "internal",
-    message:
+    message: bounded(
       problem?.message ??
-      "The integration discovery adapter failed before returning a result.",
+        "The official MCP Registry adapter failed before returning a result.",
+      MAX_FAILURE_MESSAGE_BYTES,
+    ),
     diagnostic: {
       ...(problem?.code === undefined ? {} : { code: problem.code }),
       ...(problem?.httpStatus === undefined
         ? {}
         : { http_status: problem.httpStatus }),
-      detail,
+      detail: safeDiagnostic(error),
     },
   };
 }
 
 export function safeDiagnostic(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text.replace(/[\u0000-\u001F\u007F]/gu, " ").slice(0, 4_096);
+  return bounded(text.replace(/[\u0000-\u001F\u007F]/gu, " "), MAX_DIAGNOSTIC_BYTES);
+}
+
+function bounded(value: string, bytes: number): string {
+  const encoded = Buffer.from(value, "utf8");
+  if (encoded.byteLength <= bytes) {
+    return value;
+  }
+  return encoded.subarray(0, bytes).toString("utf8");
 }

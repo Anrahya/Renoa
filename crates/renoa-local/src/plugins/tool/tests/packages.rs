@@ -3,13 +3,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use renoa_agent::{ContentBlock, Tool, ToolCall, invoke_tool};
+use renoa_agent::{ContentBlock, ToolCall, invoke_tool};
 use serde_json::{Value, json};
 use tempfile::{TempDir, tempdir};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    super::{ManageTool, TOOL_NAME},
+    super::{
+        ManageTool, TOOL_NAME,
+        contract::{ManageInput, manage_tool_spec},
+    },
     call,
 };
 use crate::{
@@ -18,6 +21,111 @@ use crate::{
     plugins::{PluginManager, tests::test_skill_store},
     skills::SkillStore,
 };
+
+#[test]
+fn oauth_credential_uses_the_exact_public_spelling_and_requires_a_registration_mode() {
+    serde_json::from_value::<ManageInput>(json!({
+        "action": "connect",
+        "package_digest": "a".repeat(64),
+        "server": "drive",
+        "connection": "drive",
+        "credential": {
+            "kind": "oauth",
+            "registration": {"mode": "pre_registered", "credential_id": "drive.client"}
+        }
+    }))
+    .expect("the documented oauth spelling must deserialize");
+    assert!(
+        serde_json::from_value::<ManageInput>(json!({
+            "action": "connect",
+            "package_digest": "a".repeat(64),
+            "server": "drive",
+            "connection": "drive",
+            "credential": {"kind": "o_auth", "registration": {"mode": "dynamic"}}
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn extension_schema_keeps_raw_credentials_out_of_the_agent_path() {
+    let spec = manage_tool_spec(TOOL_NAME);
+    assert!(spec.description.contains("references only"));
+    assert!(spec.description.contains("has no credential-entry UI"));
+    assert!(
+        spec.description
+            .contains("Never ask the user to paste credential material")
+    );
+    let schema = &spec.input_schema;
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["required"], json!(["action"]));
+    assert_eq!(
+        schema["properties"]["action"]["enum"],
+        json!([
+            "search",
+            "lookup",
+            "add",
+            "inspect",
+            "install",
+            "list",
+            "connect",
+            "authorize",
+            "disconnect"
+        ])
+    );
+    assert!(schema.get("oneOf").is_none());
+    assert_eq!(schema["properties"]["source"]["type"], "object");
+    assert_eq!(
+        schema["properties"]["source"]["properties"]["kind"]["enum"],
+        json!(["mcp", "package"])
+    );
+    assert_eq!(
+        schema["properties"]["credential"]["oneOf"][0]["required"],
+        json!(["kind", "credential_id"])
+    );
+    assert_eq!(
+        schema["properties"]["credential"]["oneOf"][1]["properties"]["kind"]["const"],
+        "oauth"
+    );
+    assert_eq!(
+        schema["properties"]["credential"]["oneOf"][1]["required"],
+        json!(["kind", "registration"])
+    );
+    assert_eq!(
+        schema["properties"]["credential"]["oneOf"][1]["properties"]["registration"]["oneOf"][2]["properties"]
+            ["mode"]["const"],
+        "pre_registered"
+    );
+    let credential_description = schema["properties"]["credential"]["description"]
+        .as_str()
+        .expect("credential schema has model guidance");
+    assert!(credential_description.contains("existing Host credential reference"));
+    assert!(credential_description.contains("can bind the reference"));
+    assert!(credential_description.contains("cannot create the referenced"));
+    let encoded = schema.to_string();
+    assert!(!encoded.contains("candidate"));
+    assert!(encoded.contains("query"));
+    assert!(!encoded.contains("connection_id"));
+    assert_eq!(
+        schema["properties"]["registry_version"]["not"]["const"],
+        "latest"
+    );
+    serde_json::from_value::<ManageInput>(json!({"action": "search", "query": "cloudflare"}))
+        .expect("official Registry search is a typed action");
+    serde_json::from_value::<ManageInput>(json!({
+        "action": "lookup",
+        "registry_name": "com.cloudflare.mcp/mcp",
+        "registry_version": "1.0.0"
+    }))
+    .expect("official Registry exact lookup is a typed action");
+    assert!(
+        serde_json::from_value::<ManageInput>(json!({
+            "action": "add",
+            "source": {"kind": "catalog", "candidate": "stale-entry"}
+        }))
+        .is_err()
+    );
+}
 
 #[tokio::test]
 async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
@@ -31,8 +139,8 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
         directory.path().join("installed"),
         mcp.clone(),
         None,
-        McpCredentialResolver::default(),
         None,
+        McpCredentialResolver::default(),
         skills,
     )
     .expect("initialize extension manager");
@@ -48,37 +156,6 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
     )
     .expect("write manifest");
     let tool = ManageTool::new(manager, directory.path().to_path_buf());
-    let schema = &tool.spec().input_schema;
-    assert_eq!(schema["type"], "object");
-    assert_eq!(schema["required"], json!(["action"]));
-    assert_eq!(
-        schema["properties"]["action"]["enum"],
-        json!([
-            "search",
-            "add",
-            "inspect",
-            "install",
-            "list",
-            "connect",
-            "authorize"
-        ])
-    );
-    assert!(schema.get("oneOf").is_none());
-    assert_eq!(schema["properties"]["source"]["type"], "object");
-    assert_eq!(
-        schema["properties"]["source"]["properties"]["kind"]["enum"],
-        json!(["catalog", "mcp", "package"])
-    );
-    assert_eq!(
-        schema["properties"]["credential"]["oneOf"][0]["required"],
-        json!(["kind", "credential_id"])
-    );
-    assert_eq!(
-        schema["properties"]["credential"]["oneOf"][1]["properties"]["kind"]["const"],
-        "oauth"
-    );
-    assert!(schema["properties"].get("candidate").is_none());
-    assert!(!schema.to_string().contains("connection_id"));
 
     let inspected = call(&tool, json!({"action": "inspect", "source_path": "source"})).await;
     let digest = inspected["digest"]
@@ -95,8 +172,15 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
     .await;
     assert_eq!(installed["digest"], digest);
     let listed = call(&tool, json!({"action": "list"})).await;
-    assert_eq!(listed.as_array().expect("installed package list").len(), 1);
-    assert_eq!(listed[0]["metadata"]["name"], "fixture");
+    assert_eq!(
+        listed["installed"]
+            .as_array()
+            .expect("installed package list")
+            .len(),
+        1
+    );
+    assert_eq!(listed["installed"][0]["metadata"]["name"], "fixture");
+    assert_eq!(listed["rejected"], json!([]));
 }
 
 #[tokio::test]
@@ -232,8 +316,8 @@ impl LocalPackageFixture {
             directory.path().join("installed"),
             mcp,
             None,
-            McpCredentialResolver::default(),
             None,
+            McpCredentialResolver::default(),
             skills.clone(),
         )
         .expect("initialize extension manager");

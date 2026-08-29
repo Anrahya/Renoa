@@ -4,14 +4,16 @@ use tempfile::tempdir;
 
 use super::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
-    McpCatalogStore, McpCatalogTool, McpConnectionAuth, McpHostError, McpRejectedTool,
-    McpToolReference, hex_sha256,
+    McpCatalogStore, McpCatalogTool, McpConnectionAuth, McpHostError, McpOAuthRegistration,
+    McpRejectedTool, McpToolReference, hex_sha256,
 };
 
 const PROFILE: &str = "renoa.coding.alpha.v1";
 const ENDPOINT: &str = "http://127.0.0.1:43127/mcp";
 
+mod catalog_compatibility;
 mod migrations;
+mod replacement;
 
 fn store() -> (tempfile::TempDir, McpCatalogStore) {
     let directory = tempdir().expect("temporary Host data directory");
@@ -174,7 +176,8 @@ fn gh_connection_persists_only_its_exact_credential_reference() {
 #[test]
 fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
     let (_directory, store) = store();
-    let auth = McpConnectionAuth::oauth("oauth", ENDPOINT).expect("OAuth reference");
+    let auth = McpConnectionAuth::oauth("oauth", ENDPOINT, McpOAuthRegistration::dynamic())
+        .expect("OAuth reference");
     store
         .register_connection(
             "oauth-integration",
@@ -190,11 +193,15 @@ fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
         .expect("publish OAuth catalog");
     let reference = McpToolReference::new("oauth", catalog.digest(), "search")
         .expect("exact OAuth tool reference");
-    let wrong = McpConnectionAuth::oauth("oauth", "https://other.example/mcp")
-        .expect("different endpoint reference")
-        .stored_credential_id()
-        .expect("OAuth has credential reference")
-        .to_owned();
+    let wrong = McpConnectionAuth::oauth(
+        "oauth",
+        "https://other.example/mcp",
+        McpOAuthRegistration::dynamic(),
+    )
+    .expect("different endpoint reference")
+    .stored_credential_id()
+    .expect("OAuth has credential reference")
+    .to_owned();
     Connection::open(store.path())
         .expect("open test mutation connection")
         .execute(
@@ -344,6 +351,101 @@ fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() 
     assert_eq!(tools[0].connection_id, "primary");
     assert_eq!(tools[0].name, "echo");
     assert_eq!(tools[1].name, "unused");
+}
+
+#[test]
+fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
+    let (_directory, store) = store();
+    store
+        .register_direct_connection("example", "primary", ENDPOINT)
+        .expect("register direct connection");
+    let catalog = snapshot("primary", ENDPOINT, &["echo"]);
+    store
+        .publish_and_enable_connection(PROFILE, &catalog)
+        .expect("publish and enable direct catalog");
+    let reference = McpToolReference::new("primary", catalog.digest(), "echo")
+        .expect("exact enabled reference");
+    let oauth_endpoint = "https://oauth.example/mcp";
+    store
+        .register_connection(
+            "oauth-integration",
+            "oauth",
+            oauth_endpoint,
+            &super::McpRequestHeaders::default(),
+            &McpConnectionAuth::oauth("oauth", oauth_endpoint, McpOAuthRegistration::dynamic())
+                .expect("OAuth reference"),
+        )
+        .expect("register OAuth connection without a catalog");
+
+    let before = serde_json::to_value(
+        store
+            .alpha_connection_statuses(PROFILE)
+            .expect("list connection states"),
+    )
+    .expect("encode connection states");
+    let connections = before.as_array().expect("connection state array");
+    let primary = connections
+        .iter()
+        .find(|connection| connection["connection"] == "primary")
+        .expect("direct connection state");
+    assert_eq!(primary["auth"], "none");
+    assert_eq!(primary["registered"], true);
+    assert_eq!(primary["catalog_loaded"], true);
+    assert_eq!(primary["enabled_for_alpha"], true);
+    assert_eq!(primary["tools"], 1);
+    let oauth = connections
+        .iter()
+        .find(|connection| connection["connection"] == "oauth")
+        .expect("OAuth connection state");
+    assert_eq!(oauth["auth"], "oauth");
+    assert_eq!(oauth["registered"], true);
+    assert_eq!(oauth["catalog_loaded"], false);
+    assert_eq!(oauth["enabled_for_alpha"], false);
+    assert_eq!(oauth["tools"], 0);
+    assert!(!before.to_string().contains("credential_id"));
+    assert!(before[0].get("endpoint").is_none());
+    assert!(before[0].get("catalog_digest").is_none());
+
+    assert!(
+        store
+            .disable_alpha_connection(PROFILE, "primary")
+            .expect("disconnect Alpha while retaining the catalog")
+    );
+    assert!(
+        store
+            .disable_alpha_connection(PROFILE, "primary")
+            .expect("repeating disconnect is idempotent")
+    );
+    assert!(
+        store
+            .alpha_tool_summaries(PROFILE)
+            .expect("read tools after disconnect")
+            .is_empty()
+    );
+    assert!(matches!(
+        store.resolve_alpha_tools(PROFILE, &[reference]),
+        Err(McpHostError::NotFound(_))
+    ));
+    assert_eq!(
+        store
+            .load_catalog("primary")
+            .expect("catalog survives disconnect"),
+        catalog
+    );
+    let after = serde_json::to_value(
+        store
+            .alpha_connection_statuses(PROFILE)
+            .expect("list states after disconnect"),
+    )
+    .expect("encode states after disconnect");
+    let primary = after
+        .as_array()
+        .expect("connection state array")
+        .iter()
+        .find(|connection| connection["connection"] == "primary")
+        .expect("disconnected direct connection state");
+    assert_eq!(primary["catalog_loaded"], true);
+    assert_eq!(primary["enabled_for_alpha"], false);
 }
 
 #[test]

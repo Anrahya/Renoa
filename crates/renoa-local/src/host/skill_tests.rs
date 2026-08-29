@@ -112,7 +112,7 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         initial_model: "fixture-model".to_owned(),
         credential_store: credentials.to_path_buf(),
         mcp_adapter: None,
-        integration_catalog_adapter: None,
+        mcp_registry_adapter: None,
         global_skill_source: Some(global.to_path_buf()),
     })
     .expect("assemble local Host with isolated skill sources")

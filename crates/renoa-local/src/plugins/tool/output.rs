@@ -2,10 +2,8 @@ use renoa_agent::{ContentBlock, ToolError, ToolErrorCode, ToolOutput};
 use serde::Serialize;
 use serde_json::json;
 
-use super::super::{
-    PluginError,
-    catalog::{CatalogError, CatalogFailure, CatalogFailureKind},
-};
+use super::super::PluginError;
+use crate::plugins::discovery::{RegistryError, RegistryFailureKind};
 use crate::{
     mcp::{
         McpAdapterError, McpFailureKind, McpHostError, McpOutcomeCertainty, McpRemoteFailure,
@@ -41,6 +39,104 @@ fn encoded_output(
 pub(super) fn remote_mcp_error_output(remote: &McpRemoteFailure) -> Result<ToolOutput, ToolError> {
     let (model, details) = remote_mcp_error_values(remote);
     encoded_output(&model, Some(details), true)
+}
+
+pub(super) fn registry_error_output(error: RegistryError) -> Result<ToolOutput, ToolError> {
+    let internal = error.to_string();
+    let (code, message, retryable, next_action, diagnostic) = match error {
+        RegistryError::Remote(failure) => {
+            let retryable = matches!(
+                failure.kind(),
+                RegistryFailureKind::Unavailable | RegistryFailureKind::Timeout
+            );
+            let next_action = match failure.kind() {
+                RegistryFailureKind::NotFound => {
+                    "Check the exact registry name and version. If search found nothing trustworthy, use the provider's official website instead of guessing."
+                }
+                RegistryFailureKind::Unavailable | RegistryFailureKind::Timeout => {
+                    "The read-only Registry request is safe to retry once. If it still fails, use the provider's official website."
+                }
+                RegistryFailureKind::Cancelled => {
+                    "Retry only if the user still wants this discovery request."
+                }
+                RegistryFailureKind::InvalidRequest
+                | RegistryFailureKind::Protocol
+                | RegistryFailureKind::ResourceLimit
+                | RegistryFailureKind::Internal => {
+                    "Do not retry unchanged. Correct the request or report the Registry adapter failure."
+                }
+            };
+            let diagnostic = failure.diagnostic();
+            (
+                format!("mcp_registry_{}", failure.kind().as_str()),
+                failure.message().to_owned(),
+                retryable,
+                next_action,
+                json!({
+                    "kind": failure.kind().as_str(),
+                    "code": diagnostic.code(),
+                    "http_status": diagnostic.http_status(),
+                    "detail": diagnostic.detail(),
+                }),
+            )
+        }
+        RegistryError::Invalid(message) => (
+            "mcp_registry_invalid_request".to_owned(),
+            message,
+            false,
+            "Correct the search query or exact name/version and call the tool again.",
+            json!({"kind": "invalid_request"}),
+        ),
+        RegistryError::Unavailable(message) => (
+            "mcp_registry_unavailable".to_owned(),
+            message,
+            false,
+            "Tell the user that official Registry discovery is not configured in this Host.",
+            json!({"kind": "configuration"}),
+        ),
+        RegistryError::Timeout => (
+            "mcp_registry_timeout".to_owned(),
+            "Official MCP Registry discovery timed out without returning a result.".to_owned(),
+            true,
+            "The read-only Registry request is safe to retry once.",
+            json!({"kind": "timeout"}),
+        ),
+        RegistryError::Cancelled => (
+            "mcp_registry_cancelled".to_owned(),
+            "Official MCP Registry discovery was cancelled.".to_owned(),
+            false,
+            "Retry only if the user still wants this discovery request.",
+            json!({"kind": "cancelled"}),
+        ),
+        RegistryError::Resolve(_)
+        | RegistryError::NotFile(_)
+        | RegistryError::Start(_)
+        | RegistryError::MissingPipe(_)
+        | RegistryError::Write(_)
+        | RegistryError::Wait(_)
+        | RegistryError::OutputLimit
+        | RegistryError::Protocol(_)
+        | RegistryError::Cleanup(_)
+        | RegistryError::Encode(_)
+        | RegistryError::Reader(_) => (
+            "mcp_registry_adapter_failure".to_owned(),
+            "Official MCP Registry discovery failed at the Host adapter boundary; no extension was installed.".to_owned(),
+            false,
+            "Do not guess or retry repeatedly. Report the adapter failure to the user.",
+            json!({"kind": "adapter", "detail": internal}),
+        ),
+    };
+    encoded_output(
+        &json!({
+            "code": code,
+            "message": message,
+            "retryable": retryable,
+            "next_action": next_action,
+            "installed": false,
+        }),
+        Some(json!({"registry": {"failure": diagnostic}})),
+        true,
+    )
 }
 
 pub(super) struct InstalledConnectionFailure<'a> {
@@ -114,28 +210,41 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
         });
         return (model, details);
     }
-    let retryable = matches!(
-        remote.kind(),
-        McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport
-    );
-    let next_action = match remote.kind() {
-        McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport => {
-            "Check that the endpoint is reachable, then retry once."
-        }
-        McpFailureKind::Cancelled => "Retry only if the user still wants this extension.",
-        McpFailureKind::Internal => "Stop guessing and report this adapter failure to the user.",
-        McpFailureKind::InvalidRequest
-        | McpFailureKind::InvalidEndpoint
-        | McpFailureKind::IncompatibleProtocol
-        | McpFailureKind::Protocol
-        | McpFailureKind::ResourceLimit
-        | McpFailureKind::UnsupportedResult
-        | McpFailureKind::InvalidResult => {
-            "Do not retry unchanged. Correct the connection or tell the user why it is incompatible."
+    let registration_required = remote.diagnostic_code() == Some("oauth_registration_required");
+    let retryable = !registration_required
+        && matches!(
+            remote.kind(),
+            McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport
+        );
+    let next_action = if registration_required {
+        "Do not retry dynamic registration. Use client_metadata only if the service's official documentation publishes a CIMD URL. Otherwise tell the user that a pre-registered OAuth client must be stored outside the agent context in Renoa's Host credential store, then reconnect using only its credential ID. This tool has no credential-entry UI; never ask the user to paste credential material into chat or tool arguments."
+    } else {
+        match remote.kind() {
+            McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport => {
+                "Check that the endpoint is reachable, then retry once."
+            }
+            McpFailureKind::Cancelled => "Retry only if the user still wants this extension.",
+            McpFailureKind::Internal => {
+                "Stop guessing and report this adapter failure to the user."
+            }
+            McpFailureKind::InvalidRequest
+            | McpFailureKind::InvalidEndpoint
+            | McpFailureKind::IncompatibleProtocol
+            | McpFailureKind::Protocol
+            | McpFailureKind::ResourceLimit
+            | McpFailureKind::UnsupportedResult
+            | McpFailureKind::InvalidResult => {
+                "Do not retry unchanged. Correct the connection or tell the user why it is incompatible."
+            }
         }
     };
+    let code = if registration_required {
+        "oauth_registration_required".to_owned()
+    } else {
+        format!("mcp_{}", remote.kind().as_str())
+    };
     let model = json!({
-        "code": format!("mcp_{}", remote.kind().as_str()),
+        "code": code,
         "message": remote.message(),
         "retryable": retryable,
         "next_action": next_action,
@@ -205,35 +314,6 @@ fn attach_installation(
     Ok(())
 }
 
-pub(super) fn catalog_failure_output(failure: &CatalogFailure) -> Result<ToolOutput, ToolError> {
-    let retryable = matches!(failure.kind(), CatalogFailureKind::Unavailable);
-    let next_action = if retryable {
-        "Retry once later. If discovery remains unavailable, use web research or a local Agent Plugin package."
-    } else {
-        "Do not retry unchanged. Search again if the candidate changed; otherwise use web research or a local Agent Plugin package."
-    };
-    let model = json!({
-        "code": format!("integration_catalog_{}", failure.kind().as_str()),
-        "message": failure.message(),
-        "retryable": retryable,
-        "next_action": next_action,
-    });
-    let diagnostic = failure.diagnostic();
-    let details = json!({
-        "integration_catalog": {
-            "failure": {
-                "kind": failure.kind().as_str(),
-                "diagnostic": {
-                    "code": diagnostic.and_then(super::super::catalog::CatalogDiagnostic::code),
-                    "http_status": diagnostic.and_then(super::super::catalog::CatalogDiagnostic::http_status),
-                    "detail": diagnostic.and_then(super::super::catalog::CatalogDiagnostic::detail),
-                }
-            }
-        }
-    });
-    encoded_output(&model, Some(details), true)
-}
-
 pub(super) fn plugin_error(error: PluginError, partial_changes_possible: bool) -> ToolError {
     let message = error.to_string();
     match error {
@@ -269,20 +349,6 @@ pub(super) fn plugin_error(error: PluginError, partial_changes_possible: bool) -
             | McpHostError::HostCatalog(_)
             | McpHostError::Json(_)
             | McpHostError::Background(_),
-        )
-        | PluginError::Catalog(
-            CatalogError::Resolve(_)
-            | CatalogError::NotFile(_)
-            | CatalogError::Start(_)
-            | CatalogError::MissingPipe(_)
-            | CatalogError::Write(_)
-            | CatalogError::Wait(_)
-            | CatalogError::Timeout
-            | CatalogError::OutputLimit
-            | CatalogError::Protocol(_)
-            | CatalogError::Cleanup(_)
-            | CatalogError::Encode(_)
-            | CatalogError::Reader(_),
         ) => ToolError::unavailable(message),
         PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote))) => {
             ToolError::process_failed(remote.to_string(), partial_changes_possible)
@@ -308,11 +374,5 @@ pub(super) fn plugin_error(error: PluginError, partial_changes_possible: bool) -
             | crate::mcp::McpOAuthError::Browser { .. }
             | crate::mcp::McpOAuthError::BrowserStatus { .. } => ToolError::unavailable(message),
         },
-        PluginError::Catalog(CatalogError::Cancelled) => {
-            ToolError::cancelled(message, partial_changes_possible)
-        }
-        PluginError::Catalog(CatalogError::Remote(failure)) => {
-            ToolError::process_failed(failure.to_string(), partial_changes_possible)
-        }
     }
 }

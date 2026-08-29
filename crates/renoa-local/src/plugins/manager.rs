@@ -1,32 +1,47 @@
 use std::path::PathBuf;
 
 use renoa_agent::ToolUpdates;
-use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
+mod credential;
+mod identity;
+mod status;
+
 use super::{
-    CatalogCandidate, ExtensionAddRequest, ExtensionConnectionRequest, ExtensionSource,
-    InstalledPlugin, IntegrationCatalog, PluginCredential, PluginError, PluginInspection,
-    generated::GeneratedMcpPlugin, store::PluginStore,
+    ExtensionAddRequest, ExtensionConnectionRequest, ExtensionSource, InstalledPlugin,
+    OfficialRegistry, PluginCredential, PluginError, PluginInspection,
+    discovery::{RegistryError, RegistryLookupResult, RegistrySearchResult},
+    generated::GeneratedMcpPlugin,
+    store::PluginStore,
 };
 use crate::{
     ALPHA_PROFILE_ID,
     mcp::{
         McpAdapterError, McpAuthorizationResolver, McpCatalogSnapshot, McpCatalogStore,
-        McpConnectionAuth, McpCredentialResolver, McpHostError, McpOAuthAuthorizationRequest,
-        discover_cancellable,
+        McpCredentialResolver, McpHostError, McpOAuthAuthorizationRequest, discover_cancellable,
     },
     skills::{SkillComponentReport, SkillStore},
 };
+use credential::credential_auth;
+use identity::{default_connection_id, integration_id};
 
 #[derive(Clone)]
 pub(crate) struct PluginManager {
     store: PluginStore,
     mcp_catalog: McpCatalogStore,
     mcp_adapter: Option<PathBuf>,
+    registry: Option<OfficialRegistry>,
     authorizations: McpAuthorizationResolver,
-    catalog: Option<IntegrationCatalog>,
     skills: SkillStore,
+}
+
+pub(crate) struct AlphaConnectionRequest<'a> {
+    pub(crate) package_digest: &'a str,
+    pub(crate) server_id: &'a str,
+    pub(crate) connection_id: &'a str,
+    pub(crate) credential: PluginCredential,
+    pub(crate) replace: bool,
+    pub(crate) operation_id: &'a str,
 }
 
 impl PluginManager {
@@ -35,8 +50,8 @@ impl PluginManager {
         packages: PathBuf,
         mcp_catalog: McpCatalogStore,
         mcp_adapter: Option<PathBuf>,
+        registry_adapter: Option<PathBuf>,
         credentials: McpCredentialResolver,
-        catalog: Option<IntegrationCatalog>,
         skills: SkillStore,
     ) -> Result<Self, PluginError> {
         let authorizations =
@@ -45,10 +60,41 @@ impl PluginManager {
             store: PluginStore::initialize(database, packages)?,
             mcp_catalog,
             mcp_adapter,
+            registry: registry_adapter.map(OfficialRegistry::new),
             authorizations,
-            catalog,
             skills,
         })
+    }
+
+    pub(crate) async fn search_registry(
+        &self,
+        query: &str,
+        cancellation: CancellationToken,
+    ) -> Result<RegistrySearchResult, RegistryError> {
+        let registry = self.registry.as_ref().ok_or_else(|| {
+            RegistryError::Unavailable(
+                "RENOA_MCP_REGISTRY_ADAPTER must be set before searching the official Registry"
+                    .to_owned(),
+            )
+        })?;
+        registry.search(query, cancellation).await
+    }
+
+    pub(crate) async fn lookup_registry(
+        &self,
+        registry_name: &str,
+        registry_version: &str,
+        cancellation: CancellationToken,
+    ) -> Result<RegistryLookupResult, RegistryError> {
+        let registry = self.registry.as_ref().ok_or_else(|| {
+            RegistryError::Unavailable(
+                "RENOA_MCP_REGISTRY_ADAPTER must be set before looking up an official Registry record"
+                    .to_owned(),
+            )
+        })?;
+        registry
+            .lookup(registry_name, registry_version, cancellation)
+            .await
     }
 
     pub(crate) async fn inspect(
@@ -78,18 +124,9 @@ impl PluginManager {
         tokio::task::spawn_blocking(move || store.list()).await?
     }
 
-    pub(crate) async fn search_catalog(
-        &self,
-        query: &str,
-        cancellation: CancellationToken,
-    ) -> Result<Vec<CatalogCandidate>, PluginError> {
-        let catalog = self.catalog.as_ref().ok_or_else(|| {
-            PluginError::Unavailable(
-                "RENOA_INTEGRATION_CATALOG_ADAPTER must be set before searching for extensions"
-                    .to_owned(),
-            )
-        })?;
-        Ok(catalog.search(query, cancellation).await?)
+    pub(crate) async fn list_report(&self) -> Result<super::PluginListReport, PluginError> {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || store.list_report()).await?
     }
 
     pub(crate) async fn add_alpha(
@@ -100,30 +137,6 @@ impl PluginManager {
     ) -> Result<ExtensionAddOutcome, PluginError> {
         let connection_request = request.connection;
         let prepared = match request.source {
-            ExtensionSource::Catalog { reference } => {
-                let catalog = self.catalog.as_ref().ok_or_else(|| {
-                    PluginError::Unavailable(
-                        "RENOA_INTEGRATION_CATALOG_ADAPTER must be set before adding a discovered extension"
-                            .to_owned(),
-                    )
-                })?;
-                let candidate = catalog.resolve(&reference, cancellation.clone()).await?;
-                let generated = GeneratedMcpPlugin::from_catalog(&candidate);
-                let server = generated.server().to_owned();
-                let store = self.store.clone();
-                let installed =
-                    tokio::task::spawn_blocking(move || store.install_generated(&generated))
-                        .await??;
-                PreparedExtension {
-                    installed,
-                    source: ExtensionSourceReceipt::Catalog {
-                        reference: candidate.reference().to_owned(),
-                        name: candidate.name().to_owned(),
-                    },
-                    generated_server: Some(server),
-                    connect_by_default: true,
-                }
-            }
             ExtensionSource::Mcp(source) => {
                 let generated = GeneratedMcpPlugin::from_researched(source)?;
                 let server = generated.server().to_owned();
@@ -199,8 +212,10 @@ impl PluginManager {
             id,
             server,
             credential,
-        } = request
-            .unwrap_or_else(|| ExtensionConnectionRequest::new(None, None, PluginCredential::None));
+            replace,
+        } = request.unwrap_or_else(|| {
+            ExtensionConnectionRequest::new(None, None, PluginCredential::None, false)
+        });
         let server = match server.or(prepared.generated_server) {
             Some(server) => server,
             None if prepared.installed.mcp_servers().len() == 1 => {
@@ -226,11 +241,14 @@ impl PluginManager {
             id.unwrap_or_else(|| default_connection_id(prepared.installed.digest(), &server));
         let outcome = match self
             .connect_alpha_operation(
-                prepared.installed.digest(),
-                &server,
-                &connection,
-                credential,
-                operation_id,
+                AlphaConnectionRequest {
+                    package_digest: prepared.installed.digest(),
+                    server_id: &server,
+                    connection_id: &connection,
+                    credential,
+                    replace,
+                    operation_id,
+                },
                 cancellation,
             )
             .await
@@ -264,11 +282,14 @@ impl PluginManager {
     ) -> Result<McpCatalogSnapshot, PluginError> {
         let operation_id = format!("host-connect.{}", uuid::Uuid::new_v4());
         self.connect_alpha_operation(
-            package_digest,
-            server_id,
-            connection_id,
-            credential,
-            &operation_id,
+            AlphaConnectionRequest {
+                package_digest,
+                server_id,
+                connection_id,
+                credential,
+                replace: false,
+                operation_id: &operation_id,
+            },
             cancellation,
         )
         .await
@@ -276,13 +297,17 @@ impl PluginManager {
 
     pub(crate) async fn connect_alpha_operation(
         &self,
-        package_digest: &str,
-        server_id: &str,
-        connection_id: &str,
-        credential: PluginCredential,
-        operation_id: &str,
+        request: AlphaConnectionRequest<'_>,
         cancellation: CancellationToken,
     ) -> Result<McpCatalogSnapshot, PluginError> {
+        let AlphaConnectionRequest {
+            package_digest,
+            server_id,
+            connection_id,
+            credential,
+            replace,
+            operation_id,
+        } = request;
         let store = self.store.clone();
         let digest = package_digest.to_owned();
         let plugin = tokio::task::spawn_blocking(move || store.load(&digest)).await??;
@@ -293,8 +318,9 @@ impl PluginManager {
             .cloned()
             .ok_or_else(|| {
                 PluginError::NotFound(format!(
-                    "package '{}' has no supported MCP server '{server_id}'",
-                    plugin.digest()
+                    "package '{}' has no supported MCP server '{}'",
+                    plugin.digest(),
+                    server_id,
                 ))
             })?;
         let adapter = self.mcp_adapter.clone().ok_or_else(|| {
@@ -317,13 +343,23 @@ impl PluginManager {
         let registered_headers_copy = registered_headers.clone();
         let registered_auth = auth.clone();
         tokio::task::spawn_blocking(move || {
-            catalog.register_connection(
-                &registered_integration,
-                &registered_connection,
-                &registered_endpoint,
-                &registered_headers_copy,
-                &registered_auth,
-            )
+            if replace {
+                catalog.replace_connection(
+                    &registered_integration,
+                    &registered_connection,
+                    &registered_endpoint,
+                    &registered_headers_copy,
+                    &registered_auth,
+                )
+            } else {
+                catalog.register_connection(
+                    &registered_integration,
+                    &registered_connection,
+                    &registered_endpoint,
+                    &registered_headers_copy,
+                    &registered_auth,
+                )
+            }
         })
         .await??;
         let authorization = self
@@ -423,7 +459,6 @@ pub(crate) struct ExtensionAddOutcome {
 }
 
 pub(crate) enum ExtensionSourceReceipt {
-    Catalog { reference: String, name: String },
     Mcp,
     Package,
 }
@@ -440,37 +475,4 @@ pub(crate) enum ExtensionConnectionOutcome {
         server: Option<String>,
         error: PluginError,
     },
-}
-
-fn credential_auth(
-    credential: PluginCredential,
-    connection_id: &str,
-    endpoint: &str,
-) -> Result<McpConnectionAuth, PluginError> {
-    match credential {
-        PluginCredential::None => Ok(McpConnectionAuth::None),
-        PluginCredential::SecretServiceBearer { credential_id } => {
-            Ok(McpConnectionAuth::secret_service_bearer(&credential_id)?)
-        }
-        PluginCredential::OAuth => Ok(McpConnectionAuth::oauth(connection_id, endpoint)?),
-    }
-}
-
-fn integration_id(plugin_digest: &str, server_id: &str) -> String {
-    let server_digest = hex(&Sha256::digest(server_id.as_bytes()));
-    format!("plugin.{}.{}", &plugin_digest[..24], &server_digest[..24])
-}
-
-fn default_connection_id(plugin_digest: &str, server_id: &str) -> String {
-    format!("{}.default", integration_id(plugin_digest, server_id))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    output
 }

@@ -51,7 +51,7 @@ pub(super) fn load_catalog(
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let snapshot = McpCatalogSnapshot::from_adapter_with_headers(
+    let snapshot = McpCatalogSnapshot::from_stored_with_headers(
         connection_id,
         McpRequestHeaders::from_stored(&request_headers)?,
         AdapterCatalog {

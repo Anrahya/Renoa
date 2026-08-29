@@ -1,10 +1,10 @@
-import type { CatalogRequest } from "./contract.js";
-import { CatalogProblem } from "./errors.js";
+import type { RegistryRequest } from "./contract.js";
+import { RegistryProblem } from "./errors.js";
 import { MAX_QUERY_BYTES, WIRE_VERSION } from "./limits.js";
 
-const REFERENCE = /^integrations\.sh\/([a-z0-9.-]+)\/([a-z0-9-]+)\/([a-f0-9]{64})$/u;
+const REGISTRY_NAME = /^[a-zA-Z0-9.-]+\/[a-zA-Z0-9._-]+$/u;
 
-export function parseRequest(value: unknown): CatalogRequest {
+export function parseRequest(value: unknown): RegistryRequest {
   const request = object(value, "request");
   if (request.wire_version !== WIRE_VERSION) {
     throw invalid(`request.wire_version must be ${WIRE_VERSION}`);
@@ -17,31 +17,43 @@ export function parseRequest(value: unknown): CatalogRequest {
         `request.query must contain 1 to ${MAX_QUERY_BYTES} UTF-8 bytes`,
       );
     }
+    if (/[\u0000-\u001F\u007F]/u.test(query)) {
+      throw invalid("request.query must not contain control characters");
+    }
     return { wire_version: WIRE_VERSION, action: "search", query };
   }
-  if (request.action === "resolve") {
-    exactKeys(request, ["wire_version", "action", "candidate"], "request");
-    const candidate = string(request.candidate, "request.candidate");
-    parseReference(candidate);
-    return { wire_version: WIRE_VERSION, action: "resolve", candidate };
+  if (request.action === "lookup") {
+    exactKeys(
+      request,
+      ["wire_version", "action", "registry_name", "registry_version"],
+      "request",
+    );
+    const registryName = string(request.registry_name, "request.registry_name");
+    if (registryName.length > 200 || !REGISTRY_NAME.test(registryName)) {
+      throw invalid("request.registry_name is not a valid MCP Registry server name");
+    }
+    const registryVersion = string(
+      request.registry_version,
+      "request.registry_version",
+    );
+    if (
+      registryVersion.length === 0 ||
+      Buffer.byteLength(registryVersion, "utf8") > 255 ||
+      registryVersion === "latest" ||
+      /[\u0000-\u001F\u007F/]/u.test(registryVersion)
+    ) {
+      throw invalid(
+        "request.registry_version must be an exact 1-255 byte version, not 'latest'",
+      );
+    }
+    return {
+      wire_version: WIRE_VERSION,
+      action: "lookup",
+      registry_name: registryName,
+      registry_version: registryVersion,
+    };
   }
-  throw invalid("request.action must be 'search' or 'resolve'");
-}
-
-export function parseReference(reference: string): {
-  readonly domain: string;
-  readonly slug: string;
-  readonly digest: string;
-} {
-  const match = REFERENCE.exec(reference);
-  if (match === null) {
-    throw invalid("candidate reference is malformed; search again for a current candidate");
-  }
-  const [, domain, slug, digest] = match;
-  if (domain === undefined || slug === undefined || digest === undefined) {
-    throw invalid("candidate reference could not be decoded");
-  }
-  return { domain, slug, digest };
+  throw invalid("request.action must be 'search' or 'lookup'");
 }
 
 function object(value: unknown, path: string): Record<string, unknown> {
@@ -76,8 +88,8 @@ function exactKeys(
   }
 }
 
-function invalid(message: string): CatalogProblem {
-  return new CatalogProblem("invalid_request", message, {
+function invalid(message: string): RegistryProblem {
+  return new RegistryProblem("invalid_request", message, {
     code: "invalid_wire_request",
   });
 }

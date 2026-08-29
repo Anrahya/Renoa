@@ -2,7 +2,7 @@ use std::{cmp::Reverse, collections::HashSet, fmt, str::FromStr};
 
 use super::{McpHostError, validate_identity};
 
-pub(crate) const SEARCH_RESULT_LIMIT: usize = 5;
+pub(crate) const SEARCH_RESULT_LIMIT: usize = 200;
 pub(crate) const LOAD_REFERENCE_LIMIT: usize = 3;
 pub(crate) const LOAD_OUTPUT_BYTES: usize = 64 * 1_024;
 const QUERY_BYTES: usize = 256;
@@ -223,7 +223,7 @@ fn summarize(description: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{McpToolReference, McpToolSummary, rank_tools};
+    use super::{McpToolReference, McpToolSummary, SEARCH_RESULT_LIMIT, rank_tools};
 
     #[test]
     fn references_are_exact_and_reject_ambiguous_or_uppercase_digests() {
@@ -268,6 +268,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["read_issue", "search_issues"]
         );
+    }
+
+    #[test]
+    fn search_returns_two_hundred_matching_tool_summaries() {
+        let tools = (0..201)
+            .map(|index| summary("primary", &format!("tool_{index:03}"), "Fixture tool"))
+            .collect();
+
+        let ranked = rank_tools(tools, "tool").expect("rank tool summaries");
+
+        assert_eq!(ranked.total_matches, 201);
+        assert_eq!(ranked.matches.len(), SEARCH_RESULT_LIMIT);
+        assert_eq!(
+            ranked.matches.first().expect("first match").name,
+            "tool_000"
+        );
+        assert_eq!(ranked.matches.last().expect("last match").name, "tool_199");
     }
 
     fn summary(connection: &str, name: &str, description: &str) -> McpToolSummary {

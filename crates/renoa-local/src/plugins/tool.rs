@@ -12,18 +12,17 @@ mod output;
 #[cfg(test)]
 mod tests;
 
-use super::catalog::CatalogError;
 use super::{
-    CatalogCandidate, ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential,
-    PluginError, PluginManager,
+    ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential, PluginListReport,
+    PluginManager,
 };
-use crate::mcp::oauth_operation_id;
+use crate::mcp::{McpConnectionStatus, oauth_operation_id};
 use actions::{ConnectRequest, ExtensionInvocation};
 use contract::{ManageInput, manage_tool_spec, resolve_source};
-use output::{catalog_failure_output, json_output, plugin_error};
+use output::{json_output, plugin_error, registry_error_output};
 
 const TOOL_NAME: &str = "extension_manage";
-const BINDING_REVISION: &str = "renoa-extension-manager-v3";
+const BINDING_REVISION: &str = "renoa-extension-manager-v7";
 
 pub(crate) fn alpha_plugin_binding(
     manager: PluginManager,
@@ -110,20 +109,32 @@ impl ManageTool {
         updates: ToolUpdates,
     ) -> Result<ToolOutput, ToolError> {
         match input {
-            ManageInput::Search { query } => self.search(&query, cancellation).await,
+            ManageInput::Search { query } => self.search_registry(&query, cancellation).await,
+            ManageInput::Lookup {
+                registry_name,
+                registry_version,
+            } => {
+                self.lookup_registry(&registry_name, &registry_version, cancellation)
+                    .await
+            }
             ManageInput::Add {
                 source,
                 server,
                 connection,
                 credential,
+                replace,
             } => {
                 let source = source.into_source(&self.workspace)?;
-                let connection = if server.is_some() || connection.is_some() || credential.is_some()
+                let connection = if server.is_some()
+                    || connection.is_some()
+                    || credential.is_some()
+                    || replace
                 {
                     Some(ExtensionConnectionRequest::new(
                         connection,
                         server,
                         credential.map_or(PluginCredential::None, Into::into),
+                        replace,
                     ))
                 } else {
                     None
@@ -156,19 +167,13 @@ impl ManageTool {
                     .map_err(|error| plugin_error(error, true))?;
                 json_output(&installed)
             }
-            ManageInput::List => {
-                let installed = self
-                    .manager
-                    .list()
-                    .await
-                    .map_err(|error| plugin_error(error, false))?;
-                json_output(&installed)
-            }
+            ManageInput::List => self.list().await,
             ManageInput::Connect {
                 package_digest,
                 server,
                 connection,
                 credential,
+                replace,
             } => {
                 actions::connect(
                     self,
@@ -177,6 +182,7 @@ impl ManageTool {
                         server,
                         connection,
                         credential: credential.map_or(PluginCredential::None, Into::into),
+                        replace,
                     },
                     ExtensionInvocation::new(operation_id, cancellation, &updates),
                 )
@@ -194,49 +200,81 @@ impl ManageTool {
                 )
                 .await
             }
+            ManageInput::Disconnect { connection } => self.disconnect(connection).await,
         }
     }
 
-    async fn search(
+    async fn search_registry(
         &self,
         query: &str,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
-        let candidates = match self.manager.search_catalog(query, cancellation).await {
-            Ok(candidates) => candidates,
-            Err(PluginError::Catalog(CatalogError::Remote(failure))) => {
-                return catalog_failure_output(&failure);
-            }
-            Err(error) => return Err(plugin_error(error, false)),
-        };
-        let next_action = if candidates.is_empty() {
-            "No MCP candidate was found. Use web search to find the provider's official MCP documentation, then create or use a local Agent Plugin package; do not guess an endpoint."
-        } else {
-            "Review the endpoint and auth status, choose the best candidate, then call add with its exact reference."
-        };
-        json_output(&CatalogSearchOutput {
-            source: "integrations.sh",
-            candidates,
-            next_action,
+        match self.manager.search_registry(query, cancellation).await {
+            Ok(result) => json_output(&RegistryActionOutput {
+                action: "search",
+                installed: false,
+                result: &result,
+            }),
+            Err(error) => registry_error_output(error),
+        }
+    }
+
+    async fn list(&self) -> Result<ToolOutput, ToolError> {
+        let packages = self
+            .manager
+            .list_report()
+            .await
+            .map_err(|error| plugin_error(error, false))?;
+        let connections = self
+            .manager
+            .connection_statuses()
+            .await
+            .map_err(|error| plugin_error(error, false))?;
+        json_output(&ExtensionListOutput {
+            packages: &packages,
+            connections: &connections,
         })
     }
-}
 
-#[derive(Serialize)]
-struct CatalogSearchOutput<'a> {
-    source: &'static str,
-    candidates: Vec<CatalogCandidate>,
-    next_action: &'a str,
+    async fn disconnect(&self, connection: String) -> Result<ToolOutput, ToolError> {
+        let catalog_retained = self
+            .manager
+            .disconnect_alpha(connection.clone())
+            .await
+            .map_err(|error| plugin_error(error, true))?;
+        json_output(&DisconnectedOutput {
+            status: "disconnected",
+            connection,
+            catalog_retained,
+            enabled_for_alpha: false,
+        })
+    }
+
+    async fn lookup_registry(
+        &self,
+        registry_name: &str,
+        registry_version: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        match self
+            .manager
+            .lookup_registry(registry_name, registry_version, cancellation)
+            .await
+        {
+            Ok(result) => json_output(&RegistryActionOutput {
+                action: "lookup",
+                installed: false,
+                result: &result,
+            }),
+            Err(error) => registry_error_output(error),
+        }
+    }
 }
 
 #[derive(Serialize)]
 struct ConnectedOutput<'a> {
     status: &'static str,
     source: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    candidate: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<&'a str>,
     package_digest: &'a str,
     connection: &'a str,
     server: &'a str,
@@ -251,10 +289,6 @@ struct ConnectedOutput<'a> {
 struct InstalledOutput<'a> {
     status: &'static str,
     source: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    candidate: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<&'a str>,
     package_digest: &'a str,
     metadata: &'a super::PluginMetadata,
     mcp_servers: &'a [super::PluginMcpServer],
@@ -264,6 +298,7 @@ struct InstalledOutput<'a> {
 
 #[derive(Serialize)]
 struct ConnectionOutput {
+    status: &'static str,
     package_digest: String,
     server: String,
     connection: String,
@@ -279,6 +314,29 @@ struct AuthorizedOutput {
     catalog_digest: String,
     tools: usize,
     rejected_tools: usize,
+}
+
+#[derive(Serialize)]
+struct DisconnectedOutput {
+    status: &'static str,
+    connection: String,
+    catalog_retained: bool,
+    enabled_for_alpha: bool,
+}
+
+#[derive(Serialize)]
+struct ExtensionListOutput<'a> {
+    #[serde(flatten)]
+    packages: &'a PluginListReport,
+    connections: &'a [McpConnectionStatus],
+}
+
+#[derive(Serialize)]
+struct RegistryActionOutput<'a, T> {
+    action: &'static str,
+    installed: bool,
+    #[serde(flatten)]
+    result: &'a T,
 }
 
 fn require_active(cancellation: &CancellationToken) -> Result<(), ToolError> {

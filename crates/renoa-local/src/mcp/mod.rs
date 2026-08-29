@@ -1,5 +1,6 @@
 mod auth;
 mod call;
+mod digest;
 mod error;
 mod headers;
 mod oauth;
@@ -15,9 +16,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
 
-pub(crate) use auth::{McpAuthorization, McpConnectionAuth, McpCredentialResolver};
+use digest::{catalog_digest, headerless_catalog_digest};
+
+pub(crate) use auth::{
+    McpAuthorization, McpConnectionAuth, McpCredentialResolver, McpOAuthRegistration,
+};
+pub(crate) use digest::hex_sha256;
 pub(crate) use headers::McpRequestHeaders;
 pub(crate) use oauth::{
     McpAuthorizationResolver, McpOAuthAuthorizationRequest, operation_id as oauth_operation_id,
@@ -32,11 +37,19 @@ pub(crate) use process::{discover, discover_cancellable};
 pub(crate) use registry::{
     LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, SEARCH_RESULT_LIMIT, rank_tools,
 };
-pub(crate) use store::McpCatalogStore;
+pub(crate) use store::{McpCatalogStore, McpConnectionStatus};
 pub(crate) use tool::{adapter_tool_error, alpha_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.5.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.6.0";
+const MCP_LEGACY_ADAPTER_REVISIONS: &[&str] = &[
+    "mcp-client-node-v0.1.0",
+    "mcp-client-node-v0.2.0",
+    "mcp-client-node-v0.4.0",
+    "mcp-client-node-v0.5.0",
+];
+const MCP_HEADERLESS_DIGEST_REVISIONS: &[&str] =
+    &["mcp-client-node-v0.1.0", "mcp-client-node-v0.2.0"];
 const MCP_LEGACY_PROTOCOL_VERSIONS: &[&str] = &[
     "2025-11-25",
     "2025-06-18",
@@ -268,6 +281,36 @@ impl McpCatalogSnapshot {
         request_headers: McpRequestHeaders,
         catalog: AdapterCatalog,
     ) -> Result<Self, McpHostError> {
+        if catalog.adapter_revision != MCP_ADAPTER_REVISION {
+            return Err(McpHostError::Invalid(format!(
+                "adapter returned revision {}, expected {MCP_ADAPTER_REVISION}",
+                catalog.adapter_revision
+            )));
+        }
+        Self::from_validated_catalog(connection_id, request_headers, catalog)
+    }
+
+    fn from_stored_with_headers(
+        connection_id: &str,
+        request_headers: McpRequestHeaders,
+        catalog: AdapterCatalog,
+    ) -> Result<Self, McpHostError> {
+        if catalog.adapter_revision != MCP_ADAPTER_REVISION
+            && !MCP_LEGACY_ADAPTER_REVISIONS.contains(&catalog.adapter_revision.as_str())
+        {
+            return Err(McpHostError::Invalid(format!(
+                "stored catalog uses unsupported adapter revision {}",
+                catalog.adapter_revision
+            )));
+        }
+        Self::from_validated_catalog(connection_id, request_headers, catalog)
+    }
+
+    fn from_validated_catalog(
+        connection_id: &str,
+        request_headers: McpRequestHeaders,
+        catalog: AdapterCatalog,
+    ) -> Result<Self, McpHostError> {
         validate_identity("connection", connection_id)?;
         validate_endpoint(&catalog.endpoint)?;
         if catalog.protocol_version != MCP_PROTOCOL_VERSION
@@ -276,12 +319,6 @@ impl McpCatalogSnapshot {
             return Err(McpHostError::Invalid(format!(
                 "adapter returned unsupported protocol {}",
                 catalog.protocol_version
-            )));
-        }
-        if catalog.adapter_revision != MCP_ADAPTER_REVISION {
-            return Err(McpHostError::Invalid(format!(
-                "adapter returned revision {}, expected {MCP_ADAPTER_REVISION}",
-                catalog.adapter_revision
             )));
         }
         if catalog
@@ -328,7 +365,12 @@ impl McpCatalogSnapshot {
             }
             previous_rejection = Some(rejected.index);
         }
-        let digest = catalog_digest(&request_headers, &catalog)?;
+        let digest = if MCP_HEADERLESS_DIGEST_REVISIONS.contains(&catalog.adapter_revision.as_str())
+        {
+            headerless_catalog_digest(&catalog)?
+        } else {
+            catalog_digest(&request_headers, &catalog)?
+        };
         Ok(Self {
             connection_id: connection_id.to_owned(),
             endpoint: catalog.endpoint,
@@ -400,41 +442,4 @@ fn validate_schema(kind: &str, schema: &Value) -> Result<(), McpHostError> {
         )));
     }
     Ok(())
-}
-
-fn catalog_digest(
-    request_headers: &McpRequestHeaders,
-    catalog: &AdapterCatalog,
-) -> Result<String, serde_json::Error> {
-    #[derive(Serialize)]
-    struct DigestCatalog<'a> {
-        endpoint: &'a str,
-        request_headers: &'a McpRequestHeaders,
-        protocol_version: &'a str,
-        adapter_revision: &'a str,
-        tools: &'a [McpCatalogTool],
-        rejected_tools: &'a [McpRejectedTool],
-    }
-
-    let encoded = serde_json::to_vec(&DigestCatalog {
-        endpoint: &catalog.endpoint,
-        request_headers,
-        protocol_version: &catalog.protocol_version,
-        adapter_revision: &catalog.adapter_revision,
-        tools: &catalog.tools,
-        rejected_tools: &catalog.rejected_tools,
-    })?;
-    Ok(hex_sha256(&encoded))
-}
-
-pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    Sha256::digest(bytes)
-        .iter()
-        .fold(String::with_capacity(64), |mut output, byte| {
-            output.push(char::from(HEX[usize::from(byte >> 4)]));
-            output.push(char::from(HEX[usize::from(byte & 0x0f)]));
-            output
-        })
 }

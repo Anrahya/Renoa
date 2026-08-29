@@ -23,6 +23,7 @@ struct InteractiveAuthorization<'a> {
     connection_id: &'a str,
     endpoint: &'a str,
     credential_id: &'a str,
+    reference: &'a crate::mcp::McpConnectionAuth,
     operation_id: &'a str,
     restart: bool,
     updates: Option<&'a ToolUpdates>,
@@ -66,6 +67,7 @@ impl OAuthCoordinator {
             connection_id: request.connection_id,
             endpoint: request.endpoint,
             credential_id,
+            reference: request.reference,
             operation_id: request.operation_id,
             restart: request.restart,
             updates: request.updates,
@@ -98,16 +100,24 @@ impl OAuthCoordinator {
             listener.expires_at_ms(),
         )?;
         self.flows.put(&flow).await?;
-        let result = process::begin(
-            self.adapter()?,
-            context.endpoint,
-            &csrf_state,
-            &redirect_uri,
-            force_reauthorization,
-            prior.as_ref().map(|bundle| &bundle.adapter_state),
-            context.cancellation.clone(),
-        )
-        .await;
+        let result = {
+            let registration = self
+                .adapter_registration(context.reference, context.cancellation.clone())
+                .await?;
+            process::begin(
+                self.adapter()?,
+                process::OAuthBegin {
+                    endpoint: context.endpoint,
+                    csrf_state: &csrf_state,
+                    redirect_uri: &redirect_uri,
+                    force_reauthorization,
+                    registration: &registration,
+                    prior: prior.as_ref().map(|bundle| &bundle.adapter_state),
+                },
+                context.cancellation.clone(),
+            )
+            .await
+        };
         match result {
             Ok(OAuthResult::Redirect {
                 authorization_url,
@@ -232,28 +242,10 @@ impl OAuthCoordinator {
             OAuthPhase::AwaitingCallback if bundle.pending_callback.is_some() => {
                 flow = flow.with_phase(OAuthPhase::CallbackReady)?;
                 self.flows.put(&flow).await?;
-                self.exchange_pending(
-                    context.endpoint,
-                    context.credential_id,
-                    flow,
-                    bundle,
-                    context.operation_id,
-                    context.cancellation.clone(),
-                )
-                .await
+                self.exchange_pending(context, flow, bundle).await
             }
             OAuthPhase::AwaitingCallback => self.resume_callback(context, flow, bundle).await,
-            OAuthPhase::CallbackReady => {
-                self.exchange_pending(
-                    context.endpoint,
-                    context.credential_id,
-                    flow,
-                    bundle,
-                    context.operation_id,
-                    context.cancellation.clone(),
-                )
-                .await
-            }
+            OAuthPhase::CallbackReady => self.exchange_pending(context, flow, bundle).await,
             OAuthPhase::ExchangeInFlight => {
                 self.recover_exchange(
                     context.endpoint,
@@ -341,40 +333,35 @@ impl OAuthCoordinator {
         let ready = flow.with_phase(OAuthPhase::CallbackReady)?;
         self.flows.put(&ready).await?;
         received.acknowledge().await;
-        self.exchange_pending(
-            context.endpoint,
-            context.credential_id,
-            ready,
-            bundle,
-            context.operation_id,
-            context.cancellation.clone(),
-        )
-        .await
+        self.exchange_pending(context, ready, bundle).await
     }
 
     async fn exchange_pending(
         &self,
-        endpoint: &str,
-        credential_id: &str,
+        context: &InteractiveAuthorization<'_>,
         flow: OAuthFlow,
         bundle: OAuthSecretBundle,
-        current_operation_id: &str,
-        cancellation: CancellationToken,
     ) -> Result<McpAuthorization, McpHostError> {
         let pending = bundle.pending_callback.as_ref().ok_or_else(|| {
             McpOAuthError::Invalid("durable OAuth callback code is missing".to_owned())
         })?;
         let in_flight = flow.with_phase(OAuthPhase::ExchangeInFlight)?;
         self.flows.put(&in_flight).await?;
-        let result = process::exchange(
-            self.adapter()?,
-            endpoint,
-            &pending.authorization_code,
-            pending.issuer.as_deref(),
-            &bundle.adapter_state,
-            cancellation.clone(),
-        )
-        .await;
+        let result = {
+            let registration = self
+                .adapter_registration(context.reference, context.cancellation.clone())
+                .await?;
+            process::exchange(
+                self.adapter()?,
+                context.endpoint,
+                &pending.authorization_code,
+                pending.issuer.as_deref(),
+                &registration,
+                &bundle.adapter_state,
+                context.cancellation.clone(),
+            )
+            .await
+        };
         match result {
             Ok(OAuthResult::Authorized {
                 authorization,
@@ -383,32 +370,32 @@ impl OAuthCoordinator {
             }) => {
                 self.complete_authorized(
                     &flow,
-                    credential_id,
-                    current_operation_id,
+                    context.credential_id,
+                    context.operation_id,
                     authorization,
                     state,
-                    cancellation,
+                    context.cancellation.clone(),
                 )
                 .await
             }
             Ok(OAuthResult::Failed { failure, state }) => {
                 self.complete_failure(
                     &flow,
-                    credential_id,
-                    current_operation_id,
+                    context.credential_id,
+                    context.operation_id,
                     failure,
                     state,
-                    cancellation,
+                    context.cancellation.clone(),
                 )
                 .await
             }
             Ok(OAuthResult::Redirect { state, .. } | OAuthResult::RefreshRequired { state }) => {
                 self.complete_authorization_required(
                     &flow,
-                    credential_id,
-                    current_operation_id,
+                    context.credential_id,
+                    context.operation_id,
                     state,
-                    cancellation,
+                    context.cancellation.clone(),
                 )
                 .await
             }

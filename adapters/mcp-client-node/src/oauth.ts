@@ -68,6 +68,13 @@ export async function executeOAuthRequest(
   } catch (error) {
     const state = provider.snapshot();
     const exactSecrets = oauthSecrets(state);
+    if (
+      "registration" in request &&
+      request.registration.mode === "pre_registered" &&
+      request.registration.client_secret !== undefined
+    ) {
+      exactSecrets.push(request.registration.client_secret);
+    }
     if (request.action === "oauth_exchange") {
       exactSecrets.push(request.authorization_code);
     }
@@ -91,9 +98,16 @@ function providerFor(request: OAuthRequest): RenoaOAuthProvider {
       request.redirect_uri,
       request.force_reauthorization,
       request.endpoint,
+      request.registration,
     );
   }
-  return new RenoaOAuthProvider(request.oauth_state, request.endpoint);
+  return new RenoaOAuthProvider(
+    request.oauth_state,
+    request.endpoint,
+    request.action === "oauth_token"
+      ? { mode: "dynamic" }
+      : request.registration,
+  );
 }
 
 function authorized(
@@ -113,6 +127,26 @@ function oauthFailure(
   tracker: OAuthExchangeTracker,
   cancelled: boolean,
 ): WireFailure {
+  if (
+    error instanceof Error &&
+    (error.message ===
+      "Incompatible auth server: does not support dynamic client registration" ||
+      error.message ===
+        "OAuth client information must be saveable for dynamic registration")
+  ) {
+    return {
+      kind: "protocol",
+      certainty: "definite",
+      message:
+        "The authorization server does not support the selected OAuth client registration mode.",
+      partial_changes_possible: false,
+      diagnostic: {
+        code: "oauth_registration_required",
+        detail:
+          "Configure this connection with pre_registered OAuth credentials or a Client ID Metadata Document URL supported by the authorization server.",
+      },
+    };
+  }
   if (error instanceof RegistrationRejectedError) {
     return {
       kind: "protocol",

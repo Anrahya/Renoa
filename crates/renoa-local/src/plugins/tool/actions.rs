@@ -4,15 +4,18 @@ use tokio_util::sync::CancellationToken;
 use super::{
     AuthorizedOutput, ConnectedOutput, ConnectionOutput, InstalledOutput, ManageTool,
     output::{
-        InstalledConnectionFailure, catalog_failure_output, installed_connection_failure_output,
-        json_output, plugin_error, remote_mcp_error_output,
+        InstalledConnectionFailure, installed_connection_failure_output, json_output, plugin_error,
+        remote_mcp_error_output,
     },
 };
 use crate::{
     mcp::{McpAdapterError, McpCatalogSnapshot, McpHostError},
     plugins::{
         ExtensionAddRequest, InstalledPlugin, PluginCredential, PluginError,
-        manager::{ExtensionAddOutcome, ExtensionConnectionOutcome, ExtensionSourceReceipt},
+        manager::{
+            AlphaConnectionRequest, ExtensionAddOutcome, ExtensionConnectionOutcome,
+            ExtensionSourceReceipt,
+        },
     },
     skills::SkillComponentReport,
 };
@@ -42,6 +45,7 @@ pub(super) struct ConnectRequest {
     pub(super) server: String,
     pub(super) connection: String,
     pub(super) credential: PluginCredential,
+    pub(super) replace: bool,
 }
 
 pub(super) async fn connect(
@@ -49,23 +53,26 @@ pub(super) async fn connect(
     request: ConnectRequest,
     invocation: ExtensionInvocation<'_>,
 ) -> Result<ToolOutput, ToolError> {
-    let snapshot = match tool
+    let (snapshot, status) = match tool
         .manager
         .connect_alpha_operation(
-            &request.package_digest,
-            &request.server,
-            &request.connection,
-            request.credential,
-            invocation.operation_id,
+            AlphaConnectionRequest {
+                package_digest: &request.package_digest,
+                server_id: &request.server,
+                connection_id: &request.connection,
+                credential: request.credential,
+                replace: request.replace,
+                operation_id: invocation.operation_id,
+            },
             invocation.cancellation.clone(),
         )
         .await
     {
-        Ok(snapshot) => snapshot,
+        Ok(snapshot) => (snapshot, "catalog_loaded"),
         Err(PluginError::Mcp(McpHostError::OAuth(
             crate::mcp::McpOAuthError::AuthorizationRequired(_),
         ))) => match authorize_snapshot(tool, &request.connection, false, invocation).await {
-            Ok(snapshot) => snapshot,
+            Ok(snapshot) => (snapshot, "authorized"),
             Err(PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote)))) => {
                 return remote_mcp_error_output(&remote);
             }
@@ -77,6 +84,7 @@ pub(super) async fn connect(
         Err(error) => return Err(plugin_error(error, true)),
     };
     json_output(&ConnectionOutput {
+        status,
         package_digest: request.package_digest,
         server: request.server,
         connection: request.connection,
@@ -140,9 +148,6 @@ pub(super) async fn add(
         .await
     {
         Ok(added) => added,
-        Err(PluginError::Catalog(crate::plugins::CatalogError::Remote(failure))) => {
-            return catalog_failure_output(&failure);
-        }
         Err(error) => return Err(plugin_error(error, true)),
     };
     render_added(tool, added, invocation).await
@@ -150,8 +155,6 @@ pub(super) async fn add(
 
 struct AddedExtensionView<'a> {
     source: &'static str,
-    candidate: Option<&'a str>,
-    name: Option<&'a str>,
     installed: &'a InstalledPlugin,
     skills: &'a SkillComponentReport,
 }
@@ -161,11 +164,9 @@ async fn render_added(
     added: ExtensionAddOutcome,
     invocation: ExtensionInvocation<'_>,
 ) -> Result<ToolOutput, ToolError> {
-    let (source, candidate, name) = source_output(&added.source);
+    let source = source_output(&added.source);
     let output = AddedExtensionView {
         source,
-        candidate,
-        name,
         installed: &added.installed,
         skills: &added.skills,
     };
@@ -175,7 +176,7 @@ async fn render_added(
             id,
             server,
             snapshot,
-        } => connected_output(&output, &id, &server, &snapshot),
+        } => connected_output(&output, &id, &server, &snapshot, "catalog_loaded"),
         ExtensionConnectionOutcome::Failed { id, server, error } => {
             failed_output(tool, &output, id, server, error, invocation).await
         }
@@ -186,8 +187,6 @@ fn installed_output(extension: &AddedExtensionView<'_>) -> Result<ToolOutput, To
     json_output(&InstalledOutput {
         status: "installed",
         source: extension.source,
-        candidate: extension.candidate,
-        name: extension.name,
         package_digest: extension.installed.digest(),
         metadata: extension.installed.metadata(),
         mcp_servers: extension.installed.mcp_servers(),
@@ -201,12 +200,11 @@ fn connected_output(
     connection: &str,
     server: &str,
     snapshot: &McpCatalogSnapshot,
+    status: &'static str,
 ) -> Result<ToolOutput, ToolError> {
     json_output(&ConnectedOutput {
-        status: "connected",
+        status,
         source: extension.source,
-        candidate: extension.candidate,
-        name: extension.name,
         package_digest: extension.installed.digest(),
         connection,
         server,
@@ -234,7 +232,9 @@ async fn failed_output(
     ) && let (Some(connection), Some(server)) = (&connection, &server)
     {
         return match authorize_snapshot(tool, connection, false, invocation).await {
-            Ok(snapshot) => connected_output(extension, connection, server, &snapshot),
+            Ok(snapshot) => {
+                connected_output(extension, connection, server, &snapshot, "authorized")
+            }
             Err(error) => installed_failure(extension, Some(connection), Some(server), error),
         };
     }
@@ -260,12 +260,9 @@ fn installed_failure(
     )
 }
 
-fn source_output(receipt: &ExtensionSourceReceipt) -> (&'static str, Option<&str>, Option<&str>) {
+fn source_output(receipt: &ExtensionSourceReceipt) -> &'static str {
     match receipt {
-        ExtensionSourceReceipt::Catalog { reference, name } => {
-            ("integrations.sh", Some(reference), Some(name))
-        }
-        ExtensionSourceReceipt::Mcp => ("mcp", None, None),
-        ExtensionSourceReceipt::Package => ("package", None, None),
+        ExtensionSourceReceipt::Mcp => "mcp",
+        ExtensionSourceReceipt::Package => "package",
     }
 }

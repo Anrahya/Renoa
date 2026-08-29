@@ -6,6 +6,7 @@ mod lock;
 mod process;
 mod resolution;
 mod secret;
+mod sensitive;
 mod store;
 
 #[cfg(test)]
@@ -19,9 +20,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     McpAdapterError, McpAuthorization, McpCatalogStore, McpConnectionAuth, McpCredentialResolver,
-    McpHostError, McpOAuthError,
+    McpHostError, McpOAuthError, McpOAuthRegistration,
 };
 use secret::OAuthSecretStore;
+use sensitive::SensitiveString;
 use store::OAuthFlowStore;
 
 const INTERACTIVE_LOCK_WAIT: Duration = Duration::from_secs(2);
@@ -128,6 +130,34 @@ impl OAuthCoordinator {
         reference.oauth_credential_id().ok_or_else(|| {
             McpOAuthError::Invalid("connection credential kind is not OAuth".to_owned()).into()
         })
+    }
+
+    async fn adapter_registration(
+        &self,
+        reference: &McpConnectionAuth,
+        cancellation: CancellationToken,
+    ) -> Result<process::OAuthRegistration, McpHostError> {
+        match reference.oauth_registration().ok_or_else(|| {
+            McpOAuthError::Invalid("connection credential kind is not OAuth".to_owned())
+        })? {
+            McpOAuthRegistration::Dynamic => Ok(process::OAuthRegistration::Dynamic),
+            McpOAuthRegistration::ClientMetadata { url } => {
+                Ok(process::OAuthRegistration::ClientMetadata {
+                    client_metadata_url: url.clone(),
+                })
+            }
+            McpOAuthRegistration::PreRegistered { credential_id } => {
+                let client = self
+                    .secrets
+                    .load_pre_registered_client(credential_id, cancellation)
+                    .await?;
+                Ok(process::OAuthRegistration::PreRegistered {
+                    issuer: client.issuer,
+                    client_id: client.client_id,
+                    client_secret: client.client_secret,
+                })
+            }
+        }
     }
 }
 

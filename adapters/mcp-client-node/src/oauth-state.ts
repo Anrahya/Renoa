@@ -6,31 +6,27 @@ import type {
   StoredOAuthClientInformation,
   StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
-import type { WireOAuthState } from "./contract.js";
-import { isLoopbackHost, parseEndpoint } from "./endpoint.js";
+import type { WireOAuthRegistration, WireOAuthState } from "./contract.js";
 import { AdapterProblem } from "./errors.js";
+import { MAX_OAUTH_STATE_BYTES } from "./limits.js";
 import {
-  MAX_AUTH_TOKEN_BYTES,
-  MAX_OAUTH_STATE_BYTES,
-  MAX_OAUTH_VALUE_BYTES,
-} from "./limits.js";
+  bindIssuer,
+  boundedUrl,
+  canonicalEndpoint,
+  canonicalIssuer,
+  invalid,
+  issuerMatches,
+  normalizeCredentialIssuers,
+  type PersistedOAuthState,
+  requireBoundedSecret,
+  requireIssuer,
+  sameIssuer,
+  tokenExpiry,
+  validateAuthorizationUrl,
+  validateCoreState,
+} from "./oauth-state-validation.js";
 
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
-
-interface PersistedOAuthState {
-  schema_version: 1;
-  mcp_endpoint: string;
-  csrf_state: string;
-  redirect_uri: string;
-  authorization_url?: string;
-  authorization_server_url?: string;
-  client_information?: StoredOAuthClientInformation;
-  code_verifier?: string;
-  discovery_state?: OAuthDiscoveryState;
-  resource_url?: string;
-  tokens?: StoredOAuthTokens;
-  tokens_saved_at_ms?: number;
-}
 
 export interface CurrentOAuthToken {
   readonly accessToken: string;
@@ -38,10 +34,33 @@ export interface CurrentOAuthToken {
 
 export class RenoaOAuthProvider implements OAuthClientProvider {
   readonly #state: PersistedOAuthState;
+  readonly #registration: WireOAuthRegistration;
+  readonly clientMetadataUrl?: string;
+  readonly saveClientInformation?: (
+    value: StoredOAuthClientInformation,
+    context?: OAuthClientInformationContext,
+  ) => void;
 
-  constructor(state: WireOAuthState, endpoint: string) {
+  constructor(
+    state: WireOAuthState,
+    endpoint: string,
+    registration: WireOAuthRegistration,
+  ) {
     this.#state = structuredClone(state) as unknown as PersistedOAuthState;
+    this.#registration = structuredClone(registration);
     validateCoreState(this.#state, canonicalEndpoint(endpoint));
+    normalizeCredentialIssuers(this.#state);
+    if (registration.mode === "client_metadata") {
+      this.clientMetadataUrl = registration.client_metadata_url;
+    }
+    if (
+      registration.mode === "dynamic" ||
+      registration.mode === "client_metadata"
+    ) {
+      this.saveClientInformation = (value, context) => {
+        this.#state.client_information = bindIssuer(value, context);
+      };
+    }
   }
 
   static begin(
@@ -50,6 +69,7 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
     redirectUri: string,
     forceReauthorization: boolean,
     endpoint: string,
+    registration: WireOAuthRegistration,
   ): RenoaOAuthProvider {
     const mcpEndpoint = canonicalEndpoint(endpoint);
     const retained = prior === undefined || prior.mcp_endpoint !== mcpEndpoint
@@ -64,7 +84,7 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
       csrf_state: csrfState,
       redirect_uri: redirectUri,
       ...retained,
-    } as unknown as WireOAuthState, endpoint);
+    } as unknown as WireOAuthState, endpoint, registration);
   }
 
   get redirectUrl(): string {
@@ -89,23 +109,38 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
   }
 
   clientInformation(
-    _context?: OAuthClientInformationContext,
+    context?: OAuthClientInformationContext,
   ): StoredOAuthClientInformation | undefined {
-    return clone(this.#state.client_information);
-  }
-
-  saveClientInformation(value: StoredOAuthClientInformation): void {
-    this.#state.client_information = clone(value);
+    if (this.#registration.mode === "pre_registered") {
+      requireIssuer(
+        this.#registration.issuer,
+        context,
+        "pre-registered OAuth client",
+      );
+      return {
+        client_id: this.#registration.client_id,
+        ...(this.#registration.client_secret === undefined
+          ? {}
+          : { client_secret: this.#registration.client_secret }),
+        issuer: canonicalIssuer(this.#registration.issuer),
+      };
+    }
+    const client = this.#state.client_information;
+    return issuerMatches(client?.issuer, context) ? clone(client) : undefined;
   }
 
   tokens(
-    _context?: OAuthClientInformationContext,
+    context?: OAuthClientInformationContext,
   ): StoredOAuthTokens | undefined {
-    return clone(this.#state.tokens);
+    const tokens = this.#state.tokens;
+    return issuerMatches(tokens?.issuer, context) ? clone(tokens) : undefined;
   }
 
-  saveTokens(tokens: StoredOAuthTokens): void {
-    this.#state.tokens = clone(tokens);
+  saveTokens(
+    tokens: StoredOAuthTokens,
+    context?: OAuthClientInformationContext,
+  ): void {
+    this.#state.tokens = bindIssuer(tokens, context);
     this.#state.tokens_saved_at_ms = Date.now();
   }
 
@@ -149,7 +184,18 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
   }
 
   saveAuthorizationServerUrl(url: string): void {
-    this.#state.authorization_server_url = boundedUrl(url, "authorization server");
+    const issuer = canonicalIssuer(url);
+    for (const stored of [
+      this.#state.client_information?.issuer,
+      this.#state.tokens?.issuer,
+    ]) {
+      if (stored !== undefined && !sameIssuer(stored, issuer)) {
+        throw invalid(
+          "OAuth authorization server changed after credentials were selected",
+        );
+      }
+    }
+    this.#state.authorization_server_url = issuer;
   }
 
   authorizationServerUrl(): string | undefined {
@@ -187,6 +233,17 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
     const tokens = this.#state.tokens;
     if (tokens === undefined) {
       return undefined;
+    }
+    if (tokens.issuer === undefined) {
+      throw invalid("OAuth token is missing its authorization server issuer");
+    }
+    if (
+      this.#state.authorization_server_url !== undefined &&
+      !sameIssuer(tokens.issuer, this.#state.authorization_server_url)
+    ) {
+      throw invalid(
+        "OAuth token is not bound to the current authorization server issuer",
+      );
     }
     requireBoundedSecret(tokens.access_token, "OAuth access token");
     if (tokens.token_type.toLowerCase() !== "bearer") {
@@ -243,100 +300,6 @@ function retainLongLivedState(
   };
 }
 
-function validateCoreState(
-  state: PersistedOAuthState,
-  expectedEndpoint: string,
-): void {
-  if (state.mcp_endpoint !== expectedEndpoint) {
-    throw invalid("OAuth credential state belongs to a different MCP endpoint");
-  }
-  requireBoundedSecret(state.csrf_state, "OAuth state parameter");
-  const redirect = new URL(state.redirect_uri);
-  const loopback = redirect.hostname === "127.0.0.1" || redirect.hostname === "[::1]";
-  if (
-    redirect.protocol !== "http:" ||
-    !loopback ||
-    redirect.pathname !== "/oauth/callback" ||
-    redirect.username.length > 0 ||
-    redirect.password.length > 0 ||
-    redirect.search.length > 0 ||
-    redirect.hash.length > 0
-  ) {
-    throw invalid("OAuth redirect URI must be an exact loopback HTTP callback");
-  }
-}
-
-function canonicalEndpoint(value: string): string {
-  return parseEndpoint(value).href;
-}
-
-function validateAuthorizationUrl(url: URL, state: PersistedOAuthState): void {
-  if (url.protocol !== "https:" && !isLoopbackHttp(url)) {
-    throw invalid("OAuth authorization URL must use HTTPS or loopback HTTP");
-  }
-  if (url.username.length > 0 || url.password.length > 0 || url.hash.length > 0) {
-    throw invalid("OAuth authorization URL contains forbidden URL components");
-  }
-  if (url.searchParams.get("state") !== state.csrf_state) {
-    throw invalid("OAuth authorization URL did not preserve the Host state parameter");
-  }
-  if (url.searchParams.get("redirect_uri") !== state.redirect_uri) {
-    throw invalid("OAuth authorization URL did not preserve the Host redirect URI");
-  }
-  if (Buffer.byteLength(url.href, "utf8") > MAX_OAUTH_VALUE_BYTES) {
-    throw invalid("OAuth authorization URL exceeds its boundary");
-  }
-}
-
-function boundedUrl(value: string, kind: string): string {
-  if (Buffer.byteLength(value, "utf8") > MAX_OAUTH_VALUE_BYTES) {
-    throw invalid(`${kind} URL exceeds its boundary`);
-  }
-  return value;
-}
-
-function tokenExpiry(
-  tokens: StoredOAuthTokens,
-  savedAtMs: number | undefined,
-): number | undefined {
-  if (tokens.expires_in === undefined) {
-    return undefined;
-  }
-  if (
-    savedAtMs === undefined ||
-    !Number.isSafeInteger(savedAtMs) ||
-    !Number.isSafeInteger(tokens.expires_in) ||
-    tokens.expires_in < 0
-  ) {
-    return 0;
-  }
-  const lifetimeMs = tokens.expires_in * 1_000;
-  const expiresAtMs = savedAtMs + lifetimeMs;
-  return Number.isSafeInteger(lifetimeMs) && Number.isSafeInteger(expiresAtMs)
-    ? expiresAtMs
-    : 0;
-}
-
-function requireBoundedSecret(value: string, kind: string): void {
-  if (
-    value.length === 0 ||
-    Buffer.byteLength(value, "utf8") > MAX_AUTH_TOKEN_BYTES ||
-    /[\u0000-\u001F\u007F]/u.test(value)
-  ) {
-    throw invalid(`${kind} is empty, malformed, or over limit`);
-  }
-}
-
-function isLoopbackHttp(url: URL): boolean {
-  return url.protocol === "http:" && isLoopbackHost(url.hostname);
-}
-
 function clone<T>(value: T): T {
   return structuredClone(value);
-}
-
-function invalid(message: string): AdapterProblem {
-  return new AdapterProblem("invalid_request", message, {
-    code: "invalid_oauth_state",
-  });
 }

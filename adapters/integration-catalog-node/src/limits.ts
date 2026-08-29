@@ -1,9 +1,0 @@
-export const WIRE_VERSION = 1;
-export const ADAPTER_REVISION = "integration-catalog-node-v0.1.0";
-export const CATALOG_SCHEMA_VERSION = 3;
-export const MAX_STDIN_BYTES = 16 * 1024;
-export const MAX_RECORD_BYTES = 512 * 1024;
-export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-export const MAX_QUERY_BYTES = 256;
-export const MAX_SEARCH_RESULTS = 10;
-export const REQUEST_TIMEOUT_MS = 15_000;

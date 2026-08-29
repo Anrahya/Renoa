@@ -4,8 +4,8 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, SEARCH_TOOL, SearchTool,
-    parse_references,
+    EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, SEARCH_RESULT_LIMIT, SEARCH_TOOL,
+    SearchTool, parse_references,
 };
 use crate::ALPHA_PROFILE_ID;
 use crate::mcp::{
@@ -87,10 +87,15 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
             .as_array()
             .expect("search matches array")
             .len(),
-        5
+        SEARCH_RESULT_LIMIT
     );
+    let first = after["matches"][0]
+        .as_object()
+        .expect("compact search match object");
+    let mut keys = first.keys().map(String::as_str).collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(keys, ["description", "name", "reference"]);
     assert!(!after.to_string().contains("input_schema"));
-    assert!(after.to_string().len() < 4_096);
 }
 
 #[tokio::test]

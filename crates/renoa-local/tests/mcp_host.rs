@@ -86,7 +86,7 @@ fn new_host(data: &Path, adapter: Option<&Path>) -> LocalHost {
         ModelProvider::Xai,
         "unused-model",
         data.join("unused-credentials.sqlite3"),
-        LocalHostAdapters::new(adapter, None),
+        LocalHostAdapters::new(adapter),
     )
     .expect("create local Host")
 }

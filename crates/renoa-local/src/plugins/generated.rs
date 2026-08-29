@@ -1,9 +1,8 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
-use sha2::{Digest as _, Sha256};
 use url::Url;
 
-use super::{CatalogCandidate, PluginError, RemoteMcpSource, inspect};
+use super::{PluginError, RemoteMcpSource, inspect};
 use crate::mcp::McpRequestHeaders;
 
 pub(super) struct GeneratedMcpPlugin {
@@ -16,21 +15,6 @@ pub(super) struct GeneratedMcpPlugin {
 }
 
 impl GeneratedMcpPlugin {
-    pub(super) fn from_catalog(candidate: &CatalogCandidate) -> Self {
-        let digest = hex(&Sha256::digest(candidate.reference().as_bytes()));
-        Self {
-            name: format!("integrations.{}", &digest[..32]),
-            description: candidate.description().to_owned(),
-            homepage: candidate
-                .docs()
-                .unwrap_or_else(|| candidate.source_record())
-                .to_owned(),
-            server: candidate.server().to_owned(),
-            endpoint: candidate.endpoint().to_owned(),
-            public_headers: BTreeMap::new(),
-        }
-    }
-
     pub(super) fn from_researched(source: RemoteMcpSource) -> Result<Self, PluginError> {
         let documentation = Url::parse(&source.documentation).map_err(|error| {
             PluginError::Invalid(format!("MCP documentation URL is invalid: {error}"))
@@ -89,14 +73,4 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), PluginError>
         path: path.to_path_buf(),
         source,
     })
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    output
 }

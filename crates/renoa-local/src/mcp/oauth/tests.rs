@@ -11,6 +11,8 @@ use crate::mcp::{
     McpAdapterError, McpConnectionAuth, McpHostError, McpOAuthAuthorizationRequest, McpOAuthError,
 };
 
+#[path = "tests/registration.rs"]
+mod registration;
 mod support;
 
 use support::{CONNECTION, ENDPOINT, Fixture};

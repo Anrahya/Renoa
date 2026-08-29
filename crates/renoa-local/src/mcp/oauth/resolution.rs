@@ -11,6 +11,16 @@ use crate::mcp::{
     McpOutcomeCertainty,
 };
 
+struct RefreshAttempt<'a> {
+    connection_id: &'a str,
+    endpoint: &'a str,
+    credential_id: &'a str,
+    registration: &'a process::OAuthRegistration,
+    operation_id: &'a str,
+    state: serde_json::Value,
+    cancellation: CancellationToken,
+}
+
 impl OAuthCoordinator {
     pub(super) async fn resolve(
         &self,
@@ -89,14 +99,18 @@ impl OAuthCoordinator {
             }
             OAuthResult::RefreshRequired { state } => {
                 ensure_local_state_unchanged(&bundle.adapter_state, &state)?;
-                self.refresh(
+                let registration = self
+                    .adapter_registration(reference, cancellation.clone())
+                    .await?;
+                self.refresh(RefreshAttempt {
                     connection_id,
                     endpoint,
                     credential_id,
+                    registration: &registration,
                     operation_id,
-                    bundle.adapter_state,
+                    state: bundle.adapter_state,
                     cancellation,
-                )
+                })
                 .await
             }
             OAuthResult::Failed { failure, state } => {
@@ -161,20 +175,21 @@ impl OAuthCoordinator {
         }
     }
 
-    async fn refresh(
-        &self,
-        connection_id: &str,
-        endpoint: &str,
-        credential_id: &str,
-        operation_id: &str,
-        state: serde_json::Value,
-        cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
-        let flow =
-            OAuthFlow::non_interactive(connection_id, operation_id, OAuthPhase::RefreshInFlight)?;
+    async fn refresh(&self, attempt: RefreshAttempt<'_>) -> Result<McpAuthorization, McpHostError> {
+        let flow = OAuthFlow::non_interactive(
+            attempt.connection_id,
+            attempt.operation_id,
+            OAuthPhase::RefreshInFlight,
+        )?;
         self.flows.put(&flow).await?;
-        let result =
-            process::refresh(self.adapter()?, endpoint, &state, cancellation.clone()).await;
+        let result = process::refresh(
+            self.adapter()?,
+            attempt.endpoint,
+            attempt.registration,
+            &attempt.state,
+            attempt.cancellation.clone(),
+        )
+        .await;
         match result {
             Ok(OAuthResult::Authorized {
                 authorization,
@@ -183,54 +198,67 @@ impl OAuthCoordinator {
             }) => {
                 if let Err(error) = self
                     .secrets
-                    .store(credential_id, &OAuthSecretBundle::new(state), cancellation)
+                    .store(
+                        attempt.credential_id,
+                        &OAuthSecretBundle::new(state),
+                        attempt.cancellation,
+                    )
                     .await
                 {
-                    self.mark_unknown(connection_id, operation_id).await?;
-                    return Err(unknown(connection_id, &error.to_string()));
+                    self.mark_unknown(attempt.connection_id, attempt.operation_id)
+                        .await?;
+                    return Err(unknown(attempt.connection_id, &error.to_string()));
                 }
-                self.flows.delete(connection_id).await?;
+                self.flows.delete(attempt.connection_id).await?;
                 Ok(authorization)
             }
             Ok(OAuthResult::Failed { failure, state }) => {
                 if let Err(error) = self
                     .secrets
-                    .store(credential_id, &OAuthSecretBundle::new(state), cancellation)
+                    .store(
+                        attempt.credential_id,
+                        &OAuthSecretBundle::new(state),
+                        attempt.cancellation,
+                    )
                     .await
                 {
-                    self.mark_unknown(connection_id, operation_id).await?;
-                    return Err(unknown(connection_id, &error.to_string()));
+                    self.mark_unknown(attempt.connection_id, attempt.operation_id)
+                        .await?;
+                    return Err(unknown(attempt.connection_id, &error.to_string()));
                 }
                 if failure.certainty() == McpOutcomeCertainty::Unknown {
-                    self.mark_unknown(connection_id, operation_id).await?;
+                    self.mark_unknown(attempt.connection_id, attempt.operation_id)
+                        .await?;
                 } else {
                     if let Err(error) = self
-                        .record_refresh_failure(connection_id, operation_id)
+                        .record_refresh_failure(attempt.connection_id, attempt.operation_id)
                         .await
                     {
-                        self.mark_unknown(connection_id, operation_id).await?;
-                        return Err(unknown(connection_id, &error.to_string()));
+                        self.mark_unknown(attempt.connection_id, attempt.operation_id)
+                            .await?;
+                        return Err(unknown(attempt.connection_id, &error.to_string()));
                     }
-                    self.flows.delete(connection_id).await?;
+                    self.flows.delete(attempt.connection_id).await?;
                 }
                 Err(McpAdapterError::Remote(failure).into())
             }
             Ok(OAuthResult::Redirect { state, .. } | OAuthResult::RefreshRequired { state }) => {
                 self.complete_authorization_required(
                     &flow,
-                    credential_id,
-                    operation_id,
+                    attempt.credential_id,
+                    attempt.operation_id,
                     state,
-                    cancellation,
+                    attempt.cancellation,
                 )
                 .await
             }
             Err(error) if adapter_may_have_dispatched(&error) => {
-                self.mark_unknown(connection_id, operation_id).await?;
-                Err(unknown(connection_id, &error.to_string()))
+                self.mark_unknown(attempt.connection_id, attempt.operation_id)
+                    .await?;
+                Err(unknown(attempt.connection_id, &error.to_string()))
             }
             Err(error) => {
-                self.flows.delete(connection_id).await?;
+                self.flows.delete(attempt.connection_id).await?;
                 Err(error.into())
             }
         }

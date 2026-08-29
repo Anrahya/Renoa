@@ -139,25 +139,47 @@ No Renoa-specific marketplace index is defined before a browsing or update
 consumer needs one. Early installs may identify an exact repository, path, and
 commit directly.
 
-The first implemented discovery source is the public integrations.sh REST API
-behind `adapters/integration-catalog-node`. It is a replaceable hint source,
-not a package registry or runtime dependency. Search returns bounded normalized
-MCP candidates. Add refetches the selected record and verifies its exact
-content reference before generating a standard Agent Plugin package. A
-missing, stale, malformed, or unavailable record produces explicit guidance to
-use official web research or an exact local Agent Plugin package; Renoa never
-guesses an endpoint.
+Public MCP registries and marketplaces are replaceable research inputs, never
+Host authority. The [official MCP Registry](https://modelcontextprotocol.io/registry/about)
+verifies publisher namespaces but describes its records as self-reported preview
+metadata and recommends a downstream marketplace for Host use. [GitHub's MCP
+Registry](https://github.com/mcp) provides a curated repository-backed directory.
+The [Docker MCP Catalog](https://docs.docker.com/ai/mcp-catalog-and-toolkit/catalog/)
+additionally builds, scans, signs, and tests catalog entries, but its strongest
+guarantees apply to Docker-packaged servers. None can replace provider
+documentation plus validation of the real endpoint.
 
-The implemented `add` operation has three source forms: one exact catalog
-reference, one MCP definition backed by an official HTTPS documentation URL,
-or one local Agent Plugins directory bound to the digest returned by `inspect`.
-All three converge on the same immutable package store and component loaders.
-The digest requirement prevents a crash replay from observing different bytes
-at the same mutable path. Package installation and skill loading happen before
-any MCP connection attempt. A missing credential, authorization failure,
-unsupported server choice, or unreachable endpoint therefore leaves the
-package installed and returns that exact partial state; it never makes the
-package disappear or fabricates a successful connection.
+[GitHub Marketplace](https://github.com/marketplace) is a distribution surface
+for GitHub Apps and Actions, not an MCP catalog. It may become a replaceable
+research source when Renoa supports those component types, but it does not feed
+the implemented MCP Registry adapter or bypass package and connection checks.
+
+The implemented management tool exposes read-only `search` and exact `lookup`
+through a replaceable official MCP Registry adapter. Renoa is the downstream
+normalization layer the Registry expects: it normalizes a short human query,
+requests latest versions with bounded cursor pagination, filters broad fallback
+matches, ranks deterministically, and reports rejected, filtered, truncated,
+and returned coverage. Search returns compact publisher metadata and counts;
+only lookup returns one exact published version's endpoints, header
+requirements, and package declarations. There is no cache or hidden retry.
+
+Registry publication is labeled precisely: it verifies control of the
+publisher namespace. It does not verify provider endorsement, metadata
+accuracy, server safety, or endpoint behavior. Publisher descriptions remain
+explicitly named publisher data. Registry package declarations are reported as
+unsupported rather than executed, legacy SSE and endpoint templates are
+blocked, and secret header values are never copied. The management tool accepts
+no Registry record as an `add` source. After lookup, the agent verifies the
+endpoint and authentication against the provider's official HTTPS
+documentation, then submits one independently researched typed MCP definition.
+The other `add` source is a local Agent Plugins directory bound to the digest
+returned by `inspect`. Both converge on the same immutable package store and
+component loaders. The digest requirement prevents a crash replay from
+observing different bytes at the same mutable path. Package installation and
+skill loading happen before any MCP connection attempt. A missing credential,
+authorization failure, unsupported server choice, or unreachable endpoint
+therefore leaves the package installed and returns that exact partial state; it
+never makes the package disappear or fabricates a successful connection.
 
 ## Vocabulary
 
@@ -313,6 +335,12 @@ same intent-before-effect boundary as native tools.
 An update installs another immutable digest; it does not rewrite the prior
 package in place. Static runtime changes apply at the next operation. A
 registry attachment is visible at the next safe registry read without restart.
+The implemented disconnect operation removes only Alpha's profile attachment.
+It is idempotent and keeps the registered connection, catalog, package, and
+credential reference so recovery and later reattachment retain their exact
+identity. The management list reports package integrity, registration, catalog
+presence, authentication kind, and Alpha attachment separately rather than
+collapsing them into one enabled flag.
 Removal cannot delete content still required to recover an unfinished
 operation. Rollback is selection of a previously installed compatible digest,
 not restoration from mutable leftovers.
@@ -408,8 +436,6 @@ The intended physical separation is:
 Renoa repository
   crates/renoa-local/          Host library, assembly, and management semantics
   adapters/mcp-client-node/    replaceable MCP protocol implementation
-  adapters/integration-catalog-node/
-                               replaceable discovery-only REST adapter
 
 renoa-plugins repository
   official/<plugin>/           Renoa-owned packages
@@ -432,11 +458,18 @@ request headers, and named Secret Service bearer references. Schema v7
 preserves standard plugin homepage provenance and adds the package-skill scope
 without changing existing global or workspace bindings. Schema v8 adds OAuth
 connection references, non-secret recovery phases, and bounded terminal
-receipts keyed by stable session/command/tool-call identity. OAuth client state,
-tokens, and remote failure text never enter `host.sqlite3`; all secret values
-are resolved just in time from Secret Service. Cross-platform secret stores,
-cross-node credential placement, permission, package-registry, update, and
-removal designs remain open.
+receipts keyed by stable session/command/tool-call identity. Schema v9 records
+the selected CIMD, pre-registered-client, or DCR policy and migrates existing
+OAuth connections to their former DCR behavior. OAuth client state, tokens,
+client secrets, and remote failure text never enter `host.sqlite3`; all secret
+values are resolved just in time from Secret Service. Cross-platform secret
+stores, cross-node credential placement, permission, package-registry, update,
+and removal designs remain open.
+
+A package installed before schema v7 may have a null durable homepage even when
+its immutable manifest contains one. Load repairs only that missing field and
+only when every other verified package field still matches; any broader
+difference remains a visible integrity rejection.
 
 `third_party` means that the service is external to Renoa. It does not assert
 that the named company authored, reviewed, or endorsed the package. Provenance
@@ -460,8 +493,9 @@ model prompts, tool schemas, or credentials as continuity data.
 
 ## Standards and implementation evidence
 
-Reviewed on 2026-08-29. Renoa copied no upstream implementation source for the
-skill or Agent Plugin paths. The YAML and URL parsers are pinned dependencies.
+Reviewed on 2026-08-30. Renoa copied no upstream implementation source for the
+skill, Agent Plugin, or official Registry paths. The YAML and URL parsers are
+pinned dependencies.
 
 | Source | Exact revision | License evidence | Renoa use |
 | --- | --- | --- | --- |
@@ -473,11 +507,11 @@ skill or Agent Plugin paths. The YAML and URL parsers are pinned dependencies.
 | [serde-saphyr 1.1.0](https://github.com/bourumir-wyngs/serde-saphyr/tree/ad5c614bd437f9c3dbf65b158de24cb3a07cda9d) | tag commit `ad5c614bd437f9c3dbf65b158de24cb3a07cda9d` | MIT OR Apache-2.0 | Deserialize-only YAML frontmatter dependency with default features disabled; no source adapted |
 | [MCP 2026-07-28](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267) | tag commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` | Repository records an Apache-2.0 transition with remaining MIT material and CC-BY-4.0 documentation | Current remote tool protocol semantics |
 | [MCP TypeScript client 2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac) | tag commit `cc4b41617ce3601b1290d67216ea0b194a3cd9ac` | Published package declares MIT; source repository records the broader MCP license transition | Maintained implementation behind Renoa's narrow process adapter |
+| [Official MCP Registry](https://github.com/modelcontextprotocol/registry/tree/6036804f1c62633b5e7d2927f411a6f4127f148a) | `6036804f1c62633b5e7d2927f411a6f4127f148a` (release `v1.8.1`) | New code/specification Apache-2.0, remaining code MIT, documentation CC-BY-4.0 under the repository's transition notice | Stable `v0.1` list/exact-version API and publisher-namespace trust semantics behind Renoa's replaceable read-only adapter; no upstream runtime source copied |
 | [GitHub MCP server](https://github.com/github/github-mcp-server/tree/a00dc319edcb5f8a10f118b1dad649c94928aac4) | `a00dc319edcb5f8a10f118b1dad649c94928aac4` | MIT | First real read-only remote connection; no upstream server source copied |
 | [Exa MCP server](https://github.com/exa-labs/exa-mcp-server/tree/15ffb50519e719dc791cdc750ce5ed1934c0a1ed) | `15ffb50519e719dc791cdc750ce5ed1934c0a1ed` | MIT | First real Agent Plugins/API-key package shape; endpoint and public source header consumed through the generic loader, with no server source copied |
 | [Cursor plugins](https://github.com/cursor/plugins/tree/bdf7aa355337897f167153e05069aca505dae17c) | `bdf7aa355337897f167153e05069aca505dae17c` | MIT at reviewed revision | One-directory-per-package marketplace organization; Cursor-specific manifests are not Renoa's portable contract |
 | [Executor](https://github.com/UsefulSoftwareCo/executor/tree/7c12aeea390225291ce4c97865b392237ee7934d) | `7c12aeea390225291ce4c97865b392237ee7934d` | MIT | Evidence for separating integrations, authenticated connections, discovered tools, and just-in-time secret resolution |
-| [integrations.sh](https://github.com/UsefulSoftwareCo/integrations/tree/5219a70601c8c356146aa1bc7429e571cf64fbf1) | `5219a70601c8c356146aa1bc7429e571cf64fbf1` | MIT | Replaceable ground-zero MCP metadata discovery through the public REST API; no runtime source copied and no catalog record becomes authoritative without refetch, validation, MCP discovery, and Host publication |
 
 Agent Plugins 1.0 standardizes only skills and MCP server entries. It explicitly
 leaves registries, installation, permissions, trust, caching, and product UX to
@@ -641,11 +675,14 @@ according to its resolved component type.
 Current proof: `LocalHost` and `extension_manage` call the same manager;
 inspect/install retries are content-bound and idempotent; local package adds
 require the inspected digest; connect reuses the
-existing catalog/attachment path; search and add use a replaceable
-integrations.sh REST adapter; catalog, officially researched MCP, and local
-package sources all normalize into one immutable installation path; standard
-package skills enter the existing skill registry; and connection discovery
-runs only after installation. Connection failure reports the retained package,
+existing catalog/attachment path; official Registry search and exact lookup run
+through a bounded replaceable process adapter and remain read-only; live
+multi-word search filters broad source noise and accurately shows that a
+namespace is not provider endorsement; researched MCP and local package sources
+both normalize into one immutable installation path; Registry records are not
+accepted as installation inputs; standard package skills enter
+the existing skill registry; and connection discovery runs only after
+installation. Connection failure reports the retained package,
 skill result, package notices, exact safe service error, and any known
 connection identity. One live `skill_search` or `tool_search` registry observes
 the committed component without restart. Retrying the same source converges on
@@ -653,6 +690,16 @@ the same digest and connection identity. OAuth connections use that same path:
 the Host owns exact loopback browser authorization and refresh, Secret Service
 owns credential values, SQLite owns only the connection reference and durable
 phase plus semantic terminal receipts, and uncertain exchanges are never
+replayed.
+Official Registry discovery changes the frozen `extension_manage` binding from
+revision 5 to revision 6. An unfinished operation admitted with revision 5
+fails closed after upgrade instead of gaining `search` or `lookup` under a
+different tool contract. Settled history and already installed immutable
+packages are unchanged.
+Connection-state reporting and idempotent Alpha disconnect change the binding
+from revision 6 to revision 7. An unfinished revision-6 management operation
+likewise fails closed after upgrade rather than gaining the new mutating action.
+The durable connection and catalog remain intact when a settled disconnect is
 replayed.
 Remaining proof: wire the first GUI consumer and resolve the general permission
 vocabulary without letting an agent broaden its own effective scope.
@@ -712,14 +759,15 @@ through the task journal.
 23. OAuth remains a Host-owned connection/authentication flow. The replay-safe
     management binding may carry it only with the stable
     session/command/tool-call identity, resumable callback state,
-    endpoint-bound Secret Service bundle, terminal receipt, and process-death
-    recovery path now consumed by implementation and tests.
+    explicit client-registration policy, endpoint-bound Secret Service bundle,
+    terminal receipt, and process-death recovery path now consumed by
+    implementation and tests.
 
 ## Open decisions
 
-- future Host schema migrations beyond v8 and storage for permissions;
+- future Host schema migrations beyond v9 and storage for permissions;
 - model-visible naming and collision handling for tools from many connections;
-- exact catalog freshness, cache-hint, and refresh policy;
+- future marketplace selection, ranking, freshness, and cache policy;
 - cross-platform secret-store selection, account recovery, revocation, and
   secret sync;
 - headless/device OAuth flows and non-Linux browser launchers;
@@ -763,7 +811,7 @@ The first direct MCP slice does not implement:
 - a universal plugin trait.
 
 The proven base remains deliberately small: one generic Agent Plugins manager
-normalizes catalog, researched MCP, and local package sources; installs their
+normalizes researched MCP definitions and local package sources; installs their
 immutable content; imports standard package skills; and connects supported
 remote MCP entries through the existing deferred registry. Standalone Agent
 Skills keep their global/workspace path and higher precedence. Everything runs

@@ -1,4 +1,4 @@
-mod catalog;
+mod discovery;
 mod error;
 mod generated;
 mod inspect;
@@ -20,8 +20,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::Serialize;
 
-pub(crate) use catalog::{CatalogCandidate, IntegrationCatalog};
-pub use catalog::{CatalogDiagnostic, CatalogError, CatalogFailure, CatalogFailureKind};
+pub(crate) use discovery::OfficialRegistry;
 pub use error::PluginError;
 pub(crate) use manager::PluginManager;
 pub(crate) use tool::alpha_plugin_binding;
@@ -30,9 +29,6 @@ pub(crate) const PLUGIN_STORE_DIRECTORY: &str = "plugins";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExtensionSource {
-    Catalog {
-        reference: String,
-    },
     Mcp(RemoteMcpSource),
     Package {
         path: PathBuf,
@@ -75,6 +71,7 @@ pub(crate) struct ExtensionConnectionRequest {
     id: Option<String>,
     server: Option<String>,
     credential: PluginCredential,
+    replace: bool,
 }
 
 impl ExtensionConnectionRequest {
@@ -82,11 +79,13 @@ impl ExtensionConnectionRequest {
         id: Option<String>,
         server: Option<String>,
         credential: PluginCredential,
+        replace: bool,
     ) -> Self {
         Self {
             id,
             server,
             credential,
+            replace,
         }
     }
 }
@@ -248,6 +247,27 @@ pub struct InstalledPlugin {
     notices: Vec<PluginNotice>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PluginListReport {
+    installed: Vec<InstalledPlugin>,
+    rejected: Vec<PluginListRejection>,
+}
+
+impl PluginListReport {
+    fn new(installed: Vec<InstalledPlugin>, rejected: Vec<PluginListRejection>) -> Self {
+        Self {
+            installed,
+            rejected,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct PluginListRejection {
+    package_digest: String,
+    reason: String,
+}
+
 impl InstalledPlugin {
     fn from_inspection(inspection: PluginInspection) -> Self {
         Self {
@@ -282,8 +302,19 @@ impl InstalledPlugin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginCredential {
     None,
-    SecretServiceBearer { credential_id: String },
-    OAuth,
+    SecretServiceBearer {
+        credential_id: String,
+    },
+    OAuth {
+        registration: PluginOAuthRegistration,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PluginOAuthRegistration {
+    Dynamic,
+    ClientMetadata { url: String },
+    PreRegistered { credential_id: String },
 }
 
 #[derive(Debug)]

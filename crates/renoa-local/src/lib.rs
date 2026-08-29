@@ -43,8 +43,8 @@ pub use mcp::{
 pub use model_bridge::{BridgeModel, ModelBridgeError};
 pub use model_catalog::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
 pub use plugins::{
-    CatalogDiagnostic, CatalogError, CatalogFailure, CatalogFailureKind, InstalledPlugin,
-    PluginCredential, PluginError, PluginInspection, PluginMcpServer, PluginMetadata, PluginNotice,
+    InstalledPlugin, PluginCredential, PluginError, PluginInspection, PluginMcpServer,
+    PluginMetadata, PluginNotice, PluginOAuthRegistration,
 };
 pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,

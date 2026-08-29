@@ -1,8 +1,6 @@
 import type {
   AdapterRequest,
   FrozenMcpTool,
-  JsonObject,
-  JsonValue,
   WireAuthorization,
   WireHeaders,
 } from "./contract.js";
@@ -15,6 +13,16 @@ import {
   MAX_REQUEST_HEADERS,
   WIRE_VERSION,
 } from "./limits.js";
+import { parseOAuthRegistration } from "./oauth-registration-wire.js";
+import {
+  invalid,
+  requireBoolean,
+  requireBoundedString,
+  requireExactKeys,
+  requireJsonObject,
+  requireObject,
+  requireString,
+} from "./wire-values.js";
 
 const HEADER_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const CLIENT_OWNED_HEADERS = new Set([
@@ -94,6 +102,7 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         "csrf_state",
         "redirect_uri",
         "force_reauthorization",
+        "registration",
         "oauth_state",
       ],
       "request",
@@ -117,6 +126,7 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         request.force_reauthorization,
         "request.force_reauthorization",
       ),
+      registration: parseOAuthRegistration(request.registration),
       ...(request.oauth_state === undefined
         ? {}
         : { oauth_state: parseOAuthState(request.oauth_state) }),
@@ -131,6 +141,7 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         "endpoint",
         "authorization_code",
         "issuer",
+        "registration",
         "oauth_state",
       ],
       "request",
@@ -154,10 +165,11 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
               MAX_OAUTH_VALUE_BYTES,
             ),
           }),
+      registration: parseOAuthRegistration(request.registration),
       oauth_state: parseOAuthState(request.oauth_state),
     };
   }
-  if (request.action === "oauth_token" || request.action === "oauth_refresh") {
+  if (request.action === "oauth_token") {
     requireExactKeys(
       request,
       ["wire_version", "action", "endpoint", "oauth_state"],
@@ -165,8 +177,22 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
     );
     return {
       wire_version: WIRE_VERSION,
-      action: request.action,
+      action: "oauth_token",
       endpoint: requireString(request.endpoint, "request.endpoint"),
+      oauth_state: parseOAuthState(request.oauth_state),
+    };
+  }
+  if (request.action === "oauth_refresh") {
+    requireExactKeys(
+      request,
+      ["wire_version", "action", "endpoint", "registration", "oauth_state"],
+      "request",
+    );
+    return {
+      wire_version: WIRE_VERSION,
+      action: "oauth_refresh",
+      endpoint: requireString(request.endpoint, "request.endpoint"),
+      registration: parseOAuthRegistration(request.registration),
       oauth_state: parseOAuthState(request.oauth_state),
     };
   }
@@ -237,18 +263,6 @@ function parseOAuthState(value: unknown): import("./contract.js").WireOAuthState
     MAX_OAUTH_VALUE_BYTES,
   );
   return state as import("./contract.js").WireOAuthState;
-}
-
-function requireBoundedString(
-  value: unknown,
-  path: string,
-  maxBytes: number,
-): string {
-  const text = requireString(value, path);
-  if (Buffer.byteLength(text, "utf8") > maxBytes) {
-    throw invalid(`${path} exceeds ${maxBytes} bytes`);
-  }
-  return text;
 }
 
 function optionalHeaders(
@@ -341,89 +355,4 @@ function parseFrozenTool(value: unknown): FrozenMcpTool {
           ),
         }),
   };
-}
-
-function requireJsonObject(value: unknown, path: string): JsonObject {
-  const object = requireObject(value, path);
-  if (!isJsonValue(object)) {
-    throw invalid(`${path} must contain only JSON values`);
-  }
-  return object as JsonObject;
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  const pending: unknown[] = [value];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (
-      current === null ||
-      typeof current === "string" ||
-      typeof current === "boolean"
-    ) {
-      continue;
-    }
-    if (typeof current === "number") {
-      if (!Number.isFinite(current)) {
-        return false;
-      }
-      continue;
-    }
-    if (Array.isArray(current)) {
-      pending.push(...current);
-      continue;
-    }
-    if (typeof current === "object" && current !== null) {
-      pending.push(...Object.values(current));
-      continue;
-    }
-    return false;
-  }
-  return true;
-}
-
-function requireObject(value: unknown, path: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw invalid(`${path} must be a JSON object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireString(value: unknown, path: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw invalid(`${path} must be a non-empty string`);
-  }
-  return value;
-}
-
-function requireBoolean(value: unknown, path: string): boolean {
-  if (typeof value !== "boolean") {
-    throw invalid(`${path} must be a boolean`);
-  }
-  return value;
-}
-
-function requireExactKeys(
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-  path: string,
-  optional: readonly string[] = [],
-): void {
-  const allowedSet = new Set(allowed);
-  for (const key of Object.keys(value)) {
-    if (!allowedSet.has(key)) {
-      throw invalid(`${path} contains unknown field '${key}'`);
-    }
-  }
-  const optionalSet = new Set(optional);
-  for (const key of allowed) {
-    if (!optionalSet.has(key) && !(key in value)) {
-      throw invalid(`${path} is missing required field '${key}'`);
-    }
-  }
-}
-
-function invalid(message: string): AdapterProblem {
-  return new AdapterProblem("invalid_request", message, {
-    code: "invalid_wire_request",
-  });
 }

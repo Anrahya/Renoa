@@ -4,11 +4,19 @@ use serde_json::json;
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
-use super::{call_tool, wire::McpCallResult};
+use super::{CALL_BOUNDARY_REVISION, WIRE_VERSION, call_tool, wire::McpCallResult};
 use crate::mcp::{
     AlphaMcpTool, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpAuthorization, McpCatalogTool,
     McpConnectionAuth, McpOutcomeCertainty,
 };
+
+#[test]
+fn frozen_call_revision_tracks_the_process_wire() {
+    assert!(
+        CALL_BOUNDARY_REVISION.contains(&format!("wire-{WIRE_VERSION}")),
+        "call binding revision must change with its process wire"
+    );
+}
 
 #[tokio::test]
 async fn a_valid_terminal_result_survives_nonzero_hung_cleanup() {
@@ -25,9 +33,9 @@ if (
   request.tool.name !== "echo" ||
   request.arguments.text !== "hello"
 ) process.exit(2);
-process.stdout.write(JSON.stringify({ wire_version: 5, event: "dispatch_started" }) + "\n");
+process.stdout.write(JSON.stringify({ wire_version: 6, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 5,
+  wire_version: 6,
   event: "completed",
   result: {
     content: [{ type: "text", text: "hello" }],
@@ -68,7 +76,7 @@ async fn cancellation_after_dispatch_is_an_unknown_outcome_and_reaps_the_adapter
             r#"
 import {{ writeFileSync }} from "node:fs";
 for await (const _chunk of process.stdin) {{}}
-process.stdout.write(JSON.stringify({{ wire_version: 5, event: "dispatch_started" }}) + "\n");
+process.stdout.write(JSON.stringify({{ wire_version: 6, event: "dispatch_started" }}) + "\n");
 writeFileSync({}, String(process.pid));
 await new Promise(() => {{}});
 "#,
@@ -150,9 +158,9 @@ if (
   process.argv.slice(2).length !== 0 ||
   Object.values(process.env).some(value => value?.includes(token))
 ) process.exit(9);
-process.stdout.write(JSON.stringify({ wire_version: 5, event: "dispatch_started" }) + "\n");
+process.stdout.write(JSON.stringify({ wire_version: 6, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 5,
+  wire_version: 6,
   event: "completed",
   result: {
     content: [{ type: "text", text: `server echoed ${token}` }],

@@ -97,18 +97,25 @@ instructions and files only. It cannot add a tool or permission.
 ## Extension management
 
 Alpha receives one fixed `extension_manage` tool rather than one management
-schema per package. It can search the replaceable discovery source, add one
-exact refetched catalog candidate, one officially researched MCP definition,
-or one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local
-package; install exact content; list installed revisions; and connect a
-supported package MCP server to Alpha. It can also authorize or explicitly
-restart a registered OAuth connection. Every add source becomes the same
-immutable package. Supported skills hot-load first, then Renoa attempts the
-connection. Discovery is a hint: the
-Host revalidates catalog data and the real endpoint, while a miss directs Alpha
-to official web research or an exact local package instead of guessing. Alpha
-v1's deliberate full-access policy permits those actions; the tool does not
-create a second approval system or expand the agent's authority.
+schema per package. It can search compact publisher metadata in the official
+MCP Registry and lookup one exact published version. Those actions are
+read-only: namespace verification is not provider endorsement or installation
+truth, and Registry records cannot be passed to `add`. Alpha must verify the
+endpoint and authentication against the provider's official HTTPS
+documentation. It can then add that independently researched MCP definition or
+one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local
+package; install exact content; list installed revisions; connect a supported
+package MCP server; and authorize or explicitly restart a registered OAuth
+connection. It can also disconnect a connection from Alpha without deleting
+the Host's durable package, registration, or catalog. List reports those
+lifecycle states separately. Every add source
+becomes the same immutable package. Supported skills hot-load first, then Renoa
+validates the real endpoint through MCP discovery before publishing tools.
+Registry results are research hints within this Host tool, not accepted
+installation inputs. Other discovery sources remain replaceable. Alpha v1's
+deliberate full-access policy permits those
+actions; the tool does not create a second approval system or expand the
+agent's authority.
 
 Packages never contain credentials. A connection may name a Secret Service
 bearer credential or select Host-owned OAuth. Named keys resolve only at the
@@ -172,4 +179,8 @@ The real headless product path must prove that:
     surface, survives callback cancellation and Host restart safely, refreshes
     once across concurrent sessions, replays a settled management call without
     a second browser or OAuth POST, and never exposes credential state to the
-    model.
+    model; and
+12. official Registry search normalizes multi-word names, filters broad source
+    noise within an explicit result bound, labels publisher namespace control
+    without claiming provider endorsement, and exact lookup cannot install,
+    expose a secret value, or bypass independent provider-documentation review.

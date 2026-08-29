@@ -169,7 +169,7 @@ fn new_vertical_host(data: &Path, bridge: &Path, credentials: &Path, adapter: &P
         ModelProvider::Xai,
         "fixture-model",
         credentials,
-        renoa_local::LocalHostAdapters::new(Some(adapter), None),
+        renoa_local::LocalHostAdapters::new(Some(adapter)),
     )
     .expect("create local Host")
 }

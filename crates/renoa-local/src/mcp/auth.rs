@@ -1,6 +1,5 @@
 use std::{io, path::PathBuf, str, time::Duration};
 
-use serde::Serialize;
 use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncReadExt as _},
@@ -12,124 +11,17 @@ use tokio_util::sync::CancellationToken;
 use super::{McpCredentialError, McpHostError};
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
+mod config;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use config::{McpConnectionAuth, McpOAuthRegistration};
 
 const GH_DEADLINE: Duration = Duration::from_secs(10);
 const GH_SOURCE: &str = "GitHub CLI";
 const SECRET_SERVICE_SOURCE: &str = "Secret Service";
 const MAX_TOKEN_BYTES: usize = 16 * 1_024;
 const MAX_STDERR_BYTES: usize = 4 * 1_024;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum McpConnectionAuth {
-    None,
-    GhCli { hostname: String, account: String },
-    SecretServiceBearer { credential_id: String },
-    OAuth { credential_id: String },
-}
-
-impl McpConnectionAuth {
-    pub(crate) fn gh_cli(hostname: &str, account: &str) -> Result<Self, McpHostError> {
-        validate_hostname(hostname)?;
-        validate_account(account)?;
-        Ok(Self::GhCli {
-            hostname: hostname.to_ascii_lowercase(),
-            account: account.to_owned(),
-        })
-    }
-
-    pub(crate) fn secret_service_bearer(credential_id: &str) -> Result<Self, McpHostError> {
-        super::validate_identity("credential", credential_id)?;
-        Ok(Self::SecretServiceBearer {
-            credential_id: credential_id.to_owned(),
-        })
-    }
-
-    pub(crate) fn oauth(connection_id: &str, endpoint: &str) -> Result<Self, McpHostError> {
-        super::validate_identity("connection", connection_id)?;
-        super::validate_endpoint(endpoint)?;
-        let digest = super::hex_sha256(format!("{connection_id}\0{endpoint}").as_bytes());
-        Ok(Self::OAuth {
-            credential_id: format!("oauth.{digest}"),
-        })
-    }
-
-    pub(crate) fn from_stored(
-        kind: &str,
-        hostname: Option<String>,
-        account: Option<String>,
-        credential_id: Option<String>,
-    ) -> Result<Self, McpHostError> {
-        match (kind, hostname, account, credential_id) {
-            ("none", None, None, None) => Ok(Self::None),
-            ("gh_cli", Some(hostname), Some(account), None) => Self::gh_cli(&hostname, &account),
-            ("secret_service_bearer", None, None, Some(credential_id)) => {
-                Self::secret_service_bearer(&credential_id)
-            }
-            ("oauth", None, None, Some(credential_id)) => {
-                super::validate_identity("credential", &credential_id)?;
-                Ok(Self::OAuth { credential_id })
-            }
-            _ => Err(McpHostError::Invalid(
-                "stored MCP credential reference is malformed".to_owned(),
-            )),
-        }
-    }
-
-    pub(crate) const fn stored_kind(&self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::GhCli { .. } => "gh_cli",
-            Self::SecretServiceBearer { .. } => "secret_service_bearer",
-            Self::OAuth { .. } => "oauth",
-        }
-    }
-
-    pub(crate) fn stored_hostname(&self) -> Option<&str> {
-        match self {
-            Self::GhCli { hostname, .. } => Some(hostname),
-            Self::None | Self::SecretServiceBearer { .. } | Self::OAuth { .. } => None,
-        }
-    }
-
-    pub(crate) fn stored_account(&self) -> Option<&str> {
-        match self {
-            Self::GhCli { account, .. } => Some(account),
-            Self::None | Self::SecretServiceBearer { .. } | Self::OAuth { .. } => None,
-        }
-    }
-
-    pub(crate) fn stored_credential_id(&self) -> Option<&str> {
-        match self {
-            Self::SecretServiceBearer { credential_id } | Self::OAuth { credential_id } => {
-                Some(credential_id)
-            }
-            Self::None | Self::GhCli { .. } => None,
-        }
-    }
-
-    pub(crate) fn oauth_credential_id(&self) -> Option<&str> {
-        match self {
-            Self::OAuth { credential_id } => Some(credential_id),
-            Self::None | Self::GhCli { .. } | Self::SecretServiceBearer { .. } => None,
-        }
-    }
-
-    pub(crate) fn validate_oauth_binding(
-        &self,
-        connection_id: &str,
-        endpoint: &str,
-    ) -> Result<(), McpHostError> {
-        if matches!(self, Self::OAuth { .. }) && *self != Self::oauth(connection_id, endpoint)? {
-            return Err(McpHostError::Invalid(
-                "stored MCP OAuth credential reference does not match its connection".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-}
 
 #[derive(Clone)]
 pub(crate) struct McpCredentialResolver {

@@ -4,8 +4,8 @@ use std::{
 };
 
 use super::{
-    CapturedPlugin, InstalledPlugin, PluginError, PluginMcpServer, PluginMetadata,
-    generated::GeneratedMcpPlugin, inspect,
+    CapturedPlugin, InstalledPlugin, PluginError, PluginListRejection, PluginListReport,
+    PluginMcpServer, PluginMetadata, generated::GeneratedMcpPlugin, inspect,
 };
 use crate::{
     mcp::McpRequestHeaders,
@@ -142,18 +142,23 @@ impl PluginStore {
 
     pub(super) fn load(&self, digest: &str) -> Result<InstalledPlugin, PluginError> {
         validate_digest(digest)?;
-        let stored = load_stored(&self.connection()?, digest)?.ok_or_else(|| {
+        let mut connection = self.connection()?;
+        let stored = load_stored(&connection, digest)?.ok_or_else(|| {
             PluginError::NotFound(format!("package digest '{digest}' is not installed"))
         })?;
         let captured = inspect::inspect(&self.packages.join(digest))?;
         require_no_denied_installed_entries(&captured, digest)?;
         let observed = InstalledPlugin::from_inspection(captured.inspection);
-        if !same_durable_plugin(&observed, &stored) {
-            return Err(PluginError::Conflict(format!(
-                "installed package '{digest}' differs from its durable record"
-            )));
+        if same_durable_plugin(&observed, &stored) {
+            return Ok(observed);
         }
-        Ok(observed)
+        if differs_only_by_missing_legacy_homepage(&observed, &stored) {
+            repair_legacy_homepage(&mut connection, &observed)?;
+            return Ok(observed);
+        }
+        Err(PluginError::Conflict(format!(
+            "installed package '{digest}' differs from its durable record"
+        )))
     }
 
     pub(super) fn list(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
@@ -169,6 +174,29 @@ impl PluginStore {
             .into_iter()
             .map(|digest| self.load(&digest))
             .collect()
+    }
+
+    pub(super) fn list_report(&self) -> Result<PluginListReport, PluginError> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT plugin_digest FROM installed_plugins ORDER BY name, plugin_digest")?;
+        let digests = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        drop(connection);
+        let mut installed = Vec::new();
+        let mut rejected = Vec::new();
+        for digest in digests {
+            match self.load(&digest) {
+                Ok(plugin) => installed.push(plugin),
+                Err(error) => rejected.push(PluginListRejection {
+                    package_digest: digest,
+                    reason: error.to_string(),
+                }),
+            }
+        }
+        Ok(PluginListReport::new(installed, rejected))
     }
 
     pub(super) fn package_root(&self, digest: &str) -> Result<PathBuf, PluginError> {
@@ -327,6 +355,56 @@ fn same_durable_plugin(left: &InstalledPlugin, right: &InstalledPlugin) -> bool 
     left.digest == right.digest
         && left.metadata == right.metadata
         && left.mcp_servers == right.mcp_servers
+}
+
+fn differs_only_by_missing_legacy_homepage(
+    observed: &InstalledPlugin,
+    stored: &InstalledPlugin,
+) -> bool {
+    stored.metadata.homepage.is_none()
+        && observed.metadata.homepage.is_some()
+        && observed.digest == stored.digest
+        && observed.metadata.name == stored.metadata.name
+        && observed.metadata.version == stored.metadata.version
+        && observed.metadata.description == stored.metadata.description
+        && observed.metadata.repository == stored.metadata.repository
+        && observed.metadata.license == stored.metadata.license
+        && observed.mcp_servers == stored.mcp_servers
+}
+
+fn repair_legacy_homepage(
+    connection: &mut Connection,
+    observed: &InstalledPlugin,
+) -> Result<(), PluginError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let stored = load_stored(&transaction, &observed.digest)?.ok_or_else(|| {
+        PluginError::Conflict(format!(
+            "package '{}' disappeared while recovering legacy metadata",
+            observed.digest
+        ))
+    })?;
+    if same_durable_plugin(observed, &stored) {
+        transaction.commit()?;
+        return Ok(());
+    }
+    if !differs_only_by_missing_legacy_homepage(observed, &stored) {
+        return Err(PluginError::Conflict(format!(
+            "installed package '{}' changed while recovering legacy metadata",
+            observed.digest
+        )));
+    }
+    let homepage = observed.metadata.homepage.as_deref().ok_or_else(|| {
+        PluginError::Conflict(format!(
+            "installed package '{}' has no homepage to recover",
+            observed.digest
+        ))
+    })?;
+    transaction.execute(
+        "UPDATE installed_plugins SET homepage = ?1 WHERE plugin_digest = ?2",
+        params![homepage, observed.digest],
+    )?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn validate_digest(digest: &str) -> Result<(), PluginError> {
