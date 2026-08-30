@@ -138,7 +138,8 @@ impl McpCatalogStore {
                 "SELECT integration.endpoint, integration.request_headers_json,
                         connection.auth_kind, connection.auth_hostname,
                         connection.auth_account, connection.auth_credential_id,
-                        connection.oauth_registration_json
+                        connection.oauth_registration_json,
+                        connection.auth_header_name, connection.auth_header_prefix
                  FROM mcp_connections AS connection
                  JOIN mcp_integrations AS integration
                    ON integration.integration_id = connection.integration_id
@@ -153,6 +154,8 @@ impl McpCatalogStore {
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
                         row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
                     ))
                 },
             )
@@ -161,8 +164,9 @@ impl McpCatalogStore {
                 McpHostError::NotFound(format!("connection '{connection_id}' is not registered"))
             })?;
         let endpoint = stored.0;
-        let auth =
-            McpConnectionAuth::from_stored(&stored.2, stored.3, stored.4, stored.5, stored.6)?;
+        let auth = McpConnectionAuth::from_stored(
+            &stored.2, stored.3, stored.4, stored.5, stored.6, stored.7, stored.8,
+        )?;
         auth.validate_oauth_binding(connection_id, &endpoint)?;
         Ok(McpConnectionConfig {
             endpoint,
@@ -356,7 +360,8 @@ fn ensure_connection(
     let existing = transaction
         .query_row(
             "SELECT integration_id, auth_kind, auth_hostname, auth_account,
-                    auth_credential_id, oauth_registration_json
+                    auth_credential_id, oauth_registration_json,
+                    auth_header_name, auth_header_prefix
              FROM mcp_connections WHERE connection_id = ?1",
             [connection_id],
             |row| {
@@ -367,6 +372,8 @@ fn ensure_connection(
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             },
         )
@@ -376,8 +383,9 @@ fn ensure_connection(
             transaction.execute(
                 "INSERT INTO mcp_connections(
                     connection_id, integration_id, auth_kind, auth_hostname, auth_account,
-                    auth_credential_id, oauth_registration_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    auth_credential_id, oauth_registration_json,
+                    auth_header_name, auth_header_prefix
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     connection_id,
                     integration_id,
@@ -386,6 +394,8 @@ fn ensure_connection(
                     auth.stored_account(),
                     auth.stored_credential_id(),
                     auth.stored_oauth_registration()?,
+                    auth.stored_header(),
+                    auth.stored_prefix(),
                 ],
             )?;
             Ok(())
@@ -397,6 +407,8 @@ fn ensure_connection(
             account,
             credential_id,
             oauth_registration,
+            auth_header,
+            auth_prefix,
         )) => {
             let stored_auth = McpConnectionAuth::from_stored(
                 &auth_kind,
@@ -404,6 +416,8 @@ fn ensure_connection(
                 account,
                 credential_id,
                 oauth_registration,
+                auth_header,
+                auth_prefix,
             )?;
             if stored_integration == integration_id && stored_auth == *auth {
                 Ok(())

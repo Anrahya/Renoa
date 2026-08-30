@@ -15,12 +15,16 @@ const CLIENT_OWNED_HEADERS: &[&str] = &[
     "content-type",
     "cookie",
     "host",
+    "keep-alive",
     "mcp-method",
     "mcp-protocol-version",
     "mcp-session-id",
     "proxy-authorization",
     "set-cookie",
+    "te",
+    "trailer",
     "transfer-encoding",
+    "upgrade",
     "x-api-key",
 ];
 

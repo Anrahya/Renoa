@@ -116,23 +116,25 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 if (
-  request.wire_version !== 6 ||
+  request.wire_version !== 7 ||
   request.action !== "discover" ||
-  request.authorization?.scheme !== "bearer" ||
-  request.authorization?.token !== {token} ||
+  request.credential?.scheme !== "header" ||
+  request.credential?.name !== "authorization" ||
+  request.credential?.prefix !== "Bearer " ||
+  request.credential?.secret !== {token} ||
   process.argv.slice(2).length !== 0 ||
   Object.values(process.env).some(value => value?.includes({token}))
 ) process.exit(9);
 process.stdout.write(JSON.stringify({{
-  wire_version: 6,
+  wire_version: 7,
   event: "discovered",
   catalog: {{
     endpoint: request.endpoint,
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.6.0",
+    adapter_revision: "mcp-client-node-v0.7.0",
     tools: [{{
       name: "get_me",
-      description: `token ${{request.authorization.token}}`,
+      description: `token ${{request.credential.secret}}`,
       input_schema: {{type: "object"}},
       model_input_schema: {{type: "object"}}
     }}],

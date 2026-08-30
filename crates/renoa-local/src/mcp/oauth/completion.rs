@@ -9,7 +9,7 @@ use super::{
     store::{OAuthFlow, OAuthPhase, OAuthReceipt},
 };
 use crate::mcp::{
-    McpAdapterError, McpAuthorization, McpHostError, McpOAuthError, McpOutcomeCertainty,
+    McpAdapterError, McpCredentialHeader, McpHostError, McpOAuthError, McpOutcomeCertainty,
     McpRemoteFailure,
 };
 
@@ -22,7 +22,7 @@ impl OAuthCoordinator {
         bundle: OAuthSecretBundle,
         current_operation_id: &str,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if bundle.pending_callback.is_some() {
             self.mark_unknown(&flow.connection_id, &flow.operation_id)
                 .await?;
@@ -71,7 +71,7 @@ impl OAuthCoordinator {
         bundle: OAuthSecretBundle,
         current_operation_id: &str,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if let Ok(OAuthResult::Authorized {
             authorization,
             state,
@@ -111,7 +111,7 @@ impl OAuthCoordinator {
         credential_id: &str,
         operation_id: &str,
         cancellation: CancellationToken,
-    ) -> Result<Option<McpAuthorization>, McpHostError> {
+    ) -> Result<Option<McpCredentialHeader>, McpHostError> {
         let Some(receipt) = self.flows.receipt(connection_id, operation_id).await? else {
             return Ok(None);
         };
@@ -167,10 +167,10 @@ impl OAuthCoordinator {
         flow: &OAuthFlow,
         credential_id: &str,
         current_operation_id: &str,
-        authorization: McpAuthorization,
+        authorization: McpCredentialHeader,
         state: Value,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if let Err(error) = self
             .secrets
             .store(credential_id, &OAuthSecretBundle::new(state), cancellation)
@@ -205,7 +205,7 @@ impl OAuthCoordinator {
         failure: McpRemoteFailure,
         state: Value,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if let Err(error) = self
             .secrets
             .store(credential_id, &OAuthSecretBundle::new(state), cancellation)
@@ -245,7 +245,7 @@ impl OAuthCoordinator {
         current_operation_id: &str,
         state: Value,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if let Err(error) = self
             .secrets
             .store(credential_id, &OAuthSecretBundle::new(state), cancellation)
@@ -277,7 +277,7 @@ impl OAuthCoordinator {
         flow: &OAuthFlow,
         current_operation_id: &str,
         error: String,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if let Err(receipt_error) = self
             .record_receipt_pair(
                 &flow.connection_id,

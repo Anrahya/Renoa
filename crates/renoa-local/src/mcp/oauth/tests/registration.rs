@@ -105,7 +105,7 @@ for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 fs.appendFileSync({requests_json}, `${{JSON.stringify(request.registration)}}\n`);
 process.stdout.write(`${{JSON.stringify({{
-  wire_version: 6,
+  wire_version: 7,
   event: 'oauth_failed',
   failure: {{
     kind: 'protocol',

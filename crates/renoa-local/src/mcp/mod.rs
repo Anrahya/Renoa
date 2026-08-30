@@ -20,7 +20,7 @@ use serde_json::Value;
 use digest::{catalog_digest, headerless_catalog_digest};
 
 pub(crate) use auth::{
-    McpAuthorization, McpConnectionAuth, McpCredentialResolver, McpOAuthRegistration,
+    McpConnectionAuth, McpCredentialHeader, McpCredentialResolver, McpOAuthRegistration,
 };
 pub(crate) use digest::hex_sha256;
 pub(crate) use headers::McpRequestHeaders;
@@ -41,12 +41,13 @@ pub(crate) use store::{McpCatalogStore, McpConnectionStatus};
 pub(crate) use tool::{adapter_tool_error, alpha_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.6.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.7.0";
 const MCP_LEGACY_ADAPTER_REVISIONS: &[&str] = &[
     "mcp-client-node-v0.1.0",
     "mcp-client-node-v0.2.0",
     "mcp-client-node-v0.4.0",
     "mcp-client-node-v0.5.0",
+    "mcp-client-node-v0.6.0",
 ];
 const MCP_HEADERLESS_DIGEST_REVISIONS: &[&str] =
     &["mcp-client-node-v0.1.0", "mcp-client-node-v0.2.0"];
@@ -248,24 +249,24 @@ struct AdapterCatalog {
 }
 
 impl AdapterCatalog {
-    fn redact_authorization(&mut self, authorization: Option<&McpAuthorization>) {
-        let Some(authorization) = authorization else {
+    fn redact_credential(&mut self, credential: Option<&McpCredentialHeader>) {
+        let Some(credential) = credential else {
             return;
         };
-        authorization.redact_text(&mut self.endpoint);
+        credential.redact_text(&mut self.endpoint);
         for tool in &mut self.tools {
-            authorization.redact_text(&mut tool.description);
-            authorization.redact_json(&mut tool.input_schema);
-            authorization.redact_json(&mut tool.model_input_schema);
+            credential.redact_text(&mut tool.description);
+            credential.redact_json(&mut tool.input_schema);
+            credential.redact_json(&mut tool.model_input_schema);
             if let Some(output_schema) = &mut tool.output_schema {
-                authorization.redact_json(output_schema);
+                credential.redact_json(output_schema);
             }
         }
         for rejected in &mut self.rejected_tools {
             if let Some(name) = &mut rejected.name {
-                authorization.redact_text(name);
+                credential.redact_text(name);
             }
-            authorization.redact_text(&mut rejected.reason);
+            credential.redact_text(&mut rejected.reason);
         }
     }
 }

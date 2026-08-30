@@ -8,21 +8,20 @@ use tokio_util::sync::CancellationToken;
 
 mod actions;
 mod contract;
+mod inventory;
 mod output;
 #[cfg(test)]
 mod tests;
 
-use super::{
-    ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential, PluginListReport,
-    PluginManager,
-};
-use crate::mcp::{McpConnectionStatus, oauth_operation_id};
+use super::{ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential, PluginManager};
+use crate::mcp::oauth_operation_id;
 use actions::{ConnectRequest, ExtensionInvocation};
 use contract::{ManageInput, manage_tool_spec, resolve_source};
+use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
 use output::{json_output, plugin_error, registry_error_output};
 
 const TOOL_NAME: &str = "extension_manage";
-const BINDING_REVISION: &str = "renoa-extension-manager-v7";
+const BINDING_REVISION: &str = "renoa-extension-manager-v8";
 
 pub(crate) fn alpha_plugin_binding(
     manager: PluginManager,
@@ -167,7 +166,7 @@ impl ManageTool {
                     .map_err(|error| plugin_error(error, true))?;
                 json_output(&installed)
             }
-            ManageInput::List => self.list().await,
+            ManageInput::List { cursor, limit } => self.list(cursor.as_deref(), limit).await,
             ManageInput::Connect {
                 package_digest,
                 server,
@@ -201,6 +200,7 @@ impl ManageTool {
                 .await
             }
             ManageInput::Disconnect { connection } => self.disconnect(connection).await,
+            ManageInput::Enable { connection } => self.enable(connection).await,
         }
     }
 
@@ -219,7 +219,12 @@ impl ManageTool {
         }
     }
 
-    async fn list(&self) -> Result<ToolOutput, ToolError> {
+    async fn list(&self, cursor: Option<&str>, limit: usize) -> Result<ToolOutput, ToolError> {
+        if !(1..=MAX_LIST_LIMIT).contains(&limit) {
+            return Err(ToolError::invalid_input(format!(
+                "list limit must be between 1 and {MAX_LIST_LIMIT}"
+            )));
+        }
         let packages = self
             .manager
             .list_report()
@@ -230,10 +235,13 @@ impl ManageTool {
             .connection_statuses()
             .await
             .map_err(|error| plugin_error(error, false))?;
-        json_output(&ExtensionListOutput {
-            packages: &packages,
-            connections: &connections,
-        })
+        let skill_sources = self
+            .manager
+            .skill_source_reports()
+            .await
+            .map_err(|error| plugin_error(error, false))?;
+        let page = ExtensionListPage::new(&packages, &connections, &skill_sources, cursor, limit)?;
+        json_output(&page)
     }
 
     async fn disconnect(&self, connection: String) -> Result<ToolOutput, ToolError> {
@@ -247,6 +255,19 @@ impl ManageTool {
             connection,
             catalog_retained,
             enabled_for_alpha: false,
+        })
+    }
+
+    async fn enable(&self, connection: String) -> Result<ToolOutput, ToolError> {
+        self.manager
+            .enable_alpha(connection.clone())
+            .await
+            .map_err(|error| plugin_error(error, true))?;
+        json_output(&EnabledOutput {
+            status: "enabled",
+            connection,
+            catalog_retained: true,
+            enabled_for_alpha: true,
         })
     }
 
@@ -325,10 +346,11 @@ struct DisconnectedOutput {
 }
 
 #[derive(Serialize)]
-struct ExtensionListOutput<'a> {
-    #[serde(flatten)]
-    packages: &'a PluginListReport,
-    connections: &'a [McpConnectionStatus],
+struct EnabledOutput {
+    status: &'static str,
+    connection: String,
+    catalog_retained: bool,
+    enabled_for_alpha: bool,
 }
 
 #[derive(Serialize)]

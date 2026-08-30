@@ -54,23 +54,53 @@ test("wire parser rejects unknown fields and non-object arguments", () => {
   );
 });
 
-test("wire parser accepts only bounded bearer authorization", () => {
+test("wire parser accepts bounded secret-backed credential headers", () => {
   const parsed = parseAdapterRequest({
     wire_version: WIRE_VERSION,
     action: "discover",
     endpoint: "https://example.com/mcp",
-    authorization: { scheme: "bearer", token: "secret-token" },
+    credential: {
+      scheme: "header",
+      name: "X-API-Key",
+      prefix: "",
+      secret: "secret-token",
+    },
   });
   assert.equal(parsed.action, "discover");
   if (parsed.action !== "discover") return;
-  assert.equal(parsed.authorization?.token, "secret-token");
+  assert.deepEqual(parsed.credential, {
+    scheme: "header",
+    name: "x-api-key",
+    prefix: "",
+    secret: "secret-token",
+  });
   assert.throws(
     () =>
       parseAdapterRequest({
         wire_version: WIRE_VERSION,
         action: "discover",
         endpoint: "https://example.com/mcp",
-        authorization: { scheme: "bearer", token: "bad\ntoken" },
+        credential: {
+          scheme: "header",
+          name: "X-API-Key",
+          prefix: "",
+          secret: "bad\ntoken",
+        },
+      }),
+    AdapterProblem,
+  );
+  assert.throws(
+    () =>
+      parseAdapterRequest({
+        wire_version: WIRE_VERSION,
+        action: "discover",
+        endpoint: "https://example.com/mcp",
+        credential: {
+          scheme: "header",
+          name: "Content-Length",
+          prefix: "",
+          secret: "10",
+        },
       }),
     AdapterProblem,
   );

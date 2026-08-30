@@ -14,6 +14,7 @@ use super::{
 };
 
 mod source;
+mod status;
 
 use source::{PreparedSource, SourceSpec, replace_source};
 
@@ -34,12 +35,41 @@ impl SkillComponentReport {
     fn new(accepted: Vec<String>, rejected: Vec<SkillComponentRejection>) -> Self {
         Self { accepted, rejected }
     }
+
+    pub(crate) fn accepted(&self) -> &[String] {
+        &self.accepted
+    }
+
+    pub(crate) fn rejected(&self) -> &[SkillComponentRejection] {
+        &self.rejected
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct SkillComponentRejection {
     entry: String,
     reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SkillSourceReport {
+    source: String,
+    #[serde(flatten)]
+    components: SkillComponentReport,
+}
+
+impl SkillSourceReport {
+    fn new(source: String, components: SkillComponentReport) -> Self {
+        Self { source, components }
+    }
+
+    pub(crate) fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub(crate) const fn components(&self) -> &SkillComponentReport {
+        &self.components
+    }
 }
 
 impl SkillComponentRejection {

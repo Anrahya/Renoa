@@ -177,8 +177,10 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
             inspection.digest(),
             "exa",
             "exa.default",
-            PluginCredential::SecretServiceBearer {
+            PluginCredential::SecretServiceHeader {
                 credential_id: "exa.default".to_owned(),
+                header: "X-API-Key".to_owned(),
+                prefix: String::new(),
             },
             CancellationToken::new(),
         )
@@ -307,7 +309,7 @@ fn serve_authenticated_discovery(listener: &TcpListener) -> Vec<String> {
             .position(|window| window == b"\r\n\r\n")
             .expect("MCP HTTP body");
         let headers = String::from_utf8_lossy(&request[..header_end]);
-        assert_header(&headers, "authorization", "Bearer exa-fixture-api-key");
+        assert_header(&headers, "x-api-key", "exa-fixture-api-key");
         assert_header(&headers, "x-exa-source", "agent-plugin");
         let rpc: Value = serde_json::from_slice(&request[header_end + 4..])
             .expect("decode MCP JSON-RPC request");

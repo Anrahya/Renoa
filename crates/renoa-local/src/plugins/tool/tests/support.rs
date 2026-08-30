@@ -8,12 +8,12 @@ let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 process.stdout.write(JSON.stringify({
-  wire_version: 6,
+  wire_version: 7,
   event: 'discovered',
   catalog: {
     endpoint: request.endpoint,
     protocol_version: '2026-07-28',
-    adapter_revision: 'mcp-client-node-v0.6.0',
+    adapter_revision: 'mcp-client-node-v0.7.0',
     tools: [{
       name: 'web_search_exa',
       description: 'Search the web.',

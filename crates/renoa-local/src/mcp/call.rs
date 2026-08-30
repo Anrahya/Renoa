@@ -24,18 +24,18 @@ use self::{
     wire::{CallTerminal, McpCallResult, ParseFailure, parse_call_records},
 };
 use super::{
-    AlphaMcpTool, McpAdapterError, McpAuthorization, McpOutcomeCertainty, McpRemoteFailure,
+    AlphaMcpTool, McpAdapterError, McpCredentialHeader, McpOutcomeCertainty, McpRemoteFailure,
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
-const WIRE_VERSION: u32 = 6;
+const WIRE_VERSION: u32 = 7;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(125);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
 
 pub(super) const CALL_BOUNDARY_REVISION: &str =
-    "rust-call-v1/wire-6/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
+    "rust-call-v1/wire-7/deadline-125s/request-1m/stdout-20m/stderr-64k/content-256";
 
 #[derive(Debug)]
 pub(super) struct McpCallFailure {
@@ -77,7 +77,7 @@ impl McpCallFailure {
 pub(super) async fn call_tool(
     adapter: &Path,
     selected: &AlphaMcpTool,
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
     arguments: &Value,
     cancellation: CancellationToken,
 ) -> Result<McpCallResult, McpCallFailure> {
@@ -90,7 +90,7 @@ pub(super) async fn call_tool(
         endpoint: selected.endpoint(),
         protocol_version: selected.protocol_version(),
         headers: selected.request_headers(),
-        authorization: authorization.map(WireAuthorization::from),
+        credential: credential.map(WireCredential::from),
         tool: FrozenTool {
             name: selected.tool().name(),
             input_schema: selected.tool().input_schema(),
@@ -103,7 +103,7 @@ pub(super) async fn call_tool(
         return Err(McpCallFailure::definite(McpAdapterError::InputLimit, false));
     }
 
-    let result = run_adapter(adapter, &request, authorization, cancellation).await;
+    let result = run_adapter(adapter, &request, credential, cancellation).await;
     request.fill(0);
     result
 }
@@ -117,22 +117,26 @@ struct CallRequest<'a> {
     #[serde(skip_serializing_if = "super::McpRequestHeaders::is_empty")]
     headers: &'a super::McpRequestHeaders,
     #[serde(skip_serializing_if = "Option::is_none")]
-    authorization: Option<WireAuthorization<'a>>,
+    credential: Option<WireCredential<'a>>,
     tool: FrozenTool<'a>,
     arguments: &'a Value,
 }
 
 #[derive(Serialize)]
-struct WireAuthorization<'a> {
+struct WireCredential<'a> {
     scheme: &'static str,
-    token: &'a str,
+    name: &'a str,
+    prefix: &'a str,
+    secret: &'a str,
 }
 
-impl<'a> From<&'a McpAuthorization> for WireAuthorization<'a> {
-    fn from(authorization: &'a McpAuthorization) -> Self {
+impl<'a> From<&'a McpCredentialHeader> for WireCredential<'a> {
+    fn from(credential: &'a McpCredentialHeader) -> Self {
         Self {
-            scheme: "bearer",
-            token: authorization.bearer(),
+            scheme: "header",
+            name: credential.name(),
+            prefix: credential.prefix(),
+            secret: credential.secret(),
         }
     }
 }
@@ -148,7 +152,7 @@ struct FrozenTool<'a> {
 async fn run_adapter(
     adapter: &Path,
     request: &[u8],
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
     cancellation: CancellationToken,
 ) -> Result<McpCallResult, McpCallFailure> {
     let deadline = tokio::time::Instant::now() + PROCESS_DEADLINE;
@@ -179,7 +183,7 @@ async fn run_adapter(
             capture,
             signal,
             dispatch_started.load(Ordering::Acquire),
-            authorization,
+            credential,
         );
     }
 
@@ -190,7 +194,7 @@ async fn run_adapter(
         capture,
         signal,
         dispatch_started.load(Ordering::Acquire),
-        authorization,
+        credential,
     )
 }
 
@@ -284,7 +288,7 @@ fn settle_capture(
     mut capture: capture::ProcessCapture,
     signal: ProcessSignal,
     observed_dispatch: bool,
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
 ) -> Result<McpCallResult, McpCallFailure> {
     let mut parsed = parse_call_records(&capture.stdout.bytes);
     if let Ok(parsed) = &mut parsed
@@ -292,11 +296,11 @@ fn settle_capture(
     {
         let settled = match terminal {
             CallTerminal::Completed(result) => {
-                result.redact_authorization(authorization);
+                result.redact_credential(credential);
                 Ok(result.clone())
             }
             CallTerminal::Failed(failure) => {
-                failure.redact_authorization(authorization);
+                failure.redact_credential(credential);
                 Err(McpCallFailure::remote(failure.clone()))
             }
         };
@@ -333,7 +337,7 @@ fn settle_capture(
             &error.message,
             &capture.stderr,
             "invalid terminal stream",
-            authorization,
+            credential,
         ))
     } else {
         match signal {
@@ -343,13 +347,13 @@ fn settle_capture(
                 "adapter returned no terminal record",
                 &capture.stderr,
                 &status.to_string(),
-                authorization,
+                credential,
             )),
             ProcessSignal::Terminal => McpAdapterError::Protocol(with_stderr(
                 "adapter announced an invalid terminal record",
                 &capture.stderr,
                 "stopped after terminal announcement",
-                authorization,
+                credential,
             )),
             ProcessSignal::Cancelled => McpAdapterError::Cancelled,
             ProcessSignal::Deadline => McpAdapterError::Timeout,
@@ -369,11 +373,11 @@ fn with_stderr(
     message: &str,
     stderr: &CapturedOutput,
     status: &str,
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
 ) -> String {
     let mut diagnostic = String::from_utf8_lossy(&stderr.bytes).into_owned();
-    if let Some(authorization) = authorization {
-        authorization.redact_text(&mut diagnostic);
+    if let Some(credential) = credential {
+        credential.redact_text(&mut diagnostic);
     }
     let suffix = if diagnostic.trim().is_empty() {
         String::new()

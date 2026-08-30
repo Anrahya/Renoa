@@ -7,7 +7,7 @@ use super::{
     store::{OAuthFlow, OAuthPhase},
 };
 use crate::mcp::{
-    McpAdapterError, McpAuthorization, McpConnectionAuth, McpHostError, McpOAuthError,
+    McpAdapterError, McpConnectionAuth, McpCredentialHeader, McpHostError, McpOAuthError,
     McpOutcomeCertainty,
 };
 
@@ -29,7 +29,7 @@ impl OAuthCoordinator {
         reference: &McpConnectionAuth,
         operation_id: &str,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         let credential_id = Self::credential_id(reference)?;
         let _lock = lock::acquire(
             self.locks.clone(),
@@ -131,7 +131,7 @@ impl OAuthCoordinator {
         credential_id: &str,
         flow: &OAuthFlow,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         let Some(bundle) = self
             .secrets
             .load(credential_id, cancellation.clone())
@@ -175,7 +175,10 @@ impl OAuthCoordinator {
         }
     }
 
-    async fn refresh(&self, attempt: RefreshAttempt<'_>) -> Result<McpAuthorization, McpHostError> {
+    async fn refresh(
+        &self,
+        attempt: RefreshAttempt<'_>,
+    ) -> Result<McpCredentialHeader, McpHostError> {
         let flow = OAuthFlow::non_interactive(
             attempt.connection_id,
             attempt.operation_id,

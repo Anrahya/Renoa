@@ -252,6 +252,8 @@ impl McpCatalogStore {
                 enabled.auth_account,
                 enabled.auth_credential_id,
                 enabled.oauth_registration,
+                enabled.auth_header,
+                enabled.auth_prefix,
             )?;
             auth.validate_oauth_binding(reference.connection_id(), catalog.endpoint())?;
             tools.push(AlphaMcpTool {
@@ -276,6 +278,7 @@ enum McpConnectionAuthKind {
     None,
     GhCli,
     SecretServiceBearer,
+    SecretServiceHeader,
     #[serde(rename = "oauth")]
     OAuth,
 }
@@ -286,6 +289,7 @@ impl McpConnectionAuthKind {
             "none" => Ok(Self::None),
             "gh_cli" => Ok(Self::GhCli),
             "secret_service_bearer" => Ok(Self::SecretServiceBearer),
+            "secret_service_header" => Ok(Self::SecretServiceHeader),
             "oauth" => Ok(Self::OAuth),
             _ => Err(McpHostError::Invalid(
                 "stored MCP credential kind is malformed".to_owned(),
@@ -313,6 +317,8 @@ struct EnabledConnection {
     auth_account: Option<String>,
     auth_credential_id: Option<String>,
     oauth_registration: Option<String>,
+    auth_header: Option<String>,
+    auth_prefix: Option<String>,
 }
 
 fn enabled_connection(
@@ -324,7 +330,8 @@ fn enabled_connection(
         .query_row(
             "SELECT connection.integration_id, connection.auth_kind,
                     connection.auth_hostname, connection.auth_account,
-                    connection.auth_credential_id, connection.oauth_registration_json
+                    connection.auth_credential_id, connection.oauth_registration_json,
+                    connection.auth_header_name, connection.auth_header_prefix
              FROM profile_mcp_connections AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
@@ -338,6 +345,8 @@ fn enabled_connection(
                     auth_account: row.get(3)?,
                     auth_credential_id: row.get(4)?,
                     oauth_registration: row.get(5)?,
+                    auth_header: row.get(6)?,
+                    auth_prefix: row.get(7)?,
                 })
             },
         )

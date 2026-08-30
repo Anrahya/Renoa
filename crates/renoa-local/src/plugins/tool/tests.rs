@@ -1,8 +1,8 @@
 use std::fs;
 
-use renoa_agent::{ContentBlock, ToolCall, invoke_tool};
+use renoa_agent::{ContentBlock, ToolCall, ToolErrorCode, invoke_tool};
 use serde_json::{Value, json};
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 use tokio_util::sync::CancellationToken;
 
 mod output;
@@ -19,51 +19,28 @@ use crate::{
 };
 use support::write_mcp_adapter;
 
+fn inventory_items(page: &Value) -> &[Value] {
+    page["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .expect("extension list has inventory items")
+}
+
+fn inventory_item<'a>(page: &'a Value, kind: &str) -> &'a Value {
+    inventory_items(page)
+        .iter()
+        .find(|item| item["kind"] == kind)
+        .unwrap_or_else(|| panic!("extension list has a {kind} item"))
+}
+
 #[tokio::test]
 async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
-    let directory = tempdir().expect("temporary researched MCP fixture");
-    let database = directory.path().join("host.sqlite3");
-    catalog::initialize(&database).expect("initialize Host catalog");
-    let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
-    let mcp_adapter = directory.path().join("mcp.mjs");
-    write_mcp_adapter(&mcp_adapter);
-    let skills = test_skill_store(&database, directory.path());
-    let manager = PluginManager::initialize(
-        database,
-        directory.path().join("installed"),
-        mcp.clone(),
-        Some(mcp_adapter),
-        None,
-        McpCredentialResolver::default(),
-        skills.clone(),
-    )
-    .expect("initialize extension manager");
-    let tool = ManageTool::new(manager.clone(), directory.path().to_path_buf());
-
-    let added = call(
-        &tool,
-        json!({
-            "action": "add",
-            "source": {
-                "kind": "mcp",
-                "name": "exa-research",
-                "description": "Web search through the documented Exa MCP endpoint.",
-                "server": "exa",
-                "endpoint": "https://mcp.exa.ai/mcp",
-                "documentation": "https://docs.exa.ai/reference/exa-mcp"
-            }
-        }),
-    )
-    .await;
-
-    assert_eq!(added["status"], "catalog_loaded");
-    assert_eq!(added["source"], "mcp");
-    assert_eq!(added["tools"], 1);
-    let connection = added["connection"]
-        .as_str()
-        .expect("generated connection id")
-        .to_owned();
-    let installed = manager.list().await.expect("list researched package");
+    let fixture = ResearchedMcpFixture::new().await;
+    let installed = fixture
+        .manager
+        .list()
+        .await
+        .expect("list researched package");
     assert_eq!(installed.len(), 1);
     assert_eq!(installed[0].metadata().name(), "exa-research");
     assert_eq!(
@@ -71,44 +48,168 @@ async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
         Some("https://docs.exa.ai/reference/exa-mcp")
     );
     assert_eq!(
-        mcp.alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+        fixture
+            .mcp
+            .alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read hot-loaded researched tools")
             .len(),
         1
     );
+}
 
-    let listed = call(&tool, json!({"action": "list"})).await;
-    assert_eq!(listed["installed"].as_array().map(Vec::len), Some(1));
-    assert_eq!(listed["rejected"], json!([]));
-    assert_eq!(listed["connections"].as_array().map(Vec::len), Some(1));
-    assert_eq!(listed["connections"][0]["connection"], connection);
-    assert_eq!(listed["connections"][0]["registered"], true);
-    assert_eq!(listed["connections"][0]["catalog_loaded"], true);
-    assert_eq!(listed["connections"][0]["enabled_for_alpha"], true);
+#[tokio::test]
+async fn extension_inventory_is_bounded_and_complete() {
+    let fixture = ResearchedMcpFixture::new().await;
+    let invalid_limit = fixture
+        .tool
+        .list(None, super::inventory::MAX_LIST_LIMIT + 1)
+        .await
+        .expect_err("the runtime must enforce the schema's page bound");
+    assert_eq!(invalid_limit.code(), ToolErrorCode::InvalidInput);
+
+    let listed = call(&fixture.tool, json!({"action": "list", "limit": 2})).await;
+    assert_eq!(listed["returned"], 2);
+    assert_eq!(listed["total"], 3);
+    let cursor = listed["next_cursor"]
+        .as_str()
+        .expect("a partial inventory page has a cursor");
+    assert_eq!(inventory_items(&listed)[0]["kind"], "package");
+    assert_eq!(inventory_items(&listed)[1]["kind"], "package_mcp_server");
+
+    let listed = call(
+        &fixture.tool,
+        json!({"action": "list", "cursor": cursor, "limit": 2}),
+    )
+    .await;
+    assert_eq!(listed["returned"], 1);
+    assert!(listed.get("next_cursor").is_none());
+    let connection = inventory_item(&listed, "connection");
+    assert_eq!(connection["connection"], fixture.connection);
+    assert_eq!(connection["registered"], true);
+    assert_eq!(connection["catalog_loaded"], true);
+    assert_eq!(connection["enabled_for_alpha"], true);
+}
+
+#[tokio::test]
+async fn disconnect_and_enable_preserve_one_complete_catalog() {
+    let fixture = ResearchedMcpFixture::new().await;
+    let listed = call(&fixture.tool, json!({"action": "list", "limit": 2})).await;
+    let cursor = listed["next_cursor"]
+        .as_str()
+        .expect("a partial inventory page has a cursor")
+        .to_owned();
 
     let disconnected = call(
-        &tool,
-        json!({"action": "disconnect", "connection": connection}),
+        &fixture.tool,
+        json!({"action": "disconnect", "connection": fixture.connection}),
     )
     .await;
     assert_eq!(disconnected["status"], "disconnected");
     assert_eq!(disconnected["catalog_retained"], true);
     assert_eq!(disconnected["enabled_for_alpha"], false);
     let repeated = call(
-        &tool,
-        json!({"action": "disconnect", "connection": connection}),
+        &fixture.tool,
+        json!({"action": "disconnect", "connection": fixture.connection}),
     )
     .await;
     assert_eq!(repeated, disconnected);
+    let stale_cursor = fixture
+        .tool
+        .list(Some(&cursor), 2)
+        .await
+        .expect_err("a changed inventory must invalidate its prior cursor");
+    assert_eq!(stale_cursor.code(), ToolErrorCode::Conflict);
     assert!(
-        mcp.alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+        fixture
+            .mcp
+            .alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read tools after disconnect")
             .is_empty()
     );
-    assert!(mcp.load_catalog(&connection).is_ok());
-    let listed = call(&tool, json!({"action": "list"})).await;
-    assert_eq!(listed["connections"][0]["catalog_loaded"], true);
-    assert_eq!(listed["connections"][0]["enabled_for_alpha"], false);
+    assert!(fixture.mcp.load_catalog(&fixture.connection).is_ok());
+
+    let listed = call(&fixture.tool, json!({"action": "list"})).await;
+    let connection = inventory_item(&listed, "connection");
+    assert_eq!(connection["catalog_loaded"], true);
+    assert_eq!(connection["enabled_for_alpha"], false);
+    let enabled = call(
+        &fixture.tool,
+        json!({"action": "enable", "connection": fixture.connection}),
+    )
+    .await;
+    assert_eq!(enabled["status"], "enabled");
+    assert_eq!(enabled["catalog_retained"], true);
+    assert_eq!(enabled["enabled_for_alpha"], true);
+    assert_eq!(
+        fixture
+            .mcp
+            .alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .expect("read tools after re-enable")
+            .len(),
+        1
+    );
+}
+
+struct ResearchedMcpFixture {
+    _directory: TempDir,
+    mcp: McpCatalogStore,
+    manager: PluginManager,
+    tool: ManageTool,
+    connection: String,
+}
+
+impl ResearchedMcpFixture {
+    async fn new() -> Self {
+        let directory = tempdir().expect("temporary researched MCP fixture");
+        let database = directory.path().join("host.sqlite3");
+        catalog::initialize(&database).expect("initialize Host catalog");
+        let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
+        let mcp_adapter = directory.path().join("mcp.mjs");
+        write_mcp_adapter(&mcp_adapter);
+        let skills = test_skill_store(&database, directory.path());
+        let manager = PluginManager::initialize(
+            database,
+            directory.path().join("installed"),
+            mcp.clone(),
+            Some(mcp_adapter),
+            None,
+            McpCredentialResolver::default(),
+            skills,
+        )
+        .expect("initialize extension manager");
+        let tool = ManageTool::new(manager.clone(), directory.path().to_path_buf());
+
+        let added = call(
+            &tool,
+            json!({
+                "action": "add",
+                "source": {
+                    "kind": "mcp",
+                    "name": "exa-research",
+                    "description": "Web search through the documented Exa MCP endpoint.",
+                    "server": "exa",
+                    "endpoint": "https://mcp.exa.ai/mcp",
+                    "documentation": "https://docs.exa.ai/reference/exa-mcp"
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(added["status"], "catalog_loaded");
+        assert_eq!(added["source"], "mcp");
+        assert_eq!(added["tools"], 1);
+        let connection = added["connection"]
+            .as_str()
+            .expect("generated connection id")
+            .to_owned();
+        Self {
+            _directory: directory,
+            mcp,
+            manager,
+            tool,
+            connection,
+        }
+    }
 }
 
 #[tokio::test]
@@ -178,7 +279,7 @@ async fn connection_failures_keep_actionable_model_facts_and_host_diagnostics() 
         r#"
 for await (const _chunk of process.stdin) {}
 process.stdout.write(JSON.stringify({
-  wire_version: 6,
+  wire_version: 7,
   event: "failed",
   failure: {
     kind: "incompatible_protocol",

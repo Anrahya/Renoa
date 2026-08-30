@@ -63,17 +63,31 @@ impl McpCredentialResolver {
         &self,
         reference: &McpConnectionAuth,
         cancellation: CancellationToken,
-    ) -> Result<Option<McpAuthorization>, McpCredentialError> {
+    ) -> Result<Option<McpCredentialHeader>, McpCredentialError> {
         match reference {
             McpConnectionAuth::None => Ok(None),
             McpConnectionAuth::GhCli { hostname, account } => self
                 .resolve_gh_token(hostname, account, cancellation)
                 .await
-                .map(|token| Some(McpAuthorization { token })),
+                .map(|token| Some(McpCredentialHeader::bearer(token))),
             McpConnectionAuth::SecretServiceBearer { credential_id } => self
                 .resolve_secret_service_token(credential_id, cancellation)
                 .await
-                .map(|token| Some(McpAuthorization { token })),
+                .map(|token| Some(McpCredentialHeader::bearer(token))),
+            McpConnectionAuth::SecretServiceHeader {
+                credential_id,
+                header,
+                prefix,
+            } => self
+                .resolve_secret_service_token(credential_id, cancellation)
+                .await
+                .map(|token| {
+                    Some(McpCredentialHeader {
+                        name: header.clone(),
+                        prefix: prefix.clone(),
+                        token,
+                    })
+                }),
             McpConnectionAuth::OAuth { .. } => Err(McpCredentialError::Unavailable {
                 source_name: "OAuth",
                 reference: "an interactive MCP connection".to_owned(),
@@ -231,30 +245,49 @@ enum CredentialSignal {
     Deadline,
 }
 
-pub(crate) struct McpAuthorization {
+pub(crate) struct McpCredentialHeader {
+    name: String,
+    prefix: String,
     token: SecretToken,
 }
 
-impl McpAuthorization {
+impl McpCredentialHeader {
     pub(super) fn from_token(mut token: String) -> Result<Self, McpCredentialError> {
         let bytes = std::mem::take(&mut token).into_bytes();
-        SecretToken::from_command_output(bytes, "OAuth").map(|token| Self { token })
+        SecretToken::from_command_output(bytes, "OAuth").map(Self::bearer)
     }
-    #[cfg(test)]
-    pub(crate) fn for_test(token: &str) -> Self {
+
+    fn bearer(token: SecretToken) -> Self {
         Self {
-            token: SecretToken::from_command_output(token.as_bytes().to_vec(), "test source")
-                .expect("test authorization token is valid"),
+            name: "authorization".to_owned(),
+            prefix: "Bearer ".to_owned(),
+            token,
         }
     }
 
-    pub(crate) fn bearer(&self) -> &str {
+    #[cfg(test)]
+    pub(crate) fn for_test(token: &str) -> Self {
+        Self::bearer(
+            SecretToken::from_command_output(token.as_bytes().to_vec(), "test source")
+                .expect("test authorization token is valid"),
+        )
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    pub(crate) fn secret(&self) -> &str {
         self.token.expose()
     }
 
     pub(crate) fn redact_text(&self, value: &mut String) {
-        if value.contains(self.bearer()) {
-            *value = value.replace(self.bearer(), "[REDACTED]");
+        if value.contains(self.secret()) {
+            *value = value.replace(self.secret(), "[REDACTED]");
         }
     }
 

@@ -132,6 +132,43 @@ test("an unsupported stored protocol fails before network dispatch", async () =>
   }
 });
 
+test("invalid tool arguments fail against the frozen schema before network dispatch", async () => {
+  const server = new McpFixtureServer(() => {
+    throw new Error("invalid arguments must not reach the endpoint");
+  });
+  await server.start();
+  try {
+    const request = callRequest(server.endpoint);
+    const result = await runAdapter({
+      ...request,
+      tool: {
+        name: "bounded_input",
+        input_schema: {
+          type: "object",
+          properties: {
+            count: { type: "integer", maximum: 100 },
+            status: { type: "string", enum: ["active", "disabled"] },
+          },
+          required: ["count", "status"],
+          additionalProperties: false,
+        },
+      },
+      arguments: { count: 1_000, status: "unknown", extra: true },
+    });
+    assert.deepEqual(result.records.map((record) => record.event), ["failed"]);
+    const terminal = result.records[0];
+    assert.equal(terminal?.event, "failed");
+    if (terminal?.event !== "failed") return;
+    assert.equal(terminal.failure.kind, "invalid_request");
+    assert.equal(terminal.failure.certainty, "definite");
+    assert.equal(terminal.failure.partial_changes_possible, false);
+    assert.equal(terminal.failure.diagnostic.code, "invalid_tool_arguments");
+    assert.equal(server.transportRequests.length, 0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("a redirect response after tool dispatch is definite and is not followed", async () => {
   const server = new McpFixtureServer((request) => {
     if (request.rpc.method === "server/discover") {

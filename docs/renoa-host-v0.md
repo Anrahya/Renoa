@@ -174,16 +174,17 @@ running. The runtime itself is unchanged: the kernel freezes the same three
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v7 binding accepts nine
-typed actions:
+The Host adds one fixed `extension_manage` tool. Its v8 binding exposes one
+exact, closed schema variant for each of ten typed actions:
 search compact publisher metadata in the official MCP Registry; lookup one
 exact published Registry name/version; add one MCP definition independently
 verified against the provider's official documentation or one content-bound
 local Agent Plugins 1.0 directory; inspect a local package; install the exact
 inspected digest; list package integrity and durable connection state; connect
 one supported package MCP server to Alpha; authorize or explicitly restart one
-registered OAuth connection; or disconnect one connection from Alpha without
-deleting its durable package, registration, catalog, or credential reference.
+registered OAuth connection; disconnect one connection from Alpha without
+deleting its durable package, registration, catalog, or credential reference;
+or re-enable that retained complete catalog without a network request.
 Inspection and installation execute no package code. Installation publishes a
 full immutable tree at `plugins/<sha256>` before committing its durable record.
 Official Registry discovery is a replaceable read-only input to this management
@@ -197,12 +198,12 @@ discovery validates the real endpoint before any tools are published. A
 connection or authentication failure returns the retained package digest,
 package notices, skill result, and safe exact service error instead of rolling
 back unrelated components.
-Connect accepts no credential, one named Secret Service bearer reference, or
-Host-owned OAuth, never a raw key. OAuth opens an exact loopback browser flow,
-keeps client state and tokens in the desktop Secret Service, and stores only a
-deterministic reference, non-secret flow phase, and semantic terminal receipt
-in SQLite. It automatically refreshes an expired token under a cross-process
-connection lock. A possibly dispatched code exchange or refresh is not retried
+Connect accepts no credential, one named Secret Service bearer or exact header
+reference, or Host-owned OAuth, never a raw key. OAuth opens an exact loopback
+browser flow, keeps client state and tokens in the desktop Secret Service, and
+stores only a deterministic reference, non-secret flow phase, and semantic
+terminal receipt in SQLite. It automatically refreshes an expired token under
+a cross-process connection lock. A possibly dispatched code exchange or refresh is not retried
 after process loss; replay of an already settled management operation reads its
 receipt without opening another browser. Explicit `authorize` with `restart:
 true` abandons an expired or unknown flow only for a new operation. The Host
@@ -217,7 +218,12 @@ bindings, while a second plugin with the same skill name is visibly rejected.
 The next `skill_search` sees a committed package skill without restarting the
 session or surface. Model-facing management results use the same 50 KiB
 tool-output boundary as local tools and fail instead of silently truncating
-package facts.
+package facts. List keeps aggregate state below that boundary by returning at
+most 32 compact package, server, notice, connection, and skill facts per page.
+Its opaque cursor is bound to the complete inventory revision, so concurrent
+changes produce a visible conflict and a fresh first-page requirement rather
+than offset drift. Package integrity, durable connection state, Alpha
+attachment, and accepted/rejected plugin skill bindings remain separate facts.
 
 The Host also adds exactly two Agent Skills tools: `skill_search` and
 `skill_load`. Search rescans global `~/.agents/skills` and the canonical
@@ -513,6 +519,8 @@ Host schema v8 adds the connection kind, non-secret recovery phases, and bounded
 semantic receipts. Schema v9 adds explicit CIMD, pre-registered-client, and DCR
 policy while preserving existing OAuth connections as DCR. Client credentials
 remain named Secret Service references; no kernel or RCP type changed.
+Schema v10 adds validated generic credential header names and public prefixes;
+existing connection kinds migrate without changing identity or catalog state.
 
 The standalone Agent Skills path is now complete. Alpha sees two additional
 constant schemas regardless of skill count. Search imports standard global and
@@ -550,5 +558,17 @@ revalidates every normalized result and fixed trust statement. Search exposes
 no endpoint, lookup never installs, unsupported transports and packages stay
 explicitly blocked, concrete URL credentials are rejected, and safe HTTP
 status facts reach Alpha without an untrusted response body. The frozen
-extension binding is revision 7; connection status and disconnect remain Host
-behavior, and no kernel, ACP, Waku, or RCP type changed.
+extension binding is revision 8. Search uses identity tokens rather than broad
+substrings, so an unrelated publisher such as `trycloudflare` is not treated as
+Cloudflare. Every management action has an exact schema that rejects fields
+from another action. Generic Secret Service headers, idempotent re-enable, and
+separate package/connection/skill-source status remain Host behavior, and no
+kernel, ACP, Waku, or RCP type changed. List uses bounded revision-bound cursor
+pages and rejects a stale cursor if that Host inventory changes.
+
+The current MCP adapter is revision v0.7 on process wire 7. Discovery compiles
+each external tool's input schema with the pinned SDK validator and isolates an
+invalid definition. Invocation validates the exact arguments against the
+frozen schema before dispatch. Header credentials remain standard-input-only,
+endpoint-scoped, collision-checked, and redacted; older complete catalogs stay
+readable but new discovery publishes only v0.7.

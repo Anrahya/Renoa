@@ -16,7 +16,7 @@ use renoa_agent_loop::ContextProjector;
 use renoa_kernel::{CommandId, SessionId};
 
 pub use error::SkillError;
-pub(crate) use store::{SkillComponentReport, SkillStore};
+pub(crate) use store::{SkillComponentReport, SkillSourceReport, SkillStore};
 pub(crate) use tool::alpha_skill_bindings;
 
 pub(crate) struct SkillRuntimeContext {

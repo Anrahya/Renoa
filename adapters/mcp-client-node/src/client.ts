@@ -15,7 +15,7 @@ import type {
   AdapterRequest,
   CatalogTool,
   RejectedTool,
-  WireAuthorization,
+  WireCredential,
 } from "./contract.js";
 import {
   AdapterProblem,
@@ -68,7 +68,7 @@ export async function executeAdapterRequest(
         hooks,
         tracker,
         request.headers,
-        request.authorization,
+        request.credential,
       );
       record = { wire_version: WIRE_VERSION, event: "discovered", catalog };
     } else {
@@ -86,7 +86,7 @@ export async function executeAdapterRequest(
       ),
     };
   }
-  return redactCredential(record, request.authorization?.token);
+  return redactCredential(record, request.credential?.secret);
 }
 
 function redactCredential(
@@ -125,7 +125,7 @@ async function discoverCatalog(
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
   headers: RuntimeRequest["headers"],
-  authorization: WireAuthorization | undefined,
+  credential: WireCredential | undefined,
 ) {
   const deadline = new Deadline(DISCOVERY_TIMEOUT_MS);
   const client = await connectClient(
@@ -135,7 +135,7 @@ async function discoverCatalog(
     hooks,
     tracker,
     headers,
-    authorization,
+    credential,
     undefined,
   );
   const protocolVersion = requireNegotiatedProtocolVersion(client);
@@ -216,7 +216,7 @@ async function callTool(
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
 ) {
-  const selected = validateFrozenTool(request.tool);
+  const selected = validateFrozenTool(request.tool, request.arguments);
   const deadline = new Deadline(TOOL_CALL_TIMEOUT_MS);
   const client = await connectClient(
     endpoint,
@@ -225,7 +225,7 @@ async function callTool(
     hooks,
     tracker,
     request.headers,
-    request.authorization,
+    request.credential,
     request.protocol_version,
   );
   const toolDefinition: Tool = {
@@ -263,7 +263,7 @@ async function connectClient(
   hooks: AdapterHooks,
   tracker: CallExchangeTracker,
   headers: RuntimeRequest["headers"],
-  authorization: WireAuthorization | undefined,
+  credential: WireCredential | undefined,
   expectedProtocolVersion: string | undefined,
 ): Promise<Client> {
   const fetch = guardedFetch(
@@ -273,7 +273,7 @@ async function connectClient(
     hooks.signal,
     endpoint,
     headers,
-    authorization,
+    credential,
   );
   const transport = new StreamableHTTPClientTransport(endpoint, {
     fetch,

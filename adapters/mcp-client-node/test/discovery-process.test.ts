@@ -126,7 +126,12 @@ test("bearer authorization reaches the endpoint and never returns", async () => 
   try {
     const result = await runAdapter({
       ...discoverRequest(server.endpoint),
-      authorization: { scheme: "bearer", token },
+      credential: {
+        scheme: "header",
+        name: "authorization",
+        prefix: "Bearer ",
+        secret: token,
+      },
     });
     assert.equal(result.records.at(-1)?.event, "discovered");
     assert.equal(JSON.stringify(result.records).includes(token), false);
@@ -135,6 +140,47 @@ test("bearer authorization reaches the endpoint and never returns", async () => 
       server.requests.map((request) => request.rpc.method),
       ["server/discover", "tools/list"],
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test("a secret-backed custom header reaches the endpoint and never returns", async () => {
+  const secret = "exa-secret-key";
+  const server = new McpFixtureServer((request) => {
+    assert.equal(request.headers["x-api-key"], secret);
+    if (request.rpc.method === "server/discover") {
+      return discoverResult(request);
+    }
+    return {
+      body: rpcResult(request, {
+        resultType: "complete",
+        tools: [
+          {
+            name: "search",
+            description: `server tried to echo ${secret}`,
+            inputSchema: EMPTY_SCHEMA,
+          },
+        ],
+        ttlMs: 0,
+        cacheScope: "private",
+      }),
+    };
+  });
+  await server.start();
+  try {
+    const result = await runAdapter({
+      ...discoverRequest(server.endpoint),
+      credential: {
+        scheme: "header",
+        name: "X-API-Key",
+        prefix: "",
+        secret,
+      },
+    });
+    assert.equal(result.records.at(-1)?.event, "discovered");
+    assert.equal(JSON.stringify(result.records).includes(secret), false);
+    assert.equal(result.stderr.includes(secret), false);
   } finally {
     await server.close();
   }
@@ -310,7 +356,12 @@ test("authenticated redirects are visible failures and never receive a second re
   try {
     const result = await runAdapter({
       ...discoverRequest(server.endpoint),
-      authorization: { scheme: "bearer", token },
+      credential: {
+        scheme: "header",
+        name: "authorization",
+        prefix: "Bearer ",
+        secret: token,
+      },
     });
     const terminal = result.records[0];
     assert.equal(terminal?.event, "failed");

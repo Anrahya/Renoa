@@ -51,17 +51,22 @@ fn oauth_credential_uses_the_exact_public_spelling_and_requires_a_registration_m
 fn extension_schema_keeps_raw_credentials_out_of_the_agent_path() {
     let spec = manage_tool_spec(TOOL_NAME);
     assert!(spec.description.contains("references only"));
-    assert!(spec.description.contains("has no credential-entry UI"));
-    assert!(
-        spec.description
-            .contains("Never ask the user to paste credential material")
-    );
+    assert!(spec.description.contains("never pass API keys"));
+    assert!(spec.description.contains("untrusted data"));
     let schema = &spec.input_schema;
     assert_eq!(schema["type"], "object");
-    assert_eq!(schema["required"], json!(["action"]));
+    assert!(schema.get("required").is_none());
+    let variants = schema["oneOf"]
+        .as_array()
+        .expect("management schema has action variants");
     assert_eq!(
-        schema["properties"]["action"]["enum"],
-        json!([
+        variants
+            .iter()
+            .map(|variant| variant["properties"]["action"]["const"]
+                .as_str()
+                .expect("action variant has a string discriminator"))
+            .collect::<Vec<_>>(),
+        [
             "search",
             "lookup",
             "add",
@@ -70,46 +75,59 @@ fn extension_schema_keeps_raw_credentials_out_of_the_agent_path() {
             "list",
             "connect",
             "authorize",
-            "disconnect"
-        ])
+            "disconnect",
+            "enable"
+        ]
     );
-    assert!(schema.get("oneOf").is_none());
-    assert_eq!(schema["properties"]["source"]["type"], "object");
+    assert!(
+        variants
+            .iter()
+            .all(|variant| variant["additionalProperties"] == false)
+    );
+    let add = &variants[2];
+    assert_eq!(add["required"], json!(["action", "source"]));
     assert_eq!(
-        schema["properties"]["source"]["properties"]["kind"]["enum"],
-        json!(["mcp", "package"])
+        add["properties"]["source"]["oneOf"][0]["properties"]["kind"]["const"],
+        "mcp"
     );
     assert_eq!(
-        schema["properties"]["credential"]["oneOf"][0]["required"],
+        add["properties"]["credential"]["oneOf"][0]["required"],
         json!(["kind", "credential_id"])
     );
     assert_eq!(
-        schema["properties"]["credential"]["oneOf"][1]["properties"]["kind"]["const"],
-        "oauth"
+        add["properties"]["credential"]["oneOf"][1]["properties"]["kind"]["const"],
+        "secret_service_header"
     );
     assert_eq!(
-        schema["properties"]["credential"]["oneOf"][1]["required"],
+        add["properties"]["credential"]["oneOf"][2]["required"],
         json!(["kind", "registration"])
     );
     assert_eq!(
-        schema["properties"]["credential"]["oneOf"][1]["properties"]["registration"]["oneOf"][2]["properties"]
+        add["properties"]["credential"]["oneOf"][2]["properties"]["registration"]["oneOf"][2]["properties"]
             ["mode"]["const"],
         "pre_registered"
     );
-    let credential_description = schema["properties"]["credential"]["description"]
+    let credential_description = add["properties"]["credential"]["description"]
         .as_str()
         .expect("credential schema has model guidance");
     assert!(credential_description.contains("existing Host credential reference"));
-    assert!(credential_description.contains("can bind the reference"));
-    assert!(credential_description.contains("cannot create the referenced"));
+    assert!(credential_description.contains("secret_service_header"));
     let encoded = schema.to_string();
     assert!(!encoded.contains("candidate"));
     assert!(encoded.contains("query"));
     assert!(!encoded.contains("connection_id"));
     assert_eq!(
-        schema["properties"]["registry_version"]["not"]["const"],
+        variants[1]["properties"]["registry_version"]["not"]["const"],
         "latest"
     );
+    assert_eq!(variants[5]["required"], json!(["action"]));
+    assert_eq!(
+        variants[5]["properties"]
+            .as_object()
+            .map(serde_json::Map::len),
+        Some(3)
+    );
+    assert_eq!(variants[5]["properties"]["limit"]["maximum"], 32);
     serde_json::from_value::<ManageInput>(json!({"action": "search", "query": "cloudflare"}))
         .expect("official Registry search is a typed action");
     serde_json::from_value::<ManageInput>(json!({
@@ -125,6 +143,18 @@ fn extension_schema_keeps_raw_credentials_out_of_the_agent_path() {
         }))
         .is_err()
     );
+}
+
+#[test]
+fn management_arguments_reject_fields_from_another_action() {
+    assert!(
+        serde_json::from_value::<ManageInput>(json!({
+            "action": "list",
+            "connection": "must-not-be-ignored"
+        }))
+        .is_err()
+    );
+    assert!(serde_json::from_value::<ManageInput>(json!({"action": "enable"})).is_err());
 }
 
 #[tokio::test]
@@ -172,15 +202,10 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
     .await;
     assert_eq!(installed["digest"], digest);
     let listed = call(&tool, json!({"action": "list"})).await;
-    assert_eq!(
-        listed["installed"]
-            .as_array()
-            .expect("installed package list")
-            .len(),
-        1
-    );
-    assert_eq!(listed["installed"][0]["metadata"]["name"], "fixture");
-    assert_eq!(listed["rejected"], json!([]));
+    assert_eq!(listed["total"], 1);
+    assert_eq!(listed["returned"], 1);
+    assert_eq!(super::inventory_items(&listed)[0]["kind"], "package");
+    assert_eq!(super::inventory_items(&listed)[0]["name"], "fixture");
 }
 
 #[tokio::test]
@@ -270,6 +295,15 @@ async fn package_add_reports_loaded_and_rejected_components_after_installation()
             .name,
         "review"
     );
+    let listed = call(&fixture.tool, json!({"action": "list"})).await;
+    let source = super::inventory_item(&listed, "plugin_skill_source");
+    assert_eq!(source["source"], "agent-plugin:local-fixture");
+    assert_eq!(source["accepted_count"], 1);
+    assert_eq!(source["rejected_count"], 1);
+    let accepted = super::inventory_item(&listed, "plugin_skill");
+    assert_eq!(accepted["name"], "review");
+    let rejected = super::inventory_item(&listed, "plugin_skill_rejection");
+    assert_eq!(rejected["entry"], "implicit-permission");
 
     let connection_failure = invoke_tool(
         Some(&fixture.tool),

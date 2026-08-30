@@ -11,7 +11,7 @@ use super::{
     secret::{OAuthSecretBundle, PendingCallback},
     store::{OAuthFlow, OAuthPhase},
 };
-use crate::mcp::{McpAuthorization, McpHostError, McpOAuthError};
+use crate::mcp::{McpCredentialHeader, McpHostError, McpOAuthError};
 
 mod support;
 
@@ -35,7 +35,7 @@ impl OAuthCoordinator {
         &self,
         request: McpOAuthAuthorizationRequest<'_>,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         let credential_id = Self::credential_id(request.reference)?;
         let _lock = lock::acquire(
             self.locks.clone(),
@@ -88,7 +88,7 @@ impl OAuthCoordinator {
         context: &InteractiveAuthorization<'_>,
         force_reauthorization: bool,
         prior: Option<OAuthSecretBundle>,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         let listener = OAuthCallbackListener::bind_new().await?;
         let csrf_state = random_state()?;
         let redirect_uri = listener.redirect_uri();
@@ -190,7 +190,7 @@ impl OAuthCoordinator {
         context: &InteractiveAuthorization<'_>,
         mut flow: OAuthFlow,
         bundle: Option<OAuthSecretBundle>,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if flow.phase == OAuthPhase::Unknown {
             return Err(unknown(context.connection_id, "previous exchange"));
         }
@@ -268,7 +268,7 @@ impl OAuthCoordinator {
         context: &InteractiveAuthorization<'_>,
         flow: OAuthFlow,
         bundle: OAuthSecretBundle,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if validate_saved_callback(&flow, &bundle).is_err() {
             self.mark_unknown(&flow.connection_id, &flow.operation_id)
                 .await?;
@@ -304,7 +304,7 @@ impl OAuthCoordinator {
         mut bundle: OAuthSecretBundle,
         authorization_url: String,
         listener: OAuthCallbackListener,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         emit_redirect(
             context.updates,
             &flow.connection_id,
@@ -341,7 +341,7 @@ impl OAuthCoordinator {
         context: &InteractiveAuthorization<'_>,
         flow: OAuthFlow,
         bundle: OAuthSecretBundle,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         let pending = bundle.pending_callback.as_ref().ok_or_else(|| {
             McpOAuthError::Invalid("durable OAuth callback code is missing".to_owned())
         })?;

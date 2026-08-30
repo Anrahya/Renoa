@@ -1,12 +1,13 @@
 import type {
   AdapterRequest,
   FrozenMcpTool,
-  WireAuthorization,
+  WireCredential,
   WireHeaders,
 } from "./contract.js";
 import { AdapterProblem } from "./errors.js";
 import {
   MAX_AUTH_TOKEN_BYTES,
+  MAX_CREDENTIAL_PREFIX_BYTES,
   MAX_OAUTH_STATE_BYTES,
   MAX_OAUTH_VALUE_BYTES,
   MAX_REQUEST_HEADER_BYTES,
@@ -33,13 +34,35 @@ const CLIENT_OWNED_HEADERS = new Set([
   "content-type",
   "cookie",
   "host",
+  "keep-alive",
   "mcp-method",
   "mcp-protocol-version",
   "mcp-session-id",
   "proxy-authorization",
   "set-cookie",
+  "te",
+  "trailer",
   "transfer-encoding",
+  "upgrade",
   "x-api-key",
+]);
+
+const FORBIDDEN_CREDENTIAL_HEADERS = new Set([
+  "accept",
+  "connection",
+  "content-length",
+  "content-type",
+  "host",
+  "keep-alive",
+  "mcp-method",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "proxy-authorization",
+  "set-cookie",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
 ]);
 
 export function parseAdapterRequest(value: unknown): AdapterRequest {
@@ -50,16 +73,16 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
   if (request.action === "discover") {
     requireExactKeys(
       request,
-      ["wire_version", "action", "endpoint", "headers", "authorization"],
+      ["wire_version", "action", "endpoint", "headers", "credential"],
       "request",
-      ["headers", "authorization"],
+      ["headers", "credential"],
     );
     return {
       wire_version: WIRE_VERSION,
       action: "discover",
       endpoint: requireString(request.endpoint, "request.endpoint"),
       ...optionalHeaders(request.headers),
-      ...optionalAuthorization(request.authorization),
+      ...optionalCredential(request.credential),
     };
   }
   if (request.action === "call") {
@@ -71,12 +94,12 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         "endpoint",
         "protocol_version",
         "headers",
-        "authorization",
+        "credential",
         "tool",
         "arguments",
       ],
       "request",
-      ["headers", "authorization"],
+      ["headers", "credential"],
     );
     return {
       wire_version: WIRE_VERSION,
@@ -87,7 +110,7 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         "request.protocol_version",
       ),
       ...optionalHeaders(request.headers),
-      ...optionalAuthorization(request.authorization),
+      ...optionalCredential(request.credential),
       tool: parseFrozenTool(request.tool),
       arguments: requireJsonObject(request.arguments, "request.arguments"),
     };
@@ -307,29 +330,55 @@ function optionalHeaders(
   return { headers: Object.fromEntries(normalized) };
 }
 
-function optionalAuthorization(
+function optionalCredential(
   value: unknown,
-): { readonly authorization?: WireAuthorization } {
+): { readonly credential?: WireCredential } {
   if (value === undefined) {
     return {};
   }
-  const authorization = requireObject(value, "request.authorization");
+  const credential = requireObject(value, "request.credential");
   requireExactKeys(
-    authorization,
-    ["scheme", "token"],
-    "request.authorization",
+    credential,
+    ["scheme", "name", "prefix", "secret"],
+    "request.credential",
   );
-  if (authorization.scheme !== "bearer") {
-    throw invalid("request.authorization.scheme must be 'bearer'");
+  if (credential.scheme !== "header") {
+    throw invalid("request.credential.scheme must be 'header'");
   }
-  const token = requireString(authorization.token, "request.authorization.token");
+  const name = requireString(credential.name, "request.credential.name");
+  const lower = name.toLowerCase();
+  if (!HEADER_TOKEN.test(name) || FORBIDDEN_CREDENTIAL_HEADERS.has(lower)) {
+    throw invalid("request.credential.name is not an allowed credential header");
+  }
+  if (typeof credential.prefix !== "string") {
+    throw invalid("request.credential.prefix must be a string");
+  }
+  const prefix = credential.prefix;
   if (
-    Buffer.byteLength(token, "utf8") > MAX_AUTH_TOKEN_BYTES ||
-    /[\s\u0000-\u001F\u007F]/u.test(token)
+    Buffer.byteLength(prefix, "utf8") > MAX_CREDENTIAL_PREFIX_BYTES ||
+    /[^\t\x20-\x7E]/u.test(prefix)
   ) {
-    throw invalid("request.authorization.token is malformed or over limit");
+    throw invalid("request.credential.prefix is malformed or over limit");
   }
-  return { authorization: { scheme: "bearer", token } };
+  const secret = requireString(credential.secret, "request.credential.secret");
+  if (
+    Buffer.byteLength(secret, "utf8") > MAX_AUTH_TOKEN_BYTES ||
+    /[\s\u0000-\u001F\u007F]/u.test(secret)
+  ) {
+    throw invalid("request.credential.secret is malformed or over limit");
+  }
+  try {
+    new Headers([[name, `${prefix}${secret}`]]);
+  } catch (error) {
+    throw new AdapterProblem(
+      "invalid_request",
+      "request.credential does not form a valid HTTP header",
+      { code: "invalid_wire_request", cause: error },
+    );
+  }
+  return {
+    credential: { scheme: "header", name: lower, prefix, secret },
+  };
 }
 
 function parseFrozenTool(value: unknown): FrozenMcpTool {

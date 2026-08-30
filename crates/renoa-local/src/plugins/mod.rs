@@ -260,12 +260,30 @@ impl PluginListReport {
             rejected,
         }
     }
+
+    pub(crate) fn installed(&self) -> &[InstalledPlugin] {
+        &self.installed
+    }
+
+    pub(crate) fn rejected(&self) -> &[PluginListRejection] {
+        &self.rejected
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct PluginListRejection {
     package_digest: String,
     reason: String,
+}
+
+impl PluginListRejection {
+    pub(crate) fn package_digest(&self) -> &str {
+        &self.package_digest
+    }
+
+    pub(crate) fn reason(&self) -> &str {
+        &self.reason
+    }
 }
 
 impl InstalledPlugin {
@@ -304,6 +322,11 @@ pub enum PluginCredential {
     None,
     SecretServiceBearer {
         credential_id: String,
+    },
+    SecretServiceHeader {
+        credential_id: String,
+        header: String,
+        prefix: String,
     },
     OAuth {
         registration: PluginOAuthRegistration,

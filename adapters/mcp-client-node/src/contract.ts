@@ -16,7 +16,14 @@ export interface FrozenMcpTool {
   readonly output_schema?: JsonObject;
 }
 
-export interface WireAuthorization {
+export interface WireCredential {
+  readonly scheme: "header";
+  readonly name: string;
+  readonly prefix: string;
+  readonly secret: string;
+}
+
+export interface WireOAuthAuthorization {
   readonly scheme: "bearer";
   readonly token: string;
 }
@@ -49,7 +56,7 @@ export type AdapterRequest =
       readonly action: "discover";
       readonly endpoint: string;
       readonly headers?: WireHeaders;
-      readonly authorization?: WireAuthorization;
+      readonly credential?: WireCredential;
     }
   | {
       readonly wire_version: typeof WIRE_VERSION;
@@ -57,7 +64,7 @@ export type AdapterRequest =
       readonly endpoint: string;
       readonly protocol_version: string;
       readonly headers?: WireHeaders;
-      readonly authorization?: WireAuthorization;
+      readonly credential?: WireCredential;
       readonly tool: FrozenMcpTool;
       readonly arguments: JsonObject;
     }
@@ -189,7 +196,7 @@ export type AdapterRecord =
   | {
       readonly wire_version: typeof WIRE_VERSION;
       readonly event: "oauth_authorized";
-      readonly authorization: WireAuthorization;
+      readonly authorization: WireOAuthAuthorization;
       readonly oauth_state: WireOAuthState;
     }
   | {

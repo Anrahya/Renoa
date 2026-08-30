@@ -6,8 +6,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{CALL_BOUNDARY_REVISION, WIRE_VERSION, call_tool, wire::McpCallResult};
 use crate::mcp::{
-    AlphaMcpTool, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpAuthorization, McpCatalogTool,
-    McpConnectionAuth, McpOutcomeCertainty,
+    AlphaMcpTool, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogTool, McpConnectionAuth,
+    McpCredentialHeader, McpOutcomeCertainty,
 };
 
 #[test]
@@ -33,9 +33,9 @@ if (
   request.tool.name !== "echo" ||
   request.arguments.text !== "hello"
 ) process.exit(2);
-process.stdout.write(JSON.stringify({ wire_version: 6, event: "dispatch_started" }) + "\n");
+process.stdout.write(JSON.stringify({ wire_version: 7, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 6,
+  wire_version: 7,
   event: "completed",
   result: {
     content: [{ type: "text", text: "hello" }],
@@ -76,7 +76,7 @@ async fn cancellation_after_dispatch_is_an_unknown_outcome_and_reaps_the_adapter
             r#"
 import {{ writeFileSync }} from "node:fs";
 for await (const _chunk of process.stdin) {{}}
-process.stdout.write(JSON.stringify({{ wire_version: 6, event: "dispatch_started" }}) + "\n");
+process.stdout.write(JSON.stringify({{ wire_version: 7, event: "dispatch_started" }}) + "\n");
 writeFileSync({}, String(process.pid));
 await new Promise(() => {{}});
 "#,
@@ -153,14 +153,16 @@ for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 const token = "fixture-secret-token";
 if (
-  request.authorization?.scheme !== "bearer" ||
-  request.authorization?.token !== token ||
+  request.credential?.scheme !== "header" ||
+  request.credential?.name !== "authorization" ||
+  request.credential?.prefix !== "Bearer " ||
+  request.credential?.secret !== token ||
   process.argv.slice(2).length !== 0 ||
   Object.values(process.env).some(value => value?.includes(token))
 ) process.exit(9);
-process.stdout.write(JSON.stringify({ wire_version: 6, event: "dispatch_started" }) + "\n");
+process.stdout.write(JSON.stringify({ wire_version: 7, event: "dispatch_started" }) + "\n");
 process.stdout.write(JSON.stringify({
-  wire_version: 6,
+  wire_version: 7,
   event: "completed",
   result: {
     content: [{ type: "text", text: `server echoed ${token}` }],
@@ -171,7 +173,7 @@ process.stdout.write(JSON.stringify({
 "#,
     );
     let selected = selected_tool("https://example.com/mcp");
-    let authorization = McpAuthorization::for_test("fixture-secret-token");
+    let authorization = McpCredentialHeader::for_test("fixture-secret-token");
 
     let result = call_tool(
         &adapter,

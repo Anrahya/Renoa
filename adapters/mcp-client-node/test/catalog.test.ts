@@ -95,6 +95,66 @@ test("over-deep schemas are rejected at the catalog boundary", () => {
   }
 });
 
+test("an input schema that cannot compile is isolated during discovery", () => {
+  const inspected = inspectDiscoveredTool(
+    tool({
+      type: "object",
+      properties: { value: { type: "string", pattern: "[" } },
+    }),
+    7,
+  );
+  assert.equal("rejected" in inspected, true);
+  if ("rejected" in inspected) {
+    assert.equal(inspected.rejected.index, 7);
+    assert.match(inspected.rejected.reason, /cannot be compiled/u);
+  }
+});
+
+test("reused schema ids cannot substitute an earlier tool schema", () => {
+  const first = inspectDiscoveredTool(
+    tool({
+      $id: "https://example.com/shared-schema",
+      type: "object",
+      properties: { value: { type: "string" } },
+    }),
+    1,
+  );
+  const second = inspectDiscoveredTool(
+    tool({
+      $id: "https://example.com/shared-schema",
+      type: "object",
+      properties: { value: { type: "string", pattern: "[" } },
+    }),
+    2,
+  );
+
+  assert.equal("accepted" in first, true);
+  assert.equal("rejected" in second, true);
+});
+
+test("one tool schema cannot resolve references through another tool", () => {
+  const first = inspectDiscoveredTool(
+    tool({
+      $id: "https://example.com/first-schema",
+      type: "object",
+      $defs: { value: { type: "string" } },
+    }),
+    1,
+  );
+  const second = inspectDiscoveredTool(
+    tool({
+      type: "object",
+      properties: {
+        value: { $ref: "https://example.com/first-schema#/$defs/value" },
+      },
+    }),
+    2,
+  );
+
+  assert.equal("accepted" in first, true);
+  assert.equal("rejected" in second, true);
+});
+
 function tool(inputSchema: Tool["inputSchema"]): Tool {
   return { name: "example", inputSchema };
 }

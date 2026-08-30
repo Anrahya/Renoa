@@ -14,7 +14,7 @@ use crate::{
 
 #[test]
 fn official_registry_discovery_changes_the_frozen_extension_contract() {
-    assert_eq!(BINDING_REVISION, "renoa-extension-manager-v7");
+    assert_eq!(BINDING_REVISION, "renoa-extension-manager-v8");
 }
 
 #[tokio::test]

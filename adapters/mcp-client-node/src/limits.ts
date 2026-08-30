@@ -1,6 +1,6 @@
-export const WIRE_VERSION = 6 as const;
+export const WIRE_VERSION = 7 as const;
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
-export const MCP_ADAPTER_REVISION = "mcp-client-node-v0.6.0";
+export const MCP_ADAPTER_REVISION = "mcp-client-node-v0.7.0";
 
 export const DISCOVERY_TIMEOUT_MS = 30_000;
 export const TOOL_CALL_TIMEOUT_MS = 120_000;
@@ -15,6 +15,7 @@ export const MAX_TOOL_SCHEMA_BYTES = 1 * 1024 * 1024;
 export const MAX_TOOL_DESCRIPTION_BYTES = 32 * 1024;
 export const MAX_CURSOR_BYTES = 4 * 1024;
 export const MAX_AUTH_TOKEN_BYTES = 16 * 1024;
+export const MAX_CREDENTIAL_PREFIX_BYTES = 256;
 export const MAX_OAUTH_STATE_BYTES = 512 * 1024;
 export const MAX_OAUTH_VALUE_BYTES = 16 * 1024;
 export const MAX_REQUEST_HEADERS = 64;

@@ -1,7 +1,7 @@
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type {
   AdapterRequest,
-  WireAuthorization,
+  WireCredential,
   WireHeaders,
 } from "./contract.js";
 import { AdapterProblem, type ExchangeEvidence } from "./errors.js";
@@ -86,7 +86,7 @@ export function guardedFetch(
   operationSignal: AbortSignal,
   endpoint: URL,
   configuredHeaders: WireHeaders | undefined,
-  authorization: WireAuthorization | undefined,
+  credential: WireCredential | undefined,
 ): FetchLike {
   const nativeFetch = globalThis.fetch;
   return async (input, init): Promise<Response> => {
@@ -120,8 +120,23 @@ export function guardedFetch(
         ),
       );
     }
-    if (authorization !== undefined) {
-      headers.set("authorization", `Bearer ${authorization.token}`);
+    if (credential !== undefined) {
+      if (headers.has(credential.name)) {
+        tracker.reject(
+          new AdapterProblem(
+            "protocol",
+            `MCP SDK or public configuration attempted to provide credential header '${credential.name}'.`,
+            {
+              code: "unexpected_credential_header",
+              partialChangesPossible: tracker.dispatchStarted,
+            },
+          ),
+        );
+      }
+      headers.set(
+        credential.name,
+        `${credential.prefix}${credential.secret}`,
+      );
     }
     const requestMethod = (init?.method ?? "GET").toUpperCase();
     const modernMethod = headers.get("mcp-method");

@@ -58,6 +58,8 @@ Build the model-provider adapter first:
 ```sh
 pnpm --dir adapters/model-provider-node install --frozen-lockfile --ignore-scripts
 pnpm --dir adapters/model-provider-node build
+pnpm --dir adapters/mcp-client-node install --frozen-lockfile --ignore-scripts
+pnpm --dir adapters/mcp-client-node build
 pnpm --dir adapters/mcp-registry-node install --frozen-lockfile --ignore-scripts
 pnpm --dir adapters/mcp-registry-node build
 ```
@@ -82,6 +84,7 @@ export RENOA_MODEL_AUTH_STORE='/absolute/path/to/pi-auth.sqlite'
 export RENOA_MODEL_PROVIDER='xai' # or opencode-go
 export RENOA_MODEL='grok-4.6'
 export RENOA_MODEL_REASONING='high' # optional: off|minimal|low|medium|high|xhigh|max
+export RENOA_MCP_ADAPTER='/absolute/path/to/adapters/mcp-client-node/dist/src/main.js'
 export RENOA_MCP_REGISTRY_ADAPTER='/absolute/path/to/adapters/mcp-registry-node/dist/src/main.js'
 
 cargo run -p renoa-local -- \

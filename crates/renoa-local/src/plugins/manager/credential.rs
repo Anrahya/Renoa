@@ -11,6 +11,15 @@ pub(super) fn credential_auth(
         PluginCredential::SecretServiceBearer { credential_id } => {
             Ok(McpConnectionAuth::secret_service_bearer(&credential_id)?)
         }
+        PluginCredential::SecretServiceHeader {
+            credential_id,
+            header,
+            prefix,
+        } => Ok(McpConnectionAuth::secret_service_header(
+            &credential_id,
+            &header,
+            &prefix,
+        )?),
         PluginCredential::OAuth { registration } => {
             let registration = match registration {
                 PluginOAuthRegistration::Dynamic => McpOAuthRegistration::dynamic(),

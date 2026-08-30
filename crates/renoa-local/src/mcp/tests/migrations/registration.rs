@@ -103,3 +103,79 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
         assert_eq!(count, 1, "{table} must survive migration");
     }
 }
+
+#[test]
+fn version_nine_credentials_survive_and_custom_headers_become_available() {
+    let (directory, store) = store();
+    let path = store.path().to_owned();
+    let bearer = McpConnectionAuth::secret_service_bearer("existing.bearer")
+        .expect("valid bearer reference");
+    store
+        .register_connection(
+            "existing",
+            "existing",
+            "https://example.com/existing-mcp",
+            &McpRequestHeaders::default(),
+            &bearer,
+        )
+        .expect("register existing credential");
+    drop(store);
+
+    Connection::open(&path)
+        .expect("open version downgrade fixture")
+        .execute_batch(
+            r"PRAGMA foreign_keys = OFF;
+             CREATE TABLE mcp_connections_v9 (
+                connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
+                integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
+                auth_kind TEXT NOT NULL CHECK (
+                    auth_kind IN ('none', 'gh_cli', 'secret_service_bearer', 'oauth')
+                ),
+                auth_hostname TEXT,
+                auth_account TEXT,
+                auth_credential_id TEXT,
+                oauth_registration_json TEXT
+             ) STRICT;
+             INSERT INTO mcp_connections_v9(
+                connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+                auth_credential_id, oauth_registration_json
+             )
+             SELECT connection_id, integration_id, auth_kind, auth_hostname, auth_account,
+                    auth_credential_id, oauth_registration_json
+             FROM mcp_connections;
+             DROP TABLE mcp_connections;
+             ALTER TABLE mcp_connections_v9 RENAME TO mcp_connections;
+             UPDATE host_metadata SET schema_version = 9 WHERE singleton = 1;
+             PRAGMA user_version = 9;",
+        )
+        .expect("downgrade fixture to version nine");
+
+    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
+        .expect("migrate version nine credential state");
+    assert_eq!(
+        migrated
+            .connection_config("existing")
+            .expect("load migrated bearer credential")
+            .auth,
+        bearer
+    );
+
+    let custom = McpConnectionAuth::secret_service_header("exa.api-key", "X-API-Key", "ApiKey ")
+        .expect("valid custom header reference");
+    migrated
+        .register_connection(
+            "custom",
+            "custom",
+            "https://example.com/custom-mcp",
+            &McpRequestHeaders::default(),
+            &custom,
+        )
+        .expect("register custom credential after migration");
+    assert_eq!(
+        migrated
+            .connection_config("custom")
+            .expect("load custom credential")
+            .auth,
+        custom
+    );
+}

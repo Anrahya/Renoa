@@ -260,15 +260,15 @@ impl std::fmt::Display for McpRemoteFailure {
 }
 
 impl McpRemoteFailure {
-    pub(super) fn redact_authorization(&mut self, authorization: Option<&super::McpAuthorization>) {
-        let Some(authorization) = authorization else {
+    pub(super) fn redact_credential(&mut self, credential: Option<&super::McpCredentialHeader>) {
+        let Some(credential) = credential else {
             return;
         };
-        authorization.redact_text(&mut self.message);
+        credential.redact_text(&mut self.message);
         if let Some(code) = &mut self.diagnostic.code {
-            authorization.redact_text(code);
+            credential.redact_text(code);
         }
-        authorization.redact_text(&mut self.diagnostic.detail);
+        credential.redact_text(&mut self.diagnostic.detail);
     }
 
     pub(super) fn redact_exact_secrets<'a>(&mut self, secrets: impl IntoIterator<Item = &'a str>) {

@@ -338,9 +338,14 @@ registry attachment is visible at the next safe registry read without restart.
 The implemented disconnect operation removes only Alpha's profile attachment.
 It is idempotent and keeps the registered connection, catalog, package, and
 credential reference so recovery and later reattachment retain their exact
-identity. The management list reports package integrity, registration, catalog
-presence, authentication kind, and Alpha attachment separately rather than
-collapsing them into one enabled flag.
+identity. The symmetric enable operation reattaches only a retained complete
+catalog and performs no remote request. The management list reports package
+integrity, registration, catalog presence, authentication kind, Alpha
+attachment, and plugin skill binding results separately rather than collapsing
+them into one enabled flag. It returns at most 32 compact facts per page. The
+opaque cursor binds the next page to the exact inventory revision; if packages,
+connections, or skill bindings change between pages, the Host requires a fresh
+first page rather than allowing offset drift to skip or duplicate facts.
 Removal cannot delete content still required to recover an unfinished
 operation. Rollback is selection of a previously installed compatible digest,
 not restoration from mutable leftovers.
@@ -385,6 +390,9 @@ not restoration from mutable leftovers.
 16. A registry can suggest a package but cannot approve it, authenticate it,
     bind it to a profile, or make it authoritative.
 17. No component installer or adapter may write kernel storage directly.
+18. A remote tool's frozen input schema is compiled and its exact arguments are
+    validated before possible dispatch; invalid schemas are isolated during
+    discovery instead of weakening validation for valid siblings.
 
 Renoa does not claim exactly-once behavior for an external service. A stable
 kernel `EffectId` may be forwarded as an idempotency hint when a reviewed
@@ -407,8 +415,9 @@ state, OAuth scopes, environment variables, secret references, process
 bookkeeping, schema hashes, and runtime manifests remain outside model context.
 Tool failures that help the model recover are returned as bounded model-visible
 tool results; operational diagnostics and sensitive details remain in Host
-trace data. The current manager fails rather than truncates an encoded result
-that exceeds the local 50 KiB tool-output boundary.
+trace data. Inventory reads shrink a cursor page at whole-fact boundaries to
+fit the local 50 KiB output limit. Every other management result fails rather
+than truncating if one complete result exceeds that boundary.
 
 Alpha's first skill path searches compact name/description metadata through
 `skill_search` and activates one selected name through `skill_load`. Search
@@ -454,7 +463,7 @@ local credential sources
 ```
 
 Schema v6 adds installed Agent Plugin metadata, supported MCP entries, public
-request headers, and named Secret Service bearer references. Schema v7
+request headers, and named Secret Service credential references. Schema v7
 preserves standard plugin homepage provenance and adds the package-skill scope
 without changing existing global or workspace bindings. Schema v8 adds OAuth
 connection references, non-secret recovery phases, and bounded terminal
@@ -462,7 +471,9 @@ receipts keyed by stable session/command/tool-call identity. Schema v9 records
 the selected CIMD, pre-registered-client, or DCR policy and migrates existing
 OAuth connections to their former DCR behavior. OAuth client state, tokens,
 client secrets, and remote failure text never enter `host.sqlite3`; all secret
-values are resolved just in time from Secret Service. Cross-platform secret
+values are resolved just in time from Secret Service. Schema v10 adds the exact
+header name and public prefix for generic Secret Service credentials and
+preserves every earlier connection kind during migration. Cross-platform secret
 stores, cross-node credential placement, permission, package-registry, update,
 and removal designs remain open.
 
@@ -501,7 +512,9 @@ pinned dependencies.
 | --- | --- | --- | --- |
 | [Agent Plugins 1.0](https://github.com/agentplugins/agent-plugins-spec/tree/ff8ab5e392cc87bd88d87c060815a87490e51003) | `ff8ab5e392cc87bd88d87c060815a87490e51003` | Specification and docs CC-BY-4.0; schemas and software Apache-2.0 | Portable package, skill, MCP, containment, discovery, and client-extension floor |
 | [Agent Skills](https://github.com/agentskills/agentskills/tree/69ef37e9424c0a7ea9dd2293b559e43ec8176379) | `69ef37e9424c0a7ea9dd2293b559e43ec8176379` | Code Apache-2.0; documentation CC-BY-4.0 | Portable `SKILL.md` structure and progressive-disclosure model |
-| [OpenCode v2](https://github.com/anomalyco/opencode/tree/f1521000ece5fdd9f372dcfbd126d3d89642f3ce) | `f1521000ece5fdd9f372dcfbd126d3d89642f3ce` | MIT | One narrow skill tool, metadata-first discovery, full body/base directory on demand, filesystem refresh, and durable activation evidence; Renoa does not adopt silent last-writer-wins identity |
+| [OpenCode v2](https://github.com/anomalyco/opencode/tree/dc4449df0d52199704ea4989a5a993ebbc605612) | `dc4449df0d52199704ea4989a5a993ebbc605612` | MIT | One narrow skill tool, discriminated local/remote MCP configuration, explicit lifecycle state, metadata-first discovery, and runtime connect/disconnect; Renoa does not adopt config-embedded secrets or silent last-writer-wins identity |
+| [Pi](https://github.com/badlogic/pi-mono/tree/853a80d26c90a14c1886f0ebb8ffaae133ca2185) | `853a80d26c90a14c1886f0ebb8ffaae133ca2185` | MIT | Exact TypeBox tool contracts and runtime register/reload/active-tool controls; Renoa retains durable frozen operation bindings |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/tree/cd5ef8148158c3a752a658978873241fdf8e2bbc) | `cd5ef8148158c3a752a658978873241fdf8e2bbc` | MIT | Atomic MCP generation replacement, prior-generation retention on failed refresh, and bounded reconnect; Renoa keeps connection state Host-owned and avoids hidden call retry |
 | [Claude Code skill lifecycle](https://code.claude.com/docs/en/slash-commands) | official documentation reviewed 2026-08-27 | Anthropic documentation terms | Evidence that invoked skill instructions must be deliberately carried across compaction; Renoa fails at its exact bound instead of truncating or dropping an active revision |
 | [Codex core skill loader](https://github.com/openai/codex/blob/main/codex-rs/core-skills/src/loader.rs) | `main` reviewed 2026-08-27 | Apache-2.0 repository | Bounded discovery, standard `.agents/skills` support, and explicit refresh behavior |
 | [serde-saphyr 1.1.0](https://github.com/bourumir-wyngs/serde-saphyr/tree/ad5c614bd437f9c3dbf65b158de24cb3a07cda9d) | tag commit `ad5c614bd437f9c3dbf65b158de24cb3a07cda9d` | MIT OR Apache-2.0 | Deserialize-only YAML frontmatter dependency with default features disabled; no source adapted |
@@ -701,6 +714,15 @@ from revision 6 to revision 7. An unfinished revision-6 management operation
 likewise fails closed after upgrade rather than gaining the new mutating action.
 The durable connection and catalog remain intact when a settled disconnect is
 replayed.
+Exact per-action schemas, generic Secret Service credential headers,
+idempotent re-enable, and separate package/connection/skill-source reporting
+change the binding from revision 7 to revision 8. The MCP adapter wire changes
+from 6 to 7 so the exact credential header is frozen, redacted, and scoped to
+one endpoint. Discovery compiles every remote input schema and invocation
+validates the frozen schema before dispatch. Invalid catalog siblings are
+isolated, failed refresh keeps the previous complete catalog, and re-enable
+uses that retained catalog without a network call. Management inventory uses
+bounded revision-bound cursor pages rather than one unbounded aggregate.
 Remaining proof: wire the first GUI consumer and resolve the general permission
 vocabulary without letting an agent broaden its own effective scope.
 
@@ -765,7 +787,7 @@ through the task journal.
 
 ## Open decisions
 
-- future Host schema migrations beyond v9 and storage for permissions;
+- future Host schema migrations beyond v10 and storage for permissions;
 - model-visible naming and collision handling for tools from many connections;
 - future marketplace selection, ranking, freshness, and cache policy;
 - cross-platform secret-store selection, account recovery, revocation, and

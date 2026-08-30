@@ -27,7 +27,7 @@ fn a_newer_host_catalog_schema_is_rejected() {
     drop(store);
     Connection::open(&path)
         .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 10_u32)
+        .pragma_update(None, "user_version", 11_u32)
         .expect("advance schema version");
 
     assert!(matches!(

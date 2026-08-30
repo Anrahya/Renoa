@@ -19,6 +19,7 @@ import {
   MAX_TITLE_BYTES,
   MAX_URL_BYTES,
 } from "./limits.js";
+import { publisherNamespaceMatchesQuery } from "./ranking.js";
 
 const REGISTRY_NAME = /^[a-zA-Z0-9.-]+\/[a-zA-Z0-9._-]+$/u;
 
@@ -59,9 +60,10 @@ export function normalizeCandidate(
     ...(core.title === undefined ? {} : { title: core.title }),
     publisher_description: core.description,
     publisher: core.publisher,
-    publisher_namespace_matches_query:
-      queryTokens.length > 0 &&
-      queryTokens.every((token) => namespace.includes(token)),
+    publisher_namespace_matches_query: publisherNamespaceMatchesQuery(
+      namespace,
+      queryTokens,
+    ),
     status: core.status,
     ...(core.websiteUrl === undefined
       ? {}

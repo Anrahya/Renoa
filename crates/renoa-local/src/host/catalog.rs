@@ -7,10 +7,10 @@ mod migrations;
 
 use migrations::{
     MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4, MIGRATE_V4_TO_V5, MIGRATE_V5_TO_V6,
-    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8, MIGRATE_V8_TO_V9,
+    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8, MIGRATE_V8_TO_V9, MIGRATE_V9_TO_V10,
 };
 
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -44,33 +44,50 @@ const SCHEMA: &str = "
         connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
         integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
         auth_kind TEXT NOT NULL CHECK (
-            auth_kind IN ('none', 'gh_cli', 'secret_service_bearer', 'oauth')
+            auth_kind IN (
+                'none', 'gh_cli', 'secret_service_bearer',
+                'secret_service_header', 'oauth'
+            )
         ),
         auth_hostname TEXT,
         auth_account TEXT,
         auth_credential_id TEXT,
         oauth_registration_json TEXT,
+        auth_header_name TEXT,
+        auth_header_prefix TEXT,
         CHECK (
             (auth_kind = 'none' AND auth_hostname IS NULL AND auth_account IS NULL
-             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL)
+             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL
+             AND auth_header_name IS NULL AND auth_header_prefix IS NULL)
             OR
             (auth_kind = 'gh_cli'
              AND length(auth_hostname) > 0
              AND length(auth_account) > 0
-             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL)
+             AND auth_credential_id IS NULL AND oauth_registration_json IS NULL
+             AND auth_header_name IS NULL AND auth_header_prefix IS NULL)
             OR
             (auth_kind = 'secret_service_bearer'
              AND auth_hostname IS NULL
              AND auth_account IS NULL
              AND length(auth_credential_id) > 0
-             AND oauth_registration_json IS NULL)
+             AND oauth_registration_json IS NULL
+             AND auth_header_name IS NULL AND auth_header_prefix IS NULL)
+            OR
+            (auth_kind = 'secret_service_header'
+             AND auth_hostname IS NULL
+             AND auth_account IS NULL
+             AND length(auth_credential_id) > 0
+             AND oauth_registration_json IS NULL
+             AND length(auth_header_name) > 0
+             AND auth_header_prefix IS NOT NULL)
             OR
             (auth_kind = 'oauth'
              AND auth_hostname IS NULL
              AND auth_account IS NULL
              AND length(auth_credential_id) > 0
              AND json_valid(oauth_registration_json)
-             AND json_type(oauth_registration_json) = 'object')
+             AND json_type(oauth_registration_json) = 'object'
+             AND auth_header_name IS NULL AND auth_header_prefix IS NULL)
         )
     ) STRICT;
 
@@ -232,7 +249,7 @@ const SCHEMA: &str = "
         PRIMARY KEY (plugin_digest, server_id)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 9);
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 10);
 ";
 
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
@@ -260,7 +277,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=8) {
+    if matches!(observed, 1..=9) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -291,80 +308,25 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
             transaction.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
         match version {
             SCHEMA_VERSION => transaction.commit().map_err(HostCatalogError::from),
-            1 => {
-                require_complete_selected_catalogs(&transaction)?;
-                transaction.execute_batch(MIGRATE_V1_TO_V2)?;
-                transaction.execute_batch(MIGRATE_V2_TO_V3)?;
-                transaction.execute_batch(MIGRATE_V3_TO_V4)?;
-                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
-                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
-                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
-                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            2 => {
-                require_complete_selected_catalogs(&transaction)?;
-                transaction.execute_batch(MIGRATE_V2_TO_V3)?;
-                transaction.execute_batch(MIGRATE_V3_TO_V4)?;
-                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
-                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
-                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
-                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            3 => {
-                transaction.execute_batch(MIGRATE_V3_TO_V4)?;
-                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
-                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
-                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
-                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            4 => {
-                transaction.execute_batch(MIGRATE_V4_TO_V5)?;
-                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
-                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
-                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            5 => {
-                transaction.execute_batch(MIGRATE_V5_TO_V6)?;
-                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
-                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            6 => {
-                transaction.execute_batch(MIGRATE_V6_TO_V7)?;
-                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            7 => {
-                transaction.execute_batch(MIGRATE_V7_TO_V8)?;
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            8 => {
-                transaction.execute_batch(MIGRATE_V8_TO_V9)?;
+            version if (1..SCHEMA_VERSION).contains(&version) => {
+                if version <= 2 {
+                    require_complete_selected_catalogs(&transaction)?;
+                }
+                for (source_version, migration) in [
+                    (1, MIGRATE_V1_TO_V2),
+                    (2, MIGRATE_V2_TO_V3),
+                    (3, MIGRATE_V3_TO_V4),
+                    (4, MIGRATE_V4_TO_V5),
+                    (5, MIGRATE_V5_TO_V6),
+                    (6, MIGRATE_V6_TO_V7),
+                    (7, MIGRATE_V7_TO_V8),
+                    (8, MIGRATE_V8_TO_V9),
+                    (9, MIGRATE_V9_TO_V10),
+                ] {
+                    if source_version >= version {
+                        transaction.execute_batch(migration)?;
+                    }
+                }
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())

@@ -10,7 +10,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    AdapterCatalog, McpAdapterError, McpAuthorization, McpCatalogSnapshot, McpHostError,
+    AdapterCatalog, McpAdapterError, McpCatalogSnapshot, McpCredentialHeader, McpHostError,
     McpRemoteFailure, McpRequestHeaders,
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
@@ -18,7 +18,7 @@ use crate::process::{child_pid_raw, configure_process_group, stop_process_group_
 #[cfg(test)]
 mod tests;
 
-const WIRE_VERSION: u32 = 6;
+const WIRE_VERSION: u32 = 7;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
 const MAX_STDERR_BYTES: usize = 64 * 1_024;
@@ -28,14 +28,14 @@ pub(crate) async fn discover(
     connection_id: &str,
     endpoint: &str,
     request_headers: &McpRequestHeaders,
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
 ) -> Result<McpCatalogSnapshot, McpHostError> {
     discover_cancellable(
         adapter,
         connection_id,
         endpoint,
         request_headers,
-        authorization,
+        credential,
         CancellationToken::new(),
     )
     .await
@@ -46,7 +46,7 @@ pub(crate) async fn discover_cancellable(
     connection_id: &str,
     endpoint: &str,
     request_headers: &McpRequestHeaders,
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
     cancellation: CancellationToken,
 ) -> Result<McpCatalogSnapshot, McpHostError> {
     if cancellation.is_cancelled() {
@@ -57,10 +57,10 @@ pub(crate) async fn discover_cancellable(
         action: "discover",
         endpoint,
         headers: request_headers,
-        authorization: authorization.map(WireAuthorization::from),
+        credential: credential.map(WireCredential::from),
     })
     .map_err(McpAdapterError::Encode)?;
-    let result = run_adapter(adapter, &request, authorization, cancellation).await;
+    let result = run_adapter(adapter, &request, credential, cancellation).await;
     request.fill(0);
     let catalog = result?;
     McpCatalogSnapshot::from_adapter_with_headers(connection_id, request_headers.clone(), catalog)
@@ -74,20 +74,24 @@ struct DiscoverRequest<'a> {
     #[serde(skip_serializing_if = "McpRequestHeaders::is_empty")]
     headers: &'a McpRequestHeaders,
     #[serde(skip_serializing_if = "Option::is_none")]
-    authorization: Option<WireAuthorization<'a>>,
+    credential: Option<WireCredential<'a>>,
 }
 
 #[derive(Serialize)]
-struct WireAuthorization<'a> {
+struct WireCredential<'a> {
     scheme: &'static str,
-    token: &'a str,
+    name: &'a str,
+    prefix: &'a str,
+    secret: &'a str,
 }
 
-impl<'a> From<&'a McpAuthorization> for WireAuthorization<'a> {
-    fn from(authorization: &'a McpAuthorization) -> Self {
+impl<'a> From<&'a McpCredentialHeader> for WireCredential<'a> {
+    fn from(credential: &'a McpCredentialHeader) -> Self {
         Self {
-            scheme: "bearer",
-            token: authorization.bearer(),
+            scheme: "header",
+            name: credential.name(),
+            prefix: credential.prefix(),
+            secret: credential.secret(),
         }
     }
 }
@@ -95,7 +99,7 @@ impl<'a> From<&'a McpAuthorization> for WireAuthorization<'a> {
 async fn run_adapter(
     adapter: &Path,
     request: &[u8],
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
     cancellation: CancellationToken,
 ) -> Result<AdapterCatalog, McpAdapterError> {
     let deadline = tokio::time::Instant::now() + PROCESS_DEADLINE;
@@ -155,22 +159,17 @@ async fn run_adapter(
         }
         ProcessSignal::Exited(Ok(status)) => {
             let (stdout, stderr) = stop_and_capture(&mut child, pid, stdout, stderr).await?;
-            parse_captured(stdout, stderr, &format!("{status}"), authorization)
+            parse_captured(stdout, stderr, &format!("{status}"), credential)
         }
         ProcessSignal::Terminal => {
             let (stdout, stderr) = stop_and_capture(&mut child, pid, stdout, stderr).await?;
-            parse_captured(
-                stdout,
-                stderr,
-                "stopped after terminal record",
-                authorization,
-            )
+            parse_captured(stdout, stderr, "stopped after terminal record", credential)
         }
         ProcessSignal::Deadline => {
             let (mut stdout, mut stderr) =
                 stop_and_capture(&mut child, pid, stdout, stderr).await?;
             if stdout.bytes.contains(&b'\n') {
-                parse_captured(stdout, stderr, "stopped at Host deadline", authorization)
+                parse_captured(stdout, stderr, "stopped at Host deadline", credential)
             } else {
                 stdout.bytes.fill(0);
                 stderr.bytes.fill(0);
@@ -239,7 +238,7 @@ fn parse_captured(
     mut stdout: CapturedHead,
     mut stderr: CapturedHead,
     status: &str,
-    authorization: Option<&McpAuthorization>,
+    credential: Option<&McpCredentialHeader>,
 ) -> Result<AdapterCatalog, McpAdapterError> {
     if stdout.truncated {
         stdout.bytes.fill(0);
@@ -249,18 +248,18 @@ fn parse_captured(
     let terminal = parse_discovery_record(&stdout.bytes);
     let result = match terminal {
         Ok(Ok(mut catalog)) => {
-            catalog.redact_authorization(authorization);
+            catalog.redact_credential(credential);
             Ok(catalog)
         }
         Ok(Err(McpAdapterError::Remote(mut failure))) => {
-            failure.redact_authorization(authorization);
+            failure.redact_credential(credential);
             Err(McpAdapterError::Remote(failure))
         }
         Ok(Err(error)) => Err(error),
         Err(protocol) => {
             let mut diagnostic = String::from_utf8_lossy(&stderr.bytes).into_owned();
-            if let Some(authorization) = authorization {
-                authorization.redact_text(&mut diagnostic);
+            if let Some(credential) = credential {
+                credential.redact_text(&mut diagnostic);
             }
             let suffix = if diagnostic.trim().is_empty() {
                 String::new()

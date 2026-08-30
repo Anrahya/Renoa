@@ -70,7 +70,7 @@ async fn cancelled_browser_authorization_resumes_without_putting_secrets_in_sqli
         )
         .await
         .expect("resume browser authorization");
-    assert_eq!(authorization.bearer(), "access-one");
+    assert_eq!(authorization.secret(), "access-one");
     assert!(
         fixture
             .resolver
@@ -186,7 +186,7 @@ async fn a_replayed_restart_uses_its_receipt_instead_of_reauthorizing() {
         )
         .await
         .expect("complete initial authorization");
-    assert_eq!(first.bearer(), "access-one");
+    assert_eq!(first.secret(), "access-one");
 
     let replayed = fixture
         .resolver
@@ -196,7 +196,7 @@ async fn a_replayed_restart_uses_its_receipt_instead_of_reauthorizing() {
         )
         .await
         .expect("replay completed authorization from its receipt");
-    assert_eq!(replayed.bearer(), "access-one");
+    assert_eq!(replayed.secret(), "access-one");
     assert_eq!(fixture.action_count("oauth_begin"), 1);
     assert_eq!(fixture.action_count("oauth_exchange"), 1);
     assert_eq!(fixture.action_count("oauth_token"), 1);
@@ -209,7 +209,7 @@ async fn a_replayed_restart_uses_its_receipt_instead_of_reauthorizing() {
         )
         .await
         .expect("a new operation may explicitly reauthorize");
-    assert_eq!(next.bearer(), "access-one");
+    assert_eq!(next.secret(), "access-one");
     assert_eq!(fixture.action_count("oauth_begin"), 2);
     assert_eq!(fixture.action_count("oauth_exchange"), 2);
 }
@@ -348,7 +348,7 @@ async fn authorize(fixture: &mut Fixture) {
         )
         .await
         .expect("authorize OAuth fixture");
-    assert_eq!(authorization.bearer(), "access-one");
+    assert_eq!(authorization.secret(), "access-one");
 }
 
 async fn resolve(fixture: &Fixture, operation: &str) -> String {
@@ -364,7 +364,7 @@ async fn resolve(fixture: &Fixture, operation: &str) -> String {
         .await
         .expect("resolve OAuth token")
         .expect("OAuth returns authorization")
-        .bearer()
+        .secret()
         .to_owned()
 }
 

@@ -130,7 +130,7 @@ if (request.action === 'oauth_begin') {{
     authorization_url: authorization.href
   }};
   send({{
-    wire_version: 6,
+    wire_version: 7,
     event: 'oauth_redirect',
     authorization_url: authorization.href,
     oauth_state: state
@@ -139,7 +139,7 @@ if (request.action === 'oauth_begin') {{
   if (request.authorization_code !== 'code-one') process.exit(11);
   if (request.oauth_state.reject_exchange === true) {{
     send({{
-      wire_version: 6,
+      wire_version: 7,
       event: 'oauth_failed',
       failure: {{
         kind: 'protocol',
@@ -158,7 +158,7 @@ if (request.action === 'oauth_begin') {{
     needs_refresh: false
   }};
   send({{
-    wire_version: 6,
+    wire_version: 7,
     event: 'oauth_authorized',
     authorization: {{scheme: 'bearer', token: 'access-one'}},
     oauth_state: state
@@ -166,13 +166,13 @@ if (request.action === 'oauth_begin') {{
 }} else if (request.action === 'oauth_token') {{
   if (request.oauth_state.needs_refresh === true) {{
     send({{
-      wire_version: 6,
+      wire_version: 7,
       event: 'oauth_refresh_required',
       oauth_state: request.oauth_state
     }});
   }} else {{
     send({{
-      wire_version: 6,
+      wire_version: 7,
       event: 'oauth_authorized',
       authorization: {{scheme: 'bearer', token: request.oauth_state.access_token}},
       oauth_state: request.oauth_state
@@ -186,7 +186,7 @@ if (request.action === 'oauth_begin') {{
     needs_refresh: false
   }};
   send({{
-    wire_version: 6,
+    wire_version: 7,
     event: 'oauth_authorized',
     authorization: {{scheme: 'bearer', token: 'access-two'}},
     oauth_state: state

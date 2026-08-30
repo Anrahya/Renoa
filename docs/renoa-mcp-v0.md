@@ -8,8 +8,8 @@ Node process adapter implements this boundary under `adapters/mcp-client-node`.
 The Host durably registers connections, publishes complete catalog snapshots,
 attaches connections to Alpha's searchable registry, resolves exact references
 into ordinary kernel-backed calls, and supports no authentication, an exact
-GitHub CLI account reference, a named Secret Service bearer reference, or a
-Host-owned OAuth 2.1 browser flow using Client ID Metadata Documents,
+GitHub CLI account reference, a named Secret Service bearer or header
+reference, or a Host-owned OAuth 2.1 browser flow using Client ID Metadata Documents,
 pre-registered client credentials, or Dynamic Client Registration.
 
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md) owns the
@@ -56,7 +56,7 @@ V0 supports exactly:
 - Streamable HTTP `POST` responses as either JSON or request-scoped SSE;
 - `server/discover`, paginated `tools/list`, and `tools/call`;
 - direct no-auth connections, exact `gh`-resolved bearer credentials, and named
-  Secret Service bearer credentials;
+  Secret Service credentials projected into a validated header and prefix;
 - Host-owned OAuth 2.1 authorization-code flows with PKCE for remote HTTP MCP
   servers, all three standard client registration approaches, issuer-bound
   credentials, and automatic just-in-time refresh;
@@ -92,7 +92,8 @@ These concepts are distinct even though the first proof uses one of each:
 - **Direct integration:** one reviewed Streamable HTTP endpoint definition.
 - **Connection:** one configured instance of that integration. It stores
   no-auth, an exact `gh` hostname/account reference, or a named Secret Service
-  credential reference. OAuth connections also store the selected registration
+  credential reference plus its validated header and public prefix. OAuth
+  connections also store the selected registration
   policy: a CIMD URL, a named pre-registered client reference, or explicit DCR.
   They store only a deterministic token-bundle reference, durable non-secret
   flow phase, and semantic terminal receipt in SQLite, never a token or client
@@ -139,11 +140,14 @@ Schema v9 adds the explicit OAuth registration policy. Existing v8 OAuth
 connections migrate to DCR because that is the only behavior the v8 runtime
 implemented. Their connection identity, catalog, profile attachment, flow, and
 receipt records remain intact.
-Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, and v0.5
-remain readable by the v0.6 Host. The two early revisions retain their original
-headerless digest encoding, so their durable references remain exact rather
-than being silently rewritten during an upgrade. New discovery always publishes
-the current revision.
+Schema v10 adds an exact header name and public prefix for generic Secret
+Service credentials. Existing no-auth, GitHub CLI, bearer, and OAuth rows
+migrate without changing identity or catalog state.
+Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, v0.5, and
+v0.6 remain readable by the v0.7 Host. The two early revisions retain their
+original headerless digest encoding, so their durable references remain exact
+rather than being silently rewritten during an upgrade. New discovery always
+publishes the current revision.
 
 ## Endpoint boundary
 
@@ -155,9 +159,11 @@ User information and fragments are rejected. A query string is allowed but is
 treated as public configuration: it is shown during inspection, contributes to
 endpoint identity, and must never carry a credential. A GitHub bearer token is
 resolved just in time with `gh auth token --hostname HOST --user ACCOUNT`. A
-named API key is resolved just in time with `secret-tool lookup application
-renoa credential ID`. The Host sends either value to the adapter only through
-standard input, scopes it to the exact configured URL, and wipes it after use.
+named credential is resolved just in time with `secret-tool lookup application
+renoa credential ID`. The Host sends its secret plus the connection's reviewed
+header name and public prefix to the adapter only through standard input. The
+adapter forms that exact header and scopes it to the configured URL. Rust wipes
+its owned secret buffers after use.
 It never enters Host storage, arguments, environment, catalog data,
 diagnostics, model context, or a runtime binding.
 
@@ -177,9 +183,12 @@ configuration; client IDs, client secrets, and tokens are not model arguments.
 An integration may supply bounded fixed public headers, such as Exa's source
 identifier. Renoa rejects authorization, API-key, cookie, MCP, content, and
 other client-owned header names so package data cannot impersonate a credential
-or change transport control. Standard MCP headers, the Host-resolved bearer,
-and valid argument-derived `x-mcp-header` values remain authoritative at the
-request boundary.
+or change transport control. The separately configured Secret Service header
+may use a credential header such as `authorization`, `x-api-key`, or `cookie`,
+but cannot replace transport-owned headers or collide with public package
+headers. Standard MCP headers, the Host-resolved credential, and valid
+argument-derived `x-mcp-header` values remain authoritative at the request
+boundary.
 
 Redirects are not followed. A redirect is a visible configuration failure and
 the caller may review the target as a new endpoint. This keeps source identity,
@@ -260,6 +269,17 @@ and receipts remain available for recovery and later reattachment. List output
 therefore reports registration, authentication kind, catalog presence, and
 Alpha attachment as separate facts; it never infers that an OAuth token is
 currently valid merely because the connection is registered.
+`extension_manage enable` is the symmetric, idempotent reattachment path. It
+requires the retained complete catalog and performs no network request.
+Management list output also reports the committed accepted and rejected skill
+bindings per plugin source, separately from immutable package installation.
+It flattens those states into compact pages of at most 32 facts. The opaque
+continuation cursor fingerprints the complete inventory, so a concurrent Host
+change invalidates that cursor instead of making offset pagination skip or
+repeat an entry.
+The management tool uses one closed schema variant per action. Required fields
+and allowed fields therefore change together with the selected action; a model
+cannot accidentally pass stale fields from another action and have them ignored.
 
 ## Protocol lifecycle
 
@@ -369,9 +389,13 @@ it.
 
 Before HTTP dispatch, `tool_execute` verifies the reference syntax, Alpha
 attachment, current catalog digest, exact tool name, argument-object shape, and
-adapter request bound. It resolves credentials only after those local checks.
-The server remains responsible for full JSON Schema and service-level
-validation in v0; Renoa does not ship a partial home-grown evaluator.
+adapter request bound. During discovery the Node adapter compiles every input
+schema with the pinned MCP SDK's AJV-backed validator and isolates an invalid
+tool definition. At invocation it recompiles the frozen catalog schema and
+validates the exact arguments before declaring dispatch. The server remains
+responsible for service-level validation; Renoa does not ship a partial
+home-grown schema evaluator. Credential resolution follows the local Host
+checks, and schema failure remains before possible HTTP dispatch.
 
 The adapter sends one `tools/call` with no automatic retry. It mirrors valid
 `x-mcp-header` values exactly as required by the pinned Streamable HTTP
@@ -496,13 +520,14 @@ The process contract has six actions:
 - **oauth_token:** inspect saved token state without network mutation; and
 - **oauth_refresh:** perform exactly one refresh attempt.
 
-The version-6 process request may carry one bounded bearer authorization value
-and bounded fixed public headers. OAuth begin, exchange, and refresh requests
+The version-7 process request may carry one bounded exact credential header
+name, public prefix, and secret value plus bounded fixed public headers. OAuth
+begin, exchange, and refresh requests
 carry one exact registration object. A pre-registered object includes its
 issuer and resolved client fields only for the lifetime of that adapter
 process. Local `oauth_token` inspection carries no registration credential.
-The version-6 call wire is also part of the frozen `tool_execute` binding, so an
-unfinished version-5 execution cannot resume under changed process semantics.
+The version-7 call wire is also part of the frozen `tool_execute` binding, so an
+unfinished version-6 execution cannot resume under changed process semantics.
 Standard output is a bounded machine-readable record stream. Standard error is
 bounded, redacted diagnostic text and never part of the protocol. The first
 valid terminal record is authoritative; later process output or cleanup failure
@@ -591,7 +616,7 @@ and the real process boundary:
 15. one live registry object sees a committed attachment without restart, and
     catalog replacement makes prior references fail stale;
 16. restart never repeats a possibly dispatched tool call;
-17. an exact `gh` account or named Secret Service reference resolves a token
+17. an exact `gh` account or named Secret Service reference resolves a secret
     only at invocation, while adapter output, diagnostics, Host SQLite, and
     frozen bindings remain secret-free;
 18. an Exa-shaped package sends its reviewed public source header and
@@ -617,7 +642,18 @@ and the real process boundary:
 27. one corrupt installed package is reported separately without hiding valid
     packages from `extension_manage list`; and
 28. disconnect immediately removes search and execution access, survives
-    replay, and retains the exact complete catalog for later reattachment.
+    replay, and retains the exact complete catalog for later reattachment;
+29. enable reattaches that retained catalog without network access, and list
+    reports package integrity, connection state, and plugin skill bindings as
+    separate facts;
+30. a generic Secret Service credential reaches the exact configured header
+    with its public prefix, while collisions, malformed names, and secret leaks
+    fail at the boundary; and
+31. invalid discovered schemas are isolated, and required, enum, maximum, and
+    additional-property violations fail against the frozen input schema before
+    any remote dispatch; and
+32. management inventory pagination returns every compact fact in order, while
+    a package, connection, or skill change invalidates an earlier cursor.
 
 ## Locked decisions
 
@@ -626,8 +662,8 @@ and the real process boundary:
 - The first revision prefers modern MCP `2026-07-28` and accepts only the
   pinned SDK's enumerated legacy revisions over Streamable HTTP.
 - Connections are direct and use no auth, one exact `gh` CLI account reference,
-  one named Secret Service bearer reference, or Host-owned OAuth; Renoa stores
-  no token in SQLite or package data.
+  one named Secret Service credential with an exact header and prefix, or
+  Host-owned OAuth; Renoa stores no secret in SQLite or package data.
 - OAuth uses PKCE, exact loopback callbacks, endpoint-bound Secret Service
   state, explicit client registration policy, authorization-server issuer
   binding, explicit durable phases, one credential POST per adapter operation,
@@ -652,11 +688,10 @@ and the real process boundary:
 - compatibility outside the enumerated MCP revisions and stdio transport;
 - headless/device authorization, GUI credential entry, credential revocation,
   cross-platform secret stores, and cross-node secret synchronization;
-- future Host schema migrations beyond v9;
+- future Host schema migrations beyond v10;
 - catalog cache hints and list-change subscriptions;
 - progress projection;
-- standards-complete client-side argument validation and any schema behavior
-  beyond the pinned SDK's structured-output validation;
+- schema dialects or custom keywords not accepted by the pinned SDK validator;
 - MCP resources, prompts, apps, tasks, and multi-round-trip input;
 - a safe invocation retry policy, only after service-specific idempotency and
   reconciliation can prove its duplicate semantics;
@@ -666,13 +701,15 @@ and the real process boundary:
 
 ## Evidence
 
-Reviewed on 2026-08-29. This contract copies no upstream source.
+Reviewed on 2026-08-30. This contract copies no upstream source.
 
 - [MCP specification `2026-07-28` at `5f5440bb26a62e2cf3440b92da5a667efa03b267`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267), with the repository's Apache-2.0 transition, remaining MIT material, and CC-BY-4.0 documentation.
 - [MCP TypeScript SDK 2.0.0 at `cc4b41617ce3601b1290d67216ea0b194a3cd9ac`](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac). The published `@modelcontextprotocol/client@2.0.0` package declares MIT; the source repository records the broader MCP license transition.
 - [GitHub MCP server at `a00dc319edcb5f8a10f118b1dad649c94928aac4`](https://github.com/github/github-mcp-server/tree/a00dc319edcb5f8a10f118b1dad649c94928aac4), MIT. Renoa copied no server source; the reviewed endpoint and read-only tool catalog are consumed through MCP.
 - [OpenAI Agents SDK at `10cdae4a3c30a29c6e96c8ec14e6bf1c5f02940e`](https://github.com/openai/openai-agents-python/tree/10cdae4a3c30a29c6e96c8ec14e6bf1c5f02940e), MIT. Its deferred tool loading and namespaces were reviewed; no source was copied.
-- [DeepSeek Harness at `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`](https://github.com/deepseek-ai/deepseek-harness/tree/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e), MIT. Its single code-mode transport informed the constant-schema direction; no source was copied.
+- [OpenCode v2 at `dc4449df0d52199704ea4989a5a993ebbc605612`](https://github.com/anomalyco/opencode/tree/dc4449df0d52199704ea4989a5a993ebbc605612), MIT. Its discriminated local/remote MCP configuration, explicit lifecycle status, and connect/disconnect controls informed Renoa's exact management actions; Renoa keeps credentials in Secret Service and copied no source.
+- [Pi at `853a80d26c90a14c1886f0ebb8ffaae133ca2185`](https://github.com/badlogic/pi-mono/tree/853a80d26c90a14c1886f0ebb8ffaae133ca2185), MIT. Its exact TypeBox tool contracts and runtime tool registration were reviewed; Renoa retained its frozen durable bindings and copied no source.
+- [DeepSeek Harness at `cd5ef8148158c3a752a658978873241fdf8e2bbc`](https://github.com/deepseek-ai/deepseek-harness/tree/cd5ef8148158c3a752a658978873241fdf8e2bbc), MIT. Its atomic MCP generation replacement, failed-refresh retention, and bounded reconnect behavior informed Renoa's enable and hot-load lifecycle; no source was copied.
 - [Anthropic Tool Search documentation](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool). Its deferred-definition behavior and measured large-catalog context cost were reviewed; no source was copied.
 - [Agent Plugins 1.0 at `ff8ab5e392cc87bd88d87c060815a87490e51003`](https://github.com/agentplugins/agent-plugins-spec/tree/ff8ab5e392cc87bd88d87c060815a87490e51003), with CC-BY-4.0 specification text and Apache-2.0 schemas. Renoa consumes its package and MCP shapes without copying runtime source.
 - [Exa MCP server at `15ffb50519e719dc791cdc750ce5ed1934c0a1ed`](https://github.com/exa-labs/exa-mcp-server/tree/15ffb50519e719dc791cdc750ce5ed1934c0a1ed), MIT. Renoa copied no server source; its Agent Plugin endpoint, public source header, and bearer boundary form the first real package-shaped proof.

@@ -6,7 +6,7 @@ use tokio::{io::AsyncWriteExt as _, process::Command, sync::oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    mcp::{McpAdapterError, McpAuthorization, McpRemoteFailure},
+    mcp::{McpAdapterError, McpCredentialHeader, McpRemoteFailure},
     process::{child_pid_raw, configure_process_group, stop_process_group_raw},
 };
 
@@ -18,7 +18,7 @@ mod record;
 use capture::{drain, stop_and_capture, stop_and_discard};
 use record::parse_record;
 
-const WIRE_VERSION: u32 = 6;
+const WIRE_VERSION: u32 = 7;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
@@ -32,7 +32,7 @@ pub(super) enum OAuthResult {
         state: Value,
     },
     Authorized {
-        authorization: McpAuthorization,
+        authorization: McpCredentialHeader,
         state: Value,
     },
     RefreshRequired {

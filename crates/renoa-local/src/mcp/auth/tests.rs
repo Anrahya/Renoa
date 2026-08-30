@@ -30,7 +30,7 @@ fn main() {{
         .expect("resolve fixture credential")
         .expect("gh reference resolves authorization");
 
-    assert_eq!(authorization.bearer(), "fixture-secret-token");
+    assert_eq!(authorization.secret(), "fixture-secret-token");
     assert_eq!(
         fs::read_to_string(arguments).expect("read exact gh arguments"),
         "auth\ntoken\n--hostname\ngithub.com\n--user\nAnrahya"
@@ -90,11 +90,38 @@ fn main() {{
         .expect("resolve fixture credential")
         .expect("Secret Service reference resolves authorization");
 
-    assert_eq!(authorization.bearer(), "exa-fixture-secret");
+    assert_eq!(authorization.secret(), "exa-fixture-secret");
     assert_eq!(
         fs::read_to_string(arguments).expect("read exact secret-tool arguments"),
         "lookup\napplication\nrenoa\ncredential\nexa.default"
     );
+}
+
+#[tokio::test]
+async fn secret_service_header_resolution_keeps_non_secret_header_configuration() {
+    let directory = tempdir().expect("temporary credential fixture");
+    let executable = compile_fixture(
+        directory.path(),
+        r#"
+fn main() {
+    println!("custom-fixture-secret");
+}
+"#,
+    );
+    let resolver =
+        McpCredentialResolver::with_executables(directory.path().join("unused-gh"), executable);
+    let reference = McpConnectionAuth::secret_service_header("exa.api-key", "X-API-Key", "ApiKey ")
+        .expect("valid custom Secret Service header");
+
+    let credential = resolver
+        .resolve(&reference, CancellationToken::new())
+        .await
+        .expect("resolve fixture credential")
+        .expect("Secret Service reference resolves a credential header");
+
+    assert_eq!(credential.name(), "x-api-key");
+    assert_eq!(credential.prefix(), "ApiKey ");
+    assert_eq!(credential.secret(), "custom-fixture-secret");
 }
 
 #[tokio::test]
@@ -140,7 +167,7 @@ fn main() {{
 
 #[test]
 fn stored_credential_references_fail_closed() {
-    assert!(McpConnectionAuth::from_stored("none", None, None, None, None).is_ok());
+    assert!(McpConnectionAuth::from_stored("none", None, None, None, None, None, None).is_ok());
     assert!(
         McpConnectionAuth::from_stored(
             "gh_cli",
@@ -148,12 +175,22 @@ fn stored_credential_references_fail_closed() {
             Some("Anrahya".to_owned()),
             None,
             None,
+            None,
+            None,
         )
         .is_ok()
     );
     assert!(
-        McpConnectionAuth::from_stored("gh_cli", Some("github.com".to_owned()), None, None, None,)
-            .is_err()
+        McpConnectionAuth::from_stored(
+            "gh_cli",
+            Some("github.com".to_owned()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .is_err()
     );
     assert!(
         McpConnectionAuth::from_stored(
@@ -162,8 +199,26 @@ fn stored_credential_references_fail_closed() {
             None,
             Some("exa.default".to_owned()),
             None,
+            None,
+            None,
         )
         .is_ok()
+    );
+    assert!(
+        McpConnectionAuth::from_stored(
+            "secret_service_header",
+            None,
+            None,
+            Some("exa.api-key".to_owned()),
+            None,
+            Some("x-api-key".to_owned()),
+            Some(String::new()),
+        )
+        .is_ok()
+    );
+    assert!(McpConnectionAuth::secret_service_header("exa.api-key", "Content-Length", "").is_err());
+    assert!(
+        McpConnectionAuth::secret_service_header("exa.api-key", "X-API-Key", "bad\r\n").is_err()
     );
     assert!(McpConnectionAuth::gh_cli("github.com/bad", "Anrahya").is_err());
 

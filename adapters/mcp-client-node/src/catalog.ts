@@ -1,4 +1,5 @@
 import type { Tool } from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import type {
   CatalogTool,
   DiscoveredCatalog,
@@ -51,12 +52,19 @@ export type InspectedTool =
   | { readonly accepted: CatalogTool }
   | { readonly rejected: RejectedTool };
 
+type InputValidator = ReturnType<AjvJsonSchemaValidator["getValidator"]>;
+
+interface NormalizedTool {
+  readonly tool: CatalogTool;
+  readonly validateInput: InputValidator;
+}
+
 export function inspectDiscoveredTool(
   tool: Tool,
   index: number,
 ): InspectedTool {
   try {
-    return { accepted: normalizeTool(tool) };
+    return { accepted: normalizeTool(tool).tool };
   } catch (error) {
     const reason =
       error instanceof AdapterProblem
@@ -74,17 +82,32 @@ export function inspectDiscoveredTool(
   }
 }
 
-export function validateFrozenTool(tool: FrozenMcpTool): CatalogTool {
+export function validateFrozenTool(
+  tool: FrozenMcpTool,
+  arguments_: JsonObject,
+): CatalogTool {
   try {
-    return normalizeTool({
+    const normalized = normalizeTool({
       name: tool.name,
       inputSchema: tool.input_schema as Tool["inputSchema"],
       ...(tool.output_schema === undefined
         ? {}
         : { outputSchema: tool.output_schema }),
     });
+    const result = normalized.validateInput(arguments_);
+    if (!result.valid) {
+      throw new AdapterProblem(
+        "invalid_request",
+        `MCP tool arguments do not match the frozen input schema: ${boundUtf8(result.errorMessage ?? "validation failed", 512)}`,
+        { code: "invalid_tool_arguments" },
+      );
+    }
+    return normalized.tool;
   } catch (error) {
     if (error instanceof AdapterProblem) {
+      if (error.kind === "invalid_request") {
+        throw error;
+      }
       throw new AdapterProblem("invalid_request", error.message, {
         code: "invalid_frozen_tool",
         cause: error,
@@ -125,7 +148,7 @@ export function finalizeCatalog(
   return catalog;
 }
 
-function normalizeTool(tool: Tool): CatalogTool {
+function normalizeTool(tool: Tool): NormalizedTool {
   if (!TOOL_NAME.test(tool.name)) {
     throw new AdapterProblem(
       "protocol",
@@ -153,6 +176,16 @@ function normalizeTool(tool: Tool): CatalogTool {
   assertJsonTreeBounded(inputSchema);
   assertSchemaSize(inputSchema, "input schema");
   const modelInputSchema = stripAndValidateHeaderAnnotations(inputSchema);
+  let validateInput: InputValidator;
+  try {
+    validateInput = new AjvJsonSchemaValidator().getValidator(inputSchema);
+  } catch (error) {
+    throw new AdapterProblem(
+      "protocol",
+      `tool input schema cannot be compiled: ${boundUtf8(error instanceof Error ? error.message : String(error), 512)}`,
+      { code: "invalid_input_schema", cause: error },
+    );
+  }
 
   const outputSchema = tool.outputSchema as JsonObject | undefined;
   if (outputSchema !== undefined) {
@@ -161,11 +194,14 @@ function normalizeTool(tool: Tool): CatalogTool {
   }
 
   return {
-    name: tool.name,
-    description,
-    input_schema: inputSchema,
-    model_input_schema: modelInputSchema,
-    ...(outputSchema === undefined ? {} : { output_schema: outputSchema }),
+    tool: {
+      name: tool.name,
+      description,
+      input_schema: inputSchema,
+      model_input_schema: modelInputSchema,
+      ...(outputSchema === undefined ? {} : { output_schema: outputSchema }),
+    },
+    validateInput,
   };
 }
 

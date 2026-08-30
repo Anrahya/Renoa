@@ -23,6 +23,7 @@ import {
   normalizeCandidate,
   normalizeLookup,
 } from "./records.js";
+import { candidateMatchesQuery, compareCandidates } from "./ranking.js";
 
 const SEARCH_STOP_WORDS = new Set([
   "a",
@@ -336,60 +337,6 @@ function queryPlan(query: string): QueryPlan {
     add(query.trim().toLowerCase());
   }
   return { tokens, variants };
-}
-
-function compareCandidates(
-  left: RegistryCandidate,
-  right: RegistryCandidate,
-  tokens: readonly string[],
-): number {
-  const rank = (candidate: RegistryCandidate): number => {
-    const name = candidate.registry_name.toLowerCase();
-    const leaf = name.split("/")[1] ?? name;
-    const phrase = tokens.join("-");
-    const haystack = `${name} ${candidate.title ?? ""}`.toLowerCase();
-    let score =
-      candidate.status === "active"
-        ? 0
-        : candidate.status === "deprecated"
-          ? 100
-          : 200;
-    if (candidate.publisher_namespace_matches_query) {
-      score += 0;
-    } else if (phrase.length > 0 && leaf === phrase) {
-      score += 10;
-    } else if (tokens.length > 0 && tokens.every((token) => name.includes(token))) {
-      score += 20;
-    } else if (tokens.length > 0 && tokens.every((token) => haystack.includes(token))) {
-      score += 30;
-    } else {
-      score += 40;
-    }
-    if (candidate.streamable_http_count === 0) {
-      score += 5;
-    }
-    return score;
-  };
-  return (
-    rank(left) - rank(right) ||
-    compareText(left.registry_name, right.registry_name) ||
-    compareText(left.registry_version, right.registry_version)
-  );
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function candidateMatchesQuery(
-  candidate: RegistryCandidate,
-  tokens: readonly string[],
-): boolean {
-  if (tokens.length === 0) {
-    return true;
-  }
-  const identity = `${candidate.registry_name} ${candidate.title ?? ""}`.toLowerCase();
-  return tokens.every((token) => identity.includes(token));
 }
 
 function invalidPage(message: string): RegistryProblem {

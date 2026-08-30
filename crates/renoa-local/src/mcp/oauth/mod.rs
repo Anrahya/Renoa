@@ -19,8 +19,8 @@ use renoa_kernel::{CommandId, SessionId};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    McpAdapterError, McpAuthorization, McpCatalogStore, McpConnectionAuth, McpCredentialResolver,
-    McpHostError, McpOAuthError, McpOAuthRegistration,
+    McpAdapterError, McpCatalogStore, McpConnectionAuth, McpCredentialHeader,
+    McpCredentialResolver, McpHostError, McpOAuthError, McpOAuthRegistration,
 };
 use secret::OAuthSecretStore;
 use sensitive::SensitiveString;
@@ -80,7 +80,7 @@ impl McpAuthorizationResolver {
         reference: &McpConnectionAuth,
         operation_id: &str,
         cancellation: CancellationToken,
-    ) -> Result<Option<McpAuthorization>, McpHostError> {
+    ) -> Result<Option<McpCredentialHeader>, McpHostError> {
         if reference.oauth_credential_id().is_some() {
             return self
                 .oauth
@@ -105,7 +105,7 @@ impl McpAuthorizationResolver {
         &self,
         request: McpOAuthAuthorizationRequest<'_>,
         cancellation: CancellationToken,
-    ) -> Result<McpAuthorization, McpHostError> {
+    ) -> Result<McpCredentialHeader, McpHostError> {
         if request.reference.oauth_credential_id().is_none() {
             return Err(McpOAuthError::Invalid(format!(
                 "connection '{}' is not configured for OAuth",

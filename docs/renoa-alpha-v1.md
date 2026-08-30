@@ -107,9 +107,10 @@ one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local
 package; install exact content; list installed revisions; connect a supported
 package MCP server; and authorize or explicitly restart a registered OAuth
 connection. It can also disconnect a connection from Alpha without deleting
-the Host's durable package, registration, or catalog. List reports those
-lifecycle states separately. Every add source
-becomes the same immutable package. Supported skills hot-load first, then Renoa
+the Host's durable package, registration, or catalog, then re-enable the
+retained complete catalog without contacting the service. List reports compact
+pages of package, connection, and plugin skill facts with an opaque continuation
+cursor. Every add source becomes the same immutable package. Supported skills hot-load first, then Renoa
 validates the real endpoint through MCP discovery before publishing tools.
 Registry results are research hints within this Host tool, not accepted
 installation inputs. Other discovery sources remain replaceable. Alpha v1's
@@ -118,10 +119,11 @@ actions; the tool does not create a second approval system or expand the
 agent's authority.
 
 Packages never contain credentials. A connection may name a Secret Service
-bearer credential or select Host-owned OAuth. Named keys resolve only at the
-request boundary. OAuth client state and tokens stay in Secret Service while
-SQLite stores only a reference, non-secret recovery phase, and semantic
-terminal receipt keyed by stable session/command/tool-call identity. Neither
+credential with an exact header and public prefix or select Host-owned OAuth.
+Named secrets resolve only at the request boundary. OAuth client state and
+tokens stay in Secret Service while SQLite stores only a reference, non-secret
+recovery phase, and semantic terminal receipt keyed by stable
+session/command/tool-call identity. Neither
 kind of secret or remote failure text is returned to Alpha through that receipt
 or stored in Renoa SQLite. Browser consent is
 service authentication under Alpha's existing full-access scope, not a second
@@ -183,4 +185,10 @@ The real headless product path must prove that:
 12. official Registry search normalizes multi-word names, filters broad source
     noise within an explicit result bound, labels publisher namespace control
     without claiming provider endorsement, and exact lookup cannot install,
-    expose a secret value, or bypass independent provider-documentation review.
+    expose a secret value, or bypass independent provider-documentation review;
+    and
+13. a disabled connection re-enables from its retained catalog without restart
+    or network access, generic Secret Service headers stay out of model context,
+    invalid tool arguments fail against the frozen schema before dispatch, and
+    a changed extension inventory invalidates an earlier list cursor instead of
+    skipping or duplicating facts.

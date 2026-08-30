@@ -30,8 +30,8 @@ async function main(): Promise<void> {
             exactSecrets.push(request.authorization_code);
           }
         }
-      } else if (request.authorization !== undefined) {
-        exactSecrets = [request.authorization.token];
+      } else if (request.credential !== undefined) {
+        exactSecrets = [request.credential.secret];
       }
       terminal = await executeAdapterRequest(request, {
         signal: cancellation.signal,
