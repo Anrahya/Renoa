@@ -5,11 +5,12 @@ use tokio_util::sync::CancellationToken;
 
 mod credential;
 mod identity;
+mod shared;
 mod status;
 
 use super::{
     ExtensionAddRequest, ExtensionConnectionRequest, ExtensionSource, InstalledPlugin,
-    OfficialRegistry, PluginCredential, PluginError, PluginInspection,
+    OfficialRegistry, PluginCredential, PluginError,
     discovery::{RegistryError, RegistryLookupResult, RegistrySearchResult},
     generated::GeneratedMcpPlugin,
     store::PluginStore,
@@ -20,6 +21,7 @@ use crate::{
         McpAdapterError, McpAuthorizationResolver, McpCatalogSnapshot, McpCatalogStore,
         McpCredentialResolver, McpHostError, McpOAuthAuthorizationRequest, discover_cancellable,
     },
+    shared_registry::SharedPluginRegistry,
     skills::{SkillComponentReport, SkillStore},
 };
 use credential::credential_auth;
@@ -33,6 +35,7 @@ pub(crate) struct PluginManager {
     registry: Option<OfficialRegistry>,
     authorizations: McpAuthorizationResolver,
     skills: SkillStore,
+    shared_registry: Option<SharedPluginRegistry>,
 }
 
 pub(crate) struct ProfileConnectionRequest<'a> {
@@ -64,7 +67,16 @@ impl PluginManager {
             registry: registry_adapter.map(OfficialRegistry::new),
             authorizations,
             skills,
+            shared_registry: None,
         })
+    }
+
+    pub(crate) fn with_shared_registry(
+        mut self,
+        shared_registry: Option<SharedPluginRegistry>,
+    ) -> Self {
+        self.shared_registry = shared_registry;
+        self
     }
 
     pub(crate) async fn search_registry(
@@ -98,38 +110,6 @@ impl PluginManager {
             .await
     }
 
-    pub(crate) async fn inspect(
-        &self,
-        source: impl Into<PathBuf>,
-    ) -> Result<PluginInspection, PluginError> {
-        let source = source.into();
-        tokio::task::spawn_blocking(move || {
-            super::inspect::inspect(&source).map(|item| item.inspection)
-        })
-        .await?
-    }
-
-    pub(crate) async fn install(
-        &self,
-        source: impl Into<PathBuf>,
-        expected_digest: impl Into<String>,
-    ) -> Result<InstalledPlugin, PluginError> {
-        let source = source.into();
-        let expected_digest = expected_digest.into();
-        let store = self.store.clone();
-        tokio::task::spawn_blocking(move || store.install(&source, &expected_digest)).await?
-    }
-
-    pub(crate) async fn list(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
-        let store = self.store.clone();
-        tokio::task::spawn_blocking(move || store.list()).await?
-    }
-
-    pub(crate) async fn list_report(&self) -> Result<super::PluginListReport, PluginError> {
-        let store = self.store.clone();
-        tokio::task::spawn_blocking(move || store.list_report()).await?
-    }
-
     pub(crate) async fn add_to_profile(
         &self,
         profile_id: &AgentProfileId,
@@ -146,6 +126,7 @@ impl PluginManager {
                 let installed =
                     tokio::task::spawn_blocking(move || store.install_generated(&generated))
                         .await??;
+                self.synchronize_installed(&installed).await?;
                 PreparedExtension {
                     installed,
                     source: ExtensionSourceReceipt::Mcp,
@@ -318,9 +299,7 @@ impl PluginManager {
             replace,
             operation_id,
         } = request;
-        let store = self.store.clone();
-        let digest = package_digest.to_owned();
-        let plugin = tokio::task::spawn_blocking(move || store.load(&digest)).await??;
+        let plugin = self.load_available(package_digest).await?;
         let server = plugin
             .mcp_servers()
             .iter()

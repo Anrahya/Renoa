@@ -2,7 +2,7 @@ use std::{collections::HashSet, env, path::PathBuf};
 
 use renoa_local::{
     AgentProfileId, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
-    ModelChoice, ModelProvider, alpha_profile, discover_models,
+    ModelChoice, ModelProvider, SharedPluginSyncReport, alpha_profile, discover_models,
 };
 use serde::Serialize;
 
@@ -66,6 +66,7 @@ impl Config {
     pub fn from_environment() -> Result<Self, ServerError> {
         let data_directory = data_directory()?;
         let settings = ProviderSettings::from_environment()?;
+        let shared_plugin_registry = optional("RENOA_SHARED_PLUGIN_REGISTRY")?;
         let profile = alpha_profile();
         let profile_id = profile.id().clone();
         Ok(Self {
@@ -80,7 +81,8 @@ impl Config {
                 ),
                 vec![profile],
                 LocalHostAdapters::new(optional_path("RENOA_MCP_ADAPTER").as_deref())
-                    .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref()),
+                    .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref())
+                    .with_shared_plugin_registry(shared_plugin_registry.as_deref()),
             )?,
             profile_id,
         })
@@ -211,6 +213,18 @@ pub async fn install_github_mcp(account: &str) -> Result<GitHubMcpInstallation, 
     })
 }
 
+/// Reconciles this device's Host plugin library with its private shared registry.
+///
+/// # Errors
+///
+/// Returns configuration, transport, identity, storage, or package validation failures.
+pub async fn synchronize_shared_plugins() -> Result<SharedPluginSyncReport, ServerError> {
+    Ok(Config::from_environment()?
+        .host
+        .synchronize_shared_plugins()
+        .await?)
+}
+
 fn enabled_providers(default: ModelProvider) -> Result<Vec<ModelProvider>, ServerError> {
     let configured = env::var("RENOA_MODEL_PROVIDERS")
         .ok()
@@ -271,6 +285,17 @@ fn optional_path(name: &str) -> Option<PathBuf> {
     env::var_os(name)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+}
+
+fn optional(name: &str) -> Result<Option<String>, ServerError> {
+    match env::var(name) {
+        Ok(value) if value.is_empty() => Ok(None),
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => Err(ServerError::Configuration(format!(
+            "{name} must be valid Unicode"
+        ))),
+    }
 }
 
 fn data_directory() -> Result<PathBuf, ServerError> {

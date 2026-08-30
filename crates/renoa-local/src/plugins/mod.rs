@@ -1,10 +1,10 @@
 mod discovery;
 mod error;
 mod generated;
-mod inspect;
+pub(crate) mod inspect;
 mod json;
 mod manager;
-mod store;
+pub(crate) mod store;
 mod tool;
 
 #[cfg(test)]

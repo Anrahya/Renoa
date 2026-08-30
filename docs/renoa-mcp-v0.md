@@ -148,6 +148,9 @@ receipt records remain intact.
 Schema v10 adds an exact header name and public prefix for generic Secret
 Service credentials. Existing no-auth, GitHub CLI, bearer, and OAuth rows
 migrate without changing identity or catalog state.
+Schema v11 adds only the private shared Agent Plugin registry identity and
+cursor. It does not change MCP integrations, connections, credentials,
+catalogs, attachments, tool identity, or execution.
 Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, v0.5, and
 v0.6 remain readable by the v0.7 Host. The two early revisions retain their
 original headerless digest encoding, so their durable references remain exact
@@ -694,7 +697,7 @@ and the real process boundary:
 - compatibility outside the enumerated MCP revisions and stdio transport;
 - headless/device authorization, GUI credential entry, credential revocation,
   cross-platform secret stores, and cross-node secret synchronization;
-- future Host schema migrations beyond v10;
+- future Host schema migrations beyond v11;
 - catalog cache hints and list-change subscriptions;
 - progress projection;
 - schema dialects or custom keywords not accepted by the pinned SDK validator;

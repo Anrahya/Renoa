@@ -5,8 +5,10 @@
 This document defines the intended product and architecture direction for
 installing, connecting, selecting, and using replaceable Renoa capabilities.
 It is the north star for extension work and the canonical contract for the
-implemented local Agent Plugins path. It is not a public package-registry,
-general permission, or cross-node distribution contract.
+implemented Agent Plugins path. It is not a public marketplace or general
+permission contract. The implemented private Host registry below distributes
+immutable package availability only; it does not settle credential or runtime
+placement.
 
 [`renoa-kernel-v0.md`](renoa-kernel-v0.md) remains authoritative for durable
 local execution. [`renoa-host-v0.md`](renoa-host-v0.md) remains authoritative
@@ -458,6 +460,12 @@ Renoa data directory
                                session activations, and other components
   sessions/<session>/          existing kernel and trace truth
 
+private shared registry
+  registry.lock                live process ownership; released by the OS
+  registry.sqlite3             stable registry identity and ordered revisions
+  blobs/<digest>               opaque content-addressed package archives
+  staging/                     incomplete uploads, reclaimed after a crash
+
 local credential sources
   secret material owned by a platform store or authenticated CLI
 ```
@@ -474,8 +482,10 @@ client secrets, and remote failure text never enter `host.sqlite3`; all secret
 values are resolved just in time from Secret Service. Schema v10 adds the exact
 header name and public prefix for generic Secret Service credentials and
 preserves every earlier connection kind during migration. Cross-platform secret
-stores, cross-node credential placement, permission, package-registry, update,
-and removal designs remain open.
+stores, cross-node credential placement, permission, public marketplace,
+update, and removal designs remain open. Schema v11 binds a local Host to one
+private package-registry UUID and stores its last applied revision. It does not
+store the endpoint, credentials, profile state, or remote execution state.
 
 A package installed before schema v7 may have a null durable homepage even when
 its immutable manifest contains one. Load repairs only that missing field and
@@ -492,11 +502,13 @@ One installed package and connection may supply components to multiple profiles
 on the same Host. Every surface controlling that Host sees the same durable
 library because no surface owns a private copy.
 
-Across nodes, package identity is portable by source revision and content
-digest. Connections are node-local until a separate credential and placement
-design proves otherwise. A laptop and VPS may install the same package while
-holding different accounts, filesystem access, or no usable connection at all.
-Raw secrets are never synchronized merely because package identity is shared.
+Across nodes, the private shared registry now makes package identity and exact
+bytes portable by content digest. Each Host independently validates and installs
+the immutable package. Connections remain node-local until a separate
+credential and placement design proves otherwise. A laptop and VPS may install
+the same package while holding different accounts, filesystem access, or no
+usable connection at all. Raw secrets are never synchronized merely because
+package identity is shared.
 
 RCP may eventually route a task to a node that can resolve its required
 runtime, but RCP remains independent of package loading and does not carry
@@ -571,8 +583,8 @@ The extension path is streamlined when these statements are true:
 Each slice must leave the repository coherent and pass its proof gate before
 the next begins.
 
-Slices 1 through 8 are complete. Slice 9 has its local Host and agent-tool path;
-the first surface consumer and general permission policy remain open.
+Slices 1 through 10 are complete. Slice 9 has its local Host and agent-tool
+path; the first surface consumer and general permission policy remain open.
 
 ### 1. Integration contract
 
@@ -723,15 +735,29 @@ validates the frozen schema before dispatch. Invalid catalog siblings are
 isolated, failed refresh keeps the previous complete catalog, and re-enable
 uses that retained catalog without a network call. Management inventory uses
 bounded revision-bound cursor pages rather than one unbounded aggregate.
+The later official Registry trust and identity hardening is frozen as revision
+9. Private package synchronization changes the implementation to revision 10;
+an unfinished operation frozen at revision 9 fails closed instead of acquiring
+a new remote side effect under its old manifest.
 Remaining proof: wire the first GUI consumer and resolve the general permission
 vocabulary without letting an agent broaden its own effective scope.
 
-### 10. Later fabric work
+### 10. Private shared package library
 
-Only after the local path is mature should Renoa design node capability
-advertisement, package availability, or placement-aware resolution. That work
-must preserve `rcp-v0.md` and must not synchronize secrets or package execution
-through the task journal.
+Replicate immutable Agent Plugin availability through one private Host service
+without copying the Host database. The service stores only content-addressed
+package archives and an ordered revision log. Every receiving Host verifies the
+archive envelope, applies the normal local Agent Plugins inspection, commits its
+normal immutable package, and only then advances its cursor. The service is not
+RCP and does not carry credentials, account connections, profile attachments,
+runtime placement, or session state.
+
+Proof gate: two live Hosts converge without restart; publication and cursor
+replay are idempotent; executable content survives; disconnected service and
+Host restart resume without duplicate revision; registry identity substitution
+fails closed; and no package is acknowledged or locally advanced before its
+durable boundary. Node capability advertisement and placement-aware resolution
+remain later work and must preserve `rcp-v0.md`.
 
 ## Locked decisions
 
@@ -784,10 +810,14 @@ through the task journal.
     explicit client-registration policy, endpoint-bound Secret Service bundle,
     terminal receipt, and process-death recovery path now consumed by
     implementation and tests.
+24. The private registry shares immutable package availability only. Local
+    Hosts independently validate packages and retain ownership of connections,
+    credentials, profile selection, runtime assembly, and sessions. A registry
+    URL is a route; the durable registry UUID is its identity.
 
 ## Open decisions
 
-- future Host schema migrations beyond v10 and storage for permissions;
+- future Host schema migrations beyond v11 and storage for permissions;
 - model-visible naming and collision handling for tools from many connections;
 - future marketplace selection, ranking, freshness, and cache policy;
 - cross-platform secret-store selection, account recovery, revocation, and
@@ -809,7 +839,8 @@ through the task journal.
   extensions;
 - compatibility policy beyond the SDK-supported legacy MCP revisions;
 - process lifetime and multiplexing for the MCP adapter;
-- node capability advertisement and cross-node Host configuration; and
+- node capability advertisement, placement, and cross-node Host configuration
+  beyond immutable package availability; and
 - stronger service-specific idempotency, reconciliation, or callback contracts.
 
 The first vertical proof is complete. These remain boundaries against guessing
@@ -819,15 +850,17 @@ beyond the next real consumer.
 
 The first direct MCP slice does not implement:
 
-- a general package registry, marketplace, remote package download, or archive
-  extraction inside the manager;
+- a public marketplace, package signing, automatic updates, rollback, removal,
+  or garbage collection;
 - GUI credential entry, headless OAuth, or general secret synchronization;
 - stdio MCP servers;
 - MCP resources, prompts, apps, tasks, sampling, or elicitation;
 - Waku extension settings or management UI;
 - a general permission system;
 - package signatures or automatic updates;
-- cross-node capability synchronization;
+- credential, connection, profile-definition, attachment, or session
+  synchronization;
+- automatic background synchronization or capability-aware node placement;
 - RCP changes;
 - dynamic libraries, WASM, hot code reload, or a service locator; or
 - a universal plugin trait.

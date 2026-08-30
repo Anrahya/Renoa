@@ -4,11 +4,26 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AgentProfileId, InstalledPlugin, McpCatalogSnapshot, PluginCredential, PluginInspection,
+    shared_registry::SharedPluginSyncReport,
 };
 
 use super::{LocalHost, LocalHostError};
 
 impl LocalHost {
+    /// Reconciles this Host's immutable Agent Plugin library with its configured shared registry.
+    ///
+    /// Existing MCP credentials, profile attachments, and sessions remain local.
+    ///
+    /// # Errors
+    ///
+    /// Returns when the registry is unreachable, changes identity, violates its
+    /// ordered contract, or serves a package that fails local verification.
+    pub async fn synchronize_shared_plugins(
+        &self,
+    ) -> Result<SharedPluginSyncReport, LocalHostError> {
+        Ok(self.config.plugins.synchronize_shared_required().await?)
+    }
+
     /// Inspects an Agent Plugins 1.0 directory without installing or executing it.
     ///
     /// # Errors

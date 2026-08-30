@@ -8,6 +8,7 @@ mod server;
 
 pub use config::{
     Config, GitHubMcpInstallation, ModelCatalog, configured_model_catalog, install_github_mcp,
+    synchronize_shared_plugins,
 };
 pub use error::ServerError;
 

@@ -50,6 +50,7 @@ pub struct LocalHost {
 pub struct LocalHostAdapters<'a> {
     mcp: Option<&'a Path>,
     mcp_registry: Option<&'a Path>,
+    shared_plugin_registry: Option<&'a str>,
 }
 
 impl<'a> LocalHostAdapters<'a> {
@@ -59,6 +60,7 @@ impl<'a> LocalHostAdapters<'a> {
         Self {
             mcp,
             mcp_registry: None,
+            shared_plugin_registry: None,
         }
     }
 
@@ -66,6 +68,13 @@ impl<'a> LocalHostAdapters<'a> {
     #[must_use]
     pub const fn with_mcp_registry(mut self, registry: Option<&'a Path>) -> Self {
         self.mcp_registry = registry;
+        self
+    }
+
+    /// Selects a private shared Agent Plugin registry origin.
+    #[must_use]
+    pub const fn with_shared_plugin_registry(mut self, registry: Option<&'a str>) -> Self {
+        self.shared_plugin_registry = registry;
         self
     }
 }
@@ -94,6 +103,7 @@ struct HostInitialization {
     credential_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
     mcp_registry_adapter: Option<PathBuf>,
+    shared_plugin_registry: Option<String>,
     global_skill_source: Option<PathBuf>,
     profiles: Vec<AgentProfile>,
 }
@@ -208,6 +218,7 @@ impl LocalHost {
             credential_store: models.credential_store,
             mcp_adapter,
             mcp_registry_adapter,
+            shared_plugin_registry: adapters.shared_plugin_registry.map(str::to_owned),
             global_skill_source: default_global_source(),
             profiles,
         })
@@ -223,6 +234,7 @@ impl LocalHost {
             credential_store,
             mcp_adapter,
             mcp_registry_adapter,
+            shared_plugin_registry,
             global_skill_source,
             profiles,
         } = initialization;
@@ -256,6 +268,16 @@ impl LocalHost {
             store_path(&data_directory),
             global_skill_source,
         )?;
+        let shared_plugin_registry = shared_plugin_registry
+            .map(|endpoint| {
+                crate::shared_registry::SharedPluginRegistry::new(
+                    &endpoint,
+                    host_database.clone(),
+                    &data_directory,
+                )
+            })
+            .transpose()
+            .map_err(|error| LocalHostError::Configuration(error.to_string()))?;
         let plugins = PluginManager::initialize(
             host_database.clone(),
             data_directory.join(PLUGIN_STORE_DIRECTORY),
@@ -264,7 +286,8 @@ impl LocalHost {
             mcp_registry_adapter,
             mcp_credentials.clone(),
             skill_store.clone(),
-        )?;
+        )?
+        .with_shared_registry(shared_plugin_registry);
         Ok(Self {
             config: Arc::new(HostConfig {
                 sessions,

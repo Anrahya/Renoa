@@ -446,3 +446,13 @@ pub(super) const MIGRATE_V9_TO_V10: &str = "
     ALTER TABLE mcp_connections_v10 RENAME TO mcp_connections;
     UPDATE host_metadata SET schema_version = 10 WHERE singleton = 1;
 ";
+
+pub(super) const MIGRATE_V10_TO_V11: &str = "
+    CREATE TABLE shared_plugin_registry_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        registry_id TEXT NOT NULL CHECK (length(registry_id) = 36),
+        applied_revision INTEGER NOT NULL CHECK (applied_revision >= 0)
+    ) STRICT;
+
+    UPDATE host_metadata SET schema_version = 11 WHERE singleton = 1;
+";

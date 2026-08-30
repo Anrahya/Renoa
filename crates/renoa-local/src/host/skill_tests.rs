@@ -157,6 +157,7 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         credential_store: credentials.to_path_buf(),
         mcp_adapter: None,
         mcp_registry_adapter: None,
+        shared_plugin_registry: None,
         global_skill_source: Some(global.to_path_buf()),
         profiles: vec![
             alpha_profile(),

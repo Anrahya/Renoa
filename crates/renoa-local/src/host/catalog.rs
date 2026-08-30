@@ -7,10 +7,10 @@ mod migrations;
 
 use migrations::{
     MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4, MIGRATE_V4_TO_V5, MIGRATE_V5_TO_V6,
-    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8, MIGRATE_V8_TO_V9, MIGRATE_V9_TO_V10,
+    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8, MIGRATE_V8_TO_V9, MIGRATE_V9_TO_V10, MIGRATE_V10_TO_V11,
 };
 
-const SCHEMA_VERSION: u32 = 10;
+const SCHEMA_VERSION: u32 = 11;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -249,7 +249,13 @@ const SCHEMA: &str = "
         PRIMARY KEY (plugin_digest, server_id)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 10);
+    CREATE TABLE shared_plugin_registry_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        registry_id TEXT NOT NULL CHECK (length(registry_id) = 36),
+        applied_revision INTEGER NOT NULL CHECK (applied_revision >= 0)
+    ) STRICT;
+
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 11);
 ";
 
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
@@ -277,7 +283,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=9) {
+    if matches!(observed, 1..=10) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -322,6 +328,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                     (7, MIGRATE_V7_TO_V8),
                     (8, MIGRATE_V8_TO_V9),
                     (9, MIGRATE_V9_TO_V10),
+                    (10, MIGRATE_V10_TO_V11),
                 ] {
                     if source_version >= version {
                         transaction.execute_batch(migration)?;
@@ -402,4 +409,36 @@ fn restrict_database_permissions(path: &Path) -> Result<(), HostCatalogError> {
 #[cfg(not(unix))]
 fn restrict_database_permissions(_path: &Path) -> Result<(), HostCatalogError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{initialize, open_verified};
+
+    #[test]
+    fn schema_ten_adds_an_unbound_shared_registry_cursor() {
+        let directory = tempfile::tempdir().expect("temporary Host catalog");
+        let database = directory.path().join("host.sqlite3");
+        initialize(&database).expect("initialize current catalog");
+        {
+            let connection = open_verified(&database).expect("open current catalog");
+            connection
+                .execute_batch(
+                    "DROP TABLE shared_plugin_registry_state;
+                     UPDATE host_metadata SET schema_version = 10 WHERE singleton = 1;
+                     PRAGMA user_version = 10;",
+                )
+                .expect("construct schema-ten fixture");
+        }
+        initialize(&database).expect("migrate schema ten");
+        let connection = open_verified(&database).expect("open migrated catalog");
+        let rows = connection
+            .query_row(
+                "SELECT COUNT(*) FROM shared_plugin_registry_state",
+                [],
+                |row| row.get::<_, u32>(0),
+            )
+            .expect("read shared registry state");
+        assert_eq!(rows, 0);
+    }
 }

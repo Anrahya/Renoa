@@ -55,6 +55,18 @@ catalog, and attaches that connection to Alpha's searchable registry. It stores
 the hostname/account reference, not the token. No GitHub schema is advertised
 until Alpha loads an exact search result.
 
+When a private shared plugin registry is configured, the same Host process can
+reconcile its immutable package library explicitly:
+
+```sh
+renoa-agent plugins sync
+```
+
+The JSON result reports packages published from this device, packages
+downloaded to it, and the last applied registry revision. Normal extension
+install/list flows use the same synchronization path, so another live Host can
+observe a committed package without restarting its agent or surface.
+
 The process reads:
 
 - `RENOA_MODEL_BRIDGE`
@@ -65,6 +77,7 @@ The process reads:
 - optional `RENOA_DATA_DIR`
 - optional `RENOA_MCP_ADAPTER`
 - optional `RENOA_MCP_REGISTRY_ADAPTER`
+- optional `RENOA_SHARED_PLUGIN_REGISTRY`
 
 Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
@@ -75,6 +88,13 @@ visible on the next registry call without restarting ACP or the surface.
 official MCP Registry adapter. It enables the `extension_manage` `search` and
 exact `lookup` actions. Registry metadata remains publisher-supplied research
 input and never installs or connects an extension by itself.
+`RENOA_SHARED_PLUGIN_REGISTRY` is an HTTP or HTTPS origin with no path,
+credentials, query, or fragment. It points at Renoa's private package service.
+The service replicates only verified immutable Agent Plugin directories;
+credentials, MCP connections, catalogs, profile attachments, skills activated
+by a session, and session history stay local. The first deployment exposes the
+loopback-only service through the private tailnet, but Tailscale is not part of
+the Host or registry wire contract.
 OAuth MCP connections additionally require the desktop `secret-tool` command
 and `xdg-open`. Alpha invokes the same `extension_manage` tool over ACP; the
 Host opens the browser, streams an authorization-required tool update, waits

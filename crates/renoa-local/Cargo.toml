@@ -13,17 +13,23 @@ nix.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
 renoa-agent-loop = { path = "../renoa-agent-loop", version = "0.1.0" }
 renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
+renoa-registry-protocol = { path = "../renoa-registry-protocol", version = "0.1.0" }
+reqwest.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tar.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "process"] }
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["io"] }
 url.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+renoa-registry = { path = "../renoa-registry", version = "0.1.0" }
 
 [lints]
 workspace = true

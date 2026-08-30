@@ -24,6 +24,7 @@ mod runtime;
 mod search;
 mod selection;
 mod session;
+mod shared_registry;
 mod skills;
 mod tool_error;
 mod tool_input;
@@ -52,5 +53,6 @@ pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
 };
 pub use session::{LocalHistoryEntry, LocalSession, LocalSessionError, LocalTurnOutcome};
+pub use shared_registry::SharedPluginSyncReport;
 pub use skills::SkillError;
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};

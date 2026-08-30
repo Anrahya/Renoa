@@ -13,8 +13,8 @@ use crate::{
 };
 
 #[test]
-fn official_registry_discovery_changes_the_frozen_extension_contract() {
-    assert_eq!(BINDING_REVISION, "renoa-extension-manager-v9");
+fn shared_package_synchronization_changes_the_frozen_extension_contract() {
+    assert_eq!(BINDING_REVISION, "renoa-extension-manager-v10");
 }
 
 #[tokio::test]

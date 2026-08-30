@@ -1,27 +1,26 @@
 [package]
-name = "renoa-control"
+name = "renoa-registry"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-axum = { workspace = true, features = ["http1", "ws"] }
+axum = { workspace = true, features = ["http1", "json", "query", "tokio"] }
 futures-util.workspace = true
-getrandom.workspace = true
-renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
+renoa-registry-protocol = { path = "../renoa-registry-protocol", version = "0.1.0" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util = { workspace = true, features = ["io"] }
 uuid.workspace = true
 
 [dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
-tokio-tungstenite.workspace = true
 
 [lints]
 workspace = true

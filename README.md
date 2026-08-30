@@ -33,6 +33,11 @@ without turning the kernel into product policy or one giant plugin interface.
 - [`renoa-acp`](crates/renoa-acp) is a thin ACP v1 surface adapter. A compatible
   frontend launches `renoa-agent acp`; ACP translates UI messages and live
   updates but does not own agent composition or durability.
+- [`renoa-registry`](crates/renoa-registry) is the optional private service that
+  makes immutable Agent Plugin packages available to more than one Host. Its
+  wire contract lives in
+  [`renoa-registry-protocol`](crates/renoa-registry-protocol). It carries no
+  credentials, profile permissions, sessions, or RCP events.
 - [`mcp-client-node`](adapters/mcp-client-node) is the replaceable MCP
   process adapter. The Host durably registers connections, publishes complete
   catalogs, owns optional browser OAuth and refresh, and exposes only deferred

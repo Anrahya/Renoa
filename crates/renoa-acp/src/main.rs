@@ -42,8 +42,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
             stdout.write_all(b"\n")?;
             Ok(())
         }
+        [plugins, sync] if plugins == "plugins" && sync == "sync" => {
+            let report = renoa_acp::synchronize_shared_plugins().await?;
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, &report)?;
+            stdout.write_all(b"\n")?;
+            Ok(())
+        }
         _ => Err(io::Error::other(
-            "usage: renoa-agent <acp|models --json|mcp github install --account ACCOUNT|--version>",
+            "usage: renoa-agent <acp|models --json|mcp github install --account ACCOUNT|plugins sync|--version>",
         )
         .into()),
     }

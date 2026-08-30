@@ -72,11 +72,11 @@ pub(super) fn inspect(root: &Path) -> Result<CapturedPlugin, PluginError> {
     })
 }
 
-pub(super) const fn digest_domain() -> &'static [u8] {
+pub(crate) const fn digest_domain() -> &'static [u8] {
     DIGEST_DOMAIN
 }
 
-pub(super) const fn tree_limits() -> TreeLimits {
+pub(crate) const fn tree_limits() -> TreeLimits {
     TREE_LIMITS
 }
 

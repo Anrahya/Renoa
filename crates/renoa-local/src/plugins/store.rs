@@ -14,7 +14,7 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 
 #[derive(Clone)]
-pub(super) struct PluginStore {
+pub(crate) struct PluginStore {
     database: PathBuf,
     packages: PathBuf,
 }
@@ -26,7 +26,7 @@ impl PluginStore {
         Ok(Self { database, packages })
     }
 
-    pub(super) fn install(
+    pub(crate) fn install(
         &self,
         source: &Path,
         expected_digest: &str,
@@ -140,7 +140,7 @@ impl PluginStore {
         Ok(())
     }
 
-    pub(super) fn load(&self, digest: &str) -> Result<InstalledPlugin, PluginError> {
+    pub(crate) fn load(&self, digest: &str) -> Result<InstalledPlugin, PluginError> {
         validate_digest(digest)?;
         let mut connection = self.connection()?;
         let stored = load_stored(&connection, digest)?.ok_or_else(|| {
@@ -161,7 +161,7 @@ impl PluginStore {
         )))
     }
 
-    pub(super) fn list(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
+    pub(crate) fn list(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare("SELECT plugin_digest FROM installed_plugins ORDER BY name, plugin_digest")?;
@@ -199,7 +199,7 @@ impl PluginStore {
         Ok(PluginListReport::new(installed, rejected))
     }
 
-    pub(super) fn package_root(&self, digest: &str) -> Result<PathBuf, PluginError> {
+    pub(crate) fn package_root(&self, digest: &str) -> Result<PathBuf, PluginError> {
         self.load(digest)?;
         Ok(self.packages.join(digest))
     }

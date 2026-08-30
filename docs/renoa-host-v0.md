@@ -171,6 +171,34 @@ source/profile bindings, rejected skill entries, and session activation pins.
 Registration, discovery, and profile attachment remain separate states.
 Catalog replacement and attachment are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
+
+An optional private shared plugin registry replicates only the immutable Agent
+Plugin library between Hosts. Each Host remains a complete local runtime and
+keeps its own credentials, MCP connections and discovered catalogs, profile
+attachments, session skill activations, workspaces, and session history. The
+registry is a separate Host service, not the RCP coordinator and not a remote
+kernel. Its stable UUID is the authority identity; its URL is only a replaceable
+route. A Host binds to one identity and fails closed if an endpoint later names
+a different registry.
+
+Package upload is an idempotent content-addressed `PUT`. The service fully
+writes, hashes, and syncs an archive before committing its next SQLite revision
+and acknowledging it. The ordered change feed is read from one SQLite snapshot.
+A receiving Host downloads the exact length and archive digest, rejects unsafe
+tar entries, re-runs the normal Agent Plugins inspection, publishes the normal
+immutable local tree, and only then advances its local cursor. A crash between
+local installation and cursor advancement causes a safe repeated verification,
+not a duplicate install. Schema v11 stores only the bound registry UUID and
+last applied revision.
+
+Synchronization is pull-on-management rather than a hidden background loop.
+Install and list use it when the optional registry is configured; connect uses
+it only when the requested package is absent locally. The explicit
+`renoa-agent plugins sync` command is the administration and deployment check.
+No HTTP request is retried inside the client. A visible retry reuses package
+digest identity and therefore converges at the service boundary. Existing
+connected tools continue to run from local Host state if the package service is
+offline.
 `AgentSession` owns one Agent/Session binding, canonical workspace, model
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
@@ -398,6 +426,7 @@ Local Host state has one intentionally visible layout:
                                 references, and skill/session bindings
   oauth-locks/<sha256>.lock     process-crash-safe per-connection OAuth lock
   plugins/<sha256>/             immutable Agent Plugin directory
+  shared-registry/              owner-only transient package transfers
   skills/<sha256>/              immutable imported Agent Skill directory
   sessions/<session-uuid>/
     session.json                durable identity and workspace/profile binding
@@ -467,12 +496,16 @@ modification.
     Host inventory; access and activation are explicitly profile-scoped.
 11. Every trace database identifies its profile, Agent, and Session.
 12. The Host owns OAuth coordination, client-registration policy, and secret
-   references; the MCP adapter speaks the protocol, while packages, surfaces,
-   the loop, and kernel never own credentials.
+    references; the MCP adapter speaks the protocol, while packages, surfaces,
+    the loop, and kernel never own credentials.
+13. Shared package availability is a Host concern. The package registry carries
+    immutable package bytes and ordered revisions only; it never becomes RCP,
+    remote execution, credential distribution, profile authorization, or
+    surface state.
 
 ## Open decisions
 
-- future Host schema migrations beyond the proven v1-through-v10 chain;
+- future Host schema migrations beyond the proven v1-through-v11 chain;
 - historical resolved-binding retention across explicit catalog/profile
   changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
@@ -480,13 +513,14 @@ modification.
 - durable profile definition storage, profile inheritance, and Agent Instance
   overrides;
 - permission vocabulary, scopes, policy inheritance, and enforcement;
-- remote package discovery, updates, rollback, removal, and garbage collection;
+- public package discovery, updates, rollback, removal, and garbage collection;
 - the Host management transport and presentation;
 - whether capability changes pause and continue a task through one or more
   internal operations; and
 - a durable Agent catalog, multiple Sessions per Agent, and process placement
   for multiple concurrent local Agent Instances;
-- credential distribution across Hosts or nodes; and
+- credential, profile-definition, connection, and attachment distribution
+  across Hosts or nodes; and
 - surface routing and cross-node continuity, which remain future RCP/product work.
 
 These remain open deliberately. No placeholder contract should make them
@@ -596,8 +630,7 @@ no retry; `lookup` accepts only one exact name/version. The Rust boundary
 revalidates every normalized result and fixed trust statement. Search exposes
 no endpoint, lookup never installs, unsupported transports and packages stay
 explicitly blocked, concrete URL credentials are rejected, and safe HTTP
-status facts reach Alpha without an untrusted response body. The frozen
-extension binding is revision 9. Search uses identity tokens rather than broad
+status facts reach Alpha without an untrusted response body. Search uses identity tokens rather than broad
 substrings, so an unrelated publisher such as `trycloudflare` is not treated as
 Cloudflare. Every management action has an exact schema that rejects fields
 from another action. Generic Secret Service headers, idempotent re-enable, and
@@ -611,3 +644,18 @@ invalid definition. Invocation validates the exact arguments against the
 frozen schema before dispatch. Header credentials remain standard-input-only,
 endpoint-scoped, collision-checked, and redacted; older complete catalogs stay
 readable but new discovery publishes only v0.7.
+
+The first shared Host package path is complete. A loopback-only registry owns a
+stable identity, content-addressed tar blobs, and one contiguous SQLite revision
+log. Two already-running `LocalHost` instances converge through the public Host
+management method: one publishes a locally verified package and the other
+downloads and independently validates it without restarting. Exact publication
+does not create a second revision, executable bits survive transfer, a service
+and Host restart resume from the durable cursor without duplicates, a network
+failure does not advance that cursor, and a different registry identity is
+rejected. No credential, connection, profile attachment, session record,
+kernel type, RCP type, or surface contract is copied.
+This synchronization path changes the frozen `extension_manage` implementation
+from revision 9 to revision 10. An unfinished revision-9 operation fails closed
+after upgrade instead of acquiring network synchronization under its old
+manifest.

@@ -34,6 +34,7 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     connection
         .execute_batch(
             r#"PRAGMA foreign_keys = OFF;
+             DROP TABLE shared_plugin_registry_state;
              INSERT INTO mcp_oauth_flows(
                 connection_id, operation_id, phase, callback_port, expires_at_ms
              ) VALUES ('oauth', 'migration-flow', 'unknown', NULL, NULL);
@@ -125,6 +126,7 @@ fn version_nine_credentials_survive_and_custom_headers_become_available() {
         .expect("open version downgrade fixture")
         .execute_batch(
             r"PRAGMA foreign_keys = OFF;
+             DROP TABLE shared_plugin_registry_state;
              CREATE TABLE mcp_connections_v9 (
                 connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
                 integration_id TEXT NOT NULL REFERENCES mcp_integrations(integration_id),
