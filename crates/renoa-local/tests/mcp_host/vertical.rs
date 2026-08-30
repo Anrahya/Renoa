@@ -10,7 +10,10 @@ use std::{
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock, Message};
 use renoa_kernel::{EffectRecovery, Kernel, SessionId};
-use renoa_local::{LocalHost, LocalTurnOutcome, ModelProvider};
+use renoa_local::{
+    ALPHA_PROFILE_ID, AgentProfileId, LocalHost, LocalModelConfiguration, LocalTurnOutcome,
+    ModelProvider, alpha_profile,
+};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -44,7 +47,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     configure_echo_mcp(&host, &endpoint).await;
 
     let session = host
-        .create_alpha_session(&workspace)
+        .create_session(&alpha_id(), &workspace)
         .await
         .expect("create composed Alpha session");
     let session_id = session.id();
@@ -112,7 +115,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     assert_frozen_mcp_binding(&data, session_id);
     let reopened = new_vertical_host(&data, &bridge, &credentials, &adapter);
     let restored = reopened
-        .load_alpha_session(session_id, &workspace)
+        .load_session(session_id, &workspace)
         .await
         .expect("restore exact Alpha session");
     let replayed = restored
@@ -141,13 +144,13 @@ async fn configure_echo_mcp(host: &LocalHost, endpoint: &str) {
             .collect::<Vec<_>>(),
         ["echo", "unused"]
     );
-    host.enable_alpha_mcp_connection("primary")
+    host.enable_profile_mcp_connection(&alpha_id(), "primary")
         .await
         .expect("enable fixture connection for Alpha");
 }
 
 async fn execute_tool_turn(
-    session: &renoa_local::AlphaSession,
+    session: &renoa_local::AgentSession,
     request_id: Uuid,
     prompt: Vec<ContentBlock>,
     server: SocketAddr,
@@ -164,14 +167,21 @@ async fn execute_tool_turn(
 fn new_vertical_host(data: &Path, bridge: &Path, credentials: &Path, adapter: &Path) -> LocalHost {
     LocalHost::new(
         data,
-        bridge,
-        vec![ModelProvider::Xai],
-        ModelProvider::Xai,
-        "fixture-model",
-        credentials,
+        LocalModelConfiguration::new(
+            bridge,
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "fixture-model",
+            credentials,
+        ),
+        vec![alpha_profile()],
         renoa_local::LocalHostAdapters::new(Some(adapter)),
     )
     .expect("create local Host")
+}
+
+fn alpha_id() -> AgentProfileId {
+    AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id")
 }
 
 fn assert_model_context(path: &Path, configured_endpoint: &str) {

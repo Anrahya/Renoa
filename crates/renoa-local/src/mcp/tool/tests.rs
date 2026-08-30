@@ -7,11 +7,11 @@ use super::{
     EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, SEARCH_RESULT_LIMIT, SEARCH_TOOL,
     SearchTool, parse_references,
 };
-use crate::ALPHA_PROFILE_ID;
 use crate::mcp::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
     McpCatalogStore, McpCatalogTool,
 };
+use crate::{ALPHA_PROFILE_ID, AgentProfileId};
 
 #[test]
 fn registry_tool_names_are_small_and_stable() {
@@ -40,7 +40,7 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
     let directory = tempdir().expect("temporary Host catalog");
     let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("initialize Host catalog");
-    let search_tool = SearchTool::new(store.clone());
+    let search_tool = SearchTool::new(alpha_id(), store.clone());
     let before = run_search(&search_tool, "tool").await;
     assert_eq!(before["total_matches"], 0);
 
@@ -77,7 +77,7 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
         .publish_catalog(&snapshot)
         .expect("publish large catalog");
     store
-        .enable_alpha_connection(ALPHA_PROFILE_ID, "primary")
+        .enable_profile_connection(ALPHA_PROFILE_ID, "primary")
         .expect("enable connection");
 
     let after = run_search(&search_tool, "tool").await;
@@ -96,6 +96,48 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
     keys.sort_unstable();
     assert_eq!(keys, ["description", "name", "reference"]);
     assert!(!after.to_string().contains("input_schema"));
+}
+
+#[tokio::test]
+async fn live_registry_tools_read_only_their_profile_attachments() {
+    let directory = tempdir().expect("temporary Host catalog");
+    let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
+        .expect("initialize Host catalog");
+    let second = AgentProfileId::new("renoa.test.second.v1").expect("valid second profile id");
+    let alpha_search = SearchTool::new(alpha_id(), store.clone());
+    let second_search = SearchTool::new(second.clone(), store.clone());
+    store
+        .register_direct_connection("fixture", "primary", "http://127.0.0.1:43127/mcp")
+        .expect("register connection");
+    let snapshot = McpCatalogSnapshot::from_adapter(
+        "primary",
+        AdapterCatalog {
+            endpoint: "http://127.0.0.1:43127/mcp".to_owned(),
+            protocol_version: MCP_PROTOCOL_VERSION.to_owned(),
+            adapter_revision: MCP_ADAPTER_REVISION.to_owned(),
+            tools: vec![McpCatalogTool {
+                name: "echo".to_owned(),
+                description: "Echo one value".to_owned(),
+                input_schema: json!({"type": "object"}),
+                model_input_schema: json!({"type": "object"}),
+                output_schema: None,
+            }],
+            rejected_tools: Vec::new(),
+        },
+    )
+    .expect("build catalog");
+    store.publish_catalog(&snapshot).expect("publish catalog");
+    store
+        .enable_profile_connection(ALPHA_PROFILE_ID, "primary")
+        .expect("attach catalog to Alpha");
+
+    assert_eq!(run_search(&alpha_search, "echo").await["total_matches"], 1);
+    assert_eq!(run_search(&second_search, "echo").await["total_matches"], 0);
+
+    store
+        .enable_profile_connection(second.as_str(), "primary")
+        .expect("share catalog with second profile");
+    assert_eq!(run_search(&second_search, "echo").await["total_matches"], 1);
 }
 
 #[tokio::test]
@@ -127,9 +169,9 @@ async fn schema_loading_fails_instead_of_truncating_an_exact_large_schema() {
     let reference = format!("mcp:primary:{}:large", snapshot.digest());
     store.publish_catalog(&snapshot).expect("publish catalog");
     store
-        .enable_alpha_connection(ALPHA_PROFILE_ID, "primary")
+        .enable_profile_connection(ALPHA_PROFILE_ID, "primary")
         .expect("enable connection");
-    let load = LoadTool::new(store);
+    let load = LoadTool::new(alpha_id(), store);
 
     let result = invoke_tool(
         Some(&load),
@@ -151,6 +193,10 @@ async fn schema_loading_fails_instead_of_truncating_an_exact_large_schema() {
         panic!("schema-load error must be text")
     };
     assert!(text.contains("65536"));
+}
+
+fn alpha_id() -> AgentProfileId {
+    AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id")
 }
 
 async fn run_search(tool: &SearchTool, query: &str) -> Value {

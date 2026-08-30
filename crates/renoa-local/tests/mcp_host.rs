@@ -8,12 +8,17 @@ use std::{
     time::Duration,
 };
 
-use renoa_local::{LocalHost, LocalHostAdapters, LocalHostError, ModelProvider};
+use renoa_local::{
+    ALPHA_PROFILE_ID, AgentProfile, AgentProfileId, LocalHost, LocalHostAdapters, LocalHostError,
+    LocalModelConfiguration, ModelProvider, alpha_profile,
+};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
 #[path = "mcp_host/vertical.rs"]
 mod vertical;
+
+const SECOND_PROFILE_ID: &str = "renoa.test.second.v1";
 
 #[tokio::test]
 async fn host_discovers_enables_and_restores_one_real_mcp_connection() {
@@ -40,9 +45,30 @@ async fn host_discovers_enables_and_restores_one_real_mcp_connection() {
     assert_eq!(refreshed.tools()[0].name(), "echo");
     assert_eq!(refreshed.rejected_tools().len(), 1);
     assert_eq!(refreshed.rejected_tools()[0].name(), Some("bad name"));
-    host.enable_alpha_mcp_connection("primary")
+    assert!(
+        host.profile_mcp_connection_ids(&alpha_id())
+            .await
+            .expect("read empty Alpha bindings")
+            .is_empty()
+    );
+    assert!(
+        host.profile_mcp_connection_ids(&second_id())
+            .await
+            .expect("read empty second-profile bindings")
+            .is_empty()
+    );
+    host.enable_profile_mcp_connection(&alpha_id(), "primary")
         .await
         .expect("enable connection for Alpha");
+    assert!(
+        host.profile_mcp_connection_ids(&second_id())
+            .await
+            .expect("Alpha attachment must not leak")
+            .is_empty()
+    );
+    host.enable_profile_mcp_connection(&second_id(), "primary")
+        .await
+        .expect("share the same Host connection with a second profile");
     drop(host);
 
     assert!(data.join("host.sqlite3").is_file());
@@ -56,10 +82,25 @@ async fn host_discovers_enables_and_restores_one_real_mcp_connection() {
         refreshed
     );
     let enabled = reopened
-        .alpha_mcp_connection_ids()
+        .profile_mcp_connection_ids(&alpha_id())
         .await
         .expect("restore Alpha connection binding");
     assert_eq!(enabled, ["primary"]);
+    assert_eq!(
+        reopened
+            .profile_mcp_connection_ids(&second_id())
+            .await
+            .expect("restore second-profile connection binding"),
+        ["primary"]
+    );
+}
+
+fn alpha_id() -> AgentProfileId {
+    AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id")
+}
+
+fn second_id() -> AgentProfileId {
+    AgentProfileId::new(SECOND_PROFILE_ID).expect("valid second profile id")
 }
 
 #[tokio::test]
@@ -81,11 +122,18 @@ async fn catalog_refresh_requires_an_explicit_mcp_adapter() {
 fn new_host(data: &Path, adapter: Option<&Path>) -> LocalHost {
     LocalHost::new(
         data,
-        data.join("unused-model-adapter.mjs"),
-        vec![ModelProvider::Xai],
-        ModelProvider::Xai,
-        "unused-model",
-        data.join("unused-credentials.sqlite3"),
+        LocalModelConfiguration::new(
+            data.join("unused-model-adapter.mjs"),
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "unused-model",
+            data.join("unused-credentials.sqlite3"),
+        ),
+        vec![
+            alpha_profile(),
+            AgentProfile::new(SECOND_PROFILE_ID, "You are a test agent.")
+                .expect("valid second profile"),
+        ],
         LocalHostAdapters::new(adapter),
     )
     .expect("create local Host")

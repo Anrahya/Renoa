@@ -2,7 +2,9 @@ use std::path::Path;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::{InstalledPlugin, McpCatalogSnapshot, PluginCredential, PluginInspection};
+use crate::{
+    AgentProfileId, InstalledPlugin, McpCatalogSnapshot, PluginCredential, PluginInspection,
+};
 
 use super::{LocalHost, LocalHostError};
 
@@ -39,22 +41,25 @@ impl LocalHost {
         Ok(self.config.plugins.list().await?)
     }
 
-    /// Connects one installed package MCP server and makes it searchable by Alpha.
+    /// Connects one installed package MCP server for an exact registered profile.
     ///
     /// # Errors
     ///
     /// Returns package, credential, adapter, discovery, or durable storage failures.
-    pub async fn connect_alpha_plugin_mcp(
+    pub async fn connect_profile_plugin_mcp(
         &self,
+        profile_id: &AgentProfileId,
         package_digest: &str,
         server_id: &str,
         connection_id: &str,
         credential: PluginCredential,
     ) -> Result<McpCatalogSnapshot, LocalHostError> {
+        self.profile(profile_id)?;
         Ok(self
             .config
             .plugins
-            .connect_alpha(
+            .connect_profile(
+                profile_id,
                 package_digest,
                 server_id,
                 connection_id,

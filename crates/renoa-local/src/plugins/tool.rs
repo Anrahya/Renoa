@@ -14,16 +14,17 @@ mod output;
 mod tests;
 
 use super::{ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential, PluginManager};
-use crate::mcp::oauth_operation_id;
+use crate::{AgentProfileId, mcp::oauth_operation_id};
 use actions::{ConnectRequest, ExtensionInvocation};
 use contract::{ManageInput, manage_tool_spec, resolve_source};
 use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
 use output::{json_output, plugin_error, registry_error_output};
 
 const TOOL_NAME: &str = "extension_manage";
-const BINDING_REVISION: &str = "renoa-extension-manager-v8";
+const BINDING_REVISION: &str = "renoa-extension-manager-v9";
 
-pub(crate) fn alpha_plugin_binding(
+pub(crate) fn profile_plugin_binding(
+    profile_id: AgentProfileId,
     manager: PluginManager,
     workspace: PathBuf,
     session_id: SessionId,
@@ -32,13 +33,14 @@ pub(crate) fn alpha_plugin_binding(
     AgentToolBinding::new(
         BINDING_REVISION,
         Arc::new(ManageTool::for_session(
-            manager, workspace, session_id, command_id,
+            profile_id, manager, workspace, session_id, command_id,
         )),
         EffectRecovery::SafeToReplay,
     )
 }
 
 struct ManageTool {
+    profile_id: AgentProfileId,
     manager: PluginManager,
     workspace: PathBuf,
     session_id: SessionId,
@@ -48,12 +50,14 @@ struct ManageTool {
 
 impl ManageTool {
     fn for_session(
+        profile_id: AgentProfileId,
         manager: PluginManager,
         workspace: PathBuf,
         session_id: SessionId,
         command_id: Option<CommandId>,
     ) -> Self {
         Self {
+            profile_id,
             manager,
             workspace,
             session_id,
@@ -64,7 +68,13 @@ impl ManageTool {
 
     #[cfg(test)]
     fn new(manager: PluginManager, workspace: PathBuf) -> Self {
-        Self::for_session(manager, workspace, SessionId::new(), Some(CommandId::new()))
+        Self::for_session(
+            AgentProfileId::new(crate::ALPHA_PROFILE_ID).expect("valid Alpha profile id"),
+            manager,
+            workspace,
+            SessionId::new(),
+            Some(CommandId::new()),
+        )
     }
 }
 
@@ -232,12 +242,12 @@ impl ManageTool {
             .map_err(|error| plugin_error(error, false))?;
         let connections = self
             .manager
-            .connection_statuses()
+            .connection_statuses(&self.profile_id)
             .await
             .map_err(|error| plugin_error(error, false))?;
         let skill_sources = self
             .manager
-            .skill_source_reports()
+            .skill_source_reports(&self.profile_id)
             .await
             .map_err(|error| plugin_error(error, false))?;
         let page = ExtensionListPage::new(&packages, &connections, &skill_sources, cursor, limit)?;
@@ -247,27 +257,27 @@ impl ManageTool {
     async fn disconnect(&self, connection: String) -> Result<ToolOutput, ToolError> {
         let catalog_retained = self
             .manager
-            .disconnect_alpha(connection.clone())
+            .disconnect_profile(&self.profile_id, connection.clone())
             .await
             .map_err(|error| plugin_error(error, true))?;
         json_output(&DisconnectedOutput {
             status: "disconnected",
             connection,
             catalog_retained,
-            enabled_for_alpha: false,
+            enabled_for_profile: false,
         })
     }
 
     async fn enable(&self, connection: String) -> Result<ToolOutput, ToolError> {
         self.manager
-            .enable_alpha(connection.clone())
+            .enable_profile(&self.profile_id, connection.clone())
             .await
             .map_err(|error| plugin_error(error, true))?;
         json_output(&EnabledOutput {
             status: "enabled",
             connection,
             catalog_retained: true,
-            enabled_for_alpha: true,
+            enabled_for_profile: true,
         })
     }
 
@@ -342,7 +352,7 @@ struct DisconnectedOutput {
     status: &'static str,
     connection: String,
     catalog_retained: bool,
-    enabled_for_alpha: bool,
+    enabled_for_profile: bool,
 }
 
 #[derive(Serialize)]
@@ -350,7 +360,7 @@ struct EnabledOutput {
     status: &'static str,
     connection: String,
     catalog_retained: bool,
-    enabled_for_alpha: bool,
+    enabled_for_profile: bool,
 }
 
 #[derive(Serialize)]

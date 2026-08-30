@@ -23,7 +23,7 @@ use serde::Serialize;
 pub(crate) use discovery::OfficialRegistry;
 pub use error::PluginError;
 pub(crate) use manager::PluginManager;
-pub(crate) use tool::alpha_plugin_binding;
+pub(crate) use tool::profile_plugin_binding;
 
 pub(crate) const PLUGIN_STORE_DIRECTORY: &str = "plugins";
 

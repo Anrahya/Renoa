@@ -8,11 +8,11 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    LocalHistoryEntry, LocalHostError, LocalSession, LocalWorkspace, ModelChoice, ModelProvider,
-    ReasoningLevel,
+    AgentProfile, AgentProfileId, LocalHistoryEntry, LocalHostError, LocalSession, LocalWorkspace,
+    ModelChoice, ModelProvider, ReasoningLevel,
     host::{
-        HostConfig, discover_enabled_models, initial_reasoning, require_model, resolve_runtime,
-        selected_model_by_selection_id,
+        HostConfig, RuntimeRequest, discover_enabled_models, initial_reasoning, require_model,
+        resolve_runtime, selected_model_by_selection_id,
     },
     selection::{RuntimeSelection, append_selection},
     trace::TraceStore,
@@ -20,9 +20,10 @@ use crate::{
 
 mod execution;
 
-/// One durable Alpha Agent instance assembled by the local Host.
-pub struct AlphaSession {
+/// One durable Agent session assembled from an exact Host profile.
+pub struct AgentSession {
     id: Uuid,
+    profile_id: AgentProfileId,
     host: Arc<HostConfig>,
     kernel: LocalSession,
     workspace: PathBuf,
@@ -32,8 +33,8 @@ pub struct AlphaSession {
     idle: tokio::sync::Notify,
 }
 
-/// Durable resources belonging to one assembled Alpha session.
-pub(crate) struct AlphaSessionStorage {
+/// Durable resources belonging to one assembled Agent session.
+pub(crate) struct AgentSessionStorage {
     pub(crate) kernel: LocalSession,
     pub(crate) workspace: PathBuf,
     pub(crate) selection_path: PathBuf,
@@ -60,22 +61,24 @@ enum Activity {
 
 /// Owned model and reasoning choices for surface presentation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AlphaSessionConfiguration {
+pub struct AgentSessionConfiguration {
     pub models: Vec<ModelChoice>,
     pub model: String,
     pub reasoning: ReasoningLevel,
 }
 
-impl AlphaSession {
+impl AgentSession {
     pub(crate) fn new(
         id: Uuid,
+        profile_id: AgentProfileId,
         host: Arc<HostConfig>,
-        storage: AlphaSessionStorage,
+        storage: AgentSessionStorage,
         models: Vec<ModelChoice>,
         selection: RuntimeSelection,
     ) -> Self {
         Self {
             id,
+            profile_id,
             host,
             kernel: storage.kernel,
             workspace: storage.workspace,
@@ -98,6 +101,16 @@ impl AlphaSession {
         self.id
     }
 
+    #[must_use]
+    pub const fn profile_id(&self) -> &AgentProfileId {
+        &self.profile_id
+    }
+
+    #[must_use]
+    pub const fn agent_id(&self) -> renoa_kernel::AgentId {
+        self.kernel.agent_id()
+    }
+
     /// Returns the complete kernel-backed transcript for a loading surface.
     ///
     /// # Errors
@@ -112,10 +125,10 @@ impl AlphaSession {
     /// # Errors
     ///
     /// Returns an error if a prior panic poisoned session coordination state.
-    pub fn configuration(&self) -> Result<AlphaSessionConfiguration, LocalHostError> {
+    pub fn configuration(&self) -> Result<AgentSessionConfiguration, LocalHostError> {
         let state = self.state()?;
         let model = require_model(&state.models, state.provider, &state.model, "active")?;
-        Ok(AlphaSessionConfiguration {
+        Ok(AgentSessionConfiguration {
             models: state.models.clone(),
             model: model.selection_id(),
             reasoning: state.reasoning,
@@ -256,12 +269,12 @@ impl AlphaSession {
         let mut state = self.state()?;
         if !state.accepting_work {
             return Err(LocalHostError::InvalidRequest(
-                "this Alpha session is closing".to_owned(),
+                "this Agent session is closing".to_owned(),
             ));
         }
         if !matches!(state.activity, Activity::Idle) {
             return Err(LocalHostError::InvalidRequest(
-                "this Alpha session is busy".to_owned(),
+                "this Agent session is busy".to_owned(),
             ));
         }
         let model = require_model(&state.models, state.provider, &state.model, "active")?.clone();
@@ -283,7 +296,7 @@ impl AlphaSession {
         let mut state = self.state()?;
         if !state.accepting_work {
             return Err(LocalHostError::InvalidRequest(
-                "this Alpha session is closing".to_owned(),
+                "this Agent session is closing".to_owned(),
             ));
         }
         match state.activity {
@@ -309,14 +322,18 @@ impl AlphaSession {
         model_id: String,
     ) -> Result<(), LocalHostError> {
         let workspace = LocalWorkspace::open(&self.workspace)?;
+        let profile = self.profile()?.clone();
         resolve_runtime(
             &self.host,
-            renoa_kernel::SessionId::from_uuid(self.id),
-            None,
-            model,
-            reasoning,
-            &workspace,
-            None,
+            RuntimeRequest {
+                profile: &profile,
+                session_id: renoa_kernel::SessionId::from_uuid(self.id),
+                command_id: None,
+                model,
+                reasoning,
+                workspace: &workspace,
+                events: None,
+            },
         )
         .await?;
         append_selection(
@@ -330,6 +347,15 @@ impl AlphaSession {
         .await
     }
 
+    fn profile(&self) -> Result<&AgentProfile, LocalHostError> {
+        self.host.profiles.get(&self.profile_id).ok_or_else(|| {
+            LocalHostError::InvalidRequest(format!(
+                "agent profile `{}` is no longer registered with this Host",
+                self.profile_id
+            ))
+        })
+    }
+
     fn state(&self) -> Result<MutexGuard<'_, SessionState>, LocalHostError> {
         self.state.lock().map_err(|_| LocalHostError::StatePoisoned)
     }
@@ -341,19 +367,19 @@ enum GuardKind {
 }
 
 struct ActivityGuard<'a> {
-    session: &'a AlphaSession,
+    session: &'a AgentSession,
     kind: GuardKind,
 }
 
 impl<'a> ActivityGuard<'a> {
-    const fn prompt(session: &'a AlphaSession, request_id: Uuid) -> Self {
+    const fn prompt(session: &'a AgentSession, request_id: Uuid) -> Self {
         Self {
             session,
             kind: GuardKind::Prompt(request_id),
         }
     }
 
-    const fn configuration(session: &'a AlphaSession) -> Self {
+    const fn configuration(session: &'a AgentSession) -> Self {
         Self {
             session,
             kind: GuardKind::Configuration,

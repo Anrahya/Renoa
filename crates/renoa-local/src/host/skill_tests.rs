@@ -5,12 +5,15 @@ use tempfile::tempdir;
 use uuid::Uuid;
 
 use super::{HostInitialization, LocalHost};
-use crate::{LocalTurnOutcome, ModelProvider};
+use crate::{
+    ALPHA_PROFILE_ID, AgentProfile, AgentProfileId, LocalTurnOutcome, ModelProvider, alpha_profile,
+};
 
 const PROJECT_SKILL: &str = "renoa-test-project-workflow";
 const HOT_SKILL: &str = "renoa-test-hot-workflow";
 const PROJECT_MARKER: &str = "PROJECT_SKILL_EXACT_INSTRUCTIONS";
 const HOT_MARKER: &str = "HOT_SKILL_EXACT_INSTRUCTIONS";
+const SECOND_PROFILE_ID: &str = "renoa.test.second.v1";
 
 #[tokio::test]
 async fn skills_hot_load_and_survive_compaction_and_host_restart() {
@@ -32,7 +35,7 @@ async fn skills_hot_load_and_survive_compaction_and_host_restart() {
     );
     let host = local_host(&data, &bridge, &credentials, &global);
     let session = host
-        .create_alpha_session(&workspace)
+        .create_session(&alpha_id(), &workspace)
         .await
         .expect("create Alpha session");
     let session_id = session.id();
@@ -83,7 +86,7 @@ async fn skills_hot_load_and_survive_compaction_and_host_restart() {
     drop(host);
     let reopened = local_host(&data, &bridge, &credentials, &global);
     let restored = reopened
-        .load_alpha_session(session_id, &workspace)
+        .load_session(session_id, &workspace)
         .await
         .expect("restore exact Alpha session");
     assert_eq!(
@@ -103,6 +106,47 @@ async fn skills_hot_load_and_survive_compaction_and_host_restart() {
     assert_durable_full_results(&restored.history().expect("load durable restored history"));
 }
 
+#[tokio::test]
+async fn a_non_alpha_profile_uses_its_own_skill_registry_binding() {
+    let directory = tempdir().expect("temporary Host directory");
+    let data = directory.path().join("data");
+    let workspace = directory.path().join("workspace");
+    let global = directory.path().join("global-skills");
+    let bridge = directory.path().join("model-bridge.mjs");
+    let credentials = directory.path().join("credentials.sqlite3");
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::create_dir_all(&global).expect("create empty global skill source");
+    fs::write(&bridge, MODEL_BRIDGE).expect("write deterministic model bridge");
+    fs::write(&credentials, "").expect("write credential placeholder");
+    write_skill(
+        &workspace,
+        PROJECT_SKILL,
+        "Project workflow for the integration proof.",
+        PROJECT_MARKER,
+    );
+    let host = local_host(&data, &bridge, &credentials, &global);
+    let session = host
+        .create_session(&second_id(), &workspace)
+        .await
+        .expect("create second-profile session");
+
+    assert_eq!(
+        session
+            .execute_turn(
+                Uuid::new_v4(),
+                vec![ContentBlock::text("Activate the project workflow.")],
+                Arc::new(NoopEvents),
+            )
+            .await
+            .expect("activate a skill through the second profile"),
+        LocalTurnOutcome::Completed {
+            output: "Project skill activated.".to_owned(),
+            stop_reason: renoa_agent::StopReason::Stop,
+        }
+    );
+    assert_eq!(session.profile_id(), &second_id());
+}
+
 fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> LocalHost {
     LocalHost::assemble(HostInitialization {
         data_directory: data.to_path_buf(),
@@ -114,8 +158,21 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         mcp_adapter: None,
         mcp_registry_adapter: None,
         global_skill_source: Some(global.to_path_buf()),
+        profiles: vec![
+            alpha_profile(),
+            AgentProfile::new(SECOND_PROFILE_ID, "You are a test agent.")
+                .expect("valid second profile"),
+        ],
     })
     .expect("assemble local Host with isolated skill sources")
+}
+
+fn alpha_id() -> AgentProfileId {
+    AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id")
+}
+
+fn second_id() -> AgentProfileId {
+    AgentProfileId::new(SECOND_PROFILE_ID).expect("valid second profile id")
 }
 
 fn write_skill(workspace: &Path, name: &str, description: &str, body: &str) {

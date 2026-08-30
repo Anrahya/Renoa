@@ -2,13 +2,13 @@ use renoa_agent::{ContentBlock, ToolError, ToolOutput};
 use serde_json::{Value, json};
 
 use crate::mcp::{
-    AlphaMcpTool, McpAdapterError, McpCredentialError, McpOutcomeCertainty, McpToolReference,
+    McpAdapterError, McpCredentialError, McpOutcomeCertainty, McpToolReference, ResolvedMcpTool,
     call::McpCallFailure,
 };
 
 pub(super) fn execution_details(
     reference: &McpToolReference,
-    selected: &AlphaMcpTool,
+    selected: &ResolvedMcpTool,
     structured_content: Option<&Value>,
 ) -> Value {
     json!({
@@ -24,7 +24,7 @@ pub(super) fn execution_details(
 
 pub(super) fn map_failure(
     reference: &McpToolReference,
-    selected: &AlphaMcpTool,
+    selected: &ResolvedMcpTool,
     failure: McpCallFailure,
 ) -> Result<ToolOutput, ToolError> {
     let (source, certainty, partial_changes_possible) = failure.into_parts();
@@ -65,7 +65,7 @@ pub(super) fn map_failure(
 
 fn failure_details(
     reference: &McpToolReference,
-    selected: &AlphaMcpTool,
+    selected: &ResolvedMcpTool,
     source: &McpAdapterError,
     certainty: McpOutcomeCertainty,
     partial_changes_possible: bool,

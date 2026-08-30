@@ -17,7 +17,7 @@ use agent_client_protocol::{
     },
 };
 use renoa_agent::AgentEventSink;
-use renoa_local::{AlphaSession, AlphaSessionConfiguration, LocalTurnOutcome};
+use renoa_local::{AgentSession, AgentSessionConfiguration, LocalTurnOutcome};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -128,7 +128,7 @@ pub(crate) async fn serve_stdio(config: Config) -> Result<(), ServerError> {
 
 struct Server {
     config: Config,
-    active: Mutex<Option<Arc<AlphaSession>>>,
+    active: Mutex<Option<Arc<AgentSession>>>,
 }
 
 impl Server {
@@ -152,7 +152,7 @@ impl Server {
         let session = self
             .config
             .host()
-            .create_alpha_session(&request.cwd)
+            .create_session(self.config.profile_id(), &request.cwd)
             .await?;
         let id = session.id().to_string();
         let config_options = config_options(&session)?;
@@ -176,7 +176,7 @@ impl Server {
         let session = self
             .config
             .host()
-            .load_alpha_session(session_id, &request.cwd)
+            .load_session(session_id, &request.cwd)
             .await?;
         let config_options = config_options(&session)?;
         events::replay_history(
@@ -229,7 +229,7 @@ impl Server {
                 "close the active ACP session before deleting it".to_owned(),
             ));
         }
-        self.config.host().delete_alpha_session(session_id).await?;
+        self.config.host().delete_session(session_id).await?;
         Ok(DeleteSessionResponse::new())
     }
 
@@ -367,7 +367,7 @@ impl Server {
         Ok(())
     }
 
-    async fn session(&self, requested: &str) -> Result<Arc<AlphaSession>, ServerError> {
+    async fn session(&self, requested: &str) -> Result<Arc<AgentSession>, ServerError> {
         self.active
             .lock()
             .await
@@ -377,8 +377,8 @@ impl Server {
     }
 }
 
-fn config_options(session: &AlphaSession) -> Result<Vec<SessionConfigOption>, ServerError> {
-    let AlphaSessionConfiguration {
+fn config_options(session: &AgentSession) -> Result<Vec<SessionConfigOption>, ServerError> {
+    let AgentSessionConfiguration {
         models,
         model: selected,
         reasoning,

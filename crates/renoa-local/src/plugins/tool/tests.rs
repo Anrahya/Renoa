@@ -1,6 +1,7 @@
 use std::fs;
 
 use renoa_agent::{ContentBlock, ToolCall, ToolErrorCode, invoke_tool};
+use renoa_kernel::{CommandId, SessionId};
 use serde_json::{Value, json};
 use tempfile::{TempDir, tempdir};
 use tokio_util::sync::CancellationToken;
@@ -13,6 +14,7 @@ mod support;
 use super::{ManageTool, TOOL_NAME};
 use crate::plugins::tests::test_skill_store;
 use crate::{
+    AgentProfileId,
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
     plugins::PluginManager,
@@ -50,7 +52,7 @@ async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
     assert_eq!(
         fixture
             .mcp
-            .alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read hot-loaded researched tools")
             .len(),
         1
@@ -87,7 +89,7 @@ async fn extension_inventory_is_bounded_and_complete() {
     assert_eq!(connection["connection"], fixture.connection);
     assert_eq!(connection["registered"], true);
     assert_eq!(connection["catalog_loaded"], true);
-    assert_eq!(connection["enabled_for_alpha"], true);
+    assert_eq!(connection["enabled_for_profile"], true);
 }
 
 #[tokio::test]
@@ -106,7 +108,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     .await;
     assert_eq!(disconnected["status"], "disconnected");
     assert_eq!(disconnected["catalog_retained"], true);
-    assert_eq!(disconnected["enabled_for_alpha"], false);
+    assert_eq!(disconnected["enabled_for_profile"], false);
     let repeated = call(
         &fixture.tool,
         json!({"action": "disconnect", "connection": fixture.connection}),
@@ -122,7 +124,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     assert!(
         fixture
             .mcp
-            .alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read tools after disconnect")
             .is_empty()
     );
@@ -131,7 +133,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     let listed = call(&fixture.tool, json!({"action": "list"})).await;
     let connection = inventory_item(&listed, "connection");
     assert_eq!(connection["catalog_loaded"], true);
-    assert_eq!(connection["enabled_for_alpha"], false);
+    assert_eq!(connection["enabled_for_profile"], false);
     let enabled = call(
         &fixture.tool,
         json!({"action": "enable", "connection": fixture.connection}),
@@ -139,19 +141,72 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     .await;
     assert_eq!(enabled["status"], "enabled");
     assert_eq!(enabled["catalog_retained"], true);
-    assert_eq!(enabled["enabled_for_alpha"], true);
+    assert_eq!(enabled["enabled_for_profile"], true);
     assert_eq!(
         fixture
             .mcp
-            .alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read tools after re-enable")
             .len(),
         1
     );
 }
 
+#[tokio::test]
+async fn extension_management_changes_only_its_bound_profile() {
+    let fixture = ResearchedMcpFixture::new().await;
+    let second_profile =
+        AgentProfileId::new("renoa.test.second.v1").expect("valid second profile id");
+    let second_tool = ManageTool::for_session(
+        second_profile.clone(),
+        fixture.manager.clone(),
+        fixture.directory.path().to_path_buf(),
+        SessionId::new(),
+        Some(CommandId::new()),
+    );
+
+    let before = call(&second_tool, json!({"action": "list"})).await;
+    assert_eq!(
+        inventory_item(&before, "connection")["enabled_for_profile"],
+        false
+    );
+    call(
+        &second_tool,
+        json!({"action": "enable", "connection": fixture.connection}),
+    )
+    .await;
+    assert_eq!(
+        fixture
+            .mcp
+            .profile_tool_summaries(second_profile.as_str())
+            .expect("read second profile registry")
+            .len(),
+        1
+    );
+    call(
+        &second_tool,
+        json!({"action": "disconnect", "connection": fixture.connection}),
+    )
+    .await;
+    assert!(
+        fixture
+            .mcp
+            .profile_tool_summaries(second_profile.as_str())
+            .expect("read second profile after disconnect")
+            .is_empty()
+    );
+    assert_eq!(
+        fixture
+            .mcp
+            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .expect("Alpha attachment remains unchanged")
+            .len(),
+        1
+    );
+}
+
 struct ResearchedMcpFixture {
-    _directory: TempDir,
+    directory: TempDir,
     mcp: McpCatalogStore,
     manager: PluginManager,
     tool: ManageTool,
@@ -203,7 +258,7 @@ impl ResearchedMcpFixture {
             .expect("generated connection id")
             .to_owned();
         Self {
-            _directory: directory,
+            directory,
             mcp,
             manager,
             tool,
@@ -364,7 +419,7 @@ process.stdout.write(JSON.stringify({
     );
     assert_failed_connection_is_registered_without_a_catalog(&mcp);
     assert!(
-        mcp.alpha_tool_summaries(crate::ALPHA_PROFILE_ID)
+        mcp.profile_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read Alpha registry")
             .is_empty()
     );

@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use super::LocalHost;
 use crate::{
-    LocalHostAdapters, ModelProvider,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider, alpha_profile,
     mcp::{McpConnectionAuth, McpCredentialResolver},
 };
 
@@ -21,11 +21,14 @@ async fn gh_reference_resolves_only_for_adapter_stdin_and_never_enters_host_stat
     let adapter = write_fake_adapter(&fixtures);
     let mut host = LocalHost::new(
         &data,
-        fixtures.join("unused-model-adapter.mjs"),
-        vec![ModelProvider::Xai],
-        ModelProvider::Xai,
-        "unused-model",
-        fixtures.join("unused-credentials.sqlite3"),
+        LocalModelConfiguration::new(
+            fixtures.join("unused-model-adapter.mjs"),
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "unused-model",
+            fixtures.join("unused-credentials.sqlite3"),
+        ),
+        vec![alpha_profile()],
         LocalHostAdapters::new(Some(&adapter)),
     )
     .expect("create Host");

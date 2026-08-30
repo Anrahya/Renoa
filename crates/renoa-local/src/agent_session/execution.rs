@@ -5,11 +5,11 @@ use renoa_kernel::CommandId;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::AlphaSession;
+use super::AgentSession;
 use crate::{
     LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice,
-    alpha_trace::finish_trace,
-    host::resolve_runtime,
+    agent_trace::finish_trace,
+    host::{RuntimeRequest, resolve_runtime},
     trace::{ObservedEventSink, TraceRun},
 };
 
@@ -37,8 +37,8 @@ struct TracedTurn<'a> {
     trace: &'a TraceRun,
 }
 
-impl AlphaSession {
-    /// Runs one caller-identified prompt through fresh Alpha composition.
+impl AgentSession {
+    /// Runs one caller-identified prompt through fresh profile composition.
     ///
     /// Workspace instructions are read for every newly admitted operation.
     /// The resolved behavior then freezes in that operation's kernel manifest.
@@ -166,14 +166,18 @@ impl AlphaSession {
             return Ok(outcome);
         }
         let workspace = LocalWorkspace::open(&self.workspace)?;
+        let profile = self.profile()?.clone();
         let runtime = resolve_runtime(
             &self.host,
-            renoa_kernel::SessionId::from_uuid(self.id),
-            Some(command_id),
-            &model,
-            reasoning,
-            &workspace,
-            Some(events),
+            RuntimeRequest {
+                profile: &profile,
+                session_id: renoa_kernel::SessionId::from_uuid(self.id),
+                command_id: Some(command_id),
+                model: &model,
+                reasoning,
+                workspace: &workspace,
+                events: Some(events),
+            },
         )
         .await?;
         match command {

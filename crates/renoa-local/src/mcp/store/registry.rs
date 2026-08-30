@@ -5,13 +5,13 @@ use serde::Serialize;
 
 use super::{McpCatalogStore, load_catalog};
 use crate::mcp::{
-    AlphaMcpTool, McpConnectionAuth, McpHostError,
+    McpConnectionAuth, McpHostError, ResolvedMcpTool,
     registry::{McpToolReference, McpToolSummary},
     validate_identity,
 };
 
 impl McpCatalogStore {
-    pub(crate) fn enable_alpha_connection(
+    pub(crate) fn enable_profile_connection(
         &self,
         profile_id: &str,
         connection_id: &str,
@@ -43,7 +43,7 @@ impl McpCatalogStore {
         Ok(())
     }
 
-    pub(crate) fn alpha_connection_ids(
+    pub(crate) fn profile_connection_ids(
         &self,
         profile_id: &str,
     ) -> Result<Vec<String>, McpHostError> {
@@ -59,7 +59,7 @@ impl McpCatalogStore {
         Ok(identifiers)
     }
 
-    pub(crate) fn alpha_connection_statuses(
+    pub(crate) fn profile_connection_statuses(
         &self,
         profile_id: &str,
     ) -> Result<Vec<McpConnectionStatus>, McpHostError> {
@@ -114,7 +114,7 @@ impl McpCatalogStore {
                         auth,
                         registered: true,
                         catalog_loaded,
-                        enabled_for_alpha: enabled,
+                        enabled_for_profile: enabled,
                         tools: usize::try_from(tools).map_err(|error| {
                             McpHostError::Invalid(format!(
                                 "stored MCP tool count is invalid: {error}"
@@ -131,7 +131,7 @@ impl McpCatalogStore {
             .collect()
     }
 
-    pub(crate) fn disable_alpha_connection(
+    pub(crate) fn disable_profile_connection(
         &self,
         profile_id: &str,
         connection_id: &str,
@@ -163,7 +163,7 @@ impl McpCatalogStore {
         Ok(catalog_retained)
     }
 
-    pub(crate) fn alpha_tool_summaries(
+    pub(crate) fn profile_tool_summaries(
         &self,
         profile_id: &str,
     ) -> Result<Vec<McpToolSummary>, McpHostError> {
@@ -196,11 +196,11 @@ impl McpCatalogStore {
         Ok(tools)
     }
 
-    pub(crate) fn resolve_alpha_tools(
+    pub(crate) fn resolve_profile_tools(
         &self,
         profile_id: &str,
         references: &[McpToolReference],
-    ) -> Result<Vec<AlphaMcpTool>, McpHostError> {
+    ) -> Result<Vec<ResolvedMcpTool>, McpHostError> {
         validate_identity("profile", profile_id)?;
         if references.is_empty() {
             return Err(McpHostError::Invalid(
@@ -256,7 +256,7 @@ impl McpCatalogStore {
                 enabled.auth_prefix,
             )?;
             auth.validate_oauth_binding(reference.connection_id(), catalog.endpoint())?;
-            tools.push(AlphaMcpTool {
+            tools.push(ResolvedMcpTool {
                 integration_id: enabled.integration_id,
                 connection_id: reference.connection_id().to_owned(),
                 endpoint: catalog.endpoint().to_owned(),
@@ -305,7 +305,7 @@ pub(crate) struct McpConnectionStatus {
     auth: McpConnectionAuthKind,
     registered: bool,
     catalog_loaded: bool,
-    enabled_for_alpha: bool,
+    enabled_for_profile: bool,
     tools: usize,
     rejected_tools: usize,
 }

@@ -15,7 +15,7 @@ use super::{
     store::PluginStore,
 };
 use crate::{
-    ALPHA_PROFILE_ID,
+    AgentProfileId,
     mcp::{
         McpAdapterError, McpAuthorizationResolver, McpCatalogSnapshot, McpCatalogStore,
         McpCredentialResolver, McpHostError, McpOAuthAuthorizationRequest, discover_cancellable,
@@ -35,7 +35,8 @@ pub(crate) struct PluginManager {
     skills: SkillStore,
 }
 
-pub(crate) struct AlphaConnectionRequest<'a> {
+pub(crate) struct ProfileConnectionRequest<'a> {
+    pub(crate) profile_id: &'a AgentProfileId,
     pub(crate) package_digest: &'a str,
     pub(crate) server_id: &'a str,
     pub(crate) connection_id: &'a str,
@@ -129,8 +130,9 @@ impl PluginManager {
         tokio::task::spawn_blocking(move || store.list_report()).await?
     }
 
-    pub(crate) async fn add_alpha(
+    pub(crate) async fn add_to_profile(
         &self,
+        profile_id: &AgentProfileId,
         request: ExtensionAddRequest,
         operation_id: &str,
         cancellation: CancellationToken,
@@ -164,8 +166,9 @@ impl PluginManager {
                 }
             }
         };
-        let skills = self.sync_skills(&prepared.installed).await?;
+        let skills = self.sync_skills(profile_id, &prepared.installed).await?;
         self.connect_prepared(
+            profile_id,
             prepared,
             skills,
             connection_request,
@@ -177,16 +180,18 @@ impl PluginManager {
 
     async fn sync_skills(
         &self,
+        profile_id: &AgentProfileId,
         installed: &InstalledPlugin,
     ) -> Result<SkillComponentReport, PluginError> {
         let store = self.store.clone();
         let package_digest = installed.digest().to_owned();
         let plugin_name = installed.metadata().name().to_owned();
+        let profile_id = profile_id.clone();
         let skills = self.skills.clone();
         tokio::task::spawn_blocking(move || {
             let package_root = store.package_root(&package_digest)?;
             skills
-                .sync_plugin(ALPHA_PROFILE_ID, &plugin_name, &package_root)
+                .sync_plugin(profile_id.as_str(), &plugin_name, &package_root)
                 .map_err(PluginError::from)
         })
         .await?
@@ -194,6 +199,7 @@ impl PluginManager {
 
     async fn connect_prepared(
         &self,
+        profile_id: &AgentProfileId,
         prepared: PreparedExtension,
         skills: SkillComponentReport,
         request: Option<ExtensionConnectionRequest>,
@@ -240,8 +246,9 @@ impl PluginManager {
         let connection =
             id.unwrap_or_else(|| default_connection_id(prepared.installed.digest(), &server));
         let outcome = match self
-            .connect_alpha_operation(
-                AlphaConnectionRequest {
+            .connect_profile_operation(
+                ProfileConnectionRequest {
+                    profile_id,
                     package_digest: prepared.installed.digest(),
                     server_id: &server,
                     connection_id: &connection,
@@ -272,8 +279,9 @@ impl PluginManager {
         })
     }
 
-    pub(crate) async fn connect_alpha(
+    pub(crate) async fn connect_profile(
         &self,
+        profile_id: &AgentProfileId,
         package_digest: &str,
         server_id: &str,
         connection_id: &str,
@@ -281,8 +289,9 @@ impl PluginManager {
         cancellation: CancellationToken,
     ) -> Result<McpCatalogSnapshot, PluginError> {
         let operation_id = format!("host-connect.{}", uuid::Uuid::new_v4());
-        self.connect_alpha_operation(
-            AlphaConnectionRequest {
+        self.connect_profile_operation(
+            ProfileConnectionRequest {
+                profile_id,
                 package_digest,
                 server_id,
                 connection_id,
@@ -295,12 +304,13 @@ impl PluginManager {
         .await
     }
 
-    pub(crate) async fn connect_alpha_operation(
+    pub(crate) async fn connect_profile_operation(
         &self,
-        request: AlphaConnectionRequest<'_>,
+        request: ProfileConnectionRequest<'_>,
         cancellation: CancellationToken,
     ) -> Result<McpCatalogSnapshot, PluginError> {
-        let AlphaConnectionRequest {
+        let ProfileConnectionRequest {
+            profile_id,
             package_digest,
             server_id,
             connection_id,
@@ -385,16 +395,18 @@ impl PluginManager {
         )
         .await?;
         let catalog = self.mcp_catalog.clone();
+        let enabled_profile = profile_id.clone();
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || {
-            catalog.publish_and_enable_connection(ALPHA_PROFILE_ID, &stored_snapshot)
+            catalog.publish_and_enable_connection(enabled_profile.as_str(), &stored_snapshot)
         })
         .await??;
         Ok(snapshot)
     }
 
-    pub(crate) async fn authorize_alpha(
+    pub(crate) async fn authorize_profile(
         &self,
+        profile_id: &AgentProfileId,
         connection_id: &str,
         operation_id: &str,
         restart: bool,
@@ -435,9 +447,10 @@ impl PluginManager {
         )
         .await?;
         let catalog = self.mcp_catalog.clone();
+        let enabled_profile = profile_id.clone();
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || {
-            catalog.publish_and_enable_connection(ALPHA_PROFILE_ID, &stored_snapshot)
+            catalog.publish_and_enable_connection(enabled_profile.as_str(), &stored_snapshot)
         })
         .await??;
         Ok(snapshot)

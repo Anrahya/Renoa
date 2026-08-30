@@ -212,7 +212,7 @@ fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
         .expect("mutate stored OAuth reference");
 
     assert!(matches!(
-        store.resolve_alpha_tools(PROFILE, &[reference]),
+        store.resolve_profile_tools(PROFILE, &[reference]),
         Err(McpHostError::Invalid(_))
     ));
 }
@@ -282,7 +282,7 @@ fn registered_plugin_catalog_publication_rolls_back_catalog_and_attachment() {
     assert!(store.connection_config("plugin").is_ok());
     assert!(
         store
-            .alpha_connection_ids(PROFILE)
+            .profile_connection_ids(PROFILE)
             .expect("load Alpha attachments")
             .is_empty()
     );
@@ -328,22 +328,22 @@ fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() 
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo", "unused"]))
         .expect("publish catalog");
     store
-        .enable_alpha_connection(PROFILE, "primary")
+        .enable_profile_connection(PROFILE, "primary")
         .expect("enable connection");
     store
-        .enable_alpha_connection(PROFILE, "primary")
+        .enable_profile_connection(PROFILE, "primary")
         .expect("repeat exact enable");
     drop(store);
 
     let reopened = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("reopen Host catalog");
     let tools = reopened
-        .alpha_tool_summaries(PROFILE)
+        .profile_tool_summaries(PROFILE)
         .expect("load searchable tools");
 
     assert_eq!(
         reopened
-            .alpha_connection_ids(PROFILE)
+            .profile_connection_ids(PROFILE)
             .expect("load enabled Alpha connections"),
         ["primary"]
     );
@@ -380,7 +380,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
 
     let before = serde_json::to_value(
         store
-            .alpha_connection_statuses(PROFILE)
+            .profile_connection_statuses(PROFILE)
             .expect("list connection states"),
     )
     .expect("encode connection states");
@@ -392,7 +392,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
     assert_eq!(primary["auth"], "none");
     assert_eq!(primary["registered"], true);
     assert_eq!(primary["catalog_loaded"], true);
-    assert_eq!(primary["enabled_for_alpha"], true);
+    assert_eq!(primary["enabled_for_profile"], true);
     assert_eq!(primary["tools"], 1);
     let oauth = connections
         .iter()
@@ -401,7 +401,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
     assert_eq!(oauth["auth"], "oauth");
     assert_eq!(oauth["registered"], true);
     assert_eq!(oauth["catalog_loaded"], false);
-    assert_eq!(oauth["enabled_for_alpha"], false);
+    assert_eq!(oauth["enabled_for_profile"], false);
     assert_eq!(oauth["tools"], 0);
     assert!(!before.to_string().contains("credential_id"));
     assert!(before[0].get("endpoint").is_none());
@@ -409,22 +409,22 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
 
     assert!(
         store
-            .disable_alpha_connection(PROFILE, "primary")
+            .disable_profile_connection(PROFILE, "primary")
             .expect("disconnect Alpha while retaining the catalog")
     );
     assert!(
         store
-            .disable_alpha_connection(PROFILE, "primary")
+            .disable_profile_connection(PROFILE, "primary")
             .expect("repeating disconnect is idempotent")
     );
     assert!(
         store
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("read tools after disconnect")
             .is_empty()
     );
     assert!(matches!(
-        store.resolve_alpha_tools(PROFILE, &[reference]),
+        store.resolve_profile_tools(PROFILE, &[reference]),
         Err(McpHostError::NotFound(_))
     ));
     assert_eq!(
@@ -435,7 +435,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
     );
     let after = serde_json::to_value(
         store
-            .alpha_connection_statuses(PROFILE)
+            .profile_connection_statuses(PROFILE)
             .expect("list states after disconnect"),
     )
     .expect("encode states after disconnect");
@@ -446,7 +446,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
         .find(|connection| connection["connection"] == "primary")
         .expect("disconnected direct connection state");
     assert_eq!(primary["catalog_loaded"], true);
-    assert_eq!(primary["enabled_for_alpha"], false);
+    assert_eq!(primary["enabled_for_profile"], false);
 }
 
 #[test]
@@ -457,13 +457,13 @@ fn enabling_a_connection_requires_a_complete_catalog() {
         .expect("register connection");
 
     let error = store
-        .enable_alpha_connection(PROFILE, "primary")
+        .enable_profile_connection(PROFILE, "primary")
         .expect_err("missing catalog rejects enable");
 
     assert!(matches!(error, McpHostError::NotFound(_)));
     assert!(
         store
-            .alpha_connection_ids(PROFILE)
+            .profile_connection_ids(PROFILE)
             .expect("load empty profile")
             .is_empty()
     );

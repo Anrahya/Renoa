@@ -38,7 +38,7 @@ pub(crate) use registry::{
     LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, SEARCH_RESULT_LIMIT, rank_tools,
 };
 pub(crate) use store::{McpCatalogStore, McpConnectionStatus};
-pub(crate) use tool::{adapter_tool_error, alpha_registry_bindings};
+pub(crate) use tool::{adapter_tool_error, profile_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.7.0";
@@ -185,9 +185,9 @@ impl McpCatalogSnapshot {
     }
 }
 
-/// One exact catalog-bound MCP target resolved for Alpha execution.
+/// One exact catalog-bound MCP target resolved for profile execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AlphaMcpTool {
+pub struct ResolvedMcpTool {
     integration_id: String,
     connection_id: String,
     endpoint: String,
@@ -198,7 +198,7 @@ pub struct AlphaMcpTool {
     tool: McpCatalogTool,
 }
 
-impl AlphaMcpTool {
+impl ResolvedMcpTool {
     #[must_use]
     pub fn integration_id(&self) -> &str {
         &self.integration_id

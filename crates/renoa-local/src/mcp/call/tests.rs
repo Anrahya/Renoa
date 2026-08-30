@@ -6,8 +6,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{CALL_BOUNDARY_REVISION, WIRE_VERSION, call_tool, wire::McpCallResult};
 use crate::mcp::{
-    AlphaMcpTool, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogTool, McpConnectionAuth,
-    McpCredentialHeader, McpOutcomeCertainty,
+    MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogTool, McpConnectionAuth,
+    McpCredentialHeader, McpOutcomeCertainty, ResolvedMcpTool,
 };
 
 #[test]
@@ -201,8 +201,8 @@ fn assert_result(result: &McpCallResult) {
     assert!(!result.is_error);
 }
 
-fn selected_tool(endpoint: &str) -> AlphaMcpTool {
-    AlphaMcpTool {
+fn selected_tool(endpoint: &str) -> ResolvedMcpTool {
+    ResolvedMcpTool {
         integration_id: "fixture".to_owned(),
         connection_id: "primary".to_owned(),
         endpoint: endpoint.to_owned(),

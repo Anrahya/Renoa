@@ -24,7 +24,7 @@ use self::{
     wire::{CallTerminal, McpCallResult, ParseFailure, parse_call_records},
 };
 use super::{
-    AlphaMcpTool, McpAdapterError, McpCredentialHeader, McpOutcomeCertainty, McpRemoteFailure,
+    McpAdapterError, McpCredentialHeader, McpOutcomeCertainty, McpRemoteFailure, ResolvedMcpTool,
 };
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
@@ -76,7 +76,7 @@ impl McpCallFailure {
 
 pub(super) async fn call_tool(
     adapter: &Path,
-    selected: &AlphaMcpTool,
+    selected: &ResolvedMcpTool,
     credential: Option<&McpCredentialHeader>,
     arguments: &Value,
     cancellation: CancellationToken,

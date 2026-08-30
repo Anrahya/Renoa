@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{PluginCredential, PluginError, manager::PluginManager};
 use crate::{
-    ALPHA_PROFILE_ID,
+    ALPHA_PROFILE_ID, AgentProfileId,
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
     skills::SkillStore,
@@ -162,7 +162,7 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
     )
     .expect("initialize plugin manager");
     assert!(
-        mcp.alpha_tool_summaries(ALPHA_PROFILE_ID)
+        mcp.profile_tool_summaries(ALPHA_PROFILE_ID)
             .expect("read empty registry")
             .is_empty()
     );
@@ -173,7 +173,8 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
         .expect("install package");
 
     let snapshot = manager
-        .connect_alpha(
+        .connect_profile(
+            &AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id"),
             inspection.digest(),
             "exa",
             "exa.default",
@@ -195,7 +196,7 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
         "lookup\napplication\nrenoa\ncredential\nexa.default"
     );
     let hot_loaded = mcp
-        .alpha_tool_summaries(ALPHA_PROFILE_ID)
+        .profile_tool_summaries(ALPHA_PROFILE_ID)
         .expect("same registry object sees new connection");
     assert_eq!(hot_loaded.len(), 1);
     assert_eq!(snapshot.tools()[0].name(), "web_search_exa");

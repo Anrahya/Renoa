@@ -17,7 +17,7 @@ use std::{
 };
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
-use renoa_kernel::{CommandId, SessionId};
+use renoa_kernel::{AgentId, CommandId, SessionId};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -26,6 +26,7 @@ use self::{
     record::{TraceState, now_unix_ms},
     writer::{TraceCommand, TraceEntry, TraceFinish, TraceStart, TraceWriter},
 };
+use crate::AgentProfileId;
 
 pub(crate) const TRACE_DATABASE: &str = "trace.sqlite3";
 
@@ -57,18 +58,40 @@ pub(crate) enum TraceError {
 pub(crate) struct TraceStore {
     path: PathBuf,
     session_id: SessionId,
+    agent_id: AgentId,
+    profile_id: AgentProfileId,
 }
 
 impl TraceStore {
-    pub(crate) fn create(path: PathBuf, session_id: SessionId) -> Result<Self, TraceError> {
-        schema::create(&path, session_id)?;
-        Ok(Self { path, session_id })
+    pub(crate) fn create(
+        path: PathBuf,
+        session_id: SessionId,
+        agent_id: AgentId,
+        profile_id: &AgentProfileId,
+    ) -> Result<Self, TraceError> {
+        schema::create(&path, session_id, agent_id, profile_id)?;
+        Ok(Self {
+            path,
+            session_id,
+            agent_id,
+            profile_id: profile_id.clone(),
+        })
     }
 
-    pub(crate) fn open(path: PathBuf, session_id: SessionId) -> Result<Self, TraceError> {
-        let connection = schema::open(&path, session_id)?;
+    pub(crate) fn open(
+        path: PathBuf,
+        session_id: SessionId,
+        agent_id: AgentId,
+        profile_id: &AgentProfileId,
+    ) -> Result<Self, TraceError> {
+        let connection = schema::open(&path, session_id, agent_id, profile_id)?;
         schema::recover_running(&connection)?;
-        Ok(Self { path, session_id })
+        Ok(Self {
+            path,
+            session_id,
+            agent_id,
+            profile_id: profile_id.clone(),
+        })
     }
 
     pub(crate) async fn start_run(
@@ -81,6 +104,8 @@ impl TraceStore {
     ) -> Result<Arc<TraceRun>, TraceError> {
         let path = self.path.clone();
         let session_id = self.session_id;
+        let agent_id = self.agent_id;
+        let profile_id = self.profile_id.clone();
         let run_id = Uuid::new_v4();
         let input = serde_json::to_string(content)?;
         let provider = provider.to_owned();
@@ -91,6 +116,8 @@ impl TraceStore {
             TraceWriter::start(TraceStart {
                 path,
                 session_id,
+                agent_id,
+                profile_id,
                 run_id,
                 command_id,
                 started_at_ms,

@@ -15,14 +15,15 @@ use super::{
     render,
     store::SkillStore,
 };
-use crate::ALPHA_PROFILE_ID;
+use crate::AgentProfileId;
 
 pub(super) const SKILL_LOAD_TOOL: &str = "skill_load";
 const SKILL_SEARCH_TOOL: &str = "skill_search";
 pub(super) const ACTIVATION_DETAIL_KIND: &str = "renoa.skill.activation.v1";
-const REGISTRY_REVISION: &str = "renoa-skill-registry-v3";
+const REGISTRY_REVISION: &str = "renoa-skill-registry-v4";
 
-pub(crate) fn alpha_skill_bindings(
+pub(crate) fn profile_skill_bindings(
+    profile_id: AgentProfileId,
     store: SkillStore,
     workspace: PathBuf,
     session_id: SessionId,
@@ -31,32 +32,40 @@ pub(crate) fn alpha_skill_bindings(
     vec![
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/search"),
-            Arc::new(SearchTool::new(store.clone(), workspace.clone())),
+            Arc::new(SearchTool::new(
+                profile_id.clone(),
+                store.clone(),
+                workspace.clone(),
+            )),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/load"),
-            Arc::new(LoadTool::new(store, workspace, session_id, command_id)),
+            Arc::new(LoadTool::new(
+                profile_id, store, workspace, session_id, command_id,
+            )),
             EffectRecovery::SafeToReplay,
         ),
     ]
 }
 
 struct SearchTool {
+    profile_id: AgentProfileId,
     store: SkillStore,
     workspace: PathBuf,
     spec: ToolSpec,
 }
 
 impl SearchTool {
-    fn new(store: SkillStore, workspace: PathBuf) -> Self {
+    fn new(profile_id: AgentProfileId, store: SkillStore, workspace: PathBuf) -> Self {
         Self {
+            profile_id,
             store,
             workspace,
             spec: ToolSpec {
                 name: SKILL_SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find Agent Skills available to Alpha without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} matches containing only name and description. Use query `*` to browse, then call skill_load with one name. Local global/project .agents sources are rescanned on each call, and installed Agent Plugin skills are hot-loaded. Precedence is project, global, then plugin; different plugins cannot silently compete for one name."
+                    "Find Agent Skills available to this agent profile without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} matches containing only name and description. Use query `*` to browse, then call skill_load with one name. Local global/project .agents sources are rescanned on each call, and installed Agent Plugin skills are hot-loaded. Precedence is project, global, then plugin; different plugins cannot silently compete for one name."
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -89,17 +98,19 @@ impl Tool for SearchTool {
             let input: SearchInput = decode(&call, SKILL_SEARCH_TOOL)?;
             require_active(&cancellation, false)?;
             let store = self.store.clone();
+            let profile_id = self.profile_id.clone();
             let workspace = self.workspace.clone();
             let query = input.query;
             let result = tokio::task::spawn_blocking(move || {
-                store.sync(ALPHA_PROFILE_ID, &workspace)?;
-                let matches = rank_skills(store.summaries(ALPHA_PROFILE_ID, &workspace)?, &query)?
-                    .into_iter()
-                    .map(|skill| SearchMatch {
-                        name: skill.name,
-                        description: skill.description,
-                    })
-                    .collect::<Vec<_>>();
+                store.sync(profile_id.as_str(), &workspace)?;
+                let matches =
+                    rank_skills(store.summaries(profile_id.as_str(), &workspace)?, &query)?
+                        .into_iter()
+                        .map(|skill| SearchMatch {
+                            name: skill.name,
+                            description: skill.description,
+                        })
+                        .collect::<Vec<_>>();
                 Ok::<_, SkillError>(matches)
             })
             .await
@@ -112,6 +123,7 @@ impl Tool for SearchTool {
 }
 
 struct LoadTool {
+    profile_id: AgentProfileId,
     store: SkillStore,
     workspace: PathBuf,
     session_id: SessionId,
@@ -121,12 +133,14 @@ struct LoadTool {
 
 impl LoadTool {
     fn new(
+        profile_id: AgentProfileId,
         store: SkillStore,
         workspace: PathBuf,
         session_id: SessionId,
         command_id: Option<CommandId>,
     ) -> Self {
         Self {
+            profile_id,
             store,
             workspace,
             session_id,
@@ -165,12 +179,13 @@ impl Tool for LoadTool {
             })?;
             require_active(&cancellation, false)?;
             let store = self.store.clone();
+            let profile_id = self.profile_id.clone();
             let workspace = self.workspace.clone();
             let session_id = self.session_id;
             let selected = input.name;
             let skill = tokio::task::spawn_blocking(move || {
                 store.activate(
-                    ALPHA_PROFILE_ID,
+                    profile_id.as_str(),
                     &workspace,
                     session_id,
                     command_id,

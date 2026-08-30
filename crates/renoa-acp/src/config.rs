@@ -1,7 +1,8 @@
 use std::{collections::HashSet, env, path::PathBuf};
 
 use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalHostError, ModelChoice, ModelProvider, discover_models,
+    AgentProfileId, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
+    ModelChoice, ModelProvider, alpha_profile, discover_models,
 };
 use serde::Serialize;
 
@@ -15,6 +16,7 @@ const GITHUB_HOSTNAME: &str = "github.com";
 /// Process configuration for the local ACP adapter.
 pub struct Config {
     host: LocalHost,
+    profile_id: AgentProfileId,
 }
 
 #[derive(Serialize)]
@@ -64,22 +66,32 @@ impl Config {
     pub fn from_environment() -> Result<Self, ServerError> {
         let data_directory = data_directory()?;
         let settings = ProviderSettings::from_environment()?;
+        let profile = alpha_profile();
+        let profile_id = profile.id().clone();
         Ok(Self {
             host: LocalHost::new(
                 data_directory,
-                settings.bridge,
-                settings.providers,
-                settings.default_provider,
-                settings.model,
-                settings.credential_store,
+                LocalModelConfiguration::new(
+                    settings.bridge,
+                    settings.providers,
+                    settings.default_provider,
+                    settings.model,
+                    settings.credential_store,
+                ),
+                vec![profile],
                 LocalHostAdapters::new(optional_path("RENOA_MCP_ADAPTER").as_deref())
                     .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref()),
             )?,
+            profile_id,
         })
     }
 
     pub(crate) const fn host(&self) -> &LocalHost {
         &self.host
+    }
+
+    pub(crate) const fn profile_id(&self) -> &AgentProfileId {
+        &self.profile_id
     }
 }
 
@@ -189,7 +201,7 @@ pub async fn install_github_mcp(account: &str) -> Result<GitHubMcpInstallation, 
         .await?;
     config
         .host
-        .enable_alpha_mcp_connection(GITHUB_CONNECTION_ID)
+        .enable_profile_mcp_connection(config.profile_id(), GITHUB_CONNECTION_ID)
         .await?;
     Ok(GitHubMcpInstallation {
         connection_id: GITHUB_CONNECTION_ID,

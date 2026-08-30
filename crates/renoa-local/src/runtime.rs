@@ -14,8 +14,8 @@ use renoa_kernel::{EffectRecovery, Runtime};
 use thiserror::Error;
 
 use crate::{
-    AlphaError, BridgeModel, LocalWorkspace, ModelBridgeError, ModelChoice, ReasoningLevel,
-    skills::SkillRuntimeContext,
+    AgentProfile, AgentProfileError, BridgeModel, LocalWorkspace, ModelBridgeError, ModelChoice,
+    ReasoningLevel, skills::SkillRuntimeContext,
 };
 
 const MODEL_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(32).unwrap();
@@ -38,28 +38,51 @@ pub struct LocalRuntimeConfig {
 }
 
 impl LocalRuntimeConfig {
-    /// Selects Renoa Alpha's versioned coding behavior and captures workspace rules.
+    /// Selects one profile's versioned behavior and captures its workspace rules.
     ///
     /// # Errors
     ///
     /// Returns an error when the workspace's project instructions are invalid.
+    pub fn for_profile(
+        bridge: impl Into<PathBuf>,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+        credential_store: impl Into<PathBuf>,
+        profile: &AgentProfile,
+        workspace: &LocalWorkspace,
+    ) -> Result<Self, AgentProfileError> {
+        Ok(Self {
+            bridge: bridge.into(),
+            provider: provider.into(),
+            model: model.into(),
+            credential_store: credential_store.into(),
+            instructions: profile.system_prompt(workspace.root())?,
+            model_spec: None,
+            reasoning: None,
+            skill_context: None,
+        })
+    }
+
+    /// Selects Renoa Alpha's built-in coding behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Alpha's workspace instructions are invalid.
     pub fn for_alpha(
         bridge: impl Into<PathBuf>,
         provider: impl Into<String>,
         model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
         workspace: &LocalWorkspace,
-    ) -> Result<Self, AlphaError> {
-        Ok(Self {
-            bridge: bridge.into(),
-            provider: provider.into(),
-            model: model.into(),
-            credential_store: credential_store.into(),
-            instructions: crate::alpha::system_prompt(workspace.root())?,
-            model_spec: None,
-            reasoning: None,
-            skill_context: None,
-        })
+    ) -> Result<Self, AgentProfileError> {
+        Self::for_profile(
+            bridge,
+            provider,
+            model,
+            credential_store,
+            &crate::alpha::alpha_profile(),
+            workspace,
+        )
     }
 
     #[must_use]

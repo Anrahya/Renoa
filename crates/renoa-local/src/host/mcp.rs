@@ -1,5 +1,5 @@
 use crate::{
-    ALPHA_PROFILE_ID,
+    AgentProfileId,
     mcp::{McpAuthorizationResolver, McpCatalogSnapshot, discover},
 };
 use tokio_util::sync::CancellationToken;
@@ -120,33 +120,41 @@ impl LocalHost {
         Ok(snapshot)
     }
 
-    /// Enables one discovered MCP connection for Alpha's searchable registry.
+    /// Enables one discovered MCP connection for an exact registered profile.
     ///
     /// # Errors
     ///
     /// Returns when the connection or tool is missing or storage cannot commit.
-    pub async fn enable_alpha_mcp_connection(
+    pub async fn enable_profile_mcp_connection(
         &self,
+        profile_id: &AgentProfileId,
         connection_id: &str,
     ) -> Result<(), LocalHostError> {
+        self.profile(profile_id)?;
         let store = self.config.mcp_catalog.clone();
+        let profile_id = profile_id.clone();
         let connection_id = connection_id.to_owned();
         tokio::task::spawn_blocking(move || {
-            store.enable_alpha_connection(ALPHA_PROFILE_ID, &connection_id)
+            store.enable_profile_connection(profile_id.as_str(), &connection_id)
         })
         .await??;
         Ok(())
     }
 
-    /// Lists the MCP connections currently enabled for Alpha.
+    /// Lists the MCP connections currently enabled for an exact registered profile.
     ///
     /// # Errors
     ///
     /// Returns invalid storage or background-task failures.
-    pub async fn alpha_mcp_connection_ids(&self) -> Result<Vec<String>, LocalHostError> {
+    pub async fn profile_mcp_connection_ids(
+        &self,
+        profile_id: &AgentProfileId,
+    ) -> Result<Vec<String>, LocalHostError> {
+        self.profile(profile_id)?;
         let store = self.config.mcp_catalog.clone();
+        let profile_id = profile_id.clone();
         Ok(
-            tokio::task::spawn_blocking(move || store.alpha_connection_ids(ALPHA_PROFILE_ID))
+            tokio::task::spawn_blocking(move || store.profile_connection_ids(profile_id.as_str()))
                 .await??,
         )
     }

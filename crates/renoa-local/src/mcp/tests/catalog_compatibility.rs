@@ -47,7 +47,7 @@ fn every_released_catalog_revision_remains_resolvable_after_upgrade() {
             .expect("historical tool reference");
 
         let resolved = store
-            .resolve_alpha_tools(PROFILE, &[reference])
+            .resolve_profile_tools(PROFILE, &[reference])
             .expect("resolve historical catalog with the current runtime");
         assert_eq!(resolved[0].adapter_revision(), revision);
     }

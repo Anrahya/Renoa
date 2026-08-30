@@ -46,7 +46,7 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
     store
-        .enable_alpha_connection(PROFILE, "primary")
+        .enable_profile_connection(PROFILE, "primary")
         .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
@@ -101,13 +101,13 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     );
     assert_eq!(
         migrated
-            .alpha_connection_ids(PROFILE)
+            .profile_connection_ids(PROFILE)
             .expect("load migrated Alpha connections"),
         ["primary"]
     );
     assert_eq!(
         migrated
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("load migrated Alpha tools")[0]
             .name,
         "echo"
@@ -159,13 +159,13 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
         .expect("migrate schema v2 to v4");
     assert_eq!(
         migrated
-            .alpha_connection_ids(PROFILE)
+            .profile_connection_ids(PROFILE)
             .expect("load migrated Alpha connections"),
         ["primary"]
     );
     assert_eq!(
         migrated
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("load the full attached catalog")
             .iter()
             .map(|tool| tool.name.as_str())
@@ -184,7 +184,7 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
     store
-        .enable_alpha_connection(PROFILE, "primary")
+        .enable_profile_connection(PROFILE, "primary")
         .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
@@ -212,13 +212,13 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
         .expect("migrate schema v3 to current");
     assert_eq!(
         migrated
-            .alpha_connection_ids(PROFILE)
+            .profile_connection_ids(PROFILE)
             .expect("load migrated Alpha connections"),
         ["primary"]
     );
     assert_eq!(
         migrated
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("load migrated Alpha tools")[0]
             .name,
         "echo"
@@ -239,7 +239,7 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
     store
-        .enable_alpha_connection(PROFILE, "primary")
+        .enable_profile_connection(PROFILE, "primary")
         .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
@@ -285,7 +285,7 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
         .expect("migrate schema v5 to current");
     assert_eq!(
         migrated
-            .alpha_connection_ids(PROFILE)
+            .profile_connection_ids(PROFILE)
             .expect("load migrated Alpha connections"),
         ["primary"]
     );
@@ -383,7 +383,7 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
     );
     assert_eq!(
         migrated
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("load existing attachment after migration")
             .len(),
         1

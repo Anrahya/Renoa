@@ -13,8 +13,8 @@ use crate::{
     plugins::{
         ExtensionAddRequest, InstalledPlugin, PluginCredential, PluginError,
         manager::{
-            AlphaConnectionRequest, ExtensionAddOutcome, ExtensionConnectionOutcome,
-            ExtensionSourceReceipt,
+            ExtensionAddOutcome, ExtensionConnectionOutcome, ExtensionSourceReceipt,
+            ProfileConnectionRequest,
         },
     },
     skills::SkillComponentReport,
@@ -55,8 +55,9 @@ pub(super) async fn connect(
 ) -> Result<ToolOutput, ToolError> {
     let (snapshot, status) = match tool
         .manager
-        .connect_alpha_operation(
-            AlphaConnectionRequest {
+        .connect_profile_operation(
+            ProfileConnectionRequest {
+                profile_id: &tool.profile_id,
                 package_digest: &request.package_digest,
                 server_id: &request.server,
                 connection_id: &request.connection,
@@ -123,7 +124,8 @@ async fn authorize_snapshot(
     invocation: ExtensionInvocation<'_>,
 ) -> Result<McpCatalogSnapshot, PluginError> {
     tool.manager
-        .authorize_alpha(
+        .authorize_profile(
+            &tool.profile_id,
             connection,
             invocation.operation_id,
             restart,
@@ -140,7 +142,8 @@ pub(super) async fn add(
 ) -> Result<ToolOutput, ToolError> {
     let added = match tool
         .manager
-        .add_alpha(
+        .add_to_profile(
+            &tool.profile_id,
             request,
             invocation.operation_id,
             invocation.cancellation.clone(),

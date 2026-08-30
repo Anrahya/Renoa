@@ -40,7 +40,7 @@ fn explicit_connection_replacement_drops_stale_tools_and_is_idempotent() {
     ));
     assert!(
         store
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("load detached profile")
             .is_empty()
     );
@@ -60,7 +60,7 @@ fn explicit_connection_replacement_drops_stale_tools_and_is_idempotent() {
         .expect("repeat identical replacement");
     assert_eq!(
         store
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("identical replacement preserves attachment")
             .len(),
         2

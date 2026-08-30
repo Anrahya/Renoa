@@ -1,13 +1,19 @@
 use std::path::Path;
 
-use renoa_kernel::SessionId;
-use rusqlite::{Connection, OptionalExtension as _, params};
+use renoa_kernel::{AgentId, SessionId};
+use rusqlite::{Connection, TransactionBehavior, params};
 
 use super::TraceError;
+use crate::AgentProfileId;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
-pub(super) fn create(path: &Path, session_id: SessionId) -> Result<(), TraceError> {
+pub(super) fn create(
+    path: &Path,
+    session_id: SessionId,
+    agent_id: AgentId,
+    profile_id: &AgentProfileId,
+) -> Result<(), TraceError> {
     if path.exists() {
         return Err(TraceError::Incompatible(format!(
             "{} already exists",
@@ -20,7 +26,9 @@ pub(super) fn create(path: &Path, session_id: SessionId) -> Result<(), TraceErro
         "
         CREATE TABLE trace_metadata (
             schema_version INTEGER PRIMARY KEY,
-            session_id TEXT NOT NULL
+            session_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL
         ) STRICT;
 
         CREATE TABLE runs (
@@ -66,23 +74,35 @@ pub(super) fn create(path: &Path, session_id: SessionId) -> Result<(), TraceErro
         ",
     )?;
     connection.execute(
-        "INSERT INTO trace_metadata(schema_version, session_id) VALUES (?1, ?2)",
-        params![SCHEMA_VERSION, session_id.to_string()],
+        "INSERT INTO trace_metadata(schema_version, session_id, agent_id, profile_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            SCHEMA_VERSION,
+            session_id.to_string(),
+            agent_id.to_string(),
+            profile_id.as_str()
+        ],
     )?;
     connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     Ok(())
 }
 
-pub(super) fn open(path: &Path, session_id: SessionId) -> Result<Connection, TraceError> {
+pub(super) fn open(
+    path: &Path,
+    session_id: SessionId,
+    agent_id: AgentId,
+    profile_id: &AgentProfileId,
+) -> Result<Connection, TraceError> {
     if !path.is_file() {
         return Err(TraceError::Incompatible(format!(
             "{} is not an existing trace database",
             path.display()
         )));
     }
-    let connection = Connection::open(path)?;
+    let mut connection = Connection::open(path)?;
     configure(&connection)?;
-    verify_connection(&connection, session_id)?;
+    migrate(&mut connection, session_id, agent_id, profile_id)?;
+    verify_connection(&connection, session_id, agent_id, profile_id)?;
     Ok(connection)
 }
 
@@ -115,17 +135,85 @@ fn configure(connection: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-fn verify_connection(connection: &Connection, session_id: SessionId) -> Result<(), TraceError> {
-    let metadata = connection
-        .query_row(
-            "SELECT schema_version, session_id FROM trace_metadata",
-            [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?;
-    let Some((version, stored_session)) = metadata else {
-        return Err(TraceError::Incompatible("metadata is missing".to_owned()));
-    };
+fn migrate(
+    connection: &mut Connection,
+    session_id: SessionId,
+    agent_id: AgentId,
+    profile_id: &AgentProfileId,
+) -> Result<(), TraceError> {
+    require_one_metadata_row(connection)?;
+    let version = connection.query_row("SELECT schema_version FROM trace_metadata", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    match version {
+        SCHEMA_VERSION => Ok(()),
+        1 => migrate_v1(connection, session_id, agent_id, profile_id),
+        _ => Err(TraceError::Incompatible(format!(
+            "schema version {version} is unsupported; expected {SCHEMA_VERSION}"
+        ))),
+    }
+}
+
+fn migrate_v1(
+    connection: &mut Connection,
+    session_id: SessionId,
+    agent_id: AgentId,
+    profile_id: &AgentProfileId,
+) -> Result<(), TraceError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let stored_session = transaction.query_row(
+        "SELECT session_id FROM trace_metadata WHERE schema_version = 1",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    if stored_session != session_id.to_string() {
+        return Err(TraceError::Incompatible(
+            "session identity does not match its trace database".to_owned(),
+        ));
+    }
+    transaction.execute_batch(
+        "ALTER TABLE trace_metadata RENAME TO trace_metadata_v1;
+         CREATE TABLE trace_metadata (
+             schema_version INTEGER PRIMARY KEY,
+             session_id TEXT NOT NULL,
+             agent_id TEXT NOT NULL,
+             profile_id TEXT NOT NULL
+         ) STRICT;",
+    )?;
+    transaction.execute(
+        "INSERT INTO trace_metadata(schema_version, session_id, agent_id, profile_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            SCHEMA_VERSION,
+            session_id.to_string(),
+            agent_id.to_string(),
+            profile_id.as_str()
+        ],
+    )?;
+    transaction.execute_batch("DROP TABLE trace_metadata_v1;")?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn verify_connection(
+    connection: &Connection,
+    session_id: SessionId,
+    agent_id: AgentId,
+    profile_id: &AgentProfileId,
+) -> Result<(), TraceError> {
+    require_one_metadata_row(connection)?;
+    let (version, stored_session, stored_agent, stored_profile) = connection.query_row(
+        "SELECT schema_version, session_id, agent_id, profile_id FROM trace_metadata",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
+    )?;
     if version != SCHEMA_VERSION {
         return Err(TraceError::Incompatible(format!(
             "schema version {version} is unsupported; expected {SCHEMA_VERSION}"
@@ -136,5 +224,28 @@ fn verify_connection(connection: &Connection, session_id: SessionId) -> Result<(
             "session identity does not match its trace database".to_owned(),
         ));
     }
+    if stored_agent != agent_id.to_string() {
+        return Err(TraceError::Incompatible(
+            "agent identity does not match its trace database".to_owned(),
+        ));
+    }
+    if stored_profile != profile_id.as_str() {
+        return Err(TraceError::Incompatible(
+            "profile identity does not match its trace database".to_owned(),
+        ));
+    }
     Ok(())
+}
+
+fn require_one_metadata_row(connection: &Connection) -> Result<(), TraceError> {
+    let rows = connection.query_row("SELECT count(*) FROM trace_metadata", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    if rows == 1 {
+        Ok(())
+    } else {
+        Err(TraceError::Incompatible(format!(
+            "metadata must contain exactly one row; found {rows}"
+        )))
+    }
 }

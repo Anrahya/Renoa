@@ -6,7 +6,7 @@ This document defines the first executable foundation for external Renoa
 integrations: direct MCP servers over modern Streamable HTTP. The replaceable
 Node process adapter implements this boundary under `adapters/mcp-client-node`.
 The Host durably registers connections, publishes complete catalog snapshots,
-attaches connections to Alpha's searchable registry, resolves exact references
+attaches connections to exact agent profiles, resolves exact references
 into ordinary kernel-backed calls, and supports no authentication, an exact
 GitHub CLI account reference, a named Secret Service bearer or header
 reference, or a Host-owned OAuth 2.1 browser flow using Client ID Metadata Documents,
@@ -31,7 +31,7 @@ Prove this complete path:
 ```text
 one exact Streamable HTTP endpoint
   -> discover one complete MCP tool catalog
-  -> attach the connection to Alpha
+  -> attach the connection to one registered profile
   -> search compact tool summaries without schemas
   -> load only the exact schema needed now
   -> execute an exact catalog-bound reference with NeverReplay
@@ -100,8 +100,8 @@ These concepts are distinct even though the first proof uses one of each:
   secret.
 - **Catalog snapshot:** one complete, validated result of discovery and every
   `tools/list` page.
-- **Profile attachment:** permission for Alpha's registry to search and resolve
-  one connection. It does not advertise every tool schema.
+- **Profile attachment:** permission for one exact registered profile to search
+  and resolve one connection. It does not advertise every tool schema.
 - **Tool reference:** `mcp:<connection>:<catalog-digest>:<tool>`, returned by
   search and valid only for that exact complete catalog.
 - **Resolved invocation:** the exact endpoint, protocol behavior, tool
@@ -111,6 +111,11 @@ Configuration does not imply discovery. Discovery does not imply profile
 attachment. Attachment makes catalog entries searchable; it does not load
 schemas or authorize anything beyond v0's explicit full-access profile. The
 Host publishes only complete catalog snapshots.
+
+Connections and catalog snapshots are one Host-wide inventory. Attachment rows
+are profile-scoped: the same exact connection may be attached to any number of
+registered profiles without copying its catalog, while an attachment to one
+profile grants no visibility to another.
 
 The first durable implementation keeps these states in separate SQLite tables
 under `host.sqlite3`; the SQL schema is internal Host storage, not a public
@@ -263,11 +268,11 @@ catalog. A successful unauthenticated discovery reports `catalog_loaded`; only
 a completed OAuth flow reports `authorized`.
 
 `extension_manage disconnect` is narrower than replacement or removal. It
-deletes only Alpha's profile attachment in one transaction and is idempotent.
+deletes only the active profile's attachment in one transaction and is idempotent.
 The durable connection, catalog, package, credential reference, OAuth state,
 and receipts remain available for recovery and later reattachment. List output
 therefore reports registration, authentication kind, catalog presence, and
-Alpha attachment as separate facts; it never infers that an OAuth token is
+profile attachment as separate facts; it never infers that an OAuth token is
 currently valid merely because the connection is registered.
 `extension_manage enable` is the symmetric, idempotent reattachment path. It
 requires the retained complete catalog and performs no network request.
@@ -350,8 +355,8 @@ isolated catalog-entry failure.
 Host identity is the tuple of connection identity and exact MCP tool name.
 Self-reported `serverInfo.name` is never identity.
 
-MCP names never become top-level model tool names. Alpha always sees three
-small, provider-neutral Host tools:
+MCP names never become top-level model tool names. Every assembled profile sees
+three small, provider-neutral Host tools:
 
 - `tool_search` searches names, services, and descriptions and returns at most
   200 compact matches containing only names, descriptions, and exact
@@ -387,10 +392,10 @@ it.
 
 ## Invocation
 
-Before HTTP dispatch, `tool_execute` verifies the reference syntax, Alpha
-attachment, current catalog digest, exact tool name, argument-object shape, and
-adapter request bound. During discovery the Node adapter compiles every input
-schema with the pinned MCP SDK's AJV-backed validator and isolates an invalid
+Before HTTP dispatch, `tool_execute` verifies the reference syntax,
+active-profile attachment, current catalog digest, exact tool name,
+argument-object shape, and adapter request bound. During discovery the Node
+adapter compiles every input schema with the pinned MCP SDK's AJV-backed validator and isolates an invalid
 tool definition. At invocation it recompiles the frozen catalog schema and
 validates the exact arguments before declaring dispatch. The server remains
 responsible for service-level validation; Renoa does not ship a partial
@@ -539,7 +544,7 @@ not duplicate them.
 
 ## Context and observability
 
-Discovery and search never load schemas into model context. Every normal Alpha
+Discovery and search never load schemas into model context. Every normal profile
 request carries the same three small registry specifications, independent of
 whether the Host has zero, ten, or one thousand external tools. Search returns
 at most 200 short summaries. Only a successful `tool_load` result inserts the
@@ -568,7 +573,7 @@ refresh.
 Every registry call opens current Host state instead of consulting a process
 cache. A connection attached or refreshed by a GUI, another local command, or
 the running agent becomes visible to the next `tool_search` call, including
-inside an already active Alpha turn. Waku, ACP, and Alpha do not restart. This
+inside an already active Agent turn. The surface and Agent do not restart. This
 does not alter an in-flight remote call. The stateless v0 MCP adapter also does
 not keep a subscription open for `notifications/tools/list_changed`; a Host
 refresh must publish that remote change first.
@@ -577,9 +582,9 @@ Tool invocation is never replayed after possible dispatch. The kernel's
 existing `NeverReplay` recovery turns an interrupted dispatched effect into
 `OutcomeUnknown` without invoking the MCP adapter again. During a live call,
 the Host converts a typed no-response outcome into a durable, model-visible
-uncertain tool result so Alpha can continue reasoning without replay. A process
-crash before that result is persisted still follows the kernel's conservative
-recovery boundary.
+uncertain tool result so the Agent can continue reasoning without replay. A
+process crash before that result is persisted still follows the kernel's
+conservative recovery boundary.
 
 A refresh does not mutate the three frozen registry implementations. A search
 or load read that must be replayed may observe later committed registry state,
@@ -673,7 +678,8 @@ and the real process boundary:
 - Discovery publishes only complete, bounded, deterministic catalog snapshots.
 - The stored Host identity is composite; self-reported server names are not
   identity.
-- Alpha exposes three fixed registry tools rather than every external schema.
+- Every assembled profile exposes three fixed registry tools rather than every
+  external schema.
 - Search and load are `SafeToReplay`; exact remote execution is `NeverReplay`.
 - An exact catalog digest in every reference prevents silent schema changes.
 - Committed Host changes are visible on the next registry call without an

@@ -86,7 +86,7 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     );
     assert_eq!(
         migrated
-            .alpha_tool_summaries(PROFILE)
+            .profile_tool_summaries(PROFILE)
             .expect("load migrated attachment")
             .len(),
         1

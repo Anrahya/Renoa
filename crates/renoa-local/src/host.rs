@@ -1,11 +1,10 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use renoa_agent::AgentEventSink;
-use renoa_kernel::{AgentId, CommandId, SessionId};
+use renoa_kernel::{AgentId, SessionId};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -13,31 +12,24 @@ pub(crate) mod catalog;
 mod extensions;
 mod mcp;
 mod models;
+mod profiles;
+mod runtime;
 #[cfg(test)]
 mod skill_tests;
 
-use crate::alpha_session::AlphaSessionStorage;
+use crate::agent_session::AgentSessionStorage;
 use crate::{
-    AlphaError, AlphaSession, LocalRuntimeConfig, LocalRuntimeError, LocalSession,
+    AgentProfile, AgentProfileError, AgentProfileId, AgentSession, LocalRuntimeError, LocalSession,
     LocalSessionError, LocalWorkspace, LocalWorkspaceError, ModelBridgeError, ModelChoice,
-    ModelProvider, ReasoningLevel,
+    ModelProvider,
     host_storage::{
         KERNEL_DATABASE, MANIFEST_FILE, create_session_storage, delete_session_storage,
         read_manifest,
     },
-    mcp::{
-        McpCatalogStore, McpCredentialResolver, McpHostError, alpha_registry_bindings,
-        resolve_adapter,
-    },
-    plugins::{
-        OfficialRegistry, PLUGIN_STORE_DIRECTORY, PluginError, PluginManager, alpha_plugin_binding,
-    },
-    runtime::build_composed_local_runtime,
+    mcp::{McpCatalogStore, McpCredentialResolver, McpHostError, resolve_adapter},
+    plugins::{OfficialRegistry, PLUGIN_STORE_DIRECTORY, PluginError, PluginManager},
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
-    skills::{
-        SkillError, SkillStore, alpha_skill_bindings, default_global_source, runtime_context,
-        store_path,
-    },
+    skills::{SkillError, SkillStore, default_global_source, store_path},
     trace::{TRACE_DATABASE, TraceError, TraceStore},
 };
 
@@ -45,8 +37,10 @@ use models::validate_selection;
 pub(crate) use models::{
     discover_enabled_models, initial_reasoning, require_model, selected_model_by_selection_id,
 };
+use profiles::collect_profiles;
+pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 
-/// Process-local configuration used to compose Renoa Alpha sessions.
+/// Process-local configuration used to assemble Renoa Agent sessions.
 pub struct LocalHost {
     config: Arc<HostConfig>,
 }
@@ -88,6 +82,7 @@ pub(crate) struct HostConfig {
     pub(crate) mcp_credentials: McpCredentialResolver,
     pub(crate) skill_store: SkillStore,
     pub(crate) plugins: PluginManager,
+    pub(crate) profiles: BTreeMap<AgentProfileId, AgentProfile>,
 }
 
 struct HostInitialization {
@@ -100,6 +95,35 @@ struct HostInitialization {
     mcp_adapter: Option<PathBuf>,
     mcp_registry_adapter: Option<PathBuf>,
     global_skill_source: Option<PathBuf>,
+    profiles: Vec<AgentProfile>,
+}
+
+/// Model-provider settings shared by every profile assembled by one Host.
+pub struct LocalModelConfiguration {
+    bridge: PathBuf,
+    providers: Vec<ModelProvider>,
+    initial_provider: ModelProvider,
+    initial_model: String,
+    credential_store: PathBuf,
+}
+
+impl LocalModelConfiguration {
+    #[must_use]
+    pub fn new(
+        bridge: impl Into<PathBuf>,
+        providers: Vec<ModelProvider>,
+        initial_provider: ModelProvider,
+        initial_model: impl Into<String>,
+        credential_store: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            bridge: bridge.into(),
+            providers,
+            initial_provider,
+            initial_model: initial_model.into(),
+            credential_store: credential_store.into(),
+        }
+    }
 }
 
 /// Failure while composing, storing, or running a local Agent instance.
@@ -121,7 +145,7 @@ pub enum LocalHostError {
     #[error(transparent)]
     Model(#[from] ModelBridgeError),
     #[error(transparent)]
-    Alpha(#[from] AlphaError),
+    Profile(#[from] AgentProfileError),
     #[error(transparent)]
     Session(#[from] LocalSessionError),
     #[error(transparent)]
@@ -161,11 +185,8 @@ impl LocalHost {
     /// cannot be initialized.
     pub fn new(
         data_directory: impl Into<PathBuf>,
-        bridge: impl Into<PathBuf>,
-        providers: Vec<ModelProvider>,
-        initial_provider: ModelProvider,
-        initial_model: impl Into<String>,
-        credential_store: impl Into<PathBuf>,
+        models: LocalModelConfiguration,
+        profiles: Vec<AgentProfile>,
         adapters: LocalHostAdapters<'_>,
     ) -> Result<Self, LocalHostError> {
         let mcp_adapter = adapters
@@ -180,14 +201,15 @@ impl LocalHost {
             .map_err(|error| PluginError::Unavailable(error.to_string()))?;
         Self::assemble(HostInitialization {
             data_directory: data_directory.into(),
-            bridge: bridge.into(),
-            providers,
-            initial_provider,
-            initial_model: initial_model.into(),
-            credential_store: credential_store.into(),
+            bridge: models.bridge,
+            providers: models.providers,
+            initial_provider: models.initial_provider,
+            initial_model: models.initial_model,
+            credential_store: models.credential_store,
             mcp_adapter,
             mcp_registry_adapter,
             global_skill_source: default_global_source(),
+            profiles,
         })
     }
 
@@ -202,6 +224,7 @@ impl LocalHost {
             mcp_adapter,
             mcp_registry_adapter,
             global_skill_source,
+            profiles,
         } = initialization;
         if providers.is_empty() {
             return Err(LocalHostError::Configuration(
@@ -218,6 +241,7 @@ impl LocalHost {
                 "default {initial_provider} provider is not enabled"
             )));
         }
+        let profiles = collect_profiles(profiles)?;
         std::fs::create_dir_all(&data_directory)?;
         let data_directory = std::fs::canonicalize(data_directory)?;
         let sessions = data_directory.join("sessions");
@@ -254,20 +278,29 @@ impl LocalHost {
                 mcp_credentials,
                 skill_store,
                 plugins,
+                profiles,
             }),
         })
     }
 
-    /// Resolves and atomically publishes one new Alpha session.
+    /// Returns every profile currently available to new Agent instances.
+    #[must_use]
+    pub fn profile_ids(&self) -> Vec<AgentProfileId> {
+        self.config.profiles.keys().cloned().collect()
+    }
+
+    /// Resolves and atomically publishes one new session for an exact profile.
     ///
     /// # Errors
     ///
     /// Returns provider, workspace, runtime, or durable storage failures.
-    pub async fn create_alpha_session(
+    pub async fn create_session(
         &self,
+        profile_id: &AgentProfileId,
         cwd: &Path,
-    ) -> Result<Arc<AlphaSession>, LocalHostError> {
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
         require_absolute(cwd)?;
+        let profile = self.profile(profile_id)?.clone();
         let workspace = LocalWorkspace::open(cwd)?;
         let workspace_path = std::fs::canonicalize(cwd)?;
         let models = self.models().await?;
@@ -285,8 +318,19 @@ impl LocalHost {
         let agent_id = AgentId::new();
         let session_uuid = Uuid::new_v4();
         let session_id = SessionId::from_uuid(session_uuid);
-        self.resolve_runtime(session_id, None, model, reasoning, &workspace, None)
-            .await?;
+        resolve_runtime(
+            &self.config,
+            RuntimeRequest {
+                profile: &profile,
+                session_id,
+                command_id: None,
+                model,
+                reasoning,
+                workspace: &workspace,
+                events: None,
+            },
+        )
+        .await?;
         let selection = RuntimeSelection {
             provider: self.config.initial_provider,
             model: self.config.initial_model.clone(),
@@ -295,9 +339,11 @@ impl LocalHost {
         let sessions = self.config.sessions.clone();
         let stored_selection = selection.clone();
         let stored_workspace = workspace_path.clone();
+        let stored_profile = profile.id().clone();
         let directory = tokio::task::spawn_blocking(move || {
             create_session_storage(
                 &sessions,
+                stored_profile,
                 agent_id,
                 session_id,
                 stored_workspace,
@@ -306,11 +352,17 @@ impl LocalHost {
         })
         .await??;
         let kernel = LocalSession::load(directory.join(KERNEL_DATABASE), session_id)?;
-        let trace = TraceStore::open(directory.join(TRACE_DATABASE), session_id)?;
-        Ok(Arc::new(AlphaSession::new(
+        let trace = TraceStore::open(
+            directory.join(TRACE_DATABASE),
+            session_id,
+            agent_id,
+            profile.id(),
+        )?;
+        Ok(Arc::new(AgentSession::new(
             session_uuid,
+            profile.id().clone(),
             Arc::clone(&self.config),
-            AlphaSessionStorage {
+            AgentSessionStorage {
                 kernel,
                 workspace: workspace_path,
                 selection_path: directory.join(SELECTION_FILE),
@@ -321,25 +373,26 @@ impl LocalHost {
         )))
     }
 
-    /// Reloads one exact Alpha session and its durable workspace/runtime binding.
+    /// Reloads one exact Agent session and its durable profile/workspace binding.
     ///
     /// # Errors
     ///
     /// Returns identity, workspace, provider, runtime, or storage incompatibility.
-    pub async fn load_alpha_session(
+    pub async fn load_session(
         &self,
         session_uuid: Uuid,
         cwd: &Path,
-    ) -> Result<Arc<AlphaSession>, LocalHostError> {
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
         require_absolute(cwd)?;
         let session_id = SessionId::from_uuid(session_uuid);
         let directory = self.config.sessions.join(session_id.to_string());
         let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
         if manifest.session_id != session_id {
             return Err(LocalHostError::InvalidRequest(
-                "session metadata does not match the requested Alpha session".to_owned(),
+                "session metadata does not match the requested Agent session".to_owned(),
             ));
         }
+        self.profile(&manifest.profile)?;
         let requested_workspace = std::fs::canonicalize(cwd)?;
         if manifest.workspace != requested_workspace {
             return Err(LocalHostError::InvalidRequest(
@@ -353,7 +406,12 @@ impl LocalHost {
             ));
         }
         let selection_path = directory.join(SELECTION_FILE);
-        let trace = TraceStore::open(directory.join(TRACE_DATABASE), session_id)?;
+        let trace = TraceStore::open(
+            directory.join(TRACE_DATABASE),
+            session_id,
+            manifest.agent_id,
+            &manifest.profile,
+        )?;
         let selection = read_selection(selection_path.clone()).await?;
         if !self.config.providers.contains(&selection.provider) {
             return Err(LocalHostError::Configuration(format!(
@@ -364,10 +422,11 @@ impl LocalHost {
         let models = self.models().await?;
         validate_selection(&models, &selection)?;
         LocalWorkspace::open(&requested_workspace)?;
-        Ok(Arc::new(AlphaSession::new(
+        Ok(Arc::new(AgentSession::new(
             session_uuid,
+            manifest.profile,
             Arc::clone(&self.config),
-            AlphaSessionStorage {
+            AgentSessionStorage {
                 kernel,
                 workspace: requested_workspace,
                 selection_path,
@@ -378,7 +437,7 @@ impl LocalHost {
         )))
     }
 
-    /// Permanently removes one closed Alpha session from durable Host storage.
+    /// Permanently removes one closed Agent session from durable Host storage.
     ///
     /// Deleting a missing session succeeds so a retried ACP request is safe.
     ///
@@ -386,7 +445,7 @@ impl LocalHost {
     ///
     /// Returns an ownership, identity, metadata, or storage failure. A session
     /// still owned by any process cannot be deleted.
-    pub async fn delete_alpha_session(&self, session_uuid: Uuid) -> Result<(), LocalHostError> {
+    pub async fn delete_session(&self, session_uuid: Uuid) -> Result<(), LocalHostError> {
         let sessions = self.config.sessions.clone();
         let session_id = SessionId::from_uuid(session_uuid);
         tokio::task::spawn_blocking(move || delete_session_storage(&sessions, session_id))
@@ -400,73 +459,13 @@ impl LocalHost {
         discover_enabled_models(&self.config).await
     }
 
-    async fn resolve_runtime(
-        &self,
-        session_id: SessionId,
-        command_id: Option<CommandId>,
-        model: &ModelChoice,
-        reasoning: ReasoningLevel,
-        workspace: &LocalWorkspace,
-        events: Option<Arc<dyn AgentEventSink>>,
-    ) -> Result<renoa_kernel::Runtime, LocalHostError> {
-        resolve_runtime(
-            &self.config,
-            session_id,
-            command_id,
-            model,
-            reasoning,
-            workspace,
-            events,
-        )
-        .await
+    fn profile(&self, profile_id: &AgentProfileId) -> Result<&AgentProfile, LocalHostError> {
+        self.config.profiles.get(profile_id).ok_or_else(|| {
+            LocalHostError::InvalidRequest(format!(
+                "agent profile `{profile_id}` is not registered with this Host"
+            ))
+        })
     }
-}
-
-pub(crate) async fn resolve_runtime(
-    host: &HostConfig,
-    session_id: SessionId,
-    command_id: Option<CommandId>,
-    model: &ModelChoice,
-    reasoning: ReasoningLevel,
-    workspace: &LocalWorkspace,
-    events: Option<Arc<dyn AgentEventSink>>,
-) -> Result<renoa_kernel::Runtime, LocalHostError> {
-    let mut extension_tools = alpha_registry_bindings(
-        host.mcp_catalog.clone(),
-        host.mcp_adapter.clone(),
-        host.mcp_credentials.clone(),
-        session_id,
-        command_id,
-    );
-    extension_tools.push(alpha_plugin_binding(
-        host.plugins.clone(),
-        workspace.root().to_path_buf(),
-        session_id,
-        command_id,
-    ));
-    extension_tools.extend(alpha_skill_bindings(
-        host.skill_store.clone(),
-        workspace.root().to_path_buf(),
-        session_id,
-        command_id,
-    ));
-    let skills = host.skill_store.clone();
-    let skill_context =
-        tokio::task::spawn_blocking(move || runtime_context(&skills, session_id, command_id))
-            .await??;
-    let mut config = LocalRuntimeConfig::for_alpha(
-        host.bridge.clone(),
-        model.provider().as_str(),
-        model.id(),
-        host.credential_store.clone(),
-        workspace,
-    )?
-    .with_discovered_model(model)
-    .with_reasoning(reasoning);
-    if let Some(skill_context) = skill_context {
-        config = config.with_skill_context(skill_context);
-    }
-    Ok(build_composed_local_runtime(config, workspace, extension_tools, events).await?)
 }
 
 fn require_absolute(cwd: &Path) -> Result<(), LocalHostError> {

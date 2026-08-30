@@ -32,7 +32,9 @@ management consumer is implemented.
 
 The first concrete agent profile is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is
-`renoa.coding.alpha.v1`.
+`renoa.coding.alpha.v1`. Alpha is one built-in profile, not a special Host
+execution type. A Host process registers one or more `AgentProfile` recipes and
+can create a session from any exact registered `AgentProfileId`.
 
 The product direction for portable packages, external integrations,
 connections, profile selection, and agent-driven capability changes is recorded
@@ -88,15 +90,29 @@ session history. Installed availability does not imply future authorization;
 that distinction remains required even though v0 intentionally has no
 permission system.
 
+V0 profiles are immutable process configuration: a stable validated identity,
+base instructions, and whether the canonical workspace-root `AGENTS.md` is
+included. A session manifest persists the selected profile identity beside its
+Agent, Session, and workspace identity. Loading fails closed when that exact
+profile is not registered by the current Host process. Profile definitions are
+not yet editable or stored in `host.sqlite3`.
+
+The current Host creates one Agent Instance and its first Session together. A
+durable Agent catalog and multiple Sessions per Agent remain future work.
+Telegram, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
+adapters; they do not become profiles merely because they deliver messages. A
+GitHub-review recipe or a daily-assistant recipe is a profile and may be used
+from any compatible surface.
+
 ## Full-access first slice
 
 Permission semantics are deliberately open. V0 does not introduce roles,
 levels, grants, approval records, or a permission trait.
 
-The local coding profile is all-allowed. Every tool registered by its local
-workspace provider is advertised directly. External catalogs are reached
-through three fixed registry tools so catalog size does not become model
-context. The current top-level set is:
+Every currently registered local profile is all-allowed. Every tool registered
+by its local workspace provider is advertised directly. External catalogs are
+reached through three fixed registry tools so catalog size does not become
+model context. The current top-level set is:
 
 ```text
 read_file
@@ -150,41 +166,43 @@ library, MCP catalog, skill library, and credential resolution boundary.
 `host.sqlite3` keeps installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
-snapshots, Alpha's attached connection identities, immutable skill revisions,
+snapshots, per-profile attached connection identities, immutable skill revisions,
 source/profile bindings, rejected skill entries, and session activation pins.
 Registration, discovery, and profile attachment remain separate states.
 Catalog replacement and attachment are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
-`AlphaSession` owns one Agent/Session binding, canonical workspace, model
+`AgentSession` owns one Agent/Session binding, canonical workspace, model
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
-The Host adds three fixed extension-registry tools to every Alpha runtime:
-`tool_search`, `tool_load`, and `tool_execute`. Search returns at most 200
-compact matches without schemas. Load returns only one through three explicitly
-requested model-facing schemas. Execute resolves one exact reference containing
-the current catalog digest, then reuses the proven MCP credential, adapter,
-result, and `NeverReplay` boundary. A missing adapter fails execution visibly;
-it does not prevent Alpha from starting or hide searchable catalog state.
+The Host adds three fixed extension-registry tools to every assembled profile
+runtime: `tool_search`, `tool_load`, and `tool_execute`. Search returns at most
+200 compact matches without schemas. Load returns only one through three
+explicitly requested model-facing schemas. Execute resolves one exact reference
+containing the current catalog digest, then reuses the proven MCP credential,
+adapter, result, and `NeverReplay` boundary. A missing adapter fails execution
+visibly; it does not prevent an Agent from starting or hide searchable catalog
+state.
 
 The registry tools open current `host.sqlite3` state for each call. A committed
 connection attachment or catalog refresh is therefore visible on the next
-search even when the ACP process, Alpha session, and current turn are already
-running. The runtime itself is unchanged: the kernel freezes the same three
+search even when the surface process, Agent session, and current turn are
+already running. The runtime itself is unchanged: the kernel freezes the same three
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v8 binding exposes one
+The Host adds one fixed `extension_manage` tool. Its v9 binding exposes one
 exact, closed schema variant for each of ten typed actions:
 search compact publisher metadata in the official MCP Registry; lookup one
 exact published Registry name/version; add one MCP definition independently
 verified against the provider's official documentation or one content-bound
 local Agent Plugins 1.0 directory; inspect a local package; install the exact
 inspected digest; list package integrity and durable connection state; connect
-one supported package MCP server to Alpha; authorize or explicitly restart one
-registered OAuth connection; disconnect one connection from Alpha without
-deleting its durable package, registration, catalog, or credential reference;
-or re-enable that retained complete catalog without a network request.
+one supported package MCP server for the active profile; authorize or
+explicitly restart one registered OAuth connection; disconnect one connection
+from that profile without deleting its durable package, registration, catalog,
+or credential reference; or re-enable that retained complete catalog without a
+network request.
 Inspection and installation execute no package code. Installation publishes a
 full immutable tree at `plugins/<sha256>` before committing its durable record.
 Official Registry discovery is a replaceable read-only input to this management
@@ -222,7 +240,7 @@ package facts. List keeps aggregate state below that boundary by returning at
 most 32 compact package, server, notice, connection, and skill facts per page.
 Its opaque cursor is bound to the complete inventory revision, so concurrent
 changes produce a visible conflict and a fresh first-page requirement rather
-than offset drift. Package integrity, durable connection state, Alpha
+than offset drift. Package integrity, durable connection state, profile
 attachment, and accepted/rejected plugin skill bindings remain separate facts.
 
 The Host also adds exactly two Agent Skills tools: `skill_search` and
@@ -256,21 +274,20 @@ Their real cost is visible in the selected model's context usage, and an actual
 provider context limit is reported as a provider failure rather than disguised
 as a Renoa skill rule.
 
-`LocalRuntimeConfig` is the lower composition input used inside the Host. Every
-local product path selects Alpha's versioned instructions. The resolved inputs
-are:
+`LocalRuntimeConfig` is the lower composition input used inside the Host. The
+Host selects the session's registered profile before resolving these inputs:
 
 - provider and model;
 - reasoning configuration;
-- Alpha's base prompt, bounded workspace `AGENTS.md`, and exact active skill
-  instructions; and
+- the profile's base prompt, optional bounded workspace `AGENTS.md`, and exact
+  active skill instructions; and
 - the six workspace tools, three fixed MCP registry tools, one fixed extension
   manager, and two fixed skill registry tools.
 
 `build_local_runtime` resolves that recipe with a `LocalWorkspace`:
 
 ```text
-LocalRuntimeConfig + Alpha v1
+LocalRuntimeConfig + registered AgentProfile
   + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
@@ -283,13 +300,13 @@ renoa-agent-loop::build_runtime
 renoa-kernel::Runtime + frozen RuntimeManifest
 ```
 
-The process adapter is both the model implementation and the deterministic context sizer. The
-Host derives the same researched compaction limits used by the existing local
-product path. Model identity, reasoning, context behavior, instructions,
-limits, tool specifications, recovery declarations, and workspace-bound tool
-revisions are represented by the resulting manifest.
+The process adapter is both the model implementation and the deterministic
+context sizer. The Host derives the same researched compaction limits used by
+the existing local product path. Model identity, reasoning, context behavior,
+instructions, limits, tool specifications, recovery declarations, and
+workspace-bound tool revisions are represented by the resulting manifest.
 
-Model and reasoning selection are not Alpha's identity. They may change
+Model and reasoning selection are not profile or Agent identity. They may change
 between operations while the Agent Instance, Session, instructions, tools, and
 history remain continuous. A change never mutates an active operation; the
 kernel freezes each operation's exact model and reasoning revision.
@@ -300,8 +317,9 @@ the next turn without restarting the surface. It cannot change an operation
 that is already admitted because the kernel has frozen that operation's
 manifest.
 
-This recipe is not yet a durable general profile schema. Persistence should be
-added only when the first management flow consumes it.
+The selected profile identity is durable session state. The recipe itself
+remains process-registered configuration until a real profile-management
+consumer proves the storage and mutation contract.
 
 ## Command path
 
@@ -323,8 +341,8 @@ control:
 
 ```text
 surface adapter or local caller
-  -> LocalHost creates or loads AlphaSession
-  -> AlphaSession accepts one caller-identified command
+  -> LocalHost creates or loads AgentSession
+  -> AgentSession accepts one caller-identified command
        -> read current workspace rules
        -> resolve the selected model, context, loop, and tools
        -> LocalSession atomically admits the command
@@ -333,18 +351,18 @@ surface adapter or local caller
 ```
 
 `Kernel::submit_exclusive` combines the unfinished-operation check and command
-insert in one immediate SQLite transaction. Alpha uses this optional admission
-primitive because one conversation turn must finish before another begins.
+insert in one immediate SQLite transaction. `AgentSession` uses this optional
+admission primitive because one conversation turn must finish before another begins.
 The general kernel `submit` path still permits ordered queues for future
 profiles. Exact redelivery remains idempotent; a different command is rejected
 without leaving ghost queued work.
 
-`LocalSession` remains the lower shared command boundary used by Alpha and the
-headless diagnostic runner. Its prompt and explicit-compaction methods share
+`LocalSession` remains the lower shared command boundary used by Agent profiles
+and the headless diagnostic runner. Its prompt and explicit-compaction methods share
 the same exclusive admission, stable command identity, drive, cancellation,
 and durable replay path. `LocalTurnOutcome::Compacted` carries the persisted
 post-compaction input estimate without pretending that a control operation
-produced an assistant message. `AlphaSession` is the complete surface-facing
+produced an assistant message. `AgentSession` is the complete surface-facing
 Host boundary: it also owns runtime selection, persistence, fresh per-turn
 composition, and cancellation coordination.
 
@@ -385,12 +403,15 @@ Local Host state has one intentionally visible layout:
     session.json                durable identity and workspace/profile binding
     runtime.jsonl               acknowledged provider/model/reasoning selections
     kernel.sqlite3              authoritative execution and recovery truth
-    trace.sqlite3               ordered Host/model/tool diagnostics
+    trace.sqlite3               ordered Host/model/tool diagnostics plus exact
+                                profile, Agent, and Session identity
 ```
 
 Usage, cache counts, timings, provider payloads, streamed chunks, and tool
 diagnostics belong in `trace.sqlite3`, never `runtime.jsonl` or model context.
-Trace rows explain execution but never decide replay or semantic history.
+Trace rows explain execution but never decide replay or semantic history. A
+v1 trace is migrated in place to add the durable Agent and profile identity
+already proven by its session manifest.
 
 The Host assembles these files in a hidden directory. After all four are synced
 and the kernel lease is closed, it atomically renames that directory to the
@@ -407,8 +428,8 @@ append; future valid records can never be joined onto torn JSON.
 The full intended extension lifecycle and its staged proof plan are recorded in
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md).
 
-The GUI is a surface, not the sole controller. `LocalHost` methods and Alpha's
-`extension_manage` tool already reach the same `PluginManager`; a future Waku
+The GUI is a surface, not the sole controller. `LocalHost` methods and each
+profile's `extension_manage` tool reach the same `PluginManager`; a future Waku
 view will call that Host path rather than own extension state:
 
 ```text
@@ -417,11 +438,12 @@ human surface --\
 running agent --/                                      -> durable change
 ```
 
-Alpha v1's deliberate full access permits search, lookup, inspect, install,
-list, connect, and authorize without a second plugin approval prompt. Service OAuth consent is
-authentication, not another Renoa permission decision. A later restricted
-profile will gate the same management binding through its one effective
-permission scope. An agent may exercise that authority but cannot broaden it.
+The current deliberate full-access policy permits search, lookup, inspect,
+install, list, connect, and authorize without a second plugin approval prompt.
+Service OAuth consent is authentication, not another Renoa permission decision.
+A later restricted profile will gate the same management binding through its
+one effective permission scope. An agent may exercise that authority but cannot
+broaden it.
 MCP registry attachments are visible at the next lookup; static runtime changes
 wait for a new operation and never mutate an active manifest.
 
@@ -439,24 +461,33 @@ modification.
 7. V0 exposes all configured local tools and adds no permission model.
 8. Provider, workspace, surface, and future permission policy stay outside the
    kernel.
-9. The Host owns OAuth coordination, client-registration policy, and secret
+9. The Host registers concrete profiles, persists the exact selected identity
+   per session, and fails closed when a required profile is unavailable.
+10. Installed packages, MCP catalogs, and immutable skill revisions are one
+    Host inventory; access and activation are explicitly profile-scoped.
+11. Every trace database identifies its profile, Agent, and Session.
+12. The Host owns OAuth coordination, client-registration policy, and secret
    references; the MCP adapter speaks the protocol, while packages, surfaces,
    the loop, and kernel never own credentials.
 
 ## Open decisions
 
-- future Host schema migrations beyond the proven v1-through-v9 chain;
+- future Host schema migrations beyond the proven v1-through-v10 chain;
 - historical resolved-binding retention across explicit catalog/profile
-changes for unfinished-operation recovery;
+  changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
   and immutable-package garbage collection;
-- profile inheritance and Agent Instance overrides;
+- durable profile definition storage, profile inheritance, and Agent Instance
+  overrides;
 - permission vocabulary, scopes, policy inheritance, and enforcement;
 - remote package discovery, updates, rollback, removal, and garbage collection;
 - the Host management transport and presentation;
 - whether capability changes pause and continue a task through one or more
   internal operations; and
-- process placement for multiple concurrent local Agent Instances.
+- a durable Agent catalog, multiple Sessions per Agent, and process placement
+  for multiple concurrent local Agent Instances;
+- credential distribution across Hosts or nodes; and
+- surface routing and cross-node continuity, which remain future RCP/product work.
 
 These remain open deliberately. No placeholder contract should make them
 appear settled.
@@ -476,7 +507,7 @@ The Host foundation proved that:
    that coherent foundation slice.
 
 The next consumer slice is also complete: ACP talks only to `LocalHost` and
-`AlphaSession`, creates and reloads Alpha identities, admits stable turn IDs,
+`AgentSession`, creates and reloads Alpha identities, admits stable turn IDs,
 streams transient model and tool events, durably cancels active effects, and
 projects final answers from semantic history. Exact redelivery is proven both
 within one process and after restart. Concurrent admission cannot leave ghost
@@ -486,6 +517,14 @@ and torn runtime logs remain appendable. Per-turn trace rows preserve ordered
 model/tool flow without entering kernel truth. The legacy harness crate is
 retired.
 
+The Host is now profile-generic while ACP deliberately remains Alpha-specific.
+A deterministic non-Alpha profile reaches the model with its own instructions,
+persists its exact profile/Agent/Session trace identity, survives Host restart,
+and fails closed when reopened by a process that did not register it. One MCP
+catalog can be attached to two profiles without copying it, while attaching it
+to one profile alone does not leak access to the other. This prepares the Host
+for additional agent recipes without inventing surface or permission policy.
+
 The same Host path now admits explicit compaction as a typed control operation.
 Its summary, checkpoint activation, result projection, exact redelivery,
 cancellation, and post-restart usage restoration are kernel-backed; no surface
@@ -494,8 +533,8 @@ owns or reconstructs that state.
 The first extension path is also complete. `LocalHost` registers direct no-auth
 or exact `gh`-referenced MCP connections, runs the replaceable Node adapter for
 bounded discovery and invocation, atomically publishes catalogs and tool
-attachments, and restores them after process restart. Alpha exposes three fixed
-registry tools regardless of catalog size. Search and load are bounded
+attachments, and restores them after process restart. Every assembled profile
+exposes three fixed registry tools regardless of catalog size. Search and load are bounded
 `SafeToReplay` reads; execute carries an exact catalog reference through the
 normal loop and kernel as a `NeverReplay` effect. Exact registration retries
 converge, identity changes conflict, failed refresh publication preserves the
@@ -558,7 +597,7 @@ revalidates every normalized result and fixed trust statement. Search exposes
 no endpoint, lookup never installs, unsupported transports and packages stay
 explicitly blocked, concrete URL credentials are rejected, and safe HTTP
 status facts reach Alpha without an untrusted response body. The frozen
-extension binding is revision 8. Search uses identity tokens rather than broad
+extension binding is revision 9. Search uses identity tokens rather than broad
 substrings, so an unrelated publisher such as `trycloudflare` is not treated as
 Cloudflare. Every management action has an exact schema that rejects fields
 from another action. Generic Secret Service headers, idempotent re-enable, and

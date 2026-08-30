@@ -8,7 +8,10 @@ Alpha is Renoa's first local coding-agent profile. Its stable Host identity is
 Alpha is not a loop, model, session store, or surface. It is the Host-owned
 recipe that supplies coding behavior and project instructions while the Host
 selects the exact model, reasoning level, context strategy, workspace, and
-tools. The kernel freezes the resolved behavior for each operation.
+tools. The kernel freezes the resolved behavior for each operation. `LocalHost`
+registers Alpha through the same `AgentProfile` path used by any future
+GitHub-review, messaging, or daily-assistant profile; only the ACP adapter
+currently selects Alpha by policy.
 
 ## Market study
 
@@ -52,6 +55,10 @@ surface requirements, not Alpha's internal design.
    behavior remain unchanged.
 7. Alpha has no plan mode. A question, review, plan, or implementation request
    is handled according to the user's intent by the same agent.
+8. Installed packages, MCP catalogs, and skill revisions belong to the Host.
+   Alpha sees only the connections and plugin-skill sources attached to Alpha's
+   exact profile identity. The Host can bind the same immutable catalog or skill
+   revision to another profile without duplicating its stored content.
 
 ## Project instructions
 
@@ -110,8 +117,9 @@ connection. It can also disconnect a connection from Alpha without deleting
 the Host's durable package, registration, or catalog, then re-enable the
 retained complete catalog without contacting the service. List reports compact
 pages of package, connection, and plugin skill facts with an opaque continuation
-cursor. Every add source becomes the same immutable package. Supported skills hot-load first, then Renoa
-validates the real endpoint through MCP discovery before publishing tools.
+cursor. Every add source becomes the same immutable package. Supported skills
+hot-load first, then Renoa validates the real endpoint through MCP discovery
+before publishing tools.
 Registry results are research hints within this Host tool, not accepted
 installation inputs. Other discovery sources remain replaceable. Alpha v1's
 deliberate full-access policy permits those
@@ -149,9 +157,9 @@ manifests, and configuration digests are not prompt content.
 
 ## Deliberate omissions
 
-Alpha's profile contract does not define profile persistence, permission
-vocabulary, subagents, MCP transport/catalog behavior, background jobs,
-repository maps, automatic test policy, surface protocol behavior, or a
+Alpha's profile contract does not define durable profile-definition storage,
+permission vocabulary, subagents, MCP transport/catalog behavior, background
+jobs, repository maps, automatic test policy, surface protocol behavior, or a
 generic profile trait. The Host may resolve MCP-derived tools into Alpha
 without making MCP part of Alpha. ACP can expose Alpha without becoming part of
 Alpha. A later subagent capability may ask the Host to resolve another agent

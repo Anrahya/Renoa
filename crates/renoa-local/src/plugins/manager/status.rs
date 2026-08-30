@@ -1,49 +1,57 @@
 use super::PluginManager;
 use crate::{
-    ALPHA_PROFILE_ID, mcp::McpConnectionStatus, plugins::PluginError, skills::SkillSourceReport,
+    AgentProfileId, mcp::McpConnectionStatus, plugins::PluginError, skills::SkillSourceReport,
 };
 
 impl PluginManager {
     pub(crate) async fn connection_statuses(
         &self,
+        profile_id: &AgentProfileId,
     ) -> Result<Vec<McpConnectionStatus>, PluginError> {
         let catalog = self.mcp_catalog.clone();
-        Ok(
-            tokio::task::spawn_blocking(move || {
-                catalog.alpha_connection_statuses(ALPHA_PROFILE_ID)
-            })
-            .await??,
-        )
-    }
-
-    pub(crate) async fn skill_source_reports(&self) -> Result<Vec<SkillSourceReport>, PluginError> {
-        let skills = self.skills.clone();
-        Ok(
-            tokio::task::spawn_blocking(move || skills.plugin_source_reports(ALPHA_PROFILE_ID))
-                .await??,
-        )
-    }
-
-    pub(crate) async fn disconnect_alpha(
-        &self,
-        connection_id: impl Into<String>,
-    ) -> Result<bool, PluginError> {
-        let catalog = self.mcp_catalog.clone();
-        let connection_id = connection_id.into();
+        let profile_id = profile_id.clone();
         Ok(tokio::task::spawn_blocking(move || {
-            catalog.disable_alpha_connection(ALPHA_PROFILE_ID, &connection_id)
+            catalog.profile_connection_statuses(profile_id.as_str())
         })
         .await??)
     }
 
-    pub(crate) async fn enable_alpha(
+    pub(crate) async fn skill_source_reports(
         &self,
+        profile_id: &AgentProfileId,
+    ) -> Result<Vec<SkillSourceReport>, PluginError> {
+        let skills = self.skills.clone();
+        let profile_id = profile_id.clone();
+        Ok(
+            tokio::task::spawn_blocking(move || skills.plugin_source_reports(profile_id.as_str()))
+                .await??,
+        )
+    }
+
+    pub(crate) async fn disconnect_profile(
+        &self,
+        profile_id: &AgentProfileId,
+        connection_id: impl Into<String>,
+    ) -> Result<bool, PluginError> {
+        let catalog = self.mcp_catalog.clone();
+        let profile_id = profile_id.clone();
+        let connection_id = connection_id.into();
+        Ok(tokio::task::spawn_blocking(move || {
+            catalog.disable_profile_connection(profile_id.as_str(), &connection_id)
+        })
+        .await??)
+    }
+
+    pub(crate) async fn enable_profile(
+        &self,
+        profile_id: &AgentProfileId,
         connection_id: impl Into<String>,
     ) -> Result<(), PluginError> {
         let catalog = self.mcp_catalog.clone();
+        let profile_id = profile_id.clone();
         let connection_id = connection_id.into();
         Ok(tokio::task::spawn_blocking(move || {
-            catalog.enable_alpha_connection(ALPHA_PROFILE_ID, &connection_id)
+            catalog.enable_profile_connection(profile_id.as_str(), &connection_id)
         })
         .await??)
     }

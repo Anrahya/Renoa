@@ -1,10 +1,13 @@
 use std::fs;
 
-use renoa_local::{LocalHost, LocalHostAdapters, LocalHostError, ModelProvider};
+use renoa_local::{
+    ALPHA_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters, LocalHostError,
+    LocalModelConfiguration, ModelProvider, alpha_profile,
+};
 use tempfile::tempdir;
 
 #[tokio::test]
-async fn an_open_alpha_session_can_select_a_newly_discovered_model() {
+async fn an_open_agent_session_can_select_a_newly_discovered_model() {
     let directory = tempdir().expect("temporary directory");
     let data = directory.path().join("data");
     let workspace = directory.path().join("workspace");
@@ -20,17 +23,23 @@ async fn an_open_alpha_session_can_select_a_newly_discovered_model() {
     .expect("write model bridge");
     let host = LocalHost::new(
         data,
-        &bridge,
-        vec![ModelProvider::Xai],
-        ModelProvider::Xai,
-        "model-a",
-        &credentials,
+        LocalModelConfiguration::new(
+            &bridge,
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "model-a",
+            &credentials,
+        ),
+        vec![alpha_profile()],
         LocalHostAdapters::default(),
     )
     .expect("assemble Host");
 
     let session = host
-        .create_alpha_session(&workspace)
+        .create_session(
+            &AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
+            &workspace,
+        )
         .await
         .expect("create Alpha session from first catalog");
     let initial = session.configuration().expect("initial configuration");

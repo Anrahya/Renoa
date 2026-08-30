@@ -7,7 +7,7 @@ use thiserror::Error;
 
 mod execution;
 
-/// One local Alpha conversation owned durably by the kernel.
+/// One local Agent conversation owned durably by the kernel.
 pub struct LocalSession {
     kernel: Kernel,
     agent_id: AgentId,

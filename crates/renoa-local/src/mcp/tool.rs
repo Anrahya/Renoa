@@ -20,7 +20,7 @@ use super::{
     call::{CALL_BOUNDARY_REVISION, call_tool},
     oauth_operation_id, rank_tools,
 };
-use crate::ALPHA_PROFILE_ID;
+use crate::AgentProfileId;
 use execute::{definite_boundary_error, execution_details, map_failure};
 
 pub(crate) use execute::definite_boundary_error as adapter_tool_error;
@@ -28,10 +28,11 @@ pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 const SEARCH_TOOL: &str = "tool_search";
 const LOAD_TOOL: &str = "tool_load";
 const EXECUTE_TOOL: &str = "tool_execute";
-const SEARCH_REVISION: &str = "renoa-mcp-registry-v2/search";
+const SEARCH_REVISION: &str = "renoa-mcp-registry-v3/search";
 const REGISTRY_REVISION: &str = "renoa-mcp-registry-v1";
 
-pub(crate) fn alpha_registry_bindings(
+pub(crate) fn profile_registry_bindings(
+    profile_id: AgentProfileId,
     store: McpCatalogStore,
     adapter: Option<PathBuf>,
     credentials: McpCredentialResolver,
@@ -42,17 +43,18 @@ pub(crate) fn alpha_registry_bindings(
     vec![
         AgentToolBinding::new(
             SEARCH_REVISION,
-            Arc::new(SearchTool::new(store.clone())),
+            Arc::new(SearchTool::new(profile_id.clone(), store.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/load"),
-            Arc::new(LoadTool::new(store.clone())),
+            Arc::new(LoadTool::new(profile_id.clone(), store.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/execute/{CALL_BOUNDARY_REVISION}"),
             Arc::new(ExecuteTool::new(
+                profile_id,
                 store,
                 adapter,
                 authorizations,
@@ -65,18 +67,20 @@ pub(crate) fn alpha_registry_bindings(
 }
 
 struct SearchTool {
+    profile_id: AgentProfileId,
     store: McpCatalogStore,
     spec: ToolSpec,
 }
 
 impl SearchTool {
-    fn new(store: McpCatalogStore) -> Self {
+    fn new(profile_id: AgentProfileId, store: McpCatalogStore) -> Self {
         Self {
+            profile_id,
             store,
             spec: ToolSpec {
                 name: SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find tools in Alpha's enabled extension connections without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before tool_execute. Use query `*` to browse."
+                    "Find tools enabled for this agent profile without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before tool_execute. Use query `*` to browse."
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -109,11 +113,13 @@ impl Tool for SearchTool {
             let input: SearchInput = decode_call(&call, SEARCH_TOOL)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
-            let tools =
-                tokio::task::spawn_blocking(move || store.alpha_tool_summaries(ALPHA_PROFILE_ID))
-                    .await
-                    .map_err(|error| background_error(&error))?
-                    .map_err(host_error)?;
+            let profile_id = self.profile_id.clone();
+            let tools = tokio::task::spawn_blocking(move || {
+                store.profile_tool_summaries(profile_id.as_str())
+            })
+            .await
+            .map_err(|error| background_error(&error))?
+            .map_err(host_error)?;
             require_active(&cancellation)?;
             let ranked = rank_tools(tools, &input.query).map_err(host_error)?;
             let matches = ranked
@@ -137,13 +143,15 @@ impl Tool for SearchTool {
 }
 
 struct LoadTool {
+    profile_id: AgentProfileId,
     store: McpCatalogStore,
     spec: ToolSpec,
 }
 
 impl LoadTool {
-    fn new(store: McpCatalogStore) -> Self {
+    fn new(profile_id: AgentProfileId, store: McpCatalogStore) -> Self {
         Self {
+            profile_id,
             store,
             spec: ToolSpec {
                 name: LOAD_TOOL.to_owned(),
@@ -184,9 +192,10 @@ impl Tool for LoadTool {
             let references = parse_references(input.references)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
+            let profile_id = self.profile_id.clone();
             let lookup = references.clone();
             let resolved = tokio::task::spawn_blocking(move || {
-                store.resolve_alpha_tools(ALPHA_PROFILE_ID, &lookup)
+                store.resolve_profile_tools(profile_id.as_str(), &lookup)
             })
             .await
             .map_err(|error| background_error(&error))?
@@ -225,6 +234,7 @@ impl Tool for LoadTool {
 }
 
 struct ExecuteTool {
+    profile_id: AgentProfileId,
     store: McpCatalogStore,
     adapter: Option<PathBuf>,
     authorizations: McpAuthorizationResolver,
@@ -235,6 +245,7 @@ struct ExecuteTool {
 
 impl ExecuteTool {
     fn new(
+        profile_id: AgentProfileId,
         store: McpCatalogStore,
         adapter: Option<PathBuf>,
         authorizations: McpAuthorizationResolver,
@@ -242,6 +253,7 @@ impl ExecuteTool {
         command_id: Option<CommandId>,
     ) -> Self {
         Self {
+            profile_id,
             store,
             adapter,
             authorizations,
@@ -285,9 +297,10 @@ impl Tool for ExecuteTool {
             let reference = McpToolReference::from_str(&input.reference).map_err(host_error)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
+            let profile_id = self.profile_id.clone();
             let stored_reference = reference.clone();
             let mut resolved = tokio::task::spawn_blocking(move || {
-                store.resolve_alpha_tools(ALPHA_PROFILE_ID, &[stored_reference])
+                store.resolve_profile_tools(profile_id.as_str(), &[stored_reference])
             })
             .await
             .map_err(|error| background_error(&error))?

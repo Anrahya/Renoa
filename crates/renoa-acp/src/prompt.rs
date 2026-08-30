@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::{ContentBlock as AcpContentBlock, Meta};
 use renoa_agent::{AgentEventSink, BoxFuture, ContentBlock};
-use renoa_local::{AlphaSession, LocalTurnOutcome};
+use renoa_local::{AgentSession, LocalTurnOutcome};
 use uuid::Uuid;
 
 use crate::ServerError;
@@ -13,7 +13,7 @@ pub(crate) enum PromptAction {
 }
 
 pub(crate) async fn execute(
-    session: &Arc<AlphaSession>,
+    session: &Arc<AgentSession>,
     action: PromptAction,
     request_id: Uuid,
     sink: Arc<dyn AgentEventSink>,

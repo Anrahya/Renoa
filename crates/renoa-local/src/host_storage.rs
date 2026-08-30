@@ -8,7 +8,7 @@ use renoa_kernel::{AgentId, SessionId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ALPHA_PROFILE_ID, LocalHostError, LocalSession,
+    AgentProfileId, LocalHostError, LocalSession,
     selection::{RuntimeSelection, create_selection_log},
     trace::{TRACE_DATABASE, TraceStore},
 };
@@ -21,7 +21,7 @@ const MANIFEST_VERSION: u32 = 3;
 #[serde(deny_unknown_fields)]
 pub(crate) struct SessionManifest {
     version: u32,
-    profile: String,
+    pub(crate) profile: AgentProfileId,
     pub(crate) agent_id: AgentId,
     pub(crate) session_id: SessionId,
     pub(crate) workspace: PathBuf,
@@ -34,6 +34,7 @@ struct SessionManifestHeader {
 
 pub(crate) fn create_session_storage(
     sessions: &Path,
+    profile: AgentProfileId,
     agent_id: AgentId,
     session_id: SessionId,
     workspace: PathBuf,
@@ -41,7 +42,7 @@ pub(crate) fn create_session_storage(
 ) -> Result<PathBuf, LocalHostError> {
     let manifest = SessionManifest {
         version: MANIFEST_VERSION,
-        profile: ALPHA_PROFILE_ID.to_owned(),
+        profile,
         agent_id,
         session_id,
         workspace,
@@ -54,6 +55,8 @@ pub(crate) fn create_session_storage(
         drop(TraceStore::create(
             staging.join(TRACE_DATABASE),
             session_id,
+            agent_id,
+            &manifest.profile,
         )?);
         Ok(())
     })
@@ -170,13 +173,7 @@ fn read_manifest_file(path: &Path) -> Result<SessionManifest, LocalHostError> {
             header.version
         )));
     }
-    let manifest = serde_json::from_slice::<SessionManifest>(&bytes)?;
-    if manifest.profile != ALPHA_PROFILE_ID {
-        return Err(LocalHostError::InvalidRequest(
-            "session metadata does not describe Renoa Alpha".to_owned(),
-        ));
-    }
-    Ok(manifest)
+    Ok(serde_json::from_slice::<SessionManifest>(&bytes)?)
 }
 
 fn remove_tombstone(sessions: &Path, tombstone: &Path) -> Result<(), LocalHostError> {
@@ -220,8 +217,8 @@ mod tests {
 
     use super::{KERNEL_DATABASE, create_session_storage, delete_session_storage, publish_session};
     use crate::{
-        LocalHostError, LocalSession, LocalSessionError, ModelProvider, ReasoningLevel,
-        selection::RuntimeSelection,
+        ALPHA_PROFILE_ID, AgentProfileId, LocalHostError, LocalSession, LocalSessionError,
+        ModelProvider, ReasoningLevel, selection::RuntimeSelection,
     };
 
     #[test]
@@ -275,6 +272,7 @@ mod tests {
         let session_id = SessionId::new();
         let directory = create_session_storage(
             sessions.path(),
+            AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
             agent_id,
             session_id,
             workspace.path().to_owned(),
