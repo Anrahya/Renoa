@@ -285,9 +285,11 @@ It flattens those states into compact pages of at most 32 facts. The opaque
 continuation cursor fingerprints the complete inventory, so a concurrent Host
 change invalidates that cursor instead of making offset pagination skip or
 repeat an entry.
-The management tool uses one closed schema variant per action. Required fields
-and allowed fields therefore change together with the selected action; a model
-cannot accidentally pass stale fields from another action and have them ignored.
+The management tool advertises one flat model-facing schema because several
+OpenAI-compatible providers drop arguments when a function schema is rooted in
+`oneOf`. Its action description states the required companion fields, while the
+Host decodes one closed typed variant per action. Missing fields and fields from
+another action are rejected rather than ignored.
 
 ## Protocol lifecycle
 

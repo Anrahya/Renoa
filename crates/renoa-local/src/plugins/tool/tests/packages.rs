@@ -48,23 +48,25 @@ fn oauth_credential_uses_the_exact_public_spelling_and_requires_a_registration_m
 }
 
 #[test]
-fn extension_schema_keeps_raw_credentials_out_of_the_agent_path() {
+fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     let spec = manage_tool_spec(TOOL_NAME);
     assert!(spec.description.contains("references only"));
     assert!(spec.description.contains("never pass API keys"));
     assert!(spec.description.contains("untrusted data"));
     let schema = &spec.input_schema;
     assert_eq!(schema["type"], "object");
-    assert!(schema.get("required").is_none());
-    let variants = schema["oneOf"]
+    assert_eq!(schema["required"], json!(["action"]));
+    assert_eq!(schema["additionalProperties"], false);
+    let properties = schema["properties"]
+        .as_object()
+        .expect("management schema has flat properties");
+    let actions = properties["action"]["enum"]
         .as_array()
-        .expect("management schema has action variants");
+        .expect("management schema has action values");
     assert_eq!(
-        variants
+        actions
             .iter()
-            .map(|variant| variant["properties"]["action"]["const"]
-                .as_str()
-                .expect("action variant has a string discriminator"))
+            .map(|action| action.as_str().expect("action is a string"))
             .collect::<Vec<_>>(),
         [
             "search",
@@ -79,55 +81,35 @@ fn extension_schema_keeps_raw_credentials_out_of_the_agent_path() {
             "enable"
         ]
     );
-    assert!(
-        variants
-            .iter()
-            .all(|variant| variant["additionalProperties"] == false)
-    );
-    let add = &variants[2];
-    assert_eq!(add["required"], json!(["action", "source"]));
     assert_eq!(
-        add["properties"]["source"]["oneOf"][0]["properties"]["kind"]["const"],
-        "mcp"
+        properties["source"]["properties"]["kind"]["enum"],
+        json!(["mcp", "package"])
     );
+    assert_eq!(properties["source"]["required"], json!(["kind"]));
     assert_eq!(
-        add["properties"]["credential"]["oneOf"][0]["required"],
-        json!(["kind", "credential_id"])
+        properties["credential"]["properties"]["kind"]["enum"],
+        json!(["secret_service_bearer", "secret_service_header", "oauth"])
     );
+    assert_eq!(properties["credential"]["required"], json!(["kind"]));
     assert_eq!(
-        add["properties"]["credential"]["oneOf"][1]["properties"]["kind"]["const"],
-        "secret_service_header"
+        properties["credential"]["properties"]["registration"]["properties"]["mode"]["enum"],
+        json!(["dynamic", "client_metadata", "pre_registered"])
     );
-    assert_eq!(
-        add["properties"]["credential"]["oneOf"][2]["required"],
-        json!(["kind", "registration"])
-    );
-    assert_eq!(
-        add["properties"]["credential"]["oneOf"][2]["properties"]["registration"]["oneOf"][2]["properties"]
-            ["mode"]["const"],
-        "pre_registered"
-    );
-    let credential_description = add["properties"]["credential"]["description"]
+    let credential_description = properties["credential"]["description"]
         .as_str()
         .expect("credential schema has model guidance");
     assert!(credential_description.contains("existing Host credential reference"));
     assert!(credential_description.contains("secret_service_header"));
     let encoded = schema.to_string();
+    assert!(!encoded.contains("\"oneOf\""));
+    assert!(!encoded.contains("\"anyOf\""));
+    assert!(!encoded.contains("\"allOf\""));
+    assert!(!encoded.contains("\"const\""));
+    assert!(!encoded.contains("\"not\""));
     assert!(!encoded.contains("candidate"));
     assert!(encoded.contains("query"));
     assert!(!encoded.contains("connection_id"));
-    assert_eq!(
-        variants[1]["properties"]["registry_version"]["not"]["const"],
-        "latest"
-    );
-    assert_eq!(variants[5]["required"], json!(["action"]));
-    assert_eq!(
-        variants[5]["properties"]
-            .as_object()
-            .map(serde_json::Map::len),
-        Some(3)
-    );
-    assert_eq!(variants[5]["properties"]["limit"]["maximum"], 32);
+    assert_eq!(properties["limit"]["maximum"], 32);
     serde_json::from_value::<ManageInput>(json!({"action": "search", "query": "cloudflare"}))
         .expect("official Registry search is a typed action");
     serde_json::from_value::<ManageInput>(json!({
