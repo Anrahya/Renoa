@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     AgentProfile, AgentProfileError, BridgeModel, LocalWorkspace, ModelBridgeError, ModelChoice,
-    ReasoningLevel, skills::SkillRuntimeContext,
+    ReasoningLevel, profile::AutomaticCompactionPolicy, skills::SkillRuntimeContext,
 };
 
 const MODEL_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(32).unwrap();
@@ -35,6 +35,7 @@ pub struct LocalRuntimeConfig {
     model_spec: Option<String>,
     reasoning: Option<ReasoningLevel>,
     skill_context: Option<SkillRuntimeContext>,
+    automatic_compaction: Option<AutomaticCompactionPolicy>,
 }
 
 impl LocalRuntimeConfig {
@@ -60,6 +61,7 @@ impl LocalRuntimeConfig {
             model_spec: None,
             reasoning: None,
             skill_context: None,
+            automatic_compaction: profile.automatic_compaction(),
         })
     }
 
@@ -113,6 +115,13 @@ pub enum LocalRuntimeError {
     ContextReserveOverflow,
     #[error("model context is smaller than its output reserve")]
     ContextWindowTooSmall,
+    #[error(
+        "automatic compaction trigger ({automatic_compaction_input_tokens}) exceeds the model dispatch limit ({dispatch_limit_tokens})"
+    )]
+    AutomaticCompactionAboveDispatchLimit {
+        automatic_compaction_input_tokens: u64,
+        dispatch_limit_tokens: u64,
+    },
     #[error("post-compaction target is zero")]
     ZeroCompactionTarget,
     #[error("checkpoint budget is zero")]
@@ -171,7 +180,11 @@ async fn build_local_runtime_inner(
     events: Option<Arc<dyn renoa_agent::AgentEventSink>>,
 ) -> Result<Runtime, LocalRuntimeError> {
     let resolved = resolve_model(config).await?;
-    let context = context_binding(&resolved.model, resolved.skill_context.as_ref())?;
+    let context = context_binding(
+        &resolved.model,
+        resolved.skill_context.as_ref(),
+        resolved.automatic_compaction,
+    )?;
     let model_revision = format!(
         "renoa-model-provider-node/v1/{}/{}/{}/reasoning-{}",
         resolved.provider,
@@ -196,6 +209,7 @@ struct ResolvedModel {
     instructions: String,
     model: Arc<BridgeModel>,
     skill_context: Option<SkillRuntimeContext>,
+    automatic_compaction: Option<AutomaticCompactionPolicy>,
 }
 
 async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, ModelBridgeError> {
@@ -222,25 +236,29 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
         instructions,
         model,
         skill_context: config.skill_context,
+        automatic_compaction: config.automatic_compaction,
     })
 }
 
 fn context_binding(
     model: &Arc<BridgeModel>,
     skill_context: Option<&SkillRuntimeContext>,
+    automatic_compaction: Option<AutomaticCompactionPolicy>,
 ) -> Result<ContextBinding, LocalRuntimeError> {
-    let settings = compaction_settings(model.as_ref())?;
+    let settings = compaction_settings(model.as_ref(), automatic_compaction)?;
     let limits = CompactionLimits::new(
         settings.context,
         settings.reserved,
         settings.target,
         settings.max_summary,
-    )?;
+    )?
+    .with_automatic_compaction_input_tokens(settings.automatic_compaction)?;
     let skill_revision = skill_context.map_or("none", |context| context.revision.as_str());
     let revision = format!(
-        "renoa.context.compaction.v1/context-{}/reserved-{}/target-{}/summary-{}/attempts-{}/skills-{}",
+        "renoa.context.compaction.v1/context-{}/reserved-{}/automatic-{}/target-{}/summary-{}/attempts-{}/skills-{}",
         settings.context,
         settings.reserved,
+        settings.automatic_compaction,
         settings.target,
         settings.max_summary,
         COMPACTION_ATTEMPT_LIMIT,
@@ -263,11 +281,15 @@ fn context_binding(
 struct CompactionSettings {
     context: NonZeroU64,
     reserved: u64,
+    automatic_compaction: NonZeroU64,
     target: NonZeroU64,
     max_summary: NonZeroU64,
 }
 
-fn compaction_settings(model: &BridgeModel) -> Result<CompactionSettings, LocalRuntimeError> {
+fn compaction_settings(
+    model: &BridgeModel,
+    automatic_compaction: Option<AutomaticCompactionPolicy>,
+) -> Result<CompactionSettings, LocalRuntimeError> {
     let context = model.context_window_tokens();
     let safety = (context.get() / 50).max(MIN_CONTEXT_SAFETY_TOKENS);
     let reserved = u64::from(model.max_output_tokens().get())
@@ -276,17 +298,31 @@ fn compaction_settings(model: &BridgeModel) -> Result<CompactionSettings, LocalR
     let dispatch = context
         .get()
         .checked_sub(reserved)
-        .ok_or(LocalRuntimeError::ContextWindowTooSmall)?;
-    let target = dispatch
-        .checked_mul(3)
-        .and_then(|value| value.checked_div(5))
         .and_then(NonZeroU64::new)
-        .ok_or(LocalRuntimeError::ZeroCompactionTarget)?;
+        .ok_or(LocalRuntimeError::ContextWindowTooSmall)?;
+    let automatic_compaction_input_tokens =
+        automatic_compaction.map_or(dispatch, |policy| policy.trigger_input_tokens);
+    if automatic_compaction_input_tokens > dispatch {
+        return Err(LocalRuntimeError::AutomaticCompactionAboveDispatchLimit {
+            automatic_compaction_input_tokens: automatic_compaction_input_tokens.get(),
+            dispatch_limit_tokens: dispatch.get(),
+        });
+    }
+    let target = match automatic_compaction {
+        Some(policy) => policy.target_input_tokens,
+        None => dispatch
+            .get()
+            .checked_mul(3)
+            .and_then(|value| value.checked_div(5))
+            .and_then(NonZeroU64::new)
+            .ok_or(LocalRuntimeError::ZeroCompactionTarget)?,
+    };
     let max_summary = NonZeroU64::new(MAX_CHECKPOINT_TOKENS.min(target.get() / 4))
         .ok_or(LocalRuntimeError::ZeroCheckpointBudget)?;
     Ok(CompactionSettings {
         context,
         reserved,
+        automatic_compaction: automatic_compaction_input_tokens,
         target,
         max_summary,
     })

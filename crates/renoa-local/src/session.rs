@@ -5,7 +5,11 @@ use renoa_agent_loop::MESSAGE_EVENT_KIND;
 use renoa_kernel::{AgentId, CommandId, EventCursor, Kernel, KernelError, OperationId, SessionId};
 use thiserror::Error;
 
+use crate::TurnObservationError;
+
 mod execution;
+#[cfg(test)]
+mod timing_tests;
 
 /// One local Agent conversation owned durably by the kernel.
 pub struct LocalSession {
@@ -48,6 +52,14 @@ pub enum LocalSessionError {
     Kernel(#[from] KernelError),
     #[error("local agent command cannot be encoded: {0}")]
     CommandEncoding(#[source] serde_json::Error),
+    #[error("durable command for operation {operation_id} is invalid: {source}")]
+    CommandInvalid {
+        operation_id: OperationId,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error(transparent)]
+    TurnObservation(#[from] TurnObservationError),
     #[error("admitted operation {0} is absent from its kernel session")]
     AdmissionMissing(OperationId),
     #[error(

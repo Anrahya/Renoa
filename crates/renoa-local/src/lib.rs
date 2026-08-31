@@ -3,6 +3,7 @@
 mod agent_session;
 mod agent_trace;
 mod alpha;
+mod arcee;
 mod atomic_file;
 mod bash;
 mod deadline;
@@ -29,6 +30,7 @@ mod skills;
 mod tool_error;
 mod tool_input;
 mod trace;
+mod turn_observation;
 mod workspace;
 
 #[cfg(test)]
@@ -36,6 +38,7 @@ mod model_adapter_process_tests;
 
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use alpha::{ALPHA_PROFILE_ID, alpha_profile};
+pub use arcee::{ARCEE_PROFILE_ID, arcee_profile};
 pub use host::catalog::HostCatalogError;
 pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
 pub use mcp::{
@@ -55,4 +58,5 @@ pub use runtime::{
 pub use session::{LocalHistoryEntry, LocalSession, LocalSessionError, LocalTurnOutcome};
 pub use shared_registry::SharedPluginSyncReport;
 pub use skills::SkillError;
+pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};

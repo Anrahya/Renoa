@@ -7,21 +7,24 @@ use uuid::Uuid;
 
 use super::AgentSession;
 use crate::{
-    LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice,
+    LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, TurnObservation,
     agent_trace::finish_trace,
     host::{RuntimeRequest, resolve_runtime},
     trace::{ObservedEventSink, TraceRun},
 };
 
 enum SessionCommand {
-    Prompt(Vec<ContentBlock>),
+    Prompt {
+        content: Vec<ContentBlock>,
+        observation: TurnObservation,
+    },
     Compact,
 }
 
 impl SessionCommand {
     const fn name(&self) -> &'static str {
         match self {
-            Self::Prompt(_) => "prompt",
+            Self::Prompt { .. } => "prompt",
             Self::Compact => "compact",
         }
     }
@@ -52,8 +55,34 @@ impl AgentSession {
         content: Vec<ContentBlock>,
         events: Arc<dyn AgentEventSink>,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        self.execute(request_id, SessionCommand::Prompt(content), events)
+        self.execute_turn_observed(request_id, content, TurnObservation::now()?, events)
             .await
+    }
+
+    /// Runs one caller-identified prompt with the surface's durable receive time.
+    ///
+    /// Queue-backed surfaces should use this so restarts and delivery delays do
+    /// not change the time observed by the model.
+    ///
+    /// # Errors
+    ///
+    /// Returns request coordination, runtime resolution, admission, or execution failures.
+    pub async fn execute_turn_observed(
+        &self,
+        request_id: Uuid,
+        content: Vec<ContentBlock>,
+        observation: TurnObservation,
+        events: Arc<dyn AgentEventSink>,
+    ) -> Result<LocalTurnOutcome, LocalHostError> {
+        self.execute(
+            request_id,
+            SessionCommand::Prompt {
+                content,
+                observation,
+            },
+            events,
+        )
+        .await
     }
 
     /// Runs one caller-identified explicit compaction operation.
@@ -92,7 +121,7 @@ impl AgentSession {
         let command_id = CommandId::from_uuid(request_id);
         let compact_trace = [ContentBlock::text("/compact")];
         let trace_content = match &command {
-            SessionCommand::Prompt(content) => content.as_slice(),
+            SessionCommand::Prompt { content, .. } => content.as_slice(),
             SessionCommand::Compact => compact_trace.as_slice(),
         };
         let trace = self
@@ -150,7 +179,7 @@ impl AgentSession {
             )
             .await?;
         let replay = match &command {
-            SessionCommand::Prompt(content) => {
+            SessionCommand::Prompt { content, .. } => {
                 self.kernel.replay_settled_turn(command_id, content)?
             }
             SessionCommand::Compact => self.kernel.replay_settled_compaction(command_id)?,
@@ -181,7 +210,14 @@ impl AgentSession {
         )
         .await?;
         match command {
-            SessionCommand::Prompt(content) => Ok(self
+            SessionCommand::Prompt {
+                content,
+                observation,
+            } if profile.uses_turn_timing() => Ok(self
+                .kernel
+                .execute_observed_turn(command_id, content, observation, &runtime, cancellation)
+                .await?),
+            SessionCommand::Prompt { content, .. } => Ok(self
                 .kernel
                 .execute_turn(command_id, content, &runtime, cancellation)
                 .await?),

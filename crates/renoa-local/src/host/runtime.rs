@@ -43,6 +43,9 @@ pub(crate) async fn resolve_runtime(
         session_id,
         command_id,
     );
+    if let Some(binding) = profile.document_binding() {
+        extension_tools.push(binding);
+    }
     extension_tools.push(profile_plugin_binding(
         profile.id().clone(),
         host.plugins.clone(),

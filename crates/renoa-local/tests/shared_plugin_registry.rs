@@ -180,14 +180,15 @@ impl RunningRegistry {
     }
 
     async fn status(&self) -> RegistryStatus {
-        reqwest::get(format!("{}v1/status", self.origin))
+        let bytes = reqwest::get(format!("{}v1/status", self.origin))
             .await
             .expect("request registry status")
             .error_for_status()
             .expect("successful registry status")
-            .json()
+            .bytes()
             .await
-            .expect("decode registry status")
+            .expect("read registry status");
+        serde_json::from_slice(&bytes).expect("decode registry status")
     }
 
     async fn stop(self) {

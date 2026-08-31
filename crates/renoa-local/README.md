@@ -1,15 +1,15 @@
 # Renoa local host
 
-`renoa-local` is the first real Host for `renoa-kernel`. It resolves one local
-coding runtime from:
+`renoa-local` is the first real Host for `renoa-kernel`. It resolves Agent
+runtimes from:
 
-- Renoa Alpha's versioned coding behavior and workspace `AGENTS.md` rules;
+- a versioned profile such as Alpha or Arcee, plus workspace `AGENTS.md` rules;
 - the `@renoa/model-provider` process adapter for xAI and OpenCode Go; and
 - Renoa's durable model/tool loop and compaction strategy;
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
   tools; and
 - three fixed extension-registry tools over durable MCP integration,
-  connection, catalog, and Alpha-attachment records; and
+  connection, catalog, and profile-attachment records; and
 - one fixed `extension_manage` tool whose read-only official Registry
   search/lookup is backed by a replaceable process adapter.
 

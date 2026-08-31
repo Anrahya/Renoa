@@ -2,13 +2,14 @@ use std::{
     fs::{File, OpenOptions},
     io::Write as _,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
-use renoa_kernel::{AgentId, SessionId};
+use renoa_kernel::{AgentId, KernelError, SessionId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentProfileId, LocalHostError, LocalSession,
+    AgentProfileId, LocalHostError, LocalSession, LocalSessionError,
     selection::{RuntimeSelection, create_selection_log},
     trace::{TRACE_DATABASE, TraceStore},
 };
@@ -16,6 +17,14 @@ use crate::{
 pub(crate) const KERNEL_DATABASE: &str = "kernel.sqlite3";
 pub(crate) const MANIFEST_FILE: &str = "session.json";
 const MANIFEST_VERSION: u32 = 3;
+const CREATION_LOCK_FILE: &str = ".session-creation.lock";
+const OWNERSHIP_HANDOFF_TIMEOUT: Duration = Duration::from_millis(100);
+const OWNERSHIP_HANDOFF_POLL: Duration = Duration::from_millis(1);
+
+pub(crate) enum SessionPublication {
+    Created(PathBuf),
+    Existing,
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,7 +48,7 @@ pub(crate) fn create_session_storage(
     session_id: SessionId,
     workspace: PathBuf,
     selection: &RuntimeSelection,
-) -> Result<PathBuf, LocalHostError> {
+) -> Result<SessionPublication, LocalHostError> {
     let manifest = SessionManifest {
         version: MANIFEST_VERSION,
         profile,
@@ -97,7 +106,7 @@ pub(crate) fn delete_session_storage(
     }
     let kernel_path = directory.join(KERNEL_DATABASE);
     require_file(&kernel_path)?;
-    let owner = LocalSession::load(&kernel_path, session_id)?;
+    let owner = load_session_after_handoff(&kernel_path, session_id)?;
     if owner.agent_id() != manifest.agent_id {
         return Err(LocalHostError::InvalidRequest(
             "session metadata differs from its kernel agent binding".to_owned(),
@@ -110,13 +119,47 @@ pub(crate) fn delete_session_storage(
     remove_tombstone(sessions, &tombstone)
 }
 
+/// Opens a session after a local owner was just closed.
+///
+/// A concurrently forked child briefly inherits the kernel lock descriptor
+/// until `exec` applies close-on-exec. This bounded wait covers that OS
+/// handoff. A live Renoa owner still wins and returns `AlreadyRunning`.
+pub(crate) fn load_session_after_handoff(
+    kernel_path: &Path,
+    session_id: SessionId,
+) -> Result<LocalSession, LocalHostError> {
+    let started = Instant::now();
+    loop {
+        match LocalSession::load(kernel_path, session_id) {
+            Err(LocalSessionError::Kernel(KernelError::AlreadyRunning { .. }))
+                if started.elapsed() < OWNERSHIP_HANDOFF_TIMEOUT =>
+            {
+                std::thread::sleep(OWNERSHIP_HANDOFF_POLL);
+            }
+            result => return result.map_err(Into::into),
+        }
+    }
+}
+
 fn publish_session(
     sessions: &Path,
     session_id: SessionId,
     initialize: impl FnOnce(&Path) -> Result<(), LocalHostError>,
-) -> Result<PathBuf, LocalHostError> {
+) -> Result<SessionPublication, LocalHostError> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(sessions.join(CREATION_LOCK_FILE))?;
+    lock.lock()?;
     let final_directory = sessions.join(session_id.to_string());
+    if final_directory.try_exists()? {
+        require_directory(&final_directory)?;
+        return Ok(SessionPublication::Existing);
+    }
     let staging = sessions.join(format!(".creating-{session_id}"));
+    remove_stale_staging(&staging)?;
     std::fs::create_dir(&staging)?;
     restrict_session_directory(&staging)?;
     let mut published = false;
@@ -125,7 +168,7 @@ fn publish_session(
         std::fs::rename(&staging, &final_directory)?;
         published = true;
         File::open(sessions)?.sync_all()?;
-        Ok(final_directory.clone())
+        Ok(SessionPublication::Created(final_directory.clone()))
     });
     match result {
         Ok(directory) => Ok(directory),
@@ -137,6 +180,21 @@ fn publish_session(
                 cleanup,
             }),
         },
+    }
+}
+
+fn remove_stale_staging(staging: &Path) -> Result<(), LocalHostError> {
+    match std::fs::symlink_metadata(staging) {
+        Ok(metadata) if metadata.file_type().is_dir() => {
+            std::fs::remove_dir_all(staging)?;
+            Ok(())
+        }
+        Ok(_) => Err(LocalHostError::InvalidRequest(format!(
+            "session creation staging path is not a directory: {}",
+            staging.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -210,15 +268,24 @@ fn require_file(path: &Path) -> Result<(), LocalHostError> {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::{
+        cell::Cell,
+        io,
+        sync::mpsc::{self, RecvTimeoutError},
+        thread,
+        time::Duration,
+    };
 
     use renoa_kernel::{AgentId, KernelError, SessionId};
     use tempfile::tempdir;
 
-    use super::{KERNEL_DATABASE, create_session_storage, delete_session_storage, publish_session};
+    use super::{
+        KERNEL_DATABASE, SessionPublication, create_session_storage, delete_session_storage,
+        load_session_after_handoff, publish_session,
+    };
     use crate::{
-        ALPHA_PROFILE_ID, AgentProfileId, LocalHostError, LocalSession, LocalSessionError,
-        ModelProvider, ReasoningLevel, selection::RuntimeSelection,
+        ALPHA_PROFILE_ID, AgentProfileId, LocalHostError, LocalSessionError, ModelProvider,
+        ReasoningLevel, selection::RuntimeSelection,
     };
 
     #[test]
@@ -251,8 +318,12 @@ mod tests {
         let directory = tempdir().expect("temporary directory");
         let session_id = renoa_kernel::SessionId::new();
 
-        let published = publish_session(directory.path(), session_id, |_| Ok(()))
-            .expect("publish session directory");
+        let SessionPublication::Created(published) =
+            publish_session(directory.path(), session_id, |_| Ok(()))
+                .expect("publish session directory")
+        else {
+            panic!("new session unexpectedly existed");
+        };
 
         assert_eq!(
             std::fs::metadata(published)
@@ -265,12 +336,45 @@ mod tests {
     }
 
     #[test]
+    fn publication_recovers_a_stale_creation_and_reuses_the_published_session() {
+        let sessions = tempdir().expect("temporary directory");
+        let session_id = SessionId::new();
+        let staging = sessions.path().join(format!(".creating-{session_id}"));
+        std::fs::create_dir(&staging).expect("create stale staging directory");
+        std::fs::write(staging.join("partial"), "incomplete").expect("write stale data");
+
+        let SessionPublication::Created(published) =
+            publish_session(sessions.path(), session_id, |directory| {
+                assert!(!directory.join("partial").exists());
+                std::fs::write(directory.join("complete"), "ready")?;
+                Ok(())
+            })
+            .expect("recover session publication")
+        else {
+            panic!("stale creation unexpectedly resolved as published");
+        };
+        assert_eq!(
+            std::fs::read_to_string(published.join("complete")).expect("read published data"),
+            "ready"
+        );
+
+        let initialized = Cell::new(false);
+        let publication = publish_session(sessions.path(), session_id, |_| {
+            initialized.set(true);
+            Ok(())
+        })
+        .expect("reuse published session");
+        assert!(matches!(publication, SessionPublication::Existing));
+        assert!(!initialized.get());
+    }
+
+    #[test]
     fn deletion_requires_exclusive_ownership_and_is_idempotent() {
         let sessions = tempdir().expect("temporary directory");
         let workspace = tempdir().expect("workspace directory");
         let agent_id = AgentId::new();
         let session_id = SessionId::new();
-        let directory = create_session_storage(
+        let SessionPublication::Created(directory) = create_session_storage(
             sessions.path(),
             AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
             agent_id,
@@ -282,8 +386,10 @@ mod tests {
                 reasoning: ReasoningLevel::High,
             },
         )
-        .expect("create session storage");
-        let owner = LocalSession::load(directory.join(KERNEL_DATABASE), session_id)
+        .expect("create session storage") else {
+            panic!("new session unexpectedly existed");
+        };
+        let owner = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)
             .expect("own kernel session");
 
         let active_delete = delete_session_storage(sessions.path(), session_id);
@@ -307,6 +413,51 @@ mod tests {
 
         delete_session_storage(sessions.path(), session_id)
             .expect("repeat session deletion idempotently");
+    }
+
+    #[test]
+    fn ownership_handoff_waits_briefly_for_a_released_local_owner() {
+        let sessions = tempdir().expect("temporary directory");
+        let workspace = tempdir().expect("workspace directory");
+        let agent_id = AgentId::new();
+        let session_id = SessionId::new();
+        let SessionPublication::Created(directory) = create_session_storage(
+            sessions.path(),
+            AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
+            agent_id,
+            session_id,
+            workspace.path().to_owned(),
+            &RuntimeSelection {
+                provider: ModelProvider::Xai,
+                model: "test".to_owned(),
+                reasoning: ReasoningLevel::High,
+            },
+        )
+        .expect("create session storage") else {
+            panic!("new session unexpectedly existed");
+        };
+        let kernel_path = directory.join(KERNEL_DATABASE);
+        let owner =
+            load_session_after_handoff(&kernel_path, session_id).expect("own published session");
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let waiter = thread::spawn(move || {
+            sender
+                .send(load_session_after_handoff(&kernel_path, session_id))
+                .expect("send handoff result");
+        });
+
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(20)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(owner);
+        let reopened = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("handoff completed")
+            .expect("reopen after ownership release");
+        assert_eq!(reopened.agent_id(), agent_id);
+        drop(reopened);
+        waiter.join().expect("handoff thread completed");
     }
 
     #[test]

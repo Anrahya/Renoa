@@ -23,18 +23,44 @@ Renoa Host
    durable admission, effects, events, and recovery
 ```
 
-`renoa-local` is the first Host implementation. Product surfaces are maintained
-outside this core repository and connect through ACP. The current graphical
-surface is the separate Renoa integration fork of Waku. ACP is the standard
-agent-facing surface protocol. Renoa-specific capability management will use a
-separate logical Host API whose transport is not selected until a real
+`renoa-local` is the first Host implementation. The graphical surface remains
+the separate Renoa integration fork of Waku and connects through ACP. The
+repository-owned Telegram surface calls the same Host API directly; it does not
+create another loop or history store. Renoa-specific capability management will
+use a separate logical Host API whose transport is not selected until a real
 management consumer is implemented.
 
-The first concrete agent profile is Renoa Alpha v1, specified in
+The first concrete coding profile is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is
 `renoa.coding.alpha.v1`. Alpha is one built-in profile, not a special Host
-execution type. A Host process registers one or more `AgentProfile` recipes and
-can create a session from any exact registered `AgentProfileId`.
+execution type. Arcee is the first personal-operator profile, with stable identity
+`renoa.personal.arcee.v1`; Telegram is only its first surface. A Host process
+registers one or more `AgentProfile` recipes and can create a session from any
+exact registered `AgentProfileId`.
+
+Arcee's stable system rules remain part of the registered profile. The Host
+seeds owner-editable `SOUL.md` and `USER.md` files under
+`profiles/renoa.personal.arcee.v1/` in its data directory and reads both for
+every newly admitted turn. `profile_update` replaces one complete document
+atomically against the revision shown in the prompt. A stale edit fails without
+changing the newer file. Existing files are never overwritten during startup.
+The Soul controls Arcee's identity and voice. The User file stores durable facts
+and preferences about the user. Neither file changes kernel state or the
+surface binding.
+
+Arcee starts with an intentionally empty User file. She learns durable facts
+during ordinary work and may update either document through `profile_update`
+when the evidence is strong enough. Startup does not interrogate the user or
+invent a profile from environment data.
+
+Arcee's profile starts automatic compaction when the exact projected model
+input reaches 400,000 tokens. The provider's advertised context window remains
+unchanged. Compaction targets a 40,000-token rebuilt request containing the
+fixed instructions and tools, a bounded checkpoint, and the latest safe
+conversation tail. When no safe transcript cut can meet that target, the
+planner keeps the smallest safe tail and still respects the real provider
+limit. This policy follows Arcee across surfaces and does not change Alpha's
+context policy.
 
 The product direction for portable packages, external integrations,
 connections, profile selection, and agent-driven capability changes is recorded
@@ -219,8 +245,10 @@ already running. The runtime itself is unchanged: the kernel freezes the same th
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v9 binding exposes one
-exact, closed schema variant for each of ten typed actions:
+The Host adds one fixed `extension_manage` tool. Its v11 model-facing schema is
+flat and uses only the broadly supported JSON Schema subset needed by
+OpenAI-compatible providers. The Host still decodes one exact, closed variant
+for each of ten typed actions and rejects missing or cross-action fields:
 search compact publisher metadata in the official MCP Registry; lookup one
 exact published Registry name/version; add one MCP definition independently
 verified against the provider's official documentation or one content-bound
@@ -369,7 +397,7 @@ control:
 
 ```text
 surface adapter or local caller
-  -> LocalHost creates or loads AgentSession
+  -> LocalHost creates, ensures, or loads AgentSession
   -> AgentSession accepts one caller-identified command
        -> read current workspace rules
        -> resolve the selected model, context, loop, and tools
@@ -394,6 +422,29 @@ produced an assistant message. `AgentSession` is the complete surface-facing
 Host boundary: it also owns runtime selection, persistence, fresh per-turn
 composition, and cancellation coordination.
 
+Profiles may opt into Host turn timing. A direct caller observes the Host clock
+once; a queue-backed surface supplies the receive time it already persisted.
+That observation is serialized in the exact command before admission. A retry
+with the same command identity reuses the admitted value, even if the process
+restarts or the caller now observes a different time. The next timed prompt
+computes elapsed time from the newest admitted timed user message. If the clock
+moves backward, elapsed time is omitted instead of fabricating a duration.
+
+The Host formats the observation in the operating system's configured time
+zone. `TZ` may override it for one service, with UTC as a safe fallback. The
+loop appends it to the matching user message as
+`<turn_context>` for the model. It is not inserted into the changing system
+prompt and it is not copied into surface history. Every later request rebuilds
+each prior turn with the same durable suffix, which preserves the exact prompt
+prefix used by provider caches. Alpha remains content-only; Arcee opts into
+this behavior.
+
+`LocalHost::ensure_session` accepts a caller-chosen UUID for durable surface
+admission. Repeating it resolves the already-published session with its stored
+profile, model selection, Agent identity, and workspace instead of validating a
+new-session default or creating an orphan replacement. Publication remains an
+atomic hidden-directory rename under a process-shared creation lock.
+
 The Host derives context usage from the newest semantic fact in journal order.
 A provider-reported assistant usage includes uncached input, cache reads, cache
 writes, and generated output because that output becomes part of the next
@@ -401,14 +452,16 @@ request. A later compaction result replaces it with the exact projected idle
 estimate. A later assistant response without provider usage clears the prior
 estimate rather than showing stale surface telemetry.
 
-Surfaces do not call the kernel driver, loop, model, or tools directly. ACP
-uses this Host composition and command path. The UI surface consumes that
-stable ACP contract rather than creating a second execution path.
+Surfaces do not call the kernel driver, loop, model, or tools directly. ACP and
+the Telegram adapter both use this Host composition and command path. The UI
+surface consumes the stable ACP contract rather than creating a second
+execution path.
 
 For live presentation, the Host may compose an `AgentEventSink` into the model
 and tool adapters. That observer is not part of the runtime manifest and does
-not replace semantic history. ACP streams these transient events immediately,
-then derives final output from kernel events only after durable settlement.
+not replace semantic history. ACP and Telegram project these transient events
+for presentation, then derive final output from the Host only after durable
+settlement.
 
 The local Host currently has no reconciliation UI for an effect whose outcome
 cannot be proven. For a live MCP call that returns no terminal response, the
@@ -436,8 +489,10 @@ Local Host state has one intentionally visible layout:
                                 profile, Agent, and Session identity
 ```
 
-Usage, cache counts, timings, provider payloads, streamed chunks, and tool
-diagnostics belong in `trace.sqlite3`, never `runtime.jsonl` or model context.
+Usage, cache counts, execution timings, provider payloads, streamed chunks, and
+tool diagnostics belong in `trace.sqlite3`, never `runtime.jsonl` or model
+context. The admitted user-turn observation described above is the narrow
+exception: it is semantic model context, not diagnostic trace timing.
 Trace rows explain execution but never decide replay or semantic history. A
 v1 trace is migrated in place to add the durable Agent and profile identity
 already proven by its session manifest.
@@ -558,6 +613,15 @@ and fails closed when reopened by a process that did not register it. One MCP
 catalog can be attached to two profiles without copying it, while attaching it
 to one profile alone does not leak access to the other. This prepares the Host
 for additional agent recipes without inventing surface or permission policy.
+
+The first hosted surface registers Arcee and maps each allowlisted private
+Telegram topic to one caller-identified Host session. It persists an update
+before advancing the polling offset, preserves request identity across process
+loss, re-drives kernel-owned execution, and never blindly repeats an uncertain
+Telegram final send. `/new`, `/compact`, `/status`, `/cancel`, native draft
+stopping, bounded live drafts, and exact-profile execution cross the real Host
+path. Telegram keeps only ingress, topic mapping, and delivery state; it does
+not copy Agent history or runtime composition.
 
 The same Host path now admits explicit compaction as a typed control operation.
 Its summary, checkpoint activation, result projection, exact redelivery,

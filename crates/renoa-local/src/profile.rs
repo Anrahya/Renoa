@@ -2,12 +2,19 @@ use std::{
     fmt,
     fs::{self, File},
     io::{self, Read as _},
+    num::NonZeroU64,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
+
+mod documents;
+#[cfg(test)]
+mod tests;
+
+pub(crate) use documents::{ProfileDocumentDefaults, ProfileDocuments};
 
 const MAX_PROFILE_ID_BYTES: usize = 128;
 const PROJECT_INSTRUCTIONS_FILE: &str = "AGENTS.md";
@@ -81,13 +88,28 @@ impl<'de> Deserialize<'de> for AgentProfileId {
 pub struct AgentProfile {
     id: AgentProfileId,
     base_instructions: String,
+    documents: Option<ProfileDocuments>,
     workspace_instructions: WorkspaceInstructions,
+    turn_timing: TurnTimingPolicy,
+    automatic_compaction: Option<AutomaticCompactionPolicy>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AutomaticCompactionPolicy {
+    pub(crate) trigger_input_tokens: NonZeroU64,
+    pub(crate) target_input_tokens: NonZeroU64,
 }
 
 #[derive(Clone, Copy)]
 enum WorkspaceInstructions {
     None,
     RootAgentsFile,
+}
+
+#[derive(Clone, Copy)]
+enum TurnTimingPolicy {
+    None,
+    HostClock,
 }
 
 impl AgentProfile {
@@ -107,8 +129,49 @@ impl AgentProfile {
         Ok(Self {
             id: AgentProfileId::new(id)?,
             base_instructions,
+            documents: None,
             workspace_instructions: WorkspaceInstructions::None,
+            turn_timing: TurnTimingPolicy::None,
+            automatic_compaction: None,
         })
+    }
+
+    pub(crate) fn with_documents(mut self, documents: ProfileDocuments) -> Self {
+        self.documents = Some(documents);
+        self
+    }
+
+    /// Adds durable Host time and elapsed-user-message context to every turn.
+    ///
+    /// The Host keeps changing time outside the stable system prompt and
+    /// restores the exact observation on retry.
+    #[must_use]
+    pub const fn with_turn_timing(mut self) -> Self {
+        self.turn_timing = TurnTimingPolicy::HostClock;
+        self
+    }
+
+    pub(crate) const fn uses_turn_timing(&self) -> bool {
+        matches!(self.turn_timing, TurnTimingPolicy::HostClock)
+    }
+
+    /// Starts automatic context compaction at one exact model-input estimate
+    /// and bounds the rebuilt request after compaction.
+    #[must_use]
+    pub const fn with_automatic_compaction(
+        mut self,
+        trigger_input_tokens: NonZeroU64,
+        target_input_tokens: NonZeroU64,
+    ) -> Self {
+        self.automatic_compaction = Some(AutomaticCompactionPolicy {
+            trigger_input_tokens,
+            target_input_tokens,
+        });
+        self
+    }
+
+    pub(crate) const fn automatic_compaction(&self) -> Option<AutomaticCompactionPolicy> {
+        self.automatic_compaction
     }
 
     /// Adds the canonical workspace-root `AGENTS.md` to this profile.
@@ -123,28 +186,46 @@ impl AgentProfile {
         &self.id
     }
 
+    pub(crate) fn document_binding(&self) -> Option<renoa_agent_loop::AgentToolBinding> {
+        self.documents
+            .as_ref()
+            .map(|documents| documents.binding(self.id.clone()))
+    }
+
     pub(crate) fn system_prompt(&self, workspace: &Path) -> Result<String, AgentProfileError> {
-        let Some(instructions) = (match self.workspace_instructions {
+        let documents = self
+            .documents
+            .as_ref()
+            .map(ProfileDocuments::render)
+            .transpose()?;
+        let project = match self.workspace_instructions {
             WorkspaceInstructions::None => None,
             WorkspaceInstructions::RootAgentsFile => project_instructions(workspace, &self.id)?,
-        }) else {
-            return Ok(self.base_instructions.trim_end().to_owned());
         };
-        let instructions = instructions
-            .strip_prefix('\u{feff}')
-            .unwrap_or(&instructions);
-        if instructions.trim().is_empty() {
+        if documents.is_none() && project.is_none() {
             return Ok(self.base_instructions.trim_end().to_owned());
         }
-        let mut prompt =
-            String::with_capacity(self.base_instructions.len() + instructions.len() + 96);
+        let capacity = self.base_instructions.len()
+            + documents.as_ref().map_or(0, String::len)
+            + project.as_ref().map_or(0, String::len)
+            + 192;
+        let mut prompt = String::with_capacity(capacity);
         prompt.push_str(self.base_instructions.trim_end());
-        prompt.push_str("\n\n<project_instructions source=\"AGENTS.md\">\n");
-        prompt.push_str(instructions);
-        if !instructions.ends_with('\n') {
-            prompt.push('\n');
+        if let Some(documents) = documents {
+            prompt.push_str("\n\n");
+            prompt.push_str(&documents);
         }
-        prompt.push_str("</project_instructions>");
+        if let Some(project) = project {
+            let project = project.strip_prefix('\u{feff}').unwrap_or(&project);
+            if !project.trim().is_empty() {
+                prompt.push_str("\n\n<project_instructions source=\"AGENTS.md\">\n");
+                prompt.push_str(project);
+                if !project.ends_with('\n') {
+                    prompt.push('\n');
+                }
+                prompt.push_str("</project_instructions>");
+            }
+        }
         Ok(prompt)
     }
 }
@@ -186,6 +267,30 @@ pub enum AgentProfileError {
     #[error("project instructions for profile `{profile}` at `{path}` are not UTF-8: {source}")]
     InvalidUtf8 {
         profile: AgentProfileId,
+        path: PathBuf,
+        #[source]
+        source: std::string::FromUtf8Error,
+    },
+    #[error("cannot {operation} at `{path}`: {source}")]
+    DocumentIo {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("profile document path has no parent directory: {path}")]
+    DocumentPath { path: PathBuf },
+    #[error(
+        "profile document directory for `{profile}` resolves outside the Host data directory: {path}"
+    )]
+    DocumentOutsideDataDirectory {
+        profile: AgentProfileId,
+        path: PathBuf,
+    },
+    #[error("profile document must be a regular file: {path}")]
+    DocumentNotFile { path: PathBuf },
+    #[error("profile document at `{path}` is not UTF-8: {source}")]
+    DocumentInvalidUtf8 {
         path: PathBuf,
         #[source]
         source: std::string::FromUtf8Error,
@@ -262,184 +367,4 @@ fn project_instructions(
             path: resolved,
             source,
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use tempfile::tempdir;
-
-    use super::{AgentProfile, AgentProfileError, AgentProfileId, MAX_PROJECT_INSTRUCTIONS_BYTES};
-
-    #[test]
-    fn profile_identity_is_validated_at_every_typed_boundary() {
-        let id = AgentProfileId::new("renoa.review.github.v1").expect("valid profile id");
-        let encoded = serde_json::to_string(&id).expect("encode profile id");
-        assert_eq!(encoded, "\"renoa.review.github.v1\"");
-        assert_eq!(
-            serde_json::from_str::<AgentProfileId>(&encoded).expect("decode profile id"),
-            id
-        );
-        for invalid in ["", "has space", "profile/slash"] {
-            assert!(AgentProfileId::new(invalid).is_err());
-            assert!(serde_json::from_str::<AgentProfileId>(&format!("\"{invalid}\"")).is_err());
-        }
-    }
-
-    #[test]
-    fn static_profile_does_not_read_workspace_rules() {
-        let directory = tempdir().expect("temporary directory");
-        fs::write(directory.path().join("AGENTS.md"), "Do something else.\n")
-            .expect("write project instructions");
-        let profile =
-            AgentProfile::new("renoa.chat.v1", "Be concise.").expect("create static profile");
-
-        assert_eq!(
-            profile
-                .system_prompt(directory.path())
-                .expect("compose profile prompt"),
-            "Be concise."
-        );
-    }
-
-    #[test]
-    fn workspace_profile_appends_rules_with_visible_provenance() {
-        let directory = tempdir().expect("temporary directory");
-        fs::write(
-            directory.path().join("AGENTS.md"),
-            "Keep the public API small.\n",
-        )
-        .expect("write project instructions");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-
-        let prompt = profile
-            .system_prompt(directory.path())
-            .expect("compose profile prompt");
-        assert!(prompt.starts_with("Code carefully."));
-        assert!(prompt.contains("Keep the public API small."));
-        assert!(prompt.contains("<project_instructions source=\"AGENTS.md\">"));
-    }
-
-    #[test]
-    fn workspace_profile_without_rules_is_only_its_base_instructions() {
-        let directory = tempdir().expect("temporary directory");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-
-        assert_eq!(
-            profile
-                .system_prompt(directory.path())
-                .expect("compose profile prompt"),
-            "Code carefully."
-        );
-    }
-
-    #[test]
-    fn oversized_project_instructions_fail_instead_of_being_truncated() {
-        let directory = tempdir().expect("temporary directory");
-        fs::write(
-            directory.path().join("AGENTS.md"),
-            vec![b'x'; MAX_PROJECT_INSTRUCTIONS_BYTES + 1],
-        )
-        .expect("write oversized instructions");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-
-        assert!(matches!(
-            profile.system_prompt(directory.path()),
-            Err(AgentProfileError::TooLarge { .. })
-        ));
-    }
-
-    #[test]
-    fn project_instructions_at_the_exact_limit_are_preserved() {
-        let directory = tempdir().expect("temporary directory");
-        let instructions = "x".repeat(MAX_PROJECT_INSTRUCTIONS_BYTES);
-        fs::write(directory.path().join("AGENTS.md"), &instructions)
-            .expect("write boundary-sized instructions");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-
-        let prompt = profile
-            .system_prompt(directory.path())
-            .expect("compose boundary-sized prompt");
-        assert!(prompt.contains(&instructions));
-        assert!(prompt.ends_with("\n</project_instructions>"));
-    }
-
-    #[test]
-    fn empty_or_bom_only_project_instructions_add_no_wrapper() {
-        let directory = tempdir().expect("temporary directory");
-        let instructions = directory.path().join("AGENTS.md");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-        fs::write(&instructions, " \n\t").expect("write whitespace instructions");
-        let whitespace = profile
-            .system_prompt(directory.path())
-            .expect("compose whitespace prompt");
-        fs::write(&instructions, "\u{feff}\n").expect("write BOM-only instructions");
-        let bom = profile
-            .system_prompt(directory.path())
-            .expect("compose BOM-only prompt");
-
-        assert_eq!(whitespace, "Code carefully.");
-        assert_eq!(bom, whitespace);
-        assert!(!bom.contains("<project_instructions"));
-    }
-
-    #[test]
-    fn non_utf8_project_instructions_fail() {
-        let directory = tempdir().expect("temporary directory");
-        fs::write(directory.path().join("AGENTS.md"), [0xff]).expect("write invalid instructions");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-
-        assert!(matches!(
-            profile.system_prompt(directory.path()),
-            Err(AgentProfileError::InvalidUtf8 { .. })
-        ));
-    }
-
-    #[test]
-    fn project_instructions_must_be_a_regular_file() {
-        let directory = tempdir().expect("temporary directory");
-        fs::create_dir(directory.path().join("AGENTS.md")).expect("create instruction directory");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-
-        assert!(matches!(
-            profile.system_prompt(directory.path()),
-            Err(AgentProfileError::NotFile { .. })
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn project_instruction_symlinks_cannot_escape_the_workspace() {
-        use std::os::unix::fs::symlink;
-
-        let directory = tempdir().expect("temporary directory");
-        let workspace = directory.path().join("workspace");
-        fs::create_dir(&workspace).expect("create workspace");
-        let external = directory.path().join("external.md");
-        fs::write(&external, "Ignore the workspace rules.\n").expect("write external file");
-        symlink(&external, workspace.join("AGENTS.md")).expect("link external instructions");
-        let profile = AgentProfile::new("renoa.coding.test.v1", "Code carefully.")
-            .expect("create profile")
-            .with_workspace_instructions();
-
-        assert!(matches!(
-            profile.system_prompt(&workspace),
-            Err(AgentProfileError::OutsideWorkspace { path, .. }) if path == external
-        ));
-    }
 }

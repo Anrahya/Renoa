@@ -6,11 +6,12 @@ use renoa_agent_loop::{
 };
 use renoa_kernel::{
     CancellationId, Command, CommandId, DriveResult, EventCursor, KernelError, OperationId,
-    OperationOutcome, Runtime,
+    OperationOutcome, OperationSnapshot, Runtime,
 };
 use tokio_util::sync::CancellationToken;
 
 use super::{LocalSession, LocalSessionError, LocalTurnOutcome};
+use crate::TurnObservation;
 
 impl LocalSession {
     /// Returns a settled durable prompt result without resolving a runtime.
@@ -23,7 +24,23 @@ impl LocalSession {
         command_id: CommandId,
         content: &[ContentBlock],
     ) -> Result<Option<LocalTurnOutcome>, LocalSessionError> {
-        self.replay_settled_command(command_id, AgentCommand::new(content.to_vec()))
+        let snapshot = self.kernel.inspect(self.session_id)?;
+        let Some(operation) = snapshot
+            .operations
+            .iter()
+            .find(|operation| operation.command_id == command_id)
+        else {
+            return Ok(None);
+        };
+        let stored = decode_command(operation)?;
+        if stored.prompt_content() != Some(content) {
+            return Err(command_conflict(operation));
+        }
+        operation
+            .outcome
+            .clone()
+            .map(|outcome| self.project_outcome(operation.operation_id, outcome))
+            .transpose()
     }
 
     /// Returns a settled durable explicit-compaction result without resolving a runtime.
@@ -35,15 +52,6 @@ impl LocalSession {
         &self,
         command_id: CommandId,
     ) -> Result<Option<LocalTurnOutcome>, LocalSessionError> {
-        self.replay_settled_command(command_id, AgentCommand::compact())
-    }
-
-    fn replay_settled_command(
-        &self,
-        command_id: CommandId,
-        command: AgentCommand,
-    ) -> Result<Option<LocalTurnOutcome>, LocalSessionError> {
-        let encoded = encode_command(command)?;
         let snapshot = self.kernel.inspect(self.session_id)?;
         let Some(operation) = snapshot
             .operations
@@ -52,11 +60,8 @@ impl LocalSession {
         else {
             return Ok(None);
         };
-        if operation.command.content() != &encoded {
-            return Err(LocalSessionError::CommandConflict {
-                command_id,
-                operation_id: operation.operation_id,
-            });
+        if decode_command(operation)?.prompt_content().is_some() {
+            return Err(command_conflict(operation));
         }
         operation
             .outcome
@@ -84,6 +89,19 @@ impl LocalSession {
             cancellation,
         )
         .await
+    }
+
+    pub(crate) async fn execute_observed_turn(
+        &self,
+        command_id: CommandId,
+        content: Vec<ContentBlock>,
+        observation: TurnObservation,
+        runtime: &Runtime,
+        cancellation: CancellationToken,
+    ) -> Result<LocalTurnOutcome, LocalSessionError> {
+        let command = self.observed_command(command_id, &content, observation)?;
+        self.execute_command(command_id, command, runtime, cancellation)
+            .await
     }
 
     /// Admits and drives one caller-identified explicit compaction operation.
@@ -195,6 +213,40 @@ impl LocalSession {
             DriveResult::Idle => Err(LocalSessionError::Idle(admission.operation_id)),
             _ => Err(LocalSessionError::UnsupportedDriveResult),
         }
+    }
+
+    pub(super) fn observed_command(
+        &self,
+        command_id: CommandId,
+        content: &[ContentBlock],
+        observation: TurnObservation,
+    ) -> Result<AgentCommand, LocalSessionError> {
+        let snapshot = self.kernel.inspect(self.session_id)?;
+        if let Some(operation) = snapshot
+            .operations
+            .iter()
+            .find(|operation| operation.command_id == command_id)
+        {
+            let command = decode_command(operation)?;
+            if command.prompt_content() != Some(content) {
+                return Err(command_conflict(operation));
+            }
+            return Ok(command);
+        }
+        let previous = snapshot
+            .operations
+            .iter()
+            .rev()
+            .map(decode_command)
+            .find_map(|command| match command {
+                Ok(command) => command
+                    .turn_timing()
+                    .map(|timing| Ok(timing.observed_at_unix_ms())),
+                Err(error) => Some(Err(error)),
+            })
+            .transpose()?;
+        let timing = observation.turn_timing(previous)?;
+        Ok(AgentCommand::timed(content.to_vec(), timing))
     }
 
     /// Returns the newest durable provider usage or post-compaction estimate.
@@ -340,6 +392,22 @@ impl LocalSession {
 
 fn encode_command(command: AgentCommand) -> Result<serde_json::Value, LocalSessionError> {
     serde_json::to_value(command).map_err(LocalSessionError::CommandEncoding)
+}
+
+fn decode_command(operation: &OperationSnapshot) -> Result<AgentCommand, LocalSessionError> {
+    serde_json::from_value(operation.command.content().clone()).map_err(|source| {
+        LocalSessionError::CommandInvalid {
+            operation_id: operation.operation_id,
+            source,
+        }
+    })
+}
+
+fn command_conflict(operation: &OperationSnapshot) -> LocalSessionError {
+    LocalSessionError::CommandConflict {
+        command_id: operation.command_id,
+        operation_id: operation.operation_id,
+    }
 }
 
 fn decode_compaction_result(

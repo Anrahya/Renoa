@@ -66,7 +66,62 @@ async fn host_assembles_and_restores_an_exact_non_alpha_profile() {
     assert_eq!(restored.agent_id(), agent_id);
 }
 
+#[tokio::test]
+async fn a_surface_can_retry_one_exact_session_identity_after_restart() {
+    let directory = tempdir().expect("temporary Host directory");
+    let data = directory.path().join("data");
+    let workspace = directory.path().join("workspace");
+    let bridge = directory.path().join("model-bridge.mjs");
+    let credentials = directory.path().join("credentials.sqlite3");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&bridge, MODEL_BRIDGE).expect("write deterministic model bridge");
+    fs::write(&credentials, "").expect("write credential placeholder");
+    let relay_id = AgentProfileId::new(RELAY_PROFILE_ID).expect("valid Relay profile id");
+    let requested_session = Uuid::new_v4();
+
+    let host = local_host(&data, &bridge, &credentials, true);
+    let created = host
+        .ensure_session(&relay_id, &workspace, requested_session)
+        .await
+        .expect("create exact session");
+    let agent_id = created.agent_id();
+    assert_eq!(created.id(), requested_session);
+    drop(created);
+    let alpha_id = AgentProfileId::new(renoa_local::ALPHA_PROFILE_ID).expect("valid Alpha id");
+    assert!(
+        host.ensure_session(&alpha_id, &workspace, requested_session)
+            .await
+            .is_err()
+    );
+    drop(host);
+
+    let reopened = local_host_with_model(
+        &data,
+        &bridge,
+        &credentials,
+        true,
+        "not-a-new-session-model",
+    );
+    let restored = reopened
+        .ensure_session(&relay_id, &workspace, requested_session)
+        .await
+        .expect("reuse exact session");
+    assert_eq!(restored.id(), requested_session);
+    assert_eq!(restored.agent_id(), agent_id);
+    assert_eq!(restored.profile_id(), &relay_id);
+}
+
 fn local_host(data: &Path, bridge: &Path, credentials: &Path, with_relay: bool) -> LocalHost {
+    local_host_with_model(data, bridge, credentials, with_relay, "fixture-model")
+}
+
+fn local_host_with_model(
+    data: &Path,
+    bridge: &Path,
+    credentials: &Path,
+    with_relay: bool,
+    initial_model: &str,
+) -> LocalHost {
     let mut profiles = vec![alpha_profile()];
     if with_relay {
         profiles
@@ -78,7 +133,7 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, with_relay: bool) 
             bridge,
             vec![ModelProvider::Xai],
             ModelProvider::Xai,
-            "fixture-model",
+            initial_model,
             credentials,
         ),
         profiles,

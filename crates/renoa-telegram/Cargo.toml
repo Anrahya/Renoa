@@ -1,0 +1,30 @@
+[package]
+name = "renoa-telegram"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "renoa-telegram"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+futures-util.workspace = true
+renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
+renoa-local = { path = "../renoa-local", version = "0.1.0" }
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

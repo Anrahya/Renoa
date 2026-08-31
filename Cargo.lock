@@ -1898,6 +1898,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "globset",
+ "jiff",
  "nix",
  "renoa-agent",
  "renoa-agent-loop",
@@ -2000,6 +2001,24 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "renoa-telegram"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "renoa-agent",
+ "renoa-local",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
