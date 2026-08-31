@@ -139,7 +139,17 @@ impl ContextStrategy for CompactingContextStrategy {
         };
         let estimated_input_tokens = self.sizer.estimate_input_tokens(&candidate);
         let dispatch_limit_tokens = self.planner.limits.dispatch_limit_tokens().get();
-        if !input.compaction_required() && estimated_input_tokens <= dispatch_limit_tokens {
+        let automatic_compaction_input_tokens = self
+            .planner
+            .limits
+            .automatic_compaction_input_tokens()
+            .get();
+        let below_automatic_trigger = estimated_input_tokens < automatic_compaction_input_tokens
+            || automatic_compaction_input_tokens == dispatch_limit_tokens;
+        if !input.compaction_required()
+            && estimated_input_tokens <= dispatch_limit_tokens
+            && below_automatic_trigger
+        {
             return Ok(ContextPreparation::Model {
                 messages: candidate.messages,
             });
@@ -160,6 +170,13 @@ impl ContextStrategy for CompactingContextStrategy {
                 plan,
                 max_attempts: self.max_attempts,
             },
+            None if !input.compaction_required()
+                && estimated_input_tokens <= dispatch_limit_tokens =>
+            {
+                ContextPreparation::Model {
+                    messages: candidate.messages,
+                }
+            }
             None => ContextPreparation::CapacityExceeded {
                 estimated_input_tokens,
                 dispatch_limit_tokens,

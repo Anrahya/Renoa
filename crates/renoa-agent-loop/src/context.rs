@@ -1,10 +1,13 @@
-use std::num::NonZeroU32;
+use std::{collections::HashMap, num::NonZeroU32};
 
 use renoa_agent::{Message, ModelResponse, ToolSpec};
 use renoa_kernel::OperationId;
 use thiserror::Error;
 
-use crate::compaction::{CompactionCheckpoint, CompactionPlan};
+use crate::{
+    TurnTiming,
+    compaction::{CompactionCheckpoint, CompactionPlan},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ContextOrigin {
@@ -19,9 +22,13 @@ impl ContextOrigin {
             sequence,
         }
     }
+
+    pub(crate) const fn operation_id(self) -> OperationId {
+        self.operation_id
+    }
 }
 
-/// One durable message plus its session-journal position.
+/// One model-ready message plus its durable session-journal position.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextEntry<'a> {
     origin: ContextOrigin,
@@ -41,14 +48,15 @@ impl ContextEntry<'_> {
         self.origin.sequence
     }
 
-    /// Returns the provider-neutral durable message.
+    /// Returns the exact model-facing message, including durable Host timing
+    /// on user turns when the active profile enabled it.
     #[must_use]
     pub const fn message(&self) -> &Message {
         self.message
     }
 }
 
-/// Durable messages available when preparing one model request.
+/// Durable conversation state prepared for one model request.
 ///
 /// The loop owns construction of this input. Private fields let the contract
 /// grow with concrete context needs without making strategy implementations
@@ -68,12 +76,22 @@ impl ContextInput {
     pub(crate) fn new(
         active_operation_id: OperationId,
         entries: Vec<(ContextOrigin, Message)>,
+        turn_timings: &HashMap<OperationId, TurnTiming>,
         checkpoint: Option<ActivatedCheckpoint>,
         system_prompt: &str,
         tools: &[ToolSpec],
         compaction_required: bool,
     ) -> Self {
-        let (origins, messages) = entries.into_iter().unzip();
+        let (origins, messages) = entries
+            .into_iter()
+            .map(|(origin, message)| {
+                let message = match turn_timings.get(&origin.operation_id) {
+                    Some(timing) => timing.append_to(&message),
+                    None => message,
+                };
+                (origin, message)
+            })
+            .unzip();
         Self {
             active_operation_id,
             origins,
@@ -91,7 +109,9 @@ impl ContextInput {
         self.active_operation_id
     }
 
-    /// Returns the complete decoded session transcript.
+    /// Returns the complete model-facing transcript.
+    ///
+    /// Durable Host timing is reattached to its matching user message here.
     #[must_use]
     pub fn messages(&self) -> &[Message] {
         &self.messages
@@ -134,7 +154,7 @@ impl ContextInput {
         self.compaction_required
     }
 
-    /// Takes ownership of the complete decoded session transcript.
+    /// Takes ownership of the complete model-facing transcript.
     #[must_use]
     pub fn into_messages(self) -> Vec<Message> {
         self.messages

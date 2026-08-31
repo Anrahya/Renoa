@@ -17,7 +17,7 @@ use crate::{
     context::{ContextPreparation, ContextStrategy},
     format::{
         AgentCommandKind, LoopPhase, ModelEffectOutput, checkpoint, context_input, message_event,
-        message_events,
+        message_events, turn_timing_event,
     },
 };
 
@@ -67,10 +67,19 @@ impl AgentLoop {
             }
         };
         match command.into_kind() {
-            AgentCommandKind::Prompt(content) => Ok(LoopDecision::AppendEventsAndContinue {
-                checkpoint: checkpoint(LoopPhase::NeedModel { model_turns: 0 })?,
-                events: vec![message_event(Message::User { content })?],
-            }),
+            AgentCommandKind::Prompt {
+                content,
+                turn_timing,
+            } => {
+                let mut events = vec![message_event(Message::User { content })?];
+                if let Some(turn_timing) = turn_timing {
+                    events.push(turn_timing_event(turn_timing)?);
+                }
+                Ok(LoopDecision::AppendEventsAndContinue {
+                    checkpoint: checkpoint(LoopPhase::NeedModel { model_turns: 0 })?,
+                    events,
+                })
+            }
             AgentCommandKind::Compact => self.request_explicit_compaction(input),
         }
     }

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     num::NonZeroU64,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -11,26 +12,10 @@ use renoa_kernel::OperationId;
 use serde_json::json;
 
 use super::{
-    CompactionCheckpoint, CompactionLimits, CompactionLimitsError, CompactionPlan,
-    CompactionPlanner, CompactionPlanningError, ContextSizer, validate_plan,
+    CompactionCheckpoint, CompactionLimits, CompactionPlan, CompactionPlanner,
+    CompactionPlanningError, ContextSizer, validate_plan,
 };
-use crate::{ContextInput, context::ContextOrigin};
-
-#[test]
-fn limits_reject_every_invalid_budget_ordering() {
-    assert!(matches!(
-        CompactionLimits::new(nz(10), 10, nz(5), nz(1)),
-        Err(CompactionLimitsError::ReservedTokensExhaustWindow { .. })
-    ));
-    assert!(matches!(
-        CompactionLimits::new(nz(100), 20, nz(80), nz(10)),
-        Err(CompactionLimitsError::TargetNotBelowDispatchLimit { .. })
-    ));
-    assert!(matches!(
-        CompactionLimits::new(nz(100), 20, nz(50), nz(50)),
-        Err(CompactionLimitsError::SummaryNotBelowTarget { .. })
-    ));
-}
+use crate::{ContextInput, TurnTiming, context::ContextOrigin};
 
 #[test]
 fn plan_cuts_only_after_a_complete_tool_group_and_preserves_the_active_user() {
@@ -121,6 +106,37 @@ fn summary_input_does_not_expose_host_only_tool_details() {
     assert!(encoded.contains("model-visible output"));
     assert!(!encoded.contains("host_only_marker"));
     assert!(!encoded.contains("must-not-leak"));
+}
+
+#[test]
+fn summary_input_keeps_the_durable_time_of_each_user_turn() {
+    let prior = OperationId::new();
+    let active = OperationId::new();
+    let timing = TurnTiming::new("2026-08-31T20:00:00Z[UTC]", 1_000, None).expect("valid timing");
+    let input = ContextInput::new(
+        active,
+        vec![
+            (ContextOrigin::new(prior, 0), Message::user_text("prior")),
+            (ContextOrigin::new(prior, 1), assistant_text("answer")),
+            (
+                ContextOrigin::new(active, 2),
+                Message::user_text("continue"),
+            ),
+        ],
+        &HashMap::from([(prior, timing)]),
+        None,
+        "system",
+        &[],
+        false,
+    );
+
+    let plan = planner()
+        .plan(&input, None, "system", &[], &BudgetSizer)
+        .expect("plan valid history")
+        .expect("history is compactable");
+    let encoded = serde_json::to_string(plan.summary_request()).expect("encode summary request");
+
+    assert!(encoded.contains("current_time: 2026-08-31T20:00:00Z[UTC]"));
 }
 
 #[test]
@@ -347,6 +363,7 @@ fn context(active: OperationId, entries: Vec<(OperationId, Message)>) -> Context
                 )
             })
             .collect(),
+        &std::collections::HashMap::new(),
         None,
         "system",
         &[],

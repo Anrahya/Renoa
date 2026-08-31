@@ -69,6 +69,13 @@ bounded portable-summary policy using a host-supplied deterministic
 an active operation accepts only the frozen revision. Context preparation never
 mutates the semantic journal or performs external work.
 
+The compacting strategy distinguishes the provider dispatch limit from an
+optional earlier automatic trigger. Crossing the trigger starts the same
+durable summary path as capacity recovery, while the provider's real limit
+remains available to one indivisible active request that has no safe cut. Its
+post-compaction target bounds the checkpoint plus retained request shape; it is
+not a replacement model context window.
+
 The same strategy boundary owns user-requested compaction. It borrows one
 already-decoded idle `ContextInput` and returns either an exact summary plan, an
 up-to-date estimate that requires no model call, or an explicit capacity
@@ -97,12 +104,24 @@ as a semantic event.
 
 ## Durable formats
 
-The loop accepts two strict versioned JSON command shapes. The prompt shape is
-unchanged from earlier revisions:
+The loop accepts two strict versioned JSON command shapes. A prompt may carry
+one optional Host observation:
 
 ```text
-AgentCommand { content: Vec<ContentBlock> }
+AgentCommand {
+  content: Vec<ContentBlock>,
+  turn_timing?: {
+    observed_at: String,
+    observed_at_unix_ms: i64,
+    elapsed_since_previous_user_message_ms?: u64
+  }
+}
 ```
+
+The old content-only shape remains valid. Timing text must be bounded safe
+ASCII and the Unix value cannot precede the epoch. The observation is part of
+the admitted command, so retry and restart cannot read a newer clock value for
+the same command.
 
 The control shape currently has one value:
 
@@ -124,6 +143,20 @@ The payload is exactly one provider-neutral `renoa-agent::Message`. Other
 semantic event kinds are ignored because they may belong to observers or other
 runtime features. An unknown version under the `renoa.agent.message.` namespace
 fails closed instead of silently changing model history.
+
+A timed prompt records a separate semantic event:
+
+```text
+renoa.agent.turn-timing.v1
+```
+
+It belongs to exactly one user message from the same operation. Duplicate,
+orphaned, malformed, or unknown-version timing events fail closed. Context
+preparation appends the same `<turn_context>` block to that user message for
+every normal request, size estimate, and compaction summary. The durable
+message payload itself stays unchanged, so surface replay does not show Host
+bookkeeping. Reconstructing old turns with their original observations also
+keeps prior model-message prefixes byte-stable when a new turn is appended.
 
 An activated portable summary is a separate semantic event with kind:
 
@@ -167,8 +200,10 @@ may run. While compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 9 keeps durable structured tool details available to the
-Host while removing them from every normal and compaction model request.
+Loop binding revision 10 adds durable per-turn timing and deterministic
+model-facing projection without changing content-only commands. Revision 9
+keeps durable structured tool details available to the Host while removing
+them from every normal and compaction model request.
 Revision 8 added typed manual compaction, its durable result, and model-free
 completion after summary activation. Revision 7 added durable
 summary execution, checkpoint activation, and typed provider-overflow recovery.
@@ -182,7 +217,7 @@ validation and typed live tool uncertainty.
 Runtime revisions are forward-only for unfinished operations. The Host
 currently supplies only the current loop revision, while the kernel freezes the
 exact manifest per admitted operation. An operation left unfinished under
-revision 8 therefore returns `RuntimeMismatch` under a revision-9-only Host and
+revision 9 therefore returns `RuntimeMismatch` under a revision-10-only Host and
 must be finished with its original runtime; Renoa does not guess a migration.
 Terminal operations and their semantic history remain loadable. Likewise, a
 pre-revision-8 loop cannot decode the compact control command.
@@ -194,6 +229,7 @@ One admitted operation advances as follows:
 ```text
 command
   -> commit user-message event
+  -> when supplied, commit its Host turn-timing event
   -> prepare the durable transcript
        -> if oversized: persist exact summary request
           -> model effect
@@ -241,6 +277,8 @@ slice:
 - model-turn and per-response tool-call limits fail the operation explicitly;
 - a context strategy can replace the model-facing message view without
   deleting or rewriting durable history;
+- Host timing is admitted once, remains outside the stable system prompt and
+  surface history, and is deterministically reattached to its exact user turn;
 - a context strategy can derive a deterministic, bounded compaction plan from
   real durable operation and sequence metadata without changing that history;
 - an externally implemented strategy can execute its own typed compaction plan,

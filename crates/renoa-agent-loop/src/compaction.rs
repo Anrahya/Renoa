@@ -6,6 +6,8 @@ use thiserror::Error;
 
 use crate::{ContextInput, ContextProjector, ContextStrategyError};
 
+#[cfg(test)]
+mod automatic_tests;
 mod format;
 mod planning;
 mod strategy;
@@ -22,6 +24,8 @@ const CHECKPOINT_SUFFIX: &str = "\n[END CONTEXT CHECKPOINT]";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactionLimits {
     dispatch_limit: NonZeroU64,
+    automatic_compaction: NonZeroU64,
+    target_input: NonZeroU64,
     tail_budget: NonZeroU64,
     max_summary: NonZeroU64,
 }
@@ -64,15 +68,52 @@ impl CompactionLimits {
             })?;
         Ok(Self {
             dispatch_limit: dispatch_limit_tokens,
+            automatic_compaction: dispatch_limit_tokens,
+            target_input: target_input_tokens,
             tail_budget: tail_budget_tokens,
             max_summary: max_summary_tokens,
         })
+    }
+
+    /// Starts automatic compaction before the provider's hard dispatch limit.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a trigger above the dispatch limit or at/below the
+    /// post-compaction target, which would either be ineffective or compact
+    /// again immediately.
+    pub fn with_automatic_compaction_input_tokens(
+        mut self,
+        automatic_compaction_input_tokens: NonZeroU64,
+    ) -> Result<Self, CompactionLimitsError> {
+        if automatic_compaction_input_tokens > self.dispatch_limit {
+            return Err(
+                CompactionLimitsError::AutomaticCompactionAboveDispatchLimit {
+                    automatic_compaction_input_tokens: automatic_compaction_input_tokens.get(),
+                    dispatch_limit_tokens: self.dispatch_limit.get(),
+                },
+            );
+        }
+        if self.target_input >= automatic_compaction_input_tokens {
+            return Err(CompactionLimitsError::TargetNotBelowAutomaticCompaction {
+                target_input_tokens: self.target_input.get(),
+                automatic_compaction_input_tokens: automatic_compaction_input_tokens.get(),
+            });
+        }
+        self.automatic_compaction = automatic_compaction_input_tokens;
+        Ok(self)
     }
 
     /// Returns the largest request that may be sent to the provider.
     #[must_use]
     pub const fn dispatch_limit_tokens(self) -> NonZeroU64 {
         self.dispatch_limit
+    }
+
+    /// Returns the exact input estimate that starts automatic compaction.
+    #[must_use]
+    pub const fn automatic_compaction_input_tokens(self) -> NonZeroU64 {
+        self.automatic_compaction
     }
 
     const fn tail_budget_tokens(self) -> NonZeroU64 {
@@ -317,6 +358,20 @@ pub enum CompactionLimitsError {
     SummaryNotBelowTarget {
         max_summary_tokens: u64,
         target_input_tokens: u64,
+    },
+    #[error(
+        "automatic compaction trigger ({automatic_compaction_input_tokens}) must not exceed the dispatch limit ({dispatch_limit_tokens})"
+    )]
+    AutomaticCompactionAboveDispatchLimit {
+        automatic_compaction_input_tokens: u64,
+        dispatch_limit_tokens: u64,
+    },
+    #[error(
+        "post-compaction target ({target_input_tokens}) must be below the automatic compaction trigger ({automatic_compaction_input_tokens})"
+    )]
+    TargetNotBelowAutomaticCompaction {
+        target_input_tokens: u64,
+        automatic_compaction_input_tokens: u64,
     },
 }
 

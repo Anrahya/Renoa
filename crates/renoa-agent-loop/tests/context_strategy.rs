@@ -14,7 +14,8 @@ use renoa_agent::{
 };
 use renoa_agent_loop::{
     AgentCommand, AgentLoopBuildError, AgentLoopConfig, ContextBinding, ContextInput,
-    ContextStrategy, ContextStrategyError, ModelBinding, build_runtime,
+    ContextStrategy, ContextStrategyError, MESSAGE_EVENT_KIND, ModelBinding, TurnTiming,
+    build_runtime,
 };
 use renoa_kernel::{
     AgentId, Command, CommandId, DriveResult, EffectRecovery, EffectStatus, EventCursor, Kernel,
@@ -35,6 +36,7 @@ async fn strategy_changes_the_model_view_without_rewriting_durable_history() {
             [
                 text_response("First answer."),
                 text_response("Second answer."),
+                text_response("Third answer."),
             ],
             Arc::clone(&requests),
         )),
@@ -67,6 +69,80 @@ async fn strategy_changes_the_model_view_without_rewriting_durable_history() {
     assert!(matches!(durable_messages[1], Message::Assistant { .. }));
     assert_eq!(durable_messages[2], Message::user_text("Second question."));
     assert!(matches!(durable_messages[3], Message::Assistant { .. }));
+}
+
+#[tokio::test]
+async fn timed_history_preserves_the_provider_prefix_and_clean_durable_messages() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let session_id = create_session(&kernel);
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let runtime = runtime(
+        ContextBinding::full_history(),
+        Arc::new(RecordingModel::new(
+            [
+                text_response("First answer."),
+                text_response("Second answer."),
+                text_response("Third answer."),
+            ],
+            Arc::clone(&requests),
+        )),
+    );
+    let first = AgentCommand::timed(
+        vec![renoa_agent::ContentBlock::text("First question.")],
+        TurnTiming::new("2026-08-31T20:00:00+05:30[Asia/Kolkata]", 10_000, None)
+            .expect("first timing"),
+    );
+    let second = AgentCommand::timed(
+        vec![renoa_agent::ContentBlock::text("Second question.")],
+        TurnTiming::new(
+            "2026-08-31T21:00:00+05:30[Asia/Kolkata]",
+            3_610_000,
+            Some(3_600_000),
+        )
+        .expect("second timing"),
+    );
+    let third = AgentCommand::timed(
+        vec![renoa_agent::ContentBlock::text("Third question.")],
+        TurnTiming::new(
+            "2026-08-31T22:00:00+05:30[Asia/Kolkata]",
+            7_210_000,
+            Some(3_600_000),
+        )
+        .expect("third timing"),
+    );
+
+    submit_command_and_drive(&kernel, session_id, &runtime, first).await;
+    submit_command_and_drive(&kernel, session_id, &runtime, second).await;
+    submit_command_and_drive(&kernel, session_id, &runtime, third).await;
+
+    let requests = requests.lock().expect("request lock");
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].messages[0], requests[1].messages[0]);
+    assert_eq!(
+        requests[1].messages,
+        requests[2].messages[..requests[1].messages.len()]
+    );
+    let Message::User { content } = &requests[0].messages[0] else {
+        panic!("first request message is not a user message");
+    };
+    assert!(matches!(
+        &content[1],
+        renoa_agent::ContentBlock::Text { text } if text.contains("<turn_context>")
+    ));
+    drop(requests);
+
+    let durable_messages = kernel
+        .events_after(session_id, EventCursor::START)
+        .expect("read durable history")
+        .events
+        .into_iter()
+        .filter(|event| event.kind == MESSAGE_EVENT_KIND)
+        .map(|event| serde_json::from_value(event.payload).expect("decode message"))
+        .collect::<Vec<Message>>();
+    assert_eq!(durable_messages[0], Message::user_text("First question."));
+    assert_eq!(durable_messages[2], Message::user_text("Second question."));
+    assert_eq!(durable_messages[4], Message::user_text("Third question."));
 }
 
 #[tokio::test]
@@ -350,16 +426,43 @@ fn create_session(kernel: &Kernel) -> SessionId {
 }
 
 fn submit(kernel: &Kernel, session_id: SessionId, text: &str) -> renoa_kernel::OperationId {
+    submit_command(kernel, session_id, AgentCommand::text(text))
+}
+
+fn submit_command(
+    kernel: &Kernel,
+    session_id: SessionId,
+    command: AgentCommand,
+) -> renoa_kernel::OperationId {
     kernel
         .submit(
             session_id,
             Command::new(
                 CommandId::new(),
-                serde_json::to_value(AgentCommand::text(text)).expect("serialize command"),
+                serde_json::to_value(command).expect("serialize command"),
             ),
         )
         .expect("submit command")
         .operation_id
+}
+
+async fn submit_command_and_drive(
+    kernel: &Kernel,
+    session_id: SessionId,
+    runtime: &renoa_kernel::Runtime,
+    command: AgentCommand,
+) {
+    let operation_id = submit_command(kernel, session_id, command);
+    assert_eq!(
+        kernel
+            .drive(session_id, runtime)
+            .await
+            .expect("drive operation"),
+        DriveResult::Finished {
+            operation_id,
+            outcome: OperationOutcome::Completed,
+        }
+    );
 }
 
 async fn submit_and_drive(

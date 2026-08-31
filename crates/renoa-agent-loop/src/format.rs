@@ -1,4 +1,7 @@
-use std::{collections::HashSet, num::NonZeroU32};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroU32,
+};
 
 use renoa_agent::{ContentBlock, Message, ModelResponse, ToolSpec};
 use renoa_kernel::{Checkpoint, LoopError, NewEvent, SemanticEvent};
@@ -8,6 +11,7 @@ use crate::{
     CompactionPlan,
     configuration::CHECKPOINT_SCHEMA_VERSION,
     context::{ActivatedCheckpoint, ContextInput, ContextOrigin},
+    turn_timing::TurnTiming,
 };
 
 #[cfg(test)]
@@ -16,6 +20,9 @@ mod tests;
 /// Versioned semantic-event kind carrying one provider-neutral message.
 pub const MESSAGE_EVENT_KIND: &str = "renoa.agent.message.v1";
 const MESSAGE_EVENT_PREFIX: &str = "renoa.agent.message.";
+/// Versioned semantic-event kind carrying Host-observed user-turn timing.
+pub const TURN_TIMING_EVENT_KIND: &str = "renoa.agent.turn-timing.v1";
+const TURN_TIMING_EVENT_PREFIX: &str = "renoa.agent.turn-timing.";
 /// Versioned semantic-event kind carrying one activated portable summary.
 pub const CONTEXT_CHECKPOINT_EVENT_KIND: &str = "renoa.agent.context-checkpoint.v1";
 const CONTEXT_CHECKPOINT_EVENT_PREFIX: &str = "renoa.agent.context-checkpoint.";
@@ -31,7 +38,10 @@ pub struct AgentCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AgentCommandKind {
-    Prompt(Vec<ContentBlock>),
+    Prompt {
+        content: Vec<ContentBlock>,
+        turn_timing: Option<TurnTiming>,
+    },
     Compact,
 }
 
@@ -46,6 +56,8 @@ enum AgentCommandRef<'a> {
 #[serde(deny_unknown_fields)]
 struct PromptCommandRef<'a> {
     content: &'a [ContentBlock],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_timing: Option<&'a TurnTiming>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +71,7 @@ enum AgentCommandWire {
 #[serde(deny_unknown_fields)]
 struct PromptCommand {
     content: Vec<ContentBlock>,
+    turn_timing: Option<TurnTiming>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +90,21 @@ impl AgentCommand {
     #[must_use]
     pub fn new(content: Vec<ContentBlock>) -> Self {
         Self {
-            kind: AgentCommandKind::Prompt(content),
+            kind: AgentCommandKind::Prompt {
+                content,
+                turn_timing: None,
+            },
+        }
+    }
+
+    /// Creates a prompt with one Host-observed, durable timing fact.
+    #[must_use]
+    pub fn timed(content: Vec<ContentBlock>, turn_timing: TurnTiming) -> Self {
+        Self {
+            kind: AgentCommandKind::Prompt {
+                content,
+                turn_timing: Some(turn_timing),
+            },
         }
     }
 
@@ -98,8 +125,25 @@ impl AgentCommand {
     #[must_use]
     pub fn content(&self) -> &[ContentBlock] {
         match &self.kind {
-            AgentCommandKind::Prompt(content) => content,
+            AgentCommandKind::Prompt { content, .. } => content,
             AgentCommandKind::Compact => &[],
+        }
+    }
+
+    /// Returns prompt content while preserving the distinction from a control command.
+    #[must_use]
+    pub fn prompt_content(&self) -> Option<&[ContentBlock]> {
+        match &self.kind {
+            AgentCommandKind::Prompt { content, .. } => Some(content),
+            AgentCommandKind::Compact => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn turn_timing(&self) -> Option<&TurnTiming> {
+        match &self.kind {
+            AgentCommandKind::Prompt { turn_timing, .. } => turn_timing.as_ref(),
+            AgentCommandKind::Compact => None,
         }
     }
 
@@ -114,9 +158,14 @@ impl Serialize for AgentCommand {
         S: Serializer,
     {
         match &self.kind {
-            AgentCommandKind::Prompt(content) => {
-                AgentCommandRef::Prompt(PromptCommandRef { content }).serialize(serializer)
-            }
+            AgentCommandKind::Prompt {
+                content,
+                turn_timing,
+            } => AgentCommandRef::Prompt(PromptCommandRef {
+                content,
+                turn_timing: turn_timing.as_ref(),
+            })
+            .serialize(serializer),
             AgentCommandKind::Compact => AgentCommandRef::Control(ControlCommand {
                 control: ControlKind::Compact,
             })
@@ -131,7 +180,10 @@ impl<'de> Deserialize<'de> for AgentCommand {
         D: Deserializer<'de>,
     {
         AgentCommandWire::deserialize(deserializer).map(|wire| match wire {
-            AgentCommandWire::Prompt(command) => Self::new(command.content),
+            AgentCommandWire::Prompt(command) => match command.turn_timing {
+                Some(turn_timing) => Self::timed(command.content, turn_timing),
+                None => Self::new(command.content),
+            },
             AgentCommandWire::Control(ControlCommand {
                 control: ControlKind::Compact,
             }) => Self::compact(),
@@ -228,6 +280,12 @@ pub(crate) fn message_events(
     messages.into_iter().map(message_event).collect()
 }
 
+pub(crate) fn turn_timing_event(turn_timing: TurnTiming) -> Result<NewEvent, LoopError> {
+    serde_json::to_value(turn_timing)
+        .map(|payload| NewEvent::new(TURN_TIMING_EVENT_KIND, payload))
+        .map_err(|error| LoopError::new(format!("turn timing event encoding failed: {error}")))
+}
+
 pub(crate) fn context_checkpoint_event(
     covered_through_sequence: u64,
     summary: String,
@@ -276,6 +334,7 @@ pub(crate) fn context_input(
 ) -> Result<ContextInput, LoopError> {
     let mut entries = Vec::new();
     let mut message_sequences = HashSet::new();
+    let mut turn_timings = HashMap::new();
     let mut checkpoint: Option<ActivatedCheckpoint> = None;
     for event in events {
         if event.kind == MESSAGE_EVENT_KIND {
@@ -298,6 +357,13 @@ pub(crate) fn context_input(
         } else if event.kind.starts_with(MESSAGE_EVENT_PREFIX) {
             return Err(LoopError::new(format!(
                 "message event kind `{}` is unsupported",
+                event.kind
+            )));
+        } else if event.kind == TURN_TIMING_EVENT_KIND {
+            insert_turn_timing(event, &mut turn_timings)?;
+        } else if event.kind.starts_with(TURN_TIMING_EVENT_PREFIX) {
+            return Err(LoopError::new(format!(
+                "turn timing event kind `{}` is unsupported",
                 event.kind
             )));
         } else if event.kind == CONTEXT_CHECKPOINT_EVENT_KIND {
@@ -350,12 +416,73 @@ pub(crate) fn context_input(
             })?;
         }
     }
+    finish_context_input(
+        active_operation_id,
+        entries,
+        &turn_timings,
+        checkpoint,
+        system_prompt,
+        tools,
+        compaction_required,
+    )
+}
+
+fn insert_turn_timing(
+    event: &SemanticEvent,
+    turn_timings: &mut HashMap<renoa_kernel::OperationId, TurnTiming>,
+) -> Result<(), LoopError> {
+    let decoded = serde_json::from_value::<TurnTiming>(event.payload.clone()).map_err(|error| {
+        LoopError::new(format!(
+            "turn timing event {} cannot be decoded: {error}",
+            event.event_id
+        ))
+    })?;
+    if turn_timings.insert(event.operation_id, decoded).is_some() {
+        return Err(LoopError::new(format!(
+            "operation {} has more than one turn timing event",
+            event.operation_id
+        )));
+    }
+    Ok(())
+}
+
+fn finish_context_input(
+    active_operation_id: renoa_kernel::OperationId,
+    entries: Vec<(ContextOrigin, Message)>,
+    turn_timings: &HashMap<renoa_kernel::OperationId, TurnTiming>,
+    checkpoint: Option<ActivatedCheckpoint>,
+    system_prompt: &str,
+    tools: &[ToolSpec],
+    compaction_required: bool,
+) -> Result<ContextInput, LoopError> {
+    validate_turn_timings(&entries, turn_timings)?;
     Ok(ContextInput::new(
         active_operation_id,
         entries,
+        turn_timings,
         checkpoint,
         system_prompt,
         tools,
         compaction_required,
     ))
+}
+
+fn validate_turn_timings(
+    entries: &[(ContextOrigin, Message)],
+    turn_timings: &HashMap<renoa_kernel::OperationId, TurnTiming>,
+) -> Result<(), LoopError> {
+    for operation_id in turn_timings.keys() {
+        let user_messages = entries
+            .iter()
+            .filter(|(origin, message)| {
+                origin.operation_id() == *operation_id && matches!(message, Message::User { .. })
+            })
+            .count();
+        if user_messages != 1 {
+            return Err(LoopError::new(format!(
+                "operation {operation_id} turn timing does not belong to exactly one user message"
+            )));
+        }
+    }
+    Ok(())
 }

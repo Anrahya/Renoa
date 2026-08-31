@@ -6,6 +6,7 @@ mod configuration;
 mod context;
 mod decision;
 mod format;
+mod turn_timing;
 
 pub use compaction::{
     CompactingContextStrategy, CompactionCheckpoint, CompactionLimits, CompactionLimitsError,
@@ -21,5 +22,6 @@ pub use context::{
 };
 pub use format::{
     AgentCommand, COMPACTION_RESULT_EVENT_KIND, CONTEXT_CHECKPOINT_EVENT_KIND, CompactionResult,
-    MESSAGE_EVENT_KIND,
+    MESSAGE_EVENT_KIND, TURN_TIMING_EVENT_KIND,
 };
+pub use turn_timing::{TurnTiming, TurnTimingError};
