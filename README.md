@@ -33,6 +33,10 @@ without turning the kernel into product policy or one giant plugin interface.
 - [`renoa-acp`](crates/renoa-acp) is a thin ACP v1 surface adapter. A compatible
   frontend launches `renoa-agent acp`; ACP translates UI messages and live
   updates but does not own agent composition or durability.
+- [`renoa-telegram`](crates/renoa-telegram/README.md) is the first hosted
+  surface. It maps private Telegram topics to durable sessions of Arcee, Renoa's
+  personal-operator profile, while leaving composition and history with the
+  Host and kernel.
 - [`renoa-registry`](crates/renoa-registry) is the optional private service that
   makes immutable Agent Plugin packages available to more than one Host. Its
   wire contract lives in
@@ -66,14 +70,17 @@ cargo build -p renoa-acp
 
 ## RCP is separate
 
-RCP is Renoa's future continuity layer for authenticated communication and
-handoff across surfaces and execution nodes. It is intentionally not part of
-the current local Agent path and does not replace, wrap, or define the kernel.
+RCP is Renoa's continuity layer for authenticated communication and handoff
+across surfaces and execution nodes. It remains separate from the Agent path
+and does not replace, wrap, or define the kernel.
 
-This repository still contains the earlier loopback RCP coordinator, clients,
-node bridges, and deployment proof. Their canonical continuity decisions live
-in [`docs/rcp-v0.md`](docs/rcp-v0.md). They remain isolated while the first
-local surface and Host contract become real.
+The Rust coordinator still listens only on loopback. The first public proof
+reaches it through TLS at `wss://renoa.live/connect`. Separately, deterministic
+tests prove that independently enrolled surfaces can replay and continue one
+durable task without sharing credentials or cursor state. This is a candidate
+deployment, not a stable public wire release. Waku and Telegram are not yet
+connected through RCP. Canonical continuity decisions live in
+[`docs/rcp-v0.md`](docs/rcp-v0.md).
 
 ## License
 

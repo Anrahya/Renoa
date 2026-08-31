@@ -7,16 +7,17 @@ Protocol (RCP). It records the decisions that future implementation work must
 preserve.
 
 RCP v0 is not yet a stable public wire specification. Its proven operation
-semantics and candidate JSON/WebSocket binding are now documented separately,
-but remain a loopback compatibility target rather than a public release. An
-independent TypeScript surface and Pi execution node now consume the binding.
-They cover both peer roles, recovery, errors, exact-number boundaries, and a
-real OpenAI-compatible Pi turn. The JSON fields remain candidate commitments
-until the loopback proof is hardened for public deployment.
+semantics and candidate JSON/WebSocket binding are documented separately. The
+Rust coordinator remains a plaintext loopback server, while the first public
+deployment terminates TLS at `wss://renoa.live/connect`. Independent Rust and
+TypeScript peers cover both roles, recovery, errors, exact-number boundaries,
+a real OpenAI-compatible Pi turn, and two-surface continuation. The binding is
+still a candidate until a real Agent turn and surface handoff are proven
+through the public origin.
 
 The related documents have narrower authority:
 
-- `continuity-v0.md` describes the current loopback proof.
+- `continuity-v0.md` describes the current coordinator and continuity proof.
 - `identity-v0.md` describes the current device trust mechanism.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
@@ -49,6 +50,13 @@ A person pairs each device with Renoa once. When they open any authorized
 surface, they can discover their tasks, reconstruct each task from its last
 saved cursor, submit the next command, and observe work performed on the bound
 execution environment.
+
+Changing surfaces does not transfer a process, credential, or private local
+state. The new surface authenticates as its own enrolled device and attaches to
+the same durable task. A device with no cursor requests the full journal; a
+returning device resumes from the cursor it applied locally. The bound node
+keeps the model, tools, workspace, and their credentials throughout that
+surface handoff.
 
 For example:
 
@@ -102,6 +110,19 @@ These decisions define RCP and are not ordinary implementation details:
 16. Every durable execution task record names the stable command that caused
     it. Surfaces must not infer execution causation from arrival order,
     adjacency, or timestamps.
+17. Every installation has its own revocable device credential. Device
+    credentials are never copied or transferred to continue a task on another
+    surface.
+18. Surface continuity transfers authority to observe and submit to the same
+    task; it does not transfer the executor process, harness context, workspace,
+    provider credentials, or tool credentials.
+19. Surface cursors and command outboxes are device-local recovery state. A new
+    surface can reconstruct the task from the coordinator journal without
+    receiving another surface's local database.
+20. Renoa's first self-hosted deployment is a control plane with one
+    logical coordinator authority per task, reached at a stable HTTPS origin.
+    Nodes and surfaces initiate connections to it. The origin and route are
+    deployment configuration, not RCP task semantics.
 
 ## Vocabulary
 
@@ -447,9 +468,60 @@ End-to-end encryption remains possible because routing fundamentally needs task,
 record, sequence, device, and node metadata rather than model credentials or
 workspace files.
 
-## Deployment independence
+### Credential domains and handoff
 
-The logical requirement is one serialization authority per task, not one
+Renoa has separate credential domains which must not collapse into one shared
+secret store:
+
+- An RCP device credential authenticates one installed surface or node. The
+  coordinator stores only its digest; the device stores the plaintext in its
+  platform credential facility. Desktop and mobile clients use a keychain or
+  keystore; a headless service uses its service manager's credential facility,
+  with an owner-only file as an explicit fallback. Losing a device is handled
+  by revoking it and enrolling a replacement, not by copying its credential.
+- A browser surface must not put a long-lived device credential in JavaScript
+  storage. The production browser binding will authenticate the person at the
+  coordinator's HTTPS origin and exchange that authenticated session for a
+  short-lived, single-use connection ticket. The current JSON/WebSocket bearer
+  frame remains a proof binding, not that browser storage design.
+- A surface's cursor and command outbox are continuity records, not
+  credentials. They contain enough stable identity to replay or retry but grant
+  no authority by themselves.
+- Provider, MCP, and service credentials belong to the execution node. A phone
+  continuing a Linux-bound task never receives them. Portable agent profiles
+  may name credential references, but each authorized node resolves those
+  references against its own secret facility.
+
+A future shared-secret facility belongs to Host management, not RCP. It may be
+co-located with the self-hosted control plane, but it has a separate store and
+authorization contract. It can provision an explicitly authorized execution
+node or broker use of a secret; attaching another surface must never trigger
+secret release. The concrete encryption, recovery, OAuth-refresh ownership,
+and node-grant design remains open until a second Host consumes it.
+
+Moving execution to another node is therefore a different operation from
+moving between surfaces. It requires a fenced execution-authority change,
+workspace and harness recovery, and explicit proof that the destination can
+resolve every required credential. RCP must never smuggle secrets through task
+records to make migration appear successful.
+
+## Self-hosted deployment and transport independence
+
+The first internet-reachable topology is a self-hosted, always-on control plane
+reachable at one stable HTTPS origin. The deployment terminates public TLS;
+whether a reverse proxy or the coordinator owns termination is not an RCP
+semantic. One logical coordinator authority owns identity, authorization, task
+ordering, routing, and replay for each task; it does not become a model or tool
+execution host. Linux, macOS, VPS, mobile, and browser participants all initiate
+outbound HTTPS or WebSocket connections, so an execution node does not expose
+an inbound agent port.
+
+After enrollment, a device remembers that origin. Tailscale may carry the
+connection during private development, and a normal public route or optional
+relay may carry it later. No RCP frame names Tailscale, a DNS provider, a
+reverse proxy, or a relay.
+
+The logical requirement remains one serialization authority per task, not one
 specific cloud product.
 
 The reference implementation remains a Rust coordinator with SQLite because it
@@ -549,11 +621,21 @@ The current implementation demonstrates:
   node and task provisioning. A Mac Pi node completed a real SuperGrok edit
   while its TypeScript surface was disconnected; reconnect replayed the missed
   ordered suffix, including exactly one completed terminal event.
+- two independently enrolled surfaces continuing one kernel-backed task without
+  sharing credentials or cursor state: the second surface reconstructs the
+  first turn, submits the next turn, and the first surface later replays that
+  exact suffix with its original credential.
+- a public Cloudflare Tunnel route at `wss://renoa.live/connect` while the
+  coordinator remains bound to loopback. A disposable surface enrolled,
+  authenticated with binding version 8, and completed `list_tasks` through the
+  public origin. The full public Agent-turn handoff remains unproven.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 
 1. Execution binding is static and has no generation for safe reassignment.
-2. The listener is plaintext and loopback-only.
+2. The coordinator listener is plaintext and loopback-only. Public WSS is
+   currently supplied by an outbound Cloudflare Tunnel, so the protocol does
+   not depend on the tunnel provider and no public origin port is exposed.
 3. The Pi adapter currently has one process-local harness configuration and an
    optional workspace binding with read or read-write tools. A durable
    multi-task harness registry, shell, network, approvals, and
@@ -561,6 +643,12 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    is owner-only plaintext rather than operating-system credential storage.
 4. The shared activity profile carries complete durable events, not transient
    token deltas or a general streaming UI protocol.
+5. Person authentication, browser connection tickets, first-device bootstrap,
+   recovery, and credential rotation are designed boundaries but are not
+   implemented.
+6. Public resource limits cover total connections, authentication time, and
+   message size. Per-source throttling, health monitoring, backup restoration,
+   and operational alerting remain deployment work.
 
 These are known proof boundaries, not hidden guarantees.
 
@@ -573,10 +661,17 @@ multi-task, or public-network consumer.
 
 Work proceeds in this order unless evidence changes the dependency:
 
-1. Add a durable harness-initiated interaction flow when a real approval or
+1. Prove one real Agent turn through the public origin, then disconnect one
+   independently enrolled surface and continue the task from another.
+2. Add same-device, passkey-authorized enrollment and a browser-safe connection
+   ticket at the self-hosted origin. Headless-node enrollment must be approved
+   by an existing trusted device; copied credentials are not an enrollment
+   mechanism.
+3. Add device administration, per-source throttling, health monitoring, and a
+   tested backup-and-restore procedure.
+4. Add a durable harness-initiated interaction flow when a real approval or
    follow-up consumer exists; RCP transports the interaction while the harness
    retains permission policy.
-2. Add public TLS termination and abuse controls before any internet exposure.
 
 Workspace replication, executor migration, mobile UI, push notifications, and
 additional surface adapters follow only after the continuity path is reliable.
@@ -613,6 +708,9 @@ RCP v0 is not proven until deterministic tests cover at least:
 13. A real Pi tool turn reads and edits inside its locally configured workspace,
     rejects parent traversal and escaping symlinks, and survives an uncertain
     execution-event acknowledgement without duplicating task history.
+14. One enrolled surface can disappear after completing a turn, a separately
+    enrolled surface with no shared local state can replay and continue the
+    task, and the first surface can later replay the second surface's suffix.
 
 The test harness should deliberately cut connections at persistence and
 acknowledgement boundaries. Happy-path socket tests are insufficient evidence
@@ -650,8 +748,12 @@ assumption after context compaction:
 - Snapshot, retention, compaction, artifact, and blob behavior
 - HTTP/SSE and webhook transport bindings
 - Sender-constrained device authentication
+- Passkey ceremony details, browser session lifetime, and the concrete
+  single-use connection-ticket binding
 - End-to-end encryption and key distribution
-- Hosted deployment topology
+- Stable-origin discovery and automated TLS for a self-hosted installation
+- Cross-node secret provisioning and credential-reference grants; secret
+  material remains outside RCP task continuity
 - Workspace checkpoint and executor migration design
 
 An open decision becomes locked only when a real execution path consumes it, a

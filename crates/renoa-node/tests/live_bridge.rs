@@ -3,7 +3,7 @@ mod support;
 use std::{sync::Arc, time::Duration};
 
 use renoa_control::TaskEventKind;
-use renoa_core::CommandId;
+use renoa_core::{CommandId, SurfaceRef};
 use renoa_node::RenoaNode;
 use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
 use renoa_runtime::EngineConfig;
@@ -11,9 +11,91 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use support::{
-    CuttableProxy, GatedModel, NoCapabilities, TestSystem, attach, collect_through_model_request,
-    collect_through_terminal, submit_when_node_is_online, test_agent,
+    CuttableProxy, GatedModel, NoCapabilities, TestSystem, attach, attach_after,
+    collect_through_model_request, collect_through_terminal, submit_when_node_is_online,
+    test_agent,
 };
+
+#[tokio::test]
+async fn independently_enrolled_surfaces_continue_one_durable_task() {
+    timeout(Duration::from_secs(5), async {
+        let system = TestSystem::start().await;
+        let model = Arc::new(GatedModel::new());
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            system.files.path().join("node.sqlite"),
+            test_agent(),
+            model.clone(),
+            Arc::new(NoCapabilities),
+            EngineConfig::default(),
+        )
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+
+        let linux_credentials = system.enroll_surface_as("linux").await;
+        let phone_credentials = system.enroll_surface_as("phone").await;
+        assert_ne!(linux_credentials.device_id, phone_credentials.device_id);
+        assert_ne!(linux_credentials.credential, phone_credentials.credential);
+
+        let mut linux = system.connect(&linux_credentials).await;
+        attach(&mut linux, system.task_id).await;
+        let first_command = CommandId::new();
+        submit_when_node_is_online(&mut linux, system.task_id, first_command).await;
+        model.wait_until_requested().await;
+        model.release();
+        let first_turn = collect_through_terminal(&mut linux).await;
+        let first_cursor = first_turn.last().expect("first terminal event").sequence;
+        assert!(matches!(
+            first_turn.first().map(|event| &event.kind),
+            Some(TaskEventKind::CommandSubmitted { command })
+                if command.command_id == first_command
+                    && command.surface == SurfaceRef::new("linux")
+        ));
+        drop(linux);
+
+        let mut phone = system.connect(&phone_credentials).await;
+        assert_eq!(
+            attach_after(&mut phone, system.task_id, None).await,
+            Some(first_cursor)
+        );
+        let phone_replay = collect_through_terminal(&mut phone).await;
+        assert_eq!(phone_replay, first_turn);
+
+        let second_command = CommandId::new();
+        submit_when_node_is_online(&mut phone, system.task_id, second_command).await;
+        model.wait_until_requested().await;
+        model.release();
+        let second_turn = collect_through_terminal(&mut phone).await;
+        let second_cursor = second_turn.last().expect("second terminal event").sequence;
+        assert!(matches!(
+            second_turn.first().map(|event| &event.kind),
+            Some(TaskEventKind::CommandSubmitted { command })
+                if command.command_id == second_command
+                    && command.surface == SurfaceRef::new("phone")
+        ));
+
+        let mut returned_linux = system.connect(&linux_credentials).await;
+        assert_eq!(
+            attach_after(&mut returned_linux, system.task_id, Some(first_cursor)).await,
+            Some(second_cursor)
+        );
+        assert_eq!(
+            collect_through_terminal(&mut returned_linux).await,
+            second_turn
+        );
+
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("surface handoff test timed out");
+}
 
 #[tokio::test]
 async fn a_surface_observes_durable_execution_events_while_the_model_is_still_running() {

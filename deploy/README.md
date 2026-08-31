@@ -1,13 +1,82 @@
-# Private VPS deployment
+# VPS deployment
 
-This directory contains two independent private services:
+This directory contains three independent services and one transport process:
 
 - `renoa-coordinator` carries RCP task continuity; and
-- `renoa-registry` shares immutable Agent Plugin packages between Hosts.
+- `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
+- `renoa-telegram` runs the Arcee personal-operator profile on Telegram; while
+- `cloudflared` gives the loopback-only coordinator a public HTTPS route.
 
-Neither service is required to run the other. Both remain plaintext and
-loopback-only behind Tailscale Serve. Tailscale is the current private route,
-not part of either Renoa protocol. Funnel is not used.
+The coordinator and registry do not require each other. Both remain plaintext
+and loopback-only. Cloudflare Tunnel terminates public TLS for the coordinator;
+Tailscale Serve remains a private fallback and the registry's only remote
+route. Neither transport is part of a Renoa protocol. Funnel is not used.
+
+The Telegram surface is different: it makes outbound HTTPS requests to the
+Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
+
+## Arcee Telegram surface
+
+Build and install the service binary:
+
+```sh
+cargo build --locked --release -p renoa-telegram
+install -m 0755 target/release/renoa-telegram /usr/local/bin/renoa-telegram
+```
+
+Install `ripgrep` on the runtime host. Renoa uses `rg` for deterministic skill
+and workspace discovery; the service fails clearly instead of silently changing
+that behavior when it is unavailable. On Debian:
+
+```sh
+apt-get install ripgrep
+```
+
+Create a dedicated unprivileged account and workspace. Do not add this account
+to `sudo`, `docker`, or service-management groups.
+
+```sh
+useradd --system --home-dir /var/lib/renoa-telegram \
+  --shell /usr/sbin/nologin renoa-arcee
+install -d -m 0700 -o renoa-arcee -g renoa-arcee /srv/renoa/arcee
+install -d -m 0700 -o root -g root /etc/renoa
+```
+
+Place the BotFather token in `/etc/renoa/telegram-bot-token`, owned by root with
+mode `0600`. Put the remaining explicit settings in
+`/etc/renoa/telegram.env`; that file must not contain the bot token:
+
+```text
+RENOA_TELEGRAM_ALLOWED_USER_ID=123456789
+RENOA_MODEL_BRIDGE=/opt/renoa/adapters/model-provider-node/dist/src/main.js
+RENOA_MODEL_AUTH_STORE=/var/lib/renoa-telegram/model-auth.sqlite
+RENOA_MODEL_PROVIDER=opencode-go
+RENOA_MODEL=your-model-id
+TZ=Asia/Kolkata
+```
+
+The model credential store and compiled Node adapter must already exist at
+those paths. The adapter tree must be readable by `renoa-arcee`; the credential
+store must be owned by and writable only to that account so OAuth refresh can
+rotate safely. `TZ` selects the local clock Arcee sees on each turn and may be
+changed to any valid IANA time-zone name. Optional MCP adapter and shared
+registry settings use the same environment names documented in
+[`renoa-telegram`](../crates/renoa-telegram/README.md). Install the unit and
+start it:
+
+```sh
+cp deploy/renoa-telegram.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now renoa-telegram.service
+journalctl -u renoa-telegram.service -f -o cat
+```
+
+The unit gives Arcee a writable private state directory and dedicated workspace,
+outbound network access, and a private temporary directory. The rest of the
+host filesystem is read-only, Linux capabilities are removed, and the service
+account cannot use privileged service or Docker control. Node/V8 requires
+writable executable memory, so `MemoryDenyWriteExecute` is deliberately absent.
+This is the first operational boundary, not the final Renoa permission model.
 
 ## RCP coordinator
 
@@ -56,6 +125,43 @@ systemctl status renoa-coordinator.service
 tailscale serve status
 ```
 
+### Public RCP route
+
+Install `cloudflared` from Cloudflare's signed package repository. Create a
+remotely managed tunnel whose public hostname is `renoa.live` and whose service
+is `http://127.0.0.1:7818`. Its ingress configuration must end with a catch-all
+`http_status:404` rule. The coordinator remains unreachable on a public TCP
+port; the tunnel connector initiates the network connection from the VPS.
+
+Store the tunnel token—not an RCP device credential—at
+`/etc/renoa/cloudflare-tunnel-token`, owned by root with mode `0600`. Install the
+unit and start the connector:
+
+```sh
+cp deploy/renoa-cloudflared.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now renoa-cloudflared.service
+```
+
+The Cloudflare DNS zone needs one proxied CNAME at the apex:
+
+```text
+renoa.live -> <tunnel-id>.cfargotunnel.com
+```
+
+RCP peers then connect to `wss://renoa.live/connect`. Verify the origin and the
+connector separately before enrolling a device:
+
+```sh
+systemctl status renoa-coordinator.service
+systemctl status renoa-cloudflared.service
+journalctl -u renoa-cloudflared.service -n 50 -o cat
+```
+
+The tunnel token authorizes only this connector. RCP devices still authenticate
+independently inside the WebSocket protocol, and provider, MCP, and tool secrets
+remain on their execution Host.
+
 The service runs as a dynamic user. Systemd creates `/var/lib/renoa` with mode
 `0700`, and the service umask keeps the SQLite journal owner-only. Run local
 bootstrap commands inside a transient systemd sandbox so they see the same
@@ -99,11 +205,20 @@ administration protocol.
 
 ## Current proof status
 
-On 2026-08-11, Tailscale's DNS-01 record reached its authoritative nameservers,
-but Let's Encrypt's secondary validator still received `NXDOMAIN`. The broken
-HTTPS listener was disabled to avoid consuming more authorization retries. The
-VPS currently exposes only the tailnet-private port `8081` fallback above;
-Funnel remains disabled.
+On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a
+valid Cloudflare-managed certificate. The remotely managed `renoa-control`
+tunnel routes only that hostname to `http://127.0.0.1:7818`, followed by a 404
+catch-all. The coordinator and registry still expose no public listener.
+
+Coordinator binary
+`bbb3dfe19eb4a63750f42cf03c84a7625e948aaa516bf6d4ad727dae335a58b4`
+was deployed with the hardened connection limits documented in
+[`rcp-json-ws-v0.md`](../docs/rcp-json-ws-v0.md). A disposable surface enrolled,
+authenticated as RCP binding version 8, and completed `list_tasks` through
+`wss://renoa.live/connect`. Its plaintext credential was neither printed nor
+saved; the coordinator retained only the unusable digest after the client
+exited. A full Agent turn and two-surface handoff through the public origin are
+the next proof, not a current guarantee.
 
 On 2026-08-12, coordinator binary
 `3918d12d6ee2f40307b3a7177227e243d2add2afdec67144ee8d31cf9d8cb557`

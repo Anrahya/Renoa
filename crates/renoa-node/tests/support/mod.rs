@@ -80,9 +80,13 @@ impl TestSystem {
     }
 
     pub(crate) async fn enroll_surface(&self) -> DeviceCredentials {
+        self.enroll_surface_as("test_surface").await
+    }
+
+    pub(crate) async fn enroll_surface_as(&self, name: &str) -> DeviceCredentials {
         self.enroll(PeerIdentity::Surface {
             principal_id: self.principal_id,
-            surface: SurfaceRef::new("test_surface"),
+            surface: SurfaceRef::new(name),
         })
         .await
     }

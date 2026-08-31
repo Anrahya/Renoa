@@ -1,6 +1,7 @@
 # Renoa continuity layer v0
 
-> This document describes the current loopback implementation. The canonical
+> This document describes the current loopback coordinator and its first public
+> TLS deployment. The canonical
 > protocol direction, locked decisions, open decisions, and conformance target
 > live in [rcp-v0.md](rcp-v0.md). The proven semantics are recorded in
 > [rcp-operations-v0.md](rcp-operations-v0.md), and the current wire shape is in
@@ -12,6 +13,10 @@ A task remains addressable when a surface disconnects. Any authorized surface
 can discover its tasks, observe the same ordered history, and submit the next
 command. Execution still happens on the node that owns the task's target
 environment.
+
+Surface handoff means that a separately enrolled device attaches to this same
+task with its own credential and cursor. It does not copy another surface's
+credential or move the execution node's harness, workspace, or service secrets.
 
 The proof uses Rust surfaces, a headless TypeScript surface, a Rust kernel node,
 a Pi SDK node, and one coordinator.
@@ -124,10 +129,11 @@ Transport choices are not task semantics. A later Telegram webhook, HTTP API,
 or ACP adapter can call the same coordinator operations without becoming part
 of the kernel.
 
-The first server is deliberately loopback-only. Device authentication protects
-identity but the current listener is plaintext, so it must refuse a
-non-loopback address. A public deployment requires WSS/TLS termination and
-abuse controls; credentials must never travel over `ws://` or in a URL.
+The coordinator server is deliberately loopback-only. Device authentication
+protects identity but its listener is plaintext, so it refuses a non-loopback
+address. The first public deployment uses an outbound Cloudflare Tunnel to
+terminate TLS at `wss://renoa.live/connect`. Credentials never travel over
+public `ws://` or in a URL.
 
 ## Delivery flow
 
@@ -173,8 +179,9 @@ snapshot or the live buffer, never in neither.
 - No custom channel cryptography, QUIC protocol, CBOR, or Protobuf.
 - No cloud workspace, filesystem replication, or executor migration.
 - No automatic failover to a different node.
-- No Android, Telegram, GitHub, or Jira UI yet.
-- No public network exposure before TLS termination and abuse controls exist.
+- No Android, GitHub, Jira, or RCP-connected Telegram UI yet.
+- No direct public coordinator listener. Internet access must cross TLS
+  termination and the coordinator's bounded connection boundary.
 - No generic message bus, Redis, NATS, or PostgreSQL for a single-user proof.
 
 ## Known proof shortcuts

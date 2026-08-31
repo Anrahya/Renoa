@@ -1,11 +1,12 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{State, WebSocketUpgrade, ws::Message},
-    response::Response,
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::timeout};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -19,12 +20,23 @@ use crate::{
 };
 
 const OUTBOUND_CAPACITY: usize = 128;
+const AUTHENTICATION_DEADLINE: Duration = Duration::from_secs(10);
+const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 
 pub(crate) async fn upgrade_connection(
     State(state): State<Arc<CoordinatorState>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    upgrade.on_upgrade(move |socket| serve_connection(state, socket))
+    let Ok(slot) = Arc::clone(&state.connection_slots).try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    upgrade
+        .max_message_size(MAX_APPLICATION_MESSAGE_BYTES)
+        .max_frame_size(MAX_APPLICATION_MESSAGE_BYTES)
+        .on_upgrade(move |socket| async move {
+            serve_connection(state, socket).await;
+            drop(slot);
+        })
 }
 
 async fn serve_connection(state: Arc<CoordinatorState>, socket: axum::extract::ws::WebSocket) {
@@ -33,7 +45,12 @@ async fn serve_connection(state: Arc<CoordinatorState>, socket: axum::extract::w
     let (outgoing, outbound) = mpsc::channel::<ServerMessage>(OUTBOUND_CAPACITY);
     let connection_cancelled = CancellationToken::new();
     let writer = spawn_writer(wire_sender, outbound, connection_cancelled.clone());
-    let Some(device) = read_peer(&state, &mut wire_receiver, &outgoing).await else {
+    let Ok(Some(device)) = timeout(
+        AUTHENTICATION_DEADLINE,
+        read_peer(&state, &mut wire_receiver, &outgoing),
+    )
+    .await
+    else {
         drop(outgoing);
         let _ = writer.await;
         connection_cancelled.cancel();

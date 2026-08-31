@@ -15,6 +15,10 @@ This closes two separate holes: authenticating the socket and authorizing the
 task. A valid device still cannot attach to or submit work for a task owned by a
 different principal.
 
+Each installation receives its own credential. Continuing the same task from a
+phone, desktop, or integration authenticates that installation independently;
+no device credential is handed to another device.
+
 ## Vocabulary
 
 - A **principal** owns tasks.
@@ -58,30 +62,68 @@ different principal.
    authentication.
 7. Task attachment and command submission both enforce task ownership.
 8. Revocation terminates current sessions and rejects future sessions.
+9. Enrollment creates a new device credential. Importing or cloning an existing
+   device credential is not a surface-handoff mechanism.
+10. Device credentials, task cursors, command outboxes, and provider or tool
+    credentials remain separate state with separate owners.
 
 The schema is versioned. A database created before task ownership existed is
 rejected with an explicit error because assigning owners automatically would
 turn a migration into an authorization decision.
 
+## Production enrollment direction
+
+The self-hosted coordinator has one stable HTTPS origin. On an interactive
+device, the person authenticates at that origin with WebAuthn and authorizes a
+new device whose role and principal are selected by the coordinator. WebAuthn
+proves the person; the resulting Renoa device identity authenticates later RCP
+connections. They are not the same credential.
+
+For a browser surface, the long-lived Renoa device credential must remain out
+of JavaScript storage. An authenticated same-origin HTTPS session obtains a
+short-lived, single-use WebSocket connection ticket instead. Native surfaces
+and nodes store their device credential in the platform keychain, keystore, or
+service-manager credential facility. An owner-only service credential file is
+the explicit fallback for a headless system without one of those facilities.
+
+A headless node may request enrollment, but an existing trusted device must
+approve the exact node identity before the coordinator creates its enrollment.
+Typed device codes and QR scanning are fallbacks for constrained devices, not
+the normal phone or browser flow. First-device bootstrap and total account
+recovery remain explicit local administrative ceremonies; they must not create
+an unauthenticated remote enrollment path.
+
+These are selected product and security boundaries. Their HTTP/WebAuthn and
+connection-ticket messages are not part of JSON/WebSocket binding version 8
+and must not be added until an implementation and conformance test consume
+them.
+
 ## Security boundary
 
 The v0 credential is a bearer secret. Whoever steals it can impersonate that
 device. Production clients must keep it in an operating-system credential
-store, and production traffic must use WSS/TLS. The current server therefore
-continues to reject non-loopback listeners.
+store, and production traffic must use WSS/TLS. The coordinator continues to
+reject non-loopback listeners; the first public deployment terminates TLS in an
+outbound tunnel before forwarding to that loopback listener.
 
 Bearer credentials are the smallest complete proof for a personal runtime. A
 future threat model may justify sender-constrained credentials through a
 standard such as mTLS or DPoP. Renoa does not invent an application signing
 protocol in v0.
 
-`create_enrollment` and `revoke_device` are trusted administrative Rust APIs,
-not remotely callable protocol messages. A first-device bootstrap flow, QR
-rendering, credential rotation, account recovery, rate limiting, and public TLS
-termination remain separate product and deployment work.
+`create_enrollment` and `revoke_device` are currently trusted administrative
+Rust APIs, not remotely callable protocol messages. Credential rotation,
+account recovery, per-source rate limiting, and the selected production
+enrollment flow remain implementation work. Public TLS termination is proven;
+human-facing device management is not.
 
 The transport constraints follow the
 [OWASP WebSocket Security guidance](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html).
+Interactive enrollment follows
+[WebAuthn](https://www.w3.org/TR/webauthn-3/) and the
+[IETF cross-device-flow security guidance](https://www.rfc-editor.org/rfc/rfc10027.html),
+which favors same-device or phishing-resistant authentication over copied
+device codes when capable devices are available.
 The bearer-secret limitation is the one defined by
 [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750), while the possible future
 sender-constrained direction is described in

@@ -17,6 +17,7 @@ a real Pi OpenAI-compatible turn.
 - Endpoint: `/connect`
 - Transport: WebSocket
 - Application frames: one UTF-8 JSON object per text frame
+- Maximum reassembled application message: 1 MiB
 - Top-level discriminator: `type`
 - Variant and top-level field names: `snake_case`
 - UUIDs: lowercase hyphenated strings
@@ -26,9 +27,22 @@ The first application frame must be `enroll` or `authenticate`. Enrollment
 returns credentials and ends that connection. Authentication returns
 `authenticated` and keeps the connection open for operations.
 
+The client must send that first application frame within 10 seconds after the
+WebSocket upgrade. The coordinator closes a connection that misses the
+deadline or exceeds the message limit. Large artifacts belong outside this
+control binding; the limit prevents task frames from becoming an unbounded
+bulk-transfer path.
+
+The reference coordinator admits at most 128 simultaneous upgraded
+connections. An attempt beyond that process-wide budget receives HTTP `503`
+before the WebSocket upgrade. This is an implementation resource bound, not a
+task or device limit.
+
 The current server accepts plaintext `ws://` only on a loopback listener. Any
 public deployment must terminate TLS and use `wss://` before credentials are
-sent.
+sent. The first deployment does this at `wss://renoa.live/connect` through an
+outbound tunnel; the tunnel is deployment infrastructure, not part of the
+binding.
 
 ## Binding version
 

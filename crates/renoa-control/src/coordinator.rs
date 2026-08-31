@@ -5,7 +5,7 @@ use renoa_protocol::{CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef
 use thiserror::Error;
 use tokio::{
     net::TcpListener,
-    sync::{Mutex, broadcast, mpsc},
+    sync::{Mutex, Semaphore, broadcast, mpsc},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -17,6 +17,8 @@ use crate::{
     store::{CommandAdmission, ControlStore},
     wire::{publish_task_event, send_control_error, send_error, task_sender},
 };
+
+const MAX_CONCURRENT_CONNECTIONS: usize = 128;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskSpec {
@@ -87,6 +89,7 @@ pub struct Coordinator {
 }
 
 pub(crate) struct CoordinatorState {
+    pub(crate) connection_slots: Arc<Semaphore>,
     pub(crate) connection_lifecycle: Mutex<()>,
     pub(crate) store: ControlStore,
     pub(crate) nodes: Mutex<HashMap<NodeId, NodeConnection>>,
@@ -110,6 +113,7 @@ impl Coordinator {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ControlError> {
         Ok(Self {
             state: Arc::new(CoordinatorState {
+                connection_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS)),
                 connection_lifecycle: Mutex::new(()),
                 store: ControlStore::open(path)?,
                 nodes: Mutex::new(HashMap::new()),
