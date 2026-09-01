@@ -6,7 +6,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::{sync::mpsc, time::timeout};
+use tokio::{
+    sync::mpsc,
+    time::{Instant, MissedTickBehavior, interval_at, timeout},
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -15,11 +18,12 @@ use crate::{
     coordinator::{CoordinatorState, NodeConnection, handle_surface_operation},
     json_ws::JsonOperation,
     node_messages::handle_node_operation,
-    wire::{cleanup_connection, parse_message, send_control_error, send_error},
+    wire::{InboundMessage, classify_message, cleanup_connection, send_control_error, send_error},
 };
 
 const OUTBOUND_CAPACITY: usize = 128;
 const AUTHENTICATION_DEADLINE: Duration = Duration::from_secs(10);
+const TRANSPORT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 
 struct AuthenticatedPeer {
@@ -196,17 +200,23 @@ async fn serve_messages(
             () = cancelled.cancelled() => break,
             message = receiver.next() => message,
         };
-        let Some(message) = message else { break };
-        let Ok(message) = message else { break };
-        let Some(message) = parse_message(message) else {
-            send_error(
-                outgoing,
-                None,
-                ErrorCode::InvalidMessage,
-                "message is not valid Renoa JSON",
-            )
-            .await;
-            continue;
+        let message = match message {
+            Some(Ok(message)) => match classify_message(message) {
+                InboundMessage::Application(message) => message,
+                InboundMessage::Control => continue,
+                InboundMessage::Closed => break,
+                InboundMessage::Invalid => {
+                    send_error(
+                        outgoing,
+                        None,
+                        ErrorCode::InvalidMessage,
+                        "message is not valid Renoa JSON",
+                    )
+                    .await;
+                    continue;
+                }
+            },
+            Some(Err(_)) | None => break,
         };
         let Some(operation) = message.into_operation() else {
             send_error(
@@ -271,9 +281,19 @@ fn spawn_writer(
     cancelled: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut keepalive = interval_at(
+            Instant::now() + TRANSPORT_KEEPALIVE_INTERVAL,
+            TRANSPORT_KEEPALIVE_INTERVAL,
+        );
+        keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 () = cancelled.cancelled() => break,
+                _ = keepalive.tick() => {
+                    if wire_sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                }
                 message = outbound.recv() => {
                     let Some(message) = message else { break };
                     if !message.has_interoperable_numbers() {
@@ -302,18 +322,25 @@ async fn read_peer(
     receiver: &mut futures_util::stream::SplitStream<axum::extract::ws::WebSocket>,
     outgoing: &mpsc::Sender<ServerMessage>,
 ) -> Option<AuthenticatedPeer> {
-    let Some(Ok(message)) = receiver.next().await else {
-        return None;
-    };
-    let Some(message) = parse_message(message) else {
-        send_error(
-            outgoing,
-            None,
-            ErrorCode::AuthenticationFailed,
-            "authentication failed",
-        )
-        .await;
-        return None;
+    let message = loop {
+        match receiver.next().await {
+            Some(Ok(message)) => match classify_message(message) {
+                InboundMessage::Application(message) => break message,
+                InboundMessage::Control => {}
+                InboundMessage::Closed => return None,
+                InboundMessage::Invalid => {
+                    send_error(
+                        outgoing,
+                        None,
+                        ErrorCode::AuthenticationFailed,
+                        "authentication failed",
+                    )
+                    .await;
+                    return None;
+                }
+            },
+            Some(Err(_)) | None => return None,
+        }
     };
     let authenticated = match message {
         ClientMessage::Enroll { version, token } => {

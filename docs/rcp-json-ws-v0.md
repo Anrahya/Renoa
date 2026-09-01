@@ -39,6 +39,11 @@ connections. An attempt beyond that process-wide budget receives HTTP `503`
 before the WebSocket upgrade. This is an implementation resource bound, not a
 task or device limit.
 
+The coordinator sends an empty WebSocket `ping` control frame every 30 seconds.
+Peers answer with the standard `pong`; browsers do this automatically. Control
+frames are ignored by the JSON operation decoder. They carry no RCP identity,
+ordering, or durable state and exist only to keep idle proxy paths alive.
+
 The current server accepts plaintext `ws://` only on a loopback listener. Any
 public deployment must terminate TLS and use `wss://` before credentials are
 sent. The first deployment does this at `wss://renoa.live/connect` through an
@@ -410,7 +415,8 @@ round.
 
 ## Binding exclusions
 
-Version `9` defines no task-list pagination, live directory updates, heartbeat,
-cancellation, steering, approval, artifact, binary-frame, compression,
-HTTP/SSE, webhook, or public TLS deployment contract. Adding any of those
-requires an operation contract first, then a binding and tests.
+Version `9` defines no task-list pagination, live directory updates,
+application heartbeat or presence, cancellation, steering, approval, artifact,
+binary-frame, compression, HTTP/SSE, webhook, or public TLS deployment
+contract. Adding any of those requires an operation contract first, then a
+binding and tests. The transport `ping` above is not an application heartbeat.

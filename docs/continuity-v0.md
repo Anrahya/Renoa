@@ -136,7 +136,9 @@ The coordinator server is deliberately loopback-only. Device authentication
 protects identity but its listener is plaintext, so it refuses a non-loopback
 address. The first public deployment uses an outbound Cloudflare Tunnel to
 terminate TLS at `wss://renoa.live/connect`. Credentials never travel over
-public `ws://` or in a URL.
+public `ws://` or in a URL. The coordinator emits a WebSocket control ping every
+30 seconds so an otherwise idle connection survives ordinary proxy timeouts;
+this transport keepalive carries no task semantics.
 
 ## Delivery flow
 

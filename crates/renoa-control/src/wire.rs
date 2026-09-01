@@ -9,6 +9,13 @@ use crate::{
 
 pub(crate) const TASK_BROADCAST_CAPACITY: usize = 256;
 
+pub(crate) enum InboundMessage {
+    Application(ClientMessage),
+    Control,
+    Closed,
+    Invalid,
+}
+
 pub(crate) async fn publish_task_event(state: &CoordinatorState, event: TaskEvent) {
     let _ = task_sender(state, event.task_id).await.send(event);
 }
@@ -43,12 +50,16 @@ pub(crate) async fn cleanup_connection(
     }
 }
 
-pub(crate) fn parse_message(message: Message) -> Option<ClientMessage> {
-    let Message::Text(json) = message else {
-        return None;
-    };
-    let message: ClientMessage = serde_json::from_str(&json).ok()?;
-    message.has_interoperable_numbers().then_some(message)
+pub(crate) fn classify_message(message: Message) -> InboundMessage {
+    match message {
+        Message::Text(json) => serde_json::from_str::<ClientMessage>(&json)
+            .ok()
+            .filter(ClientMessage::has_interoperable_numbers)
+            .map_or(InboundMessage::Invalid, InboundMessage::Application),
+        Message::Ping(_) | Message::Pong(_) => InboundMessage::Control,
+        Message::Close(_) => InboundMessage::Closed,
+        Message::Binary(_) => InboundMessage::Invalid,
+    }
 }
 
 pub(crate) async fn send_control_error(
