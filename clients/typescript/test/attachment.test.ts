@@ -50,7 +50,10 @@ test("reconnecting restores live delivery for existing attachments", async () =>
 
   await surface.disconnect();
   await surface.connect();
-  const submission = surface.submitText(fixture.tasks[0].taskId, "continue on this socket");
+  const submission = await surface.submitText(
+    fixture.tasks[0].taskId,
+    "continue on this socket",
+  );
   expectedCommandId = submission.commandId;
   await Promise.all([submission.accepted, observed.promise]);
   await surface.close();
@@ -60,7 +63,11 @@ test("a failed event projection is not checkpointed", async () => {
   const statePath = `${fixture.statePath}.failed-projection`;
   const seed = client(`${statePath}.seed`);
   await seed.connect();
-  await seed.submitText(fixture.tasks[1].taskId, "create a projection test event").accepted;
+  const submission = await seed.submitText(
+    fixture.tasks[1].taskId,
+    "create a projection test event",
+  );
+  await submission.accepted;
   await seed.close();
 
   const first = client(statePath);
@@ -109,7 +116,10 @@ test("a replay-required disconnect is observable and recoverable", async () => {
 
   await surface.connect();
   await surface.attach(fixture.tasks[0].taskId, apply);
-  const submission = surface.submitText(fixture.tasks[0].taskId, "resume after replay recovery");
+  const submission = await surface.submitText(
+    fixture.tasks[0].taskId,
+    "resume after replay recovery",
+  );
   expectedCommandId = submission.commandId;
   await Promise.all([submission.accepted, observed.promise]);
   await surface.close();

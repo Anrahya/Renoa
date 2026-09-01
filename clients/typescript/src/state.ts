@@ -1,12 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
+import type { PendingTextCommand, RcpSurfaceState } from "./core-client.js";
 
-export interface PendingTextCommand {
-  readonly commandId: string;
-  readonly taskId: string;
-  readonly text: string;
-}
-
-export class SurfaceState {
+export class SurfaceState implements RcpSurfaceState {
   readonly #database: DatabaseSync;
   #closed = false;
 

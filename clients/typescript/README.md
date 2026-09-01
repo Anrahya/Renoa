@@ -1,14 +1,15 @@
 # TypeScript RCP surface client
 
-This is Renoa's first non-Rust RCP implementation. It is a private, headless
-Node reference client, not a stable public SDK and not an agent harness.
+This is Renoa's first non-Rust RCP implementation. It is a private shared
+transport core with a Node reference wrapper and a browser entry point, not a
+stable public SDK and not an agent harness.
 
 It currently owns the surface-side continuity mechanics:
 
 - version 9 device or one-use browser-ticket authentication and task discovery;
 - replay followed by live task events;
-- a SQLite cursor committed only after the surface callback succeeds;
-- a SQLite command outbox written before transmission;
+- a caller-owned durable cursor committed only after the surface callback succeeds;
+- a caller-owned durable command outbox written before transmission;
 - exact command retry after an uncertain acknowledgement;
 - fully decoded baseline task activity with stable command-to-execution
   causation;
@@ -16,10 +17,12 @@ It currently owns the surface-side continuity mechanics:
 - reattachment of completed in-memory subscriptions after a host-triggered
   reconnect.
 
+The Node wrapper uses SQLite. The browser Control Room imports
+`@renoa/rcp-client/browser` and supplies an IndexedDB state implementation.
 The host either supplies device credentials from its platform keychain or a
-callback that obtains a fresh one-use browser ticket. Neither is written to the
-client's SQLite file. That file does contain plaintext command input, so it
-must remain private to the device installation.
+callback that obtains a fresh one-use browser ticket. The shared transport does
+not persist either credential. Command input in the outbox remains private
+surface data.
 
 ```ts
 import { RcpSurfaceClient } from "@renoa/rcp-client";
@@ -36,7 +39,7 @@ await client.attach(tasks[0].taskId, async (event) => {
   await projection.apply(event);
 });
 
-const submission = client.submitText(tasks[0].taskId, "continue the work");
+const submission = await client.submitText(tasks[0].taskId, "continue the work");
 await submission.accepted;
 ```
 

@@ -4,6 +4,7 @@
 /adapters/model-provider-node/dist/
 /adapters/mcp-client-node/dist/
 /adapters/mcp-registry-node/dist/
+/surfaces/control-room/dist/
 node_modules/
 *.db
 *.db-journal

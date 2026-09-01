@@ -6,8 +6,8 @@ This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
 first implemented transport binding. The current binding version is `9`.
 
 The binding is a candidate contract, not a stable public release. Version `9`
-is implemented by `renoa-control`, `renoa-node`, a headless TypeScript surface,
-and a TypeScript Pi node. Cross-language tests cover both authenticated roles,
+is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
+browser surfaces, and a TypeScript Pi node. Cross-language tests cover both authenticated roles,
 discovery and authorization, replay, live reattachment, offline-node rejection,
 lost acknowledgements, `replay_required`, JavaScript's exact integer limit, and
 a real Pi OpenAI-compatible turn.

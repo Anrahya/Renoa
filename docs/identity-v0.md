@@ -150,10 +150,12 @@ or SQLite details.
 
 ## Remaining work
 
-Human-facing passkey UI, trusted-device approval for headless enrollment,
-device and passkey administration, recovery, per-source throttling, monitoring,
-and backup restoration remain outside this foundation slice. A browser UI must
-request a fresh ticket for each connection attempt and keep it in memory only.
+The browser Control Room implements the baseline registration and
+authentication ceremonies and requests a fresh ticket for every connection
+attempt. It keeps that ticket in memory only. Trusted-device approval for
+headless enrollment, device and passkey administration, recovery, per-source
+throttling, monitoring, and backup restoration remain outside this foundation
+slice.
 
 Renoa uses [`webauthn-rs` 0.5.5](https://github.com/kanidm/webauthn-rs/releases/tag/v0.5.5)
 under MPL-2.0 for WebAuthn validation and its test authenticator. Renoa enables

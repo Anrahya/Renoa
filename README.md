@@ -37,6 +37,11 @@ without turning the kernel into product policy or one giant plugin interface.
   surface. It maps private Telegram topics to durable sessions of Arcee, Renoa's
   personal-operator profile, while leaving composition and history with the
   Host and kernel.
+- [`control-room`](surfaces/control-room) is the first browser RCP surface. It
+  uses passkeys, shows the Host's real task directory and durable event replay,
+  follows live execution, and submits idempotent continuation commands. Its
+  IndexedDB cursor and outbox remain surface state; the one-use connection
+  ticket remains memory-only.
 - [`renoa-registry`](crates/renoa-registry) is the optional private service that
   makes immutable Agent Plugin packages available to more than one Host. Its
   wire contract lives in
@@ -58,8 +63,8 @@ Alpha currently has `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and
 `AGENTS.md` instructions are read again for every new operation, while an
 already admitted operation keeps its frozen behavior.
 
-Graphical surfaces live outside this core repository and connect through ACP.
-After configuring a provider as documented in
+Agent chat surfaces can connect through ACP without entering the kernel. After
+configuring a provider as documented in
 [`renoa-local`](crates/renoa-local/README.md), build and start the surface-neutral
 ACP process with:
 
@@ -78,8 +83,9 @@ The Rust coordinator still listens only on loopback. The first public proof
 reaches it through TLS at `wss://renoa.live/connect`. A real Alpha tool turn and
 two-surface continuation crossed that origin without sharing credentials or
 cursor state; deterministic tests cover the same durability boundaries. This
-is a candidate deployment, not a stable public wire release. Waku and Telegram
-are not yet connected through RCP. Canonical continuity decisions live in
+is a candidate deployment, not a stable public wire release. The browser
+Control Room now uses that RCP boundary; Waku and Telegram are not yet connected
+through it. Canonical continuity decisions live in
 [`docs/rcp-v0.md`](docs/rcp-v0.md).
 
 ## License
