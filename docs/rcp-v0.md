@@ -650,7 +650,11 @@ The current implementation demonstrates:
   Host configuration and a separate device credential, supports Alpha and
   Arcee target bindings, reconnects with bounded backoff, and stops cleanly
   under service supervision. Its one-time enrollment command exchanges a
-  coordinator token without printing or overwriting the issued credential.
+  coordinator token without printing or overwriting the issued credential. A
+  deployed instance completed a real Alpha tool turn, restarted cleanly, then
+  reopened the same Host session: a fresh surface replayed the first turn and
+  continued it, while the original surface later received only the missing
+  suffix.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 

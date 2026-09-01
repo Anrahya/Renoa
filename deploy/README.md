@@ -322,6 +322,18 @@ credential and replayed that exact five-event continuation from cursor 6. All
 three one-time enrollments were consumed, credentials remained process-local,
 and the private disposable runner directory was removed after success.
 
+The production node binary
+`ccb0b30aef70feeb082349c191391e8a2e53b65f3c65427a43ba721034c02f06`
+then replaced the disposable runner under `renoa-node.service`. It runs as its
+own unprivileged account and scored `1.5 OK` under `systemd-analyze security`.
+Surface A completed a real Alpha `read_file` turn at cursor 6. After a clean
+service restart, independently enrolled Surface B replayed all seven existing
+records, continued the same durable Host session without repeating the tool,
+and completed at cursor 11. Surface A then reattached from cursor 6 and received
+exactly the five-record suffix. The two disposable surface credentials and
+their local cursor stores were deleted; the service's owner-protected node
+credential and durable session remain deployed.
+
 On 2026-08-12, coordinator binary
 `3918d12d6ee2f40307b3a7177227e243d2add2afdec67144ee8d31cf9d8cb557`
 was deployed. A trusted bootstrap created a fresh principal, Pi node, and task.
