@@ -20,12 +20,12 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
+    backoff::{ReconnectBackoff, STABLE_CONNECTION},
+    node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
     projection::{NoopEvents, project_history, terminal_event},
     session::{SessionEnd, serve_session},
 };
-
-const RECONNECT_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Error)]
 pub enum NodeError {
@@ -41,6 +41,8 @@ pub enum NodeError {
     Rejected { code: ErrorCode, message: String },
     #[error("RCP protocol error: {0}")]
     Protocol(String),
+    #[error("RCP transport disconnected: {0}")]
+    Transport(String),
     #[error("execution task failed: {0}")]
     Task(String),
 }
@@ -174,6 +176,7 @@ impl RenoaNode {
         tasks: &mut JoinSet<ExecutionTask>,
         running_tasks: &mut HashSet<TaskId>,
     ) -> Result<(), NodeError> {
+        let mut backoff = ReconnectBackoff::new();
         loop {
             if shutdown.is_cancelled() {
                 return Ok(());
@@ -190,11 +193,33 @@ impl RenoaNode {
             .await?
             {
                 SessionEnd::Shutdown => return Ok(()),
-                SessionEnd::Disconnected => {}
-            }
-            if !wait_to_reconnect(shutdown, Arc::clone(&self.runtime), tasks, running_tasks).await?
-            {
-                return Ok(());
+                SessionEnd::Disconnected {
+                    reason,
+                    connected_for,
+                } => {
+                    let stable = connected_for.is_some_and(|elapsed| elapsed >= STABLE_CONNECTION);
+                    let delay = backoff.next_delay(stable);
+                    node_log::event(
+                        "warn",
+                        "coordinator_disconnected",
+                        &serde_json::json!({
+                            "reason": reason,
+                            "connected_ms": connected_for.and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok()),
+                            "retry_ms": u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        }),
+                    );
+                    if !wait_to_reconnect(
+                        shutdown,
+                        Arc::clone(&self.runtime),
+                        tasks,
+                        running_tasks,
+                        delay,
+                    )
+                    .await?
+                    {
+                        return Ok(());
+                    }
+                }
             }
         }
     }
@@ -372,8 +397,9 @@ async fn wait_to_reconnect(
     runtime: Arc<NodeRuntime>,
     tasks: &mut JoinSet<ExecutionTask>,
     running_tasks: &mut HashSet<TaskId>,
+    reconnect_delay: Duration,
 ) -> Result<bool, NodeError> {
-    let delay = sleep(RECONNECT_DELAY);
+    let delay = sleep(reconnect_delay);
     tokio::pin!(delay);
     loop {
         tokio::select! {

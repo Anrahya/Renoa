@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "renoa-node"
+path = "src/bin/renoa-node/main.rs"
+
 [dependencies]
 futures-util.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
@@ -13,14 +17,16 @@ renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
 renoa-local = { path = "../renoa-local", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 rusqlite.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tokio-tungstenite.workspace = true
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 tokio-util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+nix.workspace = true
 tempfile.workspace = true
 
 [lints]

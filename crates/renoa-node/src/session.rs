@@ -1,14 +1,23 @@
-use std::{collections::HashMap, collections::HashSet, sync::Arc};
+use std::{
+    collections::HashMap,
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
 use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent};
 use tokio::{sync::watch, task::JoinSet};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     bridge::{ExecutionTask, NodeError, NodeRuntime, finish_execution, schedule_pending},
+    node_log,
     node_store::ExecutionRecord,
 };
 
@@ -16,7 +25,10 @@ type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 
 pub(crate) enum SessionEnd {
-    Disconnected,
+    Disconnected {
+        reason: String,
+        connected_for: Option<Duration>,
+    },
     Shutdown,
 }
 
@@ -24,11 +36,6 @@ struct Publication {
     record: ExecutionRecord,
     admission_in_flight: bool,
     event_in_flight: Option<u64>,
-}
-
-enum MessageResult {
-    Continue,
-    Disconnected,
 }
 
 #[allow(
@@ -44,38 +51,72 @@ pub(crate) async fn serve_session(
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
 ) -> Result<SessionEnd, NodeError> {
-    let Ok((mut socket, _)) = connect_async(endpoint).await else {
-        return Ok(SessionEnd::Disconnected);
-    };
-    if !send_client(
+    let mut authenticated_at = None;
+    let result = serve_session_inner(
+        endpoint,
+        credentials,
+        runtime,
+        shutdown,
+        commits,
+        tasks,
+        running,
+        &mut authenticated_at,
+    )
+    .await;
+    match result {
+        Err(NodeError::Transport(reason)) => Ok(SessionEnd::Disconnected {
+            reason,
+            connected_for: authenticated_at.map(|started: Instant| started.elapsed()),
+        }),
+        result => result,
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "these values are the complete state of one reconnectable node session"
+)]
+async fn serve_session_inner(
+    endpoint: &str,
+    credentials: &DeviceCredentials,
+    runtime: Arc<NodeRuntime>,
+    shutdown: &CancellationToken,
+    commits: &mut watch::Receiver<u64>,
+    tasks: &mut JoinSet<ExecutionTask>,
+    running: &mut HashSet<TaskId>,
+    authenticated_at: &mut Option<Instant>,
+) -> Result<SessionEnd, NodeError> {
+    let websocket = WebSocketConfig::default()
+        .max_message_size(Some(MAX_APPLICATION_MESSAGE_BYTES))
+        .max_frame_size(Some(MAX_APPLICATION_MESSAGE_BYTES));
+    let (mut socket, _) = connect_async_with_config(endpoint, Some(websocket), false)
+        .await
+        .map_err(|error| NodeError::Transport(error.to_string()))?;
+    send_client(
         &mut socket,
         &ClientMessage::Authenticate {
             version: JSON_WS_VERSION,
             credentials: credentials.clone(),
         },
     )
-    .await?
-    {
-        return Ok(SessionEnd::Disconnected);
-    }
+    .await?;
     match receive_server(&mut socket).await? {
-        Some(ServerMessage::Authenticated { version }) if version == JSON_WS_VERSION => {}
-        Some(ServerMessage::Error { code, message, .. }) => {
+        ServerMessage::Authenticated { version } if version == JSON_WS_VERSION => {}
+        ServerMessage::Error { code, message, .. } => {
             return Err(NodeError::Rejected { code, message });
         }
-        Some(_) => {
+        _ => {
             return Err(NodeError::Protocol(
                 "coordinator did not authenticate the node".to_owned(),
             ));
         }
-        None => return Ok(SessionEnd::Disconnected),
     }
+    *authenticated_at = Some(Instant::now());
+    node_log::event("info", "coordinator_connected", &serde_json::json!({}));
 
     let mut publications = HashMap::new();
     refresh_publications(&runtime, &mut publications).await?;
-    if !send_pending(&mut socket, &runtime, &mut publications).await? {
-        return Ok(SessionEnd::Disconnected);
-    }
+    send_pending(&mut socket, &runtime, &mut publications).await?;
 
     loop {
         tokio::select! {
@@ -85,9 +126,7 @@ pub(crate) async fn serve_session(
                     return Err(NodeError::Protocol("local commit signal closed".to_owned()));
                 }
                 refresh_publications(&runtime, &mut publications).await?;
-                if !send_pending(&mut socket, &runtime, &mut publications).await? {
-                    return Ok(SessionEnd::Disconnected);
-                }
+                send_pending(&mut socket, &runtime, &mut publications).await?;
             }
             completed = tasks.join_next(), if !tasks.is_empty() => {
                 if let Some(completed) = completed {
@@ -96,19 +135,15 @@ pub(crate) async fn serve_session(
                 }
             }
             message = receive_server(&mut socket) => {
-                let Some(message) = message? else {
-                    return Ok(SessionEnd::Disconnected);
-                };
-                if matches!(handle_server_message(
+                let message = message?;
+                handle_server_message(
                     &mut socket,
                     &runtime,
                     tasks,
                     running,
                     &mut publications,
                     message,
-                ).await?, MessageResult::Disconnected) {
-                    return Ok(SessionEnd::Disconnected);
-                }
+                ).await?;
             }
         }
     }
@@ -125,14 +160,12 @@ async fn handle_server_message(
     running: &mut HashSet<TaskId>,
     publications: &mut HashMap<CommandId, Publication>,
     message: ServerMessage,
-) -> Result<MessageResult, NodeError> {
+) -> Result<(), NodeError> {
     match message {
         ServerMessage::Execute { task_id, command } => {
             handle_execute(runtime, tasks, running, task_id, command).await?;
             refresh_publications(runtime, publications).await?;
-            if !send_pending(socket, runtime, publications).await? {
-                return Ok(MessageResult::Disconnected);
-            }
+            send_pending(socket, runtime, publications).await?;
         }
         ServerMessage::ExecutionAcknowledged { command_id } => {
             let publication = publications.get_mut(&command_id).ok_or_else(|| {
@@ -177,9 +210,7 @@ async fn handle_server_message(
             publication.record.published_through = Some(through_execution_sequence);
             publication.event_in_flight = None;
             refresh_publications(runtime, publications).await?;
-            if !send_pending(socket, runtime, publications).await? {
-                return Ok(MessageResult::Disconnected);
-            }
+            send_pending(socket, runtime, publications).await?;
         }
         ServerMessage::Error { code, message, .. } => {
             return Err(NodeError::Rejected { code, message });
@@ -195,7 +226,7 @@ async fn handle_server_message(
             ));
         }
     }
-    Ok(MessageResult::Continue)
+    Ok(())
 }
 
 async fn handle_execute(
@@ -241,7 +272,7 @@ async fn send_pending(
     socket: &mut Socket,
     runtime: &NodeRuntime,
     publications: &mut HashMap<CommandId, Publication>,
-) -> Result<bool, NodeError> {
+) -> Result<(), NodeError> {
     let mut ordered = publications
         .iter()
         .map(|(command_id, publication)| {
@@ -255,23 +286,22 @@ async fn send_pending(
     ordered.sort_unstable_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
     let mut blocked_tasks = HashSet::new();
     for (_, _, command_id) in ordered {
-        let publication = publications
-            .get_mut(&command_id)
-            .expect("publication key must remain present");
+        let publication = publications.get_mut(&command_id).ok_or_else(|| {
+            NodeError::Protocol(format!(
+                "pending publication {command_id} disappeared during scheduling"
+            ))
+        })?;
         let record = publication.record.clone();
         let send_admission = !record.admission_acked && !publication.admission_in_flight;
         if send_admission {
-            if !send_client(
+            send_client(
                 socket,
                 &ClientMessage::AcknowledgeExecution {
                     task_id: record.task_id,
                     command_id,
                 },
             )
-            .await?
-            {
-                return Ok(false);
-            }
+            .await?;
             publication.admission_in_flight = true;
         }
 
@@ -293,7 +323,7 @@ async fn send_pending(
             }
             continue;
         };
-        if !send_client(
+        send_client(
             socket,
             &ClientMessage::PublishExecutionEvents {
                 task_id: record.task_id,
@@ -301,14 +331,11 @@ async fn send_pending(
                 events,
             },
         )
-        .await?
-        {
-            return Ok(false);
-        }
+        .await?;
         publication.event_in_flight = Some(through_execution_sequence);
         blocked_tasks.insert(record.task_id);
     }
-    Ok(true)
+    Ok(())
 }
 
 fn publication_batch(
@@ -325,7 +352,9 @@ fn publication_batch(
             events: batch.clone(),
         };
         if serde_json::to_vec(&message)?.len() > MAX_APPLICATION_MESSAGE_BYTES {
-            let oversized = batch.pop().expect("candidate batch contains one event");
+            let oversized = batch.pop().ok_or_else(|| {
+                NodeError::Protocol("publication batch lost its candidate event".to_owned())
+            })?;
             if batch.is_empty() {
                 return Err(NodeError::Protocol(format!(
                     "execution event {} exceeds the RCP WebSocket message limit",
@@ -338,22 +367,38 @@ fn publication_batch(
     Ok(batch)
 }
 
-async fn send_client(socket: &mut Socket, message: &ClientMessage) -> Result<bool, NodeError> {
+async fn send_client(socket: &mut Socket, message: &ClientMessage) -> Result<(), NodeError> {
     let json = serde_json::to_string(message)?;
-    Ok(socket.send(Message::Text(json.into())).await.is_ok())
+    socket
+        .send(Message::Text(json.into()))
+        .await
+        .map_err(|error| NodeError::Transport(error.to_string()))
 }
 
-async fn receive_server(socket: &mut Socket) -> Result<Option<ServerMessage>, NodeError> {
+async fn receive_server(socket: &mut Socket) -> Result<ServerMessage, NodeError> {
     loop {
         match socket.next().await {
-            Some(Ok(Message::Text(json))) => return Ok(Some(serde_json::from_str(&json)?)),
+            Some(Ok(Message::Text(json))) => return Ok(serde_json::from_str(&json)?),
             Some(Ok(Message::Ping(payload))) => {
                 if socket.send(Message::Pong(payload)).await.is_err() {
-                    return Ok(None);
+                    return Err(NodeError::Transport(
+                        "connection closed while answering a ping".to_owned(),
+                    ));
                 }
             }
             Some(Ok(Message::Pong(_))) => {}
-            Some(Ok(Message::Close(_)) | Err(_)) | None => return Ok(None),
+            Some(Ok(Message::Close(frame))) => {
+                return Err(NodeError::Transport(match frame {
+                    Some(frame) => format!("coordinator closed: {}", frame.reason),
+                    None => "coordinator closed the WebSocket".to_owned(),
+                }));
+            }
+            Some(Err(error)) => return Err(NodeError::Transport(error.to_string())),
+            None => {
+                return Err(NodeError::Transport(
+                    "coordinator connection ended".to_owned(),
+                ));
+            }
             Some(Ok(Message::Binary(_) | Message::Frame(_))) => {
                 return Err(NodeError::Protocol(
                     "coordinator sent a non-JSON WebSocket message".to_owned(),

@@ -646,6 +646,11 @@ The current implementation demonstrates:
   the same Host session, and the first surface later replayed the exact
   continuation from its prior cursor. Neither surface shared credentials or
   cursor state.
+- a production `renoa-node` executable that reads a versioned owner-controlled
+  Host configuration and a separate device credential, supports Alpha and
+  Arcee target bindings, reconnects with bounded backoff, and stops cleanly
+  under service supervision. Its one-time enrollment command exchanges a
+  coordinator token without printing or overwriting the issued credential.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 
@@ -656,9 +661,6 @@ The proof deliberately does not yet satisfy the full RCP architecture:
 3. Rust Host targets are statically supplied when the node starts. Their
    admitted task bindings are durable, but remote target provisioning,
    configuration revisions, and a Host-management API remain unimplemented.
-   The public Alpha proof used the real node library through a disposable
-   runner; a supervised headless node executable and its owner-only
-   configuration are not yet shipped.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
@@ -682,15 +684,13 @@ multi-task, or public-network consumer.
 
 Work proceeds in this order unless evidence changes the dependency:
 
-1. Package the proven Rust Host node as a supervised headless service with an
-   owner-only ledger and exact static target configuration.
-2. Add same-device, passkey-authorized enrollment and a browser-safe connection
+1. Add same-device, passkey-authorized enrollment and a browser-safe connection
    ticket at the self-hosted origin. Headless-node enrollment must be approved
    by an existing trusted device; copied credentials are not an enrollment
    mechanism.
-3. Add device administration, per-source throttling, health monitoring, and a
+2. Add device administration, per-source throttling, health monitoring, and a
    tested backup-and-restore procedure.
-4. Add a durable harness-initiated interaction flow when a real approval or
+3. Add a durable harness-initiated interaction flow when a real approval or
    follow-up consumer exists; RCP transports the interaction while the harness
    retains permission policy.
 

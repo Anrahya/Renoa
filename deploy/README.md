@@ -1,8 +1,9 @@
 # VPS deployment
 
-This directory contains three independent services and one transport process:
+This directory contains four independent services and one transport process:
 
 - `renoa-coordinator` carries RCP task continuity; and
+- `renoa-node` executes statically bound RCP tasks through a local Host; and
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
 - `renoa-telegram` runs the Arcee personal-operator profile on Telegram; while
 - `cloudflared` gives the loopback-only coordinator a public HTTPS route.
@@ -14,6 +15,99 @@ route. Neither transport is part of a Renoa protocol. Funnel is not used.
 
 The Telegram surface is different: it makes outbound HTTPS requests to the
 Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
+
+## RCP execution node
+
+Build and install the headless Host node:
+
+```sh
+cargo build --locked --release -p renoa-node --bin renoa-node
+install -m 0755 target/release/renoa-node /usr/local/bin/renoa-node
+useradd --system --home-dir /var/lib/renoa-node \
+  --shell /usr/sbin/nologin renoa-node
+install -d -m 0700 -o renoa-node -g renoa-node /srv/renoa/node-workspaces
+install -d -m 0700 -o root -g root /etc/renoa
+```
+
+Create `/etc/renoa/node.json` as root with mode `0600`. It is an exact local
+Host configuration, not RCP wire data:
+
+```json
+{
+  "schemaVersion": 1,
+  "endpoint": "wss://renoa.live/connect",
+  "model": {
+    "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+    "credentialStore": "/var/lib/renoa-node/model-auth.sqlite",
+    "providers": ["opencode-go"],
+    "defaultProvider": "opencode-go",
+    "defaultModel": "glm-5.3-flash"
+  },
+  "adapters": {
+    "mcp": "/opt/renoa/adapters/mcp-node/dist/src/main.js",
+    "mcpRegistry": "/opt/renoa/adapters/mcp-registry-node/dist/src/main.js",
+    "sharedPluginRegistry": "http://<vps-magic-dns-name>:8082/"
+  },
+  "targets": [
+    {
+      "target": "workspace:example",
+      "profile": "renoa.coding.alpha.v1",
+      "sessionId": "<stable-session-uuid>",
+      "workspace": "/srv/renoa/node-workspaces/example"
+    }
+  ]
+}
+```
+
+Every configured adapter and model store must already exist at its absolute
+path. Omit any optional adapter field that this Host does not use. The service
+currently accepts the built-in Alpha and Arcee profile IDs. Each target binds
+one coordinator target to one stable Host session and canonical workspace;
+changing a durable binding fails closed.
+
+On the coordinator host, create the node identity and capture its five-minute
+enrollment token directly into an owner-only file:
+
+```sh
+umask 077
+systemd-run --quiet --wait --pipe --collect \
+  --property=DynamicUser=yes \
+  --property=StateDirectory=renoa \
+  --property=StateDirectoryMode=0700 \
+  --property=UMask=0077 \
+  /usr/local/bin/renoa-coordinator enroll-node \
+  /var/lib/renoa/control.sqlite <node-uuid> > node-enrollment.json
+```
+
+Move that short-lived file to the execution Host over an authenticated private
+channel, keep it mode `0600`, and exchange it once:
+
+```sh
+/usr/local/bin/renoa-node enroll \
+  wss://renoa.live/connect \
+  /run/renoa/node-enrollment.json \
+  /etc/renoa/node-device.json
+rm /run/renoa/node-enrollment.json
+```
+
+The output credential file is created as mode `0600` and is never overwritten.
+The command prints only `{"status":"enrolled"}`. Install the unit after the
+coordinator task has been created with the same node UUID and target:
+
+```sh
+cp deploy/renoa-node.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now renoa-node.service
+journalctl -u renoa-node.service -f -o cat
+```
+
+The unit passes the config and device secret through systemd credentials, whose
+runtime directory is available as `%d`. It grants writes only to the private
+node state and `/srv/renoa/node-workspaces`; add another explicit
+`ReadWritePaths=` entry in a drop-in before binding a workspace elsewhere.
+Node/V8 needs writable executable memory, so `MemoryDenyWriteExecute` remains
+off. Network loss is retried internally with bounded exponential backoff;
+systemd restarts only fatal process exits.
 
 ## Arcee Telegram surface
 

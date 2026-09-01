@@ -412,7 +412,7 @@ async fn independent_host_sessions_execute_in_parallel() {
 
 #[tokio::test]
 async fn independently_enrolled_surfaces_continue_one_host_session() {
-    timeout(Duration::from_secs(10), async {
+    Box::pin(timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
         let fixture = HostFixture::install(&system);
         let node_shutdown = CancellationToken::new();
@@ -477,7 +477,7 @@ async fn independently_enrolled_surfaces_continue_one_host_session() {
             .expect("node task")
             .expect("node shuts down cleanly");
         system.stop().await;
-    })
+    }))
     .await
     .expect("surface handoff test timed out");
 }
