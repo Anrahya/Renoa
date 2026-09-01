@@ -1,9 +1,8 @@
-//! Live execution-node bridge between RCP and Renoa's reference engine.
+//! Durable execution-node bridge between RCP and Renoa's local Host.
 
 mod bridge;
-mod live_store;
 mod node_store;
-mod profile;
+mod projection;
 mod session;
 
-pub use bridge::{NodeError, RenoaNode};
+pub use bridge::{HostTarget, NodeError, RenoaNode};

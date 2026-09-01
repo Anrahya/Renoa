@@ -337,22 +337,28 @@ outside the lock.
 The node's local harness ledger is responsible for deduplicating that execution
 identity before model inference or side effects begin.
 
-The reference `renoa-node` bridge stores the RCP task, command, and run mapping
-in the same local SQLite ledger as the kernel run. It acknowledges execution
-only after both the kernel admission and that mapping are durable. A process
-crash between those commits leaves the coordinator delivery pending, so the
-same command is redelivered and the mapping can be reconstructed safely.
+The reference `renoa-node` bridge now binds each RCP task to one exact local
+Host profile, session identity, target, and canonical workspace. A Host session
+cannot be silently shared by two tasks. The node stores the exact command and
+its `ExecutionStarted` record in an owner-only SQLite ledger before
+acknowledging execution. The RCP command UUID is reused as the kernel command
+UUID, so recovery crosses the protocol, Host, and kernel boundaries under one
+stable identity.
 
-Socket ownership stays outside the Engine. Durable ledger commits wake the
-bridge publisher, but the wakeup is not data: the publisher always reads the
-ledger from its last coordinator-acknowledged source cursor. Model and
-capability execution therefore continue across coordinator-link loss. After
-reconnection, an uncertain event batch is resent from the durable cursor.
+Socket ownership stays outside the Host. Durable node-ledger commits wake the
+publisher, but the wakeup is not data: publication always rereads persisted
+events after its last coordinator-acknowledged source cursor. Coordinator-link
+loss therefore does not cancel an active Host turn. Event batches are bounded
+to the WebSocket limit, uncertain batches are resent, and commands belonging to
+one task remain in Host-session order while different tasks may execute in
+parallel.
 
-Renoa does not yet checkpoint a running agent loop. If the node process itself
-restarts with a mapped run still open, the bridge records a failed terminal
-event instead of repeating the command and risking duplicate side effects.
-True in-run resumption remains separate future work.
+After node-process restart, every non-terminal node admission is driven again
+with its exact command and Host session. The kernel checkpoint decides what is
+safe: an interrupted model effect can replay inside the same operation, while
+an effect whose outcome is unknown is not repeated. Once the kernel settles,
+the node derives assistant and tool records from durable Host history and
+commits that projection with the terminal RCP event in one transaction.
 
 ### Harness adapter boundary
 
@@ -368,12 +374,13 @@ project supported durable activity, and resume publication from its last
 acknowledged source cursor. It does not reimplement the harness's agent loop,
 context policy, provider integration, or permission system.
 
-The Rust node resolves its `ResolvedAgent` locally. The Pi node resolves its
-provider credentials, instructions, model, target, and optional workspace tools
-locally. Both consume the same RCP delivery and publish the same baseline
-activity without a harness-specific branch in the coordinator. Adding another
-harness therefore requires a small adapter at the node boundary, not an RCP
-architecture change.
+The Rust node asks `LocalHost` to assemble the configured profile, model,
+reasoning, tools, skills, MCP connections, credentials, and workspace. The Pi
+node resolves its own provider credentials, instructions, model, target, and
+optional workspace tools. Both consume the same RCP delivery and publish the
+same baseline activity without a harness-specific branch in the coordinator.
+Adding another harness therefore requires an adapter at the node boundary, not
+an RCP architecture change.
 
 ### Execution event publication
 
@@ -521,6 +528,10 @@ connection during private development, and a normal public route or optional
 relay may carry it later. No RCP frame names Tailscale, a DNS provider, a
 reverse proxy, or a relay.
 
+A future relay-first connection that later upgrades to a direct peer path is a
+transport optimization beneath RCP. It must preserve device identity and
+cannot bypass coordinator admission, authorization, task ordering, or replay.
+
 The logical requirement remains one serialization authority per task, not one
 specific cloud product.
 
@@ -570,11 +581,15 @@ The current implementation demonstrates:
 - incremental execution-event batches with a durable per-execution source cursor;
 - idempotent overlap after a lost event acknowledgement;
 - source-gap, mutation, execution-identity, and post-terminal validation;
-- a live `renoa-node` bridge that publishes committed kernel events before the
-  model call returns;
-- node transport reconnection without interrupting the running Engine;
-- conservative process-crash recovery that terminates, rather than repeats,
-  an abandoned open run;
+- a live `renoa-node` bridge backed by the real local Host and Alpha profile,
+  including a durable `read_file` tool turn;
+- one exact RCP task-to-Host-session binding with stable command identity across
+  the node ledger and kernel;
+- node transport reconnection without interrupting the running Host turn;
+- clean node restart that redrives the same interrupted safe model effect under
+  one kernel operation and one RCP execution;
+- per-task command serialization and ordered publication without globally
+  blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
 - a documented version 8 JSON/WebSocket shape with binding-level conformance
@@ -636,11 +651,12 @@ The proof deliberately does not yet satisfy the full RCP architecture:
 2. The coordinator listener is plaintext and loopback-only. Public WSS is
    currently supplied by an outbound Cloudflare Tunnel, so the protocol does
    not depend on the tunnel provider and no public origin port is exposed.
-3. The Pi adapter currently has one process-local harness configuration and an
-   optional workspace binding with read or read-write tools. A durable
-   multi-task harness registry, shell, network, approvals, and
-   hostile-filesystem isolation remain unproven. Its model credential database
-   is owner-only plaintext rather than operating-system credential storage.
+3. Rust Host targets are statically supplied when the node starts. Their
+   admitted task bindings are durable, but remote target provisioning,
+   configuration revisions, and a Host-management API remain unimplemented.
+   The Pi adapter still has one process-local harness configuration and an
+   optional workspace binding. Its model credential database is owner-only
+   plaintext rather than operating-system credential storage.
 4. The shared activity profile carries complete durable events, not transient
    token deltas or a general streaming UI protocol.
 5. Person authentication, browser connection tickets, first-device bootstrap,
@@ -699,10 +715,11 @@ RCP v0 is not proven until deterministic tests cover at least:
    output.
 9. Replacing the reference executor with Pi does not require changes to task
    admission, ordering, replay, identity, or surface behavior.
-10. Coordinator-link loss does not interrupt an active local Engine run; the
+10. Coordinator-link loss does not interrupt an active local Host turn; the
     node reconnects and resumes publication from durable state.
-11. A node process crash does not silently rerun an admitted open command. The
-    interrupted run becomes visibly terminal until resumable checkpoints exist.
+11. A node restart redrives the exact admitted command and session. Safe effects
+    resume through the same kernel operation, while unknown side effects are
+    closed honestly without reexecution.
 12. An execution delivery contains no harness configuration, while both the
     Rust and Pi adapters still apply their different local configurations.
 13. A real Pi tool turn reads and edits inside its locally configured workspace,
@@ -740,8 +757,6 @@ assumption after context compaction:
 - Node-side task-to-harness provisioning, configuration revisions, and a
   durable registry for one node hosting multiple harness configurations
 - The product default for commands submitted while a node is offline
-- Coordinator command-position delivery for a harness that serializes many
-  admitted commands into one session
 - Execution generations and safe rebinding messages
 - Task-list pagination and live directory updates
 - Cancellation, steering, approval, and queued-follow-up semantics

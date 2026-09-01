@@ -1925,11 +1925,11 @@ name = "renoa-node"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "renoa-agent",
  "renoa-control",
- "renoa-core",
+ "renoa-kernel",
+ "renoa-local",
  "renoa-protocol",
- "renoa-runtime",
- "renoa-store-sqlite",
  "rusqlite",
  "serde_json",
  "tempfile",

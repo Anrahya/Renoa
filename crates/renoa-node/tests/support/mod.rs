@@ -1,36 +1,49 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
-use futures_util::{SinkExt, StreamExt, stream};
+use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
     PeerIdentity, ServerMessage, TaskEvent, TaskEventKind, TaskId, TaskSpec,
 };
-use renoa_core::{
-    BoxFuture, CapabilityHost, CapabilityOutcome, CapabilityRequest, CommandId, CommandInput,
-    Message as AgentMessage, ModelDriver, ModelEvent, ModelEventStream, ModelRequest,
-    ModelResponse, PrincipalId, ResolvedAgent, SurfaceRef, TargetRef,
+use renoa_kernel::{Kernel, SessionId};
+use renoa_local::{
+    ALPHA_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters, LocalModelConfiguration,
+    ModelProvider, alpha_profile,
 };
-use renoa_protocol::{ExecutionEvent, ExecutionEventKind};
+use renoa_node::HostTarget;
+use renoa_protocol::{
+    CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, PrincipalId, SurfaceRef, TargetRef,
+};
 use tempfile::TempDir;
 use tokio::{
     net::TcpListener,
-    sync::{Semaphore, mpsc, oneshot},
+    sync::{mpsc, oneshot},
     task::JoinSet,
 };
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, accept_async, connect_async, tungstenite::Message,
 };
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+mod model_bridge;
+
+use model_bridge::bridge_script;
+pub(crate) use model_bridge::wait_for_path;
 
 pub(crate) type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
-
-const TEST_INSTRUCTIONS: &str = "Complete the live bridge test.";
 
 pub(crate) struct TestSystem {
     pub(crate) files: TempDir,
     pub(crate) coordinator: Coordinator,
     pub(crate) url: String,
     pub(crate) task_id: TaskId,
+    pub(crate) target: TargetRef,
     node_id: NodeId,
     principal_id: PrincipalId,
     shutdown: CancellationToken,
@@ -45,12 +58,13 @@ impl TestSystem {
         let task_id = TaskId::new();
         let node_id = NodeId::new();
         let principal_id = PrincipalId::new();
+        let target = TargetRef::new("workspace:live");
         coordinator
             .create_task(TaskSpec {
                 task_id,
                 principal_id,
                 node_id,
-                target: TargetRef::new("workspace:live"),
+                target: target.clone(),
             })
             .await
             .expect("create task");
@@ -65,6 +79,7 @@ impl TestSystem {
             coordinator,
             url: format!("ws://{address}/connect"),
             task_id,
+            target,
             node_id,
             principal_id,
             shutdown,
@@ -77,6 +92,20 @@ impl TestSystem {
             node_id: self.node_id,
         })
         .await
+    }
+
+    pub(crate) async fn create_task(&self, target: TargetRef) -> TaskId {
+        let task_id = TaskId::new();
+        self.coordinator
+            .create_task(TaskSpec {
+                task_id,
+                principal_id: self.principal_id,
+                node_id: self.node_id,
+                target,
+            })
+            .await
+            .expect("create additional task");
+        task_id
     }
 
     pub(crate) async fn enroll_surface(&self) -> DeviceCredentials {
@@ -143,6 +172,109 @@ impl TestSystem {
             panic!("server should enroll device");
         };
         credentials
+    }
+}
+
+pub(crate) struct HostFixture {
+    pub(crate) data: PathBuf,
+    pub(crate) workspace: PathBuf,
+    bridge: PathBuf,
+    credentials: PathBuf,
+    target: TargetRef,
+    pub(crate) session_id: Uuid,
+}
+
+impl HostFixture {
+    pub(crate) fn install(system: &TestSystem) -> Self {
+        let data = system.files.path().join("host");
+        let workspace = system.files.path().join("workspace");
+        let bridge = system.files.path().join("model-bridge.mjs");
+        let credentials = system.files.path().join("credentials.sqlite3");
+        fs::create_dir(&workspace).expect("create Host workspace");
+        fs::write(workspace.join("proof.txt"), "durable proof\n").expect("write proof file");
+        fs::write(&bridge, bridge_script(&workspace)).expect("write model bridge");
+        fs::write(&credentials, "").expect("write credential placeholder");
+        Self {
+            data,
+            workspace,
+            bridge,
+            credentials,
+            target: system.target.clone(),
+            session_id: Uuid::new_v4(),
+        }
+    }
+
+    pub(crate) fn host(&self) -> Arc<LocalHost> {
+        Arc::new(
+            LocalHost::new(
+                &self.data,
+                LocalModelConfiguration::new(
+                    &self.bridge,
+                    vec![ModelProvider::Xai],
+                    ModelProvider::Xai,
+                    "fixture-model",
+                    &self.credentials,
+                ),
+                vec![alpha_profile()],
+                LocalHostAdapters::default(),
+            )
+            .expect("assemble local Host"),
+        )
+    }
+
+    pub(crate) fn target(&self) -> HostTarget {
+        Self::target_for(&self.target, self.session_id, &self.workspace)
+    }
+
+    pub(crate) fn target_for(
+        target: &TargetRef,
+        session_id: Uuid,
+        workspace: &std::path::Path,
+    ) -> HostTarget {
+        HostTarget::new(
+            target,
+            AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id"),
+            session_id,
+            workspace,
+        )
+        .expect("configure Host target")
+    }
+
+    pub(crate) fn additional_workspace(&self) -> PathBuf {
+        let workspace = self.workspace.with_file_name("workspace-two");
+        fs::create_dir(&workspace).expect("create second Host workspace");
+        workspace
+    }
+
+    pub(crate) fn started(&self) -> PathBuf {
+        self.workspace.join("model-started")
+    }
+
+    pub(crate) fn release(&self) {
+        fs::write(self.workspace.join("model-release"), "release").expect("release model");
+    }
+
+    pub(crate) fn attempts(&self) -> String {
+        fs::read_to_string(self.workspace.join("model-attempts")).expect("read model attempts")
+    }
+
+    pub(crate) fn operation_count(&self) -> usize {
+        self.operation_count_for(self.session_id)
+    }
+
+    pub(crate) fn operation_count_for(&self, session_id: Uuid) -> usize {
+        let session = SessionId::from_uuid(session_id);
+        Kernel::open(
+            self.data
+                .join("sessions")
+                .join(session_id.to_string())
+                .join("kernel.sqlite3"),
+        )
+        .expect("open Host kernel")
+        .inspect(session)
+        .expect("inspect Host session")
+        .operations
+        .len()
     }
 }
 
@@ -216,15 +348,11 @@ async fn proxy_connection(client: tokio::net::TcpStream, upstream: String) {
         tokio::select! {
             message = client_reader.next() => {
                 let Some(Ok(message)) = message else { return };
-                if upstream_writer.send(message).await.is_err() {
-                    return;
-                }
+                if upstream_writer.send(message).await.is_err() { return; }
             }
             message = upstream_reader.next() => {
                 let Some(Ok(message)) = message else { return };
-                if client_writer.send(message).await.is_err() {
-                    return;
-                }
+                if client_writer.send(message).await.is_err() { return; }
             }
         }
     }
@@ -241,84 +369,6 @@ fn spawn_server(
             .await
             .expect("serve coordinator");
     })
-}
-
-pub(crate) struct GatedModel {
-    requested: Semaphore,
-    release: Semaphore,
-}
-
-impl GatedModel {
-    pub(crate) fn new() -> Self {
-        Self {
-            requested: Semaphore::new(0),
-            release: Semaphore::new(0),
-        }
-    }
-
-    pub(crate) async fn wait_until_requested(&self) {
-        self.requested
-            .acquire()
-            .await
-            .expect("request semaphore")
-            .forget();
-    }
-
-    pub(crate) fn release(&self) {
-        self.release.add_permits(1);
-    }
-}
-
-impl ModelDriver for GatedModel {
-    fn stream(
-        &self,
-        request: ModelRequest,
-        _cancellation: CancellationToken,
-    ) -> ModelEventStream<'_> {
-        assert!(matches!(
-            request.messages.first(),
-            Some(AgentMessage::System { text }) if text == TEST_INSTRUCTIONS
-        ));
-        stream::once(async move {
-            self.requested.add_permits(1);
-            self.release
-                .acquire()
-                .await
-                .expect("release semaphore")
-                .forget();
-            Ok(ModelEvent::Completed {
-                response: ModelResponse {
-                    text: "finished live".to_owned(),
-                    capability_calls: Vec::new(),
-                    truncated: false,
-                },
-            })
-        })
-        .boxed()
-    }
-}
-
-pub(crate) fn test_agent() -> ResolvedAgent {
-    ResolvedAgent {
-        instructions: TEST_INSTRUCTIONS.to_owned(),
-        capability_grants: Vec::new(),
-    }
-}
-
-pub(crate) struct NoCapabilities;
-
-impl CapabilityHost for NoCapabilities {
-    fn specs(&self) -> Vec<renoa_core::CapabilitySpec> {
-        Vec::new()
-    }
-
-    fn execute(
-        &self,
-        _request: CapabilityRequest,
-        _cancellation: CancellationToken,
-    ) -> BoxFuture<'_, CapabilityOutcome> {
-        Box::pin(async { CapabilityOutcome::error("no capabilities") })
-    }
 }
 
 pub(crate) async fn attach(socket: &mut Socket, task_id: TaskId) {
@@ -355,6 +405,7 @@ pub(crate) async fn submit_when_node_is_online(
     socket: &mut Socket,
     task_id: TaskId,
     command_id: CommandId,
+    text: &str,
 ) {
     loop {
         send(
@@ -364,7 +415,7 @@ pub(crate) async fn submit_when_node_is_online(
                 task_id,
                 command_id,
                 input: CommandInput::Text {
-                    text: "Prove that this turn is live.".to_owned(),
+                    text: text.to_owned(),
                 },
             },
         )
@@ -383,7 +434,7 @@ pub(crate) async fn submit_when_node_is_online(
     }
 }
 
-pub(crate) async fn collect_through_model_request(socket: &mut Socket) -> Vec<TaskEvent> {
+pub(crate) async fn collect_through_turn_started(socket: &mut Socket) -> Vec<TaskEvent> {
     collect_until(socket, |event| {
         matches!(event.kind, ExecutionEventKind::TurnStarted)
     })
@@ -432,7 +483,7 @@ async fn receive(socket: &mut Socket) -> ServerMessage {
         .expect("server message")
         .expect("valid websocket message");
     let Message::Text(json) = message else {
-        panic!("expected text websocket message");
+        panic!("expected text websocket message")
     };
     serde_json::from_str(&json).expect("deserialize server message")
 }
