@@ -5,7 +5,7 @@ Node reference client, not a stable public SDK and not an agent harness.
 
 It currently owns the surface-side continuity mechanics:
 
-- version 8 authentication and task discovery;
+- version 9 device or one-use browser-ticket authentication and task discovery;
 - replay followed by live task events;
 - a SQLite cursor committed only after the surface callback succeeds;
 - a SQLite command outbox written before transmission;
@@ -16,17 +16,17 @@ It currently owns the surface-side continuity mechanics:
 - reattachment of completed in-memory subscriptions after a host-triggered
   reconnect.
 
-The host supplies device credentials and must keep them in its platform
-keychain or keystore. The client does not put credentials in its SQLite file.
-That file does contain plaintext command input, so it must remain private to the
-device installation.
+The host either supplies device credentials from its platform keychain or a
+callback that obtains a fresh one-use browser ticket. Neither is written to the
+client's SQLite file. That file does contain plaintext command input, so it
+must remain private to the device installation.
 
 ```ts
 import { RcpSurfaceClient } from "@renoa/rcp-client";
 
 const client = new RcpSurfaceClient({
   endpoint: "ws://127.0.0.1:8080/connect",
-  credentials,
+  authentication: { type: "device", credentials },
   statePath: "/private/device-state/rcp.sqlite",
 });
 
@@ -39,6 +39,10 @@ await client.attach(tasks[0].taskId, async (event) => {
 const submission = client.submitText(tasks[0].taskId, "continue the work");
 await submission.accepted;
 ```
+
+A browser surface uses `authentication: { type: "ticket", getTicket }`.
+`getTicket` must complete the passkey HTTP flow and return a new ticket for
+each connection attempt; a consumed ticket cannot reconnect.
 
 `submission.commandId` exists after the local outbox commit.
 `submission.accepted` resolves only after coordinator admission. If it rejects

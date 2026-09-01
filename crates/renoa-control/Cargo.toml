@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-axum = { workspace = true, features = ["http1", "ws"] }
+axum = { workspace = true, features = ["http1", "json", "ws"] }
 futures-util.workspace = true
 getrandom.workspace = true
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
@@ -17,12 +17,16 @@ sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+url.workspace = true
 uuid.workspace = true
+webauthn-rs = { workspace = true, features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
+reqwest = { workspace = true, features = ["json"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
+webauthn-authenticator-rs = { workspace = true, features = ["softpasskey"] }
 
 [lints]
 workspace = true

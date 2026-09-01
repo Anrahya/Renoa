@@ -10,8 +10,8 @@ use std::{process::ExitStatus, thread, time::Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION, ServerMessage,
-    TaskId, TaskSummary,
+    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION,
+    PasskeyBootstrapToken, ServerMessage, TaskId, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
@@ -32,6 +32,13 @@ struct EnrollmentCreated {
     token: EnrollmentToken,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PasskeyBootstrapCreated {
+    token: PasskeyBootstrapToken,
+    expires_at_ms: i64,
+}
+
 struct CoordinatorProcess(Child);
 
 impl CoordinatorProcess {
@@ -40,6 +47,8 @@ impl CoordinatorProcess {
             .arg("serve")
             .arg(database)
             .arg("0")
+            .arg("localhost")
+            .arg("http://localhost")
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
@@ -142,6 +151,21 @@ fn create_task(database: &Path) {
     assert!(output.stdout.is_empty(), "task creation must be silent");
 }
 
+fn create_passkey_bootstrap(database: &Path) -> PasskeyBootstrapCreated {
+    let output = coordinator_command()
+        .arg("bootstrap-passkey")
+        .arg(database)
+        .arg(Uuid::from_u128(1).to_string())
+        .output()
+        .expect("run passkey bootstrap command");
+    assert!(
+        output.status.success(),
+        "passkey bootstrap command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("parse passkey bootstrap output")
+}
+
 #[tokio::test]
 async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -149,6 +173,9 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
     let surface_token = create_surface_enrollment(&database);
     let node_token = create_node_enrollment(&database);
     create_task(&database);
+    let passkey_bootstrap = create_passkey_bootstrap(&database);
+    assert_eq!(passkey_bootstrap.token.expose().len(), 64);
+    assert!(passkey_bootstrap.expires_at_ms > 0);
 
     let mut process = CoordinatorProcess::start(&database);
     let ready = process.read_ready();

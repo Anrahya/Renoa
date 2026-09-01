@@ -51,12 +51,12 @@ export class RcpError extends Error {
 
 export class RcpSurfaceClient {
   readonly #endpoint: string;
-  readonly #credentials: RcpSurfaceClientOptions["credentials"];
+  readonly #identity: RcpSurfaceClientOptions["authentication"];
   readonly #state: SurfaceState;
   readonly #pending = new Map<number, PendingRequest>();
   readonly #attachments = new Map<string, Attachment>();
   #socket: WebSocket | undefined;
-  #authentication:
+  #handshake:
     | { readonly resolve: () => void; readonly reject: (error: Error) => void }
     | undefined;
   #disconnection:
@@ -64,22 +64,33 @@ export class RcpSurfaceClient {
     | undefined;
   #nextRequestId = 1;
   #authenticated = false;
+  #connecting = false;
   #closed = false;
   #receiving = Promise.resolve();
 
   constructor(options: RcpSurfaceClientOptions) {
-    uuid(options.credentials.deviceId, "credentials.deviceId");
-    if (
-      typeof options.credentials.credential !== "string" ||
-      options.credentials.credential === ""
-    ) {
-      throw new Error("credentials.credential must be a non-empty string");
+    if (options.authentication.type === "device") {
+      uuid(options.authentication.credentials.deviceId, "credentials.deviceId");
+      if (
+        typeof options.authentication.credentials.credential !== "string" ||
+        options.authentication.credentials.credential === ""
+      ) {
+        throw new Error("credentials.credential must be a non-empty string");
+      }
+      this.#identity = {
+        type: "device",
+        credentials: { ...options.authentication.credentials },
+      };
+    } else {
+      if (typeof options.authentication.getTicket !== "function") {
+        throw new Error("authentication.getTicket must be a function");
+      }
+      this.#identity = options.authentication;
     }
     if (typeof options.statePath !== "string" || options.statePath === "") {
       throw new Error("statePath must be a non-empty string");
     }
     this.#endpoint = options.endpoint;
-    this.#credentials = { ...options.credentials };
     this.#state = new SurfaceState(options.statePath);
   }
 
@@ -87,8 +98,18 @@ export class RcpSurfaceClient {
     if (this.#closed) {
       throw new Error("RCP client is closed");
     }
-    if (this.#socket !== undefined) {
+    if (this.#socket !== undefined || this.#connecting) {
       throw new Error("RCP client is already connected");
+    }
+    this.#connecting = true;
+    let identity: object;
+    try {
+      identity = await this.#identityMessage();
+    } finally {
+      this.#connecting = false;
+    }
+    if (this.#closed) {
+      throw new Error("RCP client is closed");
     }
     const socket = new WebSocket(this.#endpoint);
     this.#disconnection = Promise.withResolvers<Error>();
@@ -104,15 +125,9 @@ export class RcpSurfaceClient {
     try {
       await opened(socket);
       const authenticated = new Promise<void>((resolve, reject) => {
-        this.#authentication = { resolve, reject };
+        this.#handshake = { resolve, reject };
       });
-      socket.send(
-        JSON.stringify({
-          type: "authenticate",
-          version: RCP_VERSION,
-          credentials: this.#credentials,
-        }),
-      );
+      socket.send(JSON.stringify(identity));
       await authenticated;
       for (const attachment of this.#attachments.values()) {
         await this.#attachExisting(attachment);
@@ -308,11 +323,11 @@ export class RcpSurfaceClient {
     }
     const message = parseServerMessage(event.data);
     if (message.type === "authenticated") {
-      if (message.version !== RCP_VERSION || this.#authentication === undefined) {
+      if (message.version !== RCP_VERSION || this.#handshake === undefined) {
         throw new Error("unexpected authenticated message");
       }
-      const authentication = this.#authentication;
-      this.#authentication = undefined;
+      const authentication = this.#handshake;
+      this.#handshake = undefined;
       this.#authenticated = true;
       authentication.resolve();
       return;
@@ -324,8 +339,8 @@ export class RcpSurfaceClient {
     if (message.type === "error") {
       const error = new RcpError(message.code, message.message, message.request_id);
       if (message.request_id === null) {
-        this.#authentication?.reject(error);
-        this.#authentication = undefined;
+        this.#handshake?.reject(error);
+        this.#handshake = undefined;
         throw error;
       }
       const pending = this.#pending.get(message.request_id);
@@ -377,8 +392,8 @@ export class RcpSurfaceClient {
     if (this.#socket !== socket) {
       return;
     }
-    this.#authentication?.reject(error);
-    this.#authentication = undefined;
+    this.#handshake?.reject(error);
+    this.#handshake = undefined;
     this.#authenticated = false;
     for (const pending of this.#pending.values()) {
       pending.reject(error);
@@ -404,6 +419,25 @@ export class RcpSurfaceClient {
       throw new Error("RCP request id space exhausted");
     }
     return this.#nextRequestId++;
+  }
+
+  async #identityMessage(): Promise<object> {
+    if (this.#identity.type === "device") {
+      return {
+        type: "authenticate",
+        version: RCP_VERSION,
+        credentials: this.#identity.credentials,
+      };
+    }
+    const ticket = await this.#identity.getTicket();
+    if (typeof ticket !== "string" || !/^[0-9a-fA-F]{64}$/.test(ticket)) {
+      throw new Error("connection ticket must be 64 hexadecimal characters");
+    }
+    return {
+      type: "authenticate_ticket",
+      version: RCP_VERSION,
+      ticket,
+    };
   }
 }
 

@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -34,6 +34,14 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     if (1..=5).contains(&version) {
         add_execution_command_causation(connection)?;
     }
+    create_continuity_schema(connection)?;
+    create_browser_identity_schema(connection)?;
+    connection
+        .execute_batch("PRAGMA user_version = 7;")
+        .map_err(sqlite_error)
+}
+
+fn create_continuity_schema(connection: &Connection) -> Result<(), ControlError> {
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS devices (
@@ -85,9 +93,54 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
             );
 
             CREATE INDEX IF NOT EXISTS task_events_task_sequence
-                ON task_events(task_id, sequence);
+                ON task_events(task_id, sequence);",
+        )
+        .map_err(sqlite_error)
+}
 
-            PRAGMA user_version = 6;",
+fn create_browser_identity_schema(connection: &Connection) -> Result<(), ControlError> {
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS passkey_bootstraps (
+                token_hash BLOB PRIMARY KEY CHECK(length(token_hash) = 32),
+                principal_id TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS passkey_registration_ceremonies (
+                ceremony_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                surface TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS passkeys (
+                credential_id BLOB PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                passkey_json TEXT NOT NULL,
+                authentication_counter INTEGER NOT NULL DEFAULT 0
+                    CHECK(authentication_counter >= 0),
+                created_at_ms INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS passkeys_principal
+                ON passkeys(principal_id);
+
+            CREATE TABLE IF NOT EXISTS passkey_authentication_ceremonies (
+                ceremony_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL,
+                surface TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS browser_connection_tickets (
+                ticket_hash BLOB PRIMARY KEY CHECK(length(ticket_hash) = 32),
+                principal_id TEXT NOT NULL,
+                surface TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );",
         )
         .map_err(sqlite_error)
 }

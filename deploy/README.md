@@ -272,6 +272,22 @@ systemd-run --quiet --wait --pipe --collect \
 ```
 
 Its JSON output contains a single-use secret that expires after five minutes.
+Create the first browser passkey bootstrap through the same local boundary:
+
+```sh
+systemd-run --quiet --wait --pipe --collect \
+  --property=DynamicUser=yes \
+  --property=StateDirectory=renoa \
+  --property=StateDirectoryMode=0700 \
+  --property=UMask=0077 \
+  /usr/local/bin/renoa-coordinator bootstrap-passkey \
+  /var/lib/renoa/control.sqlite <principal-uuid>
+```
+
+That five-minute token is entered only into the same-origin browser passkey
+registration flow. The service unit pins the WebAuthn relying party to
+`renoa.live` and its exact `https://renoa.live` origin.
+
 Use the same wrapper to enroll the execution node and create its task binding:
 
 ```sh

@@ -9,55 +9,39 @@ const SECRET_BYTES: usize = 32;
 const SECRET_HEX_LENGTH: usize = SECRET_BYTES * 2;
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct EnrollmentToken(String);
+macro_rules! secret_type {
+    ($name:ident, $domain:literal) => {
+        #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
 
-impl EnrollmentToken {
-    pub(crate) fn generate() -> Result<Self, ControlError> {
-        random_secret().map(Self)
-    }
+        impl $name {
+            pub(crate) fn generate() -> Result<Self, ControlError> {
+                random_secret().map(Self)
+            }
 
-    pub(crate) fn digest(&self) -> Option<[u8; 32]> {
-        secret_digest(b"renoa enrollment v1\0", &self.0)
-    }
+            pub(crate) fn digest(&self) -> Option<[u8; 32]> {
+                secret_digest($domain, &self.0)
+            }
 
-    #[must_use]
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
+            #[must_use]
+            pub fn expose(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(concat!(stringify!($name), "([REDACTED])"))
+            }
+        }
+    };
 }
 
-impl fmt::Debug for EnrollmentToken {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("EnrollmentToken([REDACTED])")
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct DeviceCredential(String);
-
-impl DeviceCredential {
-    pub(crate) fn generate() -> Result<Self, ControlError> {
-        random_secret().map(Self)
-    }
-
-    pub(crate) fn digest(&self) -> Option<[u8; 32]> {
-        secret_digest(b"renoa device credential v1\0", &self.0)
-    }
-
-    #[must_use]
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for DeviceCredential {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("DeviceCredential([REDACTED])")
-    }
-}
+secret_type!(EnrollmentToken, b"renoa enrollment v1\0");
+secret_type!(DeviceCredential, b"renoa device credential v1\0");
+secret_type!(PasskeyBootstrapToken, b"renoa passkey bootstrap v1\0");
+secret_type!(ConnectionTicket, b"renoa browser connection ticket v1\0");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

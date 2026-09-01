@@ -30,6 +30,8 @@ tokio-tungstenite = "0.29.0"
 tokio-util = "0.7"
 url = "2.5.8"
 uuid = { version = "1", features = ["serde", "v4"] }
+webauthn-authenticator-rs = { version = "0.5.5", default-features = false }
+webauthn-rs = { version = "0.5.5", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

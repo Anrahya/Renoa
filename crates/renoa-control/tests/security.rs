@@ -91,9 +91,24 @@ mod security_behaviors {
                 |row| row.get::<_, bool>(0),
             )
             .expect("inspect execution event stream table");
-        assert_eq!(version, 6);
+        let browser_identity_tables = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name IN (
+                    'passkey_bootstraps',
+                    'passkey_registration_ceremonies',
+                    'passkeys',
+                    'passkey_authentication_ceremonies',
+                    'browser_connection_tickets'
+                 )",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("inspect browser identity tables");
+        assert_eq!(version, 7);
         assert!(pending_table_exists);
         assert!(stream_table_exists);
+        assert_eq!(browser_identity_tables, 5);
     }
 
     #[test]

@@ -3,9 +3,9 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `8`.
+first implemented transport binding. The current binding version is `9`.
 
-The binding is a candidate contract, not a stable public release. Version `8`
+The binding is a candidate contract, not a stable public release. Version `9`
 is implemented by `renoa-control`, `renoa-node`, a headless TypeScript surface,
 and a TypeScript Pi node. Cross-language tests cover both authenticated roles,
 discovery and authorization, replay, live reattachment, offline-node rejection,
@@ -23,9 +23,10 @@ a real Pi OpenAI-compatible turn.
 - UUIDs: lowercase hyphenated strings
 - Optional top-level values are encoded as `null`, not omitted
 
-The first application frame must be `enroll` or `authenticate`. Enrollment
-returns credentials and ends that connection. Authentication returns
-`authenticated` and keeps the connection open for operations.
+The first application frame must be `enroll`, `authenticate`, or
+`authenticate_ticket`. Enrollment returns credentials and ends that connection.
+Either authentication frame returns `authenticated` and keeps the connection
+open for operations.
 
 The client must send that first application frame within 10 seconds after the
 WebSocket upgrade. The coordinator closes a connection that misses the
@@ -47,14 +48,18 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `8` with `version_mismatch` and ends the session.
+rejects any value other than `9` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `8` supersedes version `7` by adding stable `commandId` causation to
+Version `9` supersedes version `8` by adding one-use browser connection-ticket
+authentication. The ticket contains no identity claim: its principal and
+surface were bound by the coordinator when the ticket was issued.
+
+Version `8` superseded version `7` by adding stable `commandId` causation to
 durable `execution_event` task records. Existing execution records are migrated
 by joining their execution identity to the coordinator's durable command
 binding without changing task-event identities or sequences.
@@ -72,7 +77,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 8,
+  "version": 9,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -82,7 +87,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 8,
+  "version": 9,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -95,7 +100,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 8,
+  "version": 9,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -103,12 +108,28 @@ Authentication request:
 }
 ```
 
+Browser ticket authentication request:
+
+```json
+{
+  "type": "authenticate_ticket",
+  "version": 9,
+  "ticket": "<60-second single-use connection secret>"
+}
+```
+
+The ticket is sent only in this first frame, never in a URL. The coordinator
+deletes it atomically before successful authentication. A consumed or expired
+ticket fails with `authentication_failed`; reconnecting requires a new ticket.
+The passkey HTTP ceremony that issues it is defined in
+[identity-v0.md](identity-v0.md).
+
 Successful authentication:
 
 ```json
 {
   "type": "authenticated",
-  "version": 8
+  "version": 9
 }
 ```
 
@@ -143,7 +164,7 @@ by `taskId`:
 ```
 
 An authorized principal with no tasks receives an empty `tasks` array. Version
-`8` defines no pagination or live directory update frame.
+`9` defines no pagination or live directory update frame.
 
 ### Attach
 
@@ -389,7 +410,7 @@ round.
 
 ## Binding exclusions
 
-Version `8` defines no task-list pagination, live directory updates, heartbeat,
+Version `9` defines no task-list pagination, live directory updates, heartbeat,
 cancellation, steering, approval, artifact, binary-frame, compression,
 HTTP/SSE, webhook, or public TLS deployment contract. Adding any of those
 requires an operation contract first, then a binding and tests.

@@ -88,7 +88,7 @@ test("a replay-required disconnect is observable and recoverable", async () => {
   let expectedCommandId: string | undefined;
   const surface = new RcpSurfaceClient({
     endpoint: fixture.replayEndpoint,
-    credentials: fixture.credentials,
+    authentication: { type: "device", credentials: fixture.credentials },
     statePath: `${fixture.statePath}.replay-required`,
   });
   await surface.connect();
@@ -118,7 +118,7 @@ test("a replay-required disconnect is observable and recoverable", async () => {
 function client(statePath = fixture.statePath): RcpSurfaceClient {
   return new RcpSurfaceClient({
     endpoint: fixture.endpoint,
-    credentials: fixture.credentials,
+    authentication: { type: "device", credentials: fixture.credentials },
     statePath,
   });
 }

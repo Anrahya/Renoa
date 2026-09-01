@@ -17,10 +17,10 @@ origin. The binding remains a candidate rather than a stable public standard.
 The related documents have narrower authority:
 
 - `continuity-v0.md` describes the current coordinator and continuity proof.
-- `identity-v0.md` describes the current device trust mechanism.
+- `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 8 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 9 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -45,17 +45,18 @@ RCP.
 
 ## Product outcome
 
-A person pairs each device with Renoa once. When they open any authorized
+A person enrolls each native device once or authenticates a browser with a
+passkey. When they open any authorized
 surface, they can discover their tasks, reconstruct each task from its last
 saved cursor, submit the next command, and observe work performed on the bound
 execution environment.
 
 Changing surfaces does not transfer a process, credential, or private local
-state. The new surface authenticates as its own enrolled device and attaches to
-the same durable task. A device with no cursor requests the full journal; a
-returning device resumes from the cursor it applied locally. The bound node
-keeps the model, tools, workspace, and their credentials throughout that
-surface handoff.
+state. The new surface authenticates with its own device credential or a fresh
+server-bound browser ticket and attaches to the same durable task. A surface
+with no cursor requests the full journal; a returning surface resumes from the
+cursor it applied locally. The bound node keeps the model, tools, workspace,
+and their credentials throughout that surface handoff.
 
 For example:
 
@@ -95,8 +96,8 @@ These decisions define RCP and are not ordinary implementation details:
    does not mean execution has started or completed.
 10. Any user-visible fact required after reconnection must be represented by
     durable task state. Presence and transport health may remain ephemeral.
-11. Authentication identifies a device; authorization is still checked for
-    every task operation.
+11. Authentication establishes a server-bound peer identity; authorization is
+    still checked for every task operation.
 12. RCP semantics are independent of transport encoding, storage engine, cloud
     vendor, model provider, surface, and agent harness.
 13. RCP does not invent channel cryptography or claim end-to-end exactly-once
@@ -109,9 +110,9 @@ These decisions define RCP and are not ordinary implementation details:
 16. Every durable execution task record names the stable command that caused
     it. Surfaces must not infer execution causation from arrival order,
     adjacency, or timestamps.
-17. Every installation has its own revocable device credential. Device
-    credentials are never copied or transferred to continue a task on another
-    surface.
+17. Every native installation has its own revocable device credential. Browser
+    surfaces use one-use tickets. Neither credential is copied or transferred
+    to continue a task on another surface.
 18. Surface continuity transfers authority to observe and submit to the same
     task; it does not transfer the executor process, harness context, workspace,
     provider credentials, or tool credentials.
@@ -591,8 +592,14 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 8 JSON/WebSocket shape with binding-level conformance
+- a documented version 9 JSON/WebSocket shape with binding-level conformance
   assertions;
+- passkey registration and authentication with server-side durable ceremony
+  state, explicit local first-device bootstrap, and 60-second one-use browser
+  tickets that bind a principal and surface without creating a device;
+- real cryptographic passkey registration and authentication across coordinator
+  restarts, plus concurrent ticket-claim, expiry, replay, and browser-storage
+  proofs;
 - exact admitted-command retries succeeding after the bound node goes offline;
 - rejection of replay cursors ahead of durable task history;
 - enrolled-device authentication across coordinator restart;
@@ -670,9 +677,9 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    plaintext rather than operating-system credential storage.
 4. The shared activity profile carries complete durable events, not transient
    token deltas or a general streaming UI protocol.
-5. Person authentication, browser connection tickets, first-device bootstrap,
-   recovery, and credential rotation are designed boundaries but are not
-   implemented.
+5. Trusted-device approval for remote native enrollment, recovery, passkey and
+   device administration, and credential rotation are designed boundaries but
+   are not implemented. First-device passkey bootstrap is local and explicit.
 6. Public resource limits cover total connections, authentication time, and
    message size. Per-source throttling, health monitoring, backup restoration,
    and operational alerting remain deployment work.
@@ -688,13 +695,10 @@ multi-task, or public-network consumer.
 
 Work proceeds in this order unless evidence changes the dependency:
 
-1. Add same-device, passkey-authorized enrollment and a browser-safe connection
-   ticket at the self-hosted origin. Headless-node enrollment must be approved
-   by an existing trusted device; copied credentials are not an enrollment
-   mechanism.
-2. Add device administration, per-source throttling, health monitoring, and a
+1. Add device and passkey administration, trusted-device approval for headless
+   enrollment, per-source throttling, health monitoring, and a
    tested backup-and-restore procedure.
-3. Add a durable harness-initiated interaction flow when a real approval or
+2. Add a durable harness-initiated interaction flow when a real approval or
    follow-up consumer exists; RCP transports the interaction while the harness
    retains permission policy.
 
@@ -737,6 +741,10 @@ RCP v0 is not proven until deterministic tests cover at least:
 14. One enrolled surface can disappear after completing a turn, a separately
     enrolled surface with no shared local state can replay and continue the
     task, and the first surface can later replay the second surface's suffix.
+15. Passkey ceremony state survives coordinator restart; its bootstrap,
+    registration, authentication, and browser tickets are one-use; concurrent
+    ticket claims produce one winner; and ticket authentication creates no
+    durable device.
 
 The test harness should deliberately cut connections at persistence and
 acknowledgement boundaries. Happy-path socket tests are insufficient evidence
@@ -772,8 +780,8 @@ assumption after context compaction:
 - Snapshot, retention, compaction, artifact, and blob behavior
 - HTTP/SSE and webhook transport bindings
 - Sender-constrained device authentication
-- Passkey ceremony details, browser session lifetime, and the concrete
-  single-use connection-ticket binding
+- Trusted-device enrollment approval, identity recovery, passkey revocation,
+  and active browser-session termination
 - End-to-end encryption and key distribution
 - Stable-origin discovery and automated TLS for a self-hosted installation
 - Cross-node secret provisioning and credential-reference grants; secret

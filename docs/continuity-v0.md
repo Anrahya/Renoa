@@ -50,8 +50,8 @@ Renoa makes the task journal the center and treats processes as attachments.
 ## v0 invariants
 
 1. A surface-generated command ID is admitted at most once.
-2. A connection's principal and role come from an enrolled device credential,
-   never from client-asserted identity fields.
+2. A connection's principal and role come from an enrolled device credential or
+   a server-bound browser ticket, never from client-asserted identity fields.
 3. A surface may discover only its principal's tasks and may attach to or
    submit work only for an owned task.
 4. The coordinator atomically persists a command, its task event, and a pending
@@ -106,7 +106,8 @@ The node owns:
 The surface owns:
 
 - capture and presentation;
-- secure storage of its device credential;
+- secure storage of its native device credential, or acquisition of a fresh
+  in-memory browser ticket through passkey authentication;
 - a durable command ID until admission is acknowledged;
 - its last applied task sequence.
 
@@ -117,7 +118,7 @@ silently skipped.
 
 ## Transport
 
-The version 8 binding uses JSON messages over WebSocket on localhost. WebSocket
+The version 9 binding uses JSON messages over WebSocket on localhost. WebSocket
 supplies an ordered, bidirectional byte stream and works from Rust, TypeScript,
 browsers, and mobile clients. JSON keeps the contract inspectable while it is
 changing. Exact frames are documented in
@@ -139,7 +140,9 @@ public `ws://` or in a URL.
 
 ## Delivery flow
 
-1. A device exchanges one unexpired, single-use enrollment for a credential.
+1. A native peer exchanges one unexpired, single-use enrollment for a device
+   credential, or a browser exchanges a verified passkey ceremony for a
+   60-second one-use connection ticket.
 2. A node opens an outbound connection and authenticates; the coordinator
    derives its stable node ID from the enrolled device record.
 3. A surface authenticates and lists its tasks. The coordinator returns only

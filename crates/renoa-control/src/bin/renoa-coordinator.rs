@@ -8,7 +8,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use renoa_control::{Coordinator, EnrollmentToken, NodeId, PeerIdentity, TaskId, TaskSpec};
+use renoa_control::{
+    Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity, TaskId, TaskSpec,
+};
 use renoa_protocol::{PrincipalId, SurfaceRef, TargetRef};
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -16,7 +18,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const USAGE: &str = "usage:
-  renoa-coordinator serve <database-path> <port>
+  renoa-coordinator serve <database-path> <port> <passkey-rp-id> <passkey-origin>
+  renoa-coordinator bootstrap-passkey <database-path> <principal-id>
   renoa-coordinator enroll-surface <database-path> <principal-id> <surface>
   renoa-coordinator enroll-node <database-path> <node-id>
   renoa-coordinator create-task <database-path> <task-id> <principal-id> <node-id> <target>";
@@ -26,6 +29,12 @@ enum Operation {
     Serve {
         database: PathBuf,
         port: u16,
+        passkey_rp_id: String,
+        passkey_origin: String,
+    },
+    BootstrapPasskey {
+        database: PathBuf,
+        principal_id: PrincipalId,
     },
     EnrollSurface {
         database: PathBuf,
@@ -59,8 +68,24 @@ impl Operation {
                     .ok_or_else(|| USAGE.to_owned())?
                     .parse::<u16>()
                     .map_err(|_| "port must be an integer from 0 through 65535".to_owned())?;
+                let passkey_rp_id = string_argument(&mut arguments)?;
+                let passkey_origin = string_argument(&mut arguments)?;
                 no_more_arguments(arguments)?;
-                Ok(Self::Serve { database, port })
+                Ok(Self::Serve {
+                    database,
+                    port,
+                    passkey_rp_id,
+                    passkey_origin,
+                })
+            }
+            Some("bootstrap-passkey") => {
+                let principal_id =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
+                no_more_arguments(arguments)?;
+                Ok(Self::BootstrapPasskey {
+                    database,
+                    principal_id,
+                })
             }
             Some("enroll-surface") => {
                 let principal_id =
@@ -108,6 +133,13 @@ impl Operation {
     }
 }
 
+fn string_argument(arguments: &mut impl Iterator<Item = OsString>) -> Result<String, String> {
+    arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(|| USAGE.to_owned())
+}
+
 fn uuid_argument(
     arguments: &mut impl Iterator<Item = OsString>,
     name: &str,
@@ -137,6 +169,13 @@ struct EnrollmentCreated {
     token: EnrollmentToken,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PasskeyBootstrapCreated {
+    token: PasskeyBootstrapToken,
+    expires_at_ms: i64,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
@@ -150,7 +189,16 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), String> {
     match Operation::parse(env::args_os())? {
-        Operation::Serve { database, port } => serve(database, port).await,
+        Operation::Serve {
+            database,
+            port,
+            passkey_rp_id,
+            passkey_origin,
+        } => serve(database, port, &passkey_rp_id, &passkey_origin).await,
+        Operation::BootstrapPasskey {
+            database,
+            principal_id,
+        } => create_passkey_bootstrap(database, principal_id).await,
         Operation::EnrollSurface {
             database,
             principal_id,
@@ -172,8 +220,14 @@ async fn run() -> Result<(), String> {
     }
 }
 
-async fn serve(database: PathBuf, port: u16) -> Result<(), String> {
-    let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
+async fn serve(
+    database: PathBuf,
+    port: u16,
+    passkey_rp_id: &str,
+    passkey_origin: &str,
+) -> Result<(), String> {
+    let coordinator = Coordinator::open_with_passkeys(database, passkey_rp_id, passkey_origin)
+        .map_err(|error| error.to_string())?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .await
         .map_err(|error| format!("failed to bind loopback port {port}: {error}"))?;
@@ -195,6 +249,29 @@ async fn serve(database: PathBuf, port: u16) -> Result<(), String> {
             server.await.map_err(|error| error.to_string())
         }
     }
+}
+
+async fn create_passkey_bootstrap(
+    database: PathBuf,
+    principal_id: PrincipalId,
+) -> Result<(), String> {
+    let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
+    let expires_at = SystemTime::now() + ENROLLMENT_LIFETIME;
+    let token = coordinator
+        .create_passkey_bootstrap(principal_id, expires_at)
+        .await
+        .map_err(|error| error.to_string())?;
+    let expires_at_ms = i64::try_from(
+        expires_at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| "passkey bootstrap expiry predates Unix time".to_owned())?
+            .as_millis(),
+    )
+    .map_err(|_| "passkey bootstrap expiry exceeds supported time".to_owned())?;
+    write_json(&PasskeyBootstrapCreated {
+        token,
+        expires_at_ms,
+    })
 }
 
 async fn create_enrollment(database: PathBuf, peer: PeerIdentity) -> Result<(), String> {

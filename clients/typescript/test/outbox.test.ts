@@ -42,7 +42,7 @@ test("a command for an offline node remains durable across process restart", asy
   const statePath = `${fixture.statePath}.offline-node`;
   const first = new RcpSurfaceClient({
     endpoint: fixture.endpoint,
-    credentials: fixture.credentials,
+    authentication: { type: "device", credentials: fixture.credentials },
     statePath,
   });
   await first.connect();
@@ -54,7 +54,7 @@ test("a command for an offline node remains durable across process restart", asy
 
   const resumed = new RcpSurfaceClient({
     endpoint: fixture.endpoint,
-    credentials: fixture.credentials,
+    authentication: { type: "device", credentials: fixture.credentials },
     statePath,
   });
   await resumed.connect();
@@ -65,7 +65,7 @@ test("a command for an offline node remains durable across process restart", asy
 function client(): RcpSurfaceClient {
   return new RcpSurfaceClient({
     endpoint: fixture.lossyEndpoint,
-    credentials: fixture.credentials,
+    authentication: { type: "device", credentials: fixture.credentials },
     statePath: fixture.statePath,
   });
 }

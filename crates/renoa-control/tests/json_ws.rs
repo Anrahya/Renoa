@@ -1,6 +1,6 @@
 use renoa_control::{
-    ClientMessage, ErrorCode, JSON_WS_VERSION, ServerMessage, TaskEvent, TaskEventId,
-    TaskEventKind, TaskId, TaskSummary,
+    ClientMessage, ConnectionTicket, ErrorCode, JSON_WS_VERSION, ServerMessage, TaskEvent,
+    TaskEventId, TaskEventKind, TaskId, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
@@ -10,8 +10,24 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v8_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 8);
+fn json_websocket_v9_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 9);
+    let ticket: ConnectionTicket = serde_json::from_value(json!(
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    ))
+    .expect("deserialize connection ticket");
+    assert_eq!(
+        serde_json::to_value(ClientMessage::AuthenticateTicket {
+            version: JSON_WS_VERSION,
+            ticket,
+        })
+        .expect("serialize ticket authentication"),
+        json!({
+            "type": "authenticate_ticket",
+            "version": 9,
+            "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
+        })
+    );
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let submit = ClientMessage::Submit {
@@ -71,7 +87,7 @@ fn json_websocket_v8_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v8_encodes_task_discovery() {
+fn json_websocket_v9_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -113,7 +129,7 @@ fn json_websocket_v8_encodes_task_discovery() {
 }
 
 #[test]
-fn json_websocket_v8_encodes_harness_neutral_execution_events() {
+fn json_websocket_v9_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {

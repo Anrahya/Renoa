@@ -1,4 +1,4 @@
-export const RCP_VERSION = 8;
+export const RCP_VERSION = 9;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -73,7 +73,12 @@ export interface TaskEvent {
 
 export interface RcpSurfaceClientOptions {
   readonly endpoint: string;
-  readonly credentials: DeviceCredentials;
+  readonly authentication:
+    | { readonly type: "device"; readonly credentials: DeviceCredentials }
+    | {
+        readonly type: "ticket";
+        readonly getTicket: () => string | Promise<string>;
+      };
   readonly statePath: string;
 }
 

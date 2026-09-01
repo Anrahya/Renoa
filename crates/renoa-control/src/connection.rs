@@ -13,7 +13,6 @@ use uuid::Uuid;
 use crate::{
     ClientMessage, DeviceId, ErrorCode, JSON_WS_VERSION, PeerIdentity, ServerMessage,
     coordinator::{CoordinatorState, NodeConnection, handle_surface_operation},
-    identity_store::AuthenticatedDevice,
     json_ws::JsonOperation,
     node_messages::handle_node_operation,
     wire::{cleanup_connection, parse_message, send_control_error, send_error},
@@ -22,6 +21,11 @@ use crate::{
 const OUTBOUND_CAPACITY: usize = 128;
 const AUTHENTICATION_DEADLINE: Duration = Duration::from_secs(10);
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
+
+struct AuthenticatedPeer {
+    device_id: Option<DeviceId>,
+    peer: PeerIdentity,
+}
 
 pub(crate) async fn upgrade_connection(
     State(state): State<Arc<CoordinatorState>>,
@@ -45,7 +49,7 @@ async fn serve_connection(state: Arc<CoordinatorState>, socket: axum::extract::w
     let (outgoing, outbound) = mpsc::channel::<ServerMessage>(OUTBOUND_CAPACITY);
     let connection_cancelled = CancellationToken::new();
     let writer = spawn_writer(wire_sender, outbound, connection_cancelled.clone());
-    let Ok(Some(device)) = timeout(
+    let Ok(Some(authenticated)) = timeout(
         AUTHENTICATION_DEADLINE,
         read_peer(&state, &mut wire_receiver, &outgoing),
     )
@@ -56,18 +60,23 @@ async fn serve_connection(state: Arc<CoordinatorState>, socket: axum::extract::w
         connection_cancelled.cancel();
         return;
     };
-    let device_id = device.device_id;
-    let peer = device.peer;
-    if !activate_device(
-        &state,
-        device_id,
-        &peer,
-        connection_id,
-        &outgoing,
-        &connection_cancelled,
-    )
-    .await
-    {
+    let device_id = authenticated.device_id;
+    let peer = authenticated.peer;
+    let activated = match device_id {
+        Some(device_id) => {
+            activate_device(
+                &state,
+                device_id,
+                &peer,
+                connection_id,
+                &outgoing,
+                &connection_cancelled,
+            )
+            .await
+        }
+        None => activate_ticket_peer(&peer, &outgoing).await,
+    };
+    if !activated {
         connection_cancelled.cancel();
         drop(outgoing);
         let _ = writer.await;
@@ -84,10 +93,24 @@ async fn serve_connection(state: Arc<CoordinatorState>, socket: axum::extract::w
     .await;
 
     cleanup_connection(&state, &peer, connection_id).await;
-    cleanup_session(&state, device_id, connection_id).await;
+    if let Some(device_id) = device_id {
+        cleanup_session(&state, device_id, connection_id).await;
+    }
     connection_cancelled.cancel();
     drop(outgoing);
     let _ = writer.await;
+}
+
+async fn activate_ticket_peer(peer: &PeerIdentity, outgoing: &mpsc::Sender<ServerMessage>) -> bool {
+    if !matches!(peer, PeerIdentity::Surface { .. }) {
+        return false;
+    }
+    outgoing
+        .send(ServerMessage::Authenticated {
+            version: JSON_WS_VERSION,
+        })
+        .await
+        .is_ok()
 }
 
 async fn activate_device(
@@ -278,7 +301,7 @@ async fn read_peer(
     state: &CoordinatorState,
     receiver: &mut futures_util::stream::SplitStream<axum::extract::ws::WebSocket>,
     outgoing: &mpsc::Sender<ServerMessage>,
-) -> Option<AuthenticatedDevice> {
+) -> Option<AuthenticatedPeer> {
     let Some(Ok(message)) = receiver.next().await else {
         return None;
     };
@@ -292,7 +315,7 @@ async fn read_peer(
         .await;
         return None;
     };
-    let device = match message {
+    let authenticated = match message {
         ClientMessage::Enroll { version, token } => {
             if !check_version(outgoing, version).await {
                 return None;
@@ -318,7 +341,29 @@ async fn read_peer(
                 return None;
             }
             match state.store.authenticate_device(credentials).await {
-                Ok(device) => device,
+                Ok(device) => AuthenticatedPeer {
+                    device_id: Some(device.device_id),
+                    peer: device.peer,
+                },
+                Err(error) => {
+                    send_control_error(outgoing, None, &error).await;
+                    return None;
+                }
+            }
+        }
+        ClientMessage::AuthenticateTicket { version, ticket } => {
+            if !check_version(outgoing, version).await {
+                return None;
+            }
+            match state
+                .store
+                .claim_connection_ticket(ticket, std::time::SystemTime::now())
+                .await
+            {
+                Ok(peer) => AuthenticatedPeer {
+                    device_id: None,
+                    peer,
+                },
                 Err(error) => {
                     send_control_error(outgoing, None, &error).await;
                     return None;
@@ -340,7 +385,7 @@ async fn read_peer(
             return None;
         }
     };
-    Some(device)
+    Some(authenticated)
 }
 
 async fn register_session(

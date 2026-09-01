@@ -164,7 +164,7 @@ impl ControlStore {
     }
 }
 
-fn timestamp_millis(time: SystemTime) -> Result<i64, ControlError> {
+pub(crate) fn timestamp_millis(time: SystemTime) -> Result<i64, ControlError> {
     let millis = time
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|_| ControlError::invalid("time is before the Unix epoch"))?

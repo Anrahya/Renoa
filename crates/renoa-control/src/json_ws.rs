@@ -2,11 +2,12 @@ use renoa_protocol::{CommandEnvelope, CommandId, CommandInput, ExecutionEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DeviceCredentials, EnrollmentToken, ErrorCode, TaskEvent, TaskEventKind, TaskId, TaskSummary,
+    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, TaskEvent, TaskEventKind,
+    TaskId, TaskSummary,
     operations::{NodeOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 8;
+pub const JSON_WS_VERSION: u32 = 9;
 const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -20,6 +21,10 @@ pub enum ClientMessage {
     Authenticate {
         version: u32,
         credentials: DeviceCredentials,
+    },
+    AuthenticateTicket {
+        version: u32,
+        ticket: ConnectionTicket,
     },
     ListTasks {
         request_id: u64,
@@ -49,9 +54,10 @@ pub enum ClientMessage {
 impl ClientMessage {
     pub(crate) fn has_interoperable_numbers(&self) -> bool {
         match self {
-            Self::Enroll { .. } | Self::Authenticate { .. } | Self::AcknowledgeExecution { .. } => {
-                true
-            }
+            Self::Enroll { .. }
+            | Self::Authenticate { .. }
+            | Self::AuthenticateTicket { .. }
+            | Self::AcknowledgeExecution { .. } => true,
             Self::ListTasks { request_id } | Self::Submit { request_id, .. } => {
                 interoperable(*request_id)
             }
@@ -112,7 +118,9 @@ impl ClientMessage {
                 command_id,
                 events,
             })),
-            Self::Enroll { .. } | Self::Authenticate { .. } => None,
+            Self::Enroll { .. } | Self::Authenticate { .. } | Self::AuthenticateTicket { .. } => {
+                None
+            }
         }
     }
 }

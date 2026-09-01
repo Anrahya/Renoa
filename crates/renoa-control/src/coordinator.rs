@@ -11,7 +11,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    DeviceId, ErrorCode, NodeId, PeerIdentity, ServerMessage, TaskEvent, TaskId,
+    DeviceId, ErrorCode, NodeId, PasskeyBootstrapToken, PeerIdentity, ServerMessage, TaskEvent,
+    TaskId,
+    browser_identity::BrowserIdentity,
+    browser_identity_http,
     connection::upgrade_connection,
     operations::SurfaceOperation,
     store::{CommandAdmission, ControlStore},
@@ -29,8 +32,9 @@ pub struct TaskSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ControlErrorKind {
+pub(crate) enum ControlErrorKind {
     Authentication,
+    Capacity,
     Conflict,
     Invalid,
     NotFound,
@@ -53,6 +57,10 @@ impl ControlError {
         Self::new(ControlErrorKind::Conflict, message)
     }
 
+    pub(crate) fn capacity(message: impl Into<String>) -> Self {
+        Self::new(ControlErrorKind::Capacity, message)
+    }
+
     pub(crate) fn invalid(message: impl Into<String>) -> Self {
         Self::new(ControlErrorKind::Invalid, message)
     }
@@ -72,13 +80,17 @@ impl ControlError {
         }
     }
 
+    pub(crate) const fn kind(&self) -> ControlErrorKind {
+        self.kind
+    }
+
     pub(crate) fn protocol_code(&self) -> ErrorCode {
         match self.kind {
             ControlErrorKind::Authentication => ErrorCode::AuthenticationFailed,
+            ControlErrorKind::Capacity | ControlErrorKind::Store => ErrorCode::Internal,
             ControlErrorKind::Conflict => ErrorCode::Conflict,
             ControlErrorKind::Invalid => ErrorCode::InvalidMessage,
             ControlErrorKind::NotFound => ErrorCode::NotFound,
-            ControlErrorKind::Store => ErrorCode::Internal,
         }
     }
 }
@@ -89,6 +101,7 @@ pub struct Coordinator {
 }
 
 pub(crate) struct CoordinatorState {
+    pub(crate) browser_identity: Option<BrowserIdentity>,
     pub(crate) connection_slots: Arc<Semaphore>,
     pub(crate) connection_lifecycle: Mutex<()>,
     pub(crate) store: ControlStore,
@@ -111,8 +124,29 @@ impl Coordinator {
     ///
     /// Returns an error when the `SQLite` journal cannot be opened or initialized.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ControlError> {
+        Self::open_inner(path, None)
+    }
+
+    /// Opens the coordinator with browser passkey authentication at one exact HTTPS origin.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database or passkey relying-party configuration is invalid.
+    pub fn open_with_passkeys(
+        path: impl AsRef<Path>,
+        rp_id: &str,
+        rp_origin: &str,
+    ) -> Result<Self, ControlError> {
+        Self::open_inner(path, Some(BrowserIdentity::new(rp_id, rp_origin)?))
+    }
+
+    fn open_inner(
+        path: impl AsRef<Path>,
+        browser_identity: Option<BrowserIdentity>,
+    ) -> Result<Self, ControlError> {
         Ok(Self {
             state: Arc::new(CoordinatorState {
+                browser_identity,
                 connection_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS)),
                 connection_lifecycle: Mutex::new(()),
                 store: ControlStore::open(path)?,
@@ -143,6 +177,22 @@ impl Coordinator {
         expires_at: SystemTime,
     ) -> Result<crate::EnrollmentToken, ControlError> {
         self.state.store.create_enrollment(peer, expires_at).await
+    }
+
+    /// Creates a local, single-use bootstrap for registering a passkey to one principal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bootstrap cannot be persisted.
+    pub async fn create_passkey_bootstrap(
+        &self,
+        principal_id: PrincipalId,
+        expires_at: SystemTime,
+    ) -> Result<PasskeyBootstrapToken, ControlError> {
+        self.state
+            .store
+            .create_passkey_bootstrap(principal_id, expires_at)
+            .await
     }
 
     /// Revokes a device credential and terminates its active connections.
@@ -183,9 +233,11 @@ impl Coordinator {
                 "the plaintext coordinator is loopback-only",
             ));
         }
-        let app = Router::new()
-            .route("/connect", get(upgrade_connection))
-            .with_state(Arc::clone(&self.state));
+        let mut app = Router::new().route("/connect", get(upgrade_connection));
+        if self.state.browser_identity.is_some() {
+            app = app.merge(browser_identity_http::routes());
+        }
+        let app = app.with_state(Arc::clone(&self.state));
         axum::serve(listener, app)
             .with_graceful_shutdown(shutdown.cancelled_owned())
             .await

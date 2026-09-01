@@ -17,7 +17,7 @@ after(async () => {
 test("an authenticated surface discovers only its tasks", async () => {
   const client = new RcpSurfaceClient({
     endpoint: fixture.endpoint,
-    credentials: fixture.credentials,
+    authentication: { type: "device", credentials: fixture.credentials },
     statePath: fixture.statePath,
   });
 
