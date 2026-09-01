@@ -8,8 +8,9 @@ current Renoa Continuity Protocol proof. It is subordinate to
 
 This is not yet a stable public standard. The behavior below is intentional and
 tested. The command and baseline activity payloads are consumed by both Renoa's
-Rust executor and a Pi SDK node, but remain provisional until RCP is publicly
-deployed.
+Rust Host and a Pi SDK node. A real Alpha tool turn and two-surface continuation
+have crossed the public TLS origin, but the contract remains provisional while
+identity administration and production node operation are unfinished.
 
 ## Boundary
 

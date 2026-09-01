@@ -11,9 +11,8 @@ semantics and candidate JSON/WebSocket binding are documented separately. The
 Rust coordinator remains a plaintext loopback server, while the first public
 deployment terminates TLS at `wss://renoa.live/connect`. Independent Rust and
 TypeScript peers cover both roles, recovery, errors, exact-number boundaries,
-a real OpenAI-compatible Pi turn, and two-surface continuation. The binding is
-still a candidate until a real Agent turn and surface handoff are proven
-through the public origin.
+real Pi and Alpha turns, and two-surface continuation through the public
+origin. The binding remains a candidate rather than a stable public standard.
 
 The related documents have narrower authority:
 
@@ -641,9 +640,12 @@ The current implementation demonstrates:
   first turn, submits the next turn, and the first surface later replays that
   exact suffix with its original credential.
 - a public Cloudflare Tunnel route at `wss://renoa.live/connect` while the
-  coordinator remains bound to loopback. A disposable surface enrolled,
-  authenticated with binding version 8, and completed `list_tasks` through the
-  public origin. The full public Agent-turn handoff remains unproven.
+  coordinator remains bound to loopback. A real Alpha session using OpenCode
+  Go and GLM-5.3-Flash read a unique local file through `read_file`. A second
+  independently enrolled surface replayed that exact completed turn, continued
+  the same Host session, and the first surface later replayed the exact
+  continuation from its prior cursor. Neither surface shared credentials or
+  cursor state.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 
@@ -654,6 +656,9 @@ The proof deliberately does not yet satisfy the full RCP architecture:
 3. Rust Host targets are statically supplied when the node starts. Their
    admitted task bindings are durable, but remote target provisioning,
    configuration revisions, and a Host-management API remain unimplemented.
+   The public Alpha proof used the real node library through a disposable
+   runner; a supervised headless node executable and its owner-only
+   configuration are not yet shipped.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
@@ -677,8 +682,8 @@ multi-task, or public-network consumer.
 
 Work proceeds in this order unless evidence changes the dependency:
 
-1. Prove one real Agent turn through the public origin, then disconnect one
-   independently enrolled surface and continue the task from another.
+1. Package the proven Rust Host node as a supervised headless service with an
+   owner-only ledger and exact static target configuration.
 2. Add same-device, passkey-authorized enrollment and a browser-safe connection
    ticket at the self-hosted origin. Headless-node enrollment must be approved
    by an existing trusted device; copied credentials are not an enrollment

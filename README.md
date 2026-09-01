@@ -75,11 +75,11 @@ across surfaces and execution nodes. It remains separate from the Agent path
 and does not replace, wrap, or define the kernel.
 
 The Rust coordinator still listens only on loopback. The first public proof
-reaches it through TLS at `wss://renoa.live/connect`. Separately, deterministic
-tests prove that independently enrolled surfaces can replay and continue one
-durable task without sharing credentials or cursor state. This is a candidate
-deployment, not a stable public wire release. Waku and Telegram are not yet
-connected through RCP. Canonical continuity decisions live in
+reaches it through TLS at `wss://renoa.live/connect`. A real Alpha tool turn and
+two-surface continuation crossed that origin without sharing credentials or
+cursor state; deterministic tests cover the same durability boundaries. This
+is a candidate deployment, not a stable public wire release. Waku and Telegram
+are not yet connected through RCP. Canonical continuity decisions live in
 [`docs/rcp-v0.md`](docs/rcp-v0.md).
 
 ## License

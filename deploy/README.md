@@ -217,8 +217,16 @@ was deployed with the hardened connection limits documented in
 authenticated as RCP binding version 8, and completed `list_tasks` through
 `wss://renoa.live/connect`. Its plaintext credential was neither printed nor
 saved; the coordinator retained only the unusable digest after the client
-exited. A full Agent turn and two-surface handoff through the public origin are
-the next proof, not a current guarantee.
+exited.
+
+The same public origin then carried a complete Rust Host proof. Alpha used
+OpenCode Go with GLM-5.3-Flash to call `read_file` on a unique local value and
+completed at task cursor 6. A separately enrolled second surface replayed the
+exact first turn, submitted the next command into the same Host session, and
+completed at cursor 11. The first surface reauthenticated with its own
+credential and replayed that exact five-event continuation from cursor 6. All
+three one-time enrollments were consumed, credentials remained process-local,
+and the private disposable runner directory was removed after success.
 
 On 2026-08-12, coordinator binary
 `3918d12d6ee2f40307b3a7177227e243d2add2afdec67144ee8d31cf9d8cb557`

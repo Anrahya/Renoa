@@ -18,8 +18,10 @@ Surface handoff means that a separately enrolled device attaches to this same
 task with its own credential and cursor. It does not copy another surface's
 credential or move the execution node's harness, workspace, or service secrets.
 
-The proof uses Rust surfaces, a headless TypeScript surface, a Rust kernel node,
-a Pi SDK node, and one coordinator.
+The proof uses Rust surfaces, a headless TypeScript surface, a Rust LocalHost
+node, a Pi SDK node, and one coordinator. A public run through `renoa.live`
+proved one real Alpha tool turn followed by continuation and exact replay
+between two independently enrolled surfaces.
 
 ## Core model
 
@@ -193,8 +195,10 @@ snapshot or the live buffer, never in neither.
   approval, and hostile-filesystem isolation remain unproven. OpenCode Go and
   xAI provider selection also stays local; the current xAI OAuth store is a
   `0600` plaintext database rather than operating-system credential storage.
-- A node process restart closes an abandoned open execution as failed.
-  Checkpointed in-execution resumption is not implemented.
+- A Rust Host node restart redrives the exact admitted command and session.
+  The kernel replays safe interrupted effects and refuses to repeat effects
+  whose outcome is unknown. The Pi node still closes an interrupted execution
+  rather than inventing recovery it cannot prove.
 - Task discovery is an unpaginated snapshot with task identity and target only;
   it has no title, presence, execution status, or live directory updates.
 - Static node binding has no execution generation for safe reassignment.
