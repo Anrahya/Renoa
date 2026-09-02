@@ -98,7 +98,7 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     let credential_description = properties["credential"]["description"]
         .as_str()
         .expect("credential schema has model guidance");
-    assert!(credential_description.contains("existing Host credential reference"));
+    assert!(credential_description.contains("stable Host credential reference"));
     assert!(credential_description.contains("secret_service_header"));
     let encoded = schema.to_string();
     assert!(!encoded.contains("\"oneOf\""));

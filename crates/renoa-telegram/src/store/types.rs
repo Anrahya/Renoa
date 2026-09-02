@@ -19,6 +19,7 @@ pub enum StoreError {
 pub(crate) struct RecoveryReport {
     pub(crate) requeued: usize,
     pub(crate) delivery_unknown: usize,
+    pub(crate) action_delivery_unknown: usize,
 }
 
 pub(crate) struct Admission {
@@ -52,6 +53,8 @@ pub(crate) enum WorkKind {
     Compact,
     New,
     Status,
+    Model(Option<String>),
+    Reasoning(Option<String>),
     Cancel,
     Notice(String),
 }

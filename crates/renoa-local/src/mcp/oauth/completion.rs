@@ -5,7 +5,7 @@ use super::{
     OAuthCoordinator, process,
     process::OAuthResult,
     resolution::{ensure_local_state_unchanged, unknown},
-    secret::OAuthSecretBundle,
+    secret_store::OAuthSecretBundle,
     store::{OAuthFlow, OAuthPhase, OAuthReceipt},
 };
 use crate::mcp::{
@@ -154,6 +154,22 @@ impl OAuthCoordinator {
                 Err(McpOAuthError::ReceiptFailure(connection_id.to_owned()).into())
             }
             OAuthReceipt::CallbackRejected { error } => {
+                if let Some(flow) = self.flows.load(connection_id).await?
+                    && self
+                        .flows
+                        .receipt(connection_id, &flow.operation_id)
+                        .await?
+                        .is_some_and(|receipt| {
+                            receipt
+                                == (OAuthReceipt::CallbackRejected {
+                                    error: error.clone(),
+                                })
+                        })
+                {
+                    self.acknowledge_relay_callback(&flow, &cancellation)
+                        .await?;
+                    self.flows.delete(connection_id).await?;
+                }
                 Err(McpOAuthError::CallbackRejected(error).into())
             }
             OAuthReceipt::AuthorizationRequired => {
@@ -272,19 +288,19 @@ impl OAuthCoordinator {
         Err(McpOAuthError::AuthorizationRequired(flow.connection_id.clone()).into())
     }
 
-    pub(super) async fn complete_callback_rejection(
+    pub(super) async fn persist_callback_rejection(
         &self,
         flow: &OAuthFlow,
         current_operation_id: &str,
-        error: String,
-    ) -> Result<McpCredentialHeader, McpHostError> {
+        error: &str,
+    ) -> Result<(), McpHostError> {
         if let Err(receipt_error) = self
             .record_receipt_pair(
                 &flow.connection_id,
                 &flow.operation_id,
                 current_operation_id,
                 &OAuthReceipt::CallbackRejected {
-                    error: error.clone(),
+                    error: error.to_owned(),
                 },
             )
             .await
@@ -293,8 +309,7 @@ impl OAuthCoordinator {
                 .await?;
             return Err(unknown(&flow.connection_id, &receipt_error.to_string()));
         }
-        self.flows.delete(&flow.connection_id).await?;
-        Err(McpOAuthError::CallbackRejected(error).into())
+        Ok(())
     }
 
     pub(super) async fn record_refresh_failure(

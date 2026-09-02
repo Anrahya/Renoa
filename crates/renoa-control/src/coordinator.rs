@@ -16,6 +16,7 @@ use crate::{
     browser_identity::BrowserIdentity,
     browser_identity_http,
     connection::upgrade_connection,
+    oauth_relay_http,
     operations::SurfaceOperation,
     store::{CommandAdmission, ControlStore},
     wire::{publish_task_event, send_control_error, send_error, task_sender},
@@ -102,6 +103,7 @@ pub struct Coordinator {
 
 pub(crate) struct CoordinatorState {
     pub(crate) browser_identity: Option<BrowserIdentity>,
+    pub(crate) oauth_callback_uri: Option<String>,
     pub(crate) connection_slots: Arc<Semaphore>,
     pub(crate) connection_lifecycle: Mutex<()>,
     pub(crate) store: ControlStore,
@@ -124,7 +126,7 @@ impl Coordinator {
     ///
     /// Returns an error when the `SQLite` journal cannot be opened or initialized.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ControlError> {
-        Self::open_inner(path, None)
+        Self::open_inner(path, None, None)
     }
 
     /// Opens the coordinator with browser passkey authentication at one exact HTTPS origin.
@@ -137,16 +139,24 @@ impl Coordinator {
         rp_id: &str,
         rp_origin: &str,
     ) -> Result<Self, ControlError> {
-        Self::open_inner(path, Some(BrowserIdentity::new(rp_id, rp_origin)?))
+        let browser_identity = BrowserIdentity::new(rp_id, rp_origin)?;
+        let oauth_callback_uri = format!(
+            "{}{}",
+            rp_origin.trim_end_matches('/'),
+            renoa_oauth_relay_protocol::OAUTH_CALLBACK_PATH
+        );
+        Self::open_inner(path, Some(browser_identity), Some(oauth_callback_uri))
     }
 
     fn open_inner(
         path: impl AsRef<Path>,
         browser_identity: Option<BrowserIdentity>,
+        oauth_callback_uri: Option<String>,
     ) -> Result<Self, ControlError> {
         Ok(Self {
             state: Arc::new(CoordinatorState {
                 browser_identity,
+                oauth_callback_uri,
                 connection_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS)),
                 connection_lifecycle: Mutex::new(()),
                 store: ControlStore::open(path)?,
@@ -235,7 +245,10 @@ impl Coordinator {
         }
         let mut app = Router::new().route("/connect", get(upgrade_connection));
         if self.state.browser_identity.is_some() {
-            app = app.merge(browser_identity_http::routes());
+            app = app
+                .merge(browser_identity_http::routes())
+                .merge(oauth_relay_http::routes())
+                .merge(crate::credential_relay_http::routes());
         }
         let app = app.with_state(Arc::clone(&self.state));
         axum::serve(listener, app)

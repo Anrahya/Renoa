@@ -105,6 +105,64 @@ async fn polling_and_native_drafts_cross_the_real_http_boundary_exactly() {
 }
 
 #[tokio::test]
+async fn a_permanent_action_uses_a_native_url_button() {
+    let (origin, mut requests, server) =
+        fake_server(vec![r#"{"ok":true,"result":{"message_id":81}}"#]).await;
+    let api = TelegramApi::for_test(&origin, "123:test-secret").expect("test API");
+
+    let sent = api
+        .send_action(
+            42,
+            Some(5),
+            "Authorize Exa to finish connecting it.",
+            "Authorize",
+            "https://provider.example/authorize?state=one",
+        )
+        .await
+        .expect("send permanent action");
+
+    assert_eq!(sent.message_id, 81);
+    let request = requests.recv().await.expect("action request");
+    assert!(request.starts_with("POST /bot123:test-secret/sendRichMessage HTTP/1.1"));
+    let body = request_body(&request);
+    assert_eq!(body["message_thread_id"], 5);
+    assert_eq!(
+        body["rich_message"]["blocks"],
+        serde_json::json!([
+            {"type": "paragraph", "text": "Authorize Exa to finish connecting it."},
+            {"type": "buttons", "buttons": [{
+                "text": "Authorize",
+                "url": "https://provider.example/authorize?state=one"
+            }]}
+        ])
+    );
+    server.await.expect("fake server task");
+}
+
+#[tokio::test]
+async fn telegram_advertises_model_and_reasoning_commands() {
+    let (origin, mut requests, server) = fake_server(vec![r#"{"ok":true,"result":true}"#]).await;
+    let api = TelegramApi::for_test(&origin, "123:test-secret").expect("test API");
+
+    api.set_commands().await.expect("publish bot commands");
+
+    let request = requests.recv().await.expect("command request");
+    assert!(request.starts_with("POST /bot123:test-secret/setMyCommands HTTP/1.1"));
+    let body = request_body(&request);
+    let commands = body["commands"]
+        .as_array()
+        .expect("command array")
+        .iter()
+        .map(|command| command["command"].as_str().expect("command name"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        ["new", "compact", "status", "model", "reasoning", "cancel"]
+    );
+    server.await.expect("fake server task");
+}
+
+#[tokio::test]
 async fn transport_failures_never_render_the_bot_token_or_request_url() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

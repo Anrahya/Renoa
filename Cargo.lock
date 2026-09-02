@@ -2091,6 +2091,8 @@ dependencies = [
  "axum",
  "futures-util",
  "getrandom 0.4.3",
+ "renoa-credential-relay-protocol",
+ "renoa-oauth-relay-protocol",
  "renoa-protocol",
  "reqwest",
  "rusqlite",
@@ -2121,6 +2123,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "renoa-credential-relay-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "renoa-kernel"
 version = "0.1.0"
 dependencies = [
@@ -2145,10 +2155,15 @@ dependencies = [
  "nix",
  "renoa-agent",
  "renoa-agent-loop",
+ "renoa-control",
+ "renoa-credential-relay-protocol",
  "renoa-kernel",
+ "renoa-oauth-relay-protocol",
+ "renoa-protocol",
  "renoa-registry",
  "renoa-registry-protocol",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde",
  "serde-saphyr",
@@ -2158,6 +2173,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "url",
  "uuid",
@@ -2182,6 +2198,14 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "renoa-oauth-relay-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
  "uuid",
 ]
 
@@ -2263,6 +2287,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
+ "url",
  "uuid",
 ]
 

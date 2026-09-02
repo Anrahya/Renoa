@@ -16,6 +16,7 @@ pub struct Config {
     pub(crate) workspace: PathBuf,
     pub(crate) bot_token: String,
     pub(crate) allowed_user_id: i64,
+    pub(crate) telegram_ipv4_only: bool,
 }
 
 struct ProviderSettings {
@@ -44,11 +45,24 @@ impl Config {
             ));
         }
         let bot_token = read_token(required_path("RENOA_TELEGRAM_BOT_TOKEN_FILE")?).await?;
+        let telegram_ipv4_only = optional_boolean("RENOA_TELEGRAM_IPV4_ONLY")?;
         let settings = ProviderSettings::from_environment()?;
         let shared_plugin_registry = optional("RENOA_SHARED_PLUGIN_REGISTRY")?;
+        let oauth_relay = oauth_relay_settings(
+            optional("RENOA_OAUTH_RELAY_ORIGIN")?,
+            optional_path("RENOA_OAUTH_RELAY_DEVICE_CREDENTIAL_FILE"),
+        )?;
+        let mcp_adapter = optional_path("RENOA_MCP_ADAPTER");
+        let mcp_registry_adapter = optional_path("RENOA_MCP_REGISTRY_ADAPTER");
         let profile = arcee_profile(&data_directory).map_err(renoa_local::LocalHostError::from)?;
         let profile_id = profile.id().clone();
         debug_assert_eq!(profile_id.as_str(), ARCEE_PROFILE_ID);
+        let mut adapters = LocalHostAdapters::new(mcp_adapter.as_deref())
+            .with_mcp_registry(mcp_registry_adapter.as_deref())
+            .with_shared_plugin_registry(shared_plugin_registry.as_deref());
+        if let Some((origin, credentials)) = oauth_relay.as_ref() {
+            adapters = adapters.with_oauth_relay(origin, credentials);
+        }
         let host = LocalHost::new(
             &data_directory,
             LocalModelConfiguration::new(
@@ -59,9 +73,7 @@ impl Config {
                 settings.credential_store,
             ),
             vec![profile],
-            LocalHostAdapters::new(optional_path("RENOA_MCP_ADAPTER").as_deref())
-                .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref())
-                .with_shared_plugin_registry(shared_plugin_registry.as_deref()),
+            adapters,
         )?;
         Ok(Self {
             host,
@@ -70,7 +82,21 @@ impl Config {
             workspace,
             bot_token,
             allowed_user_id,
+            telegram_ipv4_only,
         })
+    }
+}
+
+fn oauth_relay_settings(
+    origin: Option<String>,
+    credentials: Option<PathBuf>,
+) -> Result<Option<(String, PathBuf)>, TelegramServiceError> {
+    match (origin, credentials) {
+        (Some(origin), Some(credentials)) => Ok(Some((origin, credentials))),
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => Err(configuration(
+            "RENOA_OAUTH_RELAY_ORIGIN and RENOA_OAUTH_RELAY_DEVICE_CREDENTIAL_FILE must be set together",
+        )),
     }
 }
 
@@ -257,13 +283,31 @@ fn optional(name: &str) -> Result<Option<String>, TelegramServiceError> {
     }
 }
 
+fn optional_boolean(name: &str) -> Result<bool, TelegramServiceError> {
+    let configured = optional(name)?;
+    parse_optional_boolean(name, configured.as_deref())
+}
+
+fn parse_optional_boolean(
+    name: &str,
+    configured: Option<&str>,
+) -> Result<bool, TelegramServiceError> {
+    match configured {
+        None | Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(_) => Err(configuration(format!("{name} must be 0 or 1"))),
+    }
+}
+
 fn configuration(message: impl Into<String>) -> TelegramServiceError {
     TelegramServiceError::Configuration(message.into())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelProvider, parse_enabled_providers};
+    use super::{
+        ModelProvider, oauth_relay_settings, parse_enabled_providers, parse_optional_boolean,
+    };
     #[cfg(unix)]
     use super::{read_token, require_private_token_file_in};
 
@@ -281,6 +325,34 @@ mod tests {
         for invalid in ["", "xai,xai", "xai,"] {
             assert!(parse_enabled_providers(ModelProvider::OpenCodeGo, Some(invalid)).is_err());
         }
+    }
+
+    #[test]
+    fn oauth_relay_origin_and_device_credential_are_atomic_configuration() {
+        let credentials = std::path::PathBuf::from("/run/credentials/relay-device");
+        assert!(
+            oauth_relay_settings(None, None)
+                .expect("disabled relay")
+                .is_none()
+        );
+        assert!(oauth_relay_settings(Some("https://renoa.live".to_owned()), None).is_err());
+        assert!(oauth_relay_settings(None, Some(credentials.clone())).is_err());
+        assert_eq!(
+            oauth_relay_settings(Some("https://renoa.live".to_owned()), Some(credentials))
+                .expect("complete relay configuration"),
+            Some((
+                "https://renoa.live".to_owned(),
+                std::path::PathBuf::from("/run/credentials/relay-device")
+            ))
+        );
+    }
+
+    #[test]
+    fn telegram_ip_family_override_is_strict() {
+        assert!(!parse_optional_boolean("IP_FAMILY", None).expect("default address families"));
+        assert!(!parse_optional_boolean("IP_FAMILY", Some("0")).expect("dual stack"));
+        assert!(parse_optional_boolean("IP_FAMILY", Some("1")).expect("IPv4 only"));
+        assert!(parse_optional_boolean("IP_FAMILY", Some("true")).is_err());
     }
 
     #[cfg(unix)]

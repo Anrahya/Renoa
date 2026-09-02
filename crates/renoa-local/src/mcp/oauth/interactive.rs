@@ -4,12 +4,12 @@ use tokio_util::sync::CancellationToken;
 use super::{
     INTERACTIVE_LOCK_WAIT, McpOAuthAuthorizationRequest, OAuthCoordinator,
     adapter_may_have_dispatched, browser,
-    callback::OAuthCallbackListener,
+    callback_receiver::OAuthCallbackReceiver,
     lock, process,
     process::OAuthResult,
     resolution::unknown,
-    secret::{OAuthSecretBundle, PendingCallback},
-    store::{OAuthFlow, OAuthPhase},
+    secret_store::{OAuthSecretBundle, PendingCallback},
+    store::{OAuthCallbackIdentity, OAuthFlow, OAuthPhase},
 };
 use crate::mcp::{McpCredentialHeader, McpHostError, McpOAuthError};
 
@@ -21,6 +21,7 @@ use support::{
 
 struct InteractiveAuthorization<'a> {
     connection_id: &'a str,
+    display_name: Option<&'a str>,
     endpoint: &'a str,
     credential_id: &'a str,
     reference: &'a crate::mcp::McpConnectionAuth,
@@ -65,6 +66,7 @@ impl OAuthCoordinator {
         }
         let authorization = InteractiveAuthorization {
             connection_id: request.connection_id,
+            display_name: request.display_name,
             endpoint: request.endpoint,
             credential_id,
             reference: request.reference,
@@ -89,15 +91,15 @@ impl OAuthCoordinator {
         force_reauthorization: bool,
         prior: Option<OAuthSecretBundle>,
     ) -> Result<McpCredentialHeader, McpHostError> {
-        let listener = OAuthCallbackListener::bind_new().await?;
         let csrf_state = random_state()?;
-        let redirect_uri = listener.redirect_uri();
+        let receiver = OAuthCallbackReceiver::new(self, &csrf_state, &context.cancellation).await?;
+        let redirect_uri = receiver.redirect_uri();
         let flow = OAuthFlow::interactive(
             context.connection_id,
             context.operation_id,
             OAuthPhase::BeginInFlight,
-            listener.port(),
-            listener.expires_at_ms(),
+            receiver.identity(),
+            receiver.expires_at_ms(),
         )?;
         self.flows.put(&flow).await?;
         let result = {
@@ -136,7 +138,7 @@ impl OAuthCoordinator {
                 }
                 let waiting = flow.with_phase(OAuthPhase::AwaitingCallback)?;
                 self.flows.put(&waiting).await?;
-                self.wait_for_callback(context, waiting, bundle, authorization_url, listener)
+                self.wait_for_callback(context, waiting, bundle, authorization_url, receiver)
                     .await
             }
             Ok(OAuthResult::Authorized {
@@ -227,7 +229,7 @@ impl OAuthCoordinator {
                         )
                         .await;
                 }
-                if validate_saved_callback(&flow, &bundle).is_err() {
+                if validate_saved_callback(&flow, &bundle, self.relay.as_ref()).is_err() {
                     self.mark_unknown(context.connection_id, &flow.operation_id)
                         .await?;
                     return Err(unknown(
@@ -269,7 +271,7 @@ impl OAuthCoordinator {
         flow: OAuthFlow,
         bundle: OAuthSecretBundle,
     ) -> Result<McpCredentialHeader, McpHostError> {
-        if validate_saved_callback(&flow, &bundle).is_err() {
+        if validate_saved_callback(&flow, &bundle, self.relay.as_ref()).is_err() {
             self.mark_unknown(&flow.connection_id, &flow.operation_id)
                 .await?;
             return Err(unknown(
@@ -277,23 +279,15 @@ impl OAuthCoordinator {
                 "durable callback state does not match its saved listener",
             ));
         }
-        let port = flow
-            .callback_port
-            .ok_or_else(|| McpOAuthError::Invalid("OAuth callback port is missing".to_owned()))?;
+        let callback = flow.callback.ok_or_else(|| {
+            McpOAuthError::Invalid("OAuth callback identity is missing".to_owned())
+        })?;
         let expiry = flow
             .expires_at_ms
             .ok_or_else(|| McpOAuthError::Invalid("OAuth callback expiry is missing".to_owned()))?;
-        let listener = OAuthCallbackListener::resume(port, expiry)
-            .await
-            .map_err(|error| match error {
-                McpHostError::Io(_) => McpHostError::OAuth(McpOAuthError::CallbackUnavailable(
-                    "saved callback port is unavailable; retry later or call extension_manage authorize with restart=true"
-                        .to_owned(),
-                )),
-                error => error,
-            })?;
+        let receiver = OAuthCallbackReceiver::resume(self, callback, expiry).await?;
         let url = authorization_url(&bundle.adapter_state)?.to_owned();
-        self.wait_for_callback(context, flow, bundle, url, listener)
+        self.wait_for_callback(context, flow, bundle, url, receiver)
             .await
     }
 
@@ -303,36 +297,43 @@ impl OAuthCoordinator {
         flow: OAuthFlow,
         mut bundle: OAuthSecretBundle,
         authorization_url: String,
-        listener: OAuthCallbackListener,
+        receiver: OAuthCallbackReceiver,
     ) -> Result<McpCredentialHeader, McpHostError> {
         emit_redirect(
             context.updates,
             &flow.connection_id,
+            context.display_name,
             &authorization_url,
             flow.expires_at_ms,
         )
         .await;
-        browser::open(&self.browser, &authorization_url, &context.cancellation).await?;
+        if receiver.opens_local_browser() {
+            browser::open(&self.browser, &authorization_url, &context.cancellation).await?;
+        }
         let csrf_state = state_string(&bundle.adapter_state, "csrf_state")?;
-        let mut received = match listener.receive(csrf_state, &context.cancellation).await {
-            Ok(received) => received,
-            Err(McpHostError::OAuth(McpOAuthError::CallbackRejected(error))) => {
-                return self
-                    .complete_callback_rejection(&flow, context.operation_id, error)
-                    .await;
-            }
-            Err(error) => return Err(error),
-        };
+        let mut callback_result = receiver.receive(csrf_state, &context.cancellation).await?;
+        if let Some(error) = callback_result.take_rejection() {
+            self.persist_callback_rejection(&flow, context.operation_id, &error)
+                .await?;
+            callback_result.acknowledge_browser().await;
+            self.acknowledge_relay_callback(&flow, &context.cancellation)
+                .await?;
+            self.flows.delete(&flow.connection_id).await?;
+            return Err(McpOAuthError::CallbackRejected(error).into());
+        }
+        let authorization_code = callback_result.take_authorization_code().ok_or_else(|| {
+            McpOAuthError::Invalid("OAuth callback did not contain a result".to_owned())
+        })?;
         bundle.pending_callback = Some(PendingCallback {
-            authorization_code: std::mem::take(&mut received.authorization_code),
-            issuer: received.issuer.take(),
+            authorization_code,
+            issuer: callback_result.take_issuer(),
         });
         self.secrets
             .store(context.credential_id, &bundle, context.cancellation.clone())
             .await?;
         let ready = flow.with_phase(OAuthPhase::CallbackReady)?;
         self.flows.put(&ready).await?;
-        received.acknowledge().await;
+        callback_result.acknowledge_browser().await;
         self.exchange_pending(context, ready, bundle).await
     }
 
@@ -345,6 +346,8 @@ impl OAuthCoordinator {
         let pending = bundle.pending_callback.as_ref().ok_or_else(|| {
             McpOAuthError::Invalid("durable OAuth callback code is missing".to_owned())
         })?;
+        self.acknowledge_relay_callback(&flow, &context.cancellation)
+            .await?;
         let in_flight = flow.with_phase(OAuthPhase::ExchangeInFlight)?;
         self.flows.put(&in_flight).await?;
         let result = {
@@ -410,16 +413,48 @@ impl OAuthCoordinator {
             }
         }
     }
+
+    pub(super) async fn acknowledge_relay_callback(
+        &self,
+        flow: &OAuthFlow,
+        cancellation: &CancellationToken,
+    ) -> Result<(), McpHostError> {
+        let Some(OAuthCallbackIdentity::Relay(relay_id)) = flow.callback else {
+            return Ok(());
+        };
+        let expires_at_ms = flow
+            .expires_at_ms
+            .ok_or_else(|| McpOAuthError::Invalid("OAuth callback expiry is missing".to_owned()))?;
+        let relay = self.relay.as_ref().ok_or_else(|| {
+            McpOAuthError::CallbackUnavailable("saved callback relay is not configured".to_owned())
+        })?;
+        relay
+            .acknowledge_saved(relay_id, expires_at_ms, cancellation)
+            .await
+    }
 }
 
 fn validate_saved_callback(
     flow: &OAuthFlow,
     bundle: &OAuthSecretBundle,
+    relay: Option<&super::relay::OAuthRelayClient>,
 ) -> Result<(), McpHostError> {
-    let port = flow
-        .callback_port
-        .ok_or_else(|| McpOAuthError::Invalid("OAuth callback port is missing".to_owned()))?;
-    let expected_redirect = format!("http://127.0.0.1:{port}/oauth/callback");
+    let expected_redirect = match flow
+        .callback
+        .ok_or_else(|| McpOAuthError::Invalid("OAuth callback identity is missing".to_owned()))?
+    {
+        OAuthCallbackIdentity::Loopback(port) => {
+            format!("http://127.0.0.1:{port}/oauth/callback")
+        }
+        OAuthCallbackIdentity::Relay(_) => relay
+            .ok_or_else(|| {
+                McpOAuthError::CallbackUnavailable(
+                    "saved callback relay is not configured".to_owned(),
+                )
+            })?
+            .callback_uri()
+            .to_owned(),
+    };
     let csrf_state = state_string(&bundle.adapter_state, "csrf_state")?;
     validate_state_identity(&bundle.adapter_state, csrf_state, &expected_redirect)?;
     authorization_url(&bundle.adapter_state)?;

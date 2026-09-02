@@ -22,9 +22,18 @@ pub(super) struct OAuthCallbackListener {
 }
 
 pub(super) struct ReceivedCallback {
-    pub(super) authorization_code: String,
-    pub(super) issuer: Option<String>,
+    outcome: CallbackOutcome,
     response: TcpStream,
+}
+
+enum CallbackOutcome {
+    Authorized {
+        authorization_code: String,
+        issuer: Option<String>,
+    },
+    Rejected {
+        error: String,
+    },
 }
 
 impl OAuthCallbackListener {
@@ -92,15 +101,19 @@ impl OAuthCallbackListener {
             {
                 Ok(Some(data)) => {
                     return Ok(ReceivedCallback {
-                        authorization_code: data.authorization_code,
-                        issuer: data.issuer,
+                        outcome: CallbackOutcome::Authorized {
+                            authorization_code: data.authorization_code,
+                            issuer: data.issuer,
+                        },
                         response: stream,
                     });
                 }
                 Ok(None) => respond(&mut stream, 404, "Not found").await,
                 Err(CallbackReadError::Authorization(error)) => {
-                    respond(&mut stream, 400, "Authorization was not completed").await;
-                    return Err(McpOAuthError::CallbackRejected(error).into());
+                    return Ok(ReceivedCallback {
+                        outcome: CallbackOutcome::Rejected { error },
+                        response: stream,
+                    });
                 }
                 Err(CallbackReadError::Rejected) => {
                     respond(&mut stream, 400, "Invalid callback").await;
@@ -118,13 +131,39 @@ impl OAuthCallbackListener {
 }
 
 impl ReceivedCallback {
+    pub(super) fn take_authorization_code(&mut self) -> Option<String> {
+        match &mut self.outcome {
+            CallbackOutcome::Authorized {
+                authorization_code, ..
+            } => Some(std::mem::take(authorization_code)),
+            CallbackOutcome::Rejected { .. } => None,
+        }
+    }
+
+    pub(super) fn take_issuer(&mut self) -> Option<String> {
+        match &mut self.outcome {
+            CallbackOutcome::Authorized { issuer, .. } => issuer.take(),
+            CallbackOutcome::Rejected { .. } => None,
+        }
+    }
+
+    pub(super) fn take_rejection(&mut self) -> Option<String> {
+        match &mut self.outcome {
+            CallbackOutcome::Authorized { .. } => None,
+            CallbackOutcome::Rejected { error } => Some(std::mem::take(error)),
+        }
+    }
+
     pub(super) async fn acknowledge(mut self) {
-        respond(
-            &mut self.response,
-            200,
-            "Renoa received the authorization. You can close this tab.",
-        )
-        .await;
+        let message = match self.outcome {
+            CallbackOutcome::Authorized { .. } => {
+                "Renoa received the authorization. You can close this tab."
+            }
+            CallbackOutcome::Rejected { .. } => {
+                "Authorization was not completed. You can close this tab."
+            }
+        };
+        respond(&mut self.response, 200, message).await;
     }
 }
 
@@ -369,7 +408,11 @@ mod tests {
             .expect("callback task joins")
             .expect("valid callback is received");
         assert!(!early_receiver.await.expect("observe early response"));
-        assert_eq!(received.authorization_code, "one-time-code");
+        let mut received = received;
+        assert_eq!(
+            received.take_authorization_code().as_deref(),
+            Some("one-time-code")
+        );
         received.acknowledge().await;
         client.await.expect("callback client joins");
         assert!(response.lock().await.starts_with(b"HTTP/1.1 200"));

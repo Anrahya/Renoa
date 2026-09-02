@@ -1,7 +1,9 @@
+mod connection_commit;
 mod load;
 mod registry;
 use std::path::PathBuf;
 
+pub(crate) use connection_commit::McpConnectionCandidate;
 pub(crate) use registry::McpConnectionStatus;
 
 use super::{
@@ -89,40 +91,6 @@ impl McpCatalogStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_integration(&transaction, integration_id, endpoint, request_headers)?;
         ensure_connection(&transaction, connection_id, integration_id, auth)?;
-        transaction.commit()?;
-        Ok(())
-    }
-
-    pub(crate) fn replace_connection(
-        &self,
-        integration_id: &str,
-        connection_id: &str,
-        endpoint: &str,
-        request_headers: &McpRequestHeaders,
-        auth: &McpConnectionAuth,
-    ) -> Result<(), McpHostError> {
-        validate_identity("integration", integration_id)?;
-        validate_identity("connection", connection_id)?;
-        validate_endpoint(endpoint)?;
-        auth.validate_oauth_binding(connection_id, endpoint)?;
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        ensure_integration(&transaction, integration_id, endpoint, request_headers)?;
-        match ensure_connection(&transaction, connection_id, integration_id, auth) {
-            Ok(()) => {}
-            Err(McpHostError::Conflict(_)) => {
-                transaction.execute(
-                    "DELETE FROM profile_mcp_connections WHERE connection_id = ?1",
-                    [connection_id],
-                )?;
-                transaction.execute(
-                    "DELETE FROM mcp_connections WHERE connection_id = ?1",
-                    [connection_id],
-                )?;
-                ensure_connection(&transaction, connection_id, integration_id, auth)?;
-            }
-            Err(error) => return Err(error),
-        }
         transaction.commit()?;
         Ok(())
     }

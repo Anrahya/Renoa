@@ -2,20 +2,20 @@ use std::str;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-pub(super) struct SensitiveString {
+pub(crate) struct SensitiveString {
     bytes: Vec<u8>,
 }
 
 impl SensitiveString {
-    pub(super) fn expose(&self) -> &str {
+    pub(crate) fn expose(&self) -> &str {
         str::from_utf8(&self.bytes).expect("sensitive string originated as valid UTF-8")
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
-    pub(super) fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.bytes.len()
     }
 }

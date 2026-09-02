@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use renoa_agent::{
     AgentEvent, AgentEventSink as _, AssistantDelta, AssistantMetadata, ContentBlock, ModelRequest,
-    ModelResponse, StopReason, TokenUsage,
+    ModelResponse, StopReason, TokenUsage, ToolCall, ToolOutput,
 };
 use renoa_kernel::{AgentId, CommandId, SessionId};
 use rusqlite::Connection;
@@ -11,6 +11,83 @@ use tempfile::tempdir;
 
 use super::{TRACE_DATABASE, TraceStore};
 use crate::{ALPHA_PROFILE_ID, AgentProfileId};
+
+#[tokio::test]
+async fn trace_omits_credential_setup_and_oauth_authorization_urls() {
+    let directory = tempdir().expect("temporary trace directory");
+    let path = directory.path().join(TRACE_DATABASE);
+    let store = TraceStore::create(path.clone(), SessionId::new(), AgentId::new(), &alpha_id())
+        .expect("create trace store");
+    let trace = store
+        .start_run(
+            CommandId::new(),
+            &[ContentBlock::text("connect")],
+            "provider",
+            "model",
+            "high",
+        )
+        .await
+        .expect("start trace");
+    let secret = "ab".repeat(32);
+    trace
+        .emit(AgentEvent::ToolExecutionUpdate {
+            call: ToolCall {
+                id: "credential-call".to_owned(),
+                name: "extension_manage".to_owned(),
+                arguments: json!({}),
+                thought_signature: None,
+                namespace: None,
+            },
+            update: ToolOutput {
+                content: vec![ContentBlock::text(format!(
+                    "{{\"status\":\"credential_required\",\"credential\":\"exa.default\",\"setup_url\":\"https://renoa.live/setup#key={secret}&token={secret}\"}}"
+                ))],
+                details: Some(json!({"must_not_survive": secret})),
+                is_error: false,
+            },
+        })
+        .await;
+    trace
+        .emit(AgentEvent::ToolExecutionUpdate {
+            call: ToolCall {
+                id: "oauth-call".to_owned(),
+                name: "extension_manage".to_owned(),
+                arguments: json!({}),
+                thought_signature: None,
+                namespace: None,
+            },
+            update: ToolOutput {
+                content: vec![ContentBlock::text(format!(
+                    "{{\"status\":\"authorization_required\",\"connection\":\"notion.default\",\"authorization_url\":\"https://provider.example/authorize?state={secret}\"}}"
+                ))],
+                details: Some(json!({"must_not_survive": secret})),
+                is_error: false,
+            },
+        })
+        .await;
+    trace
+        .finish("completed", None, None)
+        .await
+        .expect("finish trace");
+
+    let connection = Connection::open(path).expect("open trace database");
+    let mut statement = connection
+        .prepare(
+            "SELECT payload_json FROM events WHERE kind = 'execution_update' ORDER BY sequence",
+        )
+        .expect("prepare progress trace query");
+    let payloads = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query progress traces")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("load progress traces");
+    assert_eq!(payloads.len(), 2);
+    assert!(payloads[0].contains("credential_required"));
+    assert!(payloads[0].contains("setup_url_omitted"));
+    assert!(payloads[1].contains("authorization_required"));
+    assert!(payloads[1].contains("authorization_url_omitted"));
+    assert!(payloads.iter().all(|payload| !payload.contains(&secret)));
+}
 
 #[tokio::test]
 async fn trace_records_exact_model_flow_and_normalized_usage() {

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use renoa_oauth_relay_protocol::OAuthRelayId;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
@@ -54,8 +55,14 @@ pub(super) struct OAuthFlow {
     pub(super) connection_id: String,
     pub(super) operation_id: String,
     pub(super) phase: OAuthPhase,
-    pub(super) callback_port: Option<u16>,
+    pub(super) callback: Option<OAuthCallbackIdentity>,
     pub(super) expires_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OAuthCallbackIdentity {
+    Loopback(u16),
+    Relay(OAuthRelayId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,7 +101,7 @@ impl OAuthFlow {
         connection_id: &str,
         operation_id: &str,
         phase: OAuthPhase,
-        callback_port: u16,
+        callback: OAuthCallbackIdentity,
         expires_at_ms: i64,
     ) -> Result<Self, McpHostError> {
         validate_flow_identity(connection_id, operation_id)?;
@@ -114,11 +121,16 @@ impl OAuthFlow {
                 "MCP OAuth callback expiry must be positive".to_owned(),
             ));
         }
+        if matches!(callback, OAuthCallbackIdentity::Loopback(0)) {
+            return Err(McpHostError::Invalid(
+                "MCP OAuth callback port must be nonzero".to_owned(),
+            ));
+        }
         Ok(Self {
             connection_id: connection_id.to_owned(),
             operation_id: operation_id.to_owned(),
             phase,
-            callback_port: Some(callback_port),
+            callback: Some(callback),
             expires_at_ms: Some(expires_at_ms),
         })
     }
@@ -138,16 +150,20 @@ impl OAuthFlow {
             connection_id: connection_id.to_owned(),
             operation_id: operation_id.to_owned(),
             phase,
-            callback_port: None,
+            callback: None,
             expires_at_ms: None,
         })
     }
 
     pub(super) fn with_phase(&self, phase: OAuthPhase) -> Result<Self, McpHostError> {
-        match (self.callback_port, self.expires_at_ms) {
-            (Some(port), Some(expiry)) => {
-                Self::interactive(&self.connection_id, &self.operation_id, phase, port, expiry)
-            }
+        match (self.callback, self.expires_at_ms) {
+            (Some(callback), Some(expiry)) => Self::interactive(
+                &self.connection_id,
+                &self.operation_id,
+                phase,
+                callback,
+                expiry,
+            ),
             (None, None) => Self::non_interactive(&self.connection_id, &self.operation_id, phase),
             _ => Err(McpHostError::Invalid(
                 "stored MCP OAuth flow has incomplete callback state".to_owned(),
@@ -280,7 +296,7 @@ fn load(
     let connection = crate::host::catalog::open_verified(database)?;
     let stored = connection
         .query_row(
-            "SELECT operation_id, phase, callback_port, expires_at_ms
+            "SELECT operation_id, phase, callback_port, callback_relay_id, expires_at_ms
              FROM mcp_oauth_flows WHERE connection_id = ?1",
             [connection_id],
             |row| {
@@ -288,24 +304,43 @@ fn load(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<u16>>(2)?,
-                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
                 ))
             },
         )
         .optional()?;
     stored
-        .map(|(operation_id, phase, callback_port, expires_at_ms)| {
-            let phase = OAuthPhase::from_stored(&phase)?;
-            let flow = OAuthFlow {
-                connection_id: connection_id.to_owned(),
-                operation_id,
-                phase,
-                callback_port,
-                expires_at_ms,
-            };
-            validate_loaded(&flow)?;
-            Ok(flow)
-        })
+        .map(
+            |(operation_id, phase, callback_port, callback_relay_id, expires_at_ms)| {
+                let phase = OAuthPhase::from_stored(&phase)?;
+                let callback = match (callback_port, callback_relay_id) {
+                    (Some(port), None) => Some(OAuthCallbackIdentity::Loopback(port)),
+                    (None, Some(relay_id)) => Some(OAuthCallbackIdentity::Relay(
+                        OAuthRelayId::from_uuid(relay_id.parse().map_err(|_| {
+                            McpHostError::Invalid(
+                                "stored MCP OAuth relay id is malformed".to_owned(),
+                            )
+                        })?),
+                    )),
+                    (None, None) => None,
+                    (Some(_), Some(_)) => {
+                        return Err(McpHostError::Invalid(
+                            "stored MCP OAuth callback identity is ambiguous".to_owned(),
+                        ));
+                    }
+                };
+                let flow = OAuthFlow {
+                    connection_id: connection_id.to_owned(),
+                    operation_id,
+                    phase,
+                    callback,
+                    expires_at_ms,
+                };
+                validate_loaded(&flow)?;
+                Ok(flow)
+            },
+        )
         .transpose()
 }
 
@@ -314,18 +349,26 @@ fn put(database: &std::path::Path, flow: &OAuthFlow) -> Result<(), McpHostError>
     let connection = crate::host::catalog::open_verified(database)?;
     connection.execute(
         "INSERT INTO mcp_oauth_flows(
-             connection_id, operation_id, phase, callback_port, expires_at_ms
-         ) VALUES (?1, ?2, ?3, ?4, ?5)
+             connection_id, operation_id, phase, callback_port, callback_relay_id, expires_at_ms
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(connection_id) DO UPDATE SET
              operation_id = excluded.operation_id,
              phase = excluded.phase,
              callback_port = excluded.callback_port,
+             callback_relay_id = excluded.callback_relay_id,
              expires_at_ms = excluded.expires_at_ms",
         params![
             flow.connection_id,
             flow.operation_id,
             flow.phase.stored(),
-            flow.callback_port,
+            match flow.callback {
+                Some(OAuthCallbackIdentity::Loopback(port)) => Some(port),
+                Some(OAuthCallbackIdentity::Relay(_)) | None => None,
+            },
+            match flow.callback {
+                Some(OAuthCallbackIdentity::Relay(relay_id)) => Some(relay_id.to_string()),
+                Some(OAuthCallbackIdentity::Loopback(_)) | None => None,
+            },
             flow.expires_at_ms,
         ],
     )?;
@@ -344,13 +387,13 @@ fn validate_flow_identity(connection_id: &str, operation_id: &str) -> Result<(),
 
 fn validate_loaded(flow: &OAuthFlow) -> Result<(), McpHostError> {
     validate_flow_identity(&flow.connection_id, &flow.operation_id)?;
-    match (flow.phase, flow.callback_port, flow.expires_at_ms) {
+    match (flow.phase, flow.callback, flow.expires_at_ms) {
         (
             OAuthPhase::BeginInFlight
             | OAuthPhase::AwaitingCallback
             | OAuthPhase::CallbackReady
             | OAuthPhase::ExchangeInFlight,
-            Some(_),
+            Some(OAuthCallbackIdentity::Loopback(1..=u16::MAX) | OAuthCallbackIdentity::Relay(_)),
             Some(expiry),
         ) if expiry > 0 => Ok(()),
         (OAuthPhase::RefreshInFlight | OAuthPhase::Unknown, None, None) => Ok(()),

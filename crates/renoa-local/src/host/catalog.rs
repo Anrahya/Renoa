@@ -8,9 +8,10 @@ mod migrations;
 use migrations::{
     MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4, MIGRATE_V4_TO_V5, MIGRATE_V5_TO_V6,
     MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8, MIGRATE_V8_TO_V9, MIGRATE_V9_TO_V10, MIGRATE_V10_TO_V11,
+    MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
 };
 
-const SCHEMA_VERSION: u32 = 11;
+const SCHEMA_VERSION: u32 = 13;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -134,8 +135,7 @@ const SCHEMA: &str = "
     ) STRICT;
 
     CREATE TABLE mcp_oauth_flows (
-        connection_id TEXT PRIMARY KEY
-            REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
+        connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
         operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 512),
         phase TEXT NOT NULL CHECK (
             phase IN (
@@ -144,22 +144,24 @@ const SCHEMA: &str = "
             )
         ),
         callback_port INTEGER,
+        callback_relay_id TEXT,
         expires_at_ms INTEGER,
         CHECK (
             (phase IN ('begin_in_flight', 'awaiting_callback', 'callback_ready',
                        'exchange_in_flight')
-             AND callback_port BETWEEN 1 AND 65535
+             AND ((callback_port BETWEEN 1 AND 65535 AND callback_relay_id IS NULL)
+                  OR (callback_port IS NULL AND length(callback_relay_id) = 36))
              AND expires_at_ms > 0)
             OR
             (phase IN ('refresh_in_flight', 'unknown')
              AND callback_port IS NULL
+             AND callback_relay_id IS NULL
              AND expires_at_ms IS NULL)
         )
     ) STRICT;
 
     CREATE TABLE mcp_oauth_receipts (
-        connection_id TEXT NOT NULL
-            REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
+        connection_id TEXT NOT NULL CHECK (length(connection_id) > 0),
         operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 512),
         outcome_json TEXT NOT NULL CHECK (
             length(outcome_json) BETWEEN 1 AND 16384
@@ -255,7 +257,7 @@ const SCHEMA: &str = "
         applied_revision INTEGER NOT NULL CHECK (applied_revision >= 0)
     ) STRICT;
 
-    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 11);
+    INSERT INTO host_metadata(singleton, schema_version) VALUES (1, 13);
 ";
 
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
@@ -283,7 +285,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=10) {
+    if matches!(observed, 1..=12) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -329,6 +331,8 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                     (8, MIGRATE_V8_TO_V9),
                     (9, MIGRATE_V9_TO_V10),
                     (10, MIGRATE_V10_TO_V11),
+                    (11, MIGRATE_V11_TO_V12),
+                    (12, MIGRATE_V12_TO_V13),
                 ] {
                     if source_version >= version {
                         transaction.execute_batch(migration)?;

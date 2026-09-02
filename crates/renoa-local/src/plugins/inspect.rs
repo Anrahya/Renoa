@@ -410,7 +410,7 @@ fn validate_plugin_name(name: &str) -> Result<(), PluginError> {
         Ok(())
     } else {
         Err(PluginError::Invalid(
-            "plugin name does not satisfy Agent Plugins 1.0".to_owned(),
+            "plugin.json.name must start and end with a lowercase ASCII letter or digit, contain only lowercase ASCII letters, digits, '.', or '-', and cannot contain '..' or '--' (Agent Plugins 1.0)".to_owned(),
         ))
     }
 }

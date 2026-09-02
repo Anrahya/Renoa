@@ -75,9 +75,9 @@ fn unsupported_oauth_registration_reports_the_credential_boundary() {
         .as_str()
         .expect("setup failure has a next action");
     assert!(next_action.contains("Do not retry dynamic registration"));
-    assert!(next_action.contains("outside the agent context"));
-    assert!(next_action.contains("has no credential-entry UI"));
-    assert!(next_action.contains("never ask the user to paste credential material"));
+    assert!(next_action.contains("reconnect with pre_registered"));
+    assert!(next_action.contains("secure setup link"));
+    assert!(next_action.contains("Never ask the user to paste credential material"));
     assert_eq!(
         output.details.unwrap()["mcp"]["failure"]["diagnostic"]["code"],
         "oauth_registration_required"

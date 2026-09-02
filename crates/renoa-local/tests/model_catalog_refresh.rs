@@ -1,8 +1,8 @@
 use std::fs;
 
 use renoa_local::{
-    ALPHA_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters, LocalHostError,
-    LocalModelConfiguration, ModelProvider, alpha_profile,
+    ALPHA_PROFILE_ID, ARCEE_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters,
+    LocalHostError, LocalModelConfiguration, ModelProvider, alpha_profile, arcee_profile,
 };
 use tempfile::tempdir;
 
@@ -52,12 +52,11 @@ async fn an_open_agent_session_can_select_a_newly_discovered_model() {
         ["xai/model-a"]
     );
 
-    session
-        .set_model("xai/model-b")
+    let refreshed = session
+        .refresh_configuration()
         .await
-        .expect("refresh and select the newly advertised model");
-    let refreshed = session.configuration().expect("refreshed configuration");
-    assert_eq!(refreshed.model, "xai/model-b");
+        .expect("refresh the authenticated model catalog");
+    assert_eq!(refreshed.model, "xai/model-a");
     assert_eq!(
         refreshed
             .models
@@ -65,6 +64,18 @@ async fn an_open_agent_session_can_select_a_newly_discovered_model() {
             .map(renoa_local::ModelChoice::selection_id)
             .collect::<Vec<_>>(),
         ["xai/model-a", "xai/model-b"]
+    );
+
+    session
+        .set_model("xai/model-b")
+        .await
+        .expect("select the newly advertised model");
+    assert_eq!(
+        session
+            .configuration()
+            .expect("selected configuration")
+            .model,
+        "xai/model-b"
     );
 
     let error = session
@@ -79,6 +90,58 @@ async fn an_open_agent_session_can_select_a_newly_discovered_model() {
             .model,
         "xai/model-b"
     );
+}
+
+#[tokio::test]
+async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers() {
+    let directory = tempdir().expect("temporary directory");
+    let data = directory.path().join("data");
+    let workspace = directory.path().join("workspace");
+    let bridge = directory.path().join("bridge.mjs");
+    let catalog_calls = directory.path().join("catalog-calls");
+    let credentials = directory.path().join("credentials.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&credentials, "").expect("create credential placeholder");
+    fs::write(
+        &bridge,
+        bridge_source(catalog_calls.to_string_lossy().as_ref()),
+    )
+    .expect("write model bridge");
+    let profile = arcee_profile(&data).expect("create Arcee profile");
+    let host = LocalHost::new(
+        &data,
+        LocalModelConfiguration::new(
+            &bridge,
+            vec![ModelProvider::Xai, ModelProvider::OpenCodeGo],
+            ModelProvider::Xai,
+            "model-a",
+            &credentials,
+        ),
+        vec![profile],
+        LocalHostAdapters::default(),
+    )
+    .expect("assemble Host");
+
+    let session = host
+        .create_session(
+            &AgentProfileId::new(ARCEE_PROFILE_ID).expect("Arcee profile id"),
+            &workspace,
+        )
+        .await
+        .expect("create Arcee session");
+    let configuration = session.configuration().expect("Arcee configuration");
+    assert_eq!(configuration.model, "opencode-go/model-a");
+    assert!(
+        configuration
+            .models
+            .iter()
+            .all(|model| model.provider() == ModelProvider::OpenCodeGo)
+    );
+    let error = session
+        .set_model("xai/model-a")
+        .await
+        .expect_err("Arcee must not switch to a provider outside its profile");
+    assert!(matches!(error, LocalHostError::InvalidRequest(_)));
 }
 
 fn bridge_source(catalog_calls: &str) -> String {
@@ -96,7 +159,7 @@ if (action === "catalog") {{
     id,
     name: id === "model-a" ? "Model A" : "Model B",
     reasoning_levels: ["high"],
-    context_window_tokens: 100000,
+    context_window_tokens: 1000000,
     model_spec: {{ id }}
   }})) }} }}));
   process.exit(0);
@@ -104,7 +167,7 @@ if (action === "catalog") {{
 if (action === "describe") {{
   const modelSpec = process.env.RENOA_MODEL_SPEC;
   process.stdout.write(JSON.stringify({{ ok: true, response: {{
-    context_window_tokens: 100000,
+    context_window_tokens: 1000000,
     max_output_tokens: 8192,
     model_spec: modelSpec,
     model_binding_id: createHash("sha256").update(modelSpec).digest("hex"),

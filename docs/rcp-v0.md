@@ -116,6 +116,10 @@ These decisions define RCP and are not ordinary implementation details:
 18. Surface continuity transfers authority to observe and submit to the same
     task; it does not transfer the executor process, harness context, workspace,
     provider credentials, or tool credentials.
+    A Host may use the same deployed HTTPS control plane as a short-lived
+    ciphertext relay for browser credential intake, but that is auxiliary Host
+    configuration: it is not RCP task data, and it does not transfer or share
+    the resulting credential between nodes.
 19. Surface cursors and command outboxes are device-local recovery state. A new
     surface can reconstruct the task from the coordinator journal without
     receiving another surface's local database.
@@ -123,6 +127,10 @@ These decisions define RCP and are not ordinary implementation details:
     logical coordinator authority per task, reached at a stable HTTPS origin.
     Nodes and surfaces initiate connections to it. The origin and route are
     deployment configuration, not RCP task semantics.
+21. The same HTTPS origin may expose narrowly scoped Host-management services
+    that reuse enrolled device identity. Their records, authorization rules,
+    and acknowledgements remain outside the RCP task journal and cannot acquire
+    task authority by sharing a process or origin.
 
 ## Vocabulary
 
@@ -498,6 +506,15 @@ secret store:
   continuing a Linux-bound task never receives them. Portable agent profiles
   may name credential references, but each authorized node resolves those
   references against its own secret facility.
+
+The first such auxiliary service is the MCP OAuth callback relay. An enrolled
+Node credential may reserve, poll, and acknowledge only its own short-lived
+callback records over authenticated HTTP. A provider-facing callback contains
+unguessable OAuth state; the coordinator retains its digest and a bounded code
+or rejection only until the execution Host confirms local persistence. PKCE,
+client credentials, access tokens, and refresh tokens never enter the relay or
+an RCP task record. This solves remote browser return for a headless Host; it
+does not share credentials with another Host.
 
 A future shared-secret facility belongs to Host management, not RCP. It may be
 co-located with the self-hosted control plane, but it has a separate store and

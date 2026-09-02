@@ -1,8 +1,10 @@
 use super::{ENDPOINT, PROFILE, snapshot, store};
-use crate::mcp::{McpConnectionAuth, McpHostError, McpOAuthRegistration, McpRequestHeaders};
+use crate::mcp::{
+    McpConnectionAuth, McpConnectionCandidate, McpOAuthRegistration, McpRequestHeaders,
+};
 
 #[test]
-fn explicit_connection_replacement_drops_stale_tools_and_is_idempotent() {
+fn explicit_connection_replacement_commits_config_catalog_and_attachment_together() {
     let (_directory, store) = store();
     store
         .register_direct_connection("stable-integration", "drive", ENDPOINT)
@@ -18,15 +20,18 @@ fn explicit_connection_replacement_drops_stale_tools_and_is_idempotent() {
     )
     .expect("replacement OAuth reference");
 
+    let candidate = McpConnectionCandidate::new(
+        "stable-integration".to_owned(),
+        "drive".to_owned(),
+        ENDPOINT.to_owned(),
+        McpRequestHeaders::default(),
+        replacement.clone(),
+    )
+    .expect("valid replacement candidate");
+    let refreshed = snapshot("drive", ENDPOINT, &["read", "search"]);
     store
-        .replace_connection(
-            "stable-integration",
-            "drive",
-            ENDPOINT,
-            &McpRequestHeaders::default(),
-            &replacement,
-        )
-        .expect("replace bad connection configuration");
+        .commit_connection(PROFILE, &candidate, &refreshed, true)
+        .expect("commit complete replacement");
     assert_eq!(
         store
             .connection_config("drive")
@@ -34,29 +39,21 @@ fn explicit_connection_replacement_drops_stale_tools_and_is_idempotent() {
             .auth,
         replacement
     );
-    assert!(matches!(
-        store.load_catalog("drive"),
-        Err(McpHostError::NotFound(_))
-    ));
-    assert!(
+    assert_eq!(
+        store
+            .load_catalog("drive")
+            .expect("load replacement catalog"),
+        refreshed
+    );
+    assert_eq!(
         store
             .profile_tool_summaries(PROFILE)
-            .expect("load detached profile")
-            .is_empty()
+            .expect("load preserved profile attachment")
+            .len(),
+        2
     );
-
-    let refreshed = snapshot("drive", ENDPOINT, &["read", "search"]);
     store
-        .publish_and_enable_connection(PROFILE, &refreshed)
-        .expect("publish replacement catalog");
-    store
-        .replace_connection(
-            "stable-integration",
-            "drive",
-            ENDPOINT,
-            &McpRequestHeaders::default(),
-            &replacement,
-        )
+        .commit_connection(PROFILE, &candidate, &refreshed, true)
         .expect("repeat identical replacement");
     assert_eq!(
         store

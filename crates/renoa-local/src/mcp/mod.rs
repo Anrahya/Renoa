@@ -1,5 +1,6 @@
 mod auth;
 mod call;
+mod credential_setup;
 mod digest;
 mod error;
 mod headers;
@@ -37,7 +38,7 @@ pub(crate) use process::{discover, discover_cancellable};
 pub(crate) use registry::{
     LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, SEARCH_RESULT_LIMIT, rank_tools,
 };
-pub(crate) use store::{McpCatalogStore, McpConnectionStatus};
+pub(crate) use store::{McpCatalogStore, McpConnectionCandidate, McpConnectionStatus};
 pub(crate) use tool::{adapter_tool_error, profile_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";

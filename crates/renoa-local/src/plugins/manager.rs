@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use renoa_agent::ToolUpdates;
 use tokio_util::sync::CancellationToken;
 
+mod connect;
 mod credential;
 mod identity;
 mod shared;
@@ -15,17 +16,17 @@ use super::{
     generated::GeneratedMcpPlugin,
     store::PluginStore,
 };
+#[cfg(test)]
+use crate::mcp::McpCredentialResolver;
 use crate::{
     AgentProfileId,
-    mcp::{
-        McpAdapterError, McpAuthorizationResolver, McpCatalogSnapshot, McpCatalogStore,
-        McpCredentialResolver, McpHostError, McpOAuthAuthorizationRequest, discover_cancellable,
-    },
+    mcp::{McpAuthorizationResolver, McpCatalogSnapshot, McpCatalogStore},
     shared_registry::SharedPluginRegistry,
     skills::{SkillComponentReport, SkillStore},
 };
-use credential::credential_auth;
-use identity::{default_connection_id, integration_id};
+use identity::default_connection_id;
+
+pub(crate) use connect::ProfileConnectionRequest;
 
 #[derive(Clone)]
 pub(crate) struct PluginManager {
@@ -38,17 +39,8 @@ pub(crate) struct PluginManager {
     shared_registry: Option<SharedPluginRegistry>,
 }
 
-pub(crate) struct ProfileConnectionRequest<'a> {
-    pub(crate) profile_id: &'a AgentProfileId,
-    pub(crate) package_digest: &'a str,
-    pub(crate) server_id: &'a str,
-    pub(crate) connection_id: &'a str,
-    pub(crate) credential: PluginCredential,
-    pub(crate) replace: bool,
-    pub(crate) operation_id: &'a str,
-}
-
 impl PluginManager {
+    #[cfg(test)]
     pub(crate) fn initialize(
         database: PathBuf,
         packages: PathBuf,
@@ -60,6 +52,26 @@ impl PluginManager {
     ) -> Result<Self, PluginError> {
         let authorizations =
             McpAuthorizationResolver::new(&mcp_catalog, mcp_adapter.clone(), credentials);
+        Self::initialize_with_authorizations(
+            database,
+            packages,
+            mcp_catalog,
+            mcp_adapter,
+            registry_adapter,
+            authorizations,
+            skills,
+        )
+    }
+
+    pub(crate) fn initialize_with_authorizations(
+        database: PathBuf,
+        packages: PathBuf,
+        mcp_catalog: McpCatalogStore,
+        mcp_adapter: Option<PathBuf>,
+        registry_adapter: Option<PathBuf>,
+        authorizations: McpAuthorizationResolver,
+        skills: SkillStore,
+    ) -> Result<Self, PluginError> {
         Ok(Self {
             store: PluginStore::initialize(database, packages)?,
             mcp_catalog,
@@ -115,6 +127,7 @@ impl PluginManager {
         profile_id: &AgentProfileId,
         request: ExtensionAddRequest,
         operation_id: &str,
+        updates: Option<&ToolUpdates>,
         cancellation: CancellationToken,
     ) -> Result<ExtensionAddOutcome, PluginError> {
         let connection_request = request.connection;
@@ -149,11 +162,14 @@ impl PluginManager {
         };
         let skills = self.sync_skills(profile_id, &prepared.installed).await?;
         self.connect_prepared(
-            profile_id,
             prepared,
             skills,
             connection_request,
-            operation_id,
+            AddOperationContext {
+                profile_id,
+                operation_id,
+                updates,
+            },
             cancellation,
         )
         .await
@@ -180,11 +196,10 @@ impl PluginManager {
 
     async fn connect_prepared(
         &self,
-        profile_id: &AgentProfileId,
         prepared: PreparedExtension,
         skills: SkillComponentReport,
         request: Option<ExtensionConnectionRequest>,
-        operation_id: &str,
+        context: AddOperationContext<'_>,
         cancellation: CancellationToken,
     ) -> Result<ExtensionAddOutcome, PluginError> {
         if request.is_none() && !prepared.connect_by_default {
@@ -229,13 +244,14 @@ impl PluginManager {
         let outcome = match self
             .connect_profile_operation(
                 ProfileConnectionRequest {
-                    profile_id,
+                    profile_id: context.profile_id,
                     package_digest: prepared.installed.digest(),
                     server_id: &server,
                     connection_id: &connection,
                     credential,
                     replace,
-                    operation_id,
+                    operation_id: context.operation_id,
+                    updates: context.updates,
                 },
                 cancellation,
             )
@@ -259,181 +275,12 @@ impl PluginManager {
             connection: outcome,
         })
     }
+}
 
-    pub(crate) async fn connect_profile(
-        &self,
-        profile_id: &AgentProfileId,
-        package_digest: &str,
-        server_id: &str,
-        connection_id: &str,
-        credential: PluginCredential,
-        cancellation: CancellationToken,
-    ) -> Result<McpCatalogSnapshot, PluginError> {
-        let operation_id = format!("host-connect.{}", uuid::Uuid::new_v4());
-        self.connect_profile_operation(
-            ProfileConnectionRequest {
-                profile_id,
-                package_digest,
-                server_id,
-                connection_id,
-                credential,
-                replace: false,
-                operation_id: &operation_id,
-            },
-            cancellation,
-        )
-        .await
-    }
-
-    pub(crate) async fn connect_profile_operation(
-        &self,
-        request: ProfileConnectionRequest<'_>,
-        cancellation: CancellationToken,
-    ) -> Result<McpCatalogSnapshot, PluginError> {
-        let ProfileConnectionRequest {
-            profile_id,
-            package_digest,
-            server_id,
-            connection_id,
-            credential,
-            replace,
-            operation_id,
-        } = request;
-        let plugin = self.load_available(package_digest).await?;
-        let server = plugin
-            .mcp_servers()
-            .iter()
-            .find(|server| server.id() == server_id)
-            .cloned()
-            .ok_or_else(|| {
-                PluginError::NotFound(format!(
-                    "package '{}' has no supported MCP server '{}'",
-                    plugin.digest(),
-                    server_id,
-                ))
-            })?;
-        let adapter = self.mcp_adapter.clone().ok_or_else(|| {
-            PluginError::Unavailable(
-                "RENOA_MCP_ADAPTER must be set before connecting a package MCP server".to_owned(),
-            )
-        })?;
-        let auth = credential_auth(credential, connection_id, server.endpoint())?;
-        let integration_id = integration_id(plugin.digest(), server.id());
-        let registered_headers = crate::mcp::McpRequestHeaders::new(
-            server
-                .request_headers()
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone())),
-        )?;
-        let catalog = self.mcp_catalog.clone();
-        let registered_integration = integration_id.clone();
-        let registered_connection = connection_id.to_owned();
-        let registered_endpoint = server.endpoint().to_owned();
-        let registered_headers_copy = registered_headers.clone();
-        let registered_auth = auth.clone();
-        tokio::task::spawn_blocking(move || {
-            if replace {
-                catalog.replace_connection(
-                    &registered_integration,
-                    &registered_connection,
-                    &registered_endpoint,
-                    &registered_headers_copy,
-                    &registered_auth,
-                )
-            } else {
-                catalog.register_connection(
-                    &registered_integration,
-                    &registered_connection,
-                    &registered_endpoint,
-                    &registered_headers_copy,
-                    &registered_auth,
-                )
-            }
-        })
-        .await??;
-        let authorization = self
-            .authorizations
-            .resolve(
-                connection_id,
-                server.endpoint(),
-                &auth,
-                operation_id,
-                cancellation.clone(),
-            )
-            .await?;
-        if cancellation.is_cancelled() {
-            return Err(McpHostError::from(McpAdapterError::Cancelled).into());
-        }
-        let snapshot = discover_cancellable(
-            &adapter,
-            connection_id,
-            server.endpoint(),
-            &registered_headers,
-            authorization.as_ref(),
-            cancellation,
-        )
-        .await?;
-        let catalog = self.mcp_catalog.clone();
-        let enabled_profile = profile_id.clone();
-        let stored_snapshot = snapshot.clone();
-        tokio::task::spawn_blocking(move || {
-            catalog.publish_and_enable_connection(enabled_profile.as_str(), &stored_snapshot)
-        })
-        .await??;
-        Ok(snapshot)
-    }
-
-    pub(crate) async fn authorize_profile(
-        &self,
-        profile_id: &AgentProfileId,
-        connection_id: &str,
-        operation_id: &str,
-        restart: bool,
-        updates: Option<&ToolUpdates>,
-        cancellation: CancellationToken,
-    ) -> Result<McpCatalogSnapshot, PluginError> {
-        let catalog = self.mcp_catalog.clone();
-        let stored_connection = connection_id.to_owned();
-        let connection =
-            tokio::task::spawn_blocking(move || catalog.connection_config(&stored_connection))
-                .await??;
-        let authorization = self
-            .authorizations
-            .authorize(
-                McpOAuthAuthorizationRequest {
-                    connection_id,
-                    endpoint: &connection.endpoint,
-                    reference: &connection.auth,
-                    operation_id,
-                    restart,
-                    updates,
-                },
-                cancellation.clone(),
-            )
-            .await?;
-        let adapter = self.mcp_adapter.as_deref().ok_or_else(|| {
-            PluginError::Unavailable(
-                "RENOA_MCP_ADAPTER must be set before authorizing a package MCP server".to_owned(),
-            )
-        })?;
-        let snapshot = discover_cancellable(
-            adapter,
-            connection_id,
-            &connection.endpoint,
-            &connection.request_headers,
-            Some(&authorization),
-            cancellation,
-        )
-        .await?;
-        let catalog = self.mcp_catalog.clone();
-        let enabled_profile = profile_id.clone();
-        let stored_snapshot = snapshot.clone();
-        tokio::task::spawn_blocking(move || {
-            catalog.publish_and_enable_connection(enabled_profile.as_str(), &stored_snapshot)
-        })
-        .await??;
-        Ok(snapshot)
-    }
+struct AddOperationContext<'a> {
+    profile_id: &'a AgentProfileId,
+    operation_id: &'a str,
+    updates: Option<&'a ToolUpdates>,
 }
 
 struct PreparedExtension {

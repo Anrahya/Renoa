@@ -1,6 +1,6 @@
 use crate::{
     AgentProfileId,
-    mcp::{McpAuthorizationResolver, McpCatalogSnapshot, discover},
+    mcp::{McpCatalogSnapshot, discover},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -92,12 +92,9 @@ impl LocalHost {
             )
         })?;
         let operation_id = format!("host-refresh.{}", uuid::Uuid::new_v4());
-        let authorizations = McpAuthorizationResolver::new(
-            &self.config.mcp_catalog,
-            self.config.mcp_adapter.clone(),
-            self.config.mcp_credentials.clone(),
-        );
-        let authorization = authorizations
+        let authorization = self
+            .config
+            .mcp_authorizations
             .resolve(
                 connection_id,
                 &connection.endpoint,

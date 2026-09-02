@@ -3,7 +3,7 @@ use tokio_util::sync::CancellationToken;
 use super::{
     OAuthCoordinator, REFRESH_LOCK_WAIT, adapter_may_have_dispatched, lock, process,
     process::OAuthResult,
-    secret::OAuthSecretBundle,
+    secret_store::OAuthSecretBundle,
     store::{OAuthFlow, OAuthPhase},
 };
 use crate::mcp::{

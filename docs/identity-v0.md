@@ -50,6 +50,22 @@ device's credential. Native clients keep it in a platform keychain, keystore,
 or service-manager credential facility; an owner-only file is the explicit
 headless fallback.
 
+## Auxiliary HTTP authentication
+
+One enrolled device credential may also authenticate a narrow coordinator HTTP
+route owned by that installation. The request carries the device ID in
+`X-Renoa-Device-Id` and the credential as an `Authorization: Bearer` value.
+The coordinator resolves the stored peer identity exactly as it does for a
+WebSocket connection; the request cannot claim or change its role.
+
+The first consumer is the MCP OAuth callback-relay management API. Only a Node
+identity may create, poll, or acknowledge its own relay records. This does not
+turn the API into an RCP transport or grant task access. The provider-facing
+callback is intentionally unauthenticated by device credential: its 256-bit
+OAuth state is the single-use correlation secret, and the coordinator stores
+only its digest before the callback arrives. Device credentials never appear in
+URLs, callback pages, or OAuth provider traffic.
+
 ## Browser passkey flow
 
 The coordinator is configured with one exact relying-party ID and origin. The
@@ -147,6 +163,8 @@ or SQLite details.
    and tool credentials remain separate state with separate owners.
 10. A database predating task ownership is rejected; a migration cannot invent
     authorization.
+11. Reusing device authentication on an auxiliary HTTP route preserves the
+    enrolled server-side role and grants no implicit RCP task authority.
 
 ## Remaining work
 

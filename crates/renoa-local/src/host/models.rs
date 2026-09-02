@@ -1,12 +1,26 @@
 use super::{HostConfig, LocalHostError};
 use crate::selection::RuntimeSelection;
-use crate::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
+use crate::{AgentProfile, ModelChoice, ModelProvider, ReasoningLevel, discover_models};
 
-pub(crate) async fn discover_enabled_models(
+pub(crate) async fn discover_profile_models(
     host: &HostConfig,
+    profile: &AgentProfile,
 ) -> Result<Vec<ModelChoice>, LocalHostError> {
+    if let Some(provider) = profile.model_provider()
+        && !host.providers.contains(&provider)
+    {
+        return Err(LocalHostError::Configuration(format!(
+            "profile `{}` requires the {} provider, but it is not enabled",
+            profile.id(),
+            provider.name()
+        )));
+    }
     let mut models = Vec::new();
-    for provider in &host.providers {
+    for provider in host.providers.iter().filter(|provider| {
+        profile
+            .model_provider()
+            .is_none_or(|required| required == **provider)
+    }) {
         models.extend(
             discover_models(
                 host.bridge.clone(),

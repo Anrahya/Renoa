@@ -6,6 +6,7 @@ use std::{
 use crate::ingress::{ParsedUpdate, Topic};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
+mod actions;
 mod admission;
 mod schema;
 #[cfg(test)]
@@ -83,13 +84,14 @@ impl SurfaceStore {
 
     pub(crate) async fn recover(&self) -> Result<RecoveryReport, StoreError> {
         self.access(|connection| {
+            let transaction = schema::immediate_transaction(connection)?;
             let now = now_ms()?;
-            let requeued = connection.execute(
+            let requeued = transaction.execute(
                 "UPDATE updates SET state = 'queued', updated_at_ms = ?1
                  WHERE state = 'running'",
                 [now],
             )?;
-            let delivery_unknown = connection.execute(
+            let delivery_unknown = transaction.execute(
                 "UPDATE updates
                  SET state = 'delivery_unknown',
                      error = 'process ended while Telegram final delivery was in flight',
@@ -97,9 +99,20 @@ impl SurfaceStore {
                  WHERE state = 'delivering'",
                 [now],
             )?;
+            let action_delivery_unknown = transaction.execute(
+                "UPDATE surface_actions
+                 SET state = 'delivery_unknown',
+                     error = 'process ended while Telegram action delivery was in flight',
+                     updated_at_ms = ?1
+                 WHERE state = 'delivering'",
+                [now],
+            )?;
+            actions::scrub_settled_action_urls(&transaction, now)?;
+            transaction.commit()?;
             Ok(RecoveryReport {
                 requeued,
                 delivery_unknown,
+                action_delivery_unknown,
             })
         })
         .await
@@ -146,13 +159,18 @@ impl SurfaceStore {
 
     pub(crate) async fn set_result(&self, update_id: i64, text: String) -> Result<(), StoreError> {
         self.access(move |connection| {
-            let changed = connection.execute(
+            let transaction = schema::immediate_transaction(connection)?;
+            let now = now_ms()?;
+            let changed = transaction.execute(
                 "UPDATE updates
                  SET state = 'ready', result = ?1, error = NULL, updated_at_ms = ?2
                  WHERE update_id = ?3 AND state = 'running'",
-                params![text, now_ms()?, update_id],
+                params![text, now, update_id],
             )?;
-            require_one(changed, update_id, "running", "ready")
+            require_one(changed, update_id, "running", "ready")?;
+            actions::scrub_action_urls_for_update(&transaction, update_id, now)?;
+            transaction.commit()?;
+            Ok(())
         })
         .await
     }
@@ -344,6 +362,8 @@ fn decode_work(kind: &str, payload: Option<String>) -> Result<WorkKind, StoreErr
         "compact" => Ok(WorkKind::Compact),
         "new" => Ok(WorkKind::New),
         "status" => Ok(WorkKind::Status),
+        "model" => Ok(WorkKind::Model(payload)),
+        "reasoning" => Ok(WorkKind::Reasoning(payload)),
         "cancel" => Ok(WorkKind::Cancel),
         "notice" => Ok(WorkKind::Notice(require_payload(kind, payload)?)),
         _ => Err(StoreError::Invalid(format!(

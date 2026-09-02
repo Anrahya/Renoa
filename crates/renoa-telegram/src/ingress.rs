@@ -18,6 +18,8 @@ pub(crate) enum InboundKind {
     Compact,
     New,
     Status,
+    Model(Option<String>),
+    Reasoning(Option<String>),
     Cancel,
     Notice(&'static str),
     Stopped { draft_id: i64 },
@@ -31,6 +33,8 @@ impl InboundKind {
             Self::Compact => "compact",
             Self::New => "new",
             Self::Status => "status",
+            Self::Model(_) => "model",
+            Self::Reasoning(_) => "reasoning",
             Self::Cancel => "cancel",
             Self::Notice(_) => "notice",
             Self::Stopped { .. } => "stopped",
@@ -146,18 +150,22 @@ fn command_or_prompt(text: String, bot_username: Option<&str>) -> InboundKind {
     let Some(command) = recognized_command(first, bot_username) else {
         return InboundKind::Prompt(text);
     };
-    if text.split_whitespace().count() != 1 {
-        return InboundKind::Notice("Arcee commands do not accept extra arguments.");
+    let mut arguments = text.split_whitespace().skip(1);
+    let argument = arguments.next().map(str::to_owned);
+    if arguments.next().is_some() {
+        return InboundKind::Notice("Arcee commands accept at most one argument.");
     }
     match command {
-        "new" => InboundKind::New,
-        "compact" => InboundKind::Compact,
-        "status" => InboundKind::Status,
-        "cancel" => InboundKind::Cancel,
-        "start" | "help" => InboundKind::Notice(
-            "Arcee is ready. Send a task, or use /new, /compact, /status, or /cancel.",
+        "model" => InboundKind::Model(argument),
+        "reasoning" => InboundKind::Reasoning(argument),
+        "new" if argument.is_none() => InboundKind::New,
+        "compact" if argument.is_none() => InboundKind::Compact,
+        "status" if argument.is_none() => InboundKind::Status,
+        "cancel" if argument.is_none() => InboundKind::Cancel,
+        "start" | "help" if argument.is_none() => InboundKind::Notice(
+            "Arcee is ready. Send a task, or use /new, /compact, /status, /model, /reasoning, or /cancel.",
         ),
-        _ => InboundKind::Prompt(text),
+        _ => InboundKind::Notice("This command does not accept an argument."),
     }
 }
 
@@ -171,7 +179,7 @@ fn recognized_command<'a>(first: &'a str, bot_username: Option<&str>) -> Option<
     }
     matches!(
         name,
-        "new" | "compact" | "status" | "cancel" | "start" | "help"
+        "new" | "compact" | "status" | "model" | "reasoning" | "cancel" | "start" | "help"
     )
     .then_some(name)
 }
@@ -241,6 +249,22 @@ mod tests {
         );
         assert!(matches!(
             parse(fixture("/compact now"), 42, Some("rc_bot")).kind,
+            InboundKind::Notice(_)
+        ));
+        assert_eq!(
+            parse(fixture("/model@RC_BOT glm-5.3-flash"), 42, Some("rc_bot")).kind,
+            InboundKind::Model(Some("glm-5.3-flash".to_owned()))
+        );
+        assert_eq!(
+            parse(fixture("/model"), 42, Some("rc_bot")).kind,
+            InboundKind::Model(None)
+        );
+        assert_eq!(
+            parse(fixture("/reasoning high"), 42, Some("rc_bot")).kind,
+            InboundKind::Reasoning(Some("high".to_owned()))
+        );
+        assert!(matches!(
+            parse(fixture("/model one two"), 42, Some("rc_bot")).kind,
             InboundKind::Notice(_)
         ));
         assert_eq!(

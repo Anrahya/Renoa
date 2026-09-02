@@ -4,7 +4,8 @@ use renoa_kernel::{AgentId, SessionId};
 use uuid::Uuid;
 
 use super::{
-    LocalHost, LocalHostError, RuntimeRequest, initial_reasoning, require_model, resolve_runtime,
+    LocalHost, LocalHostError, RuntimeRequest, discover_profile_models, initial_reasoning,
+    require_model, resolve_runtime,
 };
 use crate::{
     AgentProfileId, AgentSession, LocalSession, LocalWorkspace,
@@ -74,15 +75,14 @@ impl LocalHost {
         let profile = self.profile(profile_id)?.clone();
         let workspace = LocalWorkspace::open(cwd)?;
         let workspace_path = std::fs::canonicalize(cwd)?;
-        let models = self.models().await?;
-        let reasoning = initial_reasoning(
-            &models,
-            self.config.initial_provider,
-            &self.config.initial_model,
-        )?;
+        let models = discover_profile_models(&self.config, &profile).await?;
+        let initial_provider = profile
+            .model_provider()
+            .unwrap_or(self.config.initial_provider);
+        let reasoning = initial_reasoning(&models, initial_provider, &self.config.initial_model)?;
         let model = require_model(
             &models,
-            self.config.initial_provider,
+            initial_provider,
             &self.config.initial_model,
             "configured",
         )?;
@@ -101,7 +101,7 @@ impl LocalHost {
         )
         .await?;
         let selection = RuntimeSelection {
-            provider: self.config.initial_provider,
+            provider: initial_provider,
             model: self.config.initial_model.clone(),
             reasoning,
         };
@@ -190,7 +190,7 @@ impl LocalHost {
                 "session metadata does not match the requested Agent session".to_owned(),
             ));
         }
-        self.profile(&manifest.profile)?;
+        let profile = self.profile(&manifest.profile)?.clone();
         let requested_workspace = std::fs::canonicalize(cwd)?;
         if manifest.workspace != requested_workspace {
             return Err(LocalHostError::InvalidRequest(
@@ -217,7 +217,17 @@ impl LocalHost {
                 selection.provider
             )));
         }
-        let models = self.models().await?;
+        if let Some(required) = profile.model_provider()
+            && selection.provider != required
+        {
+            return Err(LocalHostError::Configuration(format!(
+                "session profile `{}` permits only the {} provider, but its saved model uses {}",
+                profile.id(),
+                required.name(),
+                selection.provider.name()
+            )));
+        }
+        let models = discover_profile_models(&self.config, &profile).await?;
         validate_selection(&models, &selection)?;
         LocalWorkspace::open(&requested_workspace)?;
         Ok(Arc::new(AgentSession::new(

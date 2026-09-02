@@ -11,6 +11,9 @@ into ordinary kernel-backed calls, and supports no authentication, an exact
 GitHub CLI account reference, a named Secret Service bearer or header
 reference, or a Host-owned OAuth 2.1 browser flow using Client ID Metadata Documents,
 pre-registered client credentials, or Dynamic Client Registration.
+Desktop Hosts use a loopback callback and Secret Service. Headless Hosts use
+the same OAuth state machine with a short-lived callback relay at the Renoa
+control origin and an owner-only local secret directory.
 
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md) owns the
 broader extension direction. [`renoa-host-v0.md`](renoa-host-v0.md) owns runtime
@@ -151,6 +154,12 @@ migrate without changing identity or catalog state.
 Schema v11 adds only the private shared Agent Plugin registry identity and
 cursor. It does not change MCP integrations, connections, credentials,
 catalogs, attachments, tool identity, or execution.
+Schema v12 adds a mutually exclusive callback-relay identity beside the
+existing loopback port. Existing flows migrate with their exact loopback port;
+no credential, catalog, attachment, or receipt changes owner.
+Schema v13 removes the active-connection foreign key from OAuth attempts and
+receipts. This lets a proposed connection finish authorization before its
+configuration is published; existing OAuth state migrates unchanged.
 Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, v0.5, and
 v0.6 remain readable by the v0.7 Host. The two early revisions retain their
 original headerless digest encoding, so their durable references remain exact
@@ -167,13 +176,15 @@ User information and fragments are rejected. A query string is allowed but is
 treated as public configuration: it is shown during inspection, contributes to
 endpoint identity, and must never carry a credential. A GitHub bearer token is
 resolved just in time with `gh auth token --hostname HOST --user ACCOUNT`. A
-named credential is resolved just in time with `secret-tool lookup application
-renoa credential ID`. The Host sends its secret plus the connection's reviewed
+named credential is resolved just in time. A desktop Host uses `secret-tool
+lookup application renoa credential ID`; a configured headless Host uses its
+owner-only private credential directory. The Host sends its secret plus the connection's reviewed
 header name and public prefix to the adapter only through standard input. The
 adapter forms that exact header and scopes it to the configured URL. Rust wipes
 its owned secret buffers after use.
-It never enters Host storage, arguments, environment, catalog data,
-diagnostics, model context, or a runtime binding.
+It never enters arguments, environment, catalog data, diagnostics, model
+context, or a runtime binding. Only the selected Host's secret facility stores
+the value.
 
 An OAuth credential bundle is bound to the exact configured MCP endpoint at
 both the Node and Rust process boundaries. Its Secret Service reference is
@@ -181,9 +192,10 @@ derived from the connection and endpoint identity. This prevents a token from
 being reused for another service even if separate local data stores reuse a
 connection name.
 
-A pre-registered client uses a separate named Secret Service item containing
+A pre-registered client uses a separate named Host credential containing
 strict JSON with `schema_version`, `issuer`, `client_id`, and an optional
-`client_secret`. The issuer is required because OAuth client identifiers are
+`client_secret`. Desktop stores use Secret Service; headless stores use the
+same private credential directory as named API tokens. The issuer is required because OAuth client identifiers are
 authorization-server-specific. The Host resolves this item just in time and
 passes it only over adapter standard input. CIMD URLs and DCR policy are public
 configuration; client IDs, client secrets, and tokens are not model arguments.
@@ -211,25 +223,62 @@ client certificates, proxies, and insecure TLS switches are outside v0.
 OAuth remains Host connection policy, not MCP tool behavior and not kernel
 state. `extension_manage` can add or connect a package with `credential.kind =
 "oauth"` and an explicit `registration` object. `client_metadata` supplies an
-HTTPS CIMD URL, `pre_registered` supplies a named Secret Service reference, and
-`dynamic` explicitly permits DCR. The Host registers the connection before
-authentication but publishes and attaches its catalog only after authorization
-and authenticated discovery both succeed. `authorize` resumes an existing
+HTTPS CIMD URL, `pre_registered` supplies a named Host credential reference, and
+`dynamic` explicitly permits DCR. The Host validates a proposed connection
+without publishing it, then authenticates and discovers its complete catalog.
+Only one final SQLite transaction publishes the connection, catalog, and
+profile attachment. A failed new connection leaves none of those rows; a failed
+replacement leaves the prior working configuration untouched. `authorize` resumes an existing
 flow. `restart: true` is the explicit instruction to abandon an expired or
 unknown flow and discard cached tokens before starting again.
 
-The Host binds an exact `127.0.0.1` callback on an ephemeral port, creates a
-cryptographically random state value, persists the callback identity and phase,
-then asks the pinned MCP client SDK to perform protected-resource and
-authorization-server discovery. The SDK uses a pre-registered client when one
-was configured, otherwise uses CIMD when the server advertises it, and may fall
-back from configured CIMD to advertised DCR. Explicit DCR fails with actionable
-setup guidance when the server does not advertise a registration endpoint.
-Renoa opens the authorization URL with `xdg-open` as an argument, never through
-a shell. The callback accepts one bounded GET from loopback, requires the exact
-Host header and state, records the code in Secret Service before acknowledging
-the browser, and validates `iss` when the server advertises it. The callback
-expires after ten minutes.
+The Host creates a cryptographically random state value and one exact callback
+identity before asking the pinned MCP client SDK to perform protected-resource
+and authorization-server discovery. A desktop Host binds `127.0.0.1` on an
+ephemeral port and opens the authorization URL with `xdg-open` as an argument,
+never through a shell. A headless Host reserves a ten-minute callback at the
+configured Renoa HTTPS origin and emits the provider authorization URL as
+structured surface progress. The person can open that link on another device;
+the provider redirects to `/v1/oauth/callback` and the Host continues polling.
+
+The callback relay is an auxiliary Host-auth service, not RCP task data. Relay
+management requires a separately enrolled Node device credential. The public
+provider callback is located only by the SHA-256 digest of the 256-bit OAuth
+state. The relay durably records one bounded code or rejection before replying
+to the browser. Exact duplicate callbacks are idempotent; conflicting reuse is
+rejected. The Host writes the result to its local secret facility before its
+idempotent acknowledgement clears the relay copy. A crash or network failure
+therefore resumes from either durable side without repeating an OAuth
+credential POST. Relay HTTP delivery may retry only transient transport or
+gateway failure with the same client-selected relay identity; MCP and OAuth
+credential operations keep their no-hidden-retry rule. The relay never receives
+the PKCE verifier, client secret, access token, or refresh token.
+
+Missing API-token and pre-registered OAuth-client references on a configured
+headless Host use a separate short-lived credential-intake relay. The Host
+first writes a random AES-256-GCM key, capability, relay identity, and operation
+binding into an owner-only local file. It sends only the capability digest and
+non-secret form metadata to the coordinator. The surface receives a permanent
+HTTPS action whose URL fragment contains the key and capability; URL fragments
+are not sent in HTTP requests. The browser fetches a same-origin, strictly
+content-security-policy-bound page, encrypts the typed credential locally with
+a fresh 96-bit nonce and relay-bound additional data, then submits only the
+nonce, ciphertext, and capability. The coordinator validates the capability,
+durably stores one idempotent ciphertext, and cannot decrypt it.
+
+The Host polls with its enrolled Node credential, decrypts and validates the
+typed value, atomically stores it in its private credential directory, and only
+then acknowledges the relay. Acknowledgement clears the coordinator's nonce
+and ciphertext. Process restart reuses the locally retained relay identity,
+key, and capability; it never creates a second secret prompt for the same tool
+operation. The credential-intake relay is not a credential-sharing service:
+the resulting value belongs only to the requesting Host.
+
+The SDK uses a pre-registered client when one was configured, otherwise uses
+CIMD when the server advertises it, and may fall back from configured CIMD to
+advertised DCR. Explicit DCR fails with actionable setup guidance when the
+server does not advertise a registration endpoint. Both callback modes
+validate the state and optional `iss` value before exchange.
 
 Persisted dynamically registered clients and tokens are returned only for the
 same validated authorization-server issuer that produced them. Pre-registered
@@ -258,15 +307,19 @@ is deferred until the Host has a proven settlement boundary.
 
 Authorization URLs may be emitted as surface progress while the browser is
 waiting. Raw OAuth state and credentials never enter tool arguments, model
-context, Host SQLite, environment variables, or package content. V0 requires a
-desktop Secret Service (`secret-tool`) and a browser opener on the executing
-node. Packages are portable; connections and credentials remain node-local.
+context, Host SQLite, environment variables, or package content. Desktop Hosts
+store OAuth state and tokens in Secret Service. A configured headless Host uses
+atomic files inside a `0700` directory with `0600` entries; the callback-relay
+device credential comes from an owner-only or service-manager credential file.
+Packages are portable. Connections and credentials remain local to the Host;
+this callback transport does not implement cross-node credential sharing.
 
 An existing connection remains immutable by default. `replace: true` on
 `add` or `connect` is the explicit repair path for a wrong endpoint or
-credential policy. Replacement is one Host transaction: the old attachment,
-catalog, OAuth flow, and terminal receipts disappear before the new connection
-is registered. Repeating the same replacement is a no-op and preserves its
+credential policy. The replacement candidate is authenticated and discovered
+while the old connection stays authoritative. One Host transaction then swaps
+the connection, catalog, and attachment and clears obsolete OAuth state.
+Repeating the same replacement is a no-op and preserves its
 catalog. A successful unauthenticated discovery reports `catalog_loaded`; only
 a completed OAuth flow reports `authorized`.
 
@@ -663,7 +716,16 @@ and the real process boundary:
     additional-property violations fail against the frozen input schema before
     any remote dispatch; and
 32. management inventory pagination returns every compact fact in order, while
-    a package, connection, or skill change invalidates an earlier cursor.
+    a package, connection, or skill change invalidates an earlier cursor;
+33. a headless Host resumes a relayed callback after interruption, persists the
+    code locally before clearing it remotely, and handles provider rejection by
+    the same durable acknowledgement rule; and
+34. the relay admits only enrolled Node credentials, survives coordinator
+    restart, rejects conflicting callback reuse, and never stores PKCE or token
+    material; and
+35. encrypted browser intake reaches the requesting Host over the real relay,
+    while failed new connections publish no configuration and failed
+    replacements preserve the previous working connection.
 
 ## Locked decisions
 
@@ -674,10 +736,18 @@ and the real process boundary:
 - Connections are direct and use no auth, one exact `gh` CLI account reference,
   one named Secret Service credential with an exact header and prefix, or
   Host-owned OAuth; Renoa stores no secret in SQLite or package data.
-- OAuth uses PKCE, exact loopback callbacks, endpoint-bound Secret Service
-  state, explicit client registration policy, authorization-server issuer
-  binding, explicit durable phases, one credential POST per adapter operation,
-  and no automatic replay after an uncertain exchange.
+- OAuth uses PKCE, one exact loopback or self-hosted relay callback,
+  endpoint-bound local secret state, explicit client registration policy,
+  authorization-server issuer binding, explicit durable phases, one
+  credential POST per adapter operation, and no automatic replay after an
+  uncertain exchange.
+- The callback relay stores only a short-lived code or rejection after hashing
+  state, clears that result only after the execution Host has persisted it, and
+  never becomes a credential-sharing service or an RCP task record.
+- Headless credential intake sends the coordinator only form metadata,
+  capability hashes, and browser-encrypted bytes. The decryption key remains
+  with the browser link and execution Host; connection publication waits for
+  credential validation and authenticated discovery.
 - Fixed integration headers are public, bounded data. Sensitive and
   client-owned header names are rejected.
 - Discovery publishes only complete, bounded, deterministic catalog snapshots.
@@ -697,9 +767,9 @@ and the real process boundary:
 ## Open decisions after this slice
 
 - compatibility outside the enumerated MCP revisions and stdio transport;
-- headless/device authorization, GUI credential entry, credential revocation,
-  cross-platform secret stores, and cross-node secret synchronization;
-- future Host schema migrations beyond v11;
+- credential revocation, cross-platform desktop secret stores, and cross-node
+  secret synchronization;
+- future Host schema migrations beyond v13;
 - catalog cache hints and list-change subscriptions;
 - progress projection;
 - schema dialects or custom keywords not accepted by the pinned SDK validator;
@@ -712,7 +782,10 @@ and the real process boundary:
 
 ## Evidence
 
-Reviewed on 2026-08-30. This contract copies no upstream source.
+Reviewed on 2026-09-02. This contract copies no upstream source. The remote
+callback design follows OAuth 2.0 Security Best Current Practice (RFC 9700),
+OAuth 2.0 for Native Apps (RFC 8252), and MCP authorization revision
+`2026-07-28`; Renoa still owns its relay and durability implementation.
 
 - [MCP specification `2026-07-28` at `5f5440bb26a62e2cf3440b92da5a667efa03b267`](https://github.com/modelcontextprotocol/modelcontextprotocol/tree/5f5440bb26a62e2cf3440b92da5a667efa03b267), with the repository's Apache-2.0 transition, remaining MIT material, and CC-BY-4.0 documentation.
 - [MCP TypeScript SDK 2.0.0 at `cc4b41617ce3601b1290d67216ea0b194a3cd9ac`](https://github.com/modelcontextprotocol/typescript-sdk/tree/cc4b41617ce3601b1290d67216ea0b194a3cd9ac). The published `@modelcontextprotocol/client@2.0.0` package declares MIT; the source repository records the broader MCP license transition.

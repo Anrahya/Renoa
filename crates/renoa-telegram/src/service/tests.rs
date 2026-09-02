@@ -4,7 +4,7 @@ use renoa_agent::Message;
 use renoa_local::{
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, arcee_profile,
 };
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_util::sync::CancellationToken;
 
@@ -12,7 +12,7 @@ use super::{ActiveTurn, Worker, retry_delay};
 use crate::{
     api::{ApiError, TelegramApi},
     ingress::{InboundKind, ParsedUpdate, Topic},
-    store::{PendingAction, SurfaceStore},
+    store::{DeliveryItem, PendingAction, SurfaceStore, WorkItem},
 };
 
 #[test]
@@ -35,6 +35,111 @@ fn polling_backoff_is_bounded_and_honors_server_delay() {
 
 #[tokio::test]
 async fn one_telegram_prompt_crosses_the_real_arcee_host_and_kernel_path() {
+    let mut fixture = service_fixture().await;
+    let work = admit_work(
+        &fixture.store,
+        1,
+        InboundKind::Prompt("Do the real task.".to_owned()),
+    )
+    .await;
+    let session_id = work.session_id;
+    fixture
+        .worker
+        .execute(work)
+        .await
+        .expect("execute Arcee prompt");
+    let delivery = ready_delivery(&fixture.store).await;
+    assert_eq!(delivery.text, "Arcee completed the real path.");
+    let history = fixture
+        .worker
+        .sessions
+        .get(&session_id)
+        .expect("cached Arcee session")
+        .history()
+        .expect("durable Arcee history");
+    assert!(history.len() >= 2);
+    assert_eq!(history[0].message, Message::user_text("Do the real task."));
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn telegram_model_commands_use_the_surface_neutral_session_configuration() {
+    let mut fixture = service_fixture().await;
+    let model_work = admit_work(
+        &fixture.store,
+        1,
+        InboundKind::Model(Some("fixture-model-b".to_owned())),
+    )
+    .await;
+    let session_id = model_work.session_id;
+    fixture
+        .worker
+        .execute(model_work)
+        .await
+        .expect("execute model command");
+    let model_delivery = ready_delivery(&fixture.store).await;
+    assert_eq!(
+        model_delivery.text,
+        "Model changed to Fixture Model B (fixture-model-b).\nReasoning: High."
+    );
+    assert_eq!(
+        fixture
+            .worker
+            .sessions
+            .get(&session_id)
+            .expect("cached Arcee session")
+            .configuration()
+            .expect("selected configuration")
+            .model,
+        "opencode-go/fixture-model-b"
+    );
+    finish_delivery(&fixture.store, model_delivery, 81).await;
+    let reasoning_work = admit_work(
+        &fixture.store,
+        2,
+        InboundKind::Reasoning(Some("low".to_owned())),
+    )
+    .await;
+    fixture
+        .worker
+        .execute(reasoning_work)
+        .await
+        .expect("execute reasoning command");
+    let reasoning_delivery = ready_delivery(&fixture.store).await;
+    assert_eq!(
+        reasoning_delivery.text,
+        "Reasoning changed to Low for Fixture Model B."
+    );
+    assert_eq!(
+        fixture
+            .worker
+            .sessions
+            .get(&session_id)
+            .expect("cached Arcee session")
+            .configuration()
+            .expect("reasoning configuration")
+            .reasoning,
+        renoa_local::ReasoningLevel::Low
+    );
+    fixture.shutdown().await;
+}
+
+struct ServiceFixture {
+    _directory: TempDir,
+    store: SurfaceStore,
+    worker: Worker,
+    server_shutdown: CancellationToken,
+    server: tokio::task::JoinHandle<()>,
+}
+
+impl ServiceFixture {
+    async fn shutdown(self) {
+        self.server_shutdown.cancel();
+        self.server.await.expect("draft server task");
+    }
+}
+
+async fn service_fixture() -> ServiceFixture {
     let directory = tempdir().expect("temporary service root");
     let data = directory.path().join("data");
     let workspace = directory.path().join("workspace");
@@ -49,8 +154,8 @@ async fn one_telegram_prompt_crosses_the_real_arcee_host_and_kernel_path() {
         &data,
         LocalModelConfiguration::new(
             &bridge,
-            vec![ModelProvider::Xai],
-            ModelProvider::Xai,
+            vec![ModelProvider::OpenCodeGo],
+            ModelProvider::OpenCodeGo,
             "fixture-model",
             &credentials,
         ),
@@ -63,30 +168,8 @@ async fn one_telegram_prompt_crosses_the_real_arcee_host_and_kernel_path() {
         .bind_identity(9, 42, &workspace)
         .await
         .expect("bind Telegram identity");
-    store
-        .admit(ParsedUpdate {
-            update_id: 1,
-            canonical: b"telegram-update-1".to_vec(),
-            topic: Some(Topic {
-                chat_id: 42,
-                thread_id: None,
-            }),
-            message_id: Some(10),
-            kind: InboundKind::Prompt("Do the real task.".to_owned()),
-        })
-        .await
-        .expect("admit Telegram prompt");
-    let PendingAction::Execute(work) = store
-        .next_action()
-        .await
-        .expect("load work")
-        .expect("queued work")
-    else {
-        panic!("prompt did not become executable");
-    };
-    let session_id = work.session_id;
     let (origin, server_shutdown, server) = draft_server().await;
-    let mut worker = Worker {
+    let worker = Worker {
         api: Arc::new(TelegramApi::for_test(&origin, "9:test").expect("test API")),
         store: store.clone(),
         host: Arc::new(host),
@@ -97,28 +180,61 @@ async fn one_telegram_prompt_crosses_the_real_arcee_host_and_kernel_path() {
         wake: Arc::new(tokio::sync::Notify::new()),
         shutdown: CancellationToken::new(),
     };
+    ServiceFixture {
+        _directory: directory,
+        store,
+        worker,
+        server_shutdown,
+        server,
+    }
+}
 
-    worker.execute(work).await.expect("execute Arcee prompt");
+async fn admit_work(store: &SurfaceStore, update_id: i64, kind: InboundKind) -> WorkItem {
+    store
+        .admit(ParsedUpdate {
+            update_id,
+            canonical: format!("telegram-update-{update_id}").into_bytes(),
+            topic: Some(Topic {
+                chat_id: 42,
+                thread_id: None,
+            }),
+            message_id: Some(update_id + 9),
+            kind,
+        })
+        .await
+        .expect("admit Telegram work");
+    let PendingAction::Execute(work) = store
+        .next_action()
+        .await
+        .expect("load work")
+        .expect("queued work")
+    else {
+        panic!("update did not become executable");
+    };
+    work
+}
+
+async fn ready_delivery(store: &SurfaceStore) -> DeliveryItem {
     let PendingAction::Deliver(delivery) = store
         .next_action()
         .await
         .expect("load result")
         .expect("ready result")
     else {
-        panic!("Arcee result did not become deliverable");
+        panic!("result did not become deliverable");
     };
-    assert_eq!(delivery.text, "Arcee completed the real path.");
-    let history = worker
-        .sessions
-        .get(&session_id)
-        .expect("cached Arcee session")
-        .history()
-        .expect("durable Arcee history");
-    assert!(history.len() >= 2);
-    assert_eq!(history[0].message, Message::user_text("Do the real task."));
+    delivery
+}
 
-    server_shutdown.cancel();
-    server.await.expect("draft server task");
+async fn finish_delivery(store: &SurfaceStore, delivery: DeliveryItem, message_id: i64) {
+    store
+        .mark_delivering(delivery.update_id)
+        .await
+        .expect("begin delivery");
+    store
+        .mark_chunk_delivered(delivery.update_id, delivery.cursor, message_id, true)
+        .await
+        .expect("finish delivery");
 }
 
 async fn draft_server() -> (String, CancellationToken, tokio::task::JoinHandle<()>) {
@@ -156,14 +272,22 @@ import { createHash } from "node:crypto";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const action = process.env.RENOA_MODEL_ACTION;
-const modelSpec = JSON.stringify({ id: "fixture-model" });
+const modelSpec = process.env.RENOA_MODEL_SPEC;
 if (action === "catalog") {
-  process.stdout.write(JSON.stringify({ ok: true, response: { models: [{
+  process.stdout.write(JSON.stringify({ ok: true, response: { models: [
+  {
     id: "fixture-model",
     name: "Fixture Model",
-    reasoning_levels: ["high"],
+    reasoning_levels: ["low", "high"],
     context_window_tokens: 1000000,
     model_spec: { id: "fixture-model" }
+  },
+  {
+    id: "fixture-model-b",
+    name: "Fixture Model B",
+    reasoning_levels: ["low", "high"],
+    context_window_tokens: 1000000,
+    model_spec: { id: "fixture-model-b" }
   }] } }));
   process.exit(0);
 }
@@ -203,7 +327,11 @@ process.stdout.write(JSON.stringify({
     content: [{ type: "text", text: "Arcee completed the real path." }],
     stop_reason: "stop",
     usage: { input: 8, output: 4, cache_read: 0, cache_write: 0 },
-    metadata: { api: "test", provider: "xai", model: "fixture-model" }
+    metadata: {
+      api: "test",
+      provider: process.env.RENOA_MODEL_PROVIDER,
+      model: JSON.parse(modelSpec).id
+    }
   }
 }) + "\n");
 "#;

@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::super::{
     process::{self, OAuthRegistration, OAuthResult},
-    secret::OAuthSecretStore,
+    secret_store::OAuthSecretStore,
     store::{OAuthFlow, OAuthPhase},
 };
 use super::support::{ENDPOINT, Fixture, compile_secret_tool};
@@ -23,7 +23,7 @@ async fn pre_registered_oauth_clients_are_loaded_from_one_named_secret_reference
     )
     .expect("write OAuth client credential");
     let executable = compile_secret_tool(directory.path(), &data, &writes);
-    let store = OAuthSecretStore::new(executable);
+    let store = OAuthSecretStore::service(executable);
 
     let client = store
         .load_pre_registered_client("drive.client", CancellationToken::new())

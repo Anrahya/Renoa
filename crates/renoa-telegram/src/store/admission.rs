@@ -223,6 +223,7 @@ fn advance_offset(
 fn payload(kind: &InboundKind) -> (Option<&str>, Option<i64>) {
     match kind {
         InboundKind::Prompt(text) => (Some(text), None),
+        InboundKind::Model(model) | InboundKind::Reasoning(model) => (model.as_deref(), None),
         InboundKind::Notice(text) | InboundKind::Ignored(text) => (Some(text), None),
         InboundKind::Stopped { draft_id } => (None, Some(*draft_id)),
         _ => (None, None),

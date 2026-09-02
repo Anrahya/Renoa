@@ -9,6 +9,8 @@ use crate::mcp::{McpHostError, McpOAuthError, hex_sha256};
 struct RedirectUpdate<'a> {
     status: &'static str,
     connection: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<&'a str>,
     authorization_url: &'a str,
     expires_at_ms: Option<i64>,
     message: &'static str,
@@ -17,6 +19,7 @@ struct RedirectUpdate<'a> {
 pub(super) async fn emit_redirect(
     updates: Option<&ToolUpdates>,
     connection_id: &str,
+    display_name: Option<&str>,
     authorization_url: &str,
     expires_at_ms: Option<i64>,
 ) {
@@ -26,9 +29,10 @@ pub(super) async fn emit_redirect(
     let update = RedirectUpdate {
         status: "authorization_required",
         connection: connection_id,
+        display_name,
         authorization_url,
         expires_at_ms,
-        message: "Complete authorization in the opened browser. Renoa is waiting for the local callback.",
+        message: "Open the authorization link in a browser. Renoa is waiting for the callback.",
     };
     if let Ok(encoded) = serde_json::to_string(&update) {
         updates

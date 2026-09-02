@@ -18,15 +18,18 @@ mod skill_tests;
 
 use crate::{
     AgentProfile, AgentProfileError, AgentProfileId, LocalRuntimeError, LocalSessionError,
-    LocalWorkspaceError, ModelBridgeError, ModelChoice, ModelProvider,
-    mcp::{McpCatalogStore, McpCredentialResolver, McpHostError, resolve_adapter},
+    LocalWorkspaceError, ModelBridgeError, ModelProvider,
+    mcp::{
+        McpAuthorizationResolver, McpCatalogStore, McpCredentialResolver, McpHostError,
+        resolve_adapter,
+    },
     plugins::{OfficialRegistry, PLUGIN_STORE_DIRECTORY, PluginError, PluginManager},
     skills::{SkillError, SkillStore, default_global_source, store_path},
     trace::TraceError,
 };
 
 pub(crate) use models::{
-    discover_enabled_models, initial_reasoning, require_model, selected_model_by_selection_id,
+    discover_profile_models, initial_reasoning, require_model, selected_model_by_selection_id,
 };
 use profiles::collect_profiles;
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
@@ -42,6 +45,7 @@ pub struct LocalHostAdapters<'a> {
     mcp: Option<&'a Path>,
     mcp_registry: Option<&'a Path>,
     shared_plugin_registry: Option<&'a str>,
+    oauth_relay: Option<(&'a str, &'a Path)>,
 }
 
 impl<'a> LocalHostAdapters<'a> {
@@ -52,6 +56,7 @@ impl<'a> LocalHostAdapters<'a> {
             mcp,
             mcp_registry: None,
             shared_plugin_registry: None,
+            oauth_relay: None,
         }
     }
 
@@ -68,6 +73,13 @@ impl<'a> LocalHostAdapters<'a> {
         self.shared_plugin_registry = registry;
         self
     }
+
+    /// Uses the self-hosted callback relay and private headless OAuth store.
+    #[must_use]
+    pub const fn with_oauth_relay(mut self, origin: &'a str, credentials: &'a Path) -> Self {
+        self.oauth_relay = Some((origin, credentials));
+        self
+    }
 }
 
 pub(crate) struct HostConfig {
@@ -79,7 +91,7 @@ pub(crate) struct HostConfig {
     pub(crate) credential_store: PathBuf,
     pub(crate) mcp_catalog: McpCatalogStore,
     pub(crate) mcp_adapter: Option<PathBuf>,
-    pub(crate) mcp_credentials: McpCredentialResolver,
+    pub(crate) mcp_authorizations: McpAuthorizationResolver,
     pub(crate) skill_store: SkillStore,
     pub(crate) plugins: PluginManager,
     pub(crate) profiles: BTreeMap<AgentProfileId, AgentProfile>,
@@ -96,6 +108,7 @@ struct HostInitialization {
     mcp_registry_adapter: Option<PathBuf>,
     shared_plugin_registry: Option<String>,
     global_skill_source: Option<PathBuf>,
+    oauth_relay: Option<(String, PathBuf)>,
     profiles: Vec<AgentProfile>,
 }
 
@@ -213,6 +226,9 @@ impl LocalHost {
             mcp_registry_adapter,
             shared_plugin_registry: adapters.shared_plugin_registry.map(str::to_owned),
             global_skill_source: default_global_source(),
+            oauth_relay: adapters
+                .oauth_relay
+                .map(|(origin, credentials)| (origin.to_owned(), credentials.to_path_buf())),
             profiles,
         })
     }
@@ -229,6 +245,7 @@ impl LocalHost {
             mcp_registry_adapter,
             shared_plugin_registry,
             global_skill_source,
+            oauth_relay,
             profiles,
         } = initialization;
         if providers.is_empty() {
@@ -256,6 +273,18 @@ impl LocalHost {
         catalog::initialize(&host_database)?;
         let mcp_catalog = McpCatalogStore::open(host_database.clone())?;
         let mcp_credentials = McpCredentialResolver::default();
+        let mcp_authorizations = match oauth_relay {
+            Some((origin, relay_credentials)) => McpAuthorizationResolver::with_remote_oauth(
+                &mcp_catalog,
+                mcp_adapter.clone(),
+                mcp_credentials,
+                &origin,
+                &relay_credentials,
+            )?,
+            None => {
+                McpAuthorizationResolver::new(&mcp_catalog, mcp_adapter.clone(), mcp_credentials)
+            }
+        };
         let skill_store = SkillStore::initialize(
             host_database.clone(),
             store_path(&data_directory),
@@ -271,13 +300,13 @@ impl LocalHost {
             })
             .transpose()
             .map_err(|error| LocalHostError::Configuration(error.to_string()))?;
-        let plugins = PluginManager::initialize(
+        let plugins = PluginManager::initialize_with_authorizations(
             host_database.clone(),
             data_directory.join(PLUGIN_STORE_DIRECTORY),
             mcp_catalog.clone(),
             mcp_adapter.clone(),
             mcp_registry_adapter,
-            mcp_credentials.clone(),
+            mcp_authorizations.clone(),
             skill_store.clone(),
         )?
         .with_shared_registry(shared_plugin_registry);
@@ -291,7 +320,7 @@ impl LocalHost {
                 credential_store,
                 mcp_catalog,
                 mcp_adapter,
-                mcp_credentials,
+                mcp_authorizations,
                 skill_store,
                 plugins,
                 profiles,
@@ -303,10 +332,6 @@ impl LocalHost {
     #[must_use]
     pub fn profile_ids(&self) -> Vec<AgentProfileId> {
         self.config.profiles.keys().cloned().collect()
-    }
-
-    async fn models(&self) -> Result<Vec<ModelChoice>, LocalHostError> {
-        discover_enabled_models(&self.config).await
     }
 
     fn profile(&self, profile_id: &AgentProfileId) -> Result<&AgentProfile, LocalHostError> {

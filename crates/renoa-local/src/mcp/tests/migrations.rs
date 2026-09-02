@@ -25,10 +25,14 @@ fn a_newer_host_catalog_schema_is_rejected() {
     let (directory, store) = store();
     let path = store.path().to_owned();
     drop(store);
-    Connection::open(&path)
-        .expect("open schema mutation connection")
-        .pragma_update(None, "user_version", 12_u32)
+    let connection = Connection::open(&path).expect("open schema mutation connection");
+    let current = connection
+        .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+        .expect("read current schema version");
+    connection
+        .pragma_update(None, "user_version", current + 1)
         .expect("advance schema version");
+    drop(connection);
 
     assert!(matches!(
         McpCatalogStore::initialize(directory.path().join("host.sqlite3")),

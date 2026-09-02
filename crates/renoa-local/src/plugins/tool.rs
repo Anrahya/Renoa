@@ -21,7 +21,7 @@ use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
 use output::{json_output, plugin_error, registry_error_output};
 
 const TOOL_NAME: &str = "extension_manage";
-const BINDING_REVISION: &str = "renoa-extension-manager-v11";
+const BINDING_REVISION: &str = "renoa-extension-manager-v12";
 
 pub(crate) fn profile_plugin_binding(
     profile_id: AgentProfileId,

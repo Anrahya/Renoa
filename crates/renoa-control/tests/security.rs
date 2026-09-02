@@ -105,10 +105,32 @@ mod security_behaviors {
                 |row| row.get::<_, i64>(0),
             )
             .expect("inspect browser identity tables");
-        assert_eq!(version, 7);
+        let oauth_relay_table_exists = connection
+            .query_row(
+                "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'oauth_callback_relays'
+             )",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("inspect OAuth callback relay table");
+        let credential_relay_table_exists = connection
+            .query_row(
+                "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'credential_relays'
+             )",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("inspect credential relay table");
+        assert_eq!(version, 9);
         assert!(pending_table_exists);
         assert!(stream_table_exists);
         assert_eq!(browser_identity_tables, 5);
+        assert!(oauth_relay_table_exists);
+        assert!(credential_relay_table_exists);
     }
 
     #[test]

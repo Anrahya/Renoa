@@ -1,10 +1,15 @@
-use std::time::Duration;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    time::Duration,
+};
 
 use futures_util::StreamExt as _;
 use reqwest::{Client, redirect::Policy};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
+
+mod messages;
 
 const API_ORIGIN: &str = "https://api.telegram.org";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -184,39 +189,26 @@ enum RichDraftBlock<'a> {
     Paragraph { text: &'a str },
 }
 
-#[derive(Serialize)]
-struct RichMessageRequest<'a> {
-    chat_id: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message_thread_id: Option<i64>,
-    rich_message: RichMessage<'a>,
-}
-
-#[derive(Serialize)]
-#[serde(untagged)]
-enum RichMessage<'a> {
-    Markdown { markdown: &'a str },
-    Plain { blocks: [Paragraph<'a>; 1] },
-}
-
-#[derive(Serialize)]
-struct Paragraph<'a> {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    text: &'a str,
-}
-
 impl TelegramApi {
-    pub(crate) fn new(token: &str) -> Result<Self, ApiError> {
-        Self::with_origin(API_ORIGIN, token, true)
+    pub(crate) fn new(token: &str, ipv4_only: bool) -> Result<Self, ApiError> {
+        Self::with_origin(API_ORIGIN, token, true, ipv4_only)
     }
 
-    fn with_origin(origin: &str, token: &str, https_only: bool) -> Result<Self, ApiError> {
-        let client = Client::builder()
+    fn with_origin(
+        origin: &str,
+        token: &str,
+        https_only: bool,
+        ipv4_only: bool,
+    ) -> Result<Self, ApiError> {
+        let mut builder = Client::builder()
             .https_only(https_only)
             .redirect(Policy::none())
             .no_proxy()
-            .connect_timeout(Duration::from_secs(10))
+            .connect_timeout(Duration::from_secs(10));
+        if ipv4_only {
+            builder = builder.local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        }
+        let client = builder
             .build()
             .map_err(|error| transport_error("client initialization", error, token))?;
         Ok(Self {
@@ -228,7 +220,7 @@ impl TelegramApi {
 
     #[cfg(test)]
     pub(crate) fn for_test(origin: &str, token: &str) -> Result<Self, ApiError> {
-        Self::with_origin(origin, token, false)
+        Self::with_origin(origin, token, false, false)
     }
 
     pub(crate) async fn get_me(&self) -> Result<BotUser, ApiError> {
@@ -265,6 +257,14 @@ impl TelegramApi {
             BotCommand {
                 command: "status",
                 description: "Show this session's model and context use",
+            },
+            BotCommand {
+                command: "model",
+                description: "List or change this session's model",
+            },
+            BotCommand {
+                command: "reasoning",
+                description: "List or change this session's reasoning level",
             },
             BotCommand {
                 command: "cancel",
@@ -353,47 +353,6 @@ impl TelegramApi {
         accepted.then_some(()).ok_or(ApiError::InvalidResponse {
             method: "sendRichMessageDraft",
         })
-    }
-
-    pub(crate) async fn send_markdown(
-        &self,
-        chat_id: i64,
-        thread_id: Option<i64>,
-        text: &str,
-    ) -> Result<SentMessage, ApiError> {
-        self.call(
-            "sendRichMessage",
-            &RichMessageRequest {
-                chat_id,
-                message_thread_id: thread_id,
-                rich_message: RichMessage::Markdown { markdown: text },
-            },
-            Duration::from_secs(30),
-        )
-        .await
-    }
-
-    pub(crate) async fn send_plain(
-        &self,
-        chat_id: i64,
-        thread_id: Option<i64>,
-        text: &str,
-    ) -> Result<SentMessage, ApiError> {
-        self.call(
-            "sendRichMessage",
-            &RichMessageRequest {
-                chat_id,
-                message_thread_id: thread_id,
-                rich_message: RichMessage::Plain {
-                    blocks: [Paragraph {
-                        kind: "paragraph",
-                        text,
-                    }],
-                },
-            },
-            Duration::from_secs(30),
-        )
-        .await
     }
 
     async fn call<T: DeserializeOwned>(

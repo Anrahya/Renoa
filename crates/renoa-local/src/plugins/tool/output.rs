@@ -217,7 +217,7 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
             McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport
         );
     let next_action = if registration_required {
-        "Do not retry dynamic registration. Use client_metadata only if the service's official documentation publishes a CIMD URL. Otherwise tell the user that a pre-registered OAuth client must be stored outside the agent context in Renoa's Host credential store, then reconnect using only its credential ID. This tool has no credential-entry UI; never ask the user to paste credential material into chat or tool arguments."
+        "Do not retry dynamic registration. Use client_metadata only if the service's official documentation publishes a CIMD URL. Otherwise reconnect with pre_registered and a stable credential ID. A configured headless Host will send the user a secure setup link; other Hosts require the client in their configured credential store. Never ask the user to paste credential material into chat or tool arguments."
     } else {
         match remote.kind() {
             McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport => {

@@ -1,8 +1,10 @@
 import {
   auth,
+  fetchToken,
   IssuerMismatchError,
   OAuthClientFlowError,
   OAuthError,
+  refreshAuthorization,
   RegistrationRejectedError,
 } from "@modelcontextprotocol/client";
 import type {
@@ -14,6 +16,7 @@ import type {
 import { toWireFailure } from "./errors.js";
 import { WIRE_VERSION } from "./limits.js";
 import { RenoaOAuthProvider } from "./oauth-state.js";
+import { canonicalIssuer, sameIssuer } from "./oauth-state-validation.js";
 import { guardedOAuthFetch, OAuthExchangeTracker } from "./oauth-transport.js";
 
 type OAuthRequest = Exclude<
@@ -42,16 +45,15 @@ export async function executeOAuthRequest(
           }
         : authorized(provider, token.accessToken);
     }
-    const result = await auth(provider, {
-      serverUrl: request.endpoint,
-      fetchFn: guardedOAuthFetch(tracker, signal),
-      ...(request.action === "oauth_exchange"
-        ? {
-            authorizationCode: request.authorization_code,
-            ...(request.issuer === undefined ? {} : { iss: request.issuer }),
-          }
-        : {}),
-    });
+    const fetchFn = guardedOAuthFetch(tracker, signal);
+    const result = request.action === "oauth_exchange"
+      ? await exchangeOnce(provider, request, fetchFn)
+      : request.action === "oauth_refresh"
+        ? await refreshOnce(provider, fetchFn)
+        : await auth(provider, {
+            serverUrl: request.endpoint,
+            fetchFn,
+          });
     if (result === "REDIRECT") {
       return {
         wire_version: WIRE_VERSION,
@@ -88,6 +90,92 @@ export async function executeOAuthRequest(
       oauth_state: state,
     };
   }
+}
+
+type OAuthFetch = ReturnType<typeof guardedOAuthFetch>;
+
+async function exchangeOnce(
+  provider: RenoaOAuthProvider,
+  request: Extract<OAuthRequest, { readonly action: "oauth_exchange" }>,
+  fetchFn: OAuthFetch,
+): Promise<"AUTHORIZED"> {
+  const context = tokenContext(provider);
+  const tokens = await fetchToken(provider, context.authorizationServerUrl, {
+    ...(context.metadata === undefined ? {} : { metadata: context.metadata }),
+    ...(context.resource === undefined ? {} : { resource: context.resource }),
+    authorizationCode: request.authorization_code,
+    ...(request.issuer === undefined ? {} : { iss: request.issuer }),
+    fetchFn,
+  });
+  provider.saveTokens({ ...tokens, issuer: context.issuer }, {
+    issuer: context.issuer,
+  });
+  return "AUTHORIZED";
+}
+
+async function refreshOnce(
+  provider: RenoaOAuthProvider,
+  fetchFn: OAuthFetch,
+): Promise<"AUTHORIZED"> {
+  const context = tokenContext(provider);
+  const tokens = provider.tokens({ issuer: context.issuer });
+  const refreshToken = tokens?.refresh_token;
+  if (refreshToken === undefined) {
+    throw new OAuthClientFlowError("stored OAuth state has no refresh token");
+  }
+  const clientInformation = provider.clientInformation({
+    issuer: context.issuer,
+  });
+  if (clientInformation === undefined) {
+    throw new OAuthClientFlowError("stored OAuth state has no client information");
+  }
+  const refreshed = await refreshAuthorization(context.authorizationServerUrl, {
+    ...(context.metadata === undefined ? {} : { metadata: context.metadata }),
+    clientInformation,
+    refreshToken,
+    ...(context.resource === undefined ? {} : { resource: context.resource }),
+    fetchFn,
+  });
+  provider.saveTokens({ ...refreshed, issuer: context.issuer }, {
+    issuer: context.issuer,
+  });
+  return "AUTHORIZED";
+}
+
+function tokenContext(provider: RenoaOAuthProvider): {
+  readonly authorizationServerUrl: string;
+  readonly issuer: string;
+  readonly metadata: NonNullable<
+    ReturnType<RenoaOAuthProvider["discoveryState"]>
+  >["authorizationServerMetadata"];
+  readonly resource: URL | undefined;
+} {
+  const discovery = provider.discoveryState();
+  const authorizationServerUrl = provider.authorizationServerUrl();
+  if (
+    discovery === undefined ||
+    authorizationServerUrl === undefined ||
+    !sameIssuer(discovery.authorizationServerUrl, authorizationServerUrl)
+  ) {
+    throw new OAuthClientFlowError(
+      "stored OAuth discovery does not match its authorization server",
+    );
+  }
+  const issuer = canonicalIssuer(
+    discovery.authorizationServerMetadata?.issuer ?? authorizationServerUrl,
+  );
+  if (!sameIssuer(authorizationServerUrl, issuer)) {
+    throw new OAuthClientFlowError(
+      "stored OAuth metadata belongs to a different authorization server",
+    );
+  }
+  const resourceUrl = provider.resourceUrl();
+  return {
+    authorizationServerUrl,
+    issuer,
+    metadata: discovery.authorizationServerMetadata,
+    resource: resourceUrl === undefined ? undefined : new URL(resourceUrl),
+  };
 }
 
 function providerFor(request: OAuthRequest): RenoaOAuthProvider {
@@ -173,6 +261,7 @@ function oauthFailure(
     };
   }
   if (error instanceof OAuthError) {
+    const httpStatus = tracker.responseStatus();
     return {
       kind: "protocol",
       certainty: "definite",
@@ -180,7 +269,8 @@ function oauthFailure(
       partial_changes_possible: tracker.evidence().dispatchStarted,
       diagnostic: {
         code: error.code,
-        detail: "The authorization server returned a standard OAuth error.",
+        ...(httpStatus === undefined ? {} : { http_status: httpStatus }),
+        detail: safeOAuthDetail(error.message),
       },
     };
   }
@@ -206,6 +296,16 @@ function oauthFailure(
       .replaceAll("tool call", "credential request")
       .replaceAll("tool outcome", "credential outcome"),
   };
+}
+
+function safeOAuthDetail(value: string): string {
+  const detail = [...value]
+    .filter((character) => character === "\n" || !/[\u0000-\u001F\u007F]/u.test(character))
+    .slice(0, 1_024)
+    .join("");
+  return detail.length === 0
+    ? "The authorization server returned a standard OAuth error."
+    : detail;
 }
 
 function registrationErrorCode(body: string): string | undefined {

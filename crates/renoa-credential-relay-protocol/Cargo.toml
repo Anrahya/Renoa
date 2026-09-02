@@ -1,0 +1,13 @@
+[package]
+name = "renoa-credential-relay-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

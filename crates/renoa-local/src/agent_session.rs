@@ -11,7 +11,7 @@ use crate::{
     AgentProfile, AgentProfileId, LocalHistoryEntry, LocalHostError, LocalSession, LocalWorkspace,
     ModelChoice, ModelProvider, ReasoningLevel,
     host::{
-        HostConfig, RuntimeRequest, discover_enabled_models, initial_reasoning, require_model,
+        HostConfig, RuntimeRequest, discover_profile_models, initial_reasoning, require_model,
         resolve_runtime, selected_model_by_selection_id,
     },
     selection::{RuntimeSelection, append_selection},
@@ -135,6 +135,37 @@ impl AgentSession {
         })
     }
 
+    /// Refreshes this profile's provider catalog without changing the active selection.
+    ///
+    /// # Errors
+    ///
+    /// Rejects concurrent work and preserves the previous catalog if discovery or
+    /// validation fails.
+    pub async fn refresh_configuration(&self) -> Result<AgentSessionConfiguration, LocalHostError> {
+        let guard = self.begin_configuration()?;
+        let (provider, model_id, reasoning) = {
+            let state = self.state()?;
+            (state.provider, state.model.clone(), state.reasoning)
+        };
+        let profile = self.profile()?.clone();
+        let models = discover_profile_models(&self.host, &profile).await?;
+        let model = require_model(&models, provider, &model_id, "active")?;
+        if !model.reasoning_levels().contains(&reasoning) {
+            return Err(LocalHostError::Configuration(format!(
+                "active {model_id} model no longer supports {} reasoning",
+                reasoning.as_str()
+            )));
+        }
+        let configuration = AgentSessionConfiguration {
+            models: models.clone(),
+            model: model.selection_id(),
+            reasoning,
+        };
+        self.state()?.models = models;
+        drop(guard);
+        Ok(configuration)
+    }
+
     /// Returns the active model's advertised context-window size.
     ///
     /// # Errors
@@ -233,10 +264,24 @@ impl AgentSession {
         if current_selection == model_id {
             return Ok(());
         }
-        let models = discover_enabled_models(&self.host).await?;
-        let model = selected_model_by_selection_id(&models, model_id)
-            .cloned()
-            .ok_or_else(|| LocalHostError::InvalidRequest("unknown model selection".to_owned()))?;
+        let profile = self.profile()?.clone();
+        let models = discover_profile_models(&self.host, &profile).await?;
+        let model = if let Some(model) = selected_model_by_selection_id(&models, model_id) {
+            model.clone()
+        } else {
+            let mut matching = models.iter().filter(|model| model.id() == model_id);
+            let model = matching.next().ok_or_else(|| {
+                LocalHostError::InvalidRequest(format!(
+                    "model `{model_id}` is not available for this agent profile"
+                ))
+            })?;
+            if matching.next().is_some() {
+                return Err(LocalHostError::InvalidRequest(format!(
+                    "model id `{model_id}` exists under more than one provider; use its provider-qualified id"
+                )));
+            }
+            model.clone()
+        };
         let reasoning = if model.reasoning_levels().contains(&current_reasoning) {
             current_reasoning
         } else {

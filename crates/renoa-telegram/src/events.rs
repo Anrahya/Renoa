@@ -5,7 +5,13 @@ use renoa_agent::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{api::TelegramApi, ingress::Topic, log};
+use crate::{actions, api::TelegramApi, ingress::Topic, log, store::SurfaceStore};
+
+mod authorization;
+#[cfg(test)]
+mod integration_tests;
+
+use authorization::{extension_action, extension_progress};
 
 const DRAFT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 const DRAFT_REFRESH_TICKS: u64 = 10;
@@ -14,6 +20,17 @@ const MAX_ACCUMULATED_PROGRESS_UTF16_UNITS: usize = MAX_DRAFT_UTF16_UNITS * 2;
 
 pub(crate) struct SurfaceEvents {
     state: Arc<Mutex<ProgressState>>,
+    actions: ActionContext,
+}
+
+#[derive(Clone)]
+struct ActionContext {
+    api: Arc<TelegramApi>,
+    store: SurfaceStore,
+    update_id: i64,
+    topic: Topic,
+    request_id: uuid::Uuid,
+    cancellation: CancellationToken,
 }
 
 struct ProgressState {
@@ -40,9 +57,24 @@ impl ProgressState {
 }
 
 impl SurfaceEvents {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn for_turn(
+        api: Arc<TelegramApi>,
+        store: SurfaceStore,
+        update_id: i64,
+        topic: Topic,
+        request_id: uuid::Uuid,
+        cancellation: CancellationToken,
+    ) -> Self {
         Self {
             state: Arc::new(Mutex::new(ProgressState::new())),
+            actions: ActionContext {
+                api,
+                store,
+                update_id,
+                topic,
+                request_id,
+                cancellation,
+            },
         }
     }
 
@@ -109,8 +141,37 @@ impl SurfaceEvents {
 
 impl AgentEventSink for SurfaceEvents {
     fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
+        let action = match &event {
+            AgentEvent::ToolExecutionUpdate { call, update } => extension_action(
+                &format!("{}/{}", self.actions.request_id, call.id),
+                &call.name,
+                update,
+            ),
+            _ => None,
+        };
         self.update(|state| observe(state, event));
-        Box::pin(std::future::ready(()))
+        let context = self.actions.clone();
+        Box::pin(async move {
+            let Some(action) = action else {
+                return;
+            };
+            if let Err(error) = actions::deliver(
+                &context.api,
+                &context.store,
+                context.update_id,
+                context.topic,
+                action,
+                &context.cancellation,
+            )
+            .await
+            {
+                log::event(
+                    "error",
+                    "surface_action_storage_failed",
+                    &serde_json::json!({"update_id": context.update_id, "error": error.to_string()}),
+                );
+            }
+        })
     }
 }
 
@@ -121,6 +182,8 @@ fn observe(state: &mut ProgressState, event: AgentEvent) -> bool {
             let cleared = clear_visible(state);
             set_status(state, "Retrying…") || cleared
         }
+        AgentEvent::ToolExecutionUpdate { call, update } => extension_progress(&call.name, &update)
+            .is_some_and(|message| append_progress(state, &message)),
         AgentEvent::MessageUpdate {
             delta: AssistantDelta::Text { text },
             ..
@@ -182,8 +245,7 @@ fn observe(state: &mut ProgressState, event: AgentEvent) -> bool {
         | AgentEvent::MessageStart { .. }
         | AgentEvent::ModelProviderRequest { .. }
         | AgentEvent::ModelProviderResponse { .. }
-        | AgentEvent::ModelRequestChunk { .. }
-        | AgentEvent::ToolExecutionUpdate { .. } => false,
+        | AgentEvent::ModelRequestChunk { .. } => false,
     }
 }
 

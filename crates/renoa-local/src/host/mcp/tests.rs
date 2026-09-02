@@ -5,7 +5,7 @@ use tempfile::tempdir;
 use super::LocalHost;
 use crate::{
     LocalHostAdapters, LocalModelConfiguration, ModelProvider, alpha_profile,
-    mcp::{McpConnectionAuth, McpCredentialResolver},
+    mcp::{McpAuthorizationResolver, McpConnectionAuth, McpCredentialResolver},
 };
 
 const TOKEN: &str = "fixture-github-secret-token";
@@ -32,9 +32,12 @@ async fn gh_reference_resolves_only_for_adapter_stdin_and_never_enters_host_stat
         LocalHostAdapters::new(Some(&adapter)),
     )
     .expect("create Host");
-    Arc::get_mut(&mut host.config)
-        .expect("test owns Host config")
-        .mcp_credentials = McpCredentialResolver::with_gh_executable(gh);
+    let config = Arc::get_mut(&mut host.config).expect("test owns Host config");
+    config.mcp_authorizations = McpAuthorizationResolver::new(
+        &config.mcp_catalog,
+        config.mcp_adapter.clone(),
+        McpCredentialResolver::with_gh_executable(gh),
+    );
     host.register_gh_cli_mcp_connection(
         "github",
         "github",

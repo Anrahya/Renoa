@@ -13,9 +13,12 @@ jiff.workspace = true
 nix.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
 renoa-agent-loop = { path = "../renoa-agent-loop", version = "0.1.0" }
+renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol", version = "0.1.0" }
 renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
+renoa-oauth-relay-protocol = { path = "../renoa-oauth-relay-protocol", version = "0.1.0" }
 renoa-registry-protocol = { path = "../renoa-registry-protocol", version = "0.1.0" }
 reqwest.workspace = true
+ring.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
@@ -30,7 +33,10 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+renoa-control = { path = "../renoa-control", version = "0.1.0" }
+renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 renoa-registry = { path = "../renoa-registry", version = "0.1.0" }
+tokio-tungstenite.workspace = true
 
 [lints]
 workspace = true

@@ -43,6 +43,12 @@ secret_type!(DeviceCredential, b"renoa device credential v1\0");
 secret_type!(PasskeyBootstrapToken, b"renoa passkey bootstrap v1\0");
 secret_type!(ConnectionTicket, b"renoa browser connection ticket v1\0");
 
+impl DeviceCredential {
+    pub(crate) fn from_encoded(value: String) -> Option<Self> {
+        secret_digest(b"renoa device credential v1\0", &value).map(|_| Self(value))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceCredentials {

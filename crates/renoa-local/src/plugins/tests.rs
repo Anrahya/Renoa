@@ -98,6 +98,26 @@ fn manifest_failure_is_fatal_but_one_bad_mcp_entry_is_isolated() {
     ));
 }
 
+#[test]
+fn invalid_plugin_names_explain_the_agent_plugins_rule() {
+    let directory = tempdir().expect("temporary plugin fixture");
+    fs::write(
+        directory.path().join("plugin.json"),
+        serde_json::to_vec(&json!({
+            "$schema": super::inspect::PLUGIN_SCHEMA,
+            "name": "Notion MCP"
+        }))
+        .expect("encode invalid manifest"),
+    )
+    .expect("write invalid manifest");
+
+    let error = super::inspect::inspect(directory.path())
+        .expect_err("invalid plugin name must be rejected")
+        .to_string();
+    assert!(error.contains("start and end with a lowercase ASCII letter or digit"));
+    assert!(error.contains("cannot contain '..' or '--'"));
+}
+
 #[cfg(unix)]
 #[test]
 fn symlinked_fixed_components_are_denied_at_the_narrowest_boundary() {

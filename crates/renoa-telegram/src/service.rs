@@ -16,13 +16,18 @@ use crate::{
     store::{ImmediateAction, PendingAction, SurfaceStore, WorkItem, WorkKind},
 };
 
+mod commands;
+
 /// Runs the supervised Arcee Telegram surface until shutdown or a required task fails.
 ///
 /// # Errors
 ///
 /// Returns configuration, Telegram transport, Host, durable state, or supervision failures.
 pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
-    let api = Arc::new(TelegramApi::new(&config.bot_token)?);
+    let api = Arc::new(TelegramApi::new(
+        &config.bot_token,
+        config.telegram_ipv4_only,
+    )?);
     let bot = api.get_me().await?;
     if !bot.is_bot || bot.id <= 0 {
         return Err(TelegramServiceError::Configuration(
@@ -44,6 +49,7 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
             "profile_id": config.profile_id.as_str(),
             "requeued": recovery.requeued,
             "delivery_unknown": recovery.delivery_unknown,
+            "action_delivery_unknown": recovery.action_delivery_unknown,
         }),
     );
 
@@ -252,6 +258,18 @@ impl Worker {
                 }
                 Err(error) => surface_error(&error),
             },
+            WorkKind::Model(requested) => match self.session(item.session_id).await {
+                Ok(session) => commands::model(&session, requested.as_deref())
+                    .await
+                    .unwrap_or_else(|error| surface_error(&error)),
+                Err(error) => surface_error(&error),
+            },
+            WorkKind::Reasoning(requested) => match self.session(item.session_id).await {
+                Ok(session) => commands::reasoning(&session, requested.as_deref())
+                    .await
+                    .unwrap_or_else(|error| surface_error(&error)),
+                Err(error) => surface_error(&error),
+            },
             WorkKind::Cancel => "Stop request processed.".to_owned(),
             WorkKind::Prompt(text) => self.run_agent(&item, Some(text)).await?,
             WorkKind::Compact => self.run_agent(&item, None).await?,
@@ -280,8 +298,15 @@ impl Worker {
         if self.store.cancellation_requested(item.update_id).await? {
             session.cancel_active_turn()?;
         }
-        let events = Arc::new(SurfaceEvents::new());
         let draft_shutdown = CancellationToken::new();
+        let events = Arc::new(SurfaceEvents::for_turn(
+            Arc::clone(&self.api),
+            self.store.clone(),
+            item.update_id,
+            item.topic,
+            item.request_id,
+            draft_shutdown.clone(),
+        ));
         let draft_task = events.start_drafts(
             Arc::clone(&self.api),
             item.topic,

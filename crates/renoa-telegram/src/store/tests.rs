@@ -2,7 +2,8 @@ use std::path::Path;
 
 use tempfile::tempdir;
 
-use super::{PendingAction, SurfaceStore};
+use super::{PendingAction, SurfaceStore, actions::SCRUBBED_ACTION_URL};
+use crate::actions::ActionLink;
 use crate::ingress::{InboundKind, ParsedUpdate, Topic};
 
 const OWNER: i64 = 42;
@@ -130,6 +131,33 @@ async fn cancel_is_durable_even_when_it_arrives_before_the_worker_starts() {
 }
 
 #[tokio::test]
+async fn model_commands_round_trip_through_the_durable_queue() {
+    let directory = tempdir().expect("temporary data root");
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("create workspace");
+    let store = store(directory.path(), &workspace).await;
+
+    for (update_id, inbound) in [
+        (1, InboundKind::Model(None)),
+        (2, InboundKind::Model(Some("glm-5.3-flash".to_owned()))),
+        (3, InboundKind::Reasoning(Some("high".to_owned()))),
+    ] {
+        store
+            .admit(update(update_id, inbound))
+            .await
+            .expect("admit model command");
+        let work = execute(&store).await;
+        match (update_id, &work.kind) {
+            (1, super::WorkKind::Model(None))
+            | (2, super::WorkKind::Model(Some(_)))
+            | (3, super::WorkKind::Reasoning(Some(_))) => {}
+            _ => panic!("stored model command changed shape"),
+        }
+        settle(&store, work.update_id).await;
+    }
+}
+
+#[tokio::test]
 async fn restart_requeues_execution_but_never_blindly_retries_final_delivery() {
     let directory = tempdir().expect("temporary data root");
     let workspace = directory.path().join("workspace");
@@ -175,6 +203,112 @@ async fn restart_requeues_execution_but_never_blindly_retries_final_delivery() {
     assert_eq!(recovered.requeued, 0);
     assert_eq!(recovered.delivery_unknown, 1);
     assert!(store.next_action().await.expect("load queue").is_none());
+}
+
+#[tokio::test]
+async fn permanent_actions_are_durable_idempotent_and_not_retried_after_ambiguity() {
+    let directory = tempdir().expect("temporary data root");
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("create workspace");
+    let store = store(directory.path(), &workspace).await;
+    store
+        .admit(update(1, InboundKind::Prompt("connect exa".to_owned())))
+        .await
+        .expect("admit prompt");
+    let work = execute(&store).await;
+    store
+        .mark_running(work.update_id)
+        .await
+        .expect("start work");
+    let action = ActionLink::new(
+        format!("{}/call-1/authorization", work.request_id),
+        "Authorize exa".to_owned(),
+        "Authorize exa to finish connecting it.".to_owned(),
+        "Authorize".to_owned(),
+        url::Url::parse("https://provider.example/authorize?state=one").expect("valid action URL"),
+        Some(9_999_999_999_999),
+    );
+
+    assert!(
+        store
+            .begin_action_delivery(work.update_id, work.topic, action.clone())
+            .await
+            .expect("begin action")
+    );
+    assert!(
+        !store
+            .begin_action_delivery(work.update_id, work.topic, action.clone())
+            .await
+            .expect("duplicate in-flight action")
+    );
+    let recovered = store.recover().await.expect("recover ambiguous action");
+    assert_eq!(recovered.action_delivery_unknown, 1);
+    store
+        .mark_running(work.update_id)
+        .await
+        .expect("restart parent work");
+    assert!(
+        !store
+            .begin_action_delivery(work.update_id, work.topic, action)
+            .await
+            .expect("ambiguous action is never sent twice")
+    );
+}
+
+#[tokio::test]
+async fn a_settled_turn_scrubs_its_authorization_url_and_recovery_repairs_old_rows() {
+    let directory = tempdir().expect("temporary data root");
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("create workspace");
+    let store = store(directory.path(), &workspace).await;
+    store
+        .admit(update(1, InboundKind::Prompt("connect notion".to_owned())))
+        .await
+        .expect("admit prompt");
+    let work = execute(&store).await;
+    store
+        .mark_running(work.update_id)
+        .await
+        .expect("start work");
+    let action_id = format!("{}/call-1/authorization", work.request_id);
+    let authorization_url = "https://provider.example/authorize?state=sensitive";
+    let action = ActionLink::new(
+        action_id.clone(),
+        "Authorize Notion".to_owned(),
+        "Finish connecting Notion.".to_owned(),
+        "Authorize".to_owned(),
+        url::Url::parse(authorization_url).expect("valid action URL"),
+        Some(9_999_999_999_999),
+    );
+    assert!(
+        store
+            .begin_action_delivery(work.update_id, work.topic, action)
+            .await
+            .expect("begin action")
+    );
+    store
+        .mark_action_delivered(&action_id, 91)
+        .await
+        .expect("deliver action");
+    assert_eq!(stored_action_url(&store, &action_id), authorization_url);
+
+    store
+        .set_result(work.update_id, "Notion connected.".to_owned())
+        .await
+        .expect("settle parent turn");
+    assert_eq!(stored_action_url(&store, &action_id), SCRUBBED_ACTION_URL);
+
+    let connection =
+        rusqlite::Connection::open(store.database.as_ref()).expect("open legacy action fixture");
+    connection
+        .execute(
+            "UPDATE surface_actions SET url = ?1 WHERE action_id = ?2",
+            rusqlite::params![authorization_url, action_id],
+        )
+        .expect("restore legacy retained URL");
+    drop(connection);
+    store.recover().await.expect("recover settled actions");
+    assert_eq!(stored_action_url(&store, &action_id), SCRUBBED_ACTION_URL);
 }
 
 #[tokio::test]
@@ -224,4 +358,16 @@ async fn settle(store: &SurfaceStore, update_id: i64) {
         .mark_chunk_delivered(update_id, delivery.cursor, 500 + update_id, true)
         .await
         .expect("complete delivery");
+}
+
+fn stored_action_url(store: &SurfaceStore, action_id: &str) -> String {
+    let connection =
+        rusqlite::Connection::open(store.database.as_ref()).expect("open surface database");
+    connection
+        .query_row(
+            "SELECT url FROM surface_actions WHERE action_id = ?1",
+            [action_id],
+            |row| row.get(0),
+        )
+        .expect("load stored action URL")
 }

@@ -3,7 +3,7 @@ use std::{fs, path::Path, process::Command};
 use tempfile::{TempDir, tempdir};
 use tokio_util::sync::CancellationToken;
 
-use super::super::{McpAuthorizationResolver, secret::OAuthSecretBundle};
+use super::super::{McpAuthorizationResolver, secret_store::OAuthSecretBundle};
 use crate::mcp::{
     McpCatalogStore, McpConnectionAuth, McpCredentialResolver, McpOAuthRegistration,
     McpRequestHeaders,
@@ -104,7 +104,7 @@ fn lines(path: &Path) -> Vec<String> {
         .collect()
 }
 
-fn write_adapter(directory: &Path, actions: &Path) -> std::path::PathBuf {
+pub(super) fn write_adapter(directory: &Path, actions: &Path) -> std::path::PathBuf {
     let path = directory.join("oauth-adapter.mjs");
     let actions = serde_json::to_string(&actions.to_string_lossy()).expect("encode action path");
     fs::write(

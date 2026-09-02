@@ -116,14 +116,18 @@ pub(crate) fn definite_boundary_error(
         McpAdapterError::Credential(McpCredentialError::Cancelled) => {
             ToolError::cancelled(message, false)
         }
-        McpAdapterError::Credential(McpCredentialError::Timeout(_)) => {
-            ToolError::timeout(message, false)
-        }
         McpAdapterError::Credential(
-            McpCredentialError::Unavailable { .. } | McpCredentialError::InvalidOutput(_),
+            McpCredentialError::Timeout(_) | McpCredentialError::SetupExpired,
+        ) => ToolError::timeout(message, false),
+        McpAdapterError::Credential(
+            McpCredentialError::Unavailable { .. }
+            | McpCredentialError::InvalidOutput(_)
+            | McpCredentialError::SetupInvalid,
         ) => ToolError::permission_denied(message),
         McpAdapterError::Credential(
-            McpCredentialError::Start { .. }
+            McpCredentialError::PrivateStore(_)
+            | McpCredentialError::SetupUnavailable(_)
+            | McpCredentialError::Start { .. }
             | McpCredentialError::Write { .. }
             | McpCredentialError::MissingPipe(_)
             | McpCredentialError::Wait { .. }

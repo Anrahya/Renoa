@@ -159,6 +159,7 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         mcp_registry_adapter: None,
         shared_plugin_registry: None,
         global_skill_source: Some(global.to_path_buf()),
+        oauth_relay: None,
         profiles: vec![
             alpha_profile(),
             AgentProfile::new(SECOND_PROFILE_ID, "You are a test agent.")

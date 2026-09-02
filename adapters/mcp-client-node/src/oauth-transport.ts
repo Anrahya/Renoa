@@ -6,6 +6,7 @@ import { MAX_HTTP_RESPONSE_BYTES } from "./limits.js";
 export class OAuthExchangeTracker {
   #postCount = 0;
   #postResponseStarted = false;
+  #postResponseStatus: number | undefined;
 
   markRequest(method: string): void {
     if (method !== "POST") {
@@ -25,10 +26,15 @@ export class OAuthExchangeTracker {
     this.#postResponseStarted = false;
   }
 
-  markResponse(method: string): void {
+  markResponse(method: string, status?: number): void {
     if (method === "POST") {
       this.#postResponseStarted = true;
+      this.#postResponseStatus = status;
     }
+  }
+
+  responseStatus(): number | undefined {
+    return this.#postResponseStatus;
   }
 
   evidence(): ExchangeEvidence {
@@ -57,7 +63,7 @@ export function guardedOAuthFetch(
       redirect: "manual",
       signal,
     });
-    tracker.markResponse(method);
+    tracker.markResponse(method, response.status);
     if (response.status >= 300 && response.status < 400) {
       throw new AdapterProblem(
         "protocol",

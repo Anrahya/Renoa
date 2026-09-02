@@ -39,7 +39,7 @@ pub(crate) async fn resolve_runtime(
         profile.id().clone(),
         host.mcp_catalog.clone(),
         host.mcp_adapter.clone(),
-        host.mcp_credentials.clone(),
+        host.mcp_authorizations.clone(),
         session_id,
         command_id,
     );

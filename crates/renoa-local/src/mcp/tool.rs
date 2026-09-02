@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpAuthorizationResolver, McpCatalogStore,
-    McpCredentialResolver, McpHostError, McpToolReference, SEARCH_RESULT_LIMIT,
+    McpHostError, McpToolReference, SEARCH_RESULT_LIMIT,
     call::{CALL_BOUNDARY_REVISION, call_tool},
     oauth_operation_id, rank_tools,
 };
@@ -35,11 +35,10 @@ pub(crate) fn profile_registry_bindings(
     profile_id: AgentProfileId,
     store: McpCatalogStore,
     adapter: Option<PathBuf>,
-    credentials: McpCredentialResolver,
+    authorizations: McpAuthorizationResolver,
     session_id: SessionId,
     command_id: Option<CommandId>,
 ) -> Vec<AgentToolBinding> {
-    let authorizations = McpAuthorizationResolver::new(&store, adapter.clone(), credentials);
     vec![
         AgentToolBinding::new(
             SEARCH_REVISION,

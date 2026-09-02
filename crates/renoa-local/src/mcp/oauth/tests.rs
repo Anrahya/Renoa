@@ -4,8 +4,8 @@ use renoa_kernel::{CommandId, SessionId};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    secret::OAuthSecretBundle,
-    store::{OAuthFlow, OAuthPhase},
+    secret_store::OAuthSecretBundle,
+    store::{OAuthCallbackIdentity, OAuthFlow, OAuthPhase},
 };
 use crate::mcp::{
     McpAdapterError, McpConnectionAuth, McpHostError, McpOAuthAuthorizationRequest, McpOAuthError,
@@ -13,6 +13,8 @@ use crate::mcp::{
 
 #[path = "tests/registration.rs"]
 mod registration;
+#[path = "tests/relay.rs"]
+mod relay_tests;
 mod support;
 
 use support::{CONNECTION, ENDPOINT, Fixture};
@@ -301,7 +303,7 @@ async fn begin_recovery_rejects_secret_state_for_a_different_callback() {
                 CONNECTION,
                 "session/interrupted-begin",
                 OAuthPhase::BeginInFlight,
-                41002,
+                OAuthCallbackIdentity::Loopback(41002),
                 i64::MAX,
             )
             .expect("create interrupted flow"),
@@ -375,6 +377,7 @@ fn authorization_request<'a>(
 ) -> McpOAuthAuthorizationRequest<'a> {
     McpOAuthAuthorizationRequest {
         connection_id: CONNECTION,
+        display_name: None,
         endpoint: ENDPOINT,
         reference: auth,
         operation_id,

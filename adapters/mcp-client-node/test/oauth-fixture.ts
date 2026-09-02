@@ -70,6 +70,11 @@ interface OAuthFixtureOptions {
   readonly omitRegistrationEndpoint?: boolean;
   readonly clientMetadataSupported?: boolean;
   readonly tokenAuthMethods?: readonly string[];
+  readonly rejectToken?: {
+    readonly status: number;
+    readonly error: string;
+    readonly description: string;
+  };
 }
 
 export class OAuthFixture {
@@ -176,6 +181,12 @@ export class OAuthFixture {
       this.tokenRequests += 1;
       this.tokenAuthorization = request.headers.authorization;
       const params = new URLSearchParams(await body(request));
+      if (this.#options.rejectToken !== undefined) {
+        return json(response, this.#options.rejectToken.status, {
+          error: this.#options.rejectToken.error,
+          error_description: this.#options.rejectToken.description,
+        });
+      }
       if (params.get("grant_type") === "refresh_token") {
         this.refreshRequests += 1;
         assert.equal(params.get("refresh_token"), "refresh-one");

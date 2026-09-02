@@ -8,7 +8,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::{McpCredentialError, McpHostError};
+use super::{McpCredentialError, McpHostError, oauth::PrivateSecretStore};
 use crate::process::{child_pid_raw, configure_process_group, stop_process_group_raw};
 
 mod config;
@@ -27,6 +27,7 @@ const MAX_STDERR_BYTES: usize = 4 * 1_024;
 pub(crate) struct McpCredentialResolver {
     gh_executable: PathBuf,
     secret_tool_executable: PathBuf,
+    private_store: Option<PrivateSecretStore>,
 }
 
 impl Default for McpCredentialResolver {
@@ -34,6 +35,7 @@ impl Default for McpCredentialResolver {
         Self {
             gh_executable: PathBuf::from("gh"),
             secret_tool_executable: PathBuf::from("secret-tool"),
+            private_store: None,
         }
     }
 }
@@ -43,11 +45,17 @@ impl McpCredentialResolver {
         self.secret_tool_executable.clone()
     }
 
+    pub(super) fn with_private_store(mut self, store: PrivateSecretStore) -> Self {
+        self.private_store = Some(store);
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn with_gh_executable(path: PathBuf) -> Self {
         Self {
             gh_executable: path,
             secret_tool_executable: PathBuf::from("secret-tool"),
+            private_store: None,
         }
     }
 
@@ -56,6 +64,7 @@ impl McpCredentialResolver {
         Self {
             gh_executable: gh,
             secret_tool_executable: secret_tool,
+            private_store: None,
         }
     }
 
@@ -119,6 +128,26 @@ impl McpCredentialResolver {
         credential_id: &str,
         cancellation: CancellationToken,
     ) -> Result<SecretToken, McpCredentialError> {
+        if let Some(store) = &self.private_store {
+            if cancellation.is_cancelled() {
+                return Err(McpCredentialError::Cancelled);
+            }
+            return match store
+                .lookup(credential_id, MAX_TOKEN_BYTES)
+                .await
+                .map_err(|error| McpCredentialError::PrivateStore(error.to_string()))?
+            {
+                Some(bytes) => SecretToken::from_command_output(bytes, "private Host store"),
+                None => Err(McpCredentialError::Unavailable {
+                    source_name: "private Host store",
+                    reference: format!("credential `{credential_id}`"),
+                    status: "not found".to_owned(),
+                    guidance:
+                        "complete the secure credential setup link emitted by extension_manage"
+                            .to_owned(),
+                }),
+            };
+        }
         self.resolve_command_token(
             SECRET_SERVICE_SOURCE,
             &self.secret_tool_executable,

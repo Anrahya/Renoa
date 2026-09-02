@@ -10,6 +10,8 @@ use std::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
+use crate::ModelProvider;
+
 mod documents;
 #[cfg(test)]
 mod tests;
@@ -89,6 +91,7 @@ pub struct AgentProfile {
     id: AgentProfileId,
     base_instructions: String,
     documents: Option<ProfileDocuments>,
+    model_provider: Option<ModelProvider>,
     workspace_instructions: WorkspaceInstructions,
     turn_timing: TurnTimingPolicy,
     automatic_compaction: Option<AutomaticCompactionPolicy>,
@@ -130,6 +133,7 @@ impl AgentProfile {
             id: AgentProfileId::new(id)?,
             base_instructions,
             documents: None,
+            model_provider: None,
             workspace_instructions: WorkspaceInstructions::None,
             turn_timing: TurnTimingPolicy::None,
             automatic_compaction: None,
@@ -139,6 +143,17 @@ impl AgentProfile {
     pub(crate) fn with_documents(mut self, documents: ProfileDocuments) -> Self {
         self.documents = Some(documents);
         self
+    }
+
+    /// Restricts sessions assembled from this profile to one model provider.
+    #[must_use]
+    pub const fn with_model_provider(mut self, provider: ModelProvider) -> Self {
+        self.model_provider = Some(provider);
+        self
+    }
+
+    pub(crate) const fn model_provider(&self) -> Option<ModelProvider> {
+        self.model_provider
     }
 
     /// Adds durable Host time and elapsed-user-message context to every turn.

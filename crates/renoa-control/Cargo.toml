@@ -9,6 +9,8 @@ rust-version.workspace = true
 axum = { workspace = true, features = ["http1", "json", "ws"] }
 futures-util.workspace = true
 getrandom.workspace = true
+renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol", version = "0.1.0" }
+renoa-oauth-relay-protocol = { path = "../renoa-oauth-relay-protocol", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 rusqlite.workspace = true
 serde.workspace = true

@@ -4,7 +4,8 @@ use std::{
 };
 
 use renoa_agent::{
-    AgentEvent, AssistantDelta, ModelFailureCode, ModelRequest, ModelResponse, ToolCall,
+    AgentEvent, AssistantDelta, ContentBlock, ModelFailureCode, ModelRequest, ModelResponse,
+    ToolCall, ToolOutput,
 };
 use serde_json::{Value, json};
 
@@ -63,6 +64,7 @@ impl TraceState {
                 self.tool_started(call, occurred_at_ms, elapsed_us)
             }
             AgentEvent::ToolExecutionUpdate { call, update } => {
+                let update = redact_sensitive_tool_progress(&call.name, update);
                 TraceEntry::new("tool", "execution_update", occurred_at_ms, elapsed_us)
                     .correlation(call.id)
                     .name(call.name)
@@ -303,6 +305,41 @@ impl TraceState {
             .status(Some("running"))
             .payload(&to_value(call.arguments))
     }
+}
+
+fn redact_sensitive_tool_progress(tool: &str, mut update: ToolOutput) -> ToolOutput {
+    if tool != "extension_manage" {
+        return update;
+    }
+    let mut redacted = false;
+    for block in &mut update.content {
+        let ContentBlock::Text { text } = block else {
+            continue;
+        };
+        let Ok(mut value) = serde_json::from_str::<Value>(text) else {
+            continue;
+        };
+        let Some(object) = value.as_object_mut() else {
+            continue;
+        };
+        let field = match object.get("status").and_then(Value::as_str) {
+            Some("credential_required") => "setup_url",
+            Some("authorization_required") => "authorization_url",
+            _ => continue,
+        };
+        if object.remove(field).is_none() {
+            continue;
+        }
+        object.insert(format!("{field}_omitted"), Value::Bool(true));
+        if let Ok(encoded) = serde_json::to_string(&value) {
+            *text = encoded;
+            redacted = true;
+        }
+    }
+    if redacted {
+        update.details = None;
+    }
+    update
 }
 
 pub(super) fn now_unix_ms() -> i64 {

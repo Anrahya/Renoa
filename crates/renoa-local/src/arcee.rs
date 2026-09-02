@@ -1,7 +1,7 @@
 use std::{num::NonZeroU64, path::Path};
 
 use crate::{
-    AgentProfile, AgentProfileError,
+    AgentProfile, AgentProfileError, ModelProvider,
     profile::{ProfileDocumentDefaults, ProfileDocuments},
 };
 
@@ -34,6 +34,7 @@ pub fn arcee_profile(data_directory: impl AsRef<Path>) -> Result<AgentProfile, A
     )?;
     Ok(AgentProfile::new(ARCEE_PROFILE_ID, SYSTEM_PROMPT)?
         .with_documents(documents)
+        .with_model_provider(ModelProvider::OpenCodeGo)
         .with_turn_timing()
         .with_automatic_compaction(
             AUTOMATIC_COMPACTION_INPUT_TOKENS,
@@ -49,6 +50,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{ARCEE_PROFILE_ID, arcee_profile};
+    use crate::ModelProvider;
 
     #[test]
     fn arcee_composes_system_soul_user_and_workspace_context() {
@@ -67,6 +69,7 @@ mod tests {
             .expect("compose Arcee prompt");
 
         assert_eq!(profile.id().as_str(), ARCEE_PROFILE_ID);
+        assert_eq!(profile.model_provider(), Some(ModelProvider::OpenCodeGo));
         assert!(profile.uses_turn_timing());
         let automatic_compaction = profile
             .automatic_compaction()

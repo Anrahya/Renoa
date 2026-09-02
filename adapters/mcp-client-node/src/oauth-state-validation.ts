@@ -39,16 +39,25 @@ export function validateCoreState(
   }
   const loopback =
     redirect.hostname === "127.0.0.1" || redirect.hostname === "[::1]";
+  const httpsRelay =
+    redirect.protocol === "https:" &&
+    redirect.hostname.length > 0 &&
+    redirect.pathname === "/v1/oauth/callback";
   if (
-    redirect.protocol !== "http:" ||
-    !loopback ||
-    redirect.pathname !== "/oauth/callback" ||
+    !(
+      (redirect.protocol === "http:" &&
+        loopback &&
+        redirect.pathname === "/oauth/callback") ||
+      httpsRelay
+    ) ||
     redirect.username.length > 0 ||
     redirect.password.length > 0 ||
     redirect.search.length > 0 ||
     redirect.hash.length > 0
   ) {
-    throw invalid("OAuth redirect URI must be an exact loopback HTTP callback");
+    throw invalid(
+      "OAuth redirect URI must be an exact loopback or HTTPS Renoa callback",
+    );
   }
 }
 

@@ -14,7 +14,7 @@ use crate::{
 
 #[test]
 fn shared_package_synchronization_changes_the_frozen_extension_contract() {
-    assert_eq!(BINDING_REVISION, "renoa-extension-manager-v11");
+    assert_eq!(BINDING_REVISION, "renoa-extension-manager-v12");
 }
 
 #[tokio::test]

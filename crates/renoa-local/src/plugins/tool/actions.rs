@@ -64,21 +64,13 @@ pub(super) async fn connect(
                 credential: request.credential,
                 replace: request.replace,
                 operation_id: invocation.operation_id,
+                updates: Some(invocation.updates),
             },
             invocation.cancellation.clone(),
         )
         .await
     {
         Ok(snapshot) => (snapshot, "catalog_loaded"),
-        Err(PluginError::Mcp(McpHostError::OAuth(
-            crate::mcp::McpOAuthError::AuthorizationRequired(_),
-        ))) => match authorize_snapshot(tool, &request.connection, false, invocation).await {
-            Ok(snapshot) => (snapshot, "authorized"),
-            Err(PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote)))) => {
-                return remote_mcp_error_output(&remote);
-            }
-            Err(error) => return Err(plugin_error(error, true)),
-        },
         Err(PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote)))) => {
             return remote_mcp_error_output(&remote);
         }
@@ -146,6 +138,7 @@ pub(super) async fn add(
             &tool.profile_id,
             request,
             invocation.operation_id,
+            Some(invocation.updates),
             invocation.cancellation.clone(),
         )
         .await
@@ -153,7 +146,7 @@ pub(super) async fn add(
         Ok(added) => added,
         Err(error) => return Err(plugin_error(error, true)),
     };
-    render_added(tool, added, invocation).await
+    render_added(added)
 }
 
 struct AddedExtensionView<'a> {
@@ -162,11 +155,7 @@ struct AddedExtensionView<'a> {
     skills: &'a SkillComponentReport,
 }
 
-async fn render_added(
-    tool: &ManageTool,
-    added: ExtensionAddOutcome,
-    invocation: ExtensionInvocation<'_>,
-) -> Result<ToolOutput, ToolError> {
+fn render_added(added: ExtensionAddOutcome) -> Result<ToolOutput, ToolError> {
     let source = source_output(&added.source);
     let output = AddedExtensionView {
         source,
@@ -181,7 +170,7 @@ async fn render_added(
             snapshot,
         } => connected_output(&output, &id, &server, &snapshot, "catalog_loaded"),
         ExtensionConnectionOutcome::Failed { id, server, error } => {
-            failed_output(tool, &output, id, server, error, invocation).await
+            failed_output(&output, id.as_deref(), server.as_deref(), error)
         }
     }
 }
@@ -219,29 +208,13 @@ fn connected_output(
     })
 }
 
-async fn failed_output(
-    tool: &ManageTool,
+fn failed_output(
     extension: &AddedExtensionView<'_>,
-    connection: Option<String>,
-    server: Option<String>,
+    connection: Option<&str>,
+    server: Option<&str>,
     error: PluginError,
-    invocation: ExtensionInvocation<'_>,
 ) -> Result<ToolOutput, ToolError> {
-    if matches!(
-        &error,
-        PluginError::Mcp(McpHostError::OAuth(
-            crate::mcp::McpOAuthError::AuthorizationRequired(_)
-        ))
-    ) && let (Some(connection), Some(server)) = (&connection, &server)
-    {
-        return match authorize_snapshot(tool, connection, false, invocation).await {
-            Ok(snapshot) => {
-                connected_output(extension, connection, server, &snapshot, "authorized")
-            }
-            Err(error) => installed_failure(extension, Some(connection), Some(server), error),
-        };
-    }
-    installed_failure(extension, connection.as_deref(), server.as_deref(), error)
+    installed_failure(extension, connection, server, error)
 }
 
 fn installed_failure(

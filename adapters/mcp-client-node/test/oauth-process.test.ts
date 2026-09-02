@@ -50,6 +50,28 @@ test("OAuth begins with discovery, one registration, PKCE, and a durable redirec
   }
 });
 
+test("OAuth accepts an exact HTTPS Renoa callback relay", async () => {
+  const server = new OAuthFixture();
+  await server.start();
+  try {
+    const callback = "https://renoa.live/v1/oauth/callback";
+    const result = await runAdapter({
+      ...beginRequest(server.endpoint),
+      redirect_uri: callback,
+    });
+    const record = result.records[0];
+    assert.equal(record?.event, "oauth_redirect", JSON.stringify(record));
+    if (record?.event !== "oauth_redirect") return;
+    assert.equal(record.oauth_state.redirect_uri, callback);
+    assert.equal(
+      new URL(record.authorization_url).searchParams.get("redirect_uri"),
+      callback,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("Client ID Metadata Documents skip dynamic registration when advertised", async () => {
   const server = new OAuthFixture({
     omitRegistrationEndpoint: true,
@@ -437,6 +459,45 @@ test("OAuth callback issuer mismatch fails before sending the code", async () =>
     assert.equal(terminal?.event, "oauth_failed", JSON.stringify(terminal));
     assert.equal(server.tokenRequests, 0);
     assert.equal(JSON.stringify(result).includes("must-not-be-sent"), false);
+  } finally {
+    await server.close();
+  }
+});
+
+test("OAuth returns the first token rejection without retrying the code", async () => {
+  const server = new OAuthFixture({
+    rejectToken: {
+      status: 400,
+      error: "invalid_grant",
+      description: "authorization code already redeemed",
+    },
+  });
+  await server.start();
+  try {
+    const state = await begin(server);
+    const result = await runAdapter({
+      wire_version: WIRE_VERSION,
+      action: "oauth_exchange",
+      endpoint: server.endpoint,
+      authorization_code: "one-time-code",
+      issuer: server.origin,
+      registration: { mode: "dynamic" },
+      oauth_state: state,
+    });
+    const terminal = result.records[0];
+    assert.equal(terminal?.event, "oauth_failed", JSON.stringify(terminal));
+    if (terminal?.event !== "oauth_failed") return;
+    assert.equal(server.tokenRequests, 1);
+    assert.equal(terminal.failure.diagnostic.code, "invalid_grant");
+    assert.match(
+      terminal.failure.diagnostic.detail,
+      /authorization code already redeemed/u,
+    );
+    assert.notEqual(
+      terminal.failure.diagnostic.code,
+      "hidden_oauth_retry_blocked",
+      "the hidden retry guard must not replace the provider error",
+    );
   } finally {
     await server.close();
   }

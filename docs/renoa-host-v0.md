@@ -62,6 +62,11 @@ planner keeps the smallest safe tail and still respects the real provider
 limit. This policy follows Arcee across surfaces and does not change Alpha's
 context policy.
 
+Arcee permits only the OpenCode Go model provider. This is Host profile policy,
+not Telegram policy: every surface that opens an Arcee session sees the same
+provider boundary. The selected OpenCode Go model and reasoning level remain
+session configuration and may change between operations.
+
 The product direction for portable packages, external integrations,
 connections, profile selection, and agent-driven capability changes is recorded
 in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md). That
@@ -117,8 +122,8 @@ that distinction remains required even though v0 intentionally has no
 permission system.
 
 V0 profiles are immutable process configuration: a stable validated identity,
-base instructions, and whether the canonical workspace-root `AGENTS.md` is
-included. A session manifest persists the selected profile identity beside its
+base instructions, an optional exact model-provider restriction, and whether
+the canonical workspace-root `AGENTS.md` is included. A session manifest persists the selected profile identity beside its
 Agent, Session, and workspace identity. Loading fails closed when that exact
 profile is not registered by the current Host process. Profile definitions are
 not yet editable or stored in `host.sqlite3`.
@@ -197,6 +202,13 @@ source/profile bindings, rejected skill entries, and session activation pins.
 Registration, discovery, and profile attachment remain separate states.
 Catalog replacement and attachment are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
+One shared authorization resolver is composed into management, discovery, and
+runtime tool execution. Desktop composition selects loopback callbacks and
+Secret Service; headless composition selects the self-hosted callback relay and
+the Host's private file-backed secret facility. The same headless composition
+also enables end-to-end encrypted browser intake for a missing API token or
+pre-registered OAuth client. The coordinator retains ciphertext only; the
+requesting Host keeps the decryption key and stores the resulting credential.
 
 An optional private shared plugin registry replicates only the immutable Agent
 Plugin library between Hosts. Each Host remains a complete local runtime and
@@ -245,7 +257,7 @@ already running. The runtime itself is unchanged: the kernel freezes the same th
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v11 model-facing schema is
+The Host adds one fixed `extension_manage` tool. Its v12 model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
 for each of ten typed actions and rejects missing or cross-action fields:
@@ -267,17 +279,25 @@ returns explicit coverage, and cannot flow directly into `add`. A local package
 add requires the digest returned by inspection so a
 crash replay cannot read changed bytes from the same path. Add normalizes every
 accepted source into the same package path, installs it, loads supported
-package skills, and only then attempts the requested MCP connection. MCP
+package skills, and only then attempts the requested MCP connection. Package
+installation and connection activation remain separate reported facts. MCP
 discovery validates the real endpoint before any tools are published. A
 connection or authentication failure returns the retained package digest,
 package notices, skill result, and safe exact service error instead of rolling
 back unrelated components.
-Connect accepts no credential, one named Secret Service bearer or exact header
-reference, or Host-owned OAuth, never a raw key. OAuth opens an exact loopback
-browser flow, keeps client state and tokens in the desktop Secret Service, and
-stores only a deterministic reference, non-secret flow phase, and semantic
-terminal receipt in SQLite. It automatically refreshes an expired token under
-a cross-process connection lock. A possibly dispatched code exchange or refresh is not retried
+Connect accepts no credential, one named Host bearer or exact header
+reference, or Host-owned OAuth, never a raw key. On a configured headless Host,
+a missing named API token or pre-registered OAuth client emits a permanent
+surface link to the encrypted Renoa credential-intake page and waits. The
+browser encrypts locally; the coordinator cannot read the submitted value. The
+Host stores and validates it before authenticated discovery. OAuth opens an exact loopback
+browser flow on desktop. A configured headless Host instead emits the provider
+link to its surface and receives the callback through the short-lived relay at
+the Renoa HTTPS origin. Client state and tokens stay in the desktop Secret
+Service or the headless Host's owner-only secret directory. SQLite stores only
+a deterministic reference, non-secret callback identity and phase, and
+semantic terminal receipt. It automatically refreshes an expired token under a
+cross-process connection lock. A possibly dispatched code exchange or refresh is not retried
 after process loss; replay of an already settled management operation reads its
 receipt without opening another browser. Explicit `authorize` with `restart:
 true` abandons an expired or unknown flow only for a new operation. The Host
@@ -298,6 +318,9 @@ Its opaque cursor is bound to the complete inventory revision, so concurrent
 changes produce a visible conflict and a fresh first-page requirement rather
 than offset drift. Package integrity, durable connection state, profile
 attachment, and accepted/rejected plugin skill bindings remain separate facts.
+Revision 12 freezes encrypted credential intake and transactional connection
+publication. An unfinished revision-11 management call fails closed after
+upgrade instead of resuming across the changed effect boundary.
 
 The Host also adds exactly two Agent Skills tools: `skill_search` and
 `skill_load`. Search rescans global `~/.agents/skills` and the canonical
@@ -366,6 +389,9 @@ Model and reasoning selection are not profile or Agent identity. They may change
 between operations while the Agent Instance, Session, instructions, tools, and
 history remain continuous. A change never mutates an active operation; the
 kernel freezes each operation's exact model and reasoning revision.
+Profiles may restrict which configured providers are eligible without fixing a
+particular model. Discovery, loading, and later model changes all enforce the
+same restriction.
 
 The Host resolves a fresh runtime for every newly admitted operation. This
 re-reads the canonical workspace `AGENTS.md`, so a project-rule edit applies to
@@ -478,6 +504,8 @@ Local Host state has one intentionally visible layout:
   host.sqlite3                  package metadata, MCP state, credential
                                 references, and skill/session bindings
   oauth-locks/<sha256>.lock     process-crash-safe per-connection OAuth lock
+  oauth-secrets/<sha256>.json   headless-only owner-protected credentials
+  credential-relay-state/      owner-only pending encrypted-intake identities
   plugins/<sha256>/             immutable Agent Plugin directory
   shared-registry/              owner-only transient package transfers
   skills/<sha256>/              immutable imported Agent Skill directory
@@ -552,15 +580,20 @@ modification.
 11. Every trace database identifies its profile, Agent, and Session.
 12. The Host owns OAuth coordination, client-registration policy, and secret
     references; the MCP adapter speaks the protocol, while packages, surfaces,
-    the loop, and kernel never own credentials.
-13. Shared package availability is a Host concern. The package registry carries
+    the loop, and kernel never own credentials. Callback transport is selected
+    once during Host composition and reused by every OAuth path.
+13. A headless surface may carry a short-lived encrypted credential-intake
+    action, but only the execution Host stores and uses the plaintext. A failed
+    setup, authentication, or discovery never publishes a new connection and
+    never replaces a working one.
+14. Shared package availability is a Host concern. The package registry carries
     immutable package bytes and ordered revisions only; it never becomes RCP,
     remote execution, credential distribution, profile authorization, or
     surface state.
 
 ## Open decisions
 
-- future Host schema migrations beyond the proven v1-through-v11 chain;
+- future Host schema migrations beyond the proven v1-through-v13 chain;
 - historical resolved-binding retention across explicit catalog/profile
   changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
@@ -618,7 +651,8 @@ The first hosted surface registers Arcee and maps each allowlisted private
 Telegram topic to one caller-identified Host session. It persists an update
 before advancing the polling offset, preserves request identity across process
 loss, re-drives kernel-owned execution, and never blindly repeats an uncertain
-Telegram final send. `/new`, `/compact`, `/status`, `/cancel`, native draft
+Telegram final send. `/new`, `/compact`, `/status`, `/model`, `/reasoning`,
+`/cancel`, native draft
 stopping, bounded live drafts, and exact-profile execution cross the real Host
 path. Telegram keeps only ingress, topic mapping, and delivery state; it does
 not copy Agent history or runtime composition.
@@ -658,6 +692,15 @@ policy while preserving existing OAuth connections as DCR. Client credentials
 remain named Secret Service references; no kernel or RCP type changed.
 Schema v10 adds validated generic credential header names and public prefixes;
 existing connection kinds migrate without changing identity or catalog state.
+Schema v12 preserves existing loopback flows and adds the alternate callback
+relay identity. A real headless Host proof survives interruption, consumes a
+durable callback from the coordinator, stores it locally before clearing the
+relay, completes exchange, and handles provider rejection by the same rule.
+The relay contains no PKCE verifier or token, and no kernel type changed.
+Schema v13 lets OAuth attempts exist before an active connection. Encrypted
+credential intake, authorization, and discovery therefore complete while the
+old connection remains authoritative; one transaction publishes a successful
+candidate, while failure publishes nothing.
 
 The standalone Agent Skills path is now complete. Alpha sees two additional
 constant schemas regardless of skill count. Search imports standard global and

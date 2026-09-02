@@ -14,8 +14,12 @@ Environment=HOME=/var/lib/renoa-telegram
 Environment=RENOA_DATA_DIR=/var/lib/renoa-telegram
 Environment=RENOA_TELEGRAM_WORKSPACE=/srv/renoa/arcee
 Environment=RENOA_TELEGRAM_BOT_TOKEN_FILE=%d/telegram-bot-token
+Environment=RENOA_TELEGRAM_IPV4_ONLY=1
+Environment=RENOA_OAUTH_RELAY_ORIGIN=https://renoa.live
+Environment=RENOA_OAUTH_RELAY_DEVICE_CREDENTIAL_FILE=%d/oauth-relay-device
 EnvironmentFile=/etc/renoa/telegram.env
 LoadCredential=telegram-bot-token:/etc/renoa/telegram-bot-token
+LoadCredential=oauth-relay-device:/etc/renoa/arcee-oauth-relay-device
 UMask=0077
 ExecStart=/usr/local/bin/renoa-telegram
 Restart=on-failure

@@ -122,6 +122,14 @@ pub enum McpAdapterError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum McpCredentialError {
+    #[error("private Host credential storage failed: {0}")]
+    PrivateStore(String),
+    #[error("secure credential setup is unavailable: {0}")]
+    SetupUnavailable(String),
+    #[error("secure credential setup expired before a credential was received")]
+    SetupExpired,
+    #[error("secure credential setup returned invalid encrypted data")]
+    SetupInvalid,
     #[error("{source_name} credential source could not start: {source}")]
     Start {
         source_name: &'static str,
@@ -176,6 +184,12 @@ pub enum McpCredentialError {
         status: String,
         guidance: String,
     },
+}
+
+impl From<McpCredentialError> for McpHostError {
+    fn from(error: McpCredentialError) -> Self {
+        Self::Adapter(McpAdapterError::Credential(error))
+    }
 }
 
 /// Adapter failure class from the pinned MCP process wire.

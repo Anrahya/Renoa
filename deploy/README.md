@@ -2,7 +2,8 @@
 
 This directory contains four independent services and one transport process:
 
-- `renoa-coordinator` carries RCP task continuity; and
+- `renoa-coordinator` carries RCP task continuity and the separate short-lived
+  Host OAuth callback relay; and
 - `renoa-node` executes statically bound RCP tasks through a local Host; and
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
 - `renoa-telegram` runs the Arcee personal-operator profile on Telegram; while
@@ -142,10 +143,12 @@ mode `0600`. Put the remaining explicit settings in
 
 ```text
 RENOA_TELEGRAM_ALLOWED_USER_ID=123456789
+RENOA_TELEGRAM_IPV4_ONLY=1
 RENOA_MODEL_BRIDGE=/opt/renoa/adapters/model-provider-node/dist/src/main.js
 RENOA_MODEL_AUTH_STORE=/var/lib/renoa-telegram/model-auth.sqlite
 RENOA_MODEL_PROVIDER=opencode-go
 RENOA_MODEL=your-model-id
+RENOA_MCP_ADAPTER=/opt/renoa/adapters/mcp-client-node/dist/src/main.js
 TZ=Asia/Kolkata
 ```
 
@@ -155,8 +158,40 @@ store must be owned by and writable only to that account so OAuth refresh can
 rotate safely. `TZ` selects the local clock Arcee sees on each turn and may be
 changed to any valid IANA time-zone name. Optional MCP adapter and shared
 registry settings use the same environment names documented in
-[`renoa-telegram`](../crates/renoa-telegram/README.md). Install the unit and
-start it:
+[`renoa-telegram`](../crates/renoa-telegram/README.md).
+
+Give the Telegram Host its own Node identity for callback-relay management.
+This identity grants no task access and is not shared with `renoa-node`. Create
+and consume the short-lived enrollment without printing either secret:
+
+```sh
+install -d -m 0700 -o root -g root /run/renoa
+umask 077
+systemd-run --quiet --wait --pipe --collect \
+  --property=DynamicUser=yes \
+  --property=StateDirectory=renoa \
+  --property=StateDirectoryMode=0700 \
+  --property=UMask=0077 \
+  /usr/local/bin/renoa-coordinator enroll-node \
+  /var/lib/renoa/control.sqlite <oauth-relay-node-uuid> \
+  > /run/renoa/arcee-oauth-relay-enrollment.json
+/usr/local/bin/renoa-node enroll \
+  wss://renoa.live/connect \
+  /run/renoa/arcee-oauth-relay-enrollment.json \
+  /etc/renoa/arcee-oauth-relay-device
+rm /run/renoa/arcee-oauth-relay-enrollment.json
+```
+
+The unit supplies that file through systemd credentials and pins the relay
+origin to `https://renoa.live`. When an MCP requires OAuth, Arcee sends a
+permanent Telegram message with a provider-login button; the temporary thinking
+draft contains no URL. The callback lands at the public origin, while PKCE state
+and tokens stay in `/var/lib/renoa-telegram`. If an MCP needs an API token or
+pre-registered OAuth client, Arcee instead sends a permanent encrypted setup
+link. The coordinator sees only ciphertext; the plaintext is stored by Arcee's
+Host before the MCP connection is published.
+
+Install the unit and start it:
 
 ```sh
 cp deploy/renoa-telegram.service /etc/systemd/system/

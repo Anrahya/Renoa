@@ -1,7 +1,5 @@
 use std::{io, path::PathBuf, time::Duration};
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _},
     process::Command,
@@ -10,210 +8,56 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    mcp::{McpAdapterError, McpCredentialError, McpHostError, McpOAuthError, validate_identity},
+    mcp::McpCredentialError,
     process::{child_pid_raw, configure_process_group, stop_process_group_raw},
 };
 
-use super::SensitiveString;
-
 const SOURCE: &str = "Secret Service";
 const DEADLINE: Duration = Duration::from_secs(15);
-const MAX_BUNDLE_BYTES: usize = 768 * 1_024;
-const MAX_CLIENT_CREDENTIAL_BYTES: usize = 64 * 1_024;
-const MAX_CLIENT_VALUE_BYTES: usize = 16 * 1_024;
+const MAX_OUTPUT_BYTES: usize = 768 * 1_024;
 const MAX_STDERR_BYTES: usize = 4 * 1_024;
 
 #[derive(Clone)]
-pub(super) struct OAuthSecretStore {
+pub(super) struct SecretService {
     executable: PathBuf,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OAuthSecretBundle {
-    schema_version: u32,
-    pub(super) adapter_state: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) pending_callback: Option<PendingCallback>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct PendingCallback {
-    pub(super) authorization_code: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) issuer: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct PreRegisteredOAuthClient {
-    schema_version: u32,
-    pub(super) issuer: String,
-    pub(super) client_id: String,
-    #[serde(default)]
-    pub(super) client_secret: Option<SensitiveString>,
-}
-
-impl OAuthSecretBundle {
-    pub(super) const fn new(adapter_state: Value) -> Self {
-        Self {
-            schema_version: 1,
-            adapter_state,
-            pending_callback: None,
-        }
-    }
-}
-
-impl OAuthSecretStore {
+impl SecretService {
     pub(super) const fn new(executable: PathBuf) -> Self {
         Self { executable }
     }
 
-    pub(super) async fn load(
+    pub(super) async fn lookup(
         &self,
         credential_id: &str,
         cancellation: CancellationToken,
-    ) -> Result<Option<OAuthSecretBundle>, McpHostError> {
-        validate_identity("credential", credential_id)?;
-        let output = run(
+    ) -> Result<Option<Vec<u8>>, McpCredentialError> {
+        run(
             &self.executable,
             SecretCommand::Lookup { credential_id },
             cancellation,
         )
         .await
-        .map_err(credential_error)?;
-        let Some(mut bytes) = output else {
-            return Ok(None);
-        };
-        if bytes.len() > MAX_BUNDLE_BYTES {
-            bytes.fill(0);
-            return Err(credential_error(McpCredentialError::OutputLimit(SOURCE)));
-        }
-        let decoded = serde_json::from_slice::<OAuthSecretBundle>(&bytes);
-        bytes.fill(0);
-        let bundle =
-            decoded.map_err(|_| credential_error(McpCredentialError::InvalidOutput(SOURCE)))?;
-        if bundle.schema_version != 1 {
-            return Err(credential_error(McpCredentialError::InvalidOutput(SOURCE)));
-        }
-        Ok(Some(bundle))
     }
 
-    pub(super) async fn store(
+    pub(super) async fn store_bytes(
         &self,
         credential_id: &str,
-        bundle: &OAuthSecretBundle,
+        bytes: &[u8],
         cancellation: CancellationToken,
-    ) -> Result<(), McpHostError> {
-        validate_identity("credential", credential_id)?;
-        let mut encoded = serde_json::to_vec(bundle)?;
-        if encoded.len() > MAX_BUNDLE_BYTES {
-            encoded.fill(0);
-            return Err(credential_error(McpCredentialError::OutputLimit(SOURCE)));
-        }
+    ) -> Result<(), McpCredentialError> {
         let result = run(
             &self.executable,
             SecretCommand::Store {
                 credential_id,
-                bytes: &encoded,
+                bytes,
             },
             cancellation,
         )
         .await;
-        encoded.fill(0);
-        result.map_err(credential_error)?.ok_or_else(|| {
-            McpHostError::Invalid("Secret Service store returned no completion".to_owned())
-        })?;
+        result?.ok_or(McpCredentialError::InvalidOutput(SOURCE))?;
         Ok(())
     }
-
-    pub(super) async fn load_pre_registered_client(
-        &self,
-        credential_id: &str,
-        cancellation: CancellationToken,
-    ) -> Result<PreRegisteredOAuthClient, McpHostError> {
-        validate_identity("OAuth client credential", credential_id)?;
-        let output = run(
-            &self.executable,
-            SecretCommand::Lookup { credential_id },
-            cancellation,
-        )
-        .await
-        .map_err(credential_error)?;
-        let Some(mut bytes) = output else {
-            return Err(credential_error(McpCredentialError::Unavailable {
-                source_name: SOURCE,
-                reference: format!("OAuth client credential `{credential_id}`"),
-                status: "not found".to_owned(),
-                guidance: format!(
-                    "store JSON {{\"schema_version\":1,\"issuer\":\"https://authorization-server.example\",\"client_id\":\"...\",\"client_secret\":\"...\"}} with `secret-tool store --label='Renoa {credential_id}' application renoa credential {credential_id}`"
-                ),
-            }));
-        };
-        if bytes.len() > MAX_CLIENT_CREDENTIAL_BYTES {
-            bytes.fill(0);
-            return Err(credential_error(McpCredentialError::OutputLimit(SOURCE)));
-        }
-        let decoded = serde_json::from_slice::<PreRegisteredOAuthClient>(&bytes);
-        bytes.fill(0);
-        let mut client = decoded.map_err(|_| {
-            McpOAuthError::Invalid(format!(
-                "pre-registered OAuth credential '{credential_id}' must be JSON with schema_version 1, issuer, client_id, and optional client_secret"
-            ))
-        })?;
-        if client.schema_version != 1
-            || client.issuer.len() > MAX_CLIENT_VALUE_BYTES
-            || client.client_id.is_empty()
-            || client.client_id.len() > MAX_CLIENT_VALUE_BYTES
-            || client
-                .client_secret
-                .as_ref()
-                .is_some_and(|secret| secret.is_empty() || secret.len() > MAX_CLIENT_VALUE_BYTES)
-        {
-            return Err(McpOAuthError::Invalid(format!(
-                "pre-registered OAuth credential '{credential_id}' has invalid or oversized fields"
-            ))
-            .into());
-        }
-        client.issuer = validate_issuer(&client.issuer).map_err(|reason| {
-            McpOAuthError::Invalid(format!(
-                "pre-registered OAuth credential '{credential_id}' has an invalid issuer: {reason}"
-            ))
-        })?;
-        Ok(client)
-    }
-}
-
-fn validate_issuer(value: &str) -> Result<String, &'static str> {
-    let issuer = url::Url::parse(value).map_err(|_| "it must be an absolute URL")?;
-    let loopback_http = issuer.scheme() == "http"
-        && issuer.host_str().is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host
-                    .trim_matches(['[', ']'])
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|address| address.is_loopback())
-        });
-    if issuer.scheme() != "https" && !loopback_http {
-        return Err("it must use HTTPS, except for loopback testing");
-    }
-    if !issuer.username().is_empty()
-        || issuer.password().is_some()
-        || issuer.query().is_some()
-        || issuer.fragment().is_some()
-    {
-        return Err("it must not contain credentials, a query, or a fragment");
-    }
-    Ok(if issuer.path() == "/" {
-        issuer.origin().ascii_serialization()
-    } else {
-        issuer.to_string()
-    })
-}
-
-fn credential_error(error: McpCredentialError) -> McpHostError {
-    McpAdapterError::Credential(error).into()
 }
 
 #[derive(Clone, Copy)]
@@ -316,7 +160,7 @@ async fn run(
             .map_err(cleanup_error)?;
         return Err(McpCredentialError::MissingPipe(SOURCE));
     };
-    let stdout = drain(stdout, MAX_BUNDLE_BYTES.saturating_add(1));
+    let stdout = drain(stdout, MAX_OUTPUT_BYTES.saturating_add(1));
     let stderr = drain(stderr, MAX_STDERR_BYTES);
     let deadline = tokio::time::Instant::now() + DEADLINE;
     if let Some(bytes) = input {
