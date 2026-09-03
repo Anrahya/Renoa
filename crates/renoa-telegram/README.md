@@ -42,6 +42,7 @@ export RENOA_MODEL_BRIDGE='/absolute/path/to/adapters/model-provider-node/dist/s
 export RENOA_MODEL_AUTH_STORE='/absolute/path/to/model-auth.sqlite'
 export RENOA_MODEL_PROVIDER='opencode-go'
 export RENOA_MODEL='your-model-id'
+export RENOA_MODEL_REASONING='high' # Optional default for new sessions.
 export TZ='Asia/Kolkata' # Optional; otherwise use the host system time zone.
 
 # Optional Host pieces:

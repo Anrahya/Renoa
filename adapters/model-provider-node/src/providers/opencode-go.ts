@@ -1,5 +1,5 @@
 /**
- * Official OpenCode Go transports, verified 2026-08-25 against
+ * Official OpenCode Go transports, verified 2026-09-03 against
  * https://dev.opencode.ai/docs/go/
  *
  * This table records model-specific corrections from OpenCode's documentation.
@@ -53,6 +53,7 @@ export const OPENCODE_GO_TRANSPORTS: Readonly<Record<string, OpenCodeTransport>>
   "grok-4.5": "openai-responses",
   "grok-4.6": "openai-responses",
   "gpt-5.6-luna": "openai-responses",
+  "muse-spark-1.3-contributor": "openai-responses",
   "muse-spark-1.2-contributor": "openai-responses",
   "glm-5.1": "openai-completions",
   "glm-5.2": "openai-completions",

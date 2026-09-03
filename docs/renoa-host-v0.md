@@ -65,7 +65,9 @@ context policy.
 Arcee permits only the OpenCode Go model provider. This is Host profile policy,
 not Telegram policy: every surface that opens an Arcee session sees the same
 provider boundary. The selected OpenCode Go model and reasoning level remain
-session configuration and may change between operations.
+session configuration and may change between operations. Host launch
+configuration may set the initial reasoning level for new sessions; saved
+sessions keep their own acknowledged model and reasoning selection.
 
 The product direction for portable packages, external integrations,
 connections, profile selection, and agent-driven capability changes is recorded

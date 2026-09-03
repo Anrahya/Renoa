@@ -79,13 +79,13 @@ impl LocalHost {
         let initial_provider = profile
             .model_provider()
             .unwrap_or(self.config.initial_provider);
-        let reasoning = initial_reasoning(&models, initial_provider, &self.config.initial_model)?;
         let model = require_model(
             &models,
             initial_provider,
             &self.config.initial_model,
             "configured",
         )?;
+        let reasoning = initial_reasoning(model, self.config.initial_reasoning)?;
         let agent_id = AgentId::new();
         resolve_runtime(
             &self.config,

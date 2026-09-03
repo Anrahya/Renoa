@@ -34,14 +34,25 @@ pub(crate) async fn discover_profile_models(
 }
 
 pub(crate) fn initial_reasoning(
-    models: &[ModelChoice],
-    provider: ModelProvider,
-    configured_model: &str,
+    model: &ModelChoice,
+    configured_reasoning: Option<ReasoningLevel>,
 ) -> Result<ReasoningLevel, LocalHostError> {
-    let model = require_model(models, provider, configured_model, "configured")?;
+    if let Some(reasoning) = configured_reasoning {
+        if model.reasoning_levels().contains(&reasoning) {
+            return Ok(reasoning);
+        }
+        return Err(LocalHostError::Configuration(format!(
+            "configured {}/{} model does not support {} reasoning",
+            model.provider(),
+            model.id(),
+            reasoning.as_str()
+        )));
+    }
     model.default_reasoning().ok_or_else(|| {
         LocalHostError::Configuration(format!(
-            "configured {configured_model} model has no supported reasoning level"
+            "configured {}/{} model has no supported reasoning level",
+            model.provider(),
+            model.id()
         ))
     })
 }

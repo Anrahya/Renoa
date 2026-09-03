@@ -2,7 +2,7 @@ use std::{collections::HashSet, env, path::PathBuf};
 
 use renoa_local::{
     ARCEE_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters, LocalModelConfiguration,
-    ModelProvider, arcee_profile,
+    ModelProvider, ReasoningLevel, arcee_profile,
 };
 
 use crate::TelegramServiceError;
@@ -24,6 +24,7 @@ struct ProviderSettings {
     providers: Vec<ModelProvider>,
     default_provider: ModelProvider,
     model: String,
+    initial_reasoning: Option<ReasoningLevel>,
     credential_store: PathBuf,
 }
 
@@ -63,15 +64,19 @@ impl Config {
         if let Some((origin, credentials)) = oauth_relay.as_ref() {
             adapters = adapters.with_oauth_relay(origin, credentials);
         }
+        let mut model_configuration = LocalModelConfiguration::new(
+            settings.bridge,
+            settings.providers,
+            settings.default_provider,
+            settings.model,
+            settings.credential_store,
+        );
+        if let Some(reasoning) = settings.initial_reasoning {
+            model_configuration = model_configuration.with_initial_reasoning(reasoning);
+        }
         let host = LocalHost::new(
             &data_directory,
-            LocalModelConfiguration::new(
-                settings.bridge,
-                settings.providers,
-                settings.default_provider,
-                settings.model,
-                settings.credential_store,
-            ),
+            model_configuration,
             vec![profile],
             adapters,
         )?;
@@ -108,6 +113,7 @@ impl ProviderSettings {
             providers: enabled_providers(default_provider)?,
             default_provider,
             model: required("RENOA_MODEL")?,
+            initial_reasoning: optional_reasoning("RENOA_MODEL_REASONING")?,
             credential_store: required_path("RENOA_MODEL_AUTH_STORE")?,
         })
     }
@@ -288,6 +294,26 @@ fn optional_boolean(name: &str) -> Result<bool, TelegramServiceError> {
     parse_optional_boolean(name, configured.as_deref())
 }
 
+fn optional_reasoning(name: &str) -> Result<Option<ReasoningLevel>, TelegramServiceError> {
+    let configured = optional(name)?;
+    parse_optional_reasoning(name, configured.as_deref())
+}
+
+fn parse_optional_reasoning(
+    name: &str,
+    configured: Option<&str>,
+) -> Result<Option<ReasoningLevel>, TelegramServiceError> {
+    configured
+        .map(|value| {
+            ReasoningLevel::from_id(value).ok_or_else(|| {
+                configuration(format!(
+                    "{name} must be off, minimal, low, medium, high, xhigh, or max"
+                ))
+            })
+        })
+        .transpose()
+}
+
 fn parse_optional_boolean(
     name: &str,
     configured: Option<&str>,
@@ -306,7 +332,8 @@ fn configuration(message: impl Into<String>) -> TelegramServiceError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ModelProvider, oauth_relay_settings, parse_enabled_providers, parse_optional_boolean,
+        ModelProvider, ReasoningLevel, oauth_relay_settings, parse_enabled_providers,
+        parse_optional_boolean, parse_optional_reasoning,
     };
     #[cfg(unix)]
     use super::{read_token, require_private_token_file_in};
@@ -353,6 +380,21 @@ mod tests {
         assert!(!parse_optional_boolean("IP_FAMILY", Some("0")).expect("dual stack"));
         assert!(parse_optional_boolean("IP_FAMILY", Some("1")).expect("IPv4 only"));
         assert!(parse_optional_boolean("IP_FAMILY", Some("true")).is_err());
+    }
+
+    #[test]
+    fn initial_reasoning_is_optional_and_strict() {
+        assert_eq!(
+            parse_optional_reasoning("RENOA_MODEL_REASONING", None)
+                .expect("default model reasoning"),
+            None
+        );
+        assert_eq!(
+            parse_optional_reasoning("RENOA_MODEL_REASONING", Some("xhigh"))
+                .expect("configured model reasoning"),
+            Some(ReasoningLevel::Xhigh)
+        );
+        assert!(parse_optional_reasoning("RENOA_MODEL_REASONING", Some("extra-high")).is_err());
     }
 
     #[cfg(unix)]

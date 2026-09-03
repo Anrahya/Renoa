@@ -154,6 +154,7 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         providers: vec![ModelProvider::Xai],
         initial_provider: ModelProvider::Xai,
         initial_model: "fixture-model".to_owned(),
+        initial_reasoning: None,
         credential_store: credentials.to_path_buf(),
         mcp_adapter: None,
         mcp_registry_adapter: None,

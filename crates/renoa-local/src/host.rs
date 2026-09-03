@@ -18,7 +18,7 @@ mod skill_tests;
 
 use crate::{
     AgentProfile, AgentProfileError, AgentProfileId, LocalRuntimeError, LocalSessionError,
-    LocalWorkspaceError, ModelBridgeError, ModelProvider,
+    LocalWorkspaceError, ModelBridgeError, ModelProvider, ReasoningLevel,
     mcp::{
         McpAuthorizationResolver, McpCatalogStore, McpCredentialResolver, McpHostError,
         resolve_adapter,
@@ -88,6 +88,7 @@ pub(crate) struct HostConfig {
     pub(crate) providers: Vec<ModelProvider>,
     pub(crate) initial_provider: ModelProvider,
     pub(crate) initial_model: String,
+    pub(crate) initial_reasoning: Option<ReasoningLevel>,
     pub(crate) credential_store: PathBuf,
     pub(crate) mcp_catalog: McpCatalogStore,
     pub(crate) mcp_adapter: Option<PathBuf>,
@@ -103,6 +104,7 @@ struct HostInitialization {
     providers: Vec<ModelProvider>,
     initial_provider: ModelProvider,
     initial_model: String,
+    initial_reasoning: Option<ReasoningLevel>,
     credential_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
     mcp_registry_adapter: Option<PathBuf>,
@@ -118,6 +120,7 @@ pub struct LocalModelConfiguration {
     providers: Vec<ModelProvider>,
     initial_provider: ModelProvider,
     initial_model: String,
+    initial_reasoning: Option<ReasoningLevel>,
     credential_store: PathBuf,
 }
 
@@ -135,8 +138,16 @@ impl LocalModelConfiguration {
             providers,
             initial_provider,
             initial_model: initial_model.into(),
+            initial_reasoning: None,
             credential_store: credential_store.into(),
         }
+    }
+
+    /// Selects the reasoning level used when a Host creates a new session.
+    #[must_use]
+    pub const fn with_initial_reasoning(mut self, reasoning: ReasoningLevel) -> Self {
+        self.initial_reasoning = Some(reasoning);
+        self
     }
 }
 
@@ -221,6 +232,7 @@ impl LocalHost {
             providers: models.providers,
             initial_provider: models.initial_provider,
             initial_model: models.initial_model,
+            initial_reasoning: models.initial_reasoning,
             credential_store: models.credential_store,
             mcp_adapter,
             mcp_registry_adapter,
@@ -240,6 +252,7 @@ impl LocalHost {
             providers,
             initial_provider,
             initial_model,
+            initial_reasoning,
             credential_store,
             mcp_adapter,
             mcp_registry_adapter,
@@ -317,6 +330,7 @@ impl LocalHost {
                 providers,
                 initial_provider,
                 initial_model,
+                initial_reasoning,
                 credential_store,
                 mcp_catalog,
                 mcp_adapter,

@@ -2,7 +2,8 @@ use std::fs;
 
 use renoa_local::{
     ALPHA_PROFILE_ID, ARCEE_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters,
-    LocalHostError, LocalModelConfiguration, ModelProvider, alpha_profile, arcee_profile,
+    LocalHostError, LocalModelConfiguration, ModelProvider, ReasoningLevel, alpha_profile,
+    arcee_profile,
 };
 use tempfile::tempdir;
 
@@ -116,7 +117,8 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
             ModelProvider::Xai,
             "model-a",
             &credentials,
-        ),
+        )
+        .with_initial_reasoning(ReasoningLevel::Xhigh),
         vec![profile],
         LocalHostAdapters::default(),
     )
@@ -131,6 +133,7 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
         .expect("create Arcee session");
     let configuration = session.configuration().expect("Arcee configuration");
     assert_eq!(configuration.model, "opencode-go/model-a");
+    assert_eq!(configuration.reasoning, ReasoningLevel::Xhigh);
     assert!(
         configuration
             .models
@@ -142,6 +145,52 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
         .await
         .expect_err("Arcee must not switch to a provider outside its profile");
     assert!(matches!(error, LocalHostError::InvalidRequest(_)));
+}
+
+#[tokio::test]
+async fn configured_initial_reasoning_must_be_supported_by_the_model() {
+    let directory = tempdir().expect("temporary directory");
+    let data = directory.path().join("data");
+    let workspace = directory.path().join("workspace");
+    let bridge = directory.path().join("bridge.mjs");
+    let catalog_calls = directory.path().join("catalog-calls");
+    let credentials = directory.path().join("credentials.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&credentials, "").expect("create credential placeholder");
+    fs::write(
+        &bridge,
+        bridge_source(catalog_calls.to_string_lossy().as_ref()),
+    )
+    .expect("write model bridge");
+    let host = LocalHost::new(
+        data,
+        LocalModelConfiguration::new(
+            &bridge,
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "model-a",
+            &credentials,
+        )
+        .with_initial_reasoning(ReasoningLevel::Max),
+        vec![alpha_profile()],
+        LocalHostAdapters::default(),
+    )
+    .expect("assemble Host");
+
+    let error = host
+        .create_session(
+            &AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
+            &workspace,
+        )
+        .await
+        .err()
+        .expect("reject unsupported initial reasoning");
+
+    assert!(matches!(error, LocalHostError::Configuration(_)));
+    assert_eq!(
+        error.to_string(),
+        "invalid local Host configuration: configured xai/model-a model does not support max reasoning"
+    );
 }
 
 fn bridge_source(catalog_calls: &str) -> String {
@@ -158,7 +207,7 @@ if (action === "catalog") {{
   process.stdout.write(JSON.stringify({{ ok: true, response: {{ models: ids.map(id => ({{
     id,
     name: id === "model-a" ? "Model A" : "Model B",
-    reasoning_levels: ["high"],
+    reasoning_levels: ["high", "xhigh"],
     context_window_tokens: 1000000,
     model_spec: {{ id }}
   }})) }} }}));

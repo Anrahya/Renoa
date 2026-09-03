@@ -148,6 +148,7 @@ RENOA_MODEL_BRIDGE=/opt/renoa/adapters/model-provider-node/dist/src/main.js
 RENOA_MODEL_AUTH_STORE=/var/lib/renoa-telegram/model-auth.sqlite
 RENOA_MODEL_PROVIDER=opencode-go
 RENOA_MODEL=your-model-id
+RENOA_MODEL_REASONING=high
 RENOA_MCP_ADAPTER=/opt/renoa/adapters/mcp-client-node/dist/src/main.js
 TZ=Asia/Kolkata
 ```

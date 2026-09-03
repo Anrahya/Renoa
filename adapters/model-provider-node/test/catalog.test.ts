@@ -11,7 +11,10 @@ import {
   validateModelSpec,
 } from "../src/catalog.js";
 import { loadCatalog } from "../src/runtime.js";
-import { OPENCODE_GO_TRANSPORTS } from "../src/providers/opencode-go.js";
+import {
+  OPENCODE_GO_TRANSPORTS,
+  opencodeGoTransport,
+} from "../src/providers/opencode-go.js";
 import { oauthCredential, tempDir } from "./helpers.js";
 import { SqliteCredentialStore } from "../src/credentials.js";
 
@@ -42,6 +45,13 @@ test("OpenCode catalog uses official transports and does not guess from the mode
   const glm = advertised.get("glm-5.1");
   assert.equal(glm?.model.api, "openai-completions");
   assert.equal(modelBindingId(glm!.model), sha256(JSON.stringify(glm!.model)));
+});
+
+test("Muse Spark 1.3 uses the documented Responses transport", () => {
+  assert.equal(
+    opencodeGoTransport("muse-spark-1.3-contributor", "@ai-sdk/openai-compatible"),
+    "openai-responses",
+  );
 });
 
 test("Ox Alpha projects the current models.dev contract onto Renoa's supported modalities", () => {

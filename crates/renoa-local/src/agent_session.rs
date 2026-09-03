@@ -285,7 +285,7 @@ impl AgentSession {
         let reasoning = if model.reasoning_levels().contains(&current_reasoning) {
             current_reasoning
         } else {
-            initial_reasoning(&models, model.provider(), model.id())?
+            initial_reasoning(&model, None)?
         };
         self.validate_and_persist(&model, reasoning, model.id().to_owned())
             .await?;
