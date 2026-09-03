@@ -70,6 +70,9 @@ interface OAuthFixtureOptions {
   readonly omitRegistrationEndpoint?: boolean;
   readonly clientMetadataSupported?: boolean;
   readonly tokenAuthMethods?: readonly string[];
+  readonly resourceScopes?: readonly string[];
+  readonly authorizationScopes?: readonly string[];
+  readonly omitTokenScope?: boolean;
   readonly rejectToken?: {
     readonly status: number;
     readonly error: string;
@@ -136,7 +139,7 @@ export class OAuthFixture {
       return json(response, 200, {
         resource: this.endpoint,
         authorization_servers: [this.origin],
-        scopes_supported: ["search"],
+        scopes_supported: this.#options.resourceScopes ?? ["search"],
       });
     }
     if (url.pathname.includes(".well-known/oauth-authorization-server")) {
@@ -149,7 +152,10 @@ export class OAuthFixture {
           : { registration_endpoint: `${this.origin}/register` }),
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code", "refresh_token"],
-        scopes_supported: ["search"],
+        scopes_supported:
+          this.#options.authorizationScopes ??
+          this.#options.resourceScopes ??
+          ["search"],
         code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported:
           this.#options.tokenAuthMethods ?? ["none"],
@@ -206,7 +212,7 @@ export class OAuthFixture {
         refresh_token: "refresh-one",
         token_type: "Bearer",
         expires_in: 3600,
-        scope: "search",
+        ...(this.#options.omitTokenScope === true ? {} : { scope: "search" }),
       });
     }
     return json(response, 404, { error: "not_found" });

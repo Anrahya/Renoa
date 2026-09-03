@@ -122,7 +122,7 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 if (
-  request.wire_version !== 7 ||
+  request.wire_version !== 8 ||
   request.action !== "discover" ||
   request.credential?.scheme !== "header" ||
   request.credential?.name !== "authorization" ||
@@ -132,12 +132,12 @@ if (
   Object.values(process.env).some(value => value?.includes({token}))
 ) process.exit(9);
 process.stdout.write(JSON.stringify({{
-  wire_version: 7,
+  wire_version: 8,
   event: "discovered",
   catalog: {{
     endpoint: request.endpoint,
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.7.0",
+    adapter_revision: "mcp-client-node-v0.8.0",
     tools: [{{
       name: "get_me",
       description: `token ${{request.credential.secret}}`,

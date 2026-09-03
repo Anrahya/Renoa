@@ -9,6 +9,7 @@ mod process;
 mod relay;
 mod relay_http;
 mod resolution;
+mod scope;
 mod secret;
 pub(super) mod secret_store;
 mod sensitive;
@@ -34,6 +35,7 @@ pub(super) use sensitive::SensitiveString;
 use store::OAuthFlowStore;
 
 pub(super) use private_secret::PrivateSecretStore;
+pub(crate) use scope::{MAX_OAUTH_SCOPE_BYTES, validate_oauth_scope};
 
 const INTERACTIVE_LOCK_WAIT: Duration = Duration::from_secs(2);
 const REFRESH_LOCK_WAIT: Duration = Duration::from_secs(30);
@@ -52,6 +54,7 @@ pub(crate) struct McpOAuthAuthorizationRequest<'a> {
     pub(crate) reference: &'a McpConnectionAuth,
     pub(crate) operation_id: &'a str,
     pub(crate) restart: bool,
+    pub(crate) requested_scope: Option<&'a str>,
     pub(crate) updates: Option<&'a ToolUpdates>,
 }
 

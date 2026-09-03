@@ -202,7 +202,7 @@ fn write_failed_adapter(path: &std::path::Path) {
         r#"
 for await (const _chunk of process.stdin) {}
 process.stdout.write(JSON.stringify({
-  wire_version: 7,
+  wire_version: 8,
   event: "failed",
   failure: {
     kind: "incompatible_protocol",

@@ -280,12 +280,12 @@ if (request.credential?.name !== 'authorization' ||
     request.credential?.prefix !== 'Bearer ' ||
     request.credential?.secret !== 'browser-secret') process.exit(21);
 process.stdout.write(JSON.stringify({
-  wire_version: 7,
+  wire_version: 8,
   event: 'discovered',
   catalog: {
     endpoint: request.endpoint,
     protocol_version: '2026-07-28',
-    adapter_revision: 'mcp-client-node-v0.7.0',
+    adapter_revision: 'mcp-client-node-v0.8.0',
     tools: [{
       name: 'credential_test',
       description: 'Proves secure credential intake.',

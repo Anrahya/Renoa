@@ -56,9 +56,10 @@ impl std::str::FromStr for CredentialRelayId {
 
 /// The exact secret shape collected by the trusted browser page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum CredentialRelayKind {
+    #[serde(rename = "api_token")]
     ApiToken,
+    #[serde(rename = "oauth_client", alias = "o_auth_client")]
     OAuthClient,
 }
 
@@ -137,6 +138,33 @@ impl CredentialRelayStatus {
             | Self::Submitted { version, .. }
             | Self::Acknowledged { version } => *version,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CredentialRelayKind;
+
+    #[test]
+    fn credential_kinds_have_frozen_browser_wire_names() {
+        assert_eq!(
+            serde_json::to_string(&CredentialRelayKind::ApiToken).expect("serialize API token"),
+            r#""api_token""#
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialRelayKind::OAuthClient)
+                .expect("serialize OAuth client"),
+            r#""oauth_client""#
+        );
+    }
+
+    #[test]
+    fn coordinator_accepts_the_buggy_oauth_spelling_during_rolling_deploys() {
+        assert_eq!(
+            serde_json::from_str::<CredentialRelayKind>(r#""o_auth_client""#)
+                .expect("decode legacy OAuth spelling"),
+            CredentialRelayKind::OAuthClient
+        );
     }
 }
 

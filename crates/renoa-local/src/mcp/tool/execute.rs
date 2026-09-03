@@ -46,9 +46,10 @@ pub(super) fn map_failure(
     }
     if let McpAdapterError::Remote(remote) = &source {
         return Ok(ToolOutput {
-            content: vec![ContentBlock::text(format!(
-                "MCP tool `{target}` failed: {}",
-                remote.message()
+            content: vec![ContentBlock::text(remote_failure_message(
+                &target,
+                selected.connection_id(),
+                remote,
             ))],
             details: Some(failure_details(
                 reference,
@@ -97,11 +98,38 @@ fn failure_details(
                 "diagnostic": {
                     "code": code,
                     "http_status": http_status,
+                    "required_scope": match source {
+                        McpAdapterError::Remote(remote) => remote.required_oauth_scope(),
+                        _ => None,
+                    },
                     "detail": detail
                 }
             }
         }
     })
+}
+
+fn remote_failure_message(
+    target: &str,
+    connection: &str,
+    remote: &crate::mcp::McpRemoteFailure,
+) -> String {
+    if remote.diagnostic_code() != Some("oauth_insufficient_scope") {
+        return format!("MCP tool `{target}` failed: {}", remote.message());
+    }
+    let Some(scope) = remote.required_oauth_scope() else {
+        return format!(
+            "MCP tool `{target}` needs additional OAuth permission, but the server did not return a usable required_scope. Renoa did not retry the tool. Do not guess a provider scope; check the service's official documentation and report the missing scope challenge."
+        );
+    };
+    let authorize = json!({
+        "action": "authorize",
+        "connection": connection,
+        "required_scope": scope,
+    });
+    format!(
+        "MCP tool `{target}` needs additional OAuth permission. Renoa did not retry the tool. Call `extension_manage` with exactly {authorize}. After authorization succeeds, explicitly retry this tool once."
+    )
 }
 
 pub(crate) fn definite_boundary_error(
@@ -153,5 +181,38 @@ pub(crate) fn definite_boundary_error(
         McpAdapterError::Remote(_) => {
             ToolError::internal("remote MCP failure was classified twice")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::remote_failure_message;
+    use crate::mcp::McpRemoteFailure;
+
+    #[test]
+    fn scope_failure_tells_the_agent_the_only_valid_recovery_call() {
+        let failure: McpRemoteFailure = serde_json::from_value(json!({
+            "kind": "protocol",
+            "certainty": "definite",
+            "message": "additional authorization required",
+            "partial_changes_possible": false,
+            "diagnostic": {
+                "code": "oauth_insufficient_scope",
+                "http_status": 403,
+                "required_scope": "tweet.write users.read",
+                "detail": "write access is required"
+            }
+        }))
+        .expect("decode scope failure");
+
+        let message = remote_failure_message("x-api/create_post", "x-api", &failure);
+
+        assert!(message.contains("Renoa did not retry the tool"));
+        assert!(message.contains(
+            r#"{"action":"authorize","connection":"x-api","required_scope":"tweet.write users.read"}"#
+        ));
+        assert!(message.contains("explicitly retry this tool once"));
     }
 }

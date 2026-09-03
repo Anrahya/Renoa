@@ -271,8 +271,8 @@ mod tests {
     #[test]
     fn completed_error_preserves_order_duplicates_and_null_details() {
         let parsed = parse_call_records(
-            br#"{"wire_version":7,"event":"dispatch_started"}
-{"wire_version":7,"event":"completed","result":{"content":[{"type":"text","text":"same"},{"type":"image","data":"aW1hZ2U=","mime_type":"image/png"},{"type":"text","text":"same"}],"structured_content":{"present":true,"value":null},"is_error":true}}
+            br#"{"wire_version":8,"event":"dispatch_started"}
+{"wire_version":8,"event":"completed","result":{"content":[{"type":"text","text":"same"},{"type":"image","data":"aW1hZ2U=","mime_type":"image/png"},{"type":"text","text":"same"}],"structured_content":{"present":true,"value":null},"is_error":true}}
 "#,
         )
         .expect("valid call stream");
@@ -295,8 +295,8 @@ mod tests {
     #[test]
     fn typed_unknown_failure_survives_the_call_wire() {
         let parsed = parse_call_records(
-            br#"{"wire_version":7,"event":"dispatch_started"}
-{"wire_version":7,"event":"failed","failure":{"kind":"transport","certainty":"unknown","message":"response lost","partial_changes_possible":true,"diagnostic":{"code":"ECONNRESET","detail":"socket closed"}}}
+            br#"{"wire_version":8,"event":"dispatch_started"}
+{"wire_version":8,"event":"failed","failure":{"kind":"transport","certainty":"unknown","message":"response lost","partial_changes_possible":true,"diagnostic":{"code":"ECONNRESET","detail":"socket closed"}}}
 "#,
         )
         .expect("valid call stream");
@@ -310,11 +310,48 @@ mod tests {
     }
 
     #[test]
+    fn insufficient_scope_keeps_the_exact_actionable_oauth_grant() {
+        let parsed = parse_call_records(
+            br#"{"wire_version":8,"event":"dispatch_started"}
+{"wire_version":8,"event":"failed","failure":{"kind":"protocol","certainty":"definite","message":"additional OAuth authorization required","partial_changes_possible":false,"diagnostic":{"code":"oauth_insufficient_scope","http_status":403,"required_scope":"bookmark.write users.read","detail":"scope challenge"}}}
+"#,
+        )
+        .expect("valid insufficient-scope failure");
+        let Some(CallTerminal::Failed(failure)) = parsed.terminal else {
+            panic!("expected failed terminal")
+        };
+
+        assert_eq!(failure.diagnostic_code(), Some("oauth_insufficient_scope"));
+        assert_eq!(
+            failure.required_oauth_scope(),
+            Some("bookmark.write users.read")
+        );
+    }
+
+    #[test]
+    fn insufficient_scope_diagnostics_cannot_relabel_an_unrelated_failure() {
+        for record in [
+            br#"{"wire_version":8,"event":"dispatch_started"}
+{"wire_version":8,"event":"failed","failure":{"kind":"protocol","certainty":"definite","message":"unrelated failure","partial_changes_possible":false,"diagnostic":{"code":"different_error","http_status":403,"required_scope":"bookmark.write","detail":"not a scope challenge"}}}
+"#
+            .as_slice(),
+            br#"{"wire_version":8,"event":"dispatch_started"}
+{"wire_version":8,"event":"failed","failure":{"kind":"transport","certainty":"unknown","message":"ambiguous failure","partial_changes_possible":true,"diagnostic":{"code":"oauth_insufficient_scope","http_status":403,"detail":"not a definite denial"}}}
+"#
+            .as_slice(),
+        ] {
+            let error = parse_call_records(record)
+                .expect_err("malformed scope diagnostic must fail closed");
+            assert!(error.message.contains("scope"));
+        }
+    }
+
+    #[test]
     fn records_after_the_first_terminal_cannot_replace_it() {
         let parsed = parse_call_records(
-            br#"{"wire_version":7,"event":"dispatch_started"}
-{"wire_version":7,"event":"completed","result":{"content":[{"type":"text","text":"first"}],"structured_content":{"present":false},"is_error":false}}
-{"wire_version":7,"event":"failed","failure":{"kind":"internal","certainty":"definite","message":"late","partial_changes_possible":false,"diagnostic":{"detail":"late"}}}
+            br#"{"wire_version":8,"event":"dispatch_started"}
+{"wire_version":8,"event":"completed","result":{"content":[{"type":"text","text":"first"}],"structured_content":{"present":false},"is_error":false}}
+{"wire_version":8,"event":"failed","failure":{"kind":"internal","certainty":"definite","message":"late","partial_changes_possible":false,"diagnostic":{"detail":"late"}}}
 "#,
         )
         .expect("first terminal is authoritative");
@@ -327,7 +364,7 @@ mod tests {
     #[test]
     fn completion_requires_a_prior_dispatch_transition() {
         let error = parse_call_records(
-            br#"{"wire_version":7,"event":"completed","result":{"content":[{"type":"text","text":"impossible"}],"structured_content":{"present":false},"is_error":false}}
+            br#"{"wire_version":8,"event":"completed","result":{"content":[{"type":"text","text":"impossible"}],"structured_content":{"present":false},"is_error":false}}
 "#,
         )
         .expect_err("completion without dispatch violates the call state machine");
@@ -339,8 +376,8 @@ mod tests {
     #[test]
     fn unknown_failure_cannot_deny_possible_remote_changes() {
         let error = parse_call_records(
-            br#"{"wire_version":7,"event":"dispatch_started"}
-{"wire_version":7,"event":"failed","failure":{"kind":"transport","certainty":"unknown","message":"lost","partial_changes_possible":false,"diagnostic":{"detail":"socket closed"}}}
+            br#"{"wire_version":8,"event":"dispatch_started"}
+{"wire_version":8,"event":"failed","failure":{"kind":"transport","certainty":"unknown","message":"lost","partial_changes_possible":false,"diagnostic":{"detail":"socket closed"}}}
 "#,
         )
         .expect_err("unknown outcomes must admit possible changes");

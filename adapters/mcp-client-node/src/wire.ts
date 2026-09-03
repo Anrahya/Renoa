@@ -8,6 +8,7 @@ import { AdapterProblem } from "./errors.js";
 import {
   MAX_AUTH_TOKEN_BYTES,
   MAX_CREDENTIAL_PREFIX_BYTES,
+  MAX_OAUTH_SCOPE_BYTES,
   MAX_OAUTH_STATE_BYTES,
   MAX_OAUTH_VALUE_BYTES,
   MAX_REQUEST_HEADER_BYTES,
@@ -15,6 +16,7 @@ import {
   WIRE_VERSION,
 } from "./limits.js";
 import { parseOAuthRegistration } from "./oauth-registration-wire.js";
+import { isValidOAuthScope } from "./oauth-scope.js";
 import {
   invalid,
   requireBoolean,
@@ -125,11 +127,12 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         "csrf_state",
         "redirect_uri",
         "force_reauthorization",
+        "requested_scope",
         "registration",
         "oauth_state",
       ],
       "request",
-      ["oauth_state"],
+      ["requested_scope", "oauth_state"],
     );
     return {
       wire_version: WIRE_VERSION,
@@ -149,6 +152,11 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
         request.force_reauthorization,
         "request.force_reauthorization",
       ),
+      ...(request.requested_scope === undefined
+        ? {}
+        : {
+            requested_scope: requireOAuthScope(request.requested_scope),
+          }),
       registration: parseOAuthRegistration(request.registration),
       ...(request.oauth_state === undefined
         ? {}
@@ -224,6 +232,20 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
   );
 }
 
+function requireOAuthScope(value: unknown): string {
+  const scope = requireBoundedString(
+    value,
+    "request.requested_scope",
+    MAX_OAUTH_SCOPE_BYTES,
+  );
+  if (!isValidOAuthScope(scope)) {
+    throw invalid(
+      "request.requested_scope must contain single-space-delimited RFC 6749 scope tokens",
+    );
+  }
+  return scope;
+}
+
 function parseOAuthState(value: unknown): import("./contract.js").WireOAuthState {
   const state = requireObject(value, "request.oauth_state");
   requireExactKeys(
@@ -239,6 +261,7 @@ function parseOAuthState(value: unknown): import("./contract.js").WireOAuthState
       "code_verifier",
       "discovery_state",
       "resource_url",
+      "oauth_scope",
       "tokens",
       "tokens_saved_at_ms",
     ],
@@ -250,6 +273,7 @@ function parseOAuthState(value: unknown): import("./contract.js").WireOAuthState
       "code_verifier",
       "discovery_state",
       "resource_url",
+      "oauth_scope",
       "tokens",
       "tokens_saved_at_ms",
     ],

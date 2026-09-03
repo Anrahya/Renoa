@@ -26,7 +26,8 @@ pub(crate) use auth::{
 pub(crate) use digest::hex_sha256;
 pub(crate) use headers::McpRequestHeaders;
 pub(crate) use oauth::{
-    McpAuthorizationResolver, McpOAuthAuthorizationRequest, operation_id as oauth_operation_id,
+    MAX_OAUTH_SCOPE_BYTES, McpAuthorizationResolver, McpOAuthAuthorizationRequest,
+    operation_id as oauth_operation_id, validate_oauth_scope,
 };
 
 pub use error::{
@@ -42,13 +43,14 @@ pub(crate) use store::{McpCatalogStore, McpConnectionCandidate, McpConnectionSta
 pub(crate) use tool::{adapter_tool_error, profile_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.7.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.8.0";
 const MCP_LEGACY_ADAPTER_REVISIONS: &[&str] = &[
     "mcp-client-node-v0.1.0",
     "mcp-client-node-v0.2.0",
     "mcp-client-node-v0.4.0",
     "mcp-client-node-v0.5.0",
     "mcp-client-node-v0.6.0",
+    "mcp-client-node-v0.7.0",
 ];
 const MCP_HEADERLESS_DIGEST_REVISIONS: &[&str] =
     &["mcp-client-node-v0.1.0", "mcp-client-node-v0.2.0"];

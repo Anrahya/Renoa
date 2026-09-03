@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn redirect_must_preserve_the_host_state_and_callback() {
-        let record = br#"{"wire_version":7,"event":"oauth_redirect","authorization_url":"https://auth.example/authorize?state=changed&redirect_uri=http%3A%2F%2F127.0.0.1%3A3210%2Foauth%2Fcallback","oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
+        let record = br#"{"wire_version":8,"event":"oauth_redirect","authorization_url":"https://auth.example/authorize?state=changed&redirect_uri=http%3A%2F%2F127.0.0.1%3A3210%2Foauth%2Fcallback","oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
 "#;
         let Err(error) = parse_single_record(record, "https://mcp.example/mcp", &[]) else {
             panic!("changed OAuth state must be rejected")
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn credential_state_is_bound_to_the_requested_mcp_endpoint() {
-        let record = br#"{"wire_version":7,"event":"oauth_authorized","authorization":{"scheme":"bearer","token":"must-not-escape"},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://first.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
+        let record = br#"{"wire_version":8,"event":"oauth_authorized","authorization":{"scheme":"bearer","token":"must-not-escape"},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://first.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
 "#;
         let Err(error) = parse_single_record(record, "https://second.example/mcp", &[]) else {
             panic!("credential state for another endpoint must be rejected")
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn oauth_failures_cannot_echo_request_secrets_across_the_host_boundary() {
-        let record = br#"{"wire_version":7,"event":"oauth_failed","failure":{"kind":"protocol","certainty":"definite","message":"access-one and code-one were rejected","partial_changes_possible":true,"diagnostic":{"code":"access-one","detail":"code-one failed"}},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"state-one","redirect_uri":"http://127.0.0.1:3210/oauth/callback","access_token":"access-one"}}
+        let record = br#"{"wire_version":8,"event":"oauth_failed","failure":{"kind":"protocol","certainty":"definite","message":"access-one and code-one were rejected","partial_changes_possible":true,"diagnostic":{"code":"access-one","detail":"code-one failed"}},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"state-one","redirect_uri":"http://127.0.0.1:3210/oauth/callback","access_token":"access-one"}}
 "#;
         let parsed = parse_single_record(
             record,

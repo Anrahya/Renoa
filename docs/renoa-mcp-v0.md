@@ -160,8 +160,8 @@ no credential, catalog, attachment, or receipt changes owner.
 Schema v13 removes the active-connection foreign key from OAuth attempts and
 receipts. This lets a proposed connection finish authorization before its
 configuration is published; existing OAuth state migrates unchanged.
-Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, v0.5, and
-v0.6 remain readable by the v0.7 Host. The two early revisions retain their
+Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, v0.5, v0.6,
+and v0.7 remain readable by the v0.8 Host. The two early revisions retain their
 original headerless digest encoding, so their durable references remain exact
 rather than being silently rewritten during an upgrade. New discovery always
 publishes the current revision.
@@ -231,6 +231,18 @@ profile attachment. A failed new connection leaves none of those rows; a failed
 replacement leaves the prior working configuration untouched. `authorize` resumes an existing
 flow. `restart: true` is the explicit instruction to abandon an expired or
 unknown flow and discard cached tokens before starting again.
+
+Initial authorization follows MCP scope selection: use the exact scope from the
+initial `WWW-Authenticate` challenge when present; otherwise use the protected
+resource's advertised `scopes_supported`; otherwise omit `scope`. Renoa does
+not guess provider-specific names. If a later call returns HTTP 403
+`insufficient_scope`, the adapter returns one definite failure with the exact
+validated `required_scope` and does not retry the call. The agent may pass that
+exact value to `authorize` for an existing connection, or to a repeated
+`connect` for an unpublished connection. The Host unions it with the prior
+grant and opens fresh consent when the grant must widen. Only after
+authorization succeeds may the agent explicitly retry the original call once.
+This keeps write intent and its retry visible to the kernel.
 
 The Host creates a cryptographically random state value and one exact callback
 identity before asking the pinned MCP client SDK to perform protected-resource
@@ -583,14 +595,16 @@ The process contract has six actions:
 - **oauth_token:** inspect saved token state without network mutation; and
 - **oauth_refresh:** perform exactly one refresh attempt.
 
-The version-7 process request may carry one bounded exact credential header
+The version-8 process request may carry one bounded exact credential header
 name, public prefix, and secret value plus bounded fixed public headers. OAuth
-begin, exchange, and refresh requests
-carry one exact registration object. A pre-registered object includes its
+begin, exchange, and refresh requests carry one exact registration object.
+OAuth begin may also carry one validated scope copied from a prior
+`oauth_insufficient_scope` result. A pre-registered object includes its
 issuer and resolved client fields only for the lifetime of that adapter
 process. Local `oauth_token` inspection carries no registration credential.
-The version-7 call wire is also part of the frozen `tool_execute` binding, so an
-unfinished version-6 execution cannot resume under changed process semantics.
+The version-8 call wire can return that exact challenged scope in a typed
+diagnostic. It is also part of the frozen `tool_execute` binding, so an
+unfinished version-7 execution cannot resume under changed process semantics.
 Standard output is a bounded machine-readable record stream. Standard error is
 bounded, redacted diagnostic text and never part of the protocol. The first
 valid terminal record is authoritative; later process output or cleanup failure
@@ -725,7 +739,13 @@ and the real process boundary:
     material; and
 35. encrypted browser intake reaches the requesting Host over the real relay,
     while failed new connections publish no configuration and failed
-    replacements preserve the previous working connection.
+    replacements preserve the previous working connection; and
+36. the credential form serializes the frozen `oauth_client` wire name while
+    accepting the earlier `o_auth_client` spelling only during rolling
+    deployment; and
+37. initial OAuth follows the MCP challenge/metadata scope order, while one
+    insufficient-scope response returns its exact grant, sends one remote call,
+    and requires an explicit authorization and retry.
 
 ## Locked decisions
 
@@ -738,9 +758,10 @@ and the real process boundary:
   Host-owned OAuth; Renoa stores no secret in SQLite or package data.
 - OAuth uses PKCE, one exact loopback or self-hosted relay callback,
   endpoint-bound local secret state, explicit client registration policy,
-  authorization-server issuer binding, explicit durable phases, one
-  credential POST per adapter operation, and no automatic replay after an
-  uncertain exchange.
+  authorization-server issuer binding, MCP-selected initial scopes, explicit
+  scope accumulation, explicit durable phases, one credential POST per adapter
+  operation, no hidden tool retry, and no automatic replay after an uncertain
+  exchange.
 - The callback relay stores only a short-lived code or rejection after hashing
   state, clears that result only after the execution Host has persisted it, and
   never becomes a credential-sharing service or an RCP task record.

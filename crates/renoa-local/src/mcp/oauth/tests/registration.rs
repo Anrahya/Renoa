@@ -103,9 +103,12 @@ import fs from 'node:fs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
-fs.appendFileSync({requests_json}, `${{JSON.stringify(request.registration)}}\n`);
+fs.appendFileSync({requests_json}, `${{JSON.stringify({{
+  registration: request.registration,
+  requested_scope: request.requested_scope ?? null
+}})}}\n`);
 process.stdout.write(`${{JSON.stringify({{
-  wire_version: 7,
+  wire_version: 8,
   event: 'oauth_failed',
   failure: {{
     kind: 'protocol',
@@ -147,6 +150,7 @@ process.stdout.write(`${{JSON.stringify({{
                 csrf_state: &format!("state-{index}"),
                 redirect_uri: &format!("http://127.0.0.1:{}/oauth/callback", 41000 + index),
                 force_reauthorization: false,
+                requested_scope: (index == 0).then_some("items.read items.write"),
                 registration,
                 prior: None,
             },
@@ -164,16 +168,25 @@ process.stdout.write(`${{JSON.stringify({{
     assert_eq!(
         observed,
         vec![
-            serde_json::json!({"mode": "dynamic"}),
             serde_json::json!({
-                "mode": "client_metadata",
-                "client_metadata_url": "https://renoa.example/oauth/client.json"
+                "registration": {"mode": "dynamic"},
+                "requested_scope": "items.read items.write"
             }),
             serde_json::json!({
-                "mode": "pre_registered",
-                "issuer": "https://accounts.example",
-                "client_id": "client-one",
-                "client_secret": "secret-one"
+                "registration": {
+                    "mode": "client_metadata",
+                    "client_metadata_url": "https://renoa.example/oauth/client.json"
+                },
+                "requested_scope": null
+            }),
+            serde_json::json!({
+                "registration": {
+                    "mode": "pre_registered",
+                    "issuer": "https://accounts.example",
+                    "client_id": "client-one",
+                    "client_secret": "secret-one"
+                },
+                "requested_scope": null
             }),
         ]
     );

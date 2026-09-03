@@ -16,12 +16,12 @@ mod tests;
 use super::{ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential, PluginManager};
 use crate::{AgentProfileId, mcp::oauth_operation_id};
 use actions::{ConnectRequest, ExtensionInvocation};
-use contract::{ManageInput, manage_tool_spec, resolve_source};
+use contract::{AddSourceInput, CredentialInput, ManageInput, manage_tool_spec, resolve_source};
 use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
 use output::{json_output, plugin_error, registry_error_output};
 
 const TOOL_NAME: &str = "extension_manage";
-const BINDING_REVISION: &str = "renoa-extension-manager-v12";
+const BINDING_REVISION: &str = "renoa-extension-manager-v13";
 
 pub(crate) fn profile_plugin_binding(
     profile_id: AgentProfileId,
@@ -133,24 +133,12 @@ impl ManageTool {
                 credential,
                 replace,
             } => {
-                let source = source.into_source(&self.workspace)?;
-                let connection = if server.is_some()
-                    || connection.is_some()
-                    || credential.is_some()
-                    || replace
-                {
-                    Some(ExtensionConnectionRequest::new(
-                        connection,
-                        server,
-                        credential.map_or(PluginCredential::None, Into::into),
-                        replace,
-                    ))
-                } else {
-                    None
-                };
-                actions::add(
-                    self,
-                    ExtensionAddRequest::new(source, connection),
+                self.add_input(
+                    source,
+                    server,
+                    connection,
+                    credential,
+                    replace,
                     ExtensionInvocation::new(operation_id, cancellation, &updates),
                 )
                 .await
@@ -183,6 +171,7 @@ impl ManageTool {
                 connection,
                 credential,
                 replace,
+                required_scope,
             } => {
                 actions::connect(
                     self,
@@ -192,6 +181,7 @@ impl ManageTool {
                         connection,
                         credential: credential.map_or(PluginCredential::None, Into::into),
                         replace,
+                        required_scope,
                     },
                     ExtensionInvocation::new(operation_id, cancellation, &updates),
                 )
@@ -200,11 +190,13 @@ impl ManageTool {
             ManageInput::Authorize {
                 connection,
                 restart,
+                required_scope,
             } => {
                 actions::authorize(
                     self,
                     connection,
                     restart,
+                    required_scope,
                     ExtensionInvocation::new(operation_id, cancellation, &updates),
                 )
                 .await
@@ -212,6 +204,35 @@ impl ManageTool {
             ManageInput::Disconnect { connection } => self.disconnect(connection).await,
             ManageInput::Enable { connection } => self.enable(connection).await,
         }
+    }
+
+    async fn add_input(
+        &self,
+        source: AddSourceInput,
+        server: Option<String>,
+        connection: Option<String>,
+        credential: Option<CredentialInput>,
+        replace: bool,
+        invocation: ExtensionInvocation<'_>,
+    ) -> Result<ToolOutput, ToolError> {
+        let source = source.into_source(&self.workspace)?;
+        let connection =
+            if server.is_some() || connection.is_some() || credential.is_some() || replace {
+                Some(ExtensionConnectionRequest::new(
+                    connection,
+                    server,
+                    credential.map_or(PluginCredential::None, Into::into),
+                    replace,
+                ))
+            } else {
+                None
+            };
+        actions::add(
+            self,
+            ExtensionAddRequest::new(source, connection),
+            invocation,
+        )
+        .await
     }
 
     async fn search_registry(

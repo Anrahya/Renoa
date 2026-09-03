@@ -282,6 +282,9 @@ impl McpRemoteFailure {
         if let Some(code) = &mut self.diagnostic.code {
             credential.redact_text(code);
         }
+        if let Some(scope) = &mut self.diagnostic.required_scope {
+            credential.redact_text(scope);
+        }
         credential.redact_text(&mut self.diagnostic.detail);
     }
 
@@ -293,6 +296,9 @@ impl McpRemoteFailure {
             self.message = self.message.replace(secret, "[REDACTED]");
             if let Some(code) = &mut self.diagnostic.code {
                 *code = code.replace(secret, "[REDACTED]");
+            }
+            if let Some(scope) = &mut self.diagnostic.required_scope {
+                *scope = scope.replace(secret, "[REDACTED]");
             }
             self.diagnostic.detail = self.diagnostic.detail.replace(secret, "[REDACTED]");
         }
@@ -322,12 +328,33 @@ impl McpRemoteFailure {
                 "failure diagnostic exceeds {MAX_DIAGNOSTIC_BYTES} bytes"
             ));
         }
+        if let Some(scope) = &self.diagnostic.required_scope {
+            super::validate_oauth_scope(scope)
+                .map_err(|error| format!("invalid required OAuth scope: {error}"))?;
+        }
         if self
             .diagnostic
             .http_status
             .is_some_and(|status| !(100..=599).contains(&status))
         {
             return Err("failure HTTP status is outside 100-599".to_owned());
+        }
+        let insufficient_scope =
+            self.diagnostic.code.as_deref() == Some("oauth_insufficient_scope");
+        if self.diagnostic.required_scope.is_some() && !insufficient_scope {
+            return Err(
+                "required OAuth scope is only valid for oauth_insufficient_scope".to_owned(),
+            );
+        }
+        if insufficient_scope
+            && (self.kind != McpFailureKind::Protocol
+                || self.certainty != McpOutcomeCertainty::Definite
+                || self.partial_changes_possible
+                || self.diagnostic.http_status != Some(403))
+        {
+            return Err(
+                "oauth_insufficient_scope must be a definite HTTP 403 protocol failure".to_owned(),
+            );
         }
         Ok(())
     }
@@ -366,6 +393,11 @@ impl McpRemoteFailure {
     pub fn diagnostic_detail(&self) -> &str {
         &self.diagnostic.detail
     }
+
+    #[must_use]
+    pub fn required_oauth_scope(&self) -> Option<&str> {
+        self.diagnostic.required_scope.as_deref()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -375,5 +407,7 @@ struct McpFailureDiagnostic {
     code: Option<String>,
     #[serde(default)]
     http_status: Option<u16>,
+    #[serde(default)]
+    required_scope: Option<String>,
     detail: String,
 }

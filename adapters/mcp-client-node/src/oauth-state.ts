@@ -9,6 +9,7 @@ import type {
 import type { WireOAuthRegistration, WireOAuthState } from "./contract.js";
 import { AdapterProblem } from "./errors.js";
 import { MAX_OAUTH_STATE_BYTES } from "./limits.js";
+import { isValidOAuthScope } from "./oauth-scope.js";
 import {
   bindIssuer,
   boundedUrl,
@@ -140,12 +141,23 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
     tokens: StoredOAuthTokens,
     context?: OAuthClientInformationContext,
   ): void {
+    validateTokenScope(tokens.scope);
+    if (tokens.scope !== undefined) {
+      this.#state.oauth_scope = tokens.scope;
+    }
     this.#state.tokens = bindIssuer(tokens, context);
     this.#state.tokens_saved_at_ms = Date.now();
   }
 
   redirectToAuthorization(url: URL): void {
     validateAuthorizationUrl(url, this.#state);
+    const scope = url.searchParams.get("scope");
+    if (scope === null) {
+      delete this.#state.oauth_scope;
+    } else {
+      validateTokenScope(scope);
+      this.#state.oauth_scope = scope;
+    }
     this.#state.authorization_url = url.href;
   }
 
@@ -171,6 +183,9 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
     if (scope === "all" || scope === "tokens") {
       delete this.#state.tokens;
       delete this.#state.tokens_saved_at_ms;
+    }
+    if (scope === "all") {
+      delete this.#state.oauth_scope;
     }
     if (scope === "all" || scope === "verifier") {
       delete this.#state.code_verifier;
@@ -260,6 +275,15 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
     return this.#state.tokens !== undefined;
   }
 
+  grantedScope(): string | undefined {
+    if (this.#state.tokens === undefined) {
+      return undefined;
+    }
+    const scope = this.#state.tokens.scope ?? this.#state.oauth_scope;
+    validateTokenScope(scope);
+    return scope;
+  }
+
   snapshot(): WireOAuthState {
     const state = clone(this.#state) as unknown as WireOAuthState;
     const bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
@@ -271,6 +295,12 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
       );
     }
     return state;
+  }
+}
+
+function validateTokenScope(scope: unknown): asserts scope is string | undefined {
+  if (scope !== undefined && (typeof scope !== "string" || !isValidOAuthScope(scope))) {
+    throw invalid("OAuth token contains an invalid scope grant");
   }
 }
 
@@ -291,6 +321,7 @@ function retainLongLivedState(
     ...(state.resource_url === undefined
       ? {}
       : { resource_url: state.resource_url }),
+    ...(state.oauth_scope === undefined ? {} : { oauth_scope: state.oauth_scope }),
     ...(forceReauthorization || state.tokens === undefined
       ? {}
       : { tokens: clone(state.tokens) }),

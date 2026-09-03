@@ -15,6 +15,7 @@ import type {
 } from "./contract.js";
 import { toWireFailure } from "./errors.js";
 import { WIRE_VERSION } from "./limits.js";
+import { scopeUpgrade } from "./oauth-scope.js";
 import { RenoaOAuthProvider } from "./oauth-state.js";
 import { canonicalIssuer, sameIssuer } from "./oauth-state-validation.js";
 import { guardedOAuthFetch, OAuthExchangeTracker } from "./oauth-transport.js";
@@ -32,7 +33,8 @@ export async function executeOAuthRequest(
   request: OAuthRequest,
   signal: AbortSignal,
 ): Promise<AdapterRecord> {
-  const provider = providerFor(request);
+  const providerContext = providerFor(request);
+  const provider = providerContext.provider;
   const tracker = new OAuthExchangeTracker();
   try {
     if (request.action === "oauth_token") {
@@ -52,6 +54,10 @@ export async function executeOAuthRequest(
         ? await refreshOnce(provider, fetchFn)
         : await auth(provider, {
             serverUrl: request.endpoint,
+            ...(providerContext.scope === undefined
+              ? {}
+              : { scope: providerContext.scope }),
+            forceReauthorization: providerContext.forceReauthorization,
             fetchFn,
           });
     if (result === "REDIRECT") {
@@ -178,24 +184,49 @@ function tokenContext(provider: RenoaOAuthProvider): {
   };
 }
 
-function providerFor(request: OAuthRequest): RenoaOAuthProvider {
+function providerFor(request: OAuthRequest): {
+  readonly provider: RenoaOAuthProvider;
+  readonly scope?: string;
+  readonly forceReauthorization: boolean;
+} {
   if (request.action === "oauth_begin") {
-    return RenoaOAuthProvider.begin(
+    const retained = RenoaOAuthProvider.begin(
       request.oauth_state,
       request.csrf_state,
       request.redirect_uri,
-      request.force_reauthorization,
+      false,
       request.endpoint,
       request.registration,
     );
+    const upgrade = scopeUpgrade(
+      retained.grantedScope(),
+      request.requested_scope,
+    );
+    const forceReauthorization =
+      request.force_reauthorization || upgrade.widensGrant;
+    return {
+      provider: RenoaOAuthProvider.begin(
+        request.oauth_state,
+        request.csrf_state,
+        request.redirect_uri,
+        forceReauthorization,
+        request.endpoint,
+        request.registration,
+      ),
+      ...(upgrade.scope === undefined ? {} : { scope: upgrade.scope }),
+      forceReauthorization,
+    };
   }
-  return new RenoaOAuthProvider(
-    request.oauth_state,
-    request.endpoint,
-    request.action === "oauth_token"
-      ? { mode: "dynamic" }
-      : request.registration,
-  );
+  return {
+    provider: new RenoaOAuthProvider(
+      request.oauth_state,
+      request.endpoint,
+      request.action === "oauth_token"
+        ? { mode: "dynamic" }
+        : request.registration,
+    ),
+    forceReauthorization: false,
+  };
 }
 
 function authorized(

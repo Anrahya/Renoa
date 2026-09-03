@@ -211,13 +211,19 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
         return (model, details);
     }
     let registration_required = remote.diagnostic_code() == Some("oauth_registration_required");
+    let insufficient_scope = remote.diagnostic_code() == Some("oauth_insufficient_scope");
     let retryable = !registration_required
+        && !insufficient_scope
         && matches!(
             remote.kind(),
             McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport
         );
     let next_action = if registration_required {
         "Do not retry dynamic registration. Use client_metadata only if the service's official documentation publishes a CIMD URL. Otherwise reconnect with pre_registered and a stable credential ID. A configured headless Host will send the user a secure setup link; other Hosts require the client in their configured credential store. Never ask the user to paste credential material into chat or tool arguments."
+    } else if insufficient_scope && remote.required_oauth_scope().is_some() {
+        "Copy required_scope exactly. For an existing connection, call extension_manage authorize with connection and required_scope. If the failed connect was not published, repeat connect with the same package, server, connection, and credential plus required_scope. After authorization succeeds, explicitly retry the original operation once. Do not guess or widen scopes, and do not silently retry a write."
+    } else if insufficient_scope {
+        "The server did not return a usable required_scope. Do not invent one. Check the service's official documentation and report the malformed OAuth challenge."
     } else {
         match remote.kind() {
             McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport => {
@@ -240,6 +246,8 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
     };
     let code = if registration_required {
         "oauth_registration_required".to_owned()
+    } else if insufficient_scope {
+        "oauth_insufficient_scope".to_owned()
     } else {
         format!("mcp_{}", remote.kind().as_str())
     };
@@ -248,6 +256,7 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
         "message": remote.message(),
         "retryable": retryable,
         "next_action": next_action,
+        "required_scope": remote.required_oauth_scope(),
     });
     let details = json!({
         "mcp": {
@@ -258,6 +267,7 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
                 "diagnostic": {
                     "code": remote.diagnostic_code(),
                     "http_status": remote.diagnostic_http_status(),
+                    "required_scope": remote.required_oauth_scope(),
                     "detail": remote.diagnostic_detail(),
                 }
             }

@@ -259,7 +259,7 @@ already running. The runtime itself is unchanged: the kernel freezes the same th
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v12 model-facing schema is
+The Host adds one fixed `extension_manage` tool. Its v13 model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
 for each of ten typed actions and rejects missing or cross-action fields:
@@ -268,11 +268,12 @@ exact published Registry name/version; add one MCP definition independently
 verified against the provider's official documentation or one content-bound
 local Agent Plugins 1.0 directory; inspect a local package; install the exact
 inspected digest; list package integrity and durable connection state; connect
-one supported package MCP server for the active profile; authorize or
-explicitly restart one registered OAuth connection; disconnect one connection
-from that profile without deleting its durable package, registration, catalog,
-or credential reference; or re-enable that retained complete catalog without a
-network request.
+one supported package MCP server for the active profile, optionally carrying
+an exact scope from a prior `oauth_insufficient_scope` result; authorize,
+scope-upgrade, or explicitly restart one registered OAuth connection;
+disconnect one connection from that profile without deleting its durable
+package, registration, catalog, or credential reference; or re-enable that
+retained complete catalog without a network request.
 Inspection and installation execute no package code. Installation publishes a
 full immutable tree at `plugins/<sha256>` before committing its durable record.
 Official Registry discovery is a replaceable read-only input to this management
@@ -303,8 +304,20 @@ cross-process connection lock. A possibly dispatched code exchange or refresh is
 after process loss; replay of an already settled management operation reads its
 receipt without opening another browser. Explicit `authorize` with `restart:
 true` abandons an expired or unknown flow only for a new operation. The Host
-discovers and attaches through the same MCP
-catalog path used by `LocalHost`; the next `tool_search` sees the connection
+selects initial OAuth scopes from the first challenge, then protected-resource
+metadata, as required by MCP. A later HTTP 403
+`insufficient_scope` result is a definite, model-visible failure carrying the
+server's exact validated scope. `extension_manage` unions that scope with the
+stored grant and opens fresh consent when it widens permission. It never
+silently retries the denied MCP call; the Agent must authorize and then issue
+one explicit retry. Registration modes are not fallbacks to guess: DCR requires
+an advertised registration endpoint, CIMD requires an official metadata URL,
+and a developer-console client uses a named pre-registered credential. The
+headless setup form's frozen wire spelling is `oauth_client`; coordinators also
+accept the short-lived buggy `o_auth_client` spelling only for rolling upgrade
+compatibility.
+The Host discovers and attaches through the same MCP catalog path used by
+`LocalHost`; the next `tool_search` sees the connection
 without restarting the session or surface. Disconnect is idempotent and the
 next search stops exposing its tools while the verified catalog remains
 available for recovery or later reattachment. Package skills enter the same
@@ -747,12 +760,14 @@ separate package/connection/skill-source status remain Host behavior, and no
 kernel, ACP, Waku, or RCP type changed. List uses bounded revision-bound cursor
 pages and rejects a stale cursor if that Host inventory changes.
 
-The current MCP adapter is revision v0.7 on process wire 7. Discovery compiles
+The current MCP adapter is revision v0.8 on process wire 8. Discovery compiles
 each external tool's input schema with the pinned SDK validator and isolates an
 invalid definition. Invocation validates the exact arguments against the
 frozen schema before dispatch. Header credentials remain standard-input-only,
 endpoint-scoped, collision-checked, and redacted; older complete catalogs stay
-readable but new discovery publishes only v0.7.
+readable but new discovery publishes only v0.8. An unfinished v0.7 adapter
+operation fails closed after upgrade instead of being resumed across a changed
+wire contract.
 
 The first shared Host package path is complete. A loopback-only registry owns a
 stable identity, content-addressed tar blobs, and one contiguous SQLite revision

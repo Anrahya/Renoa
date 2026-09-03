@@ -75,6 +75,7 @@ export type AdapterRequest =
       readonly csrf_state: string;
       readonly redirect_uri: string;
       readonly force_reauthorization: boolean;
+      readonly requested_scope?: string;
       readonly registration: WireOAuthRegistration;
       readonly oauth_state?: WireOAuthState;
     }
@@ -163,6 +164,7 @@ export interface WireFailure {
   readonly diagnostic: {
     readonly code?: string;
     readonly http_status?: number;
+    readonly required_scope?: string;
     readonly detail: string;
   };
 }

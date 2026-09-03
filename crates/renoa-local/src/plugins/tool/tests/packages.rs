@@ -53,6 +53,8 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     assert!(spec.description.contains("references only"));
     assert!(spec.description.contains("never pass API keys"));
     assert!(spec.description.contains("untrusted data"));
+    assert!(spec.description.contains("oauth_insufficient_scope"));
+    assert!(spec.description.contains("never guess a scope"));
     let schema = &spec.input_schema;
     assert_eq!(schema["type"], "object");
     assert_eq!(schema["required"], json!(["action"]));
@@ -100,6 +102,19 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
         .expect("credential schema has model guidance");
     assert!(credential_description.contains("stable Host credential reference"));
     assert!(credential_description.contains("secret_service_header"));
+    assert!(credential_description.contains("Choose oauth"));
+    let registration_description =
+        properties["credential"]["properties"]["registration"]["description"]
+            .as_str()
+            .expect("registration schema has model guidance");
+    assert!(registration_description.contains("registration_endpoint"));
+    assert!(registration_description.contains("Client ID Metadata Document"));
+    assert!(registration_description.contains("developer console"));
+    let scope_description = properties["required_scope"]["description"]
+        .as_str()
+        .expect("scope schema has model guidance");
+    assert!(scope_description.contains("copy the exact"));
+    assert!(scope_description.contains("Do not translate, widen, or invent"));
     let encoded = schema.to_string();
     assert!(!encoded.contains("\"oneOf\""));
     assert!(!encoded.contains("\"anyOf\""));
@@ -137,6 +152,20 @@ fn management_arguments_reject_fields_from_another_action() {
         .is_err()
     );
     assert!(serde_json::from_value::<ManageInput>(json!({"action": "enable"})).is_err());
+    assert!(
+        serde_json::from_value::<ManageInput>(json!({
+            "action": "authorize",
+            "connection": "x-api",
+            "required_scope": "tweet.write  users.read"
+        }))
+        .is_err()
+    );
+    serde_json::from_value::<ManageInput>(json!({
+        "action": "authorize",
+        "connection": "x-api",
+        "required_scope": "tweet.write users.read"
+    }))
+    .expect("exact challenged OAuth scope is accepted");
 }
 
 #[tokio::test]

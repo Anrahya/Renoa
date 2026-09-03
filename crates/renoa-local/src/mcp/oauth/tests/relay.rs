@@ -287,6 +287,7 @@ fn request<'a>(
         reference: auth,
         operation_id: operation,
         restart: false,
+        requested_scope: None,
         updates: None,
     }
 }

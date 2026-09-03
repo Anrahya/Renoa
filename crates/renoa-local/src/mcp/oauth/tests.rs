@@ -382,6 +382,7 @@ fn authorization_request<'a>(
         reference: auth,
         operation_id,
         restart,
+        requested_scope: None,
         updates: None,
     }
 }

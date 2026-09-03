@@ -14,7 +14,7 @@ use crate::{
         ExtensionAddRequest, InstalledPlugin, PluginCredential, PluginError,
         manager::{
             ExtensionAddOutcome, ExtensionConnectionOutcome, ExtensionSourceReceipt,
-            ProfileConnectionRequest,
+            ProfileAuthorizationRequest, ProfileConnectionRequest,
         },
     },
     skills::SkillComponentReport,
@@ -46,6 +46,7 @@ pub(super) struct ConnectRequest {
     pub(super) connection: String,
     pub(super) credential: PluginCredential,
     pub(super) replace: bool,
+    pub(super) required_scope: Option<String>,
 }
 
 pub(super) async fn connect(
@@ -63,6 +64,7 @@ pub(super) async fn connect(
                 connection_id: &request.connection,
                 credential: request.credential,
                 replace: request.replace,
+                requested_scope: request.required_scope.as_deref(),
                 operation_id: invocation.operation_id,
                 updates: Some(invocation.updates),
             },
@@ -91,9 +93,18 @@ pub(super) async fn authorize(
     tool: &ManageTool,
     connection: String,
     restart: bool,
+    required_scope: Option<String>,
     invocation: ExtensionInvocation<'_>,
 ) -> Result<ToolOutput, ToolError> {
-    let snapshot = match authorize_snapshot(tool, &connection, restart, invocation).await {
+    let snapshot = match authorize_snapshot(
+        tool,
+        &connection,
+        restart,
+        required_scope.as_deref(),
+        invocation,
+    )
+    .await
+    {
         Ok(snapshot) => snapshot,
         Err(PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote)))) => {
             return remote_mcp_error_output(&remote);
@@ -113,15 +124,19 @@ async fn authorize_snapshot(
     tool: &ManageTool,
     connection: &str,
     restart: bool,
+    required_scope: Option<&str>,
     invocation: ExtensionInvocation<'_>,
 ) -> Result<McpCatalogSnapshot, PluginError> {
     tool.manager
         .authorize_profile(
-            &tool.profile_id,
-            connection,
-            invocation.operation_id,
-            restart,
-            Some(invocation.updates),
+            ProfileAuthorizationRequest {
+                profile_id: &tool.profile_id,
+                connection_id: connection,
+                operation_id: invocation.operation_id,
+                restart,
+                requested_scope: required_scope,
+                updates: Some(invocation.updates),
+            },
             invocation.cancellation,
         )
         .await

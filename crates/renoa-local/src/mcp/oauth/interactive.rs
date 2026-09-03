@@ -27,6 +27,7 @@ struct InteractiveAuthorization<'a> {
     reference: &'a crate::mcp::McpConnectionAuth,
     operation_id: &'a str,
     restart: bool,
+    requested_scope: Option<&'a str>,
     updates: Option<&'a ToolUpdates>,
     cancellation: CancellationToken,
 }
@@ -72,6 +73,7 @@ impl OAuthCoordinator {
             reference: request.reference,
             operation_id: request.operation_id,
             restart: request.restart,
+            requested_scope: request.requested_scope,
             updates: request.updates,
             cancellation,
         };
@@ -113,6 +115,7 @@ impl OAuthCoordinator {
                     csrf_state: &csrf_state,
                     redirect_uri: &redirect_uri,
                     force_reauthorization,
+                    requested_scope: context.requested_scope,
                     registration: &registration,
                     prior: prior.as_ref().map(|bundle| &bundle.adapter_state),
                 },

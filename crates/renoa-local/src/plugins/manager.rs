@@ -26,7 +26,7 @@ use crate::{
 };
 use identity::default_connection_id;
 
-pub(crate) use connect::ProfileConnectionRequest;
+pub(crate) use connect::{ProfileAuthorizationRequest, ProfileConnectionRequest};
 
 #[derive(Clone)]
 pub(crate) struct PluginManager {
@@ -250,6 +250,7 @@ impl PluginManager {
                     connection_id: &connection,
                     credential,
                     replace,
+                    requested_scope: None,
                     operation_id: context.operation_id,
                     updates: context.updates,
                 },

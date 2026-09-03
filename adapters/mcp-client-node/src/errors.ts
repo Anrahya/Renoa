@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/client";
 import type { AdapterFailureKind, WireFailure } from "./contract.js";
 import { MAX_DIAGNOSTIC_BYTES, MAX_FAILURE_MESSAGE_BYTES } from "./limits.js";
+import { insufficientScopeFailure } from "./scope-failure.js";
 
 export interface ExchangeEvidence {
   readonly dispatchStarted: boolean;
@@ -53,6 +54,8 @@ export function toWireFailure(
   },
   cancellationRequested = false,
 ): WireFailure {
+  const scopeFailure = insufficientScopeFailure(error);
+  if (scopeFailure !== undefined) return scopeFailure;
   const problem = findAdapterProblem(error);
   const code = errorCode(error, problem);
   const httpStatus = httpStatusOf(error, problem);

@@ -7,6 +7,7 @@ import type {
 import { isLoopbackHost, parseEndpoint } from "./endpoint.js";
 import { AdapterProblem } from "./errors.js";
 import { MAX_AUTH_TOKEN_BYTES, MAX_OAUTH_VALUE_BYTES } from "./limits.js";
+import { isValidOAuthScope } from "./oauth-scope.js";
 
 export interface PersistedOAuthState {
   schema_version: 1;
@@ -19,6 +20,7 @@ export interface PersistedOAuthState {
   code_verifier?: string;
   discovery_state?: OAuthDiscoveryState;
   resource_url?: string;
+  oauth_scope?: string;
   tokens?: StoredOAuthTokens;
   tokens_saved_at_ms?: number;
 }
@@ -31,6 +33,9 @@ export function validateCoreState(
     throw invalid("OAuth credential state belongs to a different MCP endpoint");
   }
   requireBoundedSecret(state.csrf_state, "OAuth state parameter");
+  if (state.oauth_scope !== undefined && !isValidOAuthScope(state.oauth_scope)) {
+    throw invalid("stored OAuth scope is malformed or over limit");
+  }
   let redirect: URL;
   try {
     redirect = new URL(state.redirect_uri);

@@ -83,3 +83,36 @@ fn unsupported_oauth_registration_reports_the_credential_boundary() {
         "oauth_registration_required"
     );
 }
+
+#[test]
+fn insufficient_scope_output_forbids_guessing_and_hidden_retries() {
+    let remote: McpRemoteFailure = serde_json::from_value(json!({
+        "kind": "protocol",
+        "certainty": "definite",
+        "message": "The MCP server requires additional OAuth authorization for this operation.",
+        "partial_changes_possible": false,
+        "diagnostic": {
+            "code": "oauth_insufficient_scope",
+            "http_status": 403,
+            "required_scope": "bookmark.write users.read",
+            "detail": "additional scope required"
+        }
+    }))
+    .expect("decode insufficient-scope failure");
+
+    let output = remote_mcp_error_output(&remote).expect("failure remains model-visible");
+    let [ContentBlock::Text { text }] = output.content.as_slice() else {
+        panic!("scope failure must be one model-visible text block")
+    };
+    let model: Value = serde_json::from_str(text).expect("decode model-visible scope failure");
+
+    assert_eq!(model["code"], "oauth_insufficient_scope");
+    assert_eq!(model["required_scope"], "bookmark.write users.read");
+    assert_eq!(model["retryable"], false);
+    let next_action = model["next_action"]
+        .as_str()
+        .expect("scope recovery guidance");
+    assert!(next_action.contains("Copy required_scope exactly"));
+    assert!(next_action.contains("Do not guess or widen scopes"));
+    assert!(next_action.contains("do not silently retry a write"));
+}

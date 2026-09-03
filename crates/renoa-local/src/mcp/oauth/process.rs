@@ -18,7 +18,7 @@ mod record;
 use capture::{drain, stop_and_capture, stop_and_discard};
 use record::parse_record;
 
-const WIRE_VERSION: u32 = 7;
+const WIRE_VERSION: u32 = 8;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
@@ -81,6 +81,7 @@ pub(super) struct OAuthBegin<'a> {
     pub(super) csrf_state: &'a str,
     pub(super) redirect_uri: &'a str,
     pub(super) force_reauthorization: bool,
+    pub(super) requested_scope: Option<&'a str>,
     pub(super) registration: &'a OAuthRegistration,
     pub(super) prior: Option<&'a Value>,
 }
@@ -99,6 +100,7 @@ pub(super) async fn begin(
             csrf_state: request.csrf_state,
             redirect_uri: request.redirect_uri,
             force_reauthorization: request.force_reauthorization,
+            requested_scope: request.requested_scope,
             registration: request.registration,
             oauth_state: request.prior,
         },
@@ -182,6 +184,8 @@ enum OAuthRequest<'a> {
         csrf_state: &'a str,
         redirect_uri: &'a str,
         force_reauthorization: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        requested_scope: Option<&'a str>,
         registration: &'a OAuthRegistration,
         #[serde(skip_serializing_if = "Option::is_none")]
         oauth_state: Option<&'a Value>,
