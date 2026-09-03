@@ -259,7 +259,7 @@ already running. The runtime itself is unchanged: the kernel freezes the same th
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v13 model-facing schema is
+The Host adds one fixed `extension_manage` tool. Its v14 model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
 for each of ten typed actions and rejects missing or cross-action fields:
@@ -274,6 +274,13 @@ scope-upgrade, or explicitly restart one registered OAuth connection;
 disconnect one connection from that profile without deleting its durable
 package, registration, catalog, or credential reference; or re-enable that
 retained complete catalog without a network request.
+The model-facing descriptions state the remote-MCP setup sequence at the
+fields where a model makes each choice. In particular, `add` may connect in the
+same call; a provider-issued Client ID or Client Secret means
+`pre_registered`; `credential_id` is a Host label rather than a secret; and a
+headless Host emits the secure credential page before the provider sign-in
+page. This guidance changes only the frozen Agent binding. It does not add a
+Host, kernel, MCP, or RCP field.
 Inspection and installation execute no package code. Installation publishes a
 full immutable tree at `plugins/<sha256>` before committing its durable record.
 Official Registry discovery is a replaceable read-only input to this management

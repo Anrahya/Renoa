@@ -50,11 +50,6 @@ fn oauth_credential_uses_the_exact_public_spelling_and_requires_a_registration_m
 #[test]
 fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     let spec = manage_tool_spec(TOOL_NAME);
-    assert!(spec.description.contains("references only"));
-    assert!(spec.description.contains("never pass API keys"));
-    assert!(spec.description.contains("untrusted data"));
-    assert!(spec.description.contains("oauth_insufficient_scope"));
-    assert!(spec.description.contains("never guess a scope"));
     let schema = &spec.input_schema;
     assert_eq!(schema["type"], "object");
     assert_eq!(schema["required"], json!(["action"]));
@@ -97,24 +92,6 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
         properties["credential"]["properties"]["registration"]["properties"]["mode"]["enum"],
         json!(["dynamic", "client_metadata", "pre_registered"])
     );
-    let credential_description = properties["credential"]["description"]
-        .as_str()
-        .expect("credential schema has model guidance");
-    assert!(credential_description.contains("stable Host credential reference"));
-    assert!(credential_description.contains("secret_service_header"));
-    assert!(credential_description.contains("Choose oauth"));
-    let registration_description =
-        properties["credential"]["properties"]["registration"]["description"]
-            .as_str()
-            .expect("registration schema has model guidance");
-    assert!(registration_description.contains("registration_endpoint"));
-    assert!(registration_description.contains("Client ID Metadata Document"));
-    assert!(registration_description.contains("developer console"));
-    let scope_description = properties["required_scope"]["description"]
-        .as_str()
-        .expect("scope schema has model guidance");
-    assert!(scope_description.contains("copy the exact"));
-    assert!(scope_description.contains("Do not translate, widen, or invent"));
     let encoded = schema.to_string();
     assert!(!encoded.contains("\"oneOf\""));
     assert!(!encoded.contains("\"anyOf\""));
@@ -140,6 +117,81 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
         }))
         .is_err()
     );
+}
+
+#[test]
+fn extension_schema_explains_the_complete_oauth_setup_flow() {
+    let spec = manage_tool_spec(TOOL_NAME);
+    for required_guidance in [
+        "Remote MCP setup:",
+        "Include connection and credential",
+        "gave the user a Client ID or Client Secret",
+        "registration.mode=pre_registered",
+        "Never put the real credential",
+        "secure credential-setup link",
+        "provider's sign-in link",
+        "Renoa handles both",
+        "Keep this call running",
+        "Failed authentication never publishes",
+        "untrusted metadata",
+        "oauth_insufficient_scope",
+        "Never guess an auth mode or OAuth scope",
+    ] {
+        assert!(
+            spec.description.contains(required_guidance),
+            "management description is missing: {required_guidance}"
+        );
+    }
+
+    let properties = spec.input_schema["properties"]
+        .as_object()
+        .expect("management schema has flat properties");
+    assert!(
+        properties["action"]["description"]
+            .as_str()
+            .expect("action schema has model guidance")
+            .contains("include connection and credential to connect it now")
+    );
+    let credential_description = properties["credential"]["description"]
+        .as_str()
+        .expect("credential schema has model guidance");
+    assert!(credential_description.contains("stable Host credential reference"));
+    assert!(credential_description.contains("secret_service_header"));
+    assert!(credential_description.contains("Choose oauth"));
+    assert!(
+        properties["credential"]["properties"]["kind"]["description"]
+            .as_str()
+            .expect("credential kind has model guidance")
+            .contains("browser sign-in")
+    );
+
+    let registration = &properties["credential"]["properties"]["registration"];
+    let registration_description = registration["description"]
+        .as_str()
+        .expect("registration schema has model guidance");
+    assert!(registration_description.contains("registration_endpoint"));
+    assert!(registration_description.contains("Client ID Metadata Document"));
+    assert!(registration_description.contains("developer console"));
+    let registration_properties = registration["properties"]
+        .as_object()
+        .expect("registration schema has properties");
+    assert!(
+        registration_properties["mode"]["description"]
+            .as_str()
+            .expect("registration mode has model guidance")
+            .contains("choose pre_registered")
+    );
+    let credential_id = registration_properties["credential_id"]["description"]
+        .as_str()
+        .expect("registration credential id has model guidance");
+    assert!(credential_id.contains("stable Host label"));
+    assert!(credential_id.contains("not the Client ID or secret"));
+    assert!(credential_id.contains("secure setup link"));
+    let scope = properties["required_scope"]["description"]
+        .as_str()
+        .expect("scope schema has model guidance");
+    assert!(scope.contains("copy the exact"));
+    assert!(scope.contains("Do not translate, widen, or invent"));
 }
 
 #[test]
