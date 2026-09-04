@@ -18,7 +18,7 @@ use crate::{
     ReasoningLevel, profile::AutomaticCompactionPolicy, skills::SkillRuntimeContext,
 };
 
-const MODEL_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(32).unwrap();
+const MODEL_ROUND_LIMIT: NonZeroU32 = NonZeroU32::new(100).unwrap();
 const TOOL_CALL_LIMIT: NonZeroU32 = NonZeroU32::new(16).unwrap();
 const MAX_OUTPUT_TOKENS: NonZeroU32 = NonZeroU32::new(32_768).unwrap();
 const COMPACTION_ATTEMPT_LIMIT: NonZeroU32 = NonZeroU32::new(2).unwrap();
@@ -192,7 +192,7 @@ async fn build_local_runtime_inner(
         resolved.model.binding_id(),
         resolved.model.reasoning().as_str()
     );
-    let config = AgentLoopConfig::new(resolved.instructions, MODEL_ATTEMPT_LIMIT, TOOL_CALL_LIMIT);
+    let config = AgentLoopConfig::new(resolved.instructions, MODEL_ROUND_LIMIT, TOOL_CALL_LIMIT);
     let model = ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay);
     let mut tools = workspace.kernel_tool_bindings();
     tools.extend(extension_tools);
