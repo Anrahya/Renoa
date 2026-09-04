@@ -68,6 +68,11 @@ interface OAuthFixtureOptions {
   readonly rejectRegistration?: boolean;
   readonly advertiseIssuerResponse?: boolean;
   readonly omitRegistrationEndpoint?: boolean;
+  readonly omitResourceMetadata?: boolean;
+  readonly resource?: string;
+  readonly omitAuthorizationServers?: boolean;
+  readonly authorizationServers?: readonly string[];
+  readonly omitAuthorizationMetadata?: boolean;
   readonly clientMetadataSupported?: boolean;
   readonly tokenAuthMethods?: readonly string[];
   readonly resourceScopes?: readonly string[];
@@ -136,13 +141,23 @@ export class OAuthFixture {
     this.requests += 1;
     const url = new URL(request.url ?? "/", this.origin);
     if (url.pathname.includes(".well-known/oauth-protected-resource")) {
-      return json(response, 200, {
-        resource: this.endpoint,
-        authorization_servers: [this.origin],
+      if (this.#options.omitResourceMetadata === true) {
+        return json(response, 404, { error: "not_found" });
+      }
+      const metadata: Record<string, unknown> = {
+        resource: this.#options.resource ?? this.endpoint,
         scopes_supported: this.#options.resourceScopes ?? ["search"],
-      });
+      };
+      if (this.#options.omitAuthorizationServers !== true) {
+        metadata.authorization_servers =
+          this.#options.authorizationServers ?? [this.origin];
+      }
+      return json(response, 200, metadata);
     }
     if (url.pathname.includes(".well-known/oauth-authorization-server")) {
+      if (this.#options.omitAuthorizationMetadata === true) {
+        return json(response, 404, { error: "not_found" });
+      }
       return json(response, 200, {
         issuer: this.origin,
         authorization_endpoint: `${this.origin}/authorize`,

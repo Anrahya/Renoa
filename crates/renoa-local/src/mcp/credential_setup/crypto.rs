@@ -53,7 +53,7 @@ pub(super) fn decrypt_and_validate(
         .map_err(|_| McpCredentialError::SetupInvalid)?;
     let result = match state.kind {
         CredentialRelayKind::ApiToken => validate_api_token(plaintext),
-        CredentialRelayKind::OAuthClient => validate_oauth_client(plaintext),
+        CredentialRelayKind::OAuthClient => validate_oauth_client(state, plaintext),
     };
     encrypted.fill(0);
     result
@@ -73,7 +73,10 @@ fn validate_api_token(plaintext: &[u8]) -> Result<Vec<u8>, McpHostError> {
     Ok(value.as_bytes().to_vec())
 }
 
-fn validate_oauth_client(plaintext: &[u8]) -> Result<Vec<u8>, McpHostError> {
+fn validate_oauth_client(
+    state: &CredentialSetupState,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, McpHostError> {
     let mut input = serde_json::from_slice::<OAuthClientInput>(plaintext)
         .map_err(|_| McpCredentialError::SetupInvalid)?;
     if input.schema_version != 1
@@ -87,18 +90,22 @@ fn validate_oauth_client(plaintext: &[u8]) -> Result<Vec<u8>, McpHostError> {
         return Err(McpCredentialError::SetupInvalid.into());
     }
     input.issuer = validate_issuer(&input.issuer).map_err(|_| McpCredentialError::SetupInvalid)?;
+    if state.expected_issuer.as_deref() != Some(input.issuer.as_str()) {
+        return Err(McpCredentialError::SetupInvalid.into());
+    }
     serde_json::to_vec(&input).map_err(McpHostError::from)
 }
 
 fn aad(state: &CredentialSetupState) -> Vec<u8> {
     format!(
-        "renoa credential relay v1\0{}\0{}\0{}",
+        "renoa credential relay v2\0{}\0{}\0{}\0{}",
         state.relay_id,
         state.credential_id,
         match state.kind {
             CredentialRelayKind::ApiToken => "api_token",
             CredentialRelayKind::OAuthClient => "oauth_client",
-        }
+        },
+        state.expected_issuer.as_deref().unwrap_or_default(),
     )
     .into_bytes()
 }
@@ -154,8 +161,11 @@ mod tests {
                 br#"{"schema_version":1,"issuer":"https://accounts.example","client_id":"client-one","client_secret":"client-secret"}"#.as_slice(),
             ),
         ] {
-            let state = CredentialSetupState::new("credential.one".to_owned(), kind)
-                .expect("create setup state");
+            let expected_issuer = (kind == CredentialRelayKind::OAuthClient)
+                .then(|| "https://accounts.example".to_owned());
+            let state =
+                CredentialSetupState::new("credential.one".to_owned(), kind, expected_issuer)
+                    .expect("create setup state");
             let nonce = [7_u8; 12];
             let mut ciphertext = plaintext.to_vec();
             let key = LessSafeKey::new(
@@ -179,12 +189,18 @@ mod tests {
 
     #[test]
     fn ciphertext_is_bound_to_its_relay_and_credential() {
-        let state =
-            CredentialSetupState::new("credential.one".to_owned(), CredentialRelayKind::ApiToken)
-                .expect("create first setup state");
-        let different =
-            CredentialSetupState::new("credential.two".to_owned(), CredentialRelayKind::ApiToken)
-                .expect("create second setup state");
+        let state = CredentialSetupState::new(
+            "credential.one".to_owned(),
+            CredentialRelayKind::ApiToken,
+            None,
+        )
+        .expect("create first setup state");
+        let different = CredentialSetupState::new(
+            "credential.two".to_owned(),
+            CredentialRelayKind::ApiToken,
+            None,
+        )
+        .expect("create second setup state");
         let nonce = [9_u8; 12];
         let mut ciphertext = br#"{"schema_version":1,"value":"secret"}"#.to_vec();
         let key = LessSafeKey::new(
@@ -201,6 +217,35 @@ mod tests {
         )
         .expect("encrypt browser payload");
         assert!(decrypt_and_validate(&different, &hex(&nonce), &hex(&ciphertext)).is_err());
+    }
+
+    #[test]
+    fn oauth_client_is_bound_to_the_discovered_issuer() {
+        let state = CredentialSetupState::new(
+            "credential.oauth".to_owned(),
+            CredentialRelayKind::OAuthClient,
+            Some("https://accounts.expected".to_owned()),
+        )
+        .expect("create issuer-bound setup state");
+        let nonce = [11_u8; 12];
+        let mut ciphertext =
+            br#"{"schema_version":1,"issuer":"https://accounts.other","client_id":"client-one"}"#
+                .to_vec();
+        let key = LessSafeKey::new(
+            UnboundKey::new(
+                &AES_256_GCM,
+                &decode_array::<32>(state.key.expose()).expect("decode generated key"),
+            )
+            .expect("create encryption key"),
+        );
+        key.seal_in_place_append_tag(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(aad(&state)),
+            &mut ciphertext,
+        )
+        .expect("encrypt browser payload");
+
+        assert!(decrypt_and_validate(&state, &hex(&nonce), &hex(&ciphertext)).is_err());
     }
 
     fn hex(bytes: &[u8]) -> String {

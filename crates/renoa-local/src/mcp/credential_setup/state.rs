@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::mcp::{
     McpCredentialError, McpHostError, hex_sha256,
-    oauth::{PrivateSecretStore, SensitiveString},
+    oauth::{PrivateSecretStore, SensitiveString, secret_store::validate_issuer},
 };
 
 const MAX_STATE_BYTES: usize = 4 * 1024;
@@ -15,6 +15,7 @@ pub(super) struct CredentialSetupState {
     pub(super) relay_id: CredentialRelayId,
     pub(super) credential_id: String,
     pub(super) kind: CredentialRelayKind,
+    pub(super) expected_issuer: Option<String>,
     pub(super) key: SensitiveString,
     pub(super) capability: SensitiveString,
     pub(super) expires_at_ms: i64,
@@ -24,12 +25,15 @@ impl CredentialSetupState {
     pub(super) fn new(
         credential_id: String,
         kind: CredentialRelayKind,
+        expected_issuer: Option<String>,
     ) -> Result<Self, McpHostError> {
+        let expected_issuer = validate_kind_and_issuer(kind, expected_issuer)?;
         Ok(Self {
-            schema_version: 1,
+            schema_version: 2,
             relay_id: CredentialRelayId::new(),
             credential_id,
             kind,
+            expected_issuer,
             key: random_secret()?,
             capability: random_secret()?,
             expires_at_ms: 0,
@@ -59,13 +63,14 @@ impl CredentialSetupStateStore {
         let decoded = serde_json::from_slice::<CredentialSetupState>(&bytes);
         bytes.fill(0);
         let state = decoded.map_err(|_| McpCredentialError::SetupInvalid)?;
-        if state.schema_version != 1
+        if state.schema_version != 2
             || state.credential_id.is_empty()
             || state.key.expose().len() != 64
             || state.capability.expose().len() != 64
         {
             return Err(McpCredentialError::SetupInvalid.into());
         }
+        validate_kind_and_issuer(state.kind, state.expected_issuer.clone())?;
         Ok(Some(state))
     }
 
@@ -93,8 +98,9 @@ pub(super) fn state_id(
     operation_id: &str,
     credential_id: &str,
     kind: CredentialRelayKind,
+    expected_issuer: Option<&str>,
 ) -> String {
-    let mut identity = b"renoa credential setup operation v1\0".to_vec();
+    let mut identity = b"renoa credential setup operation v2\0".to_vec();
     identity.extend_from_slice(operation_id.as_bytes());
     identity.push(0);
     identity.extend_from_slice(credential_id.as_bytes());
@@ -103,7 +109,24 @@ pub(super) fn state_id(
         CredentialRelayKind::ApiToken => b"api_token",
         CredentialRelayKind::OAuthClient => b"oauth_client",
     });
+    identity.push(0);
+    identity.extend_from_slice(expected_issuer.unwrap_or_default().as_bytes());
     format!("setup.{}", hex_sha256(&identity))
+}
+
+fn validate_kind_and_issuer(
+    kind: CredentialRelayKind,
+    expected_issuer: Option<String>,
+) -> Result<Option<String>, McpHostError> {
+    match (kind, expected_issuer) {
+        (CredentialRelayKind::ApiToken, None) => Ok(None),
+        (CredentialRelayKind::OAuthClient, Some(issuer)) => validate_issuer(&issuer)
+            .map(Some)
+            .map_err(|_| McpCredentialError::SetupInvalid.into()),
+        (CredentialRelayKind::ApiToken, Some(_)) | (CredentialRelayKind::OAuthClient, None) => {
+            Err(McpCredentialError::SetupInvalid.into())
+        }
+    }
 }
 
 fn random_secret() -> Result<SensitiveString, McpHostError> {

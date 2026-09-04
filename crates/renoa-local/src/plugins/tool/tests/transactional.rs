@@ -17,6 +17,43 @@ const ORIGINAL_ENDPOINT: &str = "https://original.example/mcp";
 const REPLACEMENT_ENDPOINT: &str = "https://replacement.example/mcp";
 
 #[tokio::test]
+async fn failed_oauth_preflight_returns_the_reason_and_publishes_no_connection() {
+    let directory = tempdir().expect("temporary OAuth preflight fixture");
+    let database = directory.path().join("host.sqlite3");
+    catalog::initialize(&database).expect("initialize Host catalog");
+    let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
+    let adapter = directory.path().join("oauth-preflight-adapter.mjs");
+    write_oauth_preflight_failure_adapter(&adapter);
+    let manager = manager(&directory, &database, &mcp, adapter);
+    let source = directory.path().join("source");
+    fs::create_dir(&source).expect("create plugin source");
+    crate::plugins::tests::write_exa_plugin(&source, ORIGINAL_ENDPOINT);
+    let inspection = manager.inspect(&source).await.expect("inspect package");
+    manager
+        .install(&source, inspection.digest())
+        .await
+        .expect("install package");
+    let tool = ManageTool::new(manager, directory.path().to_path_buf());
+
+    let result = connect_oauth(&tool, inspection.digest()).await;
+
+    assert!(result.is_error);
+    let [ContentBlock::Text { text }] = result.content.as_slice() else {
+        panic!("OAuth preflight failure must return one text block")
+    };
+    let model: Value = serde_json::from_str(text).expect("decode OAuth error");
+    assert_eq!(
+        model["message"],
+        "The MCP endpoint does not publish OAuth protected-resource metadata."
+    );
+    assert_eq!(model["retryable"], false);
+    assert!(matches!(
+        mcp.connection_config("exa"),
+        Err(McpHostError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
 async fn failed_discovery_leaves_no_active_connection_configuration() {
     let directory = tempdir().expect("temporary extension error fixture");
     let database = directory.path().join("host.sqlite3");
@@ -165,6 +202,29 @@ async fn connect(
     .expect("discovery failure is definite")
 }
 
+async fn connect_oauth(tool: &ManageTool, package_digest: &str) -> renoa_agent::ToolResult {
+    invoke_tool(
+        Some(tool),
+        ToolCall {
+            id: "oauth-preflight-error".to_owned(),
+            name: TOOL_NAME.to_owned(),
+            arguments: json!({
+                "action": "connect",
+                "package_digest": package_digest,
+                "server": "exa",
+                "connection": "exa",
+                "credential": {"kind": "oauth"}
+            }),
+            thought_signature: None,
+            namespace: None,
+        },
+        CancellationToken::new(),
+        None,
+    )
+    .await
+    .expect("OAuth preflight failure is definite")
+}
+
 fn assert_actionable_failure(result: &renoa_agent::ToolResult) {
     assert!(result.is_error);
     let [ContentBlock::Text { text }] = result.content.as_slice() else {
@@ -202,7 +262,7 @@ fn write_failed_adapter(path: &std::path::Path) {
         r#"
 for await (const _chunk of process.stdin) {}
 process.stdout.write(JSON.stringify({
-  wire_version: 8,
+  wire_version: 9,
   event: "failed",
   failure: {
     kind: "incompatible_protocol",
@@ -219,4 +279,31 @@ process.stdout.write(JSON.stringify({
 "#,
     )
     .expect("write failed adapter");
+}
+
+fn write_oauth_preflight_failure_adapter(path: &std::path::Path) {
+    fs::write(
+        path,
+        r"
+let input = '';
+for await (const chunk of process.stdin) input += chunk;
+const request = JSON.parse(input);
+if (request.action !== 'oauth_discover') process.exit(18);
+process.stdout.write(JSON.stringify({
+  wire_version: 9,
+  event: 'failed',
+  failure: {
+    kind: 'protocol',
+    certainty: 'definite',
+    message: 'The MCP endpoint does not publish OAuth protected-resource metadata.',
+    partial_changes_possible: false,
+    diagnostic: {
+      code: 'oauth_resource_metadata_missing',
+      detail: 'OAuth protected-resource metadata was not found'
+    }
+  }
+}) + '\n');
+",
+    )
+    .expect("write OAuth preflight adapter");
 }

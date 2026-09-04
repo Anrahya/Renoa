@@ -18,7 +18,7 @@ mod record;
 use capture::{drain, stop_and_capture, stop_and_discard};
 use record::parse_record;
 
-const WIRE_VERSION: u32 = 8;
+const WIRE_VERSION: u32 = 9;
 const PROCESS_DEADLINE: Duration = Duration::from_secs(35);
 const MAX_REQUEST_BYTES: usize = 1_024 * 1_024;
 const MAX_STDOUT_BYTES: usize = 20 * 1_024 * 1_024;
@@ -42,6 +42,29 @@ pub(super) enum OAuthResult {
         failure: McpRemoteFailure,
         state: Value,
     },
+}
+
+pub(super) enum AdapterOAuthResult {
+    Discovered(OAuthDiscovery),
+    Flow(OAuthResult),
+}
+
+impl AdapterOAuthResult {
+    fn into_flow(self) -> Result<OAuthResult, McpAdapterError> {
+        match self {
+            Self::Flow(result) => Ok(result),
+            Self::Discovered(_) => Err(McpAdapterError::Protocol(
+                "OAuth adapter returned metadata for a flow request".to_owned(),
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct OAuthDiscovery {
+    pub(super) issuer: String,
+    pub(super) client_metadata_supported: bool,
+    pub(super) dynamic_registration_supported: bool,
 }
 
 #[derive(Serialize)]
@@ -86,6 +109,29 @@ pub(super) struct OAuthBegin<'a> {
     pub(super) prior: Option<&'a Value>,
 }
 
+pub(super) async fn discover(
+    adapter: &Path,
+    endpoint: &str,
+    cancellation: CancellationToken,
+) -> Result<OAuthDiscovery, McpAdapterError> {
+    match run(
+        adapter,
+        &OAuthRequest::Discover {
+            wire_version: WIRE_VERSION,
+            action: "oauth_discover",
+            endpoint,
+        },
+        cancellation,
+    )
+    .await?
+    {
+        AdapterOAuthResult::Discovered(discovery) => Ok(discovery),
+        AdapterOAuthResult::Flow(_) => Err(McpAdapterError::Protocol(
+            "OAuth adapter returned a flow result for metadata discovery".to_owned(),
+        )),
+    }
+}
+
 pub(super) async fn begin(
     adapter: &Path,
     request: OAuthBegin<'_>,
@@ -106,7 +152,8 @@ pub(super) async fn begin(
         },
         cancellation,
     )
-    .await
+    .await?
+    .into_flow()
 }
 
 pub(super) async fn exchange(
@@ -131,7 +178,8 @@ pub(super) async fn exchange(
         },
         cancellation,
     )
-    .await
+    .await?
+    .into_flow()
 }
 
 pub(super) async fn token(
@@ -150,7 +198,8 @@ pub(super) async fn token(
         },
         cancellation,
     )
-    .await
+    .await?
+    .into_flow()
 }
 
 pub(super) async fn refresh(
@@ -171,12 +220,18 @@ pub(super) async fn refresh(
         },
         cancellation,
     )
-    .await
+    .await?
+    .into_flow()
 }
 
 #[derive(Serialize)]
 #[serde(untagged)]
 enum OAuthRequest<'a> {
+    Discover {
+        wire_version: u32,
+        action: &'static str,
+        endpoint: &'a str,
+    },
     Begin {
         wire_version: u32,
         action: &'static str,
@@ -218,7 +273,8 @@ enum OAuthRequest<'a> {
 impl OAuthRequest<'_> {
     const fn endpoint(&self) -> &str {
         match self {
-            Self::Begin { endpoint, .. }
+            Self::Discover { endpoint, .. }
+            | Self::Begin { endpoint, .. }
             | Self::Exchange { endpoint, .. }
             | Self::Token { endpoint, .. }
             | Self::Refresh { endpoint, .. } => endpoint,
@@ -232,6 +288,7 @@ impl OAuthRequest<'_> {
             .into_iter()
             .collect::<Vec<_>>();
         match self {
+            Self::Discover { .. } => {}
             Self::Begin {
                 csrf_state,
                 oauth_state,
@@ -262,7 +319,7 @@ impl OAuthRequest<'_> {
             Self::Begin { registration, .. }
             | Self::Exchange { registration, .. }
             | Self::Refresh { registration, .. } => Some(registration),
-            Self::Token { .. } => None,
+            Self::Discover { .. } | Self::Token { .. } => None,
         }
     }
 }
@@ -295,7 +352,7 @@ async fn run(
     adapter: &Path,
     request: &OAuthRequest<'_>,
     cancellation: CancellationToken,
-) -> Result<OAuthResult, McpAdapterError> {
+) -> Result<AdapterOAuthResult, McpAdapterError> {
     if cancellation.is_cancelled() {
         return Err(McpAdapterError::Cancelled);
     }
@@ -323,7 +380,7 @@ async fn run_process(
     expected_endpoint: &str,
     exact_secrets: &[&str],
     cancellation: CancellationToken,
-) -> Result<OAuthResult, McpAdapterError> {
+) -> Result<AdapterOAuthResult, McpAdapterError> {
     let deadline = tokio::time::Instant::now() + PROCESS_DEADLINE;
     let mut command = Command::new("node");
     command

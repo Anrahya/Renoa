@@ -1,10 +1,13 @@
 use super::super::{PluginCredential, PluginError, PluginOAuthRegistration};
-use crate::mcp::{McpConnectionAuth, McpOAuthRegistration};
+use crate::mcp::{McpAuthorizationResolver, McpConnectionAuth, McpOAuthRegistration};
+use tokio_util::sync::CancellationToken;
 
-pub(super) fn credential_auth(
+pub(super) async fn credential_auth(
     credential: PluginCredential,
     connection_id: &str,
     endpoint: &str,
+    authorizations: &McpAuthorizationResolver,
+    cancellation: CancellationToken,
 ) -> Result<McpConnectionAuth, PluginError> {
     match credential {
         PluginCredential::None => Ok(McpConnectionAuth::None),
@@ -22,6 +25,11 @@ pub(super) fn credential_auth(
         )?),
         PluginCredential::OAuth { registration } => {
             let registration = match registration {
+                PluginOAuthRegistration::Auto => {
+                    return Ok(authorizations
+                        .automatic_oauth(connection_id, endpoint, cancellation)
+                        .await?);
+                }
                 PluginOAuthRegistration::Dynamic => McpOAuthRegistration::dynamic(),
                 PluginOAuthRegistration::ClientMetadata { url } => {
                     McpOAuthRegistration::client_metadata(&url)?

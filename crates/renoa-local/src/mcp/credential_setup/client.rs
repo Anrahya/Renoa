@@ -95,11 +95,15 @@ impl CredentialRelayClient {
             "{CREDENTIAL_RELAYS_PATH}/{}/setup",
             state.relay_id
         ))?;
-        url.set_fragment(Some(&format!(
-            "v={CREDENTIAL_RELAY_VERSION}&key={}&token={}",
-            state.key.expose(),
-            state.capability.expose()
-        )));
+        let mut fragment = url::form_urlencoded::Serializer::new(String::new());
+        fragment
+            .append_pair("v", &CREDENTIAL_RELAY_VERSION.to_string())
+            .append_pair("key", state.key.expose())
+            .append_pair("token", state.capability.expose());
+        if let Some(issuer) = state.expected_issuer.as_deref() {
+            fragment.append_pair("issuer", issuer);
+        }
+        url.set_fragment(Some(&fragment.finish()));
         Ok(url)
     }
 

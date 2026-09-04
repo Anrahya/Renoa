@@ -219,7 +219,7 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
             McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport
         );
     let next_action = if registration_required {
-        "Do not retry dynamic registration. If official service documentation publishes a CIMD URL, reconnect with client_metadata. Otherwise reconnect with credential.kind=oauth, registration.mode=pre_registered, and an agent-chosen stable credential_id label such as x.oauth-client. The credential_id is only a label, never a Client ID or secret. If that label has no saved credential, a configured headless Host shows the user a secure setup link. Renoa handles the setup response; keep the call running and never ask for credential material in chat or tool arguments."
+        "Renoa could not establish an OAuth client using the methods advertised by this endpoint. Do not retry unchanged, choose another registration mode, invent an issuer, or create a credential label. Tell the user the exact error; the connection was not saved."
     } else if insufficient_scope && remote.required_oauth_scope().is_some() {
         "Copy required_scope exactly. For an existing connection, call extension_manage authorize with connection and required_scope. If the failed connect was not published, repeat connect with the same package, server, connection, and credential plus required_scope. After authorization succeeds, explicitly retry the original operation once. Do not guess or widen scopes, and do not silently retry a write."
     } else if insufficient_scope {

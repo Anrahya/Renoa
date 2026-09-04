@@ -122,17 +122,40 @@ impl OAuthSecretStore {
         credential_id: &str,
         cancellation: CancellationToken,
     ) -> Result<PreRegisteredOAuthClient, McpHostError> {
+        self.load_optional_pre_registered_client(credential_id, cancellation)
+            .await?
+            .ok_or_else(|| {
+                credential_error(McpCredentialError::Unavailable {
+                    source_name: self.source(),
+                    reference: format!("OAuth client credential `{credential_id}`"),
+                    status: "not found".to_owned(),
+                    guidance: "store schema-version 1 JSON with issuer, client_id, and optional client_secret in the configured Host credential facility".to_owned(),
+                })
+            })
+    }
+
+    pub(super) async fn has_pre_registered_client(
+        &self,
+        credential_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<bool, McpHostError> {
+        Ok(self
+            .load_optional_pre_registered_client(credential_id, cancellation)
+            .await?
+            .is_some())
+    }
+
+    async fn load_optional_pre_registered_client(
+        &self,
+        credential_id: &str,
+        cancellation: CancellationToken,
+    ) -> Result<Option<PreRegisteredOAuthClient>, McpHostError> {
         validate_identity("OAuth client credential", credential_id)?;
         let Some(mut bytes) = self
             .load_bytes(credential_id, MAX_CLIENT_CREDENTIAL_BYTES, cancellation)
             .await?
         else {
-            return Err(credential_error(McpCredentialError::Unavailable {
-                source_name: self.source(),
-                reference: format!("OAuth client credential `{credential_id}`"),
-                status: "not found".to_owned(),
-                guidance: "store schema-version 1 JSON with issuer, client_id, and optional client_secret in the configured Host credential facility".to_owned(),
-            }));
+            return Ok(None);
         };
         let decoded = serde_json::from_slice::<PreRegisteredOAuthClient>(&bytes);
         bytes.fill(0);
@@ -160,7 +183,7 @@ impl OAuthSecretStore {
                 "pre-registered OAuth credential '{credential_id}' has an invalid issuer: {reason}"
             ))
         })?;
-        Ok(client)
+        Ok(Some(client))
     }
 
     async fn load_bytes(
@@ -205,6 +228,9 @@ impl OAuthSecretStore {
 }
 
 pub(crate) fn validate_issuer(value: &str) -> Result<String, &'static str> {
+    if value.is_empty() || value.len() > MAX_CLIENT_VALUE_BYTES {
+        return Err("it is empty or exceeds its boundary");
+    }
     let issuer = url::Url::parse(value).map_err(|_| "it must be an absolute URL")?;
     let loopback_http = issuer.scheme() == "http"
         && issuer.host_str().is_some_and(|host| {
@@ -214,7 +240,7 @@ pub(crate) fn validate_issuer(value: &str) -> Result<String, &'static str> {
                     .parse::<std::net::IpAddr>()
                     .is_ok_and(|address| address.is_loopback())
         });
-    if issuer.scheme() != "https" && !loopback_http {
+    if issuer.host_str().is_none() || (issuer.scheme() != "https" && !loopback_http) {
         return Err("it must use HTTPS, except for loopback testing");
     }
     if !issuer.username().is_empty()

@@ -335,6 +335,7 @@ pub enum PluginCredential {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginOAuthRegistration {
+    Auto,
     Dynamic,
     ClientMetadata { url: String },
     PreRegistered { credential_id: String },

@@ -161,7 +161,7 @@ Schema v13 removes the active-connection foreign key from OAuth attempts and
 receipts. This lets a proposed connection finish authorization before its
 configuration is published; existing OAuth state migrates unchanged.
 Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, v0.5, v0.6,
-and v0.7 remain readable by the v0.8 Host. The two early revisions retain their
+v0.7, and v0.8 remain readable by the v0.9 Host. The two early revisions retain their
 original headerless digest encoding, so their durable references remain exact
 rather than being silently rewritten during an upgrade. New discovery always
 publishes the current revision.
@@ -222,10 +222,14 @@ client certificates, proxies, and insecure TLS switches are outside v0.
 
 OAuth remains Host connection policy, not MCP tool behavior and not kernel
 state. `extension_manage` can add or connect a package with `credential.kind =
-"oauth"` and an explicit `registration` object. `client_metadata` supplies an
-HTTPS CIMD URL, `pre_registered` supplies a named Host credential reference, and
-`dynamic` explicitly permits DCR. The Host validates a proposed connection
-without publishing it, then authenticates and discovers its complete catalog.
+"oauth"`; this is the model's only OAuth choice. Before producing any setup or
+sign-in link, the Host requires RFC 9728 protected-resource metadata naming
+exactly one authorization server and valid metadata for that exact issuer. It
+then reuses a saved issuer-bound client, uses the Renoa HTTPS Client ID Metadata
+Document when advertised, uses DCR when advertised, or requests a developer-app
+client bound to the discovered issuer. The model cannot choose a mode, issuer,
+or credential label. The Host validates a proposed connection without publishing
+it, then authenticates and discovers its complete catalog.
 Only one final SQLite transaction publishes the connection, catalog, and
 profile attachment. A failed new connection leaves none of those rows; a failed
 replacement leaves the prior working configuration untouched. `authorize` resumes an existing
@@ -266,12 +270,13 @@ gateway failure with the same client-selected relay identity; MCP and OAuth
 credential operations keep their no-hidden-retry rule. The relay never receives
 the PKCE verifier, client secret, access token, or refresh token.
 
-Missing API-token and pre-registered OAuth-client references on a configured
+Missing API-token and Host-selected pre-registered OAuth-client references on a configured
 headless Host use a separate short-lived credential-intake relay. The Host
 first writes a random AES-256-GCM key, capability, relay identity, and operation
 binding into an owner-only local file. It sends only the capability digest and
 non-secret form metadata to the coordinator. The surface receives a permanent
-HTTPS action whose URL fragment contains the key and capability; URL fragments
+HTTPS action whose URL fragment contains the key, capability, and the
+Host-discovered OAuth issuer when applicable; URL fragments
 are not sent in HTTP requests. The browser fetches a same-origin, strictly
 content-security-policy-bound page, encrypts the typed credential locally with
 a fresh 96-bit nonce and relay-bound additional data, then submits only the
@@ -279,18 +284,21 @@ nonce, ciphertext, and capability. The coordinator validates the capability,
 durably stores one idempotent ciphertext, and cannot decrypt it.
 
 The Host polls with its enrolled Node credential, decrypts and validates the
-typed value, atomically stores it in its private credential directory, and only
+typed value, rejects an OAuth client for any issuer other than the one bound to
+the setup link, atomically stores it in its private credential directory, and only
 then acknowledges the relay. Acknowledgement clears the coordinator's nonce
 and ciphertext. Process restart reuses the locally retained relay identity,
 key, and capability; it never creates a second secret prompt for the same tool
 operation. The credential-intake relay is not a credential-sharing service:
 the resulting value belongs only to the requesting Host.
 
-The SDK uses a pre-registered client when one was configured, otherwise uses
-CIMD when the server advertises it, and may fall back from configured CIMD to
-advertised DCR. Explicit DCR fails with actionable setup guidance when the
-server does not advertise a registration endpoint. Both callback modes
-validate the state and optional `iss` value before exchange.
+The control origin publicly serves Renoa's non-secret Client ID Metadata
+Document with a `client_id` equal to that document's exact URL and its exact
+callback URI. The Host supplies that document only when
+the authorization server advertises CIMD. A saved pre-registered client takes
+priority; otherwise CIMD takes priority over advertised DCR. If neither is
+available, the Host requests the provider's developer-app client. Both callback
+modes validate the state and optional `iss` value before exchange.
 
 Persisted dynamically registered clients and tokens are returned only for the
 same validated authorization-server issuer that produced them. Pre-registered
@@ -497,8 +505,10 @@ For a complete result:
 - `isError: true` becomes a normal settled `ToolResult` with `is_error: true`,
   preserving actionable server content for the model;
 - bounded `structuredContent` is preserved in `ToolResult.details`;
-- when `outputSchema` exists, missing or SDK-invalid structured content is a
-  definite invalid-result failure; and
+- when `outputSchema` exists, a successful result with missing or SDK-invalid
+  structured content is a definite invalid-result failure; an `isError: true`
+  result may omit success-only structured content so its diagnostic text still
+  reaches the model; and
 - server-private result `_meta` is not copied into durable history or model
   context.
 
@@ -582,27 +592,30 @@ The maintained MCP SDK remains behind a narrow Node process adapter under
 `adapters/`. Rust owns process supervision and exposes only native Renoa
 types inward.
 
-The process contract has six actions:
+The process contract has seven actions:
 
 - **discover:** accept one endpoint, produce one complete normalized catalog or
   one typed terminal failure;
 - **call:** accept one frozen endpoint/tool/request, report the dispatch
   transition, then produce one terminal result, definite failure, or typed
   uncertain failure;
+- **oauth_discover:** require protected-resource metadata, resolve exactly one
+  authorization-server issuer, and report only the client modes that its
+  metadata advertises;
 - **oauth_begin:** discover OAuth metadata and produce either an authorization
   redirect, an existing usable credential, or one typed failure;
 - **oauth_exchange:** exchange exactly one saved callback code;
 - **oauth_token:** inspect saved token state without network mutation; and
 - **oauth_refresh:** perform exactly one refresh attempt.
 
-The version-8 process request may carry one bounded exact credential header
+The version-9 process request may carry one bounded exact credential header
 name, public prefix, and secret value plus bounded fixed public headers. OAuth
 begin, exchange, and refresh requests carry one exact registration object.
 OAuth begin may also carry one validated scope copied from a prior
 `oauth_insufficient_scope` result. A pre-registered object includes its
 issuer and resolved client fields only for the lifetime of that adapter
 process. Local `oauth_token` inspection carries no registration credential.
-The version-8 call wire can return that exact challenged scope in a typed
+The version-9 call wire can return that exact challenged scope in a typed
 diagnostic. It is also part of the frozen `tool_execute` binding, so an
 unfinished version-7 execution cannot resume under changed process semantics.
 Standard output is a bounded machine-readable record stream. Standard error is
@@ -710,8 +723,9 @@ and the real process boundary:
     and redacted;
 23. replay of the same settled OAuth management operation reads its terminal
     receipt without a second browser flow or credential POST;
-24. CIMD uses no registration POST when advertised and falls back once to DCR
-    when supported, while explicit DCR without an endpoint fails actionably;
+24. strict OAuth preflight accepts exactly one metadata-backed issuer, then
+    selects an existing issuer client, advertised CIMD, advertised DCR, or an
+    issuer-bound developer client without a model-chosen fallback;
 25. a pre-registered client skips DCR, authenticates the token exchange, never
     crosses to a different issuer, and never appears in adapter output;
 26. v8 OAuth connections migrate to explicit DCR without losing durable Host
@@ -745,7 +759,9 @@ and the real process boundary:
     deployment; and
 37. initial OAuth follows the MCP challenge/metadata scope order, while one
     insufficient-scope response returns its exact grant, sends one remote call,
-    and requires an explicit authorization and retry.
+    and requires an explicit authorization and retry; and
+38. the headless OAuth-client form displays a read-only discovered issuer,
+    binds it into authenticated encryption, and rejects any different issuer.
 
 ## Locked decisions
 
@@ -757,7 +773,7 @@ and the real process boundary:
   one named Secret Service credential with an exact header and prefix, or
   Host-owned OAuth; Renoa stores no secret in SQLite or package data.
 - OAuth uses PKCE, one exact loopback or self-hosted relay callback,
-  endpoint-bound local secret state, explicit client registration policy,
+  endpoint-bound local secret state, Host-selected client registration policy,
   authorization-server issuer binding, MCP-selected initial scopes, explicit
   scope accumulation, explicit durable phases, one credential POST per adapter
   operation, no hidden tool retry, and no automatic replay after an uncertain

@@ -23,16 +23,13 @@ use crate::{
 };
 
 #[test]
-fn oauth_credential_uses_the_exact_public_spelling_and_requires_a_registration_mode() {
+fn oauth_credential_is_one_exact_host_managed_choice() {
     serde_json::from_value::<ManageInput>(json!({
         "action": "connect",
         "package_digest": "a".repeat(64),
         "server": "drive",
         "connection": "drive",
-        "credential": {
-            "kind": "oauth",
-            "registration": {"mode": "pre_registered", "credential_id": "drive.client"}
-        }
+        "credential": {"kind": "oauth"}
     }))
     .expect("the documented oauth spelling must deserialize");
     assert!(
@@ -41,7 +38,17 @@ fn oauth_credential_uses_the_exact_public_spelling_and_requires_a_registration_m
             "package_digest": "a".repeat(64),
             "server": "drive",
             "connection": "drive",
-            "credential": {"kind": "o_auth", "registration": {"mode": "dynamic"}}
+            "credential": {"kind": "o_auth"}
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ManageInput>(json!({
+            "action": "connect",
+            "package_digest": "a".repeat(64),
+            "server": "drive",
+            "connection": "drive",
+            "credential": {"kind": "oauth", "registration": {"mode": "dynamic"}}
         }))
         .is_err()
     );
@@ -88,10 +95,7 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
         json!(["secret_service_bearer", "secret_service_header", "oauth"])
     );
     assert_eq!(properties["credential"]["required"], json!(["kind"]));
-    assert_eq!(
-        properties["credential"]["properties"]["registration"]["properties"]["mode"]["enum"],
-        json!(["dynamic", "client_metadata", "pre_registered"])
-    );
+    assert!(properties["credential"]["properties"]["registration"].is_null());
     let encoded = schema.to_string();
     assert!(!encoded.contains("\"oneOf\""));
     assert!(!encoded.contains("\"anyOf\""));
@@ -123,19 +127,23 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
 fn extension_schema_explains_the_complete_oauth_setup_flow() {
     let spec = manage_tool_spec(TOOL_NAME);
     for required_guidance in [
+        "Use list and tool_search",
+        "instead of adding a duplicate",
+        "not permission to enable, install, or substitute another provider",
+        "Return its exact safe error",
         "Remote MCP setup:",
         "Include connection and credential",
-        "gave the user a Client ID or Client Secret",
-        "registration.mode=pre_registered",
-        "Never put the real credential",
-        "secure credential-setup link",
-        "provider's sign-in link",
+        "pass exactly credential.kind=oauth",
+        "verifies the endpoint's OAuth metadata",
+        "Do not choose an issuer, registration mode, or credential label",
+        "Never put a Client ID, secret, token, or authorization code",
+        "secure setup link",
+        "provider sign-in link",
         "Renoa handles both",
-        "Keep this call running",
-        "Failed authentication never publishes",
+        "keep this call running",
+        "saves no connection",
         "untrusted metadata",
         "oauth_insufficient_scope",
-        "Never guess an auth mode or OAuth scope",
     ] {
         assert!(
             spec.description.contains(required_guidance),
@@ -155,38 +163,15 @@ fn extension_schema_explains_the_complete_oauth_setup_flow() {
     let credential_description = properties["credential"]["description"]
         .as_str()
         .expect("credential schema has model guidance");
-    assert!(credential_description.contains("stable Host credential reference"));
+    assert!(credential_description.contains("stable Host credential_id reference"));
     assert!(credential_description.contains("secret_service_header"));
-    assert!(credential_description.contains("Choose oauth"));
+    assert!(credential_description.contains("Renoa discovers and validates"));
     assert!(
         properties["credential"]["properties"]["kind"]["description"]
             .as_str()
             .expect("credential kind has model guidance")
             .contains("browser sign-in")
     );
-
-    let registration = &properties["credential"]["properties"]["registration"];
-    let registration_description = registration["description"]
-        .as_str()
-        .expect("registration schema has model guidance");
-    assert!(registration_description.contains("registration_endpoint"));
-    assert!(registration_description.contains("Client ID Metadata Document"));
-    assert!(registration_description.contains("developer console"));
-    let registration_properties = registration["properties"]
-        .as_object()
-        .expect("registration schema has properties");
-    assert!(
-        registration_properties["mode"]["description"]
-            .as_str()
-            .expect("registration mode has model guidance")
-            .contains("choose pre_registered")
-    );
-    let credential_id = registration_properties["credential_id"]["description"]
-        .as_str()
-        .expect("registration credential id has model guidance");
-    assert!(credential_id.contains("stable Host label"));
-    assert!(credential_id.contains("not the Client ID or secret"));
-    assert!(credential_id.contains("secure setup link"));
     let scope = properties["required_scope"]["description"]
         .as_str()
         .expect("scope schema has model guidance");

@@ -3,13 +3,19 @@ use serde_json::Value;
 use url::Url;
 
 use super::{
-    MAX_OAUTH_STATE_BYTES, MAX_OAUTH_VALUE_BYTES, OAuthResult, WIRE_VERSION, capture::Captured,
+    AdapterOAuthResult, MAX_OAUTH_STATE_BYTES, MAX_OAUTH_VALUE_BYTES, OAuthResult, WIRE_VERSION,
+    capture::Captured,
 };
 use crate::mcp::{McpAdapterError, McpCredentialHeader, McpRemoteFailure};
 
 #[derive(Deserialize)]
 #[serde(tag = "event", deny_unknown_fields)]
 enum OAuthRecord {
+    #[serde(rename = "oauth_discovered")]
+    Discovered {
+        wire_version: u32,
+        discovery: WireOAuthDiscovery,
+    },
     #[serde(rename = "oauth_redirect")]
     Redirect {
         wire_version: u32,
@@ -42,6 +48,15 @@ enum OAuthRecord {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WireOAuthDiscovery {
+    mcp_endpoint: String,
+    issuer: String,
+    client_id_metadata_document_supported: bool,
+    dynamic_client_registration_supported: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WireAuthorization {
     scheme: String,
     token: String,
@@ -52,7 +67,7 @@ pub(super) fn parse_record(
     mut stderr: Captured,
     expected_endpoint: &str,
     exact_secrets: &[&str],
-) -> Result<OAuthResult, McpAdapterError> {
+) -> Result<AdapterOAuthResult, McpAdapterError> {
     if stdout.truncated {
         stdout.bytes.fill(0);
         stderr.bytes.fill(0);
@@ -68,7 +83,7 @@ fn parse_single_record(
     encoded: &[u8],
     expected_endpoint: &str,
     exact_secrets: &[&str],
-) -> Result<OAuthResult, McpAdapterError> {
+) -> Result<AdapterOAuthResult, McpAdapterError> {
     let mut records = encoded
         .split(|byte| *byte == b'\n')
         .filter(|record| !record.is_empty());
@@ -83,6 +98,10 @@ fn parse_single_record(
     let record: OAuthRecord = serde_json::from_slice(record)
         .map_err(|error| McpAdapterError::Protocol(format!("decode OAuth record: {error}")))?;
     match record {
+        OAuthRecord::Discovered {
+            wire_version,
+            discovery,
+        } => parse_discovery(wire_version, &discovery, expected_endpoint),
         OAuthRecord::Redirect {
             wire_version,
             authorization_url,
@@ -91,10 +110,10 @@ fn parse_single_record(
             validate_wire(wire_version)?;
             validate_state(&oauth_state, expected_endpoint)?;
             validate_authorization_url(&authorization_url, &oauth_state)?;
-            Ok(OAuthResult::Redirect {
+            Ok(AdapterOAuthResult::Flow(OAuthResult::Redirect {
                 authorization_url,
                 state: oauth_state,
-            })
+            }))
         }
         OAuthRecord::Authorized {
             wire_version,
@@ -111,10 +130,10 @@ fn parse_single_record(
                 ));
             }
             validate_state(&oauth_state, expected_endpoint)?;
-            Ok(OAuthResult::Authorized {
+            Ok(AdapterOAuthResult::Flow(OAuthResult::Authorized {
                 authorization,
                 state: oauth_state,
-            })
+            }))
         }
         OAuthRecord::RefreshRequired {
             wire_version,
@@ -122,7 +141,9 @@ fn parse_single_record(
         } => {
             validate_wire(wire_version)?;
             validate_state(&oauth_state, expected_endpoint)?;
-            Ok(OAuthResult::RefreshRequired { state: oauth_state })
+            Ok(AdapterOAuthResult::Flow(OAuthResult::RefreshRequired {
+                state: oauth_state,
+            }))
         }
         OAuthRecord::OAuthFailed {
             wire_version,
@@ -133,10 +154,10 @@ fn parse_single_record(
             validate_state(&oauth_state, expected_endpoint)?;
             failure.redact_exact_secrets(exact_secrets.iter().copied());
             failure.validate_wire().map_err(McpAdapterError::Protocol)?;
-            Ok(OAuthResult::Failed {
+            Ok(AdapterOAuthResult::Flow(OAuthResult::Failed {
                 failure,
                 state: oauth_state,
-            })
+            }))
         }
         OAuthRecord::Failed {
             wire_version,
@@ -148,6 +169,36 @@ fn parse_single_record(
             Err(McpAdapterError::Remote(failure))
         }
     }
+}
+
+fn parse_discovery(
+    wire_version: u32,
+    discovery: &WireOAuthDiscovery,
+    expected_endpoint: &str,
+) -> Result<AdapterOAuthResult, McpAdapterError> {
+    validate_wire(wire_version)?;
+    let expected = Url::parse(expected_endpoint).map_err(|_| {
+        McpAdapterError::Protocol("OAuth request has a malformed MCP endpoint".to_owned())
+    })?;
+    let returned = Url::parse(&discovery.mcp_endpoint).map_err(|_| {
+        McpAdapterError::Protocol("OAuth discovery returned a malformed MCP endpoint".to_owned())
+    })?;
+    if returned != expected {
+        return Err(McpAdapterError::Protocol(
+            "OAuth discovery changed the MCP endpoint".to_owned(),
+        ));
+    }
+    let issuer =
+        super::super::secret_store::validate_issuer(&discovery.issuer).map_err(|reason| {
+            McpAdapterError::Protocol(format!(
+                "OAuth discovery returned an invalid issuer: {reason}"
+            ))
+        })?;
+    Ok(AdapterOAuthResult::Discovered(super::OAuthDiscovery {
+        issuer,
+        client_metadata_supported: discovery.client_id_metadata_document_supported,
+        dynamic_registration_supported: discovery.dynamic_client_registration_supported,
+    }))
 }
 
 fn validate_wire(wire_version: u32) -> Result<(), McpAdapterError> {
@@ -256,7 +307,7 @@ mod tests {
 
     #[test]
     fn redirect_must_preserve_the_host_state_and_callback() {
-        let record = br#"{"wire_version":8,"event":"oauth_redirect","authorization_url":"https://auth.example/authorize?state=changed&redirect_uri=http%3A%2F%2F127.0.0.1%3A3210%2Foauth%2Fcallback","oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
+        let record = br#"{"wire_version":9,"event":"oauth_redirect","authorization_url":"https://auth.example/authorize?state=changed&redirect_uri=http%3A%2F%2F127.0.0.1%3A3210%2Foauth%2Fcallback","oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
 "#;
         let Err(error) = parse_single_record(record, "https://mcp.example/mcp", &[]) else {
             panic!("changed OAuth state must be rejected")
@@ -267,7 +318,7 @@ mod tests {
 
     #[test]
     fn credential_state_is_bound_to_the_requested_mcp_endpoint() {
-        let record = br#"{"wire_version":8,"event":"oauth_authorized","authorization":{"scheme":"bearer","token":"must-not-escape"},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://first.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
+        let record = br#"{"wire_version":9,"event":"oauth_authorized","authorization":{"scheme":"bearer","token":"must-not-escape"},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://first.example/mcp","csrf_state":"expected","redirect_uri":"http://127.0.0.1:3210/oauth/callback"}}
 "#;
         let Err(error) = parse_single_record(record, "https://second.example/mcp", &[]) else {
             panic!("credential state for another endpoint must be rejected")
@@ -278,7 +329,7 @@ mod tests {
 
     #[test]
     fn oauth_failures_cannot_echo_request_secrets_across_the_host_boundary() {
-        let record = br#"{"wire_version":8,"event":"oauth_failed","failure":{"kind":"protocol","certainty":"definite","message":"access-one and code-one were rejected","partial_changes_possible":true,"diagnostic":{"code":"access-one","detail":"code-one failed"}},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"state-one","redirect_uri":"http://127.0.0.1:3210/oauth/callback","access_token":"access-one"}}
+        let record = br#"{"wire_version":9,"event":"oauth_failed","failure":{"kind":"protocol","certainty":"definite","message":"access-one and code-one were rejected","partial_changes_possible":true,"diagnostic":{"code":"access-one","detail":"code-one failed"}},"oauth_state":{"schema_version":1,"mcp_endpoint":"https://mcp.example/mcp","csrf_state":"state-one","redirect_uri":"http://127.0.0.1:3210/oauth/callback","access_token":"access-one"}}
 "#;
         let parsed = parse_single_record(
             record,
@@ -286,7 +337,8 @@ mod tests {
             &["access-one", "code-one", "state-one"],
         )
         .expect("redacted OAuth failure remains valid");
-        let super::OAuthResult::Failed { failure, .. } = parsed else {
+        let super::AdapterOAuthResult::Flow(super::OAuthResult::Failed { failure, .. }) = parsed
+        else {
             panic!("fixture must produce an OAuth failure");
         };
         let encoded = format!(

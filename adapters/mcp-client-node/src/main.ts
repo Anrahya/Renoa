@@ -19,7 +19,9 @@ async function main(): Promise<void> {
     try {
       const request = parseAdapterRequest(await readRequest());
       if (isOAuthRequest(request)) {
-        if (request.action === "oauth_begin") {
+        if (request.action === "oauth_discover") {
+          exactSecrets = [];
+        } else if (request.action === "oauth_begin") {
           exactSecrets = [request.csrf_state];
           if (request.oauth_state !== undefined) {
             exactSecrets.push(...oauthSecrets(request.oauth_state));

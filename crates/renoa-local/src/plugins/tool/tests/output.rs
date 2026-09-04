@@ -74,13 +74,10 @@ fn unsupported_oauth_registration_reports_the_credential_boundary() {
     let next_action = model["next_action"]
         .as_str()
         .expect("setup failure has a next action");
-    assert!(next_action.contains("Do not retry dynamic registration"));
-    assert!(next_action.contains("registration.mode=pre_registered"));
-    assert!(next_action.contains("credential_id is only a label"));
-    assert!(next_action.contains("secure setup link"));
-    assert!(next_action.contains("Renoa handles the setup response"));
-    assert!(next_action.contains("keep the call running"));
-    assert!(next_action.contains("never ask for credential material"));
+    assert!(next_action.contains("Do not retry unchanged"));
+    assert!(next_action.contains("choose another registration mode"));
+    assert!(next_action.contains("invent an issuer"));
+    assert!(next_action.contains("connection was not saved"));
     assert_eq!(
         output.details.unwrap()["mcp"]["failure"]["diagnostic"]["code"],
         "oauth_registration_required"

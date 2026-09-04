@@ -86,6 +86,9 @@ mod tests {
         assert!(prompt.contains("<soul source=\"SOUL.md\" revision=\""));
         assert!(prompt.contains("<user_profile source=\"USER.md\" revision=\""));
         assert!(prompt.contains("Do not open with praise, validation, or agreement."));
+        assert!(
+            prompt.contains("Before installing an extension, reuse a matching enabled connection")
+        );
         assert!(prompt.contains("Keep production data intact."));
         assert!(!prompt.contains(workspace.to_string_lossy().as_ref()));
     }

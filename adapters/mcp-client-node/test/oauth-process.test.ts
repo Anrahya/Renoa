@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { WireOAuthState } from "../src/contract.js";
 import { WIRE_VERSION } from "../src/limits.js";
-import { OAuthExchangeTracker } from "../src/oauth-transport.js";
 import {
   begin,
   beginRequest,
@@ -12,18 +11,6 @@ import {
   OAuthFixture,
 } from "./oauth-fixture.js";
 import { runAdapter } from "./support.js";
-
-test("OAuth certainty tracks the credential POST, not earlier discovery responses", () => {
-  const tracker = new OAuthExchangeTracker();
-  tracker.markResponse("GET");
-  tracker.markRequest("POST");
-  assert.deepEqual(tracker.evidence(), {
-    dispatchStarted: true,
-    responseStarted: false,
-  });
-  tracker.markResponse("POST");
-  assert.equal(tracker.evidence().responseStarted, true);
-});
 
 test("OAuth begins with discovery, one registration, PKCE, and a durable redirect state", async () => {
   const server = new OAuthFixture();

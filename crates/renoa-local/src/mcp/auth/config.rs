@@ -49,8 +49,14 @@ pub(crate) enum McpConnectionAuth {
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum McpOAuthRegistration {
     Dynamic,
-    ClientMetadata { url: String },
-    PreRegistered { credential_id: String },
+    ClientMetadata {
+        url: String,
+    },
+    PreRegistered {
+        credential_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        issuer: Option<String>,
+    },
 }
 
 impl McpOAuthRegistration {
@@ -83,6 +89,22 @@ impl McpOAuthRegistration {
         validate_identity("OAuth client credential", credential_id)?;
         Ok(Self::PreRegistered {
             credential_id: credential_id.to_owned(),
+            issuer: None,
+        })
+    }
+
+    pub(crate) fn pre_registered_for_issuer(
+        credential_id: &str,
+        issuer: &str,
+    ) -> Result<Self, McpHostError> {
+        validate_identity("OAuth client credential", credential_id)?;
+        let issuer =
+            crate::mcp::oauth::secret_store::validate_issuer(issuer).map_err(|reason| {
+                McpHostError::Invalid(format!("OAuth issuer is invalid: {reason}"))
+            })?;
+        Ok(Self::PreRegistered {
+            credential_id: credential_id.to_owned(),
+            issuer: Some(issuer),
         })
     }
 
@@ -90,7 +112,14 @@ impl McpOAuthRegistration {
         match self {
             Self::Dynamic => Ok(Self::Dynamic),
             Self::ClientMetadata { url } => Self::client_metadata(&url),
-            Self::PreRegistered { credential_id } => Self::pre_registered(&credential_id),
+            Self::PreRegistered {
+                credential_id,
+                issuer: Some(issuer),
+            } => Self::pre_registered_for_issuer(&credential_id, &issuer),
+            Self::PreRegistered {
+                credential_id,
+                issuer: None,
+            } => Self::pre_registered(&credential_id),
         }
     }
 }

@@ -189,12 +189,16 @@ export function canonicalIssuer(value: string): string {
   }
   if (
     (issuer.protocol !== "https:" && !isLoopbackHttp(issuer)) ||
+    issuer.hostname.length === 0 ||
     issuer.username.length > 0 ||
     issuer.password.length > 0 ||
     issuer.search.length > 0 ||
     issuer.hash.length > 0
   ) {
     throw invalid("OAuth authorization server issuer is not a safe issuer URL");
+  }
+  if (Buffer.byteLength(issuer.href, "utf8") > MAX_OAUTH_VALUE_BYTES) {
+    throw invalid("OAuth authorization server issuer exceeds its boundary");
   }
   return issuer.pathname === "/" ? issuer.origin : issuer.href;
 }

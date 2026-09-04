@@ -28,6 +28,13 @@ export interface WireOAuthAuthorization {
   readonly token: string;
 }
 
+export interface WireOAuthDiscovery {
+  readonly mcp_endpoint: string;
+  readonly issuer: string;
+  readonly client_id_metadata_document_supported: boolean;
+  readonly dynamic_client_registration_supported: boolean;
+}
+
 export interface WireOAuthState extends JsonObject {
   readonly schema_version: 1;
   readonly mcp_endpoint: string;
@@ -67,6 +74,11 @@ export type AdapterRequest =
       readonly credential?: WireCredential;
       readonly tool: FrozenMcpTool;
       readonly arguments: JsonObject;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly action: "oauth_discover";
+      readonly endpoint: string;
     }
   | {
       readonly wire_version: typeof WIRE_VERSION;
@@ -188,6 +200,11 @@ export type AdapterRecord =
       readonly wire_version: typeof WIRE_VERSION;
       readonly event: "failed";
       readonly failure: WireFailure;
+    }
+  | {
+      readonly wire_version: typeof WIRE_VERSION;
+      readonly event: "oauth_discovered";
+      readonly discovery: WireOAuthDiscovery;
     }
   | {
       readonly wire_version: typeof WIRE_VERSION;

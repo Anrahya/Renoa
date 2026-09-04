@@ -76,6 +76,7 @@ impl PluginManager {
                 request.connection_id,
                 request.credential,
                 request.replace,
+                cancellation.clone(),
             )
             .await?;
         self.authorizations
@@ -163,6 +164,7 @@ impl PluginManager {
         connection_id: &str,
         credential: PluginCredential,
         replace: bool,
+        cancellation: CancellationToken,
     ) -> Result<PreparedConnection, PluginError> {
         let plugin = self.load_available(package_digest).await?;
         let server = plugin
@@ -182,7 +184,14 @@ impl PluginManager {
                 "RENOA_MCP_ADAPTER must be set before connecting a package MCP server".to_owned(),
             )
         })?;
-        let auth = credential_auth(credential, connection_id, server.endpoint())?;
+        let auth = credential_auth(
+            credential,
+            connection_id,
+            server.endpoint(),
+            &self.authorizations,
+            cancellation,
+        )
+        .await?;
         let headers = McpRequestHeaders::new(
             server
                 .request_headers()

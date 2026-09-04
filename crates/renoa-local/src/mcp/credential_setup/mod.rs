@@ -45,10 +45,10 @@ impl CredentialSetupCoordinator {
         updates: Option<&ToolUpdates>,
         cancellation: CancellationToken,
     ) -> Result<(), McpHostError> {
-        let Some((credential_id, kind)) = setup_requirement(reference) else {
+        let Some((credential_id, kind, expected_issuer)) = setup_requirement(reference) else {
             return Ok(());
         };
-        let state_id = state_id(operation_id, credential_id, kind);
+        let state_id = state_id(operation_id, credential_id, kind, expected_issuer);
         let saved_state = self.states.load(&state_id).await?;
         if saved_state.is_none() && self.secret_exists(credential_id).await? {
             return Ok(());
@@ -59,7 +59,11 @@ impl CredentialSetupCoordinator {
         let mut state = if let Some(state) = saved_state {
             state
         } else {
-            let state = CredentialSetupState::new(credential_id.to_owned(), kind)?;
+            let state = CredentialSetupState::new(
+                credential_id.to_owned(),
+                kind,
+                expected_issuer.map(str::to_owned),
+            )?;
             self.states.store(&state_id, &state).await?;
             state
         };
@@ -152,16 +156,26 @@ impl CredentialSetupCoordinator {
     }
 }
 
-fn setup_requirement(reference: &McpConnectionAuth) -> Option<(&str, CredentialRelayKind)> {
+fn setup_requirement(
+    reference: &McpConnectionAuth,
+) -> Option<(&str, CredentialRelayKind, Option<&str>)> {
     match reference {
         McpConnectionAuth::SecretServiceBearer { credential_id }
         | McpConnectionAuth::SecretServiceHeader { credential_id, .. } => {
-            Some((credential_id, CredentialRelayKind::ApiToken))
+            Some((credential_id, CredentialRelayKind::ApiToken, None))
         }
         McpConnectionAuth::OAuth {
-            registration: super::McpOAuthRegistration::PreRegistered { credential_id },
+            registration:
+                super::McpOAuthRegistration::PreRegistered {
+                    credential_id,
+                    issuer: Some(issuer),
+                },
             ..
-        } => Some((credential_id, CredentialRelayKind::OAuthClient)),
+        } => Some((
+            credential_id,
+            CredentialRelayKind::OAuthClient,
+            Some(issuer),
+        )),
         McpConnectionAuth::None
         | McpConnectionAuth::GhCli { .. }
         | McpConnectionAuth::OAuth { .. } => None,

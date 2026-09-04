@@ -27,6 +27,7 @@ const RELAY_LIFETIME: Duration = Duration::from_mins(10);
 const MAX_RELAY_BODY_BYTES: usize = 16 * 1024;
 const MAX_CALLBACK_QUERY_BYTES: usize = 32 * 1024;
 const MAX_CALLBACK_VALUE_BYTES: usize = 16 * 1024;
+const CLIENT_METADATA_PATH: &str = "/v1/oauth/client-metadata.json";
 
 pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
     Router::new()
@@ -40,7 +41,36 @@ pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
             post(acknowledge_relay),
         )
         .route(OAUTH_CALLBACK_PATH, get(provider_callback))
+        .route(CLIENT_METADATA_PATH, get(client_metadata))
         .layer(DefaultBodyLimit::max(MAX_RELAY_BODY_BYTES))
+}
+
+async fn client_metadata(State(state): State<Arc<CoordinatorState>>) -> Response {
+    let Some(redirect_uri) = state.oauth_callback_uri.as_deref() else {
+        return internal_error();
+    };
+    let Ok(callback) = Url::parse(redirect_uri) else {
+        return internal_error();
+    };
+    let Ok(client_id) = callback.join(CLIENT_METADATA_PATH) else {
+        return internal_error();
+    };
+    let client_uri = callback.origin().ascii_serialization();
+    secure_json(
+        StatusCode::OK,
+        &serde_json::json!({
+            "client_id": client_id,
+            "redirect_uris": [redirect_uri],
+            "token_endpoint_auth_method": "none",
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "application_type": "web",
+            "client_name": "Renoa",
+            "client_uri": client_uri,
+            "software_id": "renoa",
+            "software_version": env!("CARGO_PKG_VERSION")
+        }),
+    )
 }
 
 async fn create_relay(State(state): State<Arc<CoordinatorState>>, request: Request) -> Response {

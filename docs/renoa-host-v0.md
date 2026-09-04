@@ -259,7 +259,7 @@ already running. The runtime itself is unchanged: the kernel freezes the same th
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v14 model-facing schema is
+The Host adds one fixed `extension_manage` tool. Its v15 model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
 for each of ten typed actions and rejects missing or cross-action fields:
@@ -276,11 +276,11 @@ package, registration, catalog, or credential reference; or re-enable that
 retained complete catalog without a network request.
 The model-facing descriptions state the remote-MCP setup sequence at the
 fields where a model makes each choice. In particular, `add` may connect in the
-same call; a provider-issued Client ID or Client Secret means
-`pre_registered`; `credential_id` is a Host label rather than a secret; and a
-headless Host emits the secure credential page before the provider sign-in
-page. This guidance changes only the frozen Agent binding. It does not add a
-Host, kernel, MCP, or RCP field.
+same call and browser authentication is exactly `credential.kind=oauth`. The
+Host, not the model, discovers the issuer, chooses a metadata-supported client
+mode, derives the credential reference, and emits any secure credential page
+before the provider sign-in page. This guidance changes only the frozen Agent
+binding. It does not add a Host, kernel, MCP, or RCP field.
 Inspection and installation execute no package code. Installation publishes a
 full immutable tree at `plugins/<sha256>` before committing its durable record.
 Official Registry discovery is a replaceable read-only input to this management
@@ -317,9 +317,10 @@ metadata, as required by MCP. A later HTTP 403
 server's exact validated scope. `extension_manage` unions that scope with the
 stored grant and opens fresh consent when it widens permission. It never
 silently retries the denied MCP call; the Agent must authorize and then issue
-one explicit retry. Registration modes are not fallbacks to guess: DCR requires
-an advertised registration endpoint, CIMD requires an official metadata URL,
-and a developer-console client uses a named pre-registered credential. The
+one explicit retry. Registration modes are not model input or fallbacks to
+guess: strict endpoint metadata must name one issuer; the Host then chooses an
+existing issuer-bound client, hosted CIMD when advertised, DCR when advertised,
+or a developer-console client form already bound to that issuer. The
 headless setup form's frozen wire spelling is `oauth_client`; coordinators also
 accept the short-lived buggy `o_auth_client` spelling only for rolling upgrade
 compatibility.
@@ -709,8 +710,9 @@ credential exchange becomes durable unknown instead of being replayed. A
 completed or definitely failed management operation is receipt-backed, so the
 same session/command/tool-call identity causes no second authorization flow.
 Host schema v8 adds the connection kind, non-secret recovery phases, and bounded
-semantic receipts. Schema v9 adds explicit CIMD, pre-registered-client, and DCR
-policy while preserving existing OAuth connections as DCR. Client credentials
+semantic receipts. Schema v9 adds durable CIMD, pre-registered-client, and DCR
+policy while preserving existing OAuth connections as DCR. New model-initiated
+connections select that internal policy from verified metadata. Client credentials
 remain named Secret Service references; no kernel or RCP type changed.
 Schema v10 adds validated generic credential header names and public prefixes;
 existing connection kinds migrate without changing identity or catalog state.

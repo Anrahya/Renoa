@@ -4,13 +4,106 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
 use super::super::{
+    automatic_client_credential_id,
     process::{self, OAuthRegistration, OAuthResult},
     secret_store::OAuthSecretStore,
+    select_automatic_registration,
     store::{OAuthFlow, OAuthPhase},
 };
 use super::support::{ENDPOINT, Fixture, compile_secret_tool};
 use super::{authorization_request, support::CONNECTION};
 use crate::mcp::{McpConnectionAuth, McpHostError, McpOAuthError, McpOAuthRegistration};
+
+#[test]
+fn automatic_oauth_registration_follows_verified_server_metadata() {
+    let discovery = process::OAuthDiscovery {
+        issuer: "https://accounts.example".to_owned(),
+        client_metadata_supported: true,
+        dynamic_registration_supported: true,
+    };
+    let credential_id = automatic_client_credential_id(&discovery.issuer);
+
+    assert_eq!(
+        select_automatic_registration(
+            &discovery,
+            Some("https://renoa.example/v1/oauth/client-metadata.json"),
+            &credential_id,
+            true,
+        )
+        .expect("saved provider client wins"),
+        McpOAuthRegistration::pre_registered_for_issuer(&credential_id, "https://accounts.example")
+            .expect("expected pre-registered policy")
+    );
+    assert_eq!(
+        select_automatic_registration(
+            &discovery,
+            Some("https://renoa.example/v1/oauth/client-metadata.json"),
+            &credential_id,
+            false,
+        )
+        .expect("advertised CIMD wins"),
+        McpOAuthRegistration::client_metadata(
+            "https://renoa.example/v1/oauth/client-metadata.json"
+        )
+        .expect("expected CIMD policy")
+    );
+
+    let dynamic_only = process::OAuthDiscovery {
+        client_metadata_supported: false,
+        ..discovery.clone()
+    };
+    assert_eq!(
+        select_automatic_registration(&dynamic_only, None, &credential_id, false)
+            .expect("advertised DCR is selected"),
+        McpOAuthRegistration::dynamic()
+    );
+
+    let developer_app = process::OAuthDiscovery {
+        client_metadata_supported: false,
+        dynamic_registration_supported: false,
+        ..discovery
+    };
+    assert_eq!(
+        select_automatic_registration(&developer_app, None, &credential_id, false)
+            .expect("unsupported automatic registration requests a provider-bound client"),
+        McpOAuthRegistration::pre_registered_for_issuer(&credential_id, "https://accounts.example")
+            .expect("expected provider-bound client")
+    );
+}
+
+#[tokio::test]
+async fn oauth_metadata_discovery_uses_its_own_strict_wire_action() {
+    let directory = tempdir().expect("temporary OAuth discovery fixture");
+    let adapter = directory.path().join("discovery-adapter.mjs");
+    fs::write(
+        &adapter,
+        r"
+let input = '';
+for await (const chunk of process.stdin) input += chunk;
+const request = JSON.parse(input);
+if (request.action !== 'oauth_discover' || request.wire_version !== 9 ||
+    request.endpoint !== 'https://mcp.example.test/mcp') process.exit(17);
+process.stdout.write(JSON.stringify({
+  wire_version: 9,
+  event: 'oauth_discovered',
+  discovery: {
+    mcp_endpoint: request.endpoint,
+    issuer: 'https://accounts.example/',
+    client_id_metadata_document_supported: true,
+    dynamic_client_registration_supported: false
+  }
+}) + '\n');
+",
+    )
+    .expect("write discovery adapter");
+
+    let discovery = process::discover(&adapter, ENDPOINT, CancellationToken::new())
+        .await
+        .expect("discover OAuth metadata");
+    assert_eq!(discovery.issuer, "https://accounts.example");
+    assert!(discovery.client_metadata_supported);
+    assert!(!discovery.dynamic_registration_supported);
+}
 
 #[tokio::test]
 async fn pre_registered_oauth_clients_are_loaded_from_one_named_secret_reference() {
@@ -108,7 +201,7 @@ fs.appendFileSync({requests_json}, `${{JSON.stringify({{
   requested_scope: request.requested_scope ?? null
 }})}}\n`);
 process.stdout.write(`${{JSON.stringify({{
-  wire_version: 8,
+  wire_version: 9,
   event: 'oauth_failed',
   failure: {{
     kind: 'protocol',

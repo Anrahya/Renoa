@@ -117,6 +117,18 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
       arguments: requireJsonObject(request.arguments, "request.arguments"),
     };
   }
+  if (request.action === "oauth_discover") {
+    requireExactKeys(
+      request,
+      ["wire_version", "action", "endpoint"],
+      "request",
+    );
+    return {
+      wire_version: WIRE_VERSION,
+      action: "oauth_discover",
+      endpoint: requireString(request.endpoint, "request.endpoint"),
+    };
+  }
   if (request.action === "oauth_begin") {
     requireExactKeys(
       request,
@@ -228,7 +240,7 @@ export function parseAdapterRequest(value: unknown): AdapterRequest {
     };
   }
   throw invalid(
-    "request.action must be 'discover', 'call', 'oauth_begin', 'oauth_exchange', 'oauth_token', or 'oauth_refresh'",
+    "request.action must be 'discover', 'call', 'oauth_discover', 'oauth_begin', 'oauth_exchange', 'oauth_token', or 'oauth_refresh'",
   );
 }
 

@@ -476,8 +476,9 @@ preserves standard plugin homepage provenance and adds the package-skill scope
 without changing existing global or workspace bindings. Schema v8 adds OAuth
 connection references, non-secret recovery phases, and bounded terminal
 receipts keyed by stable session/command/tool-call identity. Schema v9 records
-the selected CIMD, pre-registered-client, or DCR policy and migrates existing
-OAuth connections to their former DCR behavior. OAuth client state, tokens,
+the Host-selected CIMD, pre-registered-client, or DCR policy and migrates existing
+OAuth connections to their former DCR behavior. The agent requests only OAuth;
+strict endpoint metadata and existing Host state determine that policy. OAuth client state, tokens,
 client secrets, and remote failure text never enter `host.sqlite3`; all secret
 values are resolved just in time from Secret Service. Schema v10 adds the exact
 header name and public prefix for generic Secret Service credentials and
@@ -807,7 +808,7 @@ remain later work and must preserve `rcp-v0.md`.
 23. OAuth remains a Host-owned connection/authentication flow. The replay-safe
     management binding may carry it only with the stable
     session/command/tool-call identity, resumable callback state,
-    explicit client-registration policy, endpoint-bound Secret Service bundle,
+    Host-selected client-registration policy, endpoint-bound Secret Service bundle,
     terminal receipt, and process-death recovery path now consumed by
     implementation and tests.
 24. The private registry shares immutable package availability only. Local

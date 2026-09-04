@@ -62,6 +62,7 @@ pub(crate) struct McpOAuthAuthorizationRequest<'a> {
 struct OAuthCoordinator {
     adapter: Option<PathBuf>,
     browser: PathBuf,
+    client_metadata_url: Option<String>,
     locks: PathBuf,
     secrets: OAuthSecretStore,
     flows: OAuthFlowStore,
@@ -81,6 +82,7 @@ impl McpAuthorizationResolver {
         let oauth = OAuthCoordinator {
             adapter,
             browser: PathBuf::from("xdg-open"),
+            client_metadata_url: None,
             locks: data_root.join("oauth-locks"),
             secrets: OAuthSecretStore::service(credentials.secret_tool_executable()),
             flows: OAuthFlowStore::new(catalog.path().to_path_buf()),
@@ -105,6 +107,11 @@ impl McpAuthorizationResolver {
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
         let relay = OAuthRelayClient::new(relay_origin, relay_credentials)?;
+        let client_metadata_url = url::Url::parse(relay_origin)
+            .map_err(|_| McpOAuthError::Invalid("OAuth relay origin is not a URL".to_owned()))?
+            .join("/v1/oauth/client-metadata.json")
+            .map_err(|_| McpOAuthError::Invalid("OAuth client metadata URL is invalid".to_owned()))?
+            .to_string();
         let private_secrets = PrivateSecretStore::initialize(data_root.join("oauth-secrets"))?;
         let credentials = credentials.with_private_store(private_secrets.clone());
         let credential_setup = CredentialSetupCoordinator::new(
@@ -116,6 +123,7 @@ impl McpAuthorizationResolver {
         let oauth = OAuthCoordinator {
             adapter,
             browser: PathBuf::from("xdg-open"),
+            client_metadata_url: Some(client_metadata_url),
             locks: data_root.join("oauth-locks"),
             secrets: OAuthSecretStore::from_private(private_secrets),
             flows: OAuthFlowStore::new(catalog.path().to_path_buf()),
@@ -140,6 +148,17 @@ impl McpAuthorizationResolver {
         };
         setup
             .ensure(reference, operation_id, updates, cancellation)
+            .await
+    }
+
+    pub(crate) async fn automatic_oauth(
+        &self,
+        connection_id: &str,
+        endpoint: &str,
+        cancellation: CancellationToken,
+    ) -> Result<McpConnectionAuth, McpHostError> {
+        self.oauth
+            .automatic_reference(connection_id, endpoint, cancellation)
             .await
     }
 
@@ -202,6 +221,27 @@ impl OAuthCoordinator {
         })
     }
 
+    async fn automatic_reference(
+        &self,
+        connection_id: &str,
+        endpoint: &str,
+        cancellation: CancellationToken,
+    ) -> Result<McpConnectionAuth, McpHostError> {
+        let discovery = process::discover(self.adapter()?, endpoint, cancellation.clone()).await?;
+        let credential_id = automatic_client_credential_id(&discovery.issuer);
+        let has_pre_registered = self
+            .secrets
+            .has_pre_registered_client(&credential_id, cancellation)
+            .await?;
+        let registration = select_automatic_registration(
+            &discovery,
+            self.client_metadata_url.as_deref(),
+            &credential_id,
+            has_pre_registered,
+        )?;
+        McpConnectionAuth::oauth(connection_id, endpoint, registration)
+    }
+
     async fn adapter_registration(
         &self,
         reference: &McpConnectionAuth,
@@ -216,11 +256,23 @@ impl OAuthCoordinator {
                     client_metadata_url: url.clone(),
                 })
             }
-            McpOAuthRegistration::PreRegistered { credential_id } => {
+            McpOAuthRegistration::PreRegistered {
+                credential_id,
+                issuer,
+            } => {
                 let client = self
                     .secrets
                     .load_pre_registered_client(credential_id, cancellation)
                     .await?;
+                if issuer
+                    .as_ref()
+                    .is_some_and(|issuer| *issuer != client.issuer)
+                {
+                    return Err(McpOAuthError::Invalid(format!(
+                        "pre-registered OAuth credential '{credential_id}' belongs to a different authorization server"
+                    ))
+                    .into());
+                }
                 Ok(process::OAuthRegistration::PreRegistered {
                     issuer: client.issuer,
                     client_id: client.client_id,
@@ -229,6 +281,32 @@ impl OAuthCoordinator {
             }
         }
     }
+}
+
+fn automatic_client_credential_id(issuer: &str) -> String {
+    let mut identity = b"renoa automatic OAuth client v1\0".to_vec();
+    identity.extend_from_slice(issuer.as_bytes());
+    format!("oauth-client.{}", crate::mcp::hex_sha256(&identity))
+}
+
+fn select_automatic_registration(
+    discovery: &process::OAuthDiscovery,
+    client_metadata_url: Option<&str>,
+    credential_id: &str,
+    has_pre_registered: bool,
+) -> Result<McpOAuthRegistration, McpHostError> {
+    if has_pre_registered {
+        return McpOAuthRegistration::pre_registered_for_issuer(credential_id, &discovery.issuer);
+    }
+    if discovery.client_metadata_supported
+        && let Some(url) = client_metadata_url
+    {
+        return McpOAuthRegistration::client_metadata(url);
+    }
+    if discovery.dynamic_registration_supported {
+        return Ok(McpOAuthRegistration::dynamic());
+    }
+    McpOAuthRegistration::pre_registered_for_issuer(credential_id, &discovery.issuer)
 }
 
 fn adapter_may_have_dispatched(error: &McpAdapterError) -> bool {

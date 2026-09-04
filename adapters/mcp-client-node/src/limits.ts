@@ -1,6 +1,6 @@
-export const WIRE_VERSION = 8 as const;
+export const WIRE_VERSION = 9 as const;
 export const MCP_PROTOCOL_VERSION = "2026-07-28";
-export const MCP_ADAPTER_REVISION = "mcp-client-node-v0.8.0";
+export const MCP_ADAPTER_REVISION = "mcp-client-node-v0.9.0";
 
 export const DISCOVERY_TIMEOUT_MS = 30_000;
 export const TOOL_CALL_TIMEOUT_MS = 120_000;

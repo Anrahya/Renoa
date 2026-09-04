@@ -34,8 +34,12 @@ export function projectToolResult(
     );
   }
 
+  if (result.isError !== undefined && typeof result.isError !== "boolean") {
+    throw invalidResult("MCP isError field is not boolean");
+  }
+  const isError = result.isError === true;
   const hasStructuredContent = Object.hasOwn(result, "structuredContent");
-  if (outputSchemaPresent && !hasStructuredContent) {
+  if (outputSchemaPresent && !isError && !hasStructuredContent) {
     throw invalidResult(
       "tool declared an output schema but returned no structured content",
     );
@@ -102,15 +106,12 @@ export function projectToolResult(
     }
   }
 
-  if (result.isError !== undefined && typeof result.isError !== "boolean") {
-    throw invalidResult("MCP isError field is not boolean");
-  }
   const projected: WireToolResult = {
     content,
     structured_content: hasStructuredContent
       ? { present: true, value: structuredContent as JsonValue }
       : { present: false },
-    is_error: result.isError === true,
+    is_error: isError,
   };
   if (jsonBytes(projected) > MAX_TOOL_RESULT_BYTES) {
     throw resourceLimit(

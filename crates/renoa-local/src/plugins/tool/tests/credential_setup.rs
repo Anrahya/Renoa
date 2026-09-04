@@ -28,6 +28,28 @@ use crate::{
 
 #[tokio::test]
 async fn encrypted_browser_intake_finishes_before_the_connection_is_published() {
+    run_credential_setup(
+        "credential-test",
+        "https://mcp.example/test",
+        json!({
+            "kind": "secret_service_bearer",
+            "credential_id": "credential.test"
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn oauth_setup_is_selected_by_the_host_and_bound_to_the_discovered_issuer() {
+    run_credential_setup(
+        "oauth-credential-test",
+        "https://mcp.example/oauth-test",
+        json!({"kind": "oauth"}),
+    )
+    .await;
+}
+
+async fn run_credential_setup(connection: &str, endpoint: &str, credential: Value) {
     let directory = tempdir().expect("temporary credential setup fixture");
     let relay = CredentialRelayServer::start(&directory).await;
 
@@ -64,6 +86,7 @@ async fn encrypted_browser_intake_finishes_before_the_connection_is_published() 
     let sink = CredentialSubmitter {
         http: reqwest::Client::new(),
         catalog: mcp.clone(),
+        connection: connection.to_owned(),
     };
     let result = invoke_tool(
         Some(&tool),
@@ -77,14 +100,11 @@ async fn encrypted_browser_intake_finishes_before_the_connection_is_published() 
                     "name": "credential-test",
                     "description": "Credential setup fixture.",
                     "server": "credential-test",
-                    "endpoint": "https://mcp.example/test",
+                    "endpoint": endpoint,
                     "documentation": "https://mcp.example/docs"
                 },
-                "credential": {
-                    "kind": "secret_service_bearer",
-                    "credential_id": "credential.test"
-                },
-                "connection": "credential-test"
+                "credential": credential,
+                "connection": connection
             }),
             thought_signature: None,
             namespace: None,
@@ -96,10 +116,10 @@ async fn encrypted_browser_intake_finishes_before_the_connection_is_published() 
     .expect("credential setup has a definite result");
     assert!(!result.is_error, "credential setup failed: {result:?}");
     assert_eq!(
-        mcp.connection_config("credential-test")
+        mcp.connection_config(connection)
             .expect("connection is published only after setup")
             .endpoint,
-        "https://mcp.example/test"
+        endpoint
     );
     relay.stop().await;
 }
@@ -163,6 +183,7 @@ impl CredentialRelayServer {
 struct CredentialSubmitter {
     http: reqwest::Client,
     catalog: McpCatalogStore,
+    connection: String,
 }
 
 impl AgentEventSink for CredentialSubmitter {
@@ -181,7 +202,7 @@ impl AgentEventSink for CredentialSubmitter {
                 return;
             }
             assert!(matches!(
-                self.catalog.connection_config("credential-test"),
+                self.catalog.connection_config(&self.connection),
                 Err(McpHostError::NotFound(_))
             ));
             submit_encrypted(&self.http, &value).await;
@@ -208,13 +229,25 @@ async fn submit_encrypted(http: &reqwest::Client, update: &Value) {
         .expect("relay id in setup URL");
     let credential_id = update["credential"].as_str().expect("credential id");
     let kind = update["credential_kind"].as_str().expect("credential kind");
+    let issuer = values.get("issuer").map(String::as_str).unwrap_or_default();
     let nonce = [5_u8; 12];
-    let mut ciphertext = br#"{"schema_version":1,"value":"browser-secret"}"#.to_vec();
+    let mut ciphertext = if kind == "oauth_client" {
+        assert_eq!(issuer, "https://accounts.example");
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "issuer": issuer,
+            "client_id": "browser-client",
+            "client_secret": "browser-secret"
+        }))
+        .expect("encode OAuth client")
+    } else {
+        br#"{"schema_version":1,"value":"browser-secret"}"#.to_vec()
+    };
     LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &key).expect("valid setup key"))
         .seal_in_place_append_tag(
             Nonce::assume_unique_for_key(nonce),
             Aad::from(format!(
-                "renoa credential relay v1\0{relay_id}\0{credential_id}\0{kind}"
+                "renoa credential relay v2\0{relay_id}\0{credential_id}\0{kind}\0{issuer}"
             )),
             &mut ciphertext,
         )
@@ -276,16 +309,49 @@ fn write_credential_adapter(path: &std::path::Path) {
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
-if (request.credential?.name !== 'authorization' ||
+const send = value => process.stdout.write(JSON.stringify(value) + '\n');
+if (request.action === 'oauth_discover') {
+  send({
+    wire_version: 9,
+    event: 'oauth_discovered',
+    discovery: {
+      mcp_endpoint: request.endpoint,
+      issuer: 'https://accounts.example',
+      client_id_metadata_document_supported: false,
+      dynamic_client_registration_supported: false
+    }
+  });
+  process.exit(0);
+}
+if (request.action === 'oauth_begin') {
+  if (request.registration?.mode !== 'pre_registered' ||
+      request.registration?.issuer !== 'https://accounts.example' ||
+      request.registration?.client_id !== 'browser-client' ||
+      request.registration?.client_secret !== 'browser-secret') process.exit(22);
+  send({
+    wire_version: 9,
+    event: 'oauth_authorized',
+    authorization: {scheme: 'bearer', token: 'oauth-access'},
+    oauth_state: {
+      schema_version: 1,
+      mcp_endpoint: request.endpoint,
+      csrf_state: request.csrf_state,
+      redirect_uri: request.redirect_uri
+    }
+  });
+  process.exit(0);
+}
+if (request.action !== 'discover' ||
+    request.credential?.name !== 'authorization' ||
     request.credential?.prefix !== 'Bearer ' ||
-    request.credential?.secret !== 'browser-secret') process.exit(21);
-process.stdout.write(JSON.stringify({
-  wire_version: 8,
+    !['browser-secret', 'oauth-access'].includes(request.credential?.secret)) process.exit(21);
+send({
+  wire_version: 9,
   event: 'discovered',
   catalog: {
     endpoint: request.endpoint,
     protocol_version: '2026-07-28',
-    adapter_revision: 'mcp-client-node-v0.8.0',
+    adapter_revision: 'mcp-client-node-v0.9.0',
     tools: [{
       name: 'credential_test',
       description: 'Proves secure credential intake.',
@@ -294,7 +360,7 @@ process.stdout.write(JSON.stringify({
     }],
     rejected_tools: []
   }
-}) + '\n');
+});
 ",
     )
     .expect("write credential adapter");

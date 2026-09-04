@@ -4,8 +4,10 @@ const statusNode = document.querySelector("#status");
 const form = document.querySelector("#form");
 const relayId = location.pathname.split("/").at(-2);
 const secret = new URLSearchParams(location.hash.slice(1));
+const version = secret.get("v");
 const keyHex = secret.get("key");
 const capability = secret.get("token");
+const expectedIssuer = secret.get("issuer");
 history.replaceState(null, "", location.pathname);
 
 function bytes(hex, size) {
@@ -30,6 +32,7 @@ function field(name, label, type = "text", required = true) {
 }
 
 async function start() {
+  if (version !== "1") throw new Error("This setup link is invalid.");
   const keyBytes = bytes(keyHex, 32);
   bytes(capability, 32);
   const response = await fetch(`/v1/credential-relays/${relayId}/form`, { cache: "no-store" });
@@ -39,7 +42,10 @@ async function start() {
   if (metadata.kind === "api_token") {
     form.append(field("value", "API key or token", "password"));
   } else if (metadata.kind === "oauth_client") {
-    form.append(field("issuer", "OAuth issuer URL", "url"));
+    if (!expectedIssuer) throw new Error("This OAuth setup link is invalid.");
+    const provider = document.createElement("p");
+    provider.textContent = `OAuth provider: ${expectedIssuer}`;
+    form.append(provider);
     form.append(field("client_id", "Client ID"));
     form.append(field("client_secret", "Client secret (optional)", "password", false));
   } else {
@@ -60,10 +66,10 @@ async function start() {
       const values = Object.fromEntries(new FormData(form));
       const payload = metadata.kind === "api_token"
         ? { schema_version: 1, value: values.value }
-        : { schema_version: 1, issuer: values.issuer, client_id: values.client_id, ...(values.client_secret ? { client_secret: values.client_secret } : {}) };
+        : { schema_version: 1, issuer: expectedIssuer, client_id: values.client_id, ...(values.client_secret ? { client_secret: values.client_secret } : {}) };
       const nonce = crypto.getRandomValues(new Uint8Array(12));
       const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["encrypt"]);
-      const aad = new TextEncoder().encode(`renoa credential relay v1\0${relayId}\0${metadata.credentialId}\0${metadata.kind}`);
+      const aad = new TextEncoder().encode(`renoa credential relay v2\0${relayId}\0${metadata.credentialId}\0${metadata.kind}\0${expectedIssuer ?? ""}`);
       const ciphertext = await crypto.subtle.encrypt(
         { name: "AES-GCM", iv: nonce, additionalData: aad },
         key,

@@ -17,6 +17,21 @@ test("tool errors remain completed model-visible content", () => {
   ]);
 });
 
+test("tool errors do not require success-only structured output", () => {
+  const result = projectToolResult(
+    {
+      content: [{ type: "text", text: "Google Drive rejected the request" }],
+      isError: true,
+    },
+    true,
+  );
+  assert.equal(result.is_error, true);
+  assert.equal(result.structured_content.present, false);
+  assert.deepEqual(result.content, [
+    { type: "text", text: "Google Drive rejected the request" },
+  ]);
+});
+
 test("unsupported mixed content fails atomically", () => {
   assert.throws(
     () =>

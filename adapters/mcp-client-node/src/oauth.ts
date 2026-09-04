@@ -15,6 +15,7 @@ import type {
 } from "./contract.js";
 import { toWireFailure } from "./errors.js";
 import { WIRE_VERSION } from "./limits.js";
+import { discoverOAuth } from "./oauth-discovery.js";
 import { scopeUpgrade } from "./oauth-scope.js";
 import { RenoaOAuthProvider } from "./oauth-state.js";
 import { canonicalIssuer, sameIssuer } from "./oauth-state-validation.js";
@@ -25,6 +26,11 @@ type OAuthRequest = Exclude<
   { readonly action: "discover" | "call" }
 >;
 
+type OAuthFlowRequest = Exclude<
+  OAuthRequest,
+  { readonly action: "oauth_discover" }
+>;
+
 export function isOAuthRequest(request: AdapterRequest): request is OAuthRequest {
   return request.action.startsWith("oauth_");
 }
@@ -33,9 +39,27 @@ export async function executeOAuthRequest(
   request: OAuthRequest,
   signal: AbortSignal,
 ): Promise<AdapterRecord> {
+  const tracker = new OAuthExchangeTracker();
+  if (request.action === "oauth_discover") {
+    try {
+      return {
+        wire_version: WIRE_VERSION,
+        event: "oauth_discovered",
+        discovery: await discoverOAuth(
+          request.endpoint,
+          guardedOAuthFetch(tracker, signal),
+        ),
+      };
+    } catch (error) {
+      return {
+        wire_version: WIRE_VERSION,
+        event: "failed",
+        failure: oauthFailure(error, tracker, signal.aborted),
+      };
+    }
+  }
   const providerContext = providerFor(request);
   const provider = providerContext.provider;
-  const tracker = new OAuthExchangeTracker();
   try {
     if (request.action === "oauth_token") {
       const token = provider.currentToken();
@@ -184,7 +208,7 @@ function tokenContext(provider: RenoaOAuthProvider): {
   };
 }
 
-function providerFor(request: OAuthRequest): {
+function providerFor(request: OAuthFlowRequest): {
   readonly provider: RenoaOAuthProvider;
   readonly scope?: string;
   readonly forceReauthorization: boolean;
