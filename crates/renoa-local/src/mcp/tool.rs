@@ -21,7 +21,7 @@ use super::{
     oauth_operation_id, rank_tools,
 };
 use crate::AgentProfileId;
-use execute::{definite_boundary_error, execution_details, map_failure};
+use execute::{authorization_failure, definite_boundary_error, execution_details, map_failure};
 
 pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 
@@ -29,7 +29,8 @@ const SEARCH_TOOL: &str = "tool_search";
 const LOAD_TOOL: &str = "tool_load";
 const EXECUTE_TOOL: &str = "tool_execute";
 const SEARCH_REVISION: &str = "renoa-mcp-registry-v3/search";
-const REGISTRY_REVISION: &str = "renoa-mcp-registry-v1";
+const LOAD_REVISION: &str = "renoa-mcp-registry-v1/load";
+const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
 
 pub(crate) fn profile_registry_bindings(
     profile_id: AgentProfileId,
@@ -46,12 +47,12 @@ pub(crate) fn profile_registry_bindings(
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
-            format!("{REGISTRY_REVISION}/load"),
+            LOAD_REVISION,
             Arc::new(LoadTool::new(profile_id.clone(), store.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
-            format!("{REGISTRY_REVISION}/execute/{CALL_BOUNDARY_REVISION}"),
+            format!("{EXECUTE_REVISION}/{CALL_BOUNDARY_REVISION}"),
             Arc::new(ExecuteTool::new(
                 profile_id,
                 store,
@@ -314,7 +315,7 @@ impl Tool for ExecuteTool {
                 )
             })?;
             let operation_id = oauth_operation_id(self.session_id, self.command_id, &call.id);
-            let authorization = self
+            let authorization = match self
                 .authorizations
                 .resolve(
                     selected.connection_id(),
@@ -324,7 +325,10 @@ impl Tool for ExecuteTool {
                     cancellation.clone(),
                 )
                 .await
-                .map_err(host_error)?;
+            {
+                Ok(authorization) => authorization,
+                Err(error) => return authorization_failure(&reference, &selected, error),
+            };
             match call_tool(
                 adapter,
                 &selected,

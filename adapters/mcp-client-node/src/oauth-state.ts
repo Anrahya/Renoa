@@ -28,6 +28,7 @@ import {
 } from "./oauth-state-validation.js";
 
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
+const GOOGLE_OAUTH_ISSUER = "https://accounts.google.com";
 
 export interface CurrentOAuthToken {
   readonly accessToken: string;
@@ -150,6 +151,7 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
   }
 
   redirectToAuthorization(url: URL): void {
+    applyAuthorizationServerPolicy(url, this.#state);
     validateAuthorizationUrl(url, this.#state);
     const scope = url.searchParams.get("scope");
     if (scope === null) {
@@ -296,6 +298,21 @@ export class RenoaOAuthProvider implements OAuthClientProvider {
     }
     return state;
   }
+}
+
+function applyAuthorizationServerPolicy(
+  url: URL,
+  state: PersistedOAuthState,
+): void {
+  if (!sameIssuer(state.authorization_server_url, GOOGLE_OAUTH_ISSUER)) return;
+
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("include_granted_scopes", "true");
+  const prompts = (url.searchParams.get("prompt") ?? "")
+    .split(/\s+/u)
+    .filter((prompt) => prompt.length > 0 && prompt !== "none");
+  if (!prompts.includes("consent")) prompts.push("consent");
+  url.searchParams.set("prompt", prompts.join(" "));
 }
 
 function validateTokenScope(scope: unknown): asserts scope is string | undefined {

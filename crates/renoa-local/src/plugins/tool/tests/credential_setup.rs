@@ -351,7 +351,7 @@ send({
   catalog: {
     endpoint: request.endpoint,
     protocol_version: '2026-07-28',
-    adapter_revision: 'mcp-client-node-v0.9.0',
+    adapter_revision: 'mcp-client-node-v0.10.0',
     tools: [{
       name: 'credential_test',
       description: 'Proves secure credential intake.',

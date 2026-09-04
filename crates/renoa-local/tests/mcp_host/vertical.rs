@@ -327,7 +327,7 @@ fn assert_frozen_mcp_binding(data: &Path, session_uuid: Uuid) {
         .effect_bindings
         .get("renoa.agent.tool/tool_execute")
         .expect("frozen MCP execution binding");
-    assert!(revision.starts_with("renoa-mcp-registry-v1/execute/"));
+    assert!(revision.starts_with("renoa-mcp-registry-v2/execute/"));
     assert!(
         manifest
             .effect_bindings

@@ -161,7 +161,7 @@ Schema v13 removes the active-connection foreign key from OAuth attempts and
 receipts. This lets a proposed connection finish authorization before its
 configuration is published; existing OAuth state migrates unchanged.
 Catalogs produced by released adapter revisions v0.1, v0.2, v0.4, v0.5, v0.6,
-v0.7, and v0.8 remain readable by the v0.9 Host. The two early revisions retain their
+v0.7, v0.8, and v0.9 remain readable by the v0.10 Host. The two early revisions retain their
 original headerless digest encoding, so their durable references remain exact
 rather than being silently rewritten during an upgrade. New discovery always
 publishes the current revision.
@@ -778,6 +778,14 @@ and the real process boundary:
   scope accumulation, explicit durable phases, one credential POST per adapter
   operation, no hidden tool retry, and no automatic replay after an uncertain
   exchange.
+- Authorization-server quirks remain replaceable adapter policy. For Google's
+  issuer, authorization requests require offline access and fresh consent so a
+  one-hour access token does not publish a connection that cannot be refreshed.
+  Extension-manager revision v16 owns that changed authorization request.
+  Execution-registry revision v2 turns a pre-dispatch OAuth failure into a
+  settled, model-visible error while recording that the MCP tool never ran. An
+  unfinished operation frozen to either earlier revision cannot resume under
+  the new behavior; settled operations remain replayable.
 - The callback relay stores only a short-lived code or rejection after hashing
   state, clears that result only after the execution Host has persisted it, and
   never becomes a credential-sharing service or an RCP task record.

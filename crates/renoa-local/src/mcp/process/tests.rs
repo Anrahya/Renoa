@@ -63,7 +63,7 @@ const terminal = {
   catalog: {
     endpoint: "https://example.com/mcp",
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.9.0",
+    adapter_revision: "mcp-client-node-v0.10.0",
     tools: [],
     rejected_tools: []
   }
@@ -105,7 +105,7 @@ const terminal = {
   catalog: {
     endpoint: "https://example.com/mcp",
     protocol_version: "2026-07-28",
-    adapter_revision: "mcp-client-node-v0.9.0",
+    adapter_revision: "mcp-client-node-v0.10.0",
     tools: [],
     rejected_tools: []
   }

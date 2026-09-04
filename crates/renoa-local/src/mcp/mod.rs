@@ -43,7 +43,7 @@ pub(crate) use store::{McpCatalogStore, McpConnectionCandidate, McpConnectionSta
 pub(crate) use tool::{adapter_tool_error, profile_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
-const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.9.0";
+const MCP_ADAPTER_REVISION: &str = "mcp-client-node-v0.10.0";
 const MCP_LEGACY_ADAPTER_REVISIONS: &[&str] = &[
     "mcp-client-node-v0.1.0",
     "mcp-client-node-v0.2.0",
@@ -52,6 +52,7 @@ const MCP_LEGACY_ADAPTER_REVISIONS: &[&str] = &[
     "mcp-client-node-v0.6.0",
     "mcp-client-node-v0.7.0",
     "mcp-client-node-v0.8.0",
+    "mcp-client-node-v0.9.0",
 ];
 const MCP_HEADERLESS_DIGEST_REVISIONS: &[&str] =
     &["mcp-client-node-v0.1.0", "mcp-client-node-v0.2.0"];

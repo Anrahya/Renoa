@@ -13,7 +13,7 @@ import type {
   WireFailure,
   WireOAuthState,
 } from "./contract.js";
-import { toWireFailure } from "./errors.js";
+import { AdapterProblem, toWireFailure } from "./errors.js";
 import { WIRE_VERSION } from "./limits.js";
 import { discoverOAuth } from "./oauth-discovery.js";
 import { scopeUpgrade } from "./oauth-scope.js";
@@ -151,7 +151,11 @@ async function refreshOnce(
   const tokens = provider.tokens({ issuer: context.issuer });
   const refreshToken = tokens?.refresh_token;
   if (refreshToken === undefined) {
-    throw new OAuthClientFlowError("stored OAuth state has no refresh token");
+    throw new AdapterProblem(
+      "protocol",
+      "Stored OAuth authorization has expired and cannot be refreshed because the authorization server did not issue a refresh token. Run extension_manage authorize with restart=true.",
+      { code: "oauth_refresh_token_missing" },
+    );
   }
   const clientInformation = provider.clientInformation({
     issuer: context.issuer,
