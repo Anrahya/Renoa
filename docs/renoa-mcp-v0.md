@@ -47,6 +47,16 @@ real connection uses GitHub's read-only remote MCP endpoint at
 `https://api.githubcopilot.com/mcp/readonly`. Its complete accepted catalog is
 searchable, but none of those schemas is sent until Alpha explicitly loads one.
 
+The first Renoa-owned service is the Agent Plugin package at
+`plugins/google-drive`. Its stateless Streamable HTTP Worker at
+`https://drive.renoa.live/mcp` stores no credential: the Host obtains and
+refreshes Google OAuth, supplies the access token for one request, and the
+Worker scopes it only to Google's Drive API origins. Google Drive API v3
+currently exposes 64 raw REST methods; Renoa deliberately publishes eight
+task-shaped tools: recent files, search, metadata, text read, bounded byte
+download, create, copy, and permission read. The package belongs to the
+Host-wide inventory and profiles opt into it, so no surface owns Drive logic.
+
 ## Deliberate scope
 
 V0 supports exactly:
@@ -827,7 +837,7 @@ and the real process boundary:
 
 ## Evidence
 
-Reviewed on 2026-09-02. This contract copies no upstream source. The remote
+Reviewed on 2026-09-05. This contract copies no upstream source. The remote
 callback design follows OAuth 2.0 Security Best Current Practice (RFC 9700),
 OAuth 2.0 for Native Apps (RFC 8252), and MCP authorization revision
 `2026-07-28`; Renoa still owns its relay and durability implementation.
@@ -842,6 +852,8 @@ OAuth 2.0 for Native Apps (RFC 8252), and MCP authorization revision
 - [Anthropic Tool Search documentation](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool). Its deferred-definition behavior and measured large-catalog context cost were reviewed; no source was copied.
 - [Agent Plugins 1.0 at `ff8ab5e392cc87bd88d87c060815a87490e51003`](https://github.com/agentplugins/agent-plugins-spec/tree/ff8ab5e392cc87bd88d87c060815a87490e51003), with CC-BY-4.0 specification text and Apache-2.0 schemas. Renoa consumes its package and MCP shapes without copying runtime source.
 - [Exa MCP server at `15ffb50519e719dc791cdc750ce5ed1934c0a1ed`](https://github.com/exa-labs/exa-mcp-server/tree/15ffb50519e719dc791cdc750ce5ed1934c0a1ed), MIT. Renoa copied no server source; its Agent Plugin endpoint, public source header, and bearer boundary form the first real package-shaped proof.
+- [Google Drive API v3 REST reference](https://developers.google.com/workspace/drive/api/reference/rest/v3). Renoa implements eight focused operations over the stable Drive REST API instead of mirroring its full raw method catalog.
+- [Cloudflare stateless remote MCP guide](https://developers.cloudflare.com/agents/model-context-protocol/guides/remote-mcp-server/). The first-party Drive server uses the current stateless `createMcpHandler` boundary and stores no session or credential state.
 
 The SDK is an implementation dependency behind Renoa's adapter process, not
 Renoa's internal domain model or public Rust API.

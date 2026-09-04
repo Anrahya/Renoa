@@ -24,4 +24,4 @@ node_modules/
 /deepseek-harness/
 /grok-build/
 /pi/
-/.wrangler/
+.wrangler/

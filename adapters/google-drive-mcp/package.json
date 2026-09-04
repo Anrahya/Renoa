@@ -1,0 +1,26 @@
+{
+  "name": "@renoa/google-drive-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0 OR MIT",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "types": "wrangler types --include-runtime false"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "agents": "0.22.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.4",
+    "@cloudflare/workers-types": "5.20260904.1",
+    "@modelcontextprotocol/client": "2.0.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.129.0"
+  }
+}
