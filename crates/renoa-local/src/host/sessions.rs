@@ -1,4 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use renoa_kernel::{AgentId, SessionId};
 use uuid::Uuid;
@@ -12,12 +15,18 @@ use crate::{
     agent_session::AgentSessionStorage,
     host::models::validate_selection,
     host_storage::{
-        KERNEL_DATABASE, MANIFEST_FILE, SessionPublication, create_session_storage,
-        delete_session_storage, load_session_after_handoff, read_manifest,
+        KERNEL_DATABASE, MANIFEST_FILE, SessionManifest, SessionPublication,
+        create_session_storage, delete_session_storage, load_session_after_handoff, read_manifest,
     },
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
     trace::{TRACE_DATABASE, TraceStore},
 };
+
+pub(super) struct StoredSession {
+    pub(super) directory: PathBuf,
+    pub(super) manifest: SessionManifest,
+    pub(super) kernel: LocalSession,
+}
 
 impl LocalHost {
     /// Resolves and atomically publishes one new session for an exact profile.
@@ -181,28 +190,14 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
-        require_absolute(cwd)?;
-        let session_id = SessionId::from_uuid(session_uuid);
-        let directory = self.config.sessions.join(session_id.to_string());
-        let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
-        if manifest.session_id != session_id {
-            return Err(LocalHostError::InvalidRequest(
-                "session metadata does not match the requested Agent session".to_owned(),
-            ));
-        }
+        let StoredSession {
+            directory,
+            manifest,
+            kernel,
+        } = self.load_session_storage(session_uuid, cwd).await?;
+        let session_id = manifest.session_id;
         let profile = self.profile(&manifest.profile)?.clone();
-        let requested_workspace = std::fs::canonicalize(cwd)?;
-        if manifest.workspace != requested_workspace {
-            return Err(LocalHostError::InvalidRequest(
-                "session workspace differs from its durable binding".to_owned(),
-            ));
-        }
-        let kernel = LocalSession::load(directory.join(KERNEL_DATABASE), session_id)?;
-        if kernel.agent_id() != manifest.agent_id {
-            return Err(LocalHostError::InvalidRequest(
-                "session metadata differs from its kernel agent binding".to_owned(),
-            ));
-        }
+        let requested_workspace = manifest.workspace.clone();
         let selection_path = directory.join(SELECTION_FILE);
         let trace = TraceStore::open(
             directory.join(TRACE_DATABASE),
@@ -243,6 +238,40 @@ impl LocalHost {
             models,
             selection,
         )))
+    }
+
+    pub(super) async fn load_session_storage(
+        &self,
+        session_uuid: Uuid,
+        cwd: &Path,
+    ) -> Result<StoredSession, LocalHostError> {
+        require_absolute(cwd)?;
+        let session_id = SessionId::from_uuid(session_uuid);
+        let directory = self.config.sessions.join(session_id.to_string());
+        let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
+        if manifest.session_id != session_id {
+            return Err(LocalHostError::InvalidRequest(
+                "session metadata does not match the requested Agent session".to_owned(),
+            ));
+        }
+        self.profile(&manifest.profile)?;
+        let requested_workspace = std::fs::canonicalize(cwd)?;
+        if manifest.workspace != requested_workspace {
+            return Err(LocalHostError::InvalidRequest(
+                "session workspace differs from its durable binding".to_owned(),
+            ));
+        }
+        let kernel = LocalSession::load(directory.join(KERNEL_DATABASE), session_id)?;
+        if kernel.agent_id() != manifest.agent_id {
+            return Err(LocalHostError::InvalidRequest(
+                "session metadata differs from its kernel agent binding".to_owned(),
+            ));
+        }
+        Ok(StoredSession {
+            directory,
+            manifest,
+            kernel,
+        })
     }
 
     /// Permanently removes one closed Agent session from durable Host storage.

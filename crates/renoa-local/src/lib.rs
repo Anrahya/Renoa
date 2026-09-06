@@ -41,6 +41,7 @@ pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use alpha::{ALPHA_PROFILE_ID, alpha_profile};
 pub use arcee::{ARCEE_PROFILE_ID, arcee_profile};
 pub use host::catalog::HostCatalogError;
+pub use host::history::AgentSessionHistory;
 pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError, McpFailureKind,

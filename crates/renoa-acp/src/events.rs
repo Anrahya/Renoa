@@ -253,7 +253,7 @@ pub(crate) fn replay_history(
     connection: &ConnectionTo<Client>,
     session_id: &str,
     history: Vec<LocalHistoryEntry>,
-    context_window_tokens: NonZeroU64,
+    context_window_tokens: Option<NonZeroU64>,
     latest_context_tokens: Option<u64>,
 ) -> Result<(), ServerError> {
     for entry in history {
@@ -264,7 +264,9 @@ pub(crate) fn replay_history(
                 .map_err(ServerError::Transport)?;
         }
     }
-    if let Some(used) = latest_context_tokens {
+    if let (Some(used), Some(context_window_tokens)) =
+        (latest_context_tokens, context_window_tokens)
+    {
         send_context_usage(connection, session_id, used, context_window_tokens)?;
     }
     Ok(())

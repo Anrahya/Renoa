@@ -4,6 +4,8 @@ mod assertions;
 mod close;
 #[path = "acp_lifecycle/delete.rs"]
 mod delete;
+#[path = "acp_lifecycle/history.rs"]
+mod history;
 #[path = "acp_lifecycle/observability.rs"]
 mod observability;
 #[path = "acp_lifecycle/sessions.rs"]
