@@ -15,6 +15,12 @@ mod schema;
 mod tests;
 mod work;
 
+pub(crate) enum AgentSelection {
+    Unchanged,
+    Selected(Uuid),
+    Rejected(String),
+}
+
 #[derive(Clone)]
 pub(crate) struct Store(Arc<Storage>);
 struct Storage {
@@ -92,7 +98,7 @@ impl Store {
     }
 }
 
-fn uuid(value: &str) -> Result<Uuid, SlackError> {
+pub(super) fn uuid(value: &str) -> Result<Uuid, SlackError> {
     Uuid::parse_str(value)
         .map_err(|e| SlackError::Invalid(format!("invalid stored request identity: {e}")))
 }

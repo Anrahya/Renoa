@@ -104,7 +104,7 @@ impl LocalHost {
                 .load_session_for_profile(profile_id, session_uuid, cwd, agent_id)
                 .await;
         }
-        let profile = self.profile(profile_id)?.clone();
+        let profile = self.profile(profile_id).await?;
         let workspace = LocalWorkspace::open(cwd)?;
         let workspace_path = std::fs::canonicalize(cwd)?;
         let models = discover_profile_models(&self.config, &profile).await?;
@@ -227,7 +227,7 @@ impl LocalHost {
             kernel,
         } = self.load_session_storage(session_uuid, cwd).await?;
         let session_id = manifest.session_id;
-        let profile = self.profile(&manifest.profile)?.clone();
+        let profile = self.profile(&manifest.profile).await?;
         let requested_workspace = manifest.workspace.clone();
         let selection_path = directory.join(SELECTION_FILE);
         let trace = TraceStore::open(
@@ -290,7 +290,7 @@ impl LocalHost {
         content: Option<&[renoa_agent::ContentBlock]>,
     ) -> Result<Option<crate::LocalTurnOutcome>, LocalHostError> {
         require_absolute(cwd)?;
-        self.profile(profile_id)?;
+        self.profile(profile_id).await?;
         if !self
             .config
             .sessions
@@ -327,7 +327,7 @@ impl LocalHost {
                 "session metadata does not match the requested Agent session".to_owned(),
             ));
         }
-        self.profile(&manifest.profile)?;
+        self.profile(&manifest.profile).await?;
         let requested_workspace = std::fs::canonicalize(cwd)?;
         if manifest.workspace != requested_workspace {
             return Err(LocalHostError::InvalidRequest(

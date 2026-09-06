@@ -12,7 +12,7 @@ use migrations::{
     MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
 };
 
-const SCHEMA_VERSION: u32 = 14;
+const SCHEMA_VERSION: u32 = 15;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -286,7 +286,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=13) {
+    if matches!(observed, 1..=14) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -300,6 +300,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
         0 => {
             transaction.execute_batch(SCHEMA)?;
             agents::initialize(&transaction)?;
+            initialize_bots(&transaction)?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
             verify(connection)
@@ -340,7 +341,10 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                         transaction.execute_batch(migration)?;
                     }
                 }
-                agents::initialize(&transaction)?;
+                if version < 14 {
+                    agents::initialize(&transaction)?;
+                }
+                initialize_bots(&transaction)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -415,6 +419,18 @@ fn restrict_database_permissions(path: &Path) -> Result<(), HostCatalogError> {
 
 #[cfg(not(unix))]
 fn restrict_database_permissions(_path: &Path) -> Result<(), HostCatalogError> {
+    Ok(())
+}
+
+fn initialize_bots(transaction: &rusqlite::Transaction<'_>) -> Result<(), HostCatalogError> {
+    transaction.execute_batch(
+        "CREATE TABLE IF NOT EXISTS host_bots (
+        agent_id TEXT PRIMARY KEY REFERENCES host_agents(agent_id),
+        profile_id TEXT NOT NULL UNIQUE,
+        record_json TEXT NOT NULL CHECK(json_valid(record_json))
+    ) STRICT;
+    UPDATE host_metadata SET schema_version = 15 WHERE singleton = 1;",
+    )?;
     Ok(())
 }
 

@@ -88,6 +88,7 @@ impl<'de> Deserialize<'de> for AgentProfileId {
 /// Declarative Host recipe shared by every instance created from it.
 #[derive(Clone)]
 pub struct AgentProfile {
+    pub(crate) selected_tools: Option<std::collections::BTreeSet<String>>,
     id: AgentProfileId,
     base_instructions: String,
     documents: Option<ProfileDocuments>,
@@ -130,6 +131,7 @@ impl AgentProfile {
             return Err(AgentProfileError::EmptyInstructions);
         }
         Ok(Self {
+            selected_tools: None,
             id: AgentProfileId::new(id)?,
             base_instructions,
             documents: None,

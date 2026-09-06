@@ -82,6 +82,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
     let wake = Arc::new(Notify::new());
     let mut tasks = tokio::task::JoinSet::new();
     tasks.spawn(socket::run(socket::Receiver {
+        host: host.clone(),
         api: Arc::clone(&api),
         store: store.clone(),
         active: Arc::clone(&active),

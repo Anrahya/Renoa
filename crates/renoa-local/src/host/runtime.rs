@@ -23,7 +23,7 @@ pub(crate) struct RuntimeRequest<'a> {
 }
 
 pub(crate) async fn resolve_runtime(
-    host: &HostConfig,
+    host: &Arc<HostConfig>,
     request: RuntimeRequest<'_>,
 ) -> Result<renoa_kernel::Runtime, LocalHostError> {
     let RuntimeRequest {
@@ -46,13 +46,31 @@ pub(crate) async fn resolve_runtime(
     if let Some(binding) = profile.document_binding() {
         extension_tools.push(binding);
     }
-    extension_tools.push(profile_plugin_binding(
-        profile.id().clone(),
-        host.plugins.clone(),
-        workspace.root().to_path_buf(),
-        session_id,
-        command_id,
-    ));
+    if profile
+        .selected_tools
+        .as_ref()
+        .is_none_or(|tools| tools.contains("extension_manage"))
+    {
+        extension_tools.push(profile_plugin_binding(
+            profile.id().clone(),
+            host.plugins.clone(),
+            workspace.root().to_path_buf(),
+            session_id,
+            command_id,
+        ));
+    }
+    if profile.id().as_str() == crate::ARCEE_PROFILE_ID
+        || profile
+            .selected_tools
+            .as_ref()
+            .is_some_and(|tools| tools.contains("bot_manage"))
+    {
+        extension_tools.push(super::bots::tool::binding(
+            Arc::clone(host),
+            session_id,
+            command_id,
+        ));
+    }
     extension_tools.extend(profile_skill_bindings(
         profile.id().clone(),
         host.skill_store.clone(),

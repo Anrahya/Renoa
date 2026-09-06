@@ -147,7 +147,7 @@ impl AgentSession {
             let state = self.state()?;
             (state.provider, state.model.clone(), state.reasoning)
         };
-        let profile = self.profile()?.clone();
+        let profile = self.profile().await?;
         let models = discover_profile_models(&self.host, &profile).await?;
         let model = require_model(&models, provider, &model_id, "active")?;
         if !model.reasoning_levels().contains(&reasoning) {
@@ -264,7 +264,7 @@ impl AgentSession {
         if current_selection == model_id {
             return Ok(());
         }
-        let profile = self.profile()?.clone();
+        let profile = self.profile().await?;
         let models = discover_profile_models(&self.host, &profile).await?;
         let model = if let Some(model) = selected_model_by_selection_id(&models, model_id) {
             model.clone()
@@ -367,7 +367,7 @@ impl AgentSession {
         model_id: String,
     ) -> Result<(), LocalHostError> {
         let workspace = LocalWorkspace::open(&self.workspace)?;
-        let profile = self.profile()?.clone();
+        let profile = self.profile().await?;
         resolve_runtime(
             &self.host,
             RuntimeRequest {
@@ -392,13 +392,8 @@ impl AgentSession {
         .await
     }
 
-    fn profile(&self) -> Result<&AgentProfile, LocalHostError> {
-        self.host.profiles.get(&self.profile_id).ok_or_else(|| {
-            LocalHostError::InvalidRequest(format!(
-                "agent profile `{}` is no longer registered with this Host",
-                self.profile_id
-            ))
-        })
+    async fn profile(&self) -> Result<AgentProfile, LocalHostError> {
+        crate::host::bots::resolve_profile(&self.host, &self.profile_id).await
     }
 
     fn state(&self) -> Result<MutexGuard<'_, SessionState>, LocalHostError> {

@@ -156,12 +156,13 @@ session history. Installed availability does not imply future authorization;
 that distinction remains required even though v0 intentionally has no
 permission system.
 
-V0 profiles are immutable process configuration: a stable validated identity,
+Built-in profiles are immutable process configuration: a stable validated identity,
 base instructions, an optional exact model-provider restriction, and whether
 the canonical workspace-root `AGENTS.md` is included. A session manifest persists the selected profile identity beside its
 Agent, Session, and workspace identity. Loading fails closed when that exact
-profile is not registered by the current Host process. Profile definitions are
-not yet editable or stored in `host.sqlite3`.
+profile cannot be resolved from process configuration or the Host catalog.
+Specialist recipes are stored in `host.sqlite3` and resolved by already-running
+Host processes. Both kinds remain immutable in this slice.
 
 The Host catalog stores one stable Host UUID and durable Agent records: an
 Agent ID, registered profile identity, display name, and optional creating Agent.
@@ -185,7 +186,7 @@ The [Slack adapter](../crates/renoa-slack/README.md) consumes the durable Agent
 management path: its Arcee Agent survives restarts, while DMs and channel
 threads bind independent conversations through `ensure_agent_session`. Its
 transport admission and reply receipts remain surface-owned. Specialist recipe
-creation and routines remain later consumers.
+creation now uses the same Host management path; routines remain the next consumer.
 
 Telegram, Slack, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
 adapters; they do not become profiles merely because they deliver messages. A
@@ -197,8 +198,9 @@ from any compatible surface.
 Permission semantics are deliberately open. V0 does not introduce roles,
 levels, grants, approval records, or a permission trait.
 
-Every currently registered local profile is all-allowed. Every tool registered
-by its local workspace provider is advertised directly. External catalogs are
+Profiles run with full access through the tools selected for them. Built-in
+profiles advertise all local workspace tools; specialist recipes select a subset.
+This selection does not add an OS sandbox or a permission system. External catalogs are
 reached through three fixed registry tools so catalog size does not become
 model context. The current top-level set is:
 
@@ -217,9 +219,12 @@ skill_search
 skill_load
 ```
 
+Arcee also receives `bot_manage`; specialists receive it only when selected
+in their recipe.
+
 Existing tool invariants remain in force. File tools stay within the configured
 workspace. Bash starts in that workspace but is unrestricted and is not a
-sandbox for untrusted work. "Full access" means no new Host-level filtering; it
+sandbox for untrusted work. "Full access" means no new Host approval system; it
 does not mean weakening existing adapter correctness or cancellation behavior.
 
 Model-visible output is bounded. Reads use one-based pagination; Bash preserves
@@ -687,11 +692,35 @@ modification.
 
 ### Persistent specialist agents
 
-The next Host management consumer is an operator creating and managing a
-persistent specialist through conversation. This section defines the required
-product behavior; durable Agent records and multi-session ownership now have a consuming Host
-path. Editable recipes, model-facing management tools, surface provisioning,
-and scheduling below remain future implementation.
+Arcee now creates persistent specialists through the `bot_manage` tool, backed
+by typed Host operations. The Host atomically stores a bot's identity, creating
+Agent, immutable recipe (name, instructions, selected local tools and existing
+MCP connections), Agent record, and connection attachments. Every attachment
+must have a complete discovered catalog. Creation derives a stable identity
+from the kernel tool-call identity; identical replay returns the existing bot,
+while conflicting data fails. Cancellation is checked after acquiring the
+write lock and before committing, so abandoned creation does not publish a bot.
+
+Already-running Host processes resolve these persisted profiles without a
+restart. The selected instructions replace the operator's instructions, and
+selected workspace tools are the actual advertised tools. Registry and skill
+execution retain the existing Host capability path; selecting `extension_manage`
+allows reuse of installed packages and existing connections without repeating
+OAuth. Selecting `bot_manage` allows a specialist to create descendants. These
+are capability choices, not a permission or OS isolation guarantee.
+
+`list_bots` and the model-facing list operation return compact pages of 20
+identities, names, and creator relationships with a continuation cursor. Exact
+recipe lookup is separate. Profile inventory includes persisted specialists.
+Slack consumes these identities through `!agent <id>`: admission persists the
+target Agent alongside a fresh Session before acknowledging the command. Earlier
+queued requests retain their targets. `!new` keeps the selected Agent; `!agent arcee` returns to the operator in a fresh conversation. A separate channel
+thread can keep another conversation open. Specialist working directories live
+under the Host's `bot-workspaces/<agent-id>` directory.
+
+The following behavior describes the remaining product direction. Recipe edits,
+routines and scheduling, generated-artifact management, and automatic surface
+provisioning are not implemented in this slice.
 
 For example, the user asks Arcee to create a news-digest agent with selected
 sources, research tools, and a document-generation capability. Arcee uses Host

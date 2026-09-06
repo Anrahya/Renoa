@@ -44,7 +44,8 @@ pub(super) fn open(directory: &Path) -> Result<(File, Connection), SlackError> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     match version {
         0 => connection.execute_batch(SCHEMA)?,
-        1 => {}
+        1 => connection.execute_batch("BEGIN IMMEDIATE; ALTER TABLE sessions ADD COLUMN agent_id TEXT; PRAGMA user_version=2; COMMIT;")?,
+        2 => {}
         _ => {
             return Err(SlackError::Invalid(format!(
                 "unsupported Slack schema {version}"
@@ -92,7 +93,7 @@ CREATE TABLE identity (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1), host_id TEXT NOT NULL, agent_id TEXT NOT NULL,
  team TEXT NOT NULL, bot TEXT NOT NULL, allowed_user TEXT NOT NULL, workspace BLOB NOT NULL
 ) STRICT;
-CREATE TABLE sessions (session_id TEXT PRIMARY KEY, channel TEXT NOT NULL, thread TEXT NOT NULL) STRICT;
+CREATE TABLE sessions (session_id TEXT PRIMARY KEY, channel TEXT NOT NULL, thread TEXT NOT NULL, agent_id TEXT) STRICT;
 CREATE TABLE conversations (
  channel TEXT NOT NULL, thread TEXT NOT NULL, session_id TEXT NOT NULL REFERENCES sessions(session_id),
  PRIMARY KEY(channel, thread)
@@ -120,5 +121,5 @@ CREATE TABLE deliveries (
  PRIMARY KEY(request_seq,chunk)
 ) STRICT;
 CREATE INDEX work_queue ON requests(seq) WHERE state IN('queued','ready');
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 COMMIT;";

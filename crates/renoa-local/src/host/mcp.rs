@@ -127,7 +127,7 @@ impl LocalHost {
         profile_id: &AgentProfileId,
         connection_id: &str,
     ) -> Result<(), LocalHostError> {
-        self.profile(profile_id)?;
+        self.profile(profile_id).await?;
         let store = self.config.mcp_catalog.clone();
         let profile_id = profile_id.clone();
         let connection_id = connection_id.to_owned();
@@ -147,7 +147,7 @@ impl LocalHost {
         &self,
         profile_id: &AgentProfileId,
     ) -> Result<Vec<String>, LocalHostError> {
-        self.profile(profile_id)?;
+        self.profile(profile_id).await?;
         let store = self.config.mcp_catalog.clone();
         let profile_id = profile_id.clone();
         Ok(
