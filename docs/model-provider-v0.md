@@ -73,7 +73,10 @@ keeps the same key. Missing session context is cleared at the Host boundary,
 not inherited from the launcher. Time observations remain append-only user-turn
 context, never a changing system-prompt prefix. Cache hits still depend on the
 provider, matching prompt prefixes, and retention; these routing hints do not
-guarantee a hit or request extended paid retention.
+guarantee a hit or request extended paid retention. OpenCode Go streaming refuses
+a missing or invalid session UUID locally before any HTTP request is dispatched;
+direct runtime and bridge callers must provide the durable conversation identity
+through `with_session`. Other providers retain optional session context.
 
 ## Retry
 

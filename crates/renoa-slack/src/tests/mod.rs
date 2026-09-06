@@ -21,6 +21,7 @@ use crate::{
 };
 
 mod agents;
+mod channels;
 mod execution;
 mod ingress;
 mod transport;
@@ -124,6 +125,7 @@ impl Fixture {
             wake,
             shutdown,
             session: None,
+            channel_wake: Arc::new(Notify::new()),
         };
         Self {
             directory,

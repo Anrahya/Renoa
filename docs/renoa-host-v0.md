@@ -712,15 +712,19 @@ are capability choices, not a permission or OS isolation guarantee.
 `list_bots` and the model-facing list operation return compact pages of 20
 identities, names, and creator relationships with a continuation cursor. Exact
 recipe lookup is separate. Profile inventory includes persisted specialists.
-Slack consumes these identities through `!agent <id>`: admission persists the
+Slack projects the Host specialist inventory into dedicated private channels and
+invites the operator. Its own catalog records provisioning state and conversation
+bindings; creation recovery and external channel IDs remain surface concerns.
+Plain messages in a dedicated channel route to that specialist. Slack also
+supports optional `!agent <id>` routing in DMs and ordinary threads: admission persists the
 target Agent alongside a fresh Session before acknowledging the command. Earlier
 queued requests retain their targets. `!new` keeps the selected Agent; `!agent arcee` returns to the operator in a fresh conversation. A separate channel
 thread can keep another conversation open. Specialist working directories live
 under the Host's `bot-workspaces/<agent-id>` directory.
 
 The following behavior describes the remaining product direction. Recipe edits,
-routines and scheduling, generated-artifact management, and automatic surface
-provisioning are not implemented in this slice.
+routines and scheduling, and generated-artifact management are not implemented
+in this slice.
 
 For example, the user asks Arcee to create a news-digest agent with selected
 sources, research tools, and a document-generation capability. Arcee uses Host

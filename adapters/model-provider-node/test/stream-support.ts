@@ -47,6 +47,7 @@ export async function runStream(options: StreamOptions): Promise<WireStreamRecor
     const work = streamModel({
       runtime,
       request: userRequest(),
+      sessionId: "11111111-1111-4111-8111-111111111111",
       maxOutputTokens: 128,
       signal: abort,
       emit: async (record) => {
@@ -95,6 +96,10 @@ export async function withOpenCode(
       baseUrl,
       credential: { type: "api_key", key: "opencode-test-key" },
     });
+    for (const request of server.requests) {
+      assert.equal(request.headers["x-opencode-session"], "11111111-1111-4111-8111-111111111111");
+      assert.equal(request.headers["user-agent"], "renoa/0.1.0");
+    }
     verify(records, server);
   } finally {
     await server.close();

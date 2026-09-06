@@ -13,13 +13,17 @@ continuing conversation. In a channel where Arcee has been invited, mention her
 to start a thread, then continue in that thread without another mention. Each
 channel thread has an isolated session; replies threaded inside a DM retain the
 DM session. Conversations initially belong to the configured Arcee Agent and
-can select a persisted specialist.
+can select a persisted specialist. Each Host specialist also gets its own private
+channel, with the operator invited automatically. Plain messages in that channel
+need no mention or `!agent` command. All messages there, including Slack thread
+replies, share its continuing conversation; `!new` starts a fresh one.
 
 Commands are ordinary messages (not Slack slash commands):
 
-- `!agent`: list the first 20 specialists and their IDs; Arcee can page through more.
-- `!agent <id>`: select a specialist in a fresh session in this conversation.
-- `!agent arcee`: return to Arcee in a fresh session.
+- `!agent`: list the first 20 specialists, IDs, and channel setup statuses.
+- `!agent <id>`: optional manual routing in a DM or ordinary channel thread.
+- `!agent arcee`: return to Arcee in a DM or ordinary channel thread.
+  Dedicated specialist channels retain their assigned agent.
 - `!new`: start a fresh session for the currently selected agent.
 - `!status`: inspect session, model, and context usage.
 - `!model [id]`: list models or select one.
@@ -34,9 +38,35 @@ surface and holds at most one live session handle. Arcee's `bot_manage` tool
 creates persistent specialists with their own instructions, selected tools,
 and existing Host connections. A specialist uses a working directory at
 `<Host data>/bot-workspaces/<agent-id>`. The recipe is immutable in this slice;
-schedules, automatic channel creation, and cross-machine execution migration
+schedules and cross-machine execution migration
 remain future work. It uses normal Slack messaging and does not require Slack
 AI or paid workflow features.
+
+## Private specialist channels
+
+A supervised Slack provisioning task discovers Host specialists at startup,
+after Slack turns, and once per minute. This is a surface projection of the Host
+inventory, including bots created through another surface. It never makes Slack
+channel IDs part of the Host recipe. Each bot receives a private channel named
+`renoa-<name>-<agent-id>`; the stable ID suffix distinguishes identical names.
+You can rename a ready channel in Slack because routing uses its channel ID.
+
+Slack schema 3 retains setup intent, channel ID, state, and bounded API errors.
+Creation intent commits before calling Slack. An interrupted or ambiguous create
+is recovered by paginated lookup matching the stable name, bot creator, and
+private/nonarchived state; it never issues another create while the result is
+unknown. If no match is visible, setup remains unresolved for operator inspection,
+including a crash before dispatch. Inspect Slack before repairing such an intent;
+blindly clearing it could create a duplicate. Routing commits before inviting
+the operator. A lost invitation response is retried, accepting `already_in_channel`.
+Rate limits honor Slack's delay. Missing scopes remain visible through `!agent`
+and `inspect`; ordinary conversations continue running.
+
+The installed app needs `groups:write` to create private channels and invite the
+operator, and `groups:read` to reconcile creation after interrupted delivery.
+For an existing app, add these scopes using the updated manifest or OAuth &
+Permissions page, then reinstall the app in the workspace. Updating a local
+manifest alone does not grant scopes to the installed token.
 
 ## Setup
 

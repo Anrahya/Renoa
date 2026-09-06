@@ -46,14 +46,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
     let app = read_token(&config.app_token_file, "xapp-")?;
     let api = Arc::new(SlackApi::new(bot, app)?);
     let identity = api.identity().await?;
-    if !ingress::valid_id(&identity.team, b"T")
-        || !ingress::valid_id(&identity.user, b"UW")
-        || !ingress::valid_id(&identity.bot, b"B")
-    {
-        return Err(SlackError::Invalid(
-            "Slack credential does not identify a workspace bot".to_owned(),
-        ));
-    }
+    validate_identity(&identity)?;
     let host = config.host()?;
     config.preflight().await?;
     let host_id = host.host_id().await?;
@@ -80,7 +73,20 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
     .await?;
     let active = Arc::new(Active::default());
     let wake = Arc::new(Notify::new());
+    let channel_wake = Arc::new(Notify::new());
     let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(
+        crate::channels::Channels {
+            host: host.clone(),
+            store: store.clone(),
+            api: Arc::clone(&api),
+            bot: identity.user.clone(),
+            user: config.allowed_user_id.clone(),
+            shutdown: shutdown.clone(),
+            wake: Arc::clone(&channel_wake),
+        }
+        .run(),
+    );
     tasks.spawn(socket::run(socket::Receiver {
         host: host.clone(),
         api: Arc::clone(&api),
@@ -103,6 +109,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
             wake,
             shutdown: shutdown.clone(),
             session: None,
+            channel_wake,
         }
         .run(),
     );
@@ -112,7 +119,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
         result = tasks.join_next() => result,
     };
     shutdown.cancel();
-    // Both tasks observe shutdown; the worker records cancellation and joins its
+    // All tasks observe shutdown; the worker records cancellation and joins its
     // progress publisher before releasing its kernel and surface ownership.
     let mut failure = match first {
         Some(Ok(result)) => result.err(),
@@ -145,4 +152,16 @@ pub(crate) fn now_ms() -> Result<i64, SlackError> {
 
 pub(crate) async fn pause(shutdown: &CancellationToken, duration: Duration) {
     tokio::select! { () = shutdown.cancelled() => {}, () = tokio::time::sleep(duration) => {} }
+}
+
+fn validate_identity(identity: &crate::api::Identity) -> Result<(), SlackError> {
+    if !ingress::valid_id(&identity.team, b"T")
+        || !ingress::valid_id(&identity.user, b"UW")
+        || !ingress::valid_id(&identity.bot, b"B")
+    {
+        return Err(SlackError::Invalid(
+            "Slack credential does not identify a workspace bot".to_owned(),
+        ));
+    }
+    Ok(())
 }

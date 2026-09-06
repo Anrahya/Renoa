@@ -23,6 +23,7 @@ pub(crate) struct Worker {
     pub(crate) store: Store,
     pub(crate) active: Arc<Active>,
     pub(crate) wake: Arc<Notify>,
+    pub(crate) channel_wake: Arc<Notify>,
     pub(crate) shutdown: CancellationToken,
     pub(crate) session: Option<Arc<AgentSession>>,
 }
@@ -52,7 +53,9 @@ impl Worker {
         let result = self.execute_registered(&mut work, cancellation).await;
         self.active.clear().await;
         let text = result?;
-        self.store.finish(work.seq, text).await
+        self.store.finish(work.seq, text).await?;
+        self.channel_wake.notify_one();
+        Ok(())
     }
 
     async fn execute_registered(
@@ -83,10 +86,12 @@ impl Worker {
             Command::Agent(Some(_)) => return Ok("Started a fresh conversation with the selected agent. Send its task here. Use !agent arcee to return to Arcee.".to_owned()),
             Command::Agent(None) => {
                 let page=self.host.list_bots(None).await?;
-                let output="Use !agent <id> to start a specialist conversation here, or !agent arcee to return to Arcee. Start a separate Slack thread to keep another conversation open.\n\n".to_owned();
-                let names=page.bots.iter().map(|bot| format!("{} — {}",bot.name,bot.id)).collect::<Vec<_>>().join("\n");
-                let more=if page.next_cursor.is_some() {"\nMore bots exist; ask Arcee to list the next page with bot_manage."} else {""};
-                return Ok(format!("{output}{names}{more}"));
+                let mut lines = vec!["Each specialist gets a private channel. Type there normally; !new resets its conversation. Channel setup status:".to_owned()];
+                for bot in page.bots {
+                    lines.push(format!("{} — {} — {}", bot.name, bot.id, self.store.channel_description(bot.id.to_string()).await?));
+                }
+                if page.next_cursor.is_some() { lines.push("More bots exist; ask Arcee to page through bot_manage.".to_owned()); }
+                return Ok(lines.join("\n"));
             }
             Command::Cancel => return Ok(if work.cancel_target.is_some() {"Stop requested."} else {"There is no pending turn to stop in this conversation."}.to_owned()),
             Command::New => return Ok("Started a fresh conversation here.".to_owned()),

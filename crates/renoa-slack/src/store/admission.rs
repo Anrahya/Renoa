@@ -17,7 +17,7 @@ impl Store {
 
     pub(crate) async fn admit_with_agent(
         &self,
-        input: Incoming,
+        mut input: Incoming,
         observed_at_ms: i64,
         selection: super::AgentSelection,
     ) -> Result<Admission, SlackError> {
@@ -41,16 +41,24 @@ impl Store {
                 transaction.commit()?;
                 return Ok(Admission { queued:false,cancel_target:None });
             }
+            // Deduplication compares the original Slack topic even when a channel
+            // becomes dedicated later. Routing is normalized only after that check.
+            let received_thread = input.topic.thread.clone();
+            let dedicated: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM bot_channels WHERE channel_id=?1)",[&input.topic.channel],|r|r.get(0))?;
+            if dedicated { input.topic.thread.clear(); input.starts_conversation = true; }
             let current: Option<String> = transaction.query_row(
                 "SELECT session_id FROM conversations WHERE channel=?1 AND thread=?2",
                 params![input.topic.channel, input.topic.thread], |row| row.get(0),
             ).optional()?;
             if current.is_none() && !input.starts_conversation {
-                transaction.execute("INSERT INTO messages VALUES (?1,?2,?3,?4,NULL)", params![input.topic.channel,input.message_ts,input.topic.thread,input.text])?;
+                transaction.execute("INSERT INTO messages VALUES (?1,?2,?3,?4,NULL)", params![input.topic.channel,input.message_ts,received_thread,input.text])?;
                 transaction.execute("INSERT INTO receipts VALUES (?1,?2,?3)", params![input.event_id,input.topic.channel,input.message_ts])?;
                 transaction.commit()?;
                 return Ok(Admission { queued: false, cancel_target: None });
             }
+            let selection = if dedicated && matches!(Command::parse(&input.text), Command::Agent(Some(_))) {
+                super::AgentSelection::Rejected("This channel belongs to its specialist. Use Arcee's DM to switch agents; !new starts a fresh conversation here.".to_owned())
+            } else { selection };
             let (command, selected) = match selection {
                 super::AgentSelection::Unchanged => (Command::parse(&input.text), None),
                 super::AgentSelection::Selected(id) => (Command::Agent(Some(id.to_string())), Some(id.to_string())),
@@ -81,7 +89,7 @@ impl Store {
                  VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'queued',?9)",
                 params![request_id, input.topic.channel, input.topic.thread, input.message_ts, serde_json::to_string(&command)?, command.executes_model(), session_id, observed_at_ms, target],
             )?;
-            transaction.execute("INSERT INTO messages VALUES (?1,?2,?3,?4,?5)",params![input.topic.channel,input.message_ts,input.topic.thread,input.text,request_id])?;
+            transaction.execute("INSERT INTO messages VALUES (?1,?2,?3,?4,?5)",params![input.topic.channel,input.message_ts,received_thread,input.text,request_id])?;
             transaction.execute("INSERT INTO receipts VALUES (?1,?2,?3)", params![input.event_id,input.topic.channel,input.message_ts])?;
             let cancel_target = target.as_deref().map(uuid).transpose()?;
             transaction.commit()?;

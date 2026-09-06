@@ -109,7 +109,10 @@ impl LocalRuntimeConfig {
         self
     }
 
-    pub(crate) const fn with_session(mut self, session_id: renoa_kernel::SessionId) -> Self {
+    /// Preserves provider cache routing across runtime reconstruction.
+    /// `OpenCode` Go requires the durable conversation's Session ID before streaming.
+    #[must_use]
+    pub const fn with_session(mut self, session_id: renoa_kernel::SessionId) -> Self {
         self.session_id = Some(session_id);
         self
     }
