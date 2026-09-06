@@ -1,0 +1,15 @@
+[Unit]
+Description=Renoa Slack operator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/renoa-slack run %h/.config/renoa/slack.json
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
+UMask=0077
+
+[Install]
+WantedBy=default.target

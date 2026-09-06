@@ -148,7 +148,13 @@ store. Catalog publication may follow session publication: a crash in between
 is reconciled from the existing manifest, without creating another Agent.
 The catalog records identity and composition selection, not a second execution
 journal. Kernel operation facts remain the execution authority.
-Telegram, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
+The [Slack adapter](../crates/renoa-slack/README.md) consumes the durable Agent
+management path: its Arcee Agent survives restarts, while DMs and channel
+threads bind independent conversations through `ensure_agent_session`. Its
+transport admission and reply receipts remain surface-owned. Specialist recipe
+creation and routines remain later consumers.
+
+Telegram, Slack, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
 adapters; they do not become profiles merely because they deliver messages. A
 GitHub-review recipe or a daily-assistant recipe is a profile and may be used
 from any compatible surface.
