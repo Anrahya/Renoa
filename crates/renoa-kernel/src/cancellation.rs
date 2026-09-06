@@ -68,17 +68,18 @@ struct PendingCancellation {
 }
 
 impl Kernel {
-    /// Durably requests cancellation of one exact active operation.
+    /// Durably requests cancellation of one exact queued or active operation.
     ///
     /// The request is committed before a process-local signal is delivered.
     /// Repeating the same identity and target is idempotent, including after
-    /// cancellation has settled.
+    /// cancellation has settled. Queued cancellation is closed by the bound
+    /// runtime on activation, before deciding or dispatching an effect.
     ///
     /// # Errors
     ///
     /// Returns [`KernelError::CancellationConflict`] when the identity is bound
     /// to another target, or [`KernelError::OperationNotCancellable`] when the
-    /// supplied operation is not the session's active operation.
+    /// supplied operation is neither queued nor the session's cancellable active operation.
     pub fn request_cancellation(
         &self,
         session_id: SessionId,
@@ -141,8 +142,10 @@ impl Kernel {
         let Some((phase, active_operation)) = active_phase else {
             return Err(KernelError::OperationNotCancellable(operation_id));
         };
-        if active_operation.as_deref() != Some(operation_key.as_str())
-            || !OperationPhase::from_database(&phase)?.is_cancellable()
+        let phase = OperationPhase::from_database(&phase)?;
+        if phase != OperationPhase::Queued
+            && (active_operation.as_deref() != Some(operation_key.as_str())
+                || !phase.is_cancellable())
         {
             return Err(KernelError::OperationNotCancellable(operation_id));
         }

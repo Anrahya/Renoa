@@ -27,13 +27,14 @@ async fn corrupted_history_stops_cancellation_before_the_loop_or_any_effect() {
             Command::new(CommandId::new(), serde_json::json!({"work": true})),
         )
         .expect("submit command");
+    let missing_operation = renoa_kernel::OperationId::new();
     assert!(matches!(
         kernel.request_cancellation(
             session_id,
-            admission.operation_id,
+            missing_operation,
             CancellationId::new()
         ),
-        Err(KernelError::OperationNotCancellable(id)) if id == admission.operation_id
+        Err(KernelError::OperationNotCancellable(id)) if id == missing_operation
     ));
 
     let cancellation_calls = Arc::new(AtomicUsize::new(0));

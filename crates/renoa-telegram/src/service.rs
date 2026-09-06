@@ -76,6 +76,8 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
         active: Arc::clone(&active),
         wake,
         shutdown: shutdown.clone(),
+        #[cfg(test)]
+        before_execution: None,
     }));
 
     let first = tokio::select! {
@@ -184,14 +186,9 @@ async fn apply_immediate(
     active: &ActiveTurn,
     action: ImmediateAction,
 ) -> Result<(), TelegramServiceError> {
-    match action {
-        ImmediateAction::Cancel(topic) => {
-            active.cancel(topic, None).await?;
-        }
-        ImmediateAction::Stop { topic, draft_id } => {
-            active.cancel(topic, Some(draft_id)).await?;
-        }
-    }
+    let ImmediateAction::Cancel { topic, draft_id } = action;
+    active.cancel(topic, draft_id).await;
+
     Ok(())
 }
 
@@ -205,6 +202,11 @@ struct Worker {
     active: Arc<ActiveTurn>,
     wake: Arc<Notify>,
     shutdown: CancellationToken,
+    #[cfg(test)]
+    before_execution: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
 }
 
 async fn run_worker(mut worker: Worker) -> Result<(), TelegramServiceError> {
@@ -292,11 +294,17 @@ impl Worker {
             Ok(session) => session,
             Err(error) => return Ok(surface_error(&error)),
         };
+        let cancellation = CancellationToken::new();
         self.active
-            .set(item.topic, item.draft_id, Arc::clone(&session))
+            .set(item.topic, item.draft_id, cancellation.clone())
             .await;
         if self.store.cancellation_requested(item.update_id).await? {
-            session.cancel_active_turn()?;
+            cancellation.cancel();
+        }
+        #[cfg(test)]
+        if let Some((started, release)) = self.before_execution.take() {
+            started.send(()).expect("startup boundary receiver");
+            release.await.expect("release startup boundary");
         }
         let draft_shutdown = CancellationToken::new();
         let events = Arc::new(SurfaceEvents::for_turn(
@@ -319,15 +327,20 @@ impl Worker {
                 let observation = TurnObservation::from_unix_milliseconds(item.observed_at_ms)
                     .map_err(renoa_local::LocalHostError::from)?;
                 session
-                    .execute_turn_observed(
+                    .execute_turn_observed_with_cancellation(
                         item.request_id,
                         vec![ContentBlock::text(text)],
                         observation,
                         sink,
+                        cancellation,
                     )
                     .await
             }
-            None => session.execute_compaction(item.request_id, sink).await,
+            None => {
+                session
+                    .execute_compaction_with_cancellation(item.request_id, sink, cancellation)
+                    .await
+            }
         };
         self.active.clear(item.draft_id).await;
         draft_shutdown.cancel();
@@ -365,15 +378,15 @@ struct ActiveTurn {
 struct Active {
     topic: Topic,
     draft_id: i64,
-    session: Arc<AgentSession>,
+    cancellation: CancellationToken,
 }
 
 impl ActiveTurn {
-    async fn set(&self, topic: Topic, draft_id: i64, session: Arc<AgentSession>) {
+    async fn set(&self, topic: Topic, draft_id: i64, cancellation: CancellationToken) {
         *self.current.lock().await = Some(Active {
             topic,
             draft_id,
-            session,
+            cancellation,
         });
     }
 
@@ -387,30 +400,21 @@ impl ActiveTurn {
         }
     }
 
-    async fn cancel(
-        &self,
-        topic: Topic,
-        draft_id: Option<i64>,
-    ) -> Result<bool, renoa_local::LocalHostError> {
+    async fn cancel(&self, topic: Topic, draft_id: i64) -> bool {
         let current = self.current.lock().await;
-        let Some(active) = current.as_ref().filter(|active| {
-            active.topic == topic && draft_id.is_none_or(|draft| active.draft_id == draft)
-        }) else {
-            return Ok(false);
+        let Some(active) = current
+            .as_ref()
+            .filter(|active| active.topic == topic && active.draft_id == draft_id)
+        else {
+            return false;
         };
-        active.session.cancel_active_turn()?;
-        Ok(true)
+        active.cancellation.cancel();
+        true
     }
 
     async fn cancel_any(&self) {
-        if let Some(active) = self.current.lock().await.as_ref()
-            && let Err(error) = active.session.cancel_active_turn()
-        {
-            log::event(
-                "error",
-                "shutdown_cancel_failed",
-                &serde_json::json!({"error": error.to_string()}),
-            );
+        if let Some(active) = self.current.lock().await.as_ref() {
+            active.cancellation.cancel();
         }
     }
 }

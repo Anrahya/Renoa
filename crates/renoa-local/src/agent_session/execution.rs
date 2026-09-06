@@ -74,6 +74,32 @@ impl AgentSession {
         observation: TurnObservation,
         events: Arc<dyn AgentEventSink>,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
+        self.execute_turn_observed_with_cancellation(
+            request_id,
+            content,
+            observation,
+            events,
+            CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Runs a prompt with cancellation owned by its admitting surface.
+    ///
+    /// The token may be cancelled before startup and remains the active turn's
+    /// token until settlement. The caller must durably retain pre-start cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns request coordination, runtime resolution, admission, or execution failures.
+    pub async fn execute_turn_observed_with_cancellation(
+        &self,
+        request_id: Uuid,
+        content: Vec<ContentBlock>,
+        observation: TurnObservation,
+        events: Arc<dyn AgentEventSink>,
+        cancellation: CancellationToken,
+    ) -> Result<LocalTurnOutcome, LocalHostError> {
         self.execute(
             request_id,
             SessionCommand::Prompt {
@@ -81,6 +107,7 @@ impl AgentSession {
                 observation,
             },
             events,
+            cancellation,
         )
         .await
     }
@@ -98,7 +125,22 @@ impl AgentSession {
         request_id: Uuid,
         events: Arc<dyn AgentEventSink>,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        self.execute(request_id, SessionCommand::Compact, events)
+        self.execute_compaction_with_cancellation(request_id, events, CancellationToken::new())
+            .await
+    }
+
+    /// Runs compaction with a token owned by the admitting surface, including startup.
+    ///
+    /// # Errors
+    ///
+    /// Returns request coordination, runtime resolution, admission, or execution failures.
+    pub async fn execute_compaction_with_cancellation(
+        &self,
+        request_id: Uuid,
+        events: Arc<dyn AgentEventSink>,
+        cancellation: CancellationToken,
+    ) -> Result<LocalTurnOutcome, LocalHostError> {
+        self.execute(request_id, SessionCommand::Compact, events, cancellation)
             .await
     }
 
@@ -116,8 +158,10 @@ impl AgentSession {
         request_id: Uuid,
         command: SessionCommand,
         events: Arc<dyn AgentEventSink>,
+        cancellation: CancellationToken,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let (guard, cancellation, model, reasoning) = self.begin_prompt(request_id)?;
+        let (guard, cancellation, model, reasoning) =
+            self.begin_prompt(request_id, cancellation)?;
         let command_id = CommandId::from_uuid(request_id);
         let compact_trace = [ContentBlock::text("/compact")];
         let trace_content = match &command {

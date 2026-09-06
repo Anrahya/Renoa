@@ -302,6 +302,7 @@ impl AgentSession {
     fn begin_prompt(
         &self,
         request_id: Uuid,
+        cancellation: CancellationToken,
     ) -> Result<
         (
             ActivityGuard<'_>,
@@ -323,7 +324,6 @@ impl AgentSession {
             ));
         }
         let model = require_model(&state.models, state.provider, &state.model, "active")?.clone();
-        let cancellation = CancellationToken::new();
         state.activity = Activity::Prompt {
             request_id,
             cancellation: cancellation.clone(),

@@ -15,6 +15,83 @@ use tempfile::tempdir;
 use tokio::sync::Notify;
 
 #[tokio::test]
+async fn queued_cancellation_survives_restart_without_reordering_or_deciding_the_command() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let kernel = Kernel::open(&database).expect("open kernel");
+    let session_id = create_session(&kernel);
+    let first = kernel
+        .submit(
+            session_id,
+            Command::new(CommandId::new(), serde_json::json!({"mode": "complete"})),
+        )
+        .expect("first command");
+    let second = kernel
+        .submit(
+            session_id,
+            Command::new(
+                CommandId::new(),
+                serde_json::json!({"mode": "must not decide"}),
+            ),
+        )
+        .expect("second command");
+    let cancellation_id = CancellationId::new();
+    kernel
+        .request_cancellation(session_id, second.operation_id, cancellation_id)
+        .expect("cancel queued command");
+    kernel
+        .request_cancellation(session_id, second.operation_id, cancellation_id)
+        .expect("repeat queued cancellation");
+    assert!(
+        matches!(kernel.request_cancellation(session_id, first.operation_id, cancellation_id), Err(KernelError::CancellationConflict { operation_id, .. }) if operation_id == second.operation_id)
+    );
+    let snapshot = kernel.inspect(session_id).expect("queued snapshot");
+    assert!(
+        snapshot
+            .operations
+            .iter()
+            .all(|operation| operation.status == OperationStatus::Queued)
+    );
+    drop(kernel);
+    let kernel = Kernel::open(&database).expect("restart kernel");
+    let cancellation_calls = Arc::new(AtomicUsize::new(0));
+    let runtime = control_runtime(Arc::clone(&cancellation_calls));
+    assert_eq!(
+        kernel
+            .drive(session_id, &runtime)
+            .await
+            .expect("drive first command"),
+        DriveResult::Finished {
+            operation_id: first.operation_id,
+            outcome: OperationOutcome::Completed
+        }
+    );
+    assert_eq!(cancellation_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        kernel
+            .drive(session_id, &runtime)
+            .await
+            .expect("cancel second before decide"),
+        DriveResult::Finished {
+            operation_id: second.operation_id,
+            outcome: OperationOutcome::Cancelled
+        }
+    );
+    assert_eq!(cancellation_calls.load(Ordering::SeqCst), 1);
+    kernel
+        .request_cancellation(session_id, second.operation_id, cancellation_id)
+        .expect("retry settled cancellation");
+    assert!(
+        kernel
+            .inspect(session_id)
+            .expect("settled snapshot")
+            .operations
+            .iter()
+            .all(|operation| operation.effects.is_empty())
+    );
+}
+
+#[tokio::test]
 async fn cancellation_identity_is_exact_idempotent_and_operation_scoped() {
     let directory = tempdir().expect("temporary directory");
     let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
