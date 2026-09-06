@@ -15,11 +15,15 @@ use crate::tool_error::io_error;
 /// Sidecars must not be unlinked: doing so would split cooperating owners.
 /// This coordinates Renoa writers, not arbitrary external file modifications.
 pub(crate) struct FileUpdate {
-    pub(crate) path: PathBuf,
+    path: PathBuf,
     _lock: File,
 }
 
 impl FileUpdate {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub(crate) async fn acquire(
         path: &Path,
         cancellation: &CancellationToken,

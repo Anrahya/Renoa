@@ -6,6 +6,8 @@
 /adapters/mcp-registry-node/dist/
 /surfaces/control-room/dist/
 node_modules/
+# Persistent coordination files used by Renoa's atomic file updates.
+.renoa-lock-*
 *.db
 *.db-journal
 *.db-shm

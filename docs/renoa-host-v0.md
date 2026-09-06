@@ -191,6 +191,11 @@ but intentionally overwrites the latest contents without a revision check.
 This coordination does not prevent arbitrary external programs from changing
 files or removing the lock sidecars.
 
+This repository ignores `.renoa-lock-*`. Other Git workspaces can put the same
+pattern in their `.gitignore` or local Git exclude file; Renoa does not modify
+their Git policy automatically. Ignoring sidecars keeps them out of ordinary
+staging without relocating or unlinking the inode that coordinates writers.
+
 `write_file` and `edit_file` commit through a same-directory temporary file,
 sync it, atomically rename it, and sync the parent directory. Existing file
 permissions are preserved. `edit_file` also rechecks the content it read before
