@@ -30,6 +30,9 @@ pub(crate) const PLUGIN_STORE_DIRECTORY: &str = "plugins";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExtensionSource {
     Mcp(RemoteMcpSource),
+    Installed {
+        package_digest: String,
+    },
     Package {
         path: PathBuf,
         expected_digest: String,

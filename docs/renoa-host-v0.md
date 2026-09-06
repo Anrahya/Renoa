@@ -98,6 +98,39 @@ The kernel stores compatibility identities and revisions for selected pieces.
 It does not store or interpret provider, tool, skill, workspace, or product
 configuration.
 
+### Reuse within one Host
+
+A Host is identified by its durable data root and Host UUID, not by a surface
+process. Several local surface processes may open that same root under the same
+OS identity and compatible Renoa build. They share installed plugin revisions,
+MCP connection identities and credential resolution, profile attachments, and
+immutable skill files. Each kernel session still has one exclusive execution
+owner. An unrelated data root is a separate Host even on the same machine.
+
+`extension_manage list` inventories the Host's packages and connections and
+reports whether each connection is enabled for the calling profile. `enable`
+attaches an existing connection without reinstallation, rediscovery, or another
+credential ceremony. Every surface using that profile sees the same attachment.
+A different profile selects the connection explicitly; availability in the Host
+library does not automatically expose every tool to every recipe.
+
+To reuse a package's skills, call `add` with
+`source: {"kind": "installed", "package_digest": "<digest from list>"}`.
+The Host verifies that exact installed revision and attaches its supported
+skills to the profile without needing the original source directory or a
+network registry. This does not connect the package's MCP servers. Existing
+connection identities are reused through `enable`; a new connection remains an
+explicit separate operation. Missing or corrupt revisions fail rather than
+being downloaded or substituted. This extends the frozen extension manager
+binding from revision 16 to 17; unfinished older operations retain the existing
+fail-closed runtime compatibility behavior.
+
+Global skills are discoverable by each profile through the configured global
+source; workspace skills keep their workspace scope. Loading a skill pins its
+exact revision to that session. Sharing the library does not share conversation
+history or silently activate another session's instructions. Cross-machine Host
+access and credential sharing between distinct Hosts remain separate work.
+
 ## Agent identity and assembly
 
 An Agent Instance is durable identity and isolated history. It is not the

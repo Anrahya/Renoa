@@ -255,5 +255,6 @@ fn source_output(receipt: &ExtensionSourceReceipt) -> &'static str {
     match receipt {
         ExtensionSourceReceipt::Mcp => "mcp",
         ExtensionSourceReceipt::Package => "package",
+        ExtensionSourceReceipt::Installed => "installed",
     }
 }
