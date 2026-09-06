@@ -701,6 +701,15 @@ stopping, bounded live drafts, and exact-profile execution cross the real Host
 path. Telegram keeps only ingress, topic mapping, and delivery state; it does
 not copy Agent history or runtime composition.
 
+The worker registers its request cancellation token before loading an executable
+session. A durably cancelled request that has never reached the kernel returns
+`Stopped.` without model, MCP, or trace dependencies. Existing sessions are still
+checked under kernel ownership: settled outcomes replay, changed content
+conflicts, and unfinished work receives a stable durable cancellation request.
+Unfinished work still needs its bound runtime to settle through normal recovery;
+the Host does not fabricate a terminal result when execution dependencies fail.
+Cached sessions apply the same check before preparing execution.
+
 The same Host path now admits explicit compaction as a typed control operation.
 Its summary, checkpoint activation, result projection, exact redelivery,
 cancellation, and post-restart usage restoration are kernel-backed; no surface

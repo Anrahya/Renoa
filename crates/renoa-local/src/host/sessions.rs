@@ -240,6 +240,48 @@ impl LocalHost {
         )))
     }
 
+    /// Resolves cancellation without assembling an executable session.
+    ///
+    /// The caller must durably retain cancellation for this exact request. An
+    /// absent session/request returns `Cancelled` without creating kernel data;
+    /// settled outcomes replay and unfinished requests retain durable cancellation
+    /// for their bound runtime, returning `None`. `content: None` means compaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns profile/workspace binding, ownership, request identity, or storage failures.
+    pub async fn cancel_before_execution(
+        &self,
+        profile_id: &AgentProfileId,
+        cwd: &Path,
+        session_uuid: Uuid,
+        request_id: Uuid,
+        content: Option<&[renoa_agent::ContentBlock]>,
+    ) -> Result<Option<crate::LocalTurnOutcome>, LocalHostError> {
+        require_absolute(cwd)?;
+        self.profile(profile_id)?;
+        if !self
+            .config
+            .sessions
+            .join(session_uuid.to_string())
+            .try_exists()?
+        {
+            return Ok(Some(crate::LocalTurnOutcome::Cancelled));
+        }
+        let stored = self.load_session_storage(session_uuid, cwd).await?;
+        if &stored.manifest.profile != profile_id {
+            return Err(LocalHostError::InvalidRequest(format!(
+                "session {session_uuid} belongs to profile `{}`, not requested profile `{profile_id}`",
+                stored.manifest.profile
+            )));
+        }
+        Ok(stored.kernel.cancel_before_execution(
+            renoa_kernel::CommandId::from_uuid(request_id),
+            content,
+            renoa_kernel::CancellationId::from_uuid(request_id),
+        )?)
+    }
+
     pub(super) async fn load_session_storage(
         &self,
         session_uuid: Uuid,

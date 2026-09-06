@@ -2,7 +2,7 @@ use super::*;
 use crate::service::apply_immediate;
 use crate::store::ImmediateAction;
 
-async fn admit_cancel(store: &SurfaceStore, work: &WorkItem) -> ImmediateAction {
+pub(super) async fn admit_cancel(store: &SurfaceStore, work: &WorkItem) -> ImmediateAction {
     store
         .admit(ParsedUpdate {
             update_id: 2,
@@ -166,5 +166,106 @@ async fn delayed_stop_does_not_target_a_different_request() {
         .await
         .expect("settle original cancellation");
     assert_eq!(ready_delivery(&fixture.store).await.text, "Stopped.");
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cancelled_first_request_does_not_need_a_model_bridge() {
+    let mut fixture = service_fixture().await;
+    let work = admit_work(
+        &fixture.store,
+        1,
+        InboundKind::Prompt("Never run".to_owned()),
+    )
+    .await;
+    let session_id = work.session_id;
+    admit_cancel(&fixture.store, &work).await;
+    fs::remove_file(fixture.directory.path().join("model-bridge.mjs"))
+        .expect("remove execution dependency");
+    fixture
+        .worker
+        .execute(work)
+        .await
+        .expect("settle cancelled request");
+    assert_eq!(ready_delivery(&fixture.store).await.text, "Stopped.");
+    assert!(
+        !fixture
+            .directory
+            .path()
+            .join("data/sessions")
+            .join(session_id.to_string())
+            .exists()
+    );
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cancelled_cached_request_does_not_resolve_its_runtime() {
+    let mut fixture = service_fixture().await;
+    let work = admit_work(
+        &fixture.store,
+        1,
+        InboundKind::Prompt("Never run".to_owned()),
+    )
+    .await;
+    fixture
+        .worker
+        .session(work.session_id)
+        .await
+        .expect("cache session");
+    admit_cancel(&fixture.store, &work).await;
+    fs::remove_file(fixture.directory.path().join("model-bridge.mjs"))
+        .expect("remove execution dependency");
+    fixture
+        .worker
+        .execute(work)
+        .await
+        .expect("settle cancelled request");
+    assert_eq!(ready_delivery(&fixture.store).await.text, "Stopped.");
+    assert!(!fixture.directory.path().join("stream-called").exists());
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancellation_at_cached_startup_does_not_need_runtime_or_trace_storage() {
+    let mut fixture = service_fixture().await;
+    let work = admit_work(
+        &fixture.store,
+        1,
+        InboundKind::Prompt("Stop at startup.".to_owned()),
+    )
+    .await;
+    fixture
+        .worker
+        .session(work.session_id)
+        .await
+        .expect("cache session");
+    let (started, at_startup) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    fixture.worker.before_execution = Some((started, released));
+    let active = Arc::clone(&fixture.worker.active);
+    let store = fixture.store.clone();
+    let directory = fixture.directory.path().to_path_buf();
+    let stop = async {
+        at_startup.await.expect("worker passed cancellation check");
+        let action = admit_cancel(&store, &work).await;
+        apply_immediate(&active, action)
+            .await
+            .expect("signal startup cancellation");
+        fs::remove_file(directory.join("model-bridge.mjs")).expect("remove execution dependency");
+        fs::write(
+            directory
+                .join("data/sessions")
+                .join(work.session_id.to_string())
+                .join("trace.sqlite3"),
+            "not sqlite",
+        )
+        .expect("break diagnostic dependency");
+        release.send(()).expect("resume startup");
+    };
+    let run = fixture.worker.run_agent(&work, Some("Stop at startup."));
+    let (result, ()) = tokio::join!(run, stop);
+    assert_eq!(result.expect("pre-start outcome"), "Stopped.");
+    assert!(!fixture.directory.path().join("stream-called").exists());
     fixture.shutdown().await;
 }

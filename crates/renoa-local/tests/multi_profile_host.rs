@@ -226,3 +226,6 @@ process.stdout.write(JSON.stringify({
   }
 }) + "\n");
 "#;
+
+#[path = "multi_profile_host/cancellation.rs"]
+mod cancellation;
