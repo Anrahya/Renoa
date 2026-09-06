@@ -180,6 +180,17 @@ Grep and find skip hidden paths, including `.git`; unrestricted Bash is the
 explicit path for hidden-file access. Its reported revision is part of each
 search binding identity.
 
+Revision-checked file edits and profile updates coordinate cooperating Renoa
+writers, including separate processes, with a persistent `.renoa-lock-<digest>`
+sidecar in the target's canonical parent directory. The OS lock covers revision
+validation, replacement, and parent-directory sync; its empty sidecar must not
+be deleted while writers may be active. Process exit releases ownership.
+Distinct replacements based on one revision cannot both succeed. Identical
+profile retries still succeed. Unconditional `write_file` also takes the lock
+but intentionally overwrites the latest contents without a revision check.
+This coordination does not prevent arbitrary external programs from changing
+files or removing the lock sidecars.
+
 `write_file` and `edit_file` commit through a same-directory temporary file,
 sync it, atomically rename it, and sync the parent directory. Existing file
 permissions are preserved. `edit_file` also rechecks the content it read before

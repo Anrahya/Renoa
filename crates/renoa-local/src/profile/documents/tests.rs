@@ -149,3 +149,58 @@ async fn stale_update_preserves_the_newer_document() {
         "Newer soul.\n"
     );
 }
+
+#[tokio::test]
+async fn concurrent_profile_writers_preserve_revision_conflicts_and_identical_retries() {
+    use crate::file_lock::probes;
+    use tokio::sync::Notify;
+    for identical in [false, true] {
+        let directory = tempdir().expect("Host data");
+        let documents = documents(directory.path());
+        let before = documents.read(Document::User).expect("original revision");
+        let checked = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let contended = Arc::new(Notify::new());
+        let first_token = CancellationToken::new();
+        let second_token = CancellationToken::new();
+        let first = probes::CHECKED.scope(
+            (Arc::clone(&checked), Arc::clone(&release)),
+            documents.update(Document::User, &before.revision, "first", &first_token),
+        );
+        let second = async {
+            checked.notified().await;
+            probes::CONTENDED
+                .scope(
+                    Arc::clone(&contended),
+                    documents.update(
+                        Document::User,
+                        &before.revision,
+                        if identical { "first" } else { "second" },
+                        &second_token,
+                    ),
+                )
+                .await
+        };
+        let control = async {
+            contended.notified().await;
+            release.notify_one();
+        };
+        let (first, second, ()) = tokio::join!(first, second, control);
+        let revision = first.expect("first profile update");
+        if identical {
+            assert_eq!(second.expect("identical retry"), revision);
+        } else {
+            assert_eq!(
+                second.expect_err("stale profile conflicts").code(),
+                renoa_agent::ToolErrorCode::Conflict
+            );
+        }
+        assert_eq!(
+            documents
+                .read(Document::User)
+                .expect("final profile")
+                .content,
+            "first"
+        );
+    }
+}
