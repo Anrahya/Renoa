@@ -2263,6 +2263,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "renoa-slack"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "renoa-agent",
+ "renoa-kernel",
+ "renoa-local",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "renoa-store-sqlite"
 version = "0.1.0"
 dependencies = [

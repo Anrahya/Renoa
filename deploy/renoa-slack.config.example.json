@@ -1,0 +1,13 @@
+{
+  "data_directory": "/home/you/.local/share/renoa",
+  "workspace": "/home/you/workspace",
+  "agent_id": "REPLACE_WITH_A_STABLE_UUID",
+  "allowed_user_id": "REPLACE_WITH_YOUR_SLACK_MEMBER_ID",
+  "bot_token_file": "/home/you/.config/renoa/slack-bot-token",
+  "app_token_file": "/home/you/.config/renoa/slack-app-token",
+  "model_bridge": "/home/you/Renoa/adapters/model-provider-node/dist/src/main.js",
+  "providers": ["opencode-go"],
+  "provider": "opencode-go",
+  "model": "REPLACE_WITH_AN_AVAILABLE_MODEL_ID",
+  "model_auth_store": "/home/you/.local/share/renoa/model-auth.sqlite3"
+}
