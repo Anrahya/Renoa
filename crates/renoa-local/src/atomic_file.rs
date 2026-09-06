@@ -38,7 +38,7 @@ impl FileUpdate {
         expected: Option<ContentHash>,
         cancellation: &CancellationToken,
     ) -> Result<(), ToolError> {
-        replace_locked(&self.path, content, expected, cancellation).await
+        replace_locked(self.path(), content, expected, cancellation).await
     }
 }
 
