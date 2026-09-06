@@ -29,8 +29,7 @@ pub(crate) struct Admission {
 }
 
 pub(crate) enum ImmediateAction {
-    Cancel(Topic),
-    Stop { topic: Topic, draft_id: i64 },
+    Cancel { topic: Topic, draft_id: i64 },
 }
 
 pub(crate) enum PendingAction {

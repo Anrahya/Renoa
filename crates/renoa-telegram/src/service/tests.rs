@@ -125,7 +125,7 @@ async fn telegram_model_commands_use_the_surface_neutral_session_configuration()
 }
 
 struct ServiceFixture {
-    _directory: TempDir,
+    directory: TempDir,
     store: SurfaceStore,
     worker: Worker,
     server_shutdown: CancellationToken,
@@ -179,9 +179,10 @@ async fn service_fixture() -> ServiceFixture {
         active: Arc::new(ActiveTurn::default()),
         wake: Arc::new(tokio::sync::Notify::new()),
         shutdown: CancellationToken::new(),
+        before_execution: None,
     };
     ServiceFixture {
-        _directory: directory,
+        directory,
         store,
         worker,
         server_shutdown,
@@ -269,6 +270,7 @@ async fn draft_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
 
 const MODEL_BRIDGE: &str = r#"
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const action = process.env.RENOA_MODEL_ACTION;
@@ -302,6 +304,7 @@ if (action === "describe") {
   process.exit(0);
 }
 if (action !== "stream") process.exit(2);
+writeFileSync(new URL("./stream-called", import.meta.url), "called");
 const request = JSON.parse(input);
 if (!request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) {
   process.stderr.write("Telegram surface selected the wrong profile");
@@ -335,3 +338,5 @@ process.stdout.write(JSON.stringify({
   }
 }) + "\n");
 "#;
+
+mod cancellation;

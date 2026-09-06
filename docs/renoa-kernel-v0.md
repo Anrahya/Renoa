@@ -173,7 +173,12 @@ general ordered-queue primitive.
 exact session and active operation. It commits that identity and target before
 signalling a process-local driver. Repeating the same identity and target is a
 no-op, including after terminal settlement; reusing the identity for another
-target is a conflict. A queued or terminal operation is not cancellable.
+target is a conflict. A queued request may also be cancelled durably before
+activation; the kernel closes it through the bound loop on its normal ordered
+activation, before any decision or effect dispatch. Terminal operations reject
+new cancellation identities. This lets a Host settle a cancelled request that
+was admitted before a process stopped without executing it or leaving it
+unfinished. A fresh pre-cancelled Host request still needs no kernel admission.
 
 Cancellation and ordinary progress serialize through SQLite. If cancellation
 commits first, no later model or tool effect may be created or dispatched. If
@@ -321,7 +326,7 @@ No loop plugin or effect adapter runs inside a SQLite transaction.
 | Settle effect | exact outcome, effect `Settled`, operation `NeedDecision` | result is available exactly once | call loop; never repeat settled effect |
 | Mark uncertainty | effect and operation `OutcomeUnknown` | recovery or the live adapter cannot prove the result | block without dispatch |
 | Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer | the operation is closed while the effect remains unknown | return the same outcome on retry or activate queued work |
-| Request cancellation | stable cancellation identity and exact active target | cancellation is authoritative even if the signal reply is lost | signal the exact live operation or close it on the next drive |
+| Request cancellation | stable cancellation identity and exact queued or active target | cancellation is authoritative even if the signal reply is lost | signal the exact live operation or close it on the next drive |
 | Close cancellation | loop checkpoint and events, operation `Cancelled`, clear active pointer | effect facts remain definite, not dispatched, or unknown as recorded | exact request retry is a no-op or activate queued work |
 | Terminate | checkpoint, events, outcome, clear active pointer | operation is terminal | activate next queued operation |
 
@@ -353,7 +358,7 @@ The first complete slice must prove through the public seams:
 16. explicit unknown-effect abandonment validates the frozen runtime and
     gapless history, never invokes an adapter, is idempotent after a lost reply,
     preserves the effect as unknown, and releases queued work atomically; and
-17. cancellation is persisted before signalling, targets one exact active
+17. cancellation is persisted before signalling, targets one exact queued or active
     operation, prevents later dispatch when it wins, waits for started work to
     stop, preserves the effect's certainty, closes loop-owned history, and
     releases queued work atomically.

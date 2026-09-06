@@ -126,7 +126,16 @@ impl LocalSession {
         runtime: &Runtime,
         cancellation: CancellationToken,
     ) -> Result<LocalTurnOutcome, LocalSessionError> {
-        if cancellation.is_cancelled() {
+        // New pre-cancelled work needs no admission. A recovered command must
+        // instead settle its existing kernel operation before later work can run.
+        if cancellation.is_cancelled()
+            && !self
+                .kernel
+                .inspect(self.session_id)?
+                .operations
+                .iter()
+                .any(|operation| operation.command_id == command_id)
+        {
             return Ok(LocalTurnOutcome::Cancelled);
         }
         let command = encode_command(command)?;

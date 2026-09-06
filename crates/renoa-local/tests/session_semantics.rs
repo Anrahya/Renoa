@@ -58,6 +58,76 @@ async fn a_pre_cancelled_turn_is_not_admitted_or_sent_to_the_model() {
 }
 
 #[tokio::test]
+async fn a_pre_cancelled_retry_settles_an_already_admitted_command() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let session_id = SessionId::new();
+    let session =
+        LocalSession::create(&database, AgentId::new(), session_id).expect("create session");
+    drop(session);
+    let command_id = CommandId::new();
+    let content = vec![ContentBlock::text("Cancel admitted work")];
+    let kernel = Kernel::open(&database).expect("kernel before crash");
+    let command = renoa_agent_loop::AgentCommand::new(content.clone());
+    let admission = kernel
+        .submit(
+            session_id,
+            renoa_kernel::Command::new(
+                command_id,
+                serde_json::to_value(command).expect("encode prompt"),
+            ),
+        )
+        .expect("admit before crash");
+    drop(kernel);
+    let session = LocalSession::load(&database, session_id).expect("recover Host session");
+    let calls = Arc::new(Mutex::new(0_u32));
+    let runtime = runtime(Arc::new(SequenceModel::new(
+        [Ok(text_response("next prompt"))],
+        Arc::clone(&calls),
+    )));
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert_eq!(
+        session
+            .execute_turn(command_id, content.clone(), &runtime, cancellation)
+            .await
+            .expect("settle cancelled retry"),
+        LocalTurnOutcome::Cancelled
+    );
+    assert_eq!(*calls.lock().expect("model calls"), 0);
+    drop(session);
+    let kernel = Kernel::open(&database).expect("inspect persisted cancellation");
+    let snapshot = kernel.inspect(session_id).expect("snapshot");
+    assert_eq!(snapshot.operations[0].operation_id, admission.operation_id);
+    assert_eq!(
+        snapshot.operations[0].outcome,
+        Some(renoa_kernel::OperationOutcome::Cancelled)
+    );
+    drop(kernel);
+    let session = LocalSession::load(&database, session_id).expect("reopen settled session");
+    assert_eq!(
+        session
+            .execute_turn(command_id, content, &runtime, CancellationToken::new())
+            .await
+            .expect("retry settled cancellation"),
+        LocalTurnOutcome::Cancelled
+    );
+    assert!(matches!(
+        session
+            .execute_turn(
+                CommandId::new(),
+                vec![ContentBlock::text("Continue")],
+                &runtime,
+                CancellationToken::new()
+            )
+            .await
+            .expect("next prompt"),
+        LocalTurnOutcome::Completed { .. }
+    ));
+    assert_eq!(*calls.lock().expect("model calls"), 1);
+}
+
+#[tokio::test]
 async fn an_unknown_model_outcome_is_closed_honestly_and_the_session_remains_usable() {
     let directory = tempdir().expect("temporary directory");
     let calls = Arc::new(Mutex::new(0_u32));

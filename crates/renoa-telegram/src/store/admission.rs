@@ -48,11 +48,13 @@ pub(super) fn admit(
         (Some(topic), kind) if kind.is_queued() => Some(require_conversation(&transaction, topic)?),
         _ => None,
     };
-    if matches!(&parsed.kind, InboundKind::Cancel)
-        && let Some(topic) = parsed.topic
-    {
-        request_cancellation(&transaction, topic)?;
-    }
+    let immediate = match (&parsed.kind, parsed.topic) {
+        (InboundKind::Cancel, Some(topic)) => request_cancellation(&transaction, topic, None)?,
+        (InboundKind::Stopped { draft_id }, Some(topic)) => {
+            request_cancellation(&transaction, topic, Some(*draft_id))?
+        }
+        _ => None,
+    };
     let (payload, incoming_draft_id) = payload(&parsed.kind);
     let state = if parsed.kind.is_queued() {
         "queued"
@@ -84,14 +86,6 @@ pub(super) fn admit(
     )?;
     advance_offset(&transaction, parsed.update_id)?;
     transaction.commit()?;
-    let immediate = match &parsed.kind {
-        InboundKind::Cancel => parsed.topic.map(ImmediateAction::Cancel),
-        InboundKind::Stopped { draft_id } => parsed.topic.map(|topic| ImmediateAction::Stop {
-            topic,
-            draft_id: *draft_id,
-        }),
-        _ => None,
-    };
     Ok(Admission {
         duplicate: false,
         queued: parsed.kind.is_queued(),
@@ -124,21 +118,26 @@ fn require_conversation(
 fn request_cancellation(
     transaction: &rusqlite::Transaction<'_>,
     topic: Topic,
-) -> Result<(), StoreError> {
-    transaction.execute(
-        "UPDATE updates
+    draft_id: Option<i64>,
+) -> Result<Option<ImmediateAction>, StoreError> {
+    let draft_id = transaction
+        .query_row(
+            "UPDATE updates
          SET cancel_requested = 1, updated_at_ms = ?1
          WHERE update_id = (
             SELECT update_id FROM updates
             WHERE chat_id = ?2 AND thread_id = ?3
+              AND (?4 IS NULL OR draft_id = ?4)
               AND kind IN ('prompt', 'compact')
               AND state IN ('running', 'queued')
             ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END, update_id
             LIMIT 1
-         )",
-        params![now_ms()?, topic.chat_id, topic.stored_thread_id()],
-    )?;
-    Ok(())
+         ) RETURNING draft_id",
+            params![now_ms()?, topic.chat_id, topic.stored_thread_id(), draft_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    Ok(draft_id.map(|draft_id| ImmediateAction::Cancel { topic, draft_id }))
 }
 
 fn replace_conversation(
