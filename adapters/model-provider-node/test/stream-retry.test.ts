@@ -72,7 +72,7 @@ test("429 with Retry-After retries and then succeeds without sleeping", async ()
 
 test("exhausted 429 reports attempts, status, and request id", async () => {
   const server = await startFakeServer();
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     server.enqueue({
       status: 429,
       headers: { "retry-after": "1", "x-request-id": "req_exhausted" },
@@ -88,14 +88,15 @@ test("exhausted 429 reports attempts, status, and request id", async () => {
       baseUrl: server.baseUrl,
       credential: oauthCredential(),
       clock,
-      releases: 2,
+      releases: 4,
     });
     assert.equal(error.category, "rate_limited");
-    assert.equal(error.attemptCount, 3);
+    assert.equal(error.attemptCount, 5);
     assert.equal(error.httpStatus, 429);
     assert.equal(error.requestId, "req_exhausted");
-    assert.match(error.message, /after 3 attempts/);
-    assert.equal(server.requests.length, 3);
+    assert.match(error.message, /after 5 attempts/);
+    assert.match(error.message, /Automatic retries have stopped/);
+    assert.equal(server.requests.length, 5);
   } finally {
     await server.close();
     directory.close();

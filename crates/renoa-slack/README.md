@@ -132,7 +132,10 @@ continue account setup privately; setup URLs are never published into channels.
 
 Final output commits before delivery and is split into Unicode-safe chunks.
 Each new post is marked in flight before calling Slack. Rate limits honor
-`Retry-After`. If a new post's outcome is ambiguous, it becomes `unknown` and
+`Retry-After`. Model-provider retries update the working message with the wait
+and next attempt; `!cancel` can interrupt the wait. Exhausted model rate limits
+explain that automatic retries stopped. Completed tools are not replayed.
+If a new post's outcome is ambiguous, it becomes `unknown` and
 is not automatically repeated: Slack may already have accepted it. Later chunks
 of that result remain blocked until the missing prefix is resolved manually. Updates to
 a known message can safely retry. This is not an exactly-once delivery claim.

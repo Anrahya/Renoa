@@ -64,11 +64,16 @@ sent as Chat Completions `reasoning_effort`. The adapter does not advertise
 
 ## Retry
 
-Maximum 3 total inference attempts. Exponential backoff with jitter. Honor
-`Retry-After` as RFC 9110 delay-seconds or HTTP-date, capped at 60 seconds.
 Retry connection establishment, 408, 429, and 5xx except 501. Never retry
 ordinary 4xx. Allow one OAuth refresh-and-retry after a genuine expired-token
-401, inside the same 3-attempt budget. Never retry after assistant text,
+401, inside the same 3-attempt budget. Rate limits allow up to 5 attempts,
+with 5/10/20/40-second fallback waits plus up to 25% jitter. Other transient
+failures retain the 3-attempt budget and short backoff. Honor valid `Retry-After`
+seconds or dates without shortening them; stop if the next wait would exceed
+the invocation's cumulative 2-minute retry-wait budget. Exhausted rate limits
+explain that automatic retries stopped and suggest retrying later or changing
+models. These are retries of one model invocation, not a replay of the turn
+or previously completed tools. Never retry after assistant text,
 reasoning, or tool-call output has been exposed. Never retry a broken
 successful stream merely because no visible text arrived. Cancellation aborts
 the active request and any backoff immediately. Official SDKs run with

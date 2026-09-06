@@ -1,8 +1,10 @@
 import type { FailureFacts } from "./errors.js";
 
 export const MAX_ATTEMPTS = 3;
-export const MAX_RETRY_AFTER_MS = 60_000;
+export const MAX_RATE_LIMIT_ATTEMPTS = 5;
+export const MAX_RETRY_WAIT_MS = 120_000;
 const BASE_DELAY_MS = 250;
+const RATE_LIMIT_DELAY_MS = 5_000;
 
 export interface RetryClock {
   now(): number;
@@ -31,11 +33,16 @@ export function delayForAttempt(
 ): number {
   const retryAfter = parseRetryAfter(facts.retryAfter, nowMs);
   if (retryAfter !== undefined) {
-    return Math.min(retryAfter, MAX_RETRY_AFTER_MS);
+    // A server's cooldown is a minimum. The caller stops when it exceeds
+    // the wait budget instead of retrying earlier than requested.
+    return retryAfter;
+  }
+  if (facts.category === "rate_limited") {
+    return Math.round(RATE_LIMIT_DELAY_MS * 2 ** Math.max(0, attempt - 1) * (1 + random.jitter() * 0.25));
   }
   const exponential = BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1);
   const jittered = exponential * (0.5 + random.jitter() * 0.5);
-  return Math.min(Math.round(jittered), MAX_RETRY_AFTER_MS);
+  return Math.round(jittered);
 }
 
 /** RFC 9110 Retry-After: delay-seconds or HTTP-date. */
@@ -55,7 +62,8 @@ export function parseRetryAfter(value: string | undefined, nowMs: number): numbe
 }
 
 export function shouldRetry(facts: FailureFacts, attempt: number, outputExposed: boolean): boolean {
-  if (outputExposed || attempt >= MAX_ATTEMPTS) {
+  const limit = facts.category === "rate_limited" ? MAX_RATE_LIMIT_ATTEMPTS : MAX_ATTEMPTS;
+  if (outputExposed || attempt >= limit) {
     return false;
   }
   return facts.retryable;
