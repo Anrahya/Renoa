@@ -89,7 +89,7 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
              SELECT connection_id, integration_id, auth_kind FROM mcp_connections;
              DROP TABLE mcp_connections;
              ALTER TABLE mcp_connections_v1 RENAME TO mcp_connections;
-             UPDATE host_metadata SET schema_version = 1 WHERE singleton = 1;
+             DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 1 WHERE singleton = 1;
              PRAGMA user_version = 1;",
         )
         .expect("downgrade fixture to schema v1");
@@ -156,7 +156,7 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
              DROP TABLE skill_source_rejections;
              DROP TABLE profile_skill_bindings;
              DROP TABLE skill_revisions;
-             UPDATE host_metadata SET schema_version = 2 WHERE singleton = 1;
+             DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 2 WHERE singleton = 1;
              PRAGMA user_version = 2;",
         )
         .expect("downgrade fixture to schema v2");
@@ -210,7 +210,7 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
              DROP TABLE skill_source_rejections;
              DROP TABLE profile_skill_bindings;
              DROP TABLE skill_revisions;
-             UPDATE host_metadata SET schema_version = 3 WHERE singleton = 1;
+             DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 3 WHERE singleton = 1;
              PRAGMA user_version = 3;",
         )
         .expect("downgrade fixture to schema v3");
@@ -284,7 +284,7 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
              FROM mcp_connections;
              DROP TABLE mcp_connections;
              ALTER TABLE mcp_connections_v5 RENAME TO mcp_connections;
-             UPDATE host_metadata SET schema_version = 5 WHERE singleton = 1;
+             DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 5 WHERE singleton = 1;
              PRAGMA user_version = 5;",
         )
         .expect("downgrade fixture to schema v5");
@@ -369,7 +369,7 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
              FROM mcp_connections;
              DROP TABLE mcp_connections;
              ALTER TABLE mcp_connections_v7 RENAME TO mcp_connections;
-             UPDATE host_metadata SET schema_version = 7 WHERE singleton = 1;
+             DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 7 WHERE singleton = 1;
              PRAGMA user_version = 7;",
         )
         .expect("downgrade fixture to schema v7");

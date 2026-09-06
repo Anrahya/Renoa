@@ -3,6 +3,7 @@ use std::{path::Path, time::Duration};
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
 use thiserror::Error;
 
+mod agents;
 mod migrations;
 
 use migrations::{
@@ -11,7 +12,7 @@ use migrations::{
     MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
 };
 
-const SCHEMA_VERSION: u32 = 13;
+const SCHEMA_VERSION: u32 = 14;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -285,7 +286,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=12) {
+    if matches!(observed, 1..=13) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -298,6 +299,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
         }
         0 => {
             transaction.execute_batch(SCHEMA)?;
+            agents::initialize(&transaction)?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
             verify(connection)
@@ -338,6 +340,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                         transaction.execute_batch(migration)?;
                     }
                 }
+                agents::initialize(&transaction)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())
@@ -428,7 +431,9 @@ mod tests {
             let connection = open_verified(&database).expect("open current catalog");
             connection
                 .execute_batch(
-                    "DROP TABLE shared_plugin_registry_state;
+                    "DROP TABLE host_agents;
+                     DROP TABLE host_identity;
+                     DROP TABLE shared_plugin_registry_state;
                      UPDATE host_metadata SET schema_version = 10 WHERE singleton = 1;
                      PRAGMA user_version = 10;",
                 )

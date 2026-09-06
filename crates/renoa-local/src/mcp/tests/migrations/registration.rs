@@ -70,6 +70,7 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
              FROM mcp_connections;
              DROP TABLE mcp_connections;
              ALTER TABLE mcp_connections_v8 RENAME TO mcp_connections;
+             DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 8 WHERE singleton = 1;
              PRAGMA user_version = 8;"#,
         )
@@ -147,6 +148,7 @@ fn version_nine_credentials_survive_and_custom_headers_become_available() {
              FROM mcp_connections;
              DROP TABLE mcp_connections;
              ALTER TABLE mcp_connections_v9 RENAME TO mcp_connections;
+             DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 9 WHERE singleton = 1;
              PRAGMA user_version = 9;",
         )
@@ -233,6 +235,7 @@ fn version_eleven_loopback_oauth_flow_gains_an_empty_relay_identity() {
              ) VALUES ('oauth-v11', 'operation-v11', 'awaiting_callback', 43123, 9999999999999);
              DROP TABLE mcp_oauth_flows;
              ALTER TABLE mcp_oauth_flows_v11 RENAME TO mcp_oauth_flows;
+             DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 11 WHERE singleton = 1;
              PRAGMA user_version = 11;",
         )
@@ -306,6 +309,7 @@ fn version_twelve_oauth_attempts_are_decoupled_from_active_connections() {
              ALTER TABLE mcp_oauth_receipts_v12 RENAME TO mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;
              ALTER TABLE mcp_oauth_flows_v12 RENAME TO mcp_oauth_flows;
+             DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 12 WHERE singleton = 1;
              PRAGMA user_version = 12;",
         )

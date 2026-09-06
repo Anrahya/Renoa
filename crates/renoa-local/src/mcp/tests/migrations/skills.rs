@@ -65,6 +65,7 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
              FROM skill_source_rejections;
              DROP TABLE skill_source_rejections;
              ALTER TABLE skill_source_rejections_v6 RENAME TO skill_source_rejections;
+             DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 6 WHERE singleton = 1;
              PRAGMA user_version = 6;"
         ))
@@ -213,6 +214,7 @@ fn downgrade_to_v4_with_large_skill(path: &Path) {
                 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
                 102401
              );
+             DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 4 WHERE singleton = 1;
              PRAGMA user_version = 4;",
         )

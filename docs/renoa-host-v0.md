@@ -130,8 +130,24 @@ Agent, Session, and workspace identity. Loading fails closed when that exact
 profile is not registered by the current Host process. Profile definitions are
 not yet editable or stored in `host.sqlite3`.
 
-The current Host creates one Agent Instance and its first Session together. A
-durable Agent catalog and multiple Sessions per Agent remain future work.
+The Host catalog stores one stable Host UUID and durable Agent records: an
+Agent ID, registered profile identity, display name, and optional creating Agent.
+Creation uses a caller-supplied identity and is idempotent only for identical
+fields; conflicting creation data or an absent creator fails. Creator links are
+immutable and reference existing agents, so they cannot form cycles.
+`ensure_agent_session` binds an exact caller-supplied Session ID to an existing
+Agent. Several sessions may share that Agent while retaining independent
+workspaces, model selections, histories, and exclusive execution ownership.
+Deleting a session does not delete its Agent record.
+
+The older create/ensure-session APIs retain their one-new-Agent-per-session
+behavior. Published session manifests remain authoritative for their Agent,
+profile, and workspace binding; loading a legacy session or listing the roster
+imports its existing identity into the catalog without opening a model or trace
+store. Catalog publication may follow session publication: a crash in between
+is reconciled from the existing manifest, without creating another Agent.
+The catalog records identity and composition selection, not a second execution
+journal. Kernel operation facts remain the execution authority.
 Telegram, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
 adapters; they do not become profiles merely because they deliver messages. A
 GitHub-review recipe or a daily-assistant recipe is a profile and may be used
@@ -222,7 +238,7 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` keeps installed package metadata, supported package MCP entries,
+`host.sqlite3` schema v14 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
 snapshots, per-profile attached connection identities, immutable skill revisions,
@@ -454,6 +470,25 @@ consumer proves the storage and mutation contract.
 
 ## Command path
 
+Local management commands use the same typed Host operations as future
+surface and model-facing callers, and emit JSON:
+
+```sh
+renoa-agent agents list
+renoa-agent agents show AGENT_UUID
+renoa-agent agents ensure AGENT_UUID NAME [CREATOR_UUID]
+renoa-agent agents session AGENT_UUID SESSION_UUID /absolute/workspace
+```
+
+These commands use the existing `RENOA_DATA_DIR` and provider launch settings.
+`ensure` selects the CLI's registered Alpha profile; arbitrary recipe editing is
+not implemented. Listing, lookup, and creation need no executable model bridge.
+Session creation resolves the real registered profile and model normally, and
+the returned Session ID can be reopened through the existing ACP load path.
+Host and Agent identity, creation retries, parent relationships, and isolated
+multi-session execution are tested across restart. The Host UUID identifies a
+durable data root; this slice does not replicate catalogs across machines.
+
 The first product-owned management command installs the read-only GitHub MCP
 connection without putting service policy in the generic Host API:
 
@@ -610,6 +645,79 @@ wait for a new operation and never mutate an active manifest.
 
 The kernel and the trusted Host enforcement path are outside agent-managed
 modification.
+
+### Persistent specialist agents
+
+The next Host management consumer is an operator creating and managing a
+persistent specialist through conversation. This section defines the required
+product behavior; durable Agent records and multi-session ownership now have a consuming Host
+path. Editable recipes, model-facing management tools, surface provisioning,
+and scheduling below remain future implementation.
+
+For example, the user asks Arcee to create a news-digest agent with selected
+sources, research tools, and a document-generation capability. Arcee uses Host
+management operations to create the specialist's recipe and durable Agent
+Instance, select available capabilities and account connections, and request a
+Slack conversation binding. If a needed capability is missing, existing
+extension management supplies the installation/authentication path; mentioning
+a tool in instructions never makes that tool available.
+
+The specialist is independently addressable and retains its own conversations,
+working preferences, and output references. It can answer a direct message or
+run a standing digest task on a schedule. It remains present when Arcee's
+creating turn finishes, when either agent is idle, and across Host restarts.
+A temporary delegated run may reuse agent execution primitives, but completing
+that run and deleting a persistent specialist are different lifecycle actions.
+
+The Host must retain distinct relationships:
+
+- the recipe describes the specialist's instructions and selected components;
+- the Agent Instance identifies the persistent specialist;
+- the creating-agent relationship supports the operator/specialist hierarchy
+  without making the creator's current session own the specialist's lifetime;
+- a surface binding maps an external conversation to the intended agent and
+  session; the Slack channel is not the Agent identity;
+- a routine supplies a standing request, schedule, timezone, and delivery
+  destination; each occurrence submits ordinary identifiable work; and
+- an output reference identifies a durable artifact independently of its
+  Slack attachment or notification.
+
+The personal Renoa installation owns these records. A Slack application may
+route several specialists through separate channels or threads; creating a
+specialist does not require creating another Slack application or bot token.
+The control panel may group agents by surface and nest specialists beneath
+their creator, while the underlying identities remain independent of that
+presentation and can acquire another surface binding later.
+
+Human controls and model-facing management tools must invoke the same typed
+Host operations. Arcee can create and configure the specialist; the specialist
+can update its own routine in response to the user's instruction. Changing
+"daily at 16:00" to "daily at 14:00" updates the existing routine with an
+explicit timezone and reports the next occurrence. It must not silently add a
+second routine or mutate an already executing occurrence. A scheduled request
+and an interactive request use the same session-admission and ordering rules.
+
+Creation spans local durable records and external surface actions. Retrying an
+interrupted creation must resolve the same specialist and routine, reconcile
+surface provisioning, and expose partial failure without claiming a usable
+channel exists before its binding is confirmed. A routine update needs a
+durable identity and revision check so concurrent edits cannot overwrite one
+another unnoticed. These guarantees must be tested through actual Host
+management callers rather than implemented only in an operator's prompt.
+
+The first complete Slack milestone must prove: Arcee creates one news
+specialist; the user talks to it directly; a manual and a scheduled digest use
+its configured capabilities; a generated document remains retrievable; the
+user changes the schedule through conversation; and restart preserves the
+agent, its relationships, and the updated routine without duplicate creation
+or admission. The parent/child roster must be inspectable through management
+operations before the control panel visualization is built.
+
+This slice retains the deliberate full-access starting policy through the
+configured tools and OS/workspace environment. Approval dialogs, automatic
+review, general workflow graphs, and execution migration are not prerequisites.
+Exact storage schemas and wire fields remain implementation decisions and are
+introduced only with a consuming execution path or invariant test.
 
 ## Locked decisions
 

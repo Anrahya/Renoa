@@ -3,6 +3,7 @@
 mod config;
 mod error;
 mod events;
+mod management;
 mod prompt;
 mod server;
 
@@ -11,6 +12,7 @@ pub use config::{
     synchronize_shared_plugins,
 };
 pub use error::ServerError;
+pub use management::manage_agents;
 
 /// Serves stable ACP v1 as newline-delimited JSON-RPC over standard I/O.
 ///

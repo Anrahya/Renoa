@@ -39,7 +39,7 @@ impl LocalHost {
         profile_id: &AgentProfileId,
         cwd: &Path,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
-        self.create_session_with_id(profile_id, cwd, Uuid::new_v4(), false)
+        self.create_session_with_id(profile_id, cwd, Uuid::new_v4(), false, None)
             .await
     }
 
@@ -57,7 +57,29 @@ impl LocalHost {
         cwd: &Path,
         session_uuid: Uuid,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
-        self.create_session_with_id(profile_id, cwd, session_uuid, true)
+        self.create_session_with_id(profile_id, cwd, session_uuid, true, None)
+            .await
+    }
+
+    /// Creates or reloads a caller-identified conversation for a durable agent.
+    ///
+    /// Several sessions can share an agent identity while retaining separate kernel
+    /// history, workspaces, selections, and execution ownership. Retrying a session
+    /// identity cannot move it to a different agent or workspace.
+    ///
+    /// # Errors
+    /// Returns missing agent, identity/binding, runtime, or storage errors.
+    pub async fn ensure_agent_session(
+        &self,
+        agent_id: AgentId,
+        cwd: &Path,
+        session_uuid: Uuid,
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
+        let agent = self
+            .agent(agent_id)
+            .await?
+            .ok_or(LocalHostError::AgentNotFound(agent_id))?;
+        self.create_session_with_id(&agent.profile, cwd, session_uuid, true, Some(agent_id))
             .await
     }
 
@@ -67,6 +89,7 @@ impl LocalHost {
         cwd: &Path,
         session_uuid: Uuid,
         load_existing: bool,
+        agent_id: Option<AgentId>,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
         require_absolute(cwd)?;
         let session_id = SessionId::from_uuid(session_uuid);
@@ -78,7 +101,7 @@ impl LocalHost {
                 .try_exists()?
         {
             return self
-                .load_session_for_profile(profile_id, session_uuid, cwd)
+                .load_session_for_profile(profile_id, session_uuid, cwd, agent_id)
                 .await;
         }
         let profile = self.profile(profile_id)?.clone();
@@ -95,7 +118,7 @@ impl LocalHost {
             "configured",
         )?;
         let reasoning = initial_reasoning(model, self.config.initial_reasoning)?;
-        let agent_id = AgentId::new();
+        let resolved_agent_id = agent_id.unwrap_or_else(AgentId::new);
         resolve_runtime(
             &self.config,
             RuntimeRequest {
@@ -122,7 +145,7 @@ impl LocalHost {
             create_session_storage(
                 &sessions,
                 stored_profile,
-                agent_id,
+                resolved_agent_id,
                 session_id,
                 stored_workspace,
                 &stored_selection,
@@ -133,7 +156,7 @@ impl LocalHost {
             SessionPublication::Created(directory) => directory,
             SessionPublication::Existing if load_existing => {
                 return self
-                    .load_session_for_profile(profile_id, session_uuid, cwd)
+                    .load_session_for_profile(profile_id, session_uuid, cwd, agent_id)
                     .await;
             }
             SessionPublication::Existing => {
@@ -146,9 +169,11 @@ impl LocalHost {
         let trace = TraceStore::open(
             directory.join(TRACE_DATABASE),
             session_id,
-            agent_id,
+            resolved_agent_id,
             profile.id(),
         )?;
+        let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
+        self.retain_agent_binding(&manifest).await?;
         Ok(Arc::new(AgentSession::new(
             session_uuid,
             profile.id().clone(),
@@ -169,8 +194,14 @@ impl LocalHost {
         profile_id: &AgentProfileId,
         session_uuid: Uuid,
         cwd: &Path,
+        agent_id: Option<AgentId>,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
         let session = self.load_session(session_uuid, cwd).await?;
+        if agent_id.is_some_and(|id| session.agent_id() != id) {
+            return Err(LocalHostError::InvalidRequest(
+                "session belongs to a different agent".to_owned(),
+            ));
+        }
         if session.profile_id() != profile_id {
             return Err(LocalHostError::InvalidRequest(format!(
                 "session {session_uuid} belongs to profile `{}`, not requested profile `{profile_id}`",
@@ -309,6 +340,7 @@ impl LocalHost {
                 "session metadata differs from its kernel agent binding".to_owned(),
             ));
         }
+        self.retain_agent_binding(&manifest).await?;
         Ok(StoredSession {
             directory,
             manifest,
@@ -327,8 +359,13 @@ impl LocalHost {
     pub async fn delete_session(&self, session_uuid: Uuid) -> Result<(), LocalHostError> {
         let sessions = self.config.sessions.clone();
         let session_id = SessionId::from_uuid(session_uuid);
-        tokio::task::spawn_blocking(move || delete_session_storage(&sessions, session_id))
-            .await??;
+        let database = self.config.database.clone();
+        tokio::task::spawn_blocking(move || {
+            delete_session_storage(&sessions, session_id, |manifest| {
+                super::agents::ensure_manifest(&database, manifest)
+            })
+        })
+        .await??;
         let skills = self.config.skill_store.clone();
         tokio::task::spawn_blocking(move || skills.remove_session(session_id)).await??;
         Ok(())

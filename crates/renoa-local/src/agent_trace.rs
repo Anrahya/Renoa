@@ -89,6 +89,8 @@ const fn host_error_code(error: &LocalHostError) -> &'static str {
         LocalHostError::Plugin(_) => "plugin",
         LocalHostError::HostCatalog(_) => "host_catalog",
         LocalHostError::Background(_) => "background",
+        LocalHostError::AgentConflict(_) => "agent_conflict",
+        LocalHostError::AgentNotFound(_) => "agent_not_found",
         LocalHostError::StatePoisoned => "state_poisoned",
         LocalHostError::Trace(_) => "trace",
         LocalHostError::SessionCreationCleanup { .. } => "session_creation_cleanup",

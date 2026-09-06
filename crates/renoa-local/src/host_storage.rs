@@ -78,6 +78,7 @@ pub(crate) async fn read_manifest(path: PathBuf) -> Result<SessionManifest, Loca
 pub(crate) fn delete_session_storage(
     sessions: &Path,
     session_id: SessionId,
+    retain_agent: impl FnOnce(&SessionManifest) -> Result<(), LocalHostError>,
 ) -> Result<(), LocalHostError> {
     let directory = sessions.join(session_id.to_string());
     let tombstone = sessions.join(format!(".deleting-{session_id}"));
@@ -113,6 +114,8 @@ pub(crate) fn delete_session_storage(
         ));
     }
 
+    // Retention must commit before the last published identity source is hidden.
+    retain_agent(&manifest)?;
     std::fs::rename(&directory, &tombstone)?;
     File::open(sessions)?.sync_all()?;
     drop(owner);
@@ -221,7 +224,7 @@ fn write_manifest(directory: &Path, manifest: &SessionManifest) -> Result<(), Lo
     Ok(())
 }
 
-fn read_manifest_file(path: &Path) -> Result<SessionManifest, LocalHostError> {
+pub(crate) fn read_manifest_file(path: &Path) -> Result<SessionManifest, LocalHostError> {
     require_file(path)?;
     let bytes = std::fs::read(path)?;
     let header = serde_json::from_slice::<SessionManifestHeader>(&bytes)?;
@@ -392,7 +395,7 @@ mod tests {
         let owner = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)
             .expect("own kernel session");
 
-        let active_delete = delete_session_storage(sessions.path(), session_id);
+        let active_delete = delete_session_storage(sessions.path(), session_id, |_| Ok(()));
         assert!(matches!(
             active_delete,
             Err(LocalHostError::Session(LocalSessionError::Kernel(
@@ -402,7 +405,15 @@ mod tests {
         assert!(directory.is_dir());
 
         drop(owner);
-        delete_session_storage(sessions.path(), session_id).expect("delete session storage");
+        let failed_retention = delete_session_storage(sessions.path(), session_id, |_| {
+            Err(LocalHostError::InvalidRequest(
+                "retention failed".to_owned(),
+            ))
+        });
+        assert!(failed_retention.is_err());
+        assert!(directory.is_dir());
+        delete_session_storage(sessions.path(), session_id, |_| Ok(()))
+            .expect("delete session storage");
         assert!(!directory.exists());
         assert!(
             !sessions
@@ -411,7 +422,7 @@ mod tests {
                 .exists()
         );
 
-        delete_session_storage(sessions.path(), session_id)
+        delete_session_storage(sessions.path(), session_id, |_| Ok(()))
             .expect("repeat session deletion idempotently");
     }
 
@@ -470,7 +481,8 @@ mod tests {
         std::fs::write(directory.join("data"), "durable").expect("write session data");
         std::fs::rename(&directory, &tombstone).expect("publish deletion tombstone");
 
-        delete_session_storage(sessions.path(), session_id).expect("resume session deletion");
+        delete_session_storage(sessions.path(), session_id, |_| Ok(()))
+            .expect("resume session deletion");
 
         assert!(!directory.exists());
         assert!(!tombstone.exists());
