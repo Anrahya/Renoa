@@ -132,6 +132,22 @@ impl PluginManager {
     ) -> Result<ExtensionAddOutcome, PluginError> {
         let connection_request = request.connection;
         let prepared = match request.source {
+            ExtensionSource::Installed { package_digest } => {
+                if connection_request.is_some() {
+                    return Err(PluginError::Invalid(
+                        "installed package reuse only enables skills; omit server, connection, credential, and replace, then use enable for an existing connection or connect for a new one".to_owned(),
+                    ));
+                }
+                let store = self.store.clone();
+                let installed =
+                    tokio::task::spawn_blocking(move || store.load(&package_digest)).await??;
+                PreparedExtension {
+                    installed,
+                    source: ExtensionSourceReceipt::Installed,
+                    generated_server: None,
+                    connect_by_default: false,
+                }
+            }
             ExtensionSource::Mcp(source) => {
                 let generated = GeneratedMcpPlugin::from_researched(source)?;
                 let server = generated.server().to_owned();
@@ -301,6 +317,7 @@ pub(crate) struct ExtensionAddOutcome {
 pub(crate) enum ExtensionSourceReceipt {
     Mcp,
     Package,
+    Installed,
 }
 
 pub(crate) enum ExtensionConnectionOutcome {

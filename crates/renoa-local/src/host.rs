@@ -15,6 +15,8 @@ mod models;
 mod profiles;
 mod runtime;
 mod sessions;
+#[cfg(all(test, unix))]
+mod shared_capabilities_tests;
 #[cfg(test)]
 mod skill_tests;
 

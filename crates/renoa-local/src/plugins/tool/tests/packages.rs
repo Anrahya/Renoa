@@ -22,6 +22,9 @@ use crate::{
     skills::SkillStore,
 };
 
+#[path = "installed.rs"]
+mod installed;
+
 #[test]
 fn oauth_credential_is_one_exact_host_managed_choice() {
     serde_json::from_value::<ManageInput>(json!({
@@ -87,7 +90,7 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     );
     assert_eq!(
         properties["source"]["properties"]["kind"]["enum"],
-        json!(["mcp", "package"])
+        json!(["mcp", "package", "installed"])
     );
     assert_eq!(properties["source"]["required"], json!(["kind"]));
     assert_eq!(

@@ -58,6 +58,45 @@ For a user service, install the binary in `~/.local/bin`, save the config as
 `~/.config/systemd/user/`. Enable with `systemctl --user enable --now renoa-slack`.
 A VPS user service needs lingering enabled to remain alive after logout.
 
+### Sharing the existing VPS Host
+
+Use `deploy/renoa-slack-host.service` as the system service
+`renoa-slack.service` when joining the existing Telegram deployment. It runs as
+the same `renoa-arcee` OS account and uses the existing Host data directory,
+historically named `/var/lib/renoa-telegram`. The directory name does not assign
+ownership to Telegram. Keep all processes opening this Host on compatible
+builds; back up the Host and upgrade its surfaces together when its catalog
+schema changes.
+
+Save the launch JSON at `/etc/renoa/slack.json`, readable by `renoa-arcee`, with:
+
+- `data_directory`: `/var/lib/renoa-telegram`
+- `workspace`: `/srv/renoa/arcee`
+- model/MCP adapter and auth-store paths from the existing VPS installation
+- `shared_plugin_registry`: the existing registry origin, if configured
+- `bot_token_file`: `/run/credentials/renoa-slack.service/slack-bot-token`
+- `app_token_file`: `/run/credentials/renoa-slack.service/slack-app-token`
+- `oauth_relay.origin`: the existing relay origin
+- `oauth_relay.device_credential_file`:
+  `/run/credentials/renoa-slack.service/oauth-relay-device`
+
+Store the two Slack tokens in root-owned `0600` files at
+`/etc/renoa/slack-bot-token` and `/etc/renoa/slack-app-token`. The service loads
+private copies and the existing `/etc/renoa/arcee-oauth-relay-device` credential.
+The Agent UUID and allowed Slack Member ID are stable launch settings.
+
+Both surfaces now use the same Arcee profile, enabled MCP connections, private
+OAuth store, installed plugins, and profile documents. New profile attachments
+are visible without a surface restart. The Host's extension inventory also
+lets other profiles enable an existing connection or reuse an installed
+package's skills by digest; neither operation repeats OAuth.
+
+Stop an existing Slack daemon before starting this one: two independent Socket
+Mode consumers must not split events between separate Hosts. Existing local
+Slack sessions remain in their original Host; changing a launch path does not
+migrate their bindings or history. Cross-Host session transfer is not part of
+this deployment.
+
 The configured data root is shared with the Host catalog. Slack also binds its
 own database to the exact Host, Agent, workspace, bot, and allowed user. Changing
 those bindings accidentally fails startup rather than reusing conversations
