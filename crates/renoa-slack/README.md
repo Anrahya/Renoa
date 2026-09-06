@@ -68,7 +68,7 @@ ownership to Telegram. Keep all processes opening this Host on compatible
 builds; back up the Host and upgrade its surfaces together when its catalog
 schema changes.
 
-Save the launch JSON at `/etc/renoa/slack.json`, readable by `renoa-arcee`, with:
+Save the launch JSON as a root-owned `0600` file at `/etc/renoa/slack.json` with:
 
 - `data_directory`: `/var/lib/renoa-telegram`
 - `workspace`: `/srv/renoa/arcee`
@@ -82,7 +82,9 @@ Save the launch JSON at `/etc/renoa/slack.json`, readable by `renoa-arcee`, with
 
 Store the two Slack tokens in root-owned `0600` files at
 `/etc/renoa/slack-bot-token` and `/etc/renoa/slack-app-token`. The service loads
-private copies and the existing `/etc/renoa/arcee-oauth-relay-device` credential.
+private copies of the tokens, launch JSON, and existing
+`/etc/renoa/arcee-oauth-relay-device` credential, so the service account does not
+need access to the private `/etc/renoa` directory.
 The Agent UUID and allowed Slack Member ID are stable launch settings.
 
 Both surfaces now use the same Arcee profile, enabled MCP connections, private

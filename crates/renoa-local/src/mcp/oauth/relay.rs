@@ -330,27 +330,8 @@ fn read_credentials(path: &Path) -> Result<RelayCredentials, McpHostError> {
 
 #[cfg(unix)]
 fn require_private(path: &Path, metadata: &std::fs::Metadata) -> Result<(), McpHostError> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let mode = metadata.permissions().mode() & 0o777;
-    if mode.trailing_zeros() >= 6 {
-        return Ok(());
-    }
-    let credentials_directory =
-        std::env::var_os("CREDENTIALS_DIRECTORY").map(std::path::PathBuf::from);
-    if mode == 0o440
-        && credentials_directory.as_deref() == path.parent()
-        && credentials_directory.as_deref().is_some_and(|directory| {
-            std::fs::symlink_metadata(directory).is_ok_and(|directory_metadata| {
-                let directory_mode = directory_metadata.permissions().mode() & 0o777;
-                directory_metadata.file_type().is_dir()
-                    && !directory_metadata.file_type().is_symlink()
-                    && matches!(directory_mode, 0o500 | 0o550)
-                    && directory_metadata.uid() == metadata.uid()
-                    && directory_metadata.gid() == metadata.gid()
-            })
-        })
-    {
+    let directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(std::path::PathBuf::from);
+    if crate::credential_file_is_private(path, metadata, directory.as_deref()) {
         return Ok(());
     }
     Err(McpOAuthError::Invalid(

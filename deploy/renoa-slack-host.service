@@ -15,8 +15,9 @@ Environment=TZ=Asia/Kolkata
 LoadCredential=slack-bot-token:/etc/renoa/slack-bot-token
 LoadCredential=slack-app-token:/etc/renoa/slack-app-token
 LoadCredential=oauth-relay-device:/etc/renoa/arcee-oauth-relay-device
+LoadCredential=slack-config:/etc/renoa/slack.json
 UMask=0077
-ExecStart=/usr/local/bin/renoa-slack run /etc/renoa/slack.json
+ExecStart=/usr/local/bin/renoa-slack run %d/slack-config
 Restart=on-failure
 RestartSec=10s
 TimeoutStopSec=90s

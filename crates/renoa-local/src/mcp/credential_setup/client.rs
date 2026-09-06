@@ -297,26 +297,8 @@ fn read_credentials(path: &Path) -> Result<RelayCredentials, McpHostError> {
 
 #[cfg(unix)]
 fn require_private(path: &Path, metadata: &std::fs::Metadata) -> Result<(), McpHostError> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let mode = metadata.permissions().mode() & 0o777;
-    if mode.trailing_zeros() >= 6 {
-        return Ok(());
-    }
     let directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(std::path::PathBuf::from);
-    if mode == 0o440
-        && directory.as_deref() == path.parent()
-        && directory.as_deref().is_some_and(|directory| {
-            std::fs::symlink_metadata(directory).is_ok_and(|parent| {
-                let parent_mode = parent.permissions().mode() & 0o777;
-                parent.file_type().is_dir()
-                    && !parent.file_type().is_symlink()
-                    && matches!(parent_mode, 0o500 | 0o550)
-                    && parent.uid() == metadata.uid()
-                    && parent.gid() == metadata.gid()
-            })
-        })
-    {
+    if crate::credential_file_is_private(path, metadata, directory.as_deref()) {
         return Ok(());
     }
     Err(unavailable(
