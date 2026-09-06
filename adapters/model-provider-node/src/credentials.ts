@@ -173,11 +173,9 @@ export class SqliteCredentialStore {
   ): Credential | undefined {
     return this.#immediate(() => {
       const stored = this.read(providerId);
-      if (stored === undefined) {
-        this.#insert(providerId, next);
-        return next;
-      }
-      if (stored.type !== "oauth") {
+      // Refresh has authority only over the snapshot it read. In particular,
+      // deletion while the provider request was pending must remain deletion.
+      if (stored === undefined || stored.type !== "oauth") {
         return stored;
       }
       if (sameOauth(stored, snapshot)) {
@@ -216,7 +214,8 @@ export class SqliteCredentialStore {
 }
 
 function sameOauth(left: OauthCredential, right: OauthCredential): boolean {
-  return left.access === right.access && left.refresh === right.refresh && left.expires === right.expires;
+  return left.access === right.access && left.refresh === right.refresh &&
+    left.expires === right.expires && left.accountId === right.accountId;
 }
 
 function decodeCredential(providerId: string, encoded: string): Credential {
