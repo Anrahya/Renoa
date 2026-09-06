@@ -7,6 +7,7 @@ mod arcee;
 mod atomic_file;
 mod bash;
 mod deadline;
+mod file_lock;
 mod file_tools;
 mod host;
 mod host_storage;

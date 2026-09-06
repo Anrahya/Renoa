@@ -15,7 +15,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use super::{AgentProfileError, AgentProfileId};
-use crate::atomic_file::{self, content_hash};
+use crate::{atomic_file::content_hash, file_lock::FileUpdate};
 
 const SOUL_FILE: &str = "SOUL.md";
 const USER_FILE: &str = "USER.md";
@@ -117,6 +117,7 @@ impl ProfileDocuments {
             ));
         }
         let path = self.path(document);
+        let update = FileUpdate::acquire(&path, cancellation).await?;
         let metadata = tokio::fs::symlink_metadata(&path)
             .await
             .map_err(|error| profile_tool_io("inspect profile document", &error))?;
@@ -139,7 +140,9 @@ impl ProfileDocuments {
                 "profile document changed after this turn began; inspect the next turn's profile before editing it again",
             ));
         }
-        atomic_file::replace(&path, content.as_bytes(), Some(current_hash), cancellation).await?;
+        update
+            .replace(content.as_bytes(), Some(current_hash), cancellation)
+            .await?;
         Ok(new_revision)
     }
 }

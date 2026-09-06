@@ -5,7 +5,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
 use tokio_util::sync::CancellationToken;
 
-use crate::tool_error::io_error;
+use crate::{file_lock::FileUpdate, tool_error::io_error};
 
 pub(crate) type ContentHash = [u8; 32];
 
@@ -19,6 +19,30 @@ pub(crate) fn content_hash(content: &[u8]) -> ContentHash {
 /// the operation waits for a definite result. A post-rename durability failure
 /// is reported as outcome-unknown rather than as a false definite failure.
 pub(crate) async fn replace(
+    path: &Path,
+    content: &[u8],
+    expected: Option<ContentHash>,
+    cancellation: &CancellationToken,
+) -> Result<(), ToolError> {
+    FileUpdate::acquire(path, cancellation)
+        .await?
+        .replace(content, expected, cancellation)
+        .await
+}
+
+impl FileUpdate {
+    /// The owner serializes precondition checking through rename and parent sync.
+    pub(crate) async fn replace(
+        &self,
+        content: &[u8],
+        expected: Option<ContentHash>,
+        cancellation: &CancellationToken,
+    ) -> Result<(), ToolError> {
+        replace_locked(&self.path, content, expected, cancellation).await
+    }
+}
+
+async fn replace_locked(
     path: &Path,
     content: &[u8],
     expected: Option<ContentHash>,
@@ -50,6 +74,8 @@ pub(crate) async fn replace(
         drop(file);
         return Err(cleanup_error(&temporary, error).await);
     }
+    #[cfg(test)]
+    crate::file_lock::probes::after_check().await;
     if cancellation.is_cancelled() {
         drop(file);
         return Err(cleanup_error(
@@ -205,7 +231,7 @@ mod tests {
                     .expect("directory entry")
                     .file_name()
                     .to_string_lossy()
-                    .contains(".renoa-"))
+                    .ends_with(".tmp"))
         );
     }
 
@@ -231,3 +257,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod concurrency_tests;
