@@ -140,7 +140,7 @@ function summarize(facts: FailureFacts): string {
     case "rate_limited": {
       const status = facts.httpStatus ?? 429;
       const id = facts.requestId === undefined ? "" : ` (request ${facts.requestId})`;
-      return `rate limited (${status})${id}.`;
+      return `rate limited (${status})${id}. Automatic retries have stopped. Try again later or choose another model.`;
     }
     case "invalid_request":
       return `invalid request${facts.httpStatus === undefined ? "" : ` (${facts.httpStatus})`}.`;

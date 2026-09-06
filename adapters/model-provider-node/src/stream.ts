@@ -7,6 +7,8 @@ import type {
 import { ProviderFailure, classifyError, redactHeaders, redactSecrets } from "./errors.js";
 import {
   MAX_ATTEMPTS,
+  MAX_RATE_LIMIT_ATTEMPTS,
+  MAX_RETRY_WAIT_MS,
   delayForAttempt,
   shouldRetry,
   systemClock,
@@ -42,7 +44,8 @@ export async function streamModel(invocation: StreamInvocation): Promise<void> {
   const random = invocation.random ?? systemRandom;
   let oauthRefreshed = false;
   let attempt = 0;
-  while (attempt < MAX_ATTEMPTS) {
+  let retryWaitMs = 0;
+  while (attempt < MAX_RATE_LIMIT_ATTEMPTS) {
     attempt += 1;
     const attemptSignal = AbortSignal.any([invocation.signal]);
     const observed = { outputExposed: false };
@@ -93,14 +96,15 @@ export async function streamModel(invocation: StreamInvocation): Promise<void> {
           }
         }
       }
-      if (!shouldRetry(facts, attempt, observed.outputExposed) || cancelled) {
+      const delay = delayForAttempt(attempt, facts, random, clock.now());
+      if (!shouldRetry(facts, attempt, observed.outputExposed) || cancelled || delay > MAX_RETRY_WAIT_MS - retryWaitMs) {
         throw new ProviderFailure(facts, {
           provider: invocation.runtime.provider,
           model: invocation.runtime.model.id,
           attemptCount: attempt,
         });
       }
-      const delay = delayForAttempt(facts.retryAfter === undefined ? attempt : 1, facts, random, clock.now());
+      retryWaitMs += delay;
       await invocation.emit({
         event: "retry_attempt",
         attempt,

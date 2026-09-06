@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { classifyError, ProviderFailure, redactSecrets, redactText } from "../src/errors.js";
-import { delayForAttempt, parseRetryAfter, shouldRetry, MAX_ATTEMPTS } from "../src/retry.js";
+import { delayForAttempt, parseRetryAfter, shouldRetry, MAX_RATE_LIMIT_ATTEMPTS } from "../src/retry.js";
 
 test("connection reset before HTTP is unknown once the request may have been transmitted", () => {
   const error = Object.assign(new Error("APIConnectionError: Connection error."), {
@@ -63,7 +63,7 @@ test("429 honors Retry-After seconds and remains retryable until the attempt bud
   assert.equal(parseRetryAfter(facts.retryAfter, 0), 2_000);
   assert.equal(delayForAttempt(1, facts, { jitter: () => 0 }, 0), 2_000);
   assert.equal(shouldRetry(facts, 2, false), true);
-  assert.equal(shouldRetry(facts, MAX_ATTEMPTS, false), false);
+  assert.equal(shouldRetry(facts, MAX_RATE_LIMIT_ATTEMPTS, false), false);
   const failure = new ProviderFailure(facts, { provider: "xai", model: "grok-4.6", attemptCount: 3 });
   assert.match(failure.message, /rate limited \(429\) \(request req_429\)/);
 });

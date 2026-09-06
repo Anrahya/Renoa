@@ -90,6 +90,22 @@ impl AgentEventSink for Progress {
             AgentEvent::ModelRequestStart { .. } | AgentEvent::MessageAbort => {
                 self.latest.send_replace("Thinking…".to_owned());
             }
+            AgentEvent::ModelRetryAttempt {
+                next_attempt,
+                category,
+                delay_ms,
+                ..
+            } => {
+                let reason = if category == renoa_agent::ModelErrorKind::RateLimited {
+                    "The model provider is rate limiting requests."
+                } else {
+                    "The model request hit a temporary error."
+                };
+                self.latest.send_replace(format!(
+                    "{reason} Retrying in {}s (attempt {next_attempt}). Use !cancel to stop.",
+                    delay_ms.div_ceil(1000)
+                ));
+            }
             AgentEvent::ToolExecutionStart { call } => {
                 self.latest.send_replace(format!("Using {}…", call.name));
             }
@@ -153,6 +169,35 @@ mod tests {
     use super::*;
     use axum::{Json, Router, response::IntoResponse as _, routing::post};
     use renoa_agent::{ContentBlock, ToolCall};
+
+    #[tokio::test]
+    async fn model_retry_progress_explains_wait_without_publishing_diagnostics() {
+        let (latest, receiver) = watch::channel(String::new());
+        let progress = Progress {
+            latest,
+            private_conversation: false,
+        };
+        for (category, reason) in [
+            (renoa_agent::ModelErrorKind::RateLimited, "rate limiting"),
+            (renoa_agent::ModelErrorKind::Network, "temporary error"),
+        ] {
+            progress
+                .emit(AgentEvent::ModelRetryAttempt {
+                    invocation_id: "private-invocation".to_owned(),
+                    attempt: 1,
+                    next_attempt: 2,
+                    category,
+                    delay_ms: 5_100,
+                    cause_code: Some("private-diagnostic".to_owned()),
+                })
+                .await;
+            let message = receiver.borrow().clone();
+            assert!(message.contains(reason));
+            assert!(message.contains("Retrying in 6s (attempt 2)"));
+            assert!(message.contains("!cancel"));
+            assert!(!message.contains("private"));
+        }
+    }
 
     #[tokio::test]
     async fn setup_link_retries_rate_limits_and_transient_errors_without_new_events() {
