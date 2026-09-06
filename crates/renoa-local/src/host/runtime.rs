@@ -73,6 +73,7 @@ pub(crate) async fn resolve_runtime(
         workspace,
     )?
     .with_discovered_model(model)
+    .with_session(session_id)
     .with_reasoning(reasoning);
     if let Some(skill_context) = skill_context {
         config = config.with_skill_context(skill_context);

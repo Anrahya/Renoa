@@ -72,9 +72,15 @@ pub(crate) struct ModelBridgeConfig {
     credential_store: PathBuf,
     model_spec: Option<String>,
     reasoning: Option<ReasoningLevel>,
+    session_id: Option<renoa_kernel::SessionId>,
 }
 
 impl BridgeModel {
+    pub(crate) fn with_session(mut self, session_id: Option<renoa_kernel::SessionId>) -> Self {
+        self.config.session_id = session_id;
+        self
+    }
+
     /// Resolves and validates the selected model before accepting work.
     ///
     /// # Errors
@@ -224,6 +230,7 @@ impl ModelBridgeConfig {
             credential_store,
             model_spec: None,
             reasoning: None,
+            session_id: None,
         })
     }
 
@@ -235,11 +242,17 @@ impl ModelBridgeConfig {
             .env("RENOA_MODEL_ACTION", action)
             .env("RENOA_MODEL_PROVIDER", &self.provider)
             .env("RENOA_MODEL_AUTH_STORE", &self.credential_store)
+            .env_remove("RENOA_MODEL_SESSION_ID")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         if let Some(model) = &self.model {
             command.env("RENOA_MODEL", model);
+        }
+        if action == "stream"
+            && let Some(session_id) = self.session_id
+        {
+            command.env("RENOA_MODEL_SESSION_ID", session_id.to_string());
         }
         if let Some(limit) = max_output_tokens {
             command.env("RENOA_MODEL_MAX_OUTPUT_TOKENS", limit.get().to_string());

@@ -36,6 +36,7 @@ export interface StreamInvocation {
   readonly clock?: RetryClock;
   readonly random?: RetryRandom;
   readonly fetch?: typeof fetch;
+  readonly sessionId?: string;
 }
 
 export async function streamModel(invocation: StreamInvocation): Promise<void> {
@@ -178,6 +179,13 @@ async function runAttempt(
     signal,
     maxRetries: 0,
     fetch: fetchImpl,
+    ...(invocation.sessionId === undefined ? {} : { sessionId: invocation.sessionId }),
+    ...(invocation.runtime.provider === "opencode-go"
+      ? { headers: {
+          "user-agent": "renoa/0.1.0",
+          ...(invocation.sessionId === undefined ? {} : { "x-opencode-session": invocation.sessionId }),
+        } }
+      : {}),
     onPayload: async (payload: unknown) => {
       await invocation.emit({
         event: "provider_request",

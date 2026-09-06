@@ -75,6 +75,13 @@ async fn live_host_clients_reuse_credentials_packages_and_skills_across_profiles
         expected
     );
     let calls = fs::read_to_string(root.join("mcp-calls")).expect("MCP calls");
+    let model_sessions = fs::read_to_string(root.join("model-sessions")).expect("model sessions");
+    assert!(!model_sessions.is_empty());
+    assert!(
+        model_sessions
+            .lines()
+            .all(|id| id == session_id.to_string())
+    );
     assert_eq!(calls.lines().filter(|line| *line == "discover").count(), 1);
     assert_eq!(calls.lines().filter(|line| *line == "call").count(), 2);
     assert_eq!(

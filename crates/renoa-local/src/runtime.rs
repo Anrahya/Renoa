@@ -36,6 +36,7 @@ pub struct LocalRuntimeConfig {
     reasoning: Option<ReasoningLevel>,
     skill_context: Option<SkillRuntimeContext>,
     automatic_compaction: Option<AutomaticCompactionPolicy>,
+    session_id: Option<renoa_kernel::SessionId>,
 }
 
 impl LocalRuntimeConfig {
@@ -62,6 +63,7 @@ impl LocalRuntimeConfig {
             reasoning: None,
             skill_context: None,
             automatic_compaction: profile.automatic_compaction(),
+            session_id: None,
         })
     }
 
@@ -102,6 +104,11 @@ impl LocalRuntimeConfig {
 
     pub(crate) fn with_skill_context(mut self, context: SkillRuntimeContext) -> Self {
         self.skill_context = Some(context);
+        self
+    }
+
+    pub(crate) const fn with_session(mut self, session_id: renoa_kernel::SessionId) -> Self {
+        self.session_id = Some(session_id);
         self
     }
 }
@@ -228,7 +235,8 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
             config.reasoning,
             MAX_OUTPUT_TOKENS,
         )
-        .await?,
+        .await?
+        .with_session(config.session_id),
     );
     Ok(ResolvedModel {
         provider: config.provider,
