@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { appendFileSync } from "node:fs";
 const spec = JSON.stringify({ id: "fixture" });
 if (process.env.RENOA_MODEL_ACTION === "catalog") {
   process.stdout.write(JSON.stringify({ ok: true, response: { models: [{
@@ -15,6 +16,7 @@ if (process.env.RENOA_MODEL_ACTION === "describe") {
   process.exit(0);
 }
 let input = "";
+appendFileSync(new URL("./model-sessions", import.meta.url), `${process.env.RENOA_MODEL_SESSION_ID}\n`);
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
 const fail = message => { throw new Error(message); };

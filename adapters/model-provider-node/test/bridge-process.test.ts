@@ -4,9 +4,49 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { createStore, loopbackModel, oauthCredential, startFakeServer, successfulChat, tempDir, userRequest } from "./helpers.js";
+import { createStore, loopbackModel, oauthCredential, responsesSse, startFakeServer, successfulChat, tempDir, userRequest } from "./helpers.js";
 
 const bridge = fileURLToPath(new URL("../src/main.js", import.meta.url));
+
+test("restarted OpenCode bridge keeps session cache routing outside prompt content", async () => {
+  const server = await startFakeServer();
+  const directory = tempDir();
+  const store = createStore(directory.path, { type: "api_key", key: "fixture-key" }, "opencode-go");
+  store.close();
+  const model = loopbackModel("opencode-go", "grok-4.5", server.baseUrl);
+  const first = "11111111-1111-4111-8111-111111111111";
+  const second = "22222222-2222-4222-8222-222222222222";
+  try {
+    for (const sessionId of [first, first, second]) {
+      server.enqueue({ sse: responsesSse("cached") });
+      const result = await runBridge({
+        RENOA_MODEL_ACTION: "stream",
+        RENOA_MODEL_PROVIDER: "opencode-go",
+        RENOA_MODEL: model.id,
+        RENOA_MODEL_AUTH_STORE: join(directory.path, "credentials.sqlite"),
+        RENOA_MODEL_SPEC: JSON.stringify(model),
+        RENOA_MODEL_ALLOW_LOOPBACK: "1",
+        RENOA_MODEL_MAX_OUTPUT_TOKENS: "128",
+        RENOA_MODEL_SESSION_ID: sessionId,
+      }, JSON.stringify(userRequest()));
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /"event":"completed"/);
+    }
+    assert.equal(server.requests.length, 3);
+    for (const [index, request] of server.requests.entries()) {
+      const expected = index === 2 ? second : first;
+      assert.equal(request.headers["x-opencode-session"], expected);
+      assert.equal(request.headers["user-agent"], "renoa/0.1.0");
+      const body = JSON.parse(request.body);
+      assert.equal(body.prompt_cache_key, expected);
+      assert.ok(!JSON.stringify(body.input).includes(expected));
+      assert.deepEqual(body.input, JSON.parse(server.requests[0]!.body).input);
+    }
+  } finally {
+    await server.close();
+    directory.close();
+  }
+});
 
 test("compiled bridge catalog, describe, and stream over the process boundary", async () => {
   const server = await startFakeServer();

@@ -56,6 +56,7 @@ export async function runBridgeAction(
         maxOutputTokens: requiredMaxOutput(config),
         signal,
         emit,
+        ...(config.sessionId === undefined ? {} : { sessionId: config.sessionId }),
       });
     } catch (error) {
       await emit(wireError(error, { provider: runtime.provider, model: runtime.model.id }));

@@ -11,6 +11,7 @@ export interface BridgeConfig {
   readonly reasoningLevel?: ReasoningLevel;
   readonly maxOutputTokens?: number;
   readonly allowLoopback: boolean;
+  readonly sessionId?: string;
 }
 
 export function loadBridgeConfig(environment: NodeJS.ProcessEnv): BridgeConfig {
@@ -29,6 +30,7 @@ export function loadBridgeConfig(environment: NodeJS.ProcessEnv): BridgeConfig {
   const modelId = required(environment, "RENOA_MODEL");
   const modelSpec = optionalJson(environment.RENOA_MODEL_SPEC, "RENOA_MODEL_SPEC");
   const reasoningLevel = optionalReasoning(environment.RENOA_MODEL_REASONING);
+  const sessionId = optionalSessionId(environment.RENOA_MODEL_SESSION_ID);
   return {
     ...base,
     modelId,
@@ -40,9 +42,17 @@ export function loadBridgeConfig(environment: NodeJS.ProcessEnv): BridgeConfig {
             environment.RENOA_MODEL_MAX_OUTPUT_TOKENS,
             "RENOA_MODEL_MAX_OUTPUT_TOKENS",
           ),
+          ...(sessionId === undefined ? {} : { sessionId }),
         }
       : {}),
   };
+}
+
+function optionalSessionId(value: string | undefined): string | undefined {
+  if (value !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) {
+    throw new Error("RENOA_MODEL_SESSION_ID must be a canonical UUID");
+  }
+  return value;
 }
 
 export function loadAuthStorePath(environment: NodeJS.ProcessEnv): string {
