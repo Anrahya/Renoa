@@ -207,6 +207,16 @@ permission-shaped fields are reserved in this slice.
 
 `LocalHost` owns the provider configuration, durable data root, Agent Plugin
 library, MCP catalog, skill library, and credential resolution boundary.
+
+`LocalHost::inspect_session` opens existing durable history without provider
+catalog discovery, saved-model validation, or runtime construction. Its
+`AgentSessionHistory` handle retains exclusive kernel ownership and exposes a
+separate diagnostic-store error without hiding intact history. Inspection checks
+the registered profile, exact session/Agent identity, canonical workspace binding,
+and authoritative data integrity. It cannot execute or recover a turn; callers
+drop the handle and use normal executable loading after repairing dependencies.
+ACP uses this path when normal session loading is unavailable.
+
 `host.sqlite3` keeps installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog

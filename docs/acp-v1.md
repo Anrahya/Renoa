@@ -257,6 +257,18 @@ response. A surface may keep a presentation cache, but it must reconcile that
 cache with the replayed durable event identities instead of treating a second
 transcript as execution truth.
 
+When executable loading fails, `session/load` uses the Host's supported
+`inspect_session` path. It validates the same profile, session/Agent identity,
+workspace binding, exclusive ownership, and authoritative history, then replays
+the transcript without requiring model discovery or usable diagnostic storage.
+The load response reports `_meta["renoa.executionUnavailable"]` and, separately,
+`_meta["renoa.traceUnavailable"]` when diagnostic storage cannot open. This mode
+advertises no execution controls or guessed context-window usage. Prompt and
+configuration requests fail explicitly; `session/close` releases ownership.
+After repairing the dependencies, close and reload to enable execution.
+Corrupt authoritative history remains an error. This does not migrate or resume
+an interrupted runtime under a different configuration.
+
 ## Current limits
 
 - Local standard-I/O transport only; no draft ACP v2 remote transport.

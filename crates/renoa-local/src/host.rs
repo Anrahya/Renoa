@@ -8,6 +8,7 @@ use thiserror::Error;
 
 pub(crate) mod catalog;
 mod extensions;
+pub(crate) mod history;
 mod mcp;
 mod models;
 mod profiles;
