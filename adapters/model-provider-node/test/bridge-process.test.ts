@@ -48,6 +48,31 @@ test("restarted OpenCode bridge keeps session cache routing outside prompt conte
   }
 });
 
+test("OpenCode Go refuses missing conversation identity before dispatch", async () => {
+  const server = await startFakeServer();
+  const directory = tempDir();
+  const store = createStore(directory.path, { type: "api_key", key: "fixture-key" }, "opencode-go");
+  store.close();
+  const model = loopbackModel("opencode-go", "grok-4.5", server.baseUrl);
+  try {
+    const result = await runBridge({
+      RENOA_MODEL_ACTION: "stream", RENOA_MODEL_PROVIDER: "opencode-go",
+      RENOA_MODEL: model.id, RENOA_MODEL_AUTH_STORE: join(directory.path, "credentials.sqlite"),
+      RENOA_MODEL_SPEC: JSON.stringify(model), RENOA_MODEL_ALLOW_LOOPBACK: "1",
+      RENOA_MODEL_MAX_OUTPUT_TOKENS: "128", RENOA_MODEL_SESSION_ID: undefined,
+    }, JSON.stringify(userRequest()));
+    const record = JSON.parse(result.stdout.trim());
+    assert.equal(record.event, "error");
+    assert.equal(record.error_kind, "invalid_request");
+    assert.equal(record.inference_outcome, "known_not_started");
+    assert.match(record.diagnostic.provider_message, /RENOA_MODEL_SESSION_ID/);
+    assert.equal(server.requests.length, 0);
+  } finally {
+    await server.close();
+    directory.close();
+  }
+});
+
 test("compiled bridge catalog, describe, and stream over the process boundary", async () => {
   const server = await startFakeServer();
   server.enqueue({ sse: successfulChat("from-process") });

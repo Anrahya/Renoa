@@ -76,7 +76,10 @@ pub(crate) struct ModelBridgeConfig {
 }
 
 impl BridgeModel {
-    pub(crate) fn with_session(mut self, session_id: Option<renoa_kernel::SessionId>) -> Self {
+    /// Sets durable conversation context for provider cache routing.
+    /// `OpenCode` Go refuses streams without a Session ID.
+    #[must_use]
+    pub fn with_session(mut self, session_id: Option<renoa_kernel::SessionId>) -> Self {
         self.config.session_id = session_id;
         self
     }

@@ -129,11 +129,39 @@ impl SlackApi {
             .origin
             .join(method)
             .map_err(|e| ApiError::Rejected(e.to_string()))?;
-        let response = self
-            .client
-            .post(endpoint)
-            .bearer_auth(token)
-            .json(&body)
+        self.response(self.client.post(endpoint).bearer_auth(token).json(&body))
+            .await
+    }
+
+    pub(crate) async fn bot_call<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        body: Value,
+    ) -> Result<T, ApiError> {
+        self.call(method, &self.bot_token, body).await
+    }
+
+    pub(crate) async fn bot_get<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        query: &[(&str, &str)],
+    ) -> Result<T, ApiError> {
+        let mut endpoint = self
+            .origin
+            .join(method)
+            .map_err(|e| ApiError::Rejected(e.to_string()))?;
+        endpoint
+            .query_pairs_mut()
+            .extend_pairs(query.iter().copied());
+        self.response(self.client.get(endpoint).bearer_auth(&self.bot_token))
+            .await
+    }
+
+    async fn response<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<T, ApiError> {
+        let response = request
             .send()
             .await
             .map_err(|e| ApiError::Unknown(e.without_url().to_string()))?;

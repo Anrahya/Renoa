@@ -171,6 +171,12 @@ async function runAttempt(
   observed: { outputExposed: boolean },
   capture: HttpCapture,
 ): Promise<void> {
+  if (invocation.runtime.provider === "opencode-go" &&
+      (invocation.sessionId === undefined || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(invocation.sessionId))) {
+    throw Object.assign(new Error("OpenCode Go requires RENOA_MODEL_SESSION_ID: a stable canonical UUID per conversation"), {
+      categoryHint: "invalid_request",
+    });
+  }
   const apiKey = await resolveApiKey(invocation.runtime, signal);
   const fetchImpl = capturingFetch(invocation.fetch ?? globalThis.fetch, capture);
   const options = {

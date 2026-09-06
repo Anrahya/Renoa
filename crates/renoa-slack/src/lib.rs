@@ -1,5 +1,6 @@
 mod agents;
 mod api;
+mod channels;
 mod commands;
 mod config;
 mod controls;

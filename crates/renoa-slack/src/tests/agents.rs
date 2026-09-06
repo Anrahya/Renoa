@@ -122,7 +122,7 @@ async fn unknown_agent_selection_keeps_the_current_conversation() {
     fixture.stop().await;
 }
 
-async fn news_bot(fixture: &Fixture) -> BotRecord {
+pub(super) async fn news_bot(fixture: &Fixture) -> BotRecord {
     fixture
         .worker
         .host

@@ -244,7 +244,7 @@ async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity()
     drop(store);
     let database = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
     database
-        .execute_batch("ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
+        .execute_batch("DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
         .expect("legacy schema");
     drop(database);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("migrated store");
