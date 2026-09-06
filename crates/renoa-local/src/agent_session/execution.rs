@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use renoa_agent::{AgentEventSink, ContentBlock};
-use renoa_kernel::CommandId;
+use renoa_kernel::{CancellationId, CommandId};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -22,6 +22,13 @@ enum SessionCommand {
 }
 
 impl SessionCommand {
+    fn content(&self) -> Option<&[ContentBlock]> {
+        match self {
+            Self::Prompt { content, .. } => Some(content),
+            Self::Compact => None,
+        }
+    }
+
     const fn name(&self) -> &'static str {
         match self {
             Self::Prompt { .. } => "prompt",
@@ -31,7 +38,7 @@ impl SessionCommand {
 }
 
 struct TracedTurn<'a> {
-    command_id: CommandId,
+    request_id: Uuid,
     command: SessionCommand,
     cancellation: CancellationToken,
     model: ModelChoice,
@@ -144,6 +151,31 @@ impl AgentSession {
             .await
     }
 
+    /// Cancels an idle surface request without resolving execution dependencies.
+    ///
+    /// `content` is `None` for explicit compaction. The caller must durably retain
+    /// cancellation: an absent request returns `Cancelled` without kernel admission.
+    /// Existing outcomes replay honestly; unfinished requests receive a durable
+    /// cancellation intent and return `None` until their bound runtime settles.
+    ///
+    /// # Errors
+    ///
+    /// Returns concurrent activity, request identity, ownership, or storage failures.
+    pub fn cancel_before_execution(
+        &self,
+        request_id: Uuid,
+        content: Option<&[ContentBlock]>,
+    ) -> Result<Option<LocalTurnOutcome>, LocalHostError> {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let (_guard, ..) = self.begin_prompt(request_id, cancellation)?;
+        Ok(self.kernel.cancel_before_execution(
+            CommandId::from_uuid(request_id),
+            content,
+            CancellationId::from_uuid(request_id),
+        )?)
+    }
+
     /// Returns the newest durable provider usage or post-compaction estimate.
     ///
     /// # Errors
@@ -151,6 +183,22 @@ impl AgentSession {
     /// Returns a kernel journal or persisted-payload failure.
     pub fn latest_context_tokens(&self) -> Result<Option<u64>, LocalHostError> {
         Ok(self.kernel.latest_context_tokens()?)
+    }
+
+    fn cancelled_outcome(
+        &self,
+        request_id: Uuid,
+        command: &SessionCommand,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<LocalTurnOutcome>, LocalHostError> {
+        if !cancellation.is_cancelled() {
+            return Ok(None);
+        }
+        Ok(self.kernel.cancel_before_execution(
+            CommandId::from_uuid(request_id),
+            command.content(),
+            CancellationId::from_uuid(request_id),
+        )?)
     }
 
     async fn execute(
@@ -163,12 +211,15 @@ impl AgentSession {
         let (guard, cancellation, model, reasoning) =
             self.begin_prompt(request_id, cancellation)?;
         let command_id = CommandId::from_uuid(request_id);
+        if let Some(outcome) = self.cancelled_outcome(request_id, &command, &cancellation)? {
+            return Ok(outcome);
+        }
         let compact_trace = [ContentBlock::text("/compact")];
         let trace_content = match &command {
             SessionCommand::Prompt { content, .. } => content.as_slice(),
             SessionCommand::Compact => compact_trace.as_slice(),
         };
-        let trace = self
+        let trace = match self
             .trace
             .start_run(
                 command_id,
@@ -177,12 +228,23 @@ impl AgentSession {
                 model.id(),
                 reasoning.as_str(),
             )
-            .await?;
+            .await
+        {
+            Ok(trace) => trace,
+            Err(error) => {
+                if let Some(outcome) =
+                    self.cancelled_outcome(request_id, &command, &cancellation)?
+                {
+                    return Ok(outcome);
+                }
+                return Err(error.into());
+            }
+        };
         let observed: Arc<dyn AgentEventSink> =
             Arc::new(ObservedEventSink::new(Arc::clone(&trace), events));
         let result = self
             .execute_traced_turn(TracedTurn {
-                command_id,
+                request_id,
                 command,
                 cancellation,
                 model,
@@ -201,7 +263,7 @@ impl AgentSession {
         turn: TracedTurn<'_>,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
         let TracedTurn {
-            command_id,
+            request_id,
             command,
             cancellation,
             model,
@@ -209,7 +271,8 @@ impl AgentSession {
             events,
             trace,
         } = turn;
-        trace
+        let command_id = CommandId::from_uuid(request_id);
+        let started = trace
             .record_host(
                 "turn_started",
                 Some("running"),
@@ -221,7 +284,12 @@ impl AgentSession {
                     "reasoning": reasoning.as_str()
                 }),
             )
-            .await?;
+            .await;
+        if let Err(error) = started {
+            return self
+                .cancelled_outcome(request_id, &command, &cancellation)?
+                .ok_or_else(|| error.into());
+        }
         let replay = match &command {
             SessionCommand::Prompt { content, .. } => {
                 self.kernel.replay_settled_turn(command_id, content)?
@@ -238,21 +306,39 @@ impl AgentSession {
                 .await?;
             return Ok(outcome);
         }
-        let workspace = LocalWorkspace::open(&self.workspace)?;
-        let profile = self.profile()?.clone();
-        let runtime = resolve_runtime(
-            &self.host,
-            RuntimeRequest {
-                profile: &profile,
-                session_id: renoa_kernel::SessionId::from_uuid(self.id),
-                command_id: Some(command_id),
-                model: &model,
-                reasoning,
-                workspace: &workspace,
-                events: Some(events),
-            },
-        )
-        .await?;
+        if let Some(outcome) = self.cancelled_outcome(request_id, &command, &cancellation)? {
+            return Ok(outcome);
+        }
+        let resolved = async {
+            let workspace = LocalWorkspace::open(&self.workspace)?;
+            let profile = self.profile()?.clone();
+            resolve_runtime(
+                &self.host,
+                RuntimeRequest {
+                    profile: &profile,
+                    session_id: renoa_kernel::SessionId::from_uuid(self.id),
+                    command_id: Some(command_id),
+                    model: &model,
+                    reasoning,
+                    workspace: &workspace,
+                    events: Some(events),
+                },
+            )
+            .await
+        }
+        .await;
+        let runtime = match resolved {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                if let Some(outcome) =
+                    self.cancelled_outcome(request_id, &command, &cancellation)?
+                {
+                    return Ok(outcome);
+                }
+                return Err(error);
+            }
+        };
+        let profile = self.profile()?;
         match command {
             SessionCommand::Prompt {
                 content,

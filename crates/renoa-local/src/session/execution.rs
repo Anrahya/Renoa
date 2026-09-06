@@ -70,6 +70,40 @@ impl LocalSession {
             .transpose()
     }
 
+    pub(crate) fn cancel_before_execution(
+        &self,
+        command_id: CommandId,
+        content: Option<&[ContentBlock]>,
+        cancellation_id: CancellationId,
+    ) -> Result<Option<LocalTurnOutcome>, LocalSessionError> {
+        let snapshot = self.kernel.inspect(self.session_id)?;
+        let Some(operation) = snapshot
+            .operations
+            .iter()
+            .find(|operation| operation.command_id == command_id)
+        else {
+            // No kernel terminal fact is invented. The admitting surface keeps
+            // its cancellation and result durably so this request cannot restart.
+            return Ok(Some(LocalTurnOutcome::Cancelled));
+        };
+        if decode_command(operation)?.prompt_content() != content {
+            return Err(command_conflict(operation));
+        }
+        if let Some(outcome) = operation.outcome.clone() {
+            return self
+                .project_outcome(operation.operation_id, outcome)
+                .map(Some);
+        }
+        self.kernel.request_cancellation(
+            self.session_id,
+            operation.operation_id,
+            cancellation_id,
+        )?;
+        // Only the bound runtime may close an unfinished operation and its
+        // effect facts. Persist the intent even if that runtime is unavailable.
+        Ok(None)
+    }
+
     /// Admits and drives one caller-identified prompt to a Host boundary.
     ///
     /// # Errors

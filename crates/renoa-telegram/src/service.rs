@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use renoa_agent::{AgentEventSink, ContentBlock};
-use renoa_local::{AgentProfileId, AgentSession, LocalHost, LocalTurnOutcome, TurnObservation};
+use renoa_local::{AgentProfileId, AgentSession, LocalHost, LocalTurnOutcome};
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -10,13 +9,13 @@ use crate::{
     Config, TelegramServiceError,
     api::{ApiError, TelegramApi},
     delivery::{self, DeliveryProgress},
-    events::SurfaceEvents,
     ingress::{self, Topic},
     log,
     store::{ImmediateAction, PendingAction, SurfaceStore, WorkItem, WorkKind},
 };
 
 mod commands;
+mod execution;
 
 /// Runs the supervised Arcee Telegram surface until shutdown or a required task fails.
 ///
@@ -283,90 +282,6 @@ impl Worker {
             &serde_json::json!({"update_id": item.update_id, "request_id": item.request_id}),
         );
         Ok(())
-    }
-
-    async fn run_agent(
-        &mut self,
-        item: &WorkItem,
-        prompt: Option<&str>,
-    ) -> Result<String, TelegramServiceError> {
-        let session = match self.session(item.session_id).await {
-            Ok(session) => session,
-            Err(error) => return Ok(surface_error(&error)),
-        };
-        let cancellation = CancellationToken::new();
-        self.active
-            .set(item.topic, item.draft_id, cancellation.clone())
-            .await;
-        if self.store.cancellation_requested(item.update_id).await? {
-            cancellation.cancel();
-        }
-        #[cfg(test)]
-        if let Some((started, release)) = self.before_execution.take() {
-            started.send(()).expect("startup boundary receiver");
-            release.await.expect("release startup boundary");
-        }
-        let draft_shutdown = CancellationToken::new();
-        let events = Arc::new(SurfaceEvents::for_turn(
-            Arc::clone(&self.api),
-            self.store.clone(),
-            item.update_id,
-            item.topic,
-            item.request_id,
-            draft_shutdown.clone(),
-        ));
-        let draft_task = events.start_drafts(
-            Arc::clone(&self.api),
-            item.topic,
-            item.draft_id,
-            draft_shutdown.clone(),
-        );
-        let sink: Arc<dyn AgentEventSink> = events;
-        let outcome = match prompt {
-            Some(text) => {
-                let observation = TurnObservation::from_unix_milliseconds(item.observed_at_ms)
-                    .map_err(renoa_local::LocalHostError::from)?;
-                session
-                    .execute_turn_observed_with_cancellation(
-                        item.request_id,
-                        vec![ContentBlock::text(text)],
-                        observation,
-                        sink,
-                        cancellation,
-                    )
-                    .await
-            }
-            None => {
-                session
-                    .execute_compaction_with_cancellation(item.request_id, sink, cancellation)
-                    .await
-            }
-        };
-        self.active.clear(item.draft_id).await;
-        draft_shutdown.cancel();
-        if let Err(error) = draft_task.await {
-            log::event(
-                "error",
-                "draft_task_failed",
-                &serde_json::json!({"draft_id": item.draft_id, "error": error.to_string()}),
-            );
-        }
-        Ok(outcome.map_or_else(|error| surface_error(&error), format_outcome))
-    }
-
-    async fn session(
-        &mut self,
-        session_id: Uuid,
-    ) -> Result<Arc<AgentSession>, renoa_local::LocalHostError> {
-        if let Some(session) = self.sessions.get(&session_id) {
-            return Ok(Arc::clone(session));
-        }
-        let session = self
-            .host
-            .ensure_session(&self.profile_id, &self.workspace, session_id)
-            .await?;
-        self.sessions.insert(session_id, Arc::clone(&session));
-        Ok(session)
     }
 }
 

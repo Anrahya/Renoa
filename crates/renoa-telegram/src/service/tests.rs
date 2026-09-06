@@ -340,3 +340,5 @@ process.stdout.write(JSON.stringify({
 "#;
 
 mod cancellation;
+
+mod cancelled_replay;
