@@ -157,28 +157,8 @@ fn require_private_token_file_in(
     metadata: &std::fs::Metadata,
     credentials_directory: Option<&std::path::Path>,
 ) -> Result<(), TelegramServiceError> {
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let mode = metadata.permissions().mode() & 0o777;
-    if mode.trailing_zeros() >= 6 {
+    if renoa_local::credential_file_is_private(path, metadata, credentials_directory) {
         Ok(())
-    } else if mode == 0o440 {
-        let Some(directory) =
-            credentials_directory.filter(|directory| path.parent() == Some(*directory))
-        else {
-            return Err(private_token_error());
-        };
-        let directory_metadata = std::fs::symlink_metadata(directory)?;
-        let directory_mode = directory_metadata.permissions().mode() & 0o777;
-        if directory_metadata.file_type().is_dir()
-            && !directory_metadata.file_type().is_symlink()
-            && directory_mode == 0o550
-            && directory_metadata.uid() == metadata.uid()
-            && directory_metadata.gid() == metadata.gid()
-        {
-            return Ok(());
-        }
-        Err(private_token_error())
     } else {
         Err(private_token_error())
     }

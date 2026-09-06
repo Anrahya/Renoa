@@ -152,14 +152,11 @@ pub(crate) fn read_token(path: &Path, prefix: &str) -> Result<String, SlackError
             "token must be a small regular file".to_owned(),
         ));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(SlackError::Invalid(
-                "token files must be private (chmod 600)".to_owned(),
-            ));
-        }
+    let credentials_directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
+    if !renoa_local::credential_file_is_private(path, &metadata, credentials_directory.as_deref()) {
+        return Err(SlackError::Invalid(
+            "token files must be private (chmod 600) or supplied by the service credential directory".to_owned(),
+        ));
     }
     let token = std::fs::read_to_string(path)?
         .trim_end_matches(['\r', '\n'])
