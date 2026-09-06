@@ -4,6 +4,23 @@ use serde_json::{Value, json};
 #[tokio::test]
 async fn websocket_ack_follows_commit_and_redelivery_keeps_the_same_request() {
     let directory = tempfile::tempdir().expect("surface directory");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth = directory.path().join("auth.sqlite");
+    std::fs::write(&bridge, "").expect("unused model boundary");
+    std::fs::write(&auth, "").expect("unused auth boundary");
+    let host = renoa_local::LocalHost::new(
+        directory.path(),
+        renoa_local::LocalModelConfiguration::new(
+            bridge,
+            vec![renoa_local::ModelProvider::OpenCodeGo],
+            renoa_local::ModelProvider::OpenCodeGo,
+            "fixture",
+            auth,
+        ),
+        vec![renoa_local::AgentProfile::new("fixture", "Test ingress.").expect("profile")],
+        renoa_local::LocalHostAdapters::default(),
+    )
+    .expect("Host");
     let store = Store::open(
         directory.path(),
         &crate::store::Binding {
@@ -67,6 +84,7 @@ async fn websocket_ack_follows_commit_and_redelivery_keeps_the_same_request() {
         .await
         .expect("client handshake");
     let receiver = Receiver {
+        host,
         api: Arc::new(
             SlackApi::new("xoxb-test".to_owned(), "xapp-test".to_owned()).expect("client"),
         ),

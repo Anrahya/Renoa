@@ -311,7 +311,7 @@ impl AgentSession {
         }
         let resolved = async {
             let workspace = LocalWorkspace::open(&self.workspace)?;
-            let profile = self.profile()?.clone();
+            let profile = self.profile().await?;
             resolve_runtime(
                 &self.host,
                 RuntimeRequest {
@@ -338,7 +338,7 @@ impl AgentSession {
                 return Err(error);
             }
         };
-        let profile = self.profile()?;
+        let profile = self.profile().await?;
         match command {
             SessionCommand::Prompt {
                 content,

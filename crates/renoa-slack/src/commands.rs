@@ -10,6 +10,8 @@ pub(crate) enum Command {
     Reasoning(Option<String>),
     Compact,
     Help,
+    Agent(Option<String>),
+    Notice(String),
 }
 
 impl Command {
@@ -26,6 +28,7 @@ impl Command {
             ("!status", None) => Self::Status,
             ("!compact", None) => Self::Compact,
             ("!help" | "", None) => Self::Help,
+            ("!agent", value) => Self::Agent(value),
             ("!model", value) => Self::Model(value),
             ("!reasoning", value) => Self::Reasoning(value),
             _ => Self::Prompt(text.to_owned()),

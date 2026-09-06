@@ -36,6 +36,7 @@ pub struct LocalRuntimeConfig {
     reasoning: Option<ReasoningLevel>,
     skill_context: Option<SkillRuntimeContext>,
     automatic_compaction: Option<AutomaticCompactionPolicy>,
+    selected_tools: Option<std::collections::BTreeSet<String>>,
     session_id: Option<renoa_kernel::SessionId>,
 }
 
@@ -63,6 +64,7 @@ impl LocalRuntimeConfig {
             reasoning: None,
             skill_context: None,
             automatic_compaction: profile.automatic_compaction(),
+            selected_tools: profile.selected_tools.clone(),
             session_id: None,
         })
     }
@@ -201,7 +203,7 @@ async fn build_local_runtime_inner(
     );
     let config = AgentLoopConfig::new(resolved.instructions, MODEL_ROUND_LIMIT, TOOL_CALL_LIMIT);
     let model = ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay);
-    let mut tools = workspace.kernel_tool_bindings();
+    let mut tools = workspace.selected_kernel_tool_bindings(resolved.selected_tools.as_ref());
     tools.extend(extension_tools);
     match events {
         Some(events) => build_observed_agent_runtime(config, context, model, tools, events),
@@ -217,6 +219,7 @@ struct ResolvedModel {
     model: Arc<BridgeModel>,
     skill_context: Option<SkillRuntimeContext>,
     automatic_compaction: Option<AutomaticCompactionPolicy>,
+    selected_tools: Option<std::collections::BTreeSet<String>>,
 }
 
 async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, ModelBridgeError> {
@@ -245,6 +248,7 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
         model,
         skill_context: config.skill_context,
         automatic_compaction: config.automatic_compaction,
+        selected_tools: config.selected_tools,
     })
 }
 

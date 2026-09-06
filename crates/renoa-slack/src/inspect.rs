@@ -13,7 +13,7 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version != 1 {
+    if !matches!(version, 1 | 2) {
         return Err(SlackError::Invalid(format!(
             "unsupported Slack schema {version}"
         )));

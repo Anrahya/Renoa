@@ -62,7 +62,7 @@ Grok 4.6 advertises `low`, `medium`, `high`, and `xhigh` only. Those values are
 sent as Chat Completions `reasoning_effort`. The adapter does not advertise
 `off` or `minimal`.
 
-## Retry
+## Prompt caching
 
 The Host passes its durable Session UUID to the process adapter as
 `RENOA_MODEL_SESSION_ID`, outside model messages and runtime compatibility
@@ -74,6 +74,8 @@ not inherited from the launcher. Time observations remain append-only user-turn
 context, never a changing system-prompt prefix. Cache hits still depend on the
 provider, matching prompt prefixes, and retention; these routing hints do not
 guarantee a hit or request extended paid retention.
+
+## Retry
 
 Retry connection establishment, 408, 429, and 5xx except 501. Never retry
 ordinary 4xx. Allow one OAuth refresh-and-retry after a genuine expired-token

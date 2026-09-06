@@ -7,6 +7,7 @@ use std::{
 use thiserror::Error;
 
 pub(crate) mod agents;
+pub(crate) mod bots;
 pub(crate) mod catalog;
 mod extensions;
 pub(crate) mod history;
@@ -39,6 +40,7 @@ use profiles::collect_profiles;
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 
 /// Process-local configuration used to assemble Renoa Agent sessions.
+#[derive(Clone)]
 pub struct LocalHost {
     config: Arc<HostConfig>,
 }
@@ -196,6 +198,8 @@ pub enum LocalHostError {
     AgentConflict(renoa_kernel::AgentId),
     #[error("agent {0} is not registered with this Host")]
     AgentNotFound(renoa_kernel::AgentId),
+    #[error("bot creation cancelled before commit")]
+    BotCreationCancelled,
     #[error("local Host trace failed: {0}")]
     Trace(String),
     #[error("session creation failed: {source}; staging cleanup also failed: {cleanup}")]
@@ -352,17 +356,37 @@ impl LocalHost {
         })
     }
 
-    /// Returns every profile currently available to new Agent instances.
-    #[must_use]
-    pub fn profile_ids(&self) -> Vec<AgentProfileId> {
-        self.config.profiles.keys().cloned().collect()
+    /// Returns built-in and persisted profiles available to new agents.
+    ///
+    /// # Errors
+    /// Returns catalog storage or invalid profile identity errors.
+    pub async fn profile_ids(&self) -> Result<Vec<AgentProfileId>, LocalHostError> {
+        let database = self.config.database.clone();
+        let mut ids = self
+            .config
+            .profiles
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        tokio::task::spawn_blocking(move || {
+            let connection = catalog::open_verified(&database)?;
+            let mut statement = connection
+                .prepare("SELECT profile_id FROM host_bots")
+                .map_err(catalog::HostCatalogError::from)?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(catalog::HostCatalogError::from)?;
+            for id in rows {
+                ids.insert(AgentProfileId::new(
+                    id.map_err(catalog::HostCatalogError::from)?,
+                )?);
+            }
+            Ok(ids.into_iter().collect())
+        })
+        .await?
     }
 
-    fn profile(&self, profile_id: &AgentProfileId) -> Result<&AgentProfile, LocalHostError> {
-        self.config.profiles.get(profile_id).ok_or_else(|| {
-            LocalHostError::InvalidRequest(format!(
-                "agent profile `{profile_id}` is not registered with this Host"
-            ))
-        })
+    async fn profile(&self, profile_id: &AgentProfileId) -> Result<AgentProfile, LocalHostError> {
+        bots::resolve_profile(&self.config, profile_id).await
     }
 }

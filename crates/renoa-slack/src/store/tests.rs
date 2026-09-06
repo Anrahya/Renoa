@@ -231,3 +231,50 @@ async fn uncertain_middle_chunk_blocks_the_remaining_suffix_across_restart() {
         .expect("retained suffix");
     assert_eq!(state, "pending");
 }
+
+#[tokio::test]
+async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity() {
+    let directory = tempfile::tempdir().expect("directory");
+    let store = Store::open(directory.path(), &binding(directory.path())).expect("store");
+    store
+        .admit(incoming("Ev1", "1.000001", "hello"), 1)
+        .await
+        .expect("admit");
+    let original = store.next_work().await.expect("queue").expect("work");
+    drop(store);
+    let database = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
+    database
+        .execute_batch("ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
+        .expect("legacy schema");
+    drop(database);
+    let store = Store::open(directory.path(), &binding(directory.path())).expect("migrated store");
+    let restored = store
+        .next_work()
+        .await
+        .expect("queue")
+        .expect("restored work");
+    assert_eq!(restored.session_id, original.session_id);
+    assert_eq!(restored.request_id, original.request_id);
+    assert_eq!(
+        store
+            .session_agent(restored.session_id)
+            .await
+            .expect("legacy target"),
+        Uuid::nil()
+    );
+    store
+        .admit_with_agent(
+            incoming("Ev2", "2.000001", "!agent bot"),
+            2,
+            AgentSelection::Selected(Uuid::new_v4()),
+        )
+        .await
+        .expect("select");
+    assert_eq!(
+        store
+            .session_agent(original.session_id)
+            .await
+            .expect("old target"),
+        Uuid::nil()
+    );
+}

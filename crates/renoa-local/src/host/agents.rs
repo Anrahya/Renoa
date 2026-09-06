@@ -49,7 +49,7 @@ impl LocalHost {
     /// # Errors
     /// Returns invalid profile/name, identity conflict, missing creator, or storage errors.
     pub async fn ensure_agent(&self, record: AgentRecord) -> Result<AgentRecord, LocalHostError> {
-        self.profile(&record.profile)?;
+        self.profile(&record.profile).await?;
         validate(&record)?;
         let database = self.config.database.clone();
         let sessions = self.config.sessions.clone();

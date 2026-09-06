@@ -16,12 +16,14 @@ if (action === "catalog") {
   }}));
 } else if (action === "stream") {
   const request = JSON.parse(input);
-  if (!request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) process.exit(3);
-  if (!request.tools.some(tool => tool.name === "profile_update")) process.exit(4);
+  const specialist = request.system_prompt === "News specialist.";
+  if (!specialist && !request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) process.exit(3);
+  if (!specialist && !request.tools.some(tool => tool.name === "profile_update")) process.exit(4);
+  if (specialist && request.tools.some(tool => ["bash","write_file","edit_file"].includes(tool.name))) process.exit(6);
   if (!request.messages.at(-1).content.some(part => part.text?.includes("<turn_context>"))) process.exit(5);
   appendFileSync(new URL("./model-calls",import.meta.url),"called\n");
   process.stdout.write(JSON.stringify({event:"completed",response:{
-    content:[{type:"text",text:"Arcee executed this Slack request."}],stop_reason:"stop",
+    content:[{type:"text",text:specialist ? "News executed this Slack request." : "Arcee executed this Slack request."}],stop_reason:"stop",
     usage:{input:8,output:4,cache_read:0,cache_write:0},
     metadata:{api:"test",provider:process.env.RENOA_MODEL_PROVIDER,model:"fixture"}
   }})+"\n");

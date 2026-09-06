@@ -20,6 +20,7 @@ use crate::{
     worker::Worker,
 };
 
+mod agents;
 mod execution;
 mod ingress;
 mod transport;
@@ -103,6 +104,7 @@ impl Fixture {
         let wake = Arc::new(Notify::new());
         let shutdown = CancellationToken::new();
         let receiver = Receiver {
+            host: host.clone(),
             api: Arc::clone(&api),
             store: store.clone(),
             active: Arc::clone(&active),

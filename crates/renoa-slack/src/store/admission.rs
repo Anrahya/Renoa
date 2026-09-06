@@ -5,10 +5,21 @@ use super::{Admission, Store, uuid};
 use crate::{SlackError, commands::Command, ingress::Incoming};
 
 impl Store {
+    #[cfg(test)]
     pub(crate) async fn admit(
         &self,
         input: Incoming,
         observed_at_ms: i64,
+    ) -> Result<Admission, SlackError> {
+        self.admit_with_agent(input, observed_at_ms, super::AgentSelection::Unchanged)
+            .await
+    }
+
+    pub(crate) async fn admit_with_agent(
+        &self,
+        input: Incoming,
+        observed_at_ms: i64,
+        selection: super::AgentSelection,
     ) -> Result<Admission, SlackError> {
         self.run(move |connection| {
             let transaction = connection.transaction()?;
@@ -40,12 +51,20 @@ impl Store {
                 transaction.commit()?;
                 return Ok(Admission { queued: false, cancel_target: None });
             }
-            let command = Command::parse(&input.text);
+            let (command, selected) = match selection {
+                super::AgentSelection::Unchanged => (Command::parse(&input.text), None),
+                super::AgentSelection::Selected(id) => (Command::Agent(Some(id.to_string())), Some(id.to_string())),
+                super::AgentSelection::Rejected(reason) => (Command::Notice(reason), None),
+            };
+            let inherited: Option<String> = if let Some(current) = &current {
+                transaction.query_row("SELECT agent_id FROM sessions WHERE session_id=?1", [current], |row| row.get(0))?
+            } else { None };
+            let selected_agent = selected.clone().or(inherited);
             let session_id = match current {
-                Some(id) if !matches!(command, Command::New) => id,
+                Some(id) if !matches!(command, Command::New) && selected.is_none() => id,
                 _ => {
                     let id = Uuid::new_v4().to_string();
-                    transaction.execute("INSERT INTO sessions VALUES (?1, ?2, ?3)", params![id, input.topic.channel, input.topic.thread])?;
+                    transaction.execute("INSERT INTO sessions(session_id,channel,thread,agent_id) VALUES (?1, ?2, ?3, ?4)", params![id, input.topic.channel, input.topic.thread, selected_agent])?;
                     transaction.execute("INSERT INTO conversations VALUES (?1, ?2, ?3) ON CONFLICT(channel,thread) DO UPDATE SET session_id=excluded.session_id", params![input.topic.channel, input.topic.thread, id])?;
                     id
                 }

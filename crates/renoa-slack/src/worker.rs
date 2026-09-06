@@ -79,9 +79,18 @@ impl Worker {
             return Ok(result);
         }
         match &work.command {
+            Command::Notice(text) => return Ok(text.clone()),
+            Command::Agent(Some(_)) => return Ok("Started a fresh conversation with the selected agent. Send its task here. Use !agent arcee to return to Arcee.".to_owned()),
+            Command::Agent(None) => {
+                let page=self.host.list_bots(None).await?;
+                let output="Use !agent <id> to start a specialist conversation here, or !agent arcee to return to Arcee. Start a separate Slack thread to keep another conversation open.\n\n".to_owned();
+                let names=page.bots.iter().map(|bot| format!("{} — {}",bot.name,bot.id)).collect::<Vec<_>>().join("\n");
+                let more=if page.next_cursor.is_some() {"\nMore bots exist; ask Arcee to list the next page with bot_manage."} else {""};
+                return Ok(format!("{output}{names}{more}"));
+            }
             Command::Cancel => return Ok(if work.cancel_target.is_some() {"Stop requested."} else {"There is no pending turn to stop in this conversation."}.to_owned()),
             Command::New => return Ok("Started a fresh conversation here.".to_owned()),
-            Command::Help => return Ok("Send a task here, or use !new, !status, !model [id], !reasoning [level], !compact, or !cancel. In channels, mention Arcee to start a thread and continue inside that thread.".to_owned()),
+            Command::Help => return Ok("Send a task here, or use !agent, !new, !status, !model [id], !reasoning [level], !compact, or !cancel. In channels, mention Arcee to start a thread and continue inside that thread.".to_owned()),
             _ => {},
         }
         let session = match self.session(work.session_id).await {
@@ -154,9 +163,15 @@ impl Worker {
         // One operator worker owns at most one live kernel. Durable sessions
         // outlive this bounded cache and reopen on conversation switches.
         self.session = None;
+        let agent_id = AgentId::from_uuid(self.store.session_agent(id).await?);
+        let workspace = if agent_id == self.agent_id {
+            self.workspace.clone()
+        } else {
+            self.host.bot_workspace(agent_id).await?
+        };
         let session = self
             .host
-            .ensure_agent_session(self.agent_id, &self.workspace, id)
+            .ensure_agent_session(agent_id, &workspace, id)
             .await?;
         self.session = Some(Arc::clone(&session));
         Ok(session)
@@ -172,12 +187,21 @@ impl Worker {
         {
             session.cancel_before_execution(work.request_id, content.as_deref())?
         } else {
-            let profile = renoa_local::AgentProfileId::new(renoa_local::ARCEE_PROFILE_ID)
-                .map_err(renoa_local::LocalHostError::from)?;
+            let agent_id = AgentId::from_uuid(self.store.session_agent(work.session_id).await?);
+            let agent = self
+                .host
+                .agent(agent_id)
+                .await?
+                .ok_or(renoa_local::LocalHostError::AgentNotFound(agent_id))?;
+            let workspace = if agent_id == self.agent_id {
+                self.workspace.clone()
+            } else {
+                self.host.bot_workspace(agent_id).await?
+            };
             self.host
                 .cancel_before_execution(
-                    &profile,
-                    &self.workspace,
+                    &agent.profile,
+                    &workspace,
                     work.session_id,
                     work.request_id,
                     content.as_deref(),

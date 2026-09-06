@@ -67,8 +67,18 @@ impl LocalWorkspace {
     /// Creates the concrete local tool bindings for the kernel agent loop.
     #[must_use]
     pub fn kernel_tool_bindings(&self) -> Vec<AgentToolBinding> {
+        self.selected_kernel_tool_bindings(None)
+    }
+
+    pub(crate) fn selected_kernel_tool_bindings(
+        &self,
+        selected: Option<&std::collections::BTreeSet<String>>,
+    ) -> Vec<AgentToolBinding> {
         self.tools()
             .into_iter()
+            .filter(|binding| {
+                selected.is_none_or(|names| names.contains(&binding.tool.spec().name))
+            })
             .map(|binding| {
                 AgentToolBinding::new(
                     binding.id,

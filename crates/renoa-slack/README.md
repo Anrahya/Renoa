@@ -12,11 +12,15 @@ other users, and unbound channel discussions are ignored. Send Arcee a DM for a
 continuing conversation. In a channel where Arcee has been invited, mention her
 to start a thread, then continue in that thread without another mention. Each
 channel thread has an isolated session; replies threaded inside a DM retain the
-DM session. All belong to the configured durable Agent.
+DM session. Conversations initially belong to the configured Arcee Agent and
+can select a persisted specialist.
 
 Commands are ordinary messages (not Slack slash commands):
 
-- `!new`: start a fresh session in this conversation.
+- `!agent`: list the first 20 specialists and their IDs; Arcee can page through more.
+- `!agent <id>`: select a specialist in a fresh session in this conversation.
+- `!agent arcee`: return to Arcee in a fresh session.
+- `!new`: start a fresh session for the currently selected agent.
 - `!status`: inspect session, model, and context usage.
 - `!model [id]`: list models or select one.
 - `!reasoning [level]`: list levels or change reasoning.
@@ -26,9 +30,12 @@ Commands are ordinary messages (not Slack slash commands):
 
 Arcee uses the existing personal-operator recipe and full access through its
 configured tools and workspace. One worker serializes requests across this
-surface and holds at most one live session handle. This slice does not create
-specialist recipes, schedules, additional channel bindings, or cross-machine
-execution migration. It uses normal Slack messaging and does not require Slack
+surface and holds at most one live session handle. Arcee's `bot_manage` tool
+creates persistent specialists with their own instructions, selected tools,
+and existing Host connections. A specialist uses a working directory at
+`<Host data>/bot-workspaces/<agent-id>`. The recipe is immutable in this slice;
+schedules, automatic channel creation, and cross-machine execution migration
+remain future work. It uses normal Slack messaging and does not require Slack
 AI or paid workflow features.
 
 ## Setup
@@ -116,7 +123,12 @@ and channel/message timestamps deduplicate retries and overlapping Slack event
 subscriptions. Conflicting content under an existing identity is rejected.
 Ignored unbound messages also retain their disposition, so a later thread
 binding cannot turn a retry into a new request. Cancellation intent commits before signalling an active worker. `!new` rotates
-only the binding used by later admissions.
+only the binding used by later admissions. `!agent <id>` also starts a fresh
+session, persisting its target Agent in the same admission transaction. Earlier
+queued work retains its original target. Unknown IDs leave the current binding
+unchanged. Slack schema 2 adds per-session Agent bindings; migrated schema 1
+sessions continue to resolve to the configured operator. Use a separate channel
+thread to retain another independently addressable conversation.
 
 A restart requeues interrupted execution with its original session/request IDs
 and original observation time. The real kernel replays completed outcomes and

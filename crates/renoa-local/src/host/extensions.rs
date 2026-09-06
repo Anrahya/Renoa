@@ -69,7 +69,7 @@ impl LocalHost {
         connection_id: &str,
         credential: PluginCredential,
     ) -> Result<McpCatalogSnapshot, LocalHostError> {
-        self.profile(profile_id)?;
+        self.profile(profile_id).await?;
         Ok(self
             .config
             .plugins

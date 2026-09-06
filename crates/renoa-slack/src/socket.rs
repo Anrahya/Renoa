@@ -19,6 +19,7 @@ use crate::{
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 pub(crate) struct Receiver {
+    pub(crate) host: renoa_local::LocalHost,
     pub(crate) api: Arc<SlackApi>,
     pub(crate) store: Store,
     pub(crate) active: Arc<Active>,
@@ -130,7 +131,11 @@ impl Receiver {
                 .payload
                 .ok_or_else(|| SlackError::Invalid("missing Slack event payload".to_owned()))?;
             if let Some(input) = ingress::parse(payload, &self.team, &self.user, &self.bot)? {
-                let admission = self.store.admit(input, now_ms()?).await?;
+                let selection = self.select_agent(&input.text).await?;
+                let admission = self
+                    .store
+                    .admit_with_agent(input, now_ms()?, selection)
+                    .await?;
                 if let Some(target) = admission.cancel_target {
                     self.active.cancel(target).await;
                 }
