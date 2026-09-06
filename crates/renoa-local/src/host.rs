@@ -6,6 +6,7 @@ use std::{
 
 use thiserror::Error;
 
+pub(crate) mod agents;
 pub(crate) mod catalog;
 mod extensions;
 pub(crate) mod history;
@@ -84,6 +85,7 @@ impl<'a> LocalHostAdapters<'a> {
 }
 
 pub(crate) struct HostConfig {
+    pub(crate) database: PathBuf,
     pub(crate) sessions: PathBuf,
     pub(crate) bridge: PathBuf,
     pub(crate) providers: Vec<ModelProvider>,
@@ -188,6 +190,10 @@ pub enum LocalHostError {
     Background(#[from] tokio::task::JoinError),
     #[error("local Host session state lock was poisoned")]
     StatePoisoned,
+    #[error("agent {0} is already bound to different creation fields")]
+    AgentConflict(renoa_kernel::AgentId),
+    #[error("agent {0} is not registered with this Host")]
+    AgentNotFound(renoa_kernel::AgentId),
     #[error("local Host trace failed: {0}")]
     Trace(String),
     #[error("session creation failed: {source}; staging cleanup also failed: {cleanup}")]
@@ -326,6 +332,7 @@ impl LocalHost {
         .with_shared_registry(shared_plugin_registry);
         Ok(Self {
             config: Arc::new(HostConfig {
+                database: host_database,
                 sessions,
                 bridge,
                 providers,

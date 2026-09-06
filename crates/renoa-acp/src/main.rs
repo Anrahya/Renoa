@@ -15,6 +15,13 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn Error>> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     match arguments.as_slice() {
+        [command, rest @ ..] if command == "agents" => {
+            let result = renoa_acp::manage_agents(rest).await?;
+            let mut stdout = io::stdout().lock();
+            serde_json::to_writer(&mut stdout, &result)?;
+            stdout.write_all(b"\n")?;
+            Ok(())
+        }
         [argument] if argument == "--version" => {
             println!("renoa-agent {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -50,7 +57,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         _ => Err(io::Error::other(
-            "usage: renoa-agent <acp|models --json|mcp github install --account ACCOUNT|plugins sync|--version>",
+            "usage: renoa-agent <acp|agents ...|models --json|mcp github install --account ACCOUNT|plugins sync|--version>",
         )
         .into()),
     }

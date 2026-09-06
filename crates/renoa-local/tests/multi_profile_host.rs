@@ -229,3 +229,6 @@ process.stdout.write(JSON.stringify({
 
 #[path = "multi_profile_host/cancellation.rs"]
 mod cancellation;
+
+#[path = "multi_profile_host/agents.rs"]
+mod agents;
