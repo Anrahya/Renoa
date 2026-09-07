@@ -42,6 +42,15 @@ schedules and cross-machine execution migration
 remain future work. It uses normal Slack messaging and does not require Slack
 AI or paid workflow features.
 
+Each new prompt carries a concise adapter-owned context block identifying Slack
+and describing automatic specialist-channel provisioning, the distinction from
+Slack MCP, and current limitations. Schema 4 snapshots that block in the same
+admission transaction as the user's request. Execution and cancellation consume
+the stored content; restarted work never picks up a different prompt template.
+Legacy requests retain their original content. This block is appended to the
+user turn, so later turns preserve earlier prompt prefixes. Shared user memory
+is not authoritative for the currently active interface.
+
 ## Private specialist channels
 
 A supervised Slack provisioning task discovers Host specialists at startup,

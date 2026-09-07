@@ -244,7 +244,7 @@ async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity()
     drop(store);
     let database = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
     database
-        .execute_batch("DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
+        .execute_batch("ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
         .expect("legacy schema");
     drop(database);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("migrated store");
@@ -276,5 +276,44 @@ async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity()
             .await
             .expect("old target"),
         Uuid::nil()
+    );
+}
+
+#[tokio::test]
+async fn schema_three_upgrade_preserves_legacy_prompt_content_and_snapshots_new_admissions() {
+    let directory = tempfile::tempdir().expect("directory");
+    let store = Store::open(directory.path(), &binding(directory.path())).expect("store");
+    store
+        .admit(incoming("E1", "1.000001", "legacy prompt"), 1)
+        .await
+        .expect("admit");
+    let original = store.next_work().await.expect("queue").expect("work");
+    drop(store);
+    let db = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
+    db.execute_batch("ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
+        .expect("old schema");
+    drop(db);
+    let store = Store::open(directory.path(), &binding(directory.path())).expect("upgrade");
+    let restored = store.next_work().await.expect("queue").expect("work");
+    assert_eq!(original.request_id, restored.request_id);
+    assert_eq!(
+        restored.prompt_content().expect("legacy content"),
+        vec![renoa_agent::ContentBlock::text("legacy prompt")]
+    );
+    store.mark_running(restored.seq).await.expect("running");
+    store
+        .finish(restored.seq, "done".to_owned())
+        .await
+        .expect("finish");
+    store
+        .admit(incoming("E2", "2.000001", "new prompt"), 2)
+        .await
+        .expect("new admission");
+    let current = store.next_work().await.expect("queue").expect("work");
+    let content = current.prompt_content().expect("content");
+    assert_eq!(content.len(), 2);
+    assert_eq!(
+        current.surface_context.as_deref(),
+        Some(crate::surface_context::CONTEXT)
     );
 }

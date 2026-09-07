@@ -8,12 +8,12 @@ impl Store {
     pub(crate) async fn next_work(&self) -> Result<Option<Work>, SlackError> {
         self.run(|connection| {
             let raw = connection.query_row(
-                "SELECT seq,channel,thread,session_id,request_id,command_json,observed_at_ms,reply_ts,reply_state,cancel_target
+                "SELECT seq,channel,thread,session_id,request_id,command_json,observed_at_ms,reply_ts,reply_state,cancel_target,surface_context
                  FROM requests WHERE state='queued' ORDER BY seq LIMIT 1",
-                [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get::<_, String>(3)?,row.get::<_, String>(4)?,row.get::<_, String>(5)?,row.get(6)?,row.get(7)?,row.get::<_, String>(8)?,row.get::<_, Option<String>>(9)?)),
+                [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get::<_, String>(3)?,row.get::<_, String>(4)?,row.get::<_, String>(5)?,row.get(6)?,row.get(7)?,row.get::<_, String>(8)?,row.get::<_, Option<String>>(9)?,row.get::<_,Option<String>>(10)?)),
             ).optional()?;
-            raw.map(|(seq, channel, thread, session, request, command, observed_at_ms, reply_ts, reply_state, cancel_target)| Ok(Work {
-                seq, topic: Topic {channel, thread}, session_id: uuid(&session)?, request_id: uuid(&request)?,
+            raw.map(|(seq, channel, thread, session, request, command, observed_at_ms, reply_ts, reply_state, cancel_target, surface_context)| Ok(Work {
+                seq, surface_context, topic: Topic {channel, thread}, session_id: uuid(&session)?, request_id: uuid(&request)?,
                 command: serde_json::from_str(&command)?, observed_at_ms, reply_ts, reply_pending: reply_state == "pending",
                 cancel_target: cancel_target.as_deref().map(uuid).transpose()?,
             })).transpose()

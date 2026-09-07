@@ -16,6 +16,7 @@ if (action === "catalog") {
   }}));
 } else if (action === "stream") {
   const request = JSON.parse(input);
+  appendFileSync(new URL("./model-requests",import.meta.url),JSON.stringify(request)+"\n");
   const specialist = request.system_prompt === "News specialist.";
   if (!specialist && !request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) process.exit(3);
   if (!specialist && !request.tools.some(tool => tool.name === "profile_update")) process.exit(4);

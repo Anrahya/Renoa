@@ -1,6 +1,5 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use renoa_agent::ContentBlock;
 use renoa_kernel::AgentId;
 use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome, TurnObservation};
 use tokio::sync::Notify;
@@ -127,21 +126,21 @@ impl Worker {
             (Progress::quiet(), None)
         };
         let outcome = async {
-            match &work.command {
-                Command::Prompt(text) => {
+            match (&work.command, work.prompt_content()) {
+                (Command::Prompt(_), Some(content)) => {
                     let observation = TurnObservation::from_unix_milliseconds(work.observed_at_ms)
                         .map_err(renoa_local::LocalHostError::from)?;
                     session
                         .execute_turn_observed_with_cancellation(
                             work.request_id,
-                            vec![ContentBlock::text(text)],
+                            content,
                             observation,
                             sink,
                             cancellation,
                         )
                         .await
                 }
-                Command::Compact => {
+                (Command::Compact, _) => {
                     session
                         .execute_compaction_with_cancellation(work.request_id, sink, cancellation)
                         .await
@@ -183,10 +182,7 @@ impl Worker {
     }
 
     async fn cancel_before_start(&self, work: &Work) -> Result<Option<String>, SlackError> {
-        let content = match &work.command {
-            Command::Prompt(text) => Some(vec![ContentBlock::text(text)]),
-            _ => None,
-        };
+        let content = work.prompt_content();
         let result = if let Some(session) = &self.session
             && session.id() == work.session_id
         {
