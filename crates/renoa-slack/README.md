@@ -92,6 +92,11 @@ manifest alone does not grant scopes to the installed token.
    Arcee's current recipe requires `opencode-go` at startup. The current Arcee recipe filters its catalog to that provider. Optional settings are `reasoning`,
    `mcp_adapter`, `mcp_registry_adapter`, `shared_plugin_registry`, and
    `oauth_relay: {"origin": "https://renoa.live", "device_credential_file": "/absolute/path"}`.
+   If this Slack app also authorizes the Slack MCP connection, its OAuth &
+   Permissions → Redirect URLs must include the relay callback. The manifest
+   includes `https://renoa.live/v1/oauth/callback`; replace it when using a
+   different relay origin. For an existing app, add the full callback URL and
+   select Save URLs. Updating this file alone does not update the live app.
 5. Build and launch:
 
    ```sh
