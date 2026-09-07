@@ -249,4 +249,8 @@ Specialists support one-time dates, daily schedules, and hourly intervals throug
 `routine_manage`. For example, ask a specialist to run a task once tomorrow at
 2 pm in your timezone. One-time schedules disarm when durably queued; an offline
 Host catches up once after restart. Results use the same delivery path.
+Schema 8 freezes delivered routine excerpts into the next admitted chat prompt,
+with their Host run IDs. Existing delivered results are included too. Completed
+uncancelled turns suppress repeated insertion; `!new` can recover recent results.
+`routine_results` reads complete or older Host outputs without rerunning a task.
 See the Host architecture document for routine timing, management, and launch settings.

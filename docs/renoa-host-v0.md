@@ -844,6 +844,12 @@ a fresh explicit `run_now` may run a disabled task again. Pausing and editing an
 unchanged overdue task are allowed. Re-arming requires a future timestamp and the
 current revision; admitted work is unaffected by subsequent edits.
 
+`routine_results` exposes completed-run summaries and exact run lookup through
+Host APIs. Specialists can inspect their own runs; Arcee can inspect any specialist.
+Listing is bounded to 20 results, newest first, with sequence pagination; exact
+lookup returns the retained task, output, and execution-session identity. This path
+does not execute the routine and remains available from any surface.
+
 Each routine has a stable execution session, separate from interactive chats, with
 the same specialist recipe, workspace, and selected Host connections. Its standing
 request must contain the recurring job's requirements; interactive chat history is
@@ -856,6 +862,16 @@ drains the current turn; an interrupted process recovers through the kernel.
 Unattended credential/OAuth prompts stop the scheduled turn and report that account
 setup must be completed interactively, preventing a hidden consent wait from blocking
 the scheduler.
+
+At Slack chat admission, schema 8 appends up to eight newly relevant delivered chunks (4,000
+characters each) and their run IDs to the durable user-turn context. Selection
+requires the same channel and Agent, and only confirmed sent chunks qualify.
+The snapshot and its result references commit with the request before acknowledgment;
+replay cannot add later outputs or change the admitted input. Completed uncancelled
+turns suppress subsequent duplicate insertion in that session; fresh sessions can
+recover recent results. Cancelled or still-queued turns do not consume this context.
+Earlier system/history prefixes stay unchanged. Full/older outputs remain accessible
+through `routine_results`, including after compaction or when delivery is uncertain.
 
 Slack projects completed Host results into its own durable outbox. Projection and
 cursor advancement commit together, even if a channel is not ready. Delivery resolves

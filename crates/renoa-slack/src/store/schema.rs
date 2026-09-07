@@ -45,7 +45,7 @@ pub(super) fn open(directory: &Path) -> Result<(File, Connection), SlackError> {
     match version {
         0 => connection.execute_batch(SCHEMA)?,
         1 => connection.execute_batch("BEGIN IMMEDIATE; ALTER TABLE sessions ADD COLUMN agent_id TEXT; PRAGMA user_version=2; COMMIT;")?,
-        2..=7 => {}
+        2..=8 => {}
         _ => {
             return Err(SlackError::Invalid(format!(
                 "unsupported Slack schema {version}"
@@ -90,6 +90,11 @@ pub(super) fn open(directory: &Path) -> Result<(File, Connection), SlackError> {
         connection.execute_batch("BEGIN IMMEDIATE;
             CREATE TABLE bot_channel_labels(agent_id TEXT PRIMARY KEY REFERENCES bot_channels(agent_id),base TEXT NOT NULL,desired TEXT NOT NULL UNIQUE,suffix INTEGER NOT NULL CHECK(suffix>=0),applied INTEGER NOT NULL CHECK(applied IN(0,1)),error TEXT) STRICT;
             PRAGMA user_version=7; COMMIT;")?;
+    }
+    if version < 8 {
+        connection.execute_batch("BEGIN IMMEDIATE;
+            CREATE TABLE routine_context_receipts(request_id TEXT NOT NULL REFERENCES requests(request_id),run_id TEXT NOT NULL,chunk INTEGER NOT NULL,PRIMARY KEY(request_id,run_id,chunk),FOREIGN KEY(run_id,chunk) REFERENCES routine_deliveries(run_id,chunk)) STRICT;
+            PRAGMA user_version=8; COMMIT;")?;
     }
     Ok((lease, connection))
 }

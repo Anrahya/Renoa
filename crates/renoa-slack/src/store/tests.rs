@@ -244,7 +244,7 @@ async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity()
     drop(store);
     let database = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
     database
-        .execute_batch("DROP TABLE bot_channel_labels; DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
+        .execute_batch("DROP TABLE routine_context_receipts; DROP TABLE bot_channel_labels; DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
         .expect("legacy schema");
     drop(database);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("migrated store");
@@ -290,7 +290,7 @@ async fn schema_three_upgrade_preserves_legacy_prompt_content_and_snapshots_new_
     let original = store.next_work().await.expect("queue").expect("work");
     drop(store);
     let db = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
-    db.execute_batch("DROP TABLE bot_channel_labels; DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
+    db.execute_batch("DROP TABLE routine_context_receipts; DROP TABLE bot_channel_labels; DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
         .expect("old schema");
     drop(db);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("upgrade");

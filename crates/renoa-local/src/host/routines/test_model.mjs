@@ -27,6 +27,12 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
       const current=JSON.parse(results[1].result.content[0].text).routine;
       invoke("update-routine","routine_manage",{action:"update",id:current.id,expected_revision:current.revision,spec:{...current.spec,schedule:{kind:"interval",hours:24}}});
     } else complete(text("Schedule updated"));
+  } else if(prompt==="read latest routine result") {
+    if(!results.length) invoke("list-results","routine_results",{action:"list"});
+    else if(results.length===1) {
+      const listed=JSON.parse(results[0].result.content[0].text);
+      invoke("read-result","routine_results",{action:"read",id:listed.runs[0].id});
+    } else complete(text(JSON.parse(results[1].result.content[0].text).run.output));
   } else if(prompt==="scheduled digest") {
     if(results.length) complete(text("Digest saved: digest.md"));
     else invoke("write-digest","write_file",{path:"digest.md",content:"# Digest\nSaved by the specialist."});
