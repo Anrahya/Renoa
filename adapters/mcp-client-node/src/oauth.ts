@@ -15,7 +15,7 @@ import type {
 } from "./contract.js";
 import { AdapterProblem, toWireFailure } from "./errors.js";
 import { WIRE_VERSION } from "./limits.js";
-import { discoverOAuth } from "./oauth-discovery.js";
+import { discoverOAuth, discoverOAuthChallenge } from "./oauth-discovery.js";
 import { scopeUpgrade } from "./oauth-scope.js";
 import { RenoaOAuthProvider } from "./oauth-state.js";
 import { canonicalIssuer, sameIssuer } from "./oauth-state-validation.js";
@@ -72,12 +72,17 @@ export async function executeOAuthRequest(
         : authorized(provider, token.accessToken);
     }
     const fetchFn = guardedOAuthFetch(tracker, signal);
+    const challenge =
+      request.action === "oauth_begin" && provider.discoveryState() === undefined
+      ? await discoverOAuthChallenge(request.endpoint, fetchFn)
+      : {};
     const result = request.action === "oauth_exchange"
       ? await exchangeOnce(provider, request, fetchFn)
       : request.action === "oauth_refresh"
         ? await refreshOnce(provider, fetchFn)
         : await auth(provider, {
             serverUrl: request.endpoint,
+            ...challenge,
             ...(providerContext.scope === undefined
               ? {}
               : { scope: providerContext.scope }),

@@ -65,6 +65,8 @@ export function beginRequest(endpoint: string): OAuthBeginRequest {
 }
 
 interface OAuthFixtureOptions {
+  readonly challengeMetadata?: boolean;
+  readonly challengeScope?: string;
   readonly rejectRegistration?: boolean;
   readonly advertiseIssuerResponse?: boolean;
   readonly omitRegistrationEndpoint?: boolean;
@@ -86,6 +88,7 @@ interface OAuthFixtureOptions {
 }
 
 export class OAuthFixture {
+  guessedMetadataRequests = 0;
   registrationRequests = 0;
   tokenRequests = 0;
   refreshRequests = 0;
@@ -140,6 +143,22 @@ export class OAuthFixture {
   ): Promise<void> {
     this.requests += 1;
     const url = new URL(request.url ?? "/", this.origin);
+    if (url.pathname === "/mcp" && this.#options.challengeMetadata === true) {
+      const scope = this.#options.challengeScope;
+      response.setHeader(
+        "www-authenticate",
+        `Bearer resource_metadata="${this.origin}/.well-known/oauth-protected-resource"${scope === undefined ? "" : `, scope="${scope}"`}`,
+      );
+      return json(response, 401, { error: "unauthorized" });
+    }
+    if (
+      url.pathname === "/.well-known/oauth-protected-resource/mcp" &&
+      this.#options.challengeMetadata === true
+    ) {
+      this.guessedMetadataRequests += 1;
+      response.setHeader("location", "https://unneeded-redirect.example/metadata");
+      return json(response, 302, {});
+    }
     if (url.pathname.includes(".well-known/oauth-protected-resource")) {
       if (this.#options.omitResourceMetadata === true) {
         return json(response, 404, { error: "not_found" });
