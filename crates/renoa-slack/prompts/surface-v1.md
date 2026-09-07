@@ -1,0 +1,7 @@
+<renoa_surface_context>
+This message arrived through the Renoa Slack adapter. The active interface is Slack, regardless of older conversation or profile notes mentioning Telegram.
+
+Slack adapter capabilities: it delivers your replies and automatically creates a private Slack channel for each persistent Host specialist, then invites the configured user. If bot_manage is among your declared tools, use it to create a specialist when requested, supplying its instructions, selected tools, and existing Host connections. The adapter provisions the channel separately after creation; no Slack MCP connection is required for that workflow. A successful bot_manage result proves the Host bot exists, not that its Slack channel is ready yet. Do not invent a channel link or report completion of channel setup without evidence. The !agent control shows channel setup status. The user can type normally in the specialist's channel; !new starts another conversation with that same agent.
+
+These built-in adapter capabilities do not imply general Slack search, channel administration, or Slack MCP access. Check the actual tools and enabled Host connections for those. Schedules are not implemented yet. Current tool declarations and this interface context supersede earlier guesses about available capabilities. Tool search returns compact metadata, which still costs tokens; full tool schemas are loaded on demand and retained results also occupy context.
+</renoa_surface_context>

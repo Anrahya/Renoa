@@ -85,9 +85,10 @@ impl Store {
             }
             let request_id = Uuid::new_v4().to_string();
             transaction.execute(
-                "INSERT INTO requests(request_id, channel, thread, message_ts, command_json, executes_model, session_id, observed_at_ms, state, cancel_target)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'queued',?9)",
-                params![request_id, input.topic.channel, input.topic.thread, input.message_ts, serde_json::to_string(&command)?, command.executes_model(), session_id, observed_at_ms, target],
+                "INSERT INTO requests(request_id, channel, thread, message_ts, command_json, executes_model, session_id, observed_at_ms, state, cancel_target, surface_context)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'queued',?9,?10)",
+                params![request_id, input.topic.channel, input.topic.thread, input.message_ts, serde_json::to_string(&command)?, command.executes_model(), session_id, observed_at_ms, target,
+                    matches!(command, Command::Prompt(_)).then_some(crate::surface_context::CONTEXT)],
             )?;
             transaction.execute("INSERT INTO messages VALUES (?1,?2,?3,?4,?5)",params![input.topic.channel,input.message_ts,received_thread,input.text,request_id])?;
             transaction.execute("INSERT INTO receipts VALUES (?1,?2,?3)", params![input.event_id,input.topic.channel,input.message_ts])?;

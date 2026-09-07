@@ -21,6 +21,7 @@ use crate::{
 };
 
 mod agents;
+mod awareness;
 mod channels;
 mod execution;
 mod ingress;

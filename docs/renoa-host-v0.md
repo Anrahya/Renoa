@@ -715,7 +715,11 @@ recipe lookup is separate. Profile inventory includes persisted specialists.
 Slack projects the Host specialist inventory into dedicated private channels and
 invites the operator. Its own catalog records provisioning state and conversation
 bindings; creation recovery and external channel IDs remain surface concerns.
-Plain messages in a dedicated channel route to that specialist. Slack also
+Plain messages in a dedicated channel route to that specialist. The adapter
+also persists a concise interface-capability snapshot with each admitted prompt,
+so the model can distinguish automatic surface behavior from connected MCP
+capabilities. This remains surface-owned input, not Slack policy in the Host or
+kernel. Shared profile memory must not determine the active message surface. Slack also
 supports optional `!agent <id>` routing in DMs and ordinary threads: admission persists the
 target Agent alongside a fresh Session before acknowledging the command. Earlier
 queued requests retain their targets. `!new` keeps the selected Agent; `!agent arcee` returns to the operator in a fresh conversation. A separate channel

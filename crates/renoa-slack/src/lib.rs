@@ -8,6 +8,7 @@ mod events;
 mod service;
 mod socket;
 mod store;
+mod surface_context;
 mod worker;
 pub use service::run;
 mod ingress;

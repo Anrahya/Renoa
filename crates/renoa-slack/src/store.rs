@@ -49,6 +49,7 @@ pub(crate) struct Work {
     pub(crate) request_id: Uuid,
     pub(crate) command: Command,
     pub(crate) observed_at_ms: i64,
+    pub(crate) surface_context: Option<String>,
     pub(crate) reply_ts: Option<String>,
     pub(crate) reply_pending: bool,
     pub(crate) cancel_target: Option<Uuid>,
