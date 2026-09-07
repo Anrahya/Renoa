@@ -2,11 +2,13 @@ import {
   checkResourceAllowed,
   discoverAuthorizationServerMetadata,
   discoverOAuthProtectedResourceMetadata,
+  extractWWWAuthenticateParams,
   resourceUrlFromServerUrl,
   type FetchLike,
 } from "@modelcontextprotocol/client";
 import type { WireOAuthDiscovery } from "./contract.js";
 import { AdapterProblem } from "./errors.js";
+import { challengedScope } from "./oauth-scope.js";
 import {
   canonicalEndpoint,
   canonicalIssuer,
@@ -18,11 +20,12 @@ export async function discoverOAuth(
   fetchFn: FetchLike,
 ): Promise<WireOAuthDiscovery> {
   const mcpEndpoint = canonicalEndpoint(endpoint);
+  const challenge = await discoverOAuthChallenge(mcpEndpoint, fetchFn);
   let resource;
   try {
     resource = await discoverOAuthProtectedResourceMetadata(
       mcpEndpoint,
-      undefined,
+      challenge,
       fetchFn,
     );
   } catch (error) {
@@ -95,4 +98,28 @@ export async function discoverOAuth(
 
 function metadataProblem(message: string, code: string): AdapterProblem {
   return new AdapterProblem("protocol", message, { code });
+}
+
+/** Read the server's metadata hint before falling back to well-known paths. */
+export async function discoverOAuthChallenge(
+  endpoint: string,
+  fetchFn: FetchLike,
+): Promise<{ readonly resourceMetadataUrl?: URL; readonly scope?: string }> {
+  const response = await fetchFn(canonicalEndpoint(endpoint), {
+    method: "GET",
+    headers: { accept: "application/json, text/event-stream" },
+  });
+  try {
+    if (response.status !== 401) return {};
+    const challenge = extractWWWAuthenticateParams(response);
+    const scope = challengedScope(challenge.scope);
+    return {
+      ...(challenge.resourceMetadataUrl === undefined
+        ? {}
+        : { resourceMetadataUrl: challenge.resourceMetadataUrl }),
+      ...(scope === undefined ? {} : { scope }),
+    };
+  } finally {
+    await response.body?.cancel();
+  }
 }

@@ -234,8 +234,15 @@ OAuth remains Host connection policy, not MCP tool behavior and not kernel
 state. `extension_manage` can add or connect a package with `credential.kind =
 "oauth"`; this is the model's only OAuth choice. Before producing any setup or
 sign-in link, the Host requires RFC 9728 protected-resource metadata naming
-exactly one authorization server and valid metadata for that exact issuer. It
-then reuses a saved issuer-bound client, uses the Renoa HTTPS Client ID Metadata
+exactly one authorization server and valid metadata for that exact issuer.
+Preflight and fresh authorization first make an unauthenticated GET to the MCP
+endpoint and use the metadata URL advertised by its 401 `WWW-Authenticate`
+challenge. Without that hint, discovery tries the standard well-known paths.
+The challenge body is cancelled without opening an enduring event stream;
+metadata requests carry no MCP credential and redirects remain blocked. Fresh
+authorization also uses a valid challenged scope before metadata scope defaults.
+The selected metadata URL is retained in the existing OAuth discovery state for
+subsequent exchanges and refreshes. The Host then reuses a saved issuer-bound client, uses the Renoa HTTPS Client ID Metadata
 Document when advertised, uses DCR when advertised, or requests a developer-app
 client bound to the discovered issuer. The model cannot choose a mode, issuer,
 or credential label. The Host validates a proposed connection without publishing
