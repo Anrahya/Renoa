@@ -266,6 +266,7 @@ impl PluginManager {
                     connection_id: &connection,
                     credential,
                     replace,
+                    restart: false,
                     requested_scope: None,
                     operation_id: context.operation_id,
                     updates: context.updates,

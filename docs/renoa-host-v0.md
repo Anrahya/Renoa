@@ -345,7 +345,7 @@ already running. The runtime itself is unchanged: the kernel freezes the same th
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v15 model-facing schema is
+The Host adds one fixed `extension_manage` tool. Its v18 model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
 for each of ten typed actions and rejects missing or cross-action fields:
@@ -395,8 +395,11 @@ a deterministic reference, non-secret callback identity and phase, and
 semantic terminal receipt. It automatically refreshes an expired token under a
 cross-process connection lock. A possibly dispatched code exchange or refresh is not retried
 after process loss; replay of an already settled management operation reads its
-receipt without opening another browser. Explicit `authorize` with `restart:
-true` abandons an expired or unknown flow only for a new operation. The Host
+receipt without opening another browser. Explicit `restart: true` on `authorize`
+(registered connections) or `connect` (including unpublished attempts) abandons
+an expired or unknown flow only for a new operation. The latter reuses the saved
+package and client credentials. Replay of the same restart retains its callback
+and state rather than opening another authorization flow. The Host
 selects initial OAuth scopes from the first challenge, then protected-resource
 metadata, as required by MCP. A later HTTP 403
 `insufficient_scope` result is a definite, model-visible failure carrying the

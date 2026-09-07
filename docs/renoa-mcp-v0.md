@@ -249,9 +249,13 @@ or credential label. The Host validates a proposed connection without publishing
 it, then authenticates and discovers its complete catalog.
 Only one final SQLite transaction publishes the connection, catalog, and
 profile attachment. A failed new connection leaves none of those rows; a failed
-replacement leaves the prior working configuration untouched. `authorize` resumes an existing
-flow. `restart: true` is the explicit instruction to abandon an expired or
-unknown flow and discard cached tokens before starting again.
+replacement leaves the prior working configuration untouched. `authorize` resumes
+an existing registered connection. If an attempt has not published a connection,
+use `connect` with its retained package, server, connection and credential.
+Both operations accept `restart: true` to explicitly abandon an expired or
+unknown flow. Saved developer-app credentials are reused. A new restart operation
+replaces the prior flow; replaying the same restart resumes its original callback
+and CSRF state, or returns its settled receipt, without issuing another flow.
 
 Initial authorization follows MCP scope selection: use the exact scope from the
 initial `WWW-Authenticate` challenge when present; otherwise use the protected

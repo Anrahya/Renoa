@@ -18,6 +18,7 @@ pub(crate) struct ProfileConnectionRequest<'a> {
     pub(crate) connection_id: &'a str,
     pub(crate) credential: PluginCredential,
     pub(crate) replace: bool,
+    pub(crate) restart: bool,
     pub(crate) requested_scope: Option<&'a str>,
     pub(crate) operation_id: &'a str,
     pub(crate) updates: Option<&'a ToolUpdates>,
@@ -51,6 +52,7 @@ impl PluginManager {
                 connection_id,
                 credential,
                 replace: false,
+                restart: false,
                 requested_scope: None,
                 operation_id: &operation_id,
                 updates: None,
@@ -94,11 +96,11 @@ impl PluginManager {
             endpoint: candidate.endpoint(),
             reference: candidate.auth(),
             operation_id: request.operation_id,
-            restart: false,
+            restart: request.restart,
             requested_scope: request.requested_scope,
             updates: request.updates,
         };
-        let authorization = if request.requested_scope.is_some() {
+        let authorization = if request.restart || request.requested_scope.is_some() {
             Some(
                 self.authorizations
                     .authorize(oauth_request(), cancellation.clone())

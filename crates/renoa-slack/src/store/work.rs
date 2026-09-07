@@ -78,6 +78,7 @@ impl Store {
                     params![seq, chunk, text, ts],
                 )?;
             }
+            transaction.execute("UPDATE setup_actions SET state='failed',error='Request ended before delivery' WHERE request_seq=?1 AND state='pending'", [seq])?;
             transaction.execute(
                 "UPDATE requests SET state='ready', result=?2 WHERE seq=?1",
                 params![seq, result],
