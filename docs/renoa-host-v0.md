@@ -853,6 +853,10 @@ The daemon launch JSON contains `data_directory`, `model_bridge`, `providers`,
 `mcp_registry_adapter`, `shared_plugin_registry`, and `oauth_relay` (origin and private
 device credential path). These are Host settings; there are no Slack tokens or
 channel IDs. `deploy/renoa-host.service` runs this process independently of surfaces.
+The supplied systemd unit loads `/etc/renoa/host.json` as `host-config` and the
+shared relay device credential into its own credential directory. For this unit,
+set the relay credential path to `/run/credentials/renoa-host.service/oauth-relay-device`;
+it must not point into a surface service's credential mount.
 All processes sharing the Host must support schema 16 before restarting them after
 the migration. The integration tests exercise model-driven creation, specialist
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt

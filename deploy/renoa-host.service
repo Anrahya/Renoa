@@ -7,7 +7,10 @@ Wants=network-online.target
 Type=simple
 User=renoa-arcee
 Group=renoa-arcee
-ExecStart=/usr/local/bin/renoa-host /etc/renoa/host.json
+Environment=HOME=/var/lib/renoa-telegram
+LoadCredential=host-config:/etc/renoa/host.json
+LoadCredential=oauth-relay-device:/etc/renoa/arcee-oauth-relay-device
+ExecStart=/usr/local/bin/renoa-host %d/host-config
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=300
