@@ -2,6 +2,89 @@ use super::*;
 use crate::host::reviews::runs;
 
 #[tokio::test]
+async fn a_review_survives_repeated_compaction_and_keeps_prioritized_evidence() {
+    let (directory, host, id, api) = prepared("compactions").await;
+    api.state.lock().expect("state").large_source = true;
+    let result = execute(&host, id, &api)
+        .await
+        .expect("review through compaction");
+    let GitHubReviewRun::Finished {
+        outcome: GitHubReviewOutcome::Reviewed { report, usage },
+        ..
+    } = result
+    else {
+        panic!("review must finish: {result:?}");
+    };
+    assert_eq!(report.findings[0].priority, Some(crate::ReviewPriority::P1));
+    assert_eq!(report.findings[0].evidence.quote, "    10 / count");
+    let summaries = fs::read_to_string(directory.path().join("auth.sqlite.compactions"))
+        .expect("summary calls")
+        .lines()
+        .count();
+    let normal = fs::read_to_string(directory.path().join("auth.sqlite.calls"))
+        .expect("review calls")
+        .lines()
+        .count();
+    assert_eq!(
+        usage.expect("complete usage including compaction").input,
+        u64::try_from((summaries + normal) * 10).expect("small fixture usage")
+    );
+    assert!(
+        fs::read_to_string(directory.path().join("auth.sqlite.compactions"))
+            .expect("compactions")
+            .lines()
+            .count()
+            >= 2
+    );
+    let kernel = renoa_kernel::Kernel::open(
+        host.config
+            .database
+            .with_file_name("review-sessions")
+            .join(id.to_string())
+            .join("kernel.sqlite"),
+    )
+    .expect("kernel");
+    let events = kernel
+        .events_after(
+            renoa_kernel::SessionId::from_uuid(id),
+            renoa_kernel::EventCursor::START,
+        )
+        .expect("durable history")
+        .events;
+    assert!(
+        events
+            .iter()
+            .filter(|event| event.kind == renoa_agent_loop::CONTEXT_CHECKPOINT_EVENT_KIND)
+            .count()
+            >= 2
+    );
+    api.stop().await;
+}
+
+#[tokio::test]
+async fn accumulated_source_context_can_cross_the_old_cap_and_still_validate() {
+    let (directory, host, id, api) = prepared("large-batch").await;
+    api.state.lock().expect("state").large_source = true;
+    assert!(matches!(
+        execute(&host, id, &api).await.expect("large review"),
+        GitHubReviewRun::Finished {
+            outcome: GitHubReviewOutcome::Reviewed { .. },
+            ..
+        }
+    ));
+    let request: renoa_agent::ModelRequest = serde_json::from_slice(
+        &fs::read(directory.path().join("auth.sqlite.last-request")).expect("final model input"),
+    )
+    .expect("model request");
+    let estimated = crate::model_context::estimate_input_tokens(&request);
+    assert!(
+        (100_001..258_400).contains(&estimated),
+        "estimated {estimated}"
+    );
+    api.stop().await;
+}
+
+#[tokio::test]
 async fn source_batches_complete_both_stages_and_oversized_batches_retain_the_failure() {
     for mode in ["batch", "oversized-batch"] {
         let (_directory, host, id, api) = prepared(mode).await;
@@ -13,7 +96,7 @@ async fn source_batches_complete_both_stages_and_oversized_batches_retain_the_fa
             assert!(matches!(outcome, GitHubReviewOutcome::Reviewed { .. }));
         } else {
             assert!(matches!(outcome, GitHubReviewOutcome::Incomplete { reason }
-                if reason == "Investigation failed: model returned 17 tool calls; the per-turn limit is 16"));
+                if reason == "Investigation failed: model returned 51 tool calls; the per-turn limit is 50"));
         }
         api.stop().await;
     }
@@ -254,12 +337,12 @@ async fn host_lease_and_cancellation_prevent_competing_execution() {
 }
 
 #[tokio::test]
-async fn looping_model_stops_at_six_calls_with_incomplete_result() {
+async fn investigation_and_validation_can_both_continue_past_six_responses() {
     let (directory, host, id, api) = prepared("exhaust").await;
     assert!(matches!(
-        execute(&host, id, &api).await.expect("bounded outcome"),
+        execute(&host, id, &api).await.expect("completed outcome"),
         GitHubReviewRun::Finished {
-            outcome: GitHubReviewOutcome::Incomplete { .. },
+            outcome: GitHubReviewOutcome::Reviewed { .. },
             ..
         }
     ));
@@ -268,7 +351,7 @@ async fn looping_model_stops_at_six_calls_with_incomplete_result() {
             .expect("calls")
             .lines()
             .count(),
-        6
+        18
     );
     api.stop().await;
 }

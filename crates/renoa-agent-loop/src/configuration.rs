@@ -23,7 +23,7 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentLoopConfig {
     pub(crate) system_prompt: String,
-    pub(crate) max_model_turns: NonZeroU32,
+    pub(crate) max_model_turns: Option<NonZeroU32>,
     pub(crate) max_tool_calls_per_turn: NonZeroU32,
 }
 
@@ -36,7 +36,20 @@ impl AgentLoopConfig {
     ) -> Self {
         Self {
             system_prompt: system_prompt.into(),
-            max_model_turns,
+            max_model_turns: Some(max_model_turns),
+            max_tool_calls_per_turn,
+        }
+    }
+
+    /// Runs until completion, cancellation or failure, without a model-turn budget.
+    #[must_use]
+    pub fn until_complete(
+        system_prompt: impl Into<String>,
+        max_tool_calls_per_turn: NonZeroU32,
+    ) -> Self {
+        Self {
+            system_prompt: system_prompt.into(),
+            max_model_turns: None,
             max_tool_calls_per_turn,
         }
     }
@@ -225,7 +238,7 @@ pub(crate) fn tool_effect_binding(tool_name: &str) -> String {
 #[derive(Serialize)]
 struct DigestConfiguration<'a> {
     system_prompt: &'a str,
-    max_model_turns: u32,
+    max_model_turns: Option<NonZeroU32>,
     max_tool_calls_per_turn: u32,
     context_revision: &'a str,
     model_recovery: EffectRecovery,
@@ -247,7 +260,7 @@ fn digest_configuration(
 ) -> Result<String, AgentLoopBuildError> {
     let encoded = serde_json::to_vec(&DigestConfiguration {
         system_prompt: &config.system_prompt,
-        max_model_turns: config.max_model_turns.get(),
+        max_model_turns: config.max_model_turns,
         max_tool_calls_per_turn: config.max_tool_calls_per_turn.get(),
         context_revision,
         model_recovery,

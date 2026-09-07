@@ -25,6 +25,7 @@ struct ApiState {
     closed: bool,
     installation: i64,
     changed_files: Option<usize>,
+    large_source: bool,
 }
 
 impl Api {
@@ -172,9 +173,14 @@ fn respond(headers: &str, body: &[u8], state: &Mutex<ApiState>) -> (u16, String)
     }
     if path.contains("/contents/src/lib.rs") {
         assert!(path.contains(&format!("ref={}", "b".repeat(40))));
+        let padding = if state.large_source {
+            format!("// {}\n", "context ".repeat(18)).repeat(197)
+        } else {
+            String::new()
+        };
         return (
             200,
-            "fn ratio(count: u32) -> u32 {\n    10 / count\n}\n".to_owned(),
+            format!("fn ratio(count: u32) -> u32 {{\n    10 / count\n}}\n{padding}"),
         );
     }
     assert!(path == "/repos/owner/repository?" || path == "/repos/owner/repository");

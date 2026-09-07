@@ -28,6 +28,7 @@ struct Envelope {
 struct Execution {
     request_id: Uuid,
     app_jwt_file: PathBuf,
+    workspace: renoa_local::InspectionContainerConfig,
 }
 
 pub async fn run(
@@ -52,7 +53,12 @@ pub async fn run(
         .await??;
         let jwt = String::from_utf8(jwt)?;
         let cancel = CancellationToken::new();
-        let run = host.execute_github_review(execution.request_id, jwt.trim(), cancel.clone());
+        let run = host.execute_github_review(
+            execution.request_id,
+            jwt.trim(),
+            &execution.workspace,
+            cancel.clone(),
+        );
         tokio::pin!(run);
         let result = tokio::select! {
             result=&mut run=>result?,

@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use renoa_agent::{ContentBlock, StopReason};
 use renoa_kernel::{CommandId, SessionId};
 use tokio_util::sync::CancellationToken;
@@ -28,20 +26,34 @@ impl LocalHost {
         &self,
         request_id: Uuid,
         app_jwt: &str,
+        workspace: &crate::InspectionContainerConfig,
         cancellation: CancellationToken,
     ) -> Result<GitHubReviewRun, LocalHostError> {
         let origin = Url::parse("https://api.github.com")
             .map_err(|error| GitHubReviewError::Invalid(error.to_string()))?;
-        self.execute_review_at(request_id, app_jwt, cancellation, origin)
+        self.execute_review_in(request_id, app_jwt, cancellation, origin, Some(workspace))
             .await
     }
 
+    #[cfg(test)]
     pub(super) async fn execute_review_at(
         &self,
         request_id: Uuid,
         app_jwt: &str,
         cancellation: CancellationToken,
         origin: Url,
+    ) -> Result<GitHubReviewRun, LocalHostError> {
+        self.execute_review_in(request_id, app_jwt, cancellation, origin, None)
+            .await
+    }
+
+    async fn execute_review_in(
+        &self,
+        request_id: Uuid,
+        app_jwt: &str,
+        cancellation: CancellationToken,
+        origin: Url,
+        workspace: Option<&crate::InspectionContainerConfig>,
     ) -> Result<GitHubReviewRun, LocalHostError> {
         super::active(&cancellation)?;
         let database = self.config.database.clone();
@@ -56,6 +68,16 @@ impl LocalHost {
             Ok::<_, LocalHostError>((lease, request, previous, policy))
         })
         .await??;
+        let checkout_root = self
+            .config
+            .database
+            .with_file_name("review-workspaces")
+            .join(request_id.to_string());
+        // Reap a crashed owner's environment even when changed policy or a
+        // closed PR will skip the recovered review before inference.
+        if let Some(config) = workspace {
+            super::checkout::Checkout::remove_abandoned(&checkout_root, config, request_id).await?;
+        }
         if let Some(run @ GitHubReviewRun::Finished { .. }) = previous {
             return Ok(run);
         }
@@ -101,20 +123,13 @@ impl LocalHost {
                 Err(GitHubReviewError::ContextLimit) => return self.finish_review(request_id, None, incomplete("Repository context exceeds the bounded preparation limit; no model was called.")).await,
                 Err(error) => return Err(error.into()),
             };
-            let snapshot = Box::new(
-                self.prepare_review(
-                    request,
-                    pull.base.sha.clone(),
-                    pull.head.sha.clone(),
-                    context,
-                )
-                .await?,
-            );
-            self.save_review(GitHubReviewRun::Prepared {
-                snapshot: snapshot.clone(),
-            })
-            .await?;
-            snapshot
+            self.prepare_review(
+                request,
+                pull.base.sha.clone(),
+                pull.head.sha.clone(),
+                context,
+            )
+            .await?
         };
         // A recovered run never substitutes fresh commits for its frozen input.
         if pull.state == "closed"
@@ -132,13 +147,61 @@ impl LocalHost {
                 )
                 .await;
         }
-        let outcome = self
-            .run_review_with_deadline(&snapshot, github, cancellation)
-            .await?;
         let result = self
-            .finish_review(request_id, Some(snapshot), outcome)
+            .run_prepared_review(snapshot, github, workspace, cancellation, checkout_root)
             .await;
         drop(lease);
+        result
+    }
+
+    async fn run_prepared_review(
+        &self,
+        snapshot: Box<GitHubReviewSnapshot>,
+        github: GitHub,
+        workspace: Option<&crate::InspectionContainerConfig>,
+        cancellation: CancellationToken,
+        checkout_root: std::path::PathBuf,
+    ) -> Result<GitHubReviewRun, LocalHostError> {
+        let request_id = snapshot.request.id;
+        let checkout = match workspace {
+            Some(config) => Some(
+                super::checkout::Checkout::prepare(
+                    checkout_root,
+                    config,
+                    &snapshot,
+                    &github,
+                    &cancellation,
+                )
+                .await?,
+            ),
+            None => None,
+        };
+        let source = match &checkout {
+            Some(checkout) => reviewer::ReviewToolSource::Container(&checkout.container),
+            #[cfg(test)]
+            None => reviewer::ReviewToolSource::Fixture(&snapshot),
+            #[cfg(not(test))]
+            None => {
+                return Err(LocalHostError::Configuration(
+                    "review requires an inspection container".to_owned(),
+                ));
+            }
+        };
+        let tools = reviewer::ReviewTools {
+            github: &github,
+            source,
+        };
+        let outcome = self.investigate(&snapshot, &tools, cancellation).await;
+        let result = match outcome {
+            Ok(outcome) => {
+                self.finish_review(request_id, Some(snapshot), outcome)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        if let Some(checkout) = checkout {
+            checkout.close().await?;
+        }
         result
     }
 
@@ -148,7 +211,7 @@ impl LocalHost {
         base_sha: String,
         head_sha: String,
         context: context::ReviewContext,
-    ) -> Result<GitHubReviewSnapshot, LocalHostError> {
+    ) -> Result<Box<GitHubReviewSnapshot>, LocalHostError> {
         let agent = self
             .agent(request.repository.policy.agent_id)
             .await?
@@ -166,7 +229,7 @@ impl LocalHost {
             .bot(agent.id)
             .await?
             .ok_or(LocalHostError::AgentNotFound(agent.id))?;
-        Ok(GitHubReviewSnapshot {
+        let snapshot = Box::new(GitHubReviewSnapshot {
             request,
             base_sha,
             head_sha,
@@ -176,44 +239,19 @@ impl LocalHost {
             prepared_at_ms: TurnObservation::now()?.unix_milliseconds(),
             model_spec: model.encoded_spec(),
             system_prompt: format!(
-                "{}\n\nBatch at most {} review_source calls in one response. The stage task states your model-response budget, including the final JSON response. Finish within that budget and report coverage gaps.\n\nHost-owned reviewer instructions:\n{}",
+                "{}\n\nBatch at most {} tool calls in one response. The supplied patches already contain changed source. Prefer targeted ranges for missing callers, tests and surrounding context.\n\nHost-owned reviewer identity: {}\nHost-owned reviewer instructions:\n{}",
                 reviewer::INSTRUCTIONS,
                 reviewer::SOURCE_CALLS_PER_RESPONSE,
+                recipe.recipe.name,
                 recipe.recipe.instructions
             ),
             context,
+        });
+        self.save_review(GitHubReviewRun::Prepared {
+            snapshot: snapshot.clone(),
         })
-    }
-
-    async fn run_review_with_deadline(
-        &self,
-        snapshot: &GitHubReviewSnapshot,
-        github: GitHub,
-        cancellation: CancellationToken,
-    ) -> Result<GitHubReviewOutcome, LocalHostError> {
-        let remaining = snapshot
-            .prepared_at_ms
-            .saturating_add(15 * 60 * 1000)
-            .saturating_sub(TurnObservation::now()?.unix_milliseconds())
-            .clamp(0, 15 * 60 * 1000);
-        let token = cancellation.child_token();
-        if remaining == 0 {
-            token.cancel();
-        }
-        let work = self.investigate(snapshot, github, token.clone());
-        tokio::pin!(work);
-        let result = tokio::select! {
-            result=&mut work=>result,
-            ()=tokio::time::sleep(Duration::from_millis(u64::try_from(remaining).unwrap_or(0)))=>{ token.cancel(); work.await }
-        };
-        match result {
-            Err(LocalHostError::GitHubReview(GitHubReviewError::Cancelled))
-                if token.is_cancelled() =>
-            {
-                Ok(incomplete("Review cancelled or elapsed budget exhausted."))
-            }
-            result => result,
-        }
+        .await?;
+        Ok(snapshot)
     }
 
     async fn save_review(&self, run: GitHubReviewRun) -> Result<GitHubReviewRun, LocalHostError> {
@@ -242,7 +280,7 @@ impl LocalHost {
     async fn investigate(
         &self,
         snapshot: &GitHubReviewSnapshot,
-        github: GitHub,
+        tools: &reviewer::ReviewTools<'_>,
         cancel: CancellationToken,
     ) -> Result<GitHubReviewOutcome, LocalHostError> {
         let root = self
@@ -262,10 +300,10 @@ impl LocalHost {
         })
         .await??;
         let prompt = serde_json::to_string(
-            &serde_json::json!({"task":format!("Investigate defects introduced in this PR. Use review_source for callers, tests and surrounding code. You have at most {} model responses for this stage, including the final candidate findings JSON. Reserve the last response for that report.", reviewer::INVESTIGATION_ROUNDS),"base_sha":snapshot.base_sha,"head_sha":snapshot.head_sha,"context":snapshot.context}),
+            &serde_json::json!({"task":"Investigate defects introduced in this PR. Inspect callers, tests and surrounding source as needed. Complete the investigation, then return candidate findings in the required JSON schema.","base_sha":snapshot.base_sha,"head_sha":snapshot.head_sha,"context":snapshot.context}),
         )?;
         let candidate = self
-            .review_stage(&session, snapshot, &github, false, prompt, &cancel)
+            .review_stage(&session, snapshot, tools, false, prompt, &cancel)
             .await?;
         let candidates = match candidate {
             LocalTurnOutcome::Completed {
@@ -275,7 +313,7 @@ impl LocalHost {
                 Ok(report) => report,
                 Err(_) => {
                     return Ok(incomplete(
-                        "Investigator did not return a valid bounded report.",
+                        "Investigator did not return a valid review report.",
                     ));
                 }
             },
@@ -289,17 +327,10 @@ impl LocalHost {
             }
         };
         let validation_prompt = serde_json::to_string(
-            &serde_json::json!({"task":format!("Validate these candidates against pinned source, callers and tests. Seek counterexamples; discard unsupported claims and duplicates. Return final findings JSON in the same schema. Do not add new findings. You have at most {} model responses for this stage, including the final JSON report. Reserve the last response for that report.", reviewer::VALIDATION_ROUNDS),"candidates":candidates}),
+            &serde_json::json!({"task":"Validate these candidates against pinned source, callers and tests. Seek counterexamples; discard unsupported claims and duplicates. Investigate as needed, then return final findings JSON in the same schema. Do not add new findings.","candidates":candidates}),
         )?;
         let validation = self
-            .review_stage(
-                &session,
-                snapshot,
-                &github,
-                true,
-                validation_prompt,
-                &cancel,
-            )
+            .review_stage(&session, snapshot, tools, true, validation_prompt, &cancel)
             .await?;
         let mut report = match validation {
             LocalTurnOutcome::Completed {
@@ -313,7 +344,7 @@ impl LocalHost {
                         })
                     });
                     report.limitations.extend(candidates.limitations);
-                    findings::validate(report, snapshot, &github, &cancel).await?
+                    findings::validate(report, snapshot, tools, &cancel).await?
                 }
                 Err(_) => {
                     return Ok(incomplete(
@@ -334,8 +365,8 @@ impl LocalHost {
         if history.iter().any(|entry| matches!(&entry.message, renoa_agent::Message::Tool { result } if result.is_error)) {
             report.limitations.push("At least one source lookup failed; inspect the durable transcript for missing context.".to_owned());
         }
-        let usage = findings::usage(&history);
-        self.classify_review(snapshot, &github, report, usage, &cancel)
+        let usage = session.recorded_token_usage()?;
+        self.classify_review(snapshot, tools.github, report, usage, &cancel)
             .await
     }
 
@@ -371,7 +402,7 @@ impl LocalHost {
         &self,
         session: &LocalSession,
         snapshot: &GitHubReviewSnapshot,
-        github: &GitHub,
+        tools: &reviewer::ReviewTools<'_>,
         validation: bool,
         prompt: String,
         cancel: &CancellationToken,
@@ -388,7 +419,7 @@ impl LocalHost {
         if let Some(outcome) = session.replay_settled_turn(command, &content)? {
             return Ok(outcome);
         }
-        let runtime = reviewer::runtime(&self.config, snapshot, github.clone(), validation).await?;
+        let runtime = reviewer::runtime(&self.config, snapshot, tools).await?;
         Ok(session
             .execute_turn(command, content, &runtime, cancel.child_token())
             .await?)

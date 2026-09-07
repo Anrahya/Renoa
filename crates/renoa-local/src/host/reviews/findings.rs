@@ -1,10 +1,9 @@
 use std::collections::BTreeSet;
 
-use renoa_agent::{Message, TokenUsage};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use super::{GitHubReviewError, GitHubReviewSnapshot, github::GitHub};
+use super::{GitHubReviewError, GitHubReviewSnapshot, reviewer::ReviewTools};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +15,9 @@ pub struct GitHubReviewReport {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitHubReviewFinding {
+    /// Legacy persisted reports have no assigned priority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<ReviewPriority>,
     pub path: String,
     /// RIGHT-side line in the pinned head; must be an added diff line.
     pub line: u32,
@@ -24,6 +26,14 @@ pub struct GitHubReviewFinding {
     pub consequence: String,
     pub correction: String,
     pub evidence: GitHubReviewEvidence,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ReviewPriority {
+    P0,
+    P1,
+    P2,
+    P3,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,13 +46,14 @@ pub struct GitHubReviewEvidence {
 }
 
 pub(super) fn parse(output: &str) -> Result<GitHubReviewReport, GitHubReviewError> {
-    if output.len() > 64 * 1024 {
-        return Err(GitHubReviewError::ContextLimit);
-    }
     let report: GitHubReviewReport = serde_json::from_str(output)?;
-    if report.findings.len() > 20 || report.limitations.len() > 50 {
+    if report
+        .findings
+        .iter()
+        .any(|finding| finding.priority.is_none())
+    {
         return Err(GitHubReviewError::Invalid(
-            "review result exceeds finding/limitation limit".to_owned(),
+            "new review findings require a P0–P3 priority".to_owned(),
         ));
     }
     Ok(report)
@@ -51,7 +62,7 @@ pub(super) fn parse(output: &str) -> Result<GitHubReviewReport, GitHubReviewErro
 pub(super) async fn validate(
     mut report: GitHubReviewReport,
     snapshot: &GitHubReviewSnapshot,
-    github: &GitHub,
+    tools: &ReviewTools<'_>,
     cancel: &CancellationToken,
 ) -> Result<GitHubReviewReport, GitHubReviewError> {
     let mut accepted = Vec::new();
@@ -84,20 +95,7 @@ pub(super) async fn validate(
             );
             continue;
         }
-        let source = github
-            .source(&finding.evidence.path, &snapshot.head_sha, cancel)
-            .await?;
-        let quote: Vec<_> = finding.evidence.quote.lines().collect();
-        let start = usize::try_from(finding.evidence.start_line - 1)
-            .map_err(|_| GitHubReviewError::ContextLimit)?;
-        if quote.is_empty()
-            || source
-                .lines()
-                .skip(start)
-                .take(quote.len())
-                .collect::<Vec<_>>()
-                != quote
-        {
+        if !matches_evidence(&finding.evidence, tools, cancel).await? {
             report.limitations.push(
                 "Rejected a candidate whose quoted evidence did not match the pinned source."
                     .to_owned(),
@@ -112,6 +110,7 @@ pub(super) async fn validate(
                 .push("Removed a duplicate finding at the same source anchor.".to_owned());
         }
     }
+    accepted.sort_by_key(|finding| finding.priority);
     report.findings = accepted;
     report
         .limitations
@@ -119,6 +118,63 @@ pub(super) async fn validate(
     report.limitations.sort();
     report.limitations.dedup();
     Ok(report)
+}
+
+async fn matches_evidence(
+    evidence: &GitHubReviewEvidence,
+    tools: &ReviewTools<'_>,
+    cancel: &CancellationToken,
+) -> Result<bool, GitHubReviewError> {
+    let quote: Vec<_> = evidence.quote.lines().collect();
+    let start =
+        usize::try_from(evidence.start_line - 1).map_err(|_| GitHubReviewError::ContextLimit)?;
+    let matches = match tools.source {
+        super::reviewer::ReviewToolSource::Container(container) => {
+            let root = container.checkout().join("head");
+            let path = crate::workspace::existing_file(&root, &evidence.path)
+                .await
+                .map_err(|error| GitHubReviewError::Invalid(error.to_string()))?;
+            let expected = evidence.quote.clone();
+            let cancellation = cancel.clone();
+            tokio::task::spawn_blocking(move || {
+                use std::io::BufRead as _;
+                let mut lines = std::io::BufReader::new(std::fs::File::open(path)?).lines();
+                for _ in 0..start {
+                    if cancellation.is_cancelled() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "evidence lookup cancelled",
+                        ));
+                    }
+                    if lines.next().transpose()?.is_none() {
+                        return Ok(false);
+                    }
+                }
+                for expected in expected.lines() {
+                    if lines.next().transpose()?.as_deref() != Some(expected) {
+                        return Ok(false);
+                    }
+                }
+                Ok::<_, std::io::Error>(true)
+            })
+            .await
+            .map_err(|error| GitHubReviewError::Invalid(error.to_string()))??
+        }
+        #[cfg(test)]
+        super::reviewer::ReviewToolSource::Fixture(snapshot) => {
+            tools
+                .github
+                .source(&evidence.path, &snapshot.head_sha, cancel)
+                .await?
+                .lines()
+                .skip(start)
+                .take(quote.len())
+                .collect::<Vec<_>>()
+                == quote
+        }
+    };
+
+    Ok(!quote.is_empty() && matches)
 }
 
 fn added_lines(patch: &str) -> BTreeSet<u32> {
@@ -142,20 +198,4 @@ fn added_lines(patch: &str) -> BTreeSet<u32> {
         }
     }
     result
-}
-
-pub(super) fn usage(history: &[crate::LocalHistoryEntry]) -> Option<TokenUsage> {
-    let mut total = TokenUsage::default();
-    let mut observed = false;
-    for entry in history {
-        if let Message::Assistant { usage, .. } = &entry.message {
-            let usage = (*usage)?;
-            observed = true;
-            total.input = total.input.checked_add(usage.input)?;
-            total.output = total.output.checked_add(usage.output)?;
-            total.cache_read = total.cache_read.checked_add(usage.cache_read)?;
-            total.cache_write = total.cache_write.checked_add(usage.cache_write)?;
-        }
-    }
-    observed.then_some(total)
 }

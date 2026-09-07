@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError, catalog};
 
+mod checkout;
 mod context;
 mod execution;
 mod findings;
@@ -20,7 +21,7 @@ mod tests;
 mod webhook;
 
 pub use context::{ReviewCheck, ReviewContext, ReviewFile};
-pub use findings::{GitHubReviewEvidence, GitHubReviewFinding, GitHubReviewReport};
+pub use findings::{GitHubReviewEvidence, GitHubReviewFinding, GitHubReviewReport, ReviewPriority};
 pub use runs::{GitHubReviewOutcome, GitHubReviewRun, GitHubReviewSnapshot};
 pub(super) use store::initialize;
 pub use webhook::GitHubReviewWebhook;
@@ -135,6 +136,8 @@ pub enum GitHubReviewReply {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitHubReviewError {
+    #[error("review workspace failed: {0}")]
+    Workspace(#[from] std::io::Error),
     #[error("invalid GitHub review request: {0}")]
     Invalid(String),
     #[error("GitHub review operation or repository revision conflicts")]

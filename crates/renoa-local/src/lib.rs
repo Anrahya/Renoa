@@ -12,6 +12,7 @@ mod file_lock;
 mod file_tools;
 mod host;
 mod host_storage;
+mod isolated_workspace;
 mod mcp;
 mod model_bridge;
 mod model_catalog;
@@ -46,6 +47,7 @@ pub use host::agents::AgentRecord;
 pub use host::catalog::HostCatalogError;
 pub use host::history::AgentSessionHistory;
 pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
+pub use isolated_workspace::InspectionContainerConfig;
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError, McpFailureKind,
     McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure, ResolvedMcpTool,
@@ -80,5 +82,5 @@ pub use host::reviews::{
     GitHubReviewFinding, GitHubReviewOutcome, GitHubReviewPolicy, GitHubReviewReply,
     GitHubReviewReport, GitHubReviewRepository, GitHubReviewRequest, GitHubReviewRun,
     GitHubReviewSkip, GitHubReviewSnapshot, GitHubReviewTrigger, GitHubReviewWebhook, ReviewCheck,
-    ReviewContext, ReviewFile,
+    ReviewContext, ReviewFile, ReviewPriority,
 };

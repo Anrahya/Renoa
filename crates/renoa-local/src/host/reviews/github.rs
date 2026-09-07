@@ -43,6 +43,13 @@ pub(super) struct Repository {
 }
 
 impl GitHub {
+    pub(super) fn installation_token(&self) -> std::io::Result<&str> {
+        self.headers
+            .get(AUTHORIZATION)
+            .and_then(|header| header.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .ok_or_else(|| std::io::Error::other("installation authentication unavailable"))
+    }
     pub(super) async fn connect(
         origin: Url,
         app_jwt: &str,

@@ -196,6 +196,7 @@ async fn build_local_runtime_inner(
         &resolved.model,
         resolved.skill_context.as_ref(),
         resolved.automatic_compaction,
+        None,
     )?;
     let model_revision = format!(
         "renoa-model-provider-node/v1/{}/{}/{}/reasoning-{}",
@@ -255,12 +256,13 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
     })
 }
 
-fn context_binding(
+pub(crate) fn context_binding(
     model: &Arc<BridgeModel>,
     skill_context: Option<&SkillRuntimeContext>,
     automatic_compaction: Option<AutomaticCompactionPolicy>,
+    working_input_limit: Option<NonZeroU64>,
 ) -> Result<ContextBinding, LocalRuntimeError> {
-    let settings = compaction_settings(model.as_ref(), automatic_compaction)?;
+    let settings = compaction_settings(model.as_ref(), automatic_compaction, working_input_limit)?;
     let limits = CompactionLimits::new(
         settings.context,
         settings.reserved,
@@ -304,17 +306,41 @@ struct CompactionSettings {
 fn compaction_settings(
     model: &BridgeModel,
     automatic_compaction: Option<AutomaticCompactionPolicy>,
+    working_input_limit: Option<NonZeroU64>,
 ) -> Result<CompactionSettings, LocalRuntimeError> {
-    let context = model.context_window_tokens();
-    let safety = (context.get() / 50).max(MIN_CONTEXT_SAFETY_TOKENS);
+    let provider_context = model.context_window_tokens();
+    let safety = (provider_context.get() / 50).max(MIN_CONTEXT_SAFETY_TOKENS);
     let reserved = u64::from(model.max_output_tokens().get())
         .checked_add(safety)
         .ok_or(LocalRuntimeError::ContextReserveOverflow)?;
+    let context = working_input_limit.map_or(provider_context, |limit| {
+        NonZeroU64::new(
+            provider_context
+                .get()
+                .min(limit.get().saturating_add(reserved)),
+        )
+        .expect("positive context and working input limit")
+    });
     let dispatch = context
         .get()
         .checked_sub(reserved)
         .and_then(NonZeroU64::new)
         .ok_or(LocalRuntimeError::ContextWindowTooSmall)?;
+    let automatic_compaction = match (automatic_compaction, working_input_limit) {
+        (Some(policy), Some(_)) => {
+            let trigger = policy.trigger_input_tokens.min(dispatch);
+            let target = trigger
+                .get()
+                .checked_mul(3)
+                .and_then(|value| NonZeroU64::new(value / 5))
+                .ok_or(LocalRuntimeError::ZeroCompactionTarget)?;
+            Some(AutomaticCompactionPolicy {
+                trigger_input_tokens: trigger,
+                target_input_tokens: policy.target_input_tokens.min(target),
+            })
+        }
+        (policy, None) | (policy @ None, Some(_)) => policy,
+    };
     let automatic_compaction_input_tokens =
         automatic_compaction.map_or(dispatch, |policy| policy.trigger_input_tokens);
     if automatic_compaction_input_tokens > dispatch {
