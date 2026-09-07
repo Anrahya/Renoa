@@ -186,7 +186,7 @@ The [Slack adapter](../crates/renoa-slack/README.md) consumes the durable Agent
 management path: its Arcee Agent survives restarts, while DMs and channel
 threads bind independent conversations through `ensure_agent_session`. Its
 transport admission and reply receipts remain surface-owned. Specialist recipe
-creation now uses the same Host management path; routines remain the next consumer.
+creation now uses the same Host management path; routines use the same Host identities and execute independently of surfaces.
 
 Telegram, Slack, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
 adapters; they do not become profiles merely because they deliver messages. A
@@ -729,9 +729,8 @@ queued requests retain their targets. `!new` keeps the selected Agent; `!agent a
 thread can keep another conversation open. Specialist working directories live
 under the Host's `bot-workspaces/<agent-id>` directory.
 
-The following behavior describes the remaining product direction. Recipe edits,
-routines and scheduling, and generated-artifact management are not implemented
-in this slice.
+The following behavior describes the remaining product direction. Recipe edits and structured generated-artifact management remain open. Host-owned
+routines and Slack result delivery are implemented below.
 
 For example, the user asks Arcee to create a news-digest agent with selected
 sources, research tools, and a document-generation capability. Arcee uses Host
@@ -797,6 +796,67 @@ configured tools and OS/workspace environment. Approval dialogs, automatic
 review, general workflow graphs, and execution migration are not prerequisites.
 Exact storage schemas and wire fields remain implementation decisions and are
 introduced only with a consuming execution path or invariant test.
+
+### Host-owned routines
+
+`routine_manage` and `LocalHost::manage_routine` share typed creation, revision-checked
+replacement, and manual-run operations. Arcee may manage any persistent specialist;
+each specialist receives routine management for itself, including specialists whose
+recipes predate this tool. This is Host management policy; selecting workspace tools
+and account connections remains independent. List returns bounded pages with exact
+routine IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
+complete routine for inspection or editing.
+Pausing sets enabled=false; it leaves an already admitted occurrence intact.
+
+Host schema 16 stores routines, management receipts, and occurrence records. A tool
+operation derives its stable identity from the session, command, and tool call.
+Replaying a management operation returns its original result even after a later edit;
+conflicting input and stale revisions fail. Creation targets an existing Host
+specialist, not a Slack channel. No surface identifiers or credentials appear in
+routine records. Results belong to the agent's durable Host inbox.
+
+The `renoa-host <config.json>` process owns one scheduler lease per Host directory.
+It admits and runs one occurrence at a time, without requiring Slack or Telegram.
+Admission persists the occurrence ID, exact task, target Agent, execution Session,
+scheduled time, and actual admission time before execution. Advancing the schedule
+commits in the same transaction. Daily schedules require an IANA timezone; repeated
+fall-back times run once and nonexistent spring times shift forward across the gap.
+Elapsed-hour intervals retain their original phase. Downtime coalesces missed times
+into one catch-up occurrence. A manual run retains the normal recurring schedule and
+cannot overlap another admitted occurrence of that routine.
+
+Each routine has a stable execution session, separate from interactive chats, with
+the same specialist recipe, workspace, and selected Host connections. Its standing
+request must contain the recurring job's requirements; interactive chat history is
+not implicitly copied into it. Admission time enters the existing durable user-turn
+time context, preserving the system/tool cache prefix. The kernel remains the
+execution authority: after a crash, the runner reuses the admitted command and
+recovers the kernel outcome. The Host stores that outcome before surface delivery.
+Infrastructure errors retain pending work for service restart. Graceful shutdown
+drains the current turn; an interrupted process recovers through the kernel.
+Unattended credential/OAuth prompts stop the scheduled turn and report that account
+setup must be completed interactively, preventing a hidden consent wait from blocking
+the scheduler.
+
+Slack projects completed Host results into its own durable outbox. Projection and
+cursor advancement commit together, even if a channel is not ready. Delivery resolves
+each agent's ready channel binding; one unbound bot does not block other bots.
+The adapter marks posting intent before calling Slack; rate limits retry and uncertain
+posts remain unknown rather than being blindly duplicated. Slack downtime delays
+notification while the Host continues execution. Other surfaces can consume the same
+Host result API with their own delivery cursors. This slice delivers text and durable
+workspace file references; binary artifact upload and general workflow graphs remain
+separate work. Bot files remain retrievable through that bot's configured file tools.
+
+The daemon launch JSON contains `data_directory`, `model_bridge`, `providers`,
+`provider`, `model`, `model_auth_store`, and optional `reasoning`, `mcp_adapter`,
+`mcp_registry_adapter`, `shared_plugin_registry`, and `oauth_relay` (origin and private
+device credential path). These are Host settings; there are no Slack tokens or
+channel IDs. `deploy/renoa-host.service` runs this process independently of surfaces.
+All processes sharing the Host must support schema 16 before restarting them after
+the migration. The integration tests exercise model-driven creation, specialist
+rescheduling, artifact generation, and recovery after losing the Host outcome receipt
+without repeating the kernel's completed file operation.
 
 ## Locked decisions
 

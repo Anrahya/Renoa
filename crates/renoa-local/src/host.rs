@@ -14,6 +14,7 @@ pub(crate) mod history;
 mod mcp;
 mod models;
 mod profiles;
+pub(crate) mod routines;
 mod runtime;
 mod sessions;
 #[cfg(all(test, unix))]
@@ -200,6 +201,8 @@ pub enum LocalHostError {
     AgentNotFound(renoa_kernel::AgentId),
     #[error("bot creation cancelled before commit")]
     BotCreationCancelled,
+    #[error(transparent)]
+    Routine(#[from] routines::RoutineError),
     #[error("local Host trace failed: {0}")]
     Trace(String),
     #[error("session creation failed: {source}; staging cleanup also failed: {cleanup}")]
