@@ -14,6 +14,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
         name TEXT NOT NULL, prompt TEXT NOT NULL, schedule_json TEXT NOT NULL CHECK(json_valid(schedule_json)),
         enabled INTEGER NOT NULL CHECK(enabled IN(0,1)), revision INTEGER NOT NULL CHECK(revision>0), next_due_ms INTEGER NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS host_routine_deletions (routine_id TEXT PRIMARY KEY REFERENCES host_routines(id)) STRICT;
     CREATE TABLE IF NOT EXISTS host_routine_mutations (
         operation_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL REFERENCES host_agents(agent_id),
         request_json TEXT NOT NULL, result_json TEXT NOT NULL
@@ -94,6 +95,27 @@ pub(super) fn mutate(
                 next_due_ms,
             };
             save(&tx, &record, false)?;
+            record
+        }
+        RoutineMutation::Delete {
+            id,
+            expected_revision,
+        } => {
+            let mut record = get(&tx, id)?;
+            authorize(&tx, actor, record.spec.agent_id)?;
+            if record.revision != expected_revision {
+                return Err(RoutineError::Conflict);
+            }
+            record.spec.enabled = false;
+            record.revision = record
+                .revision
+                .checked_add(1)
+                .ok_or(RoutineError::Conflict)?;
+            save(&tx, &record, false)?;
+            tx.execute(
+                "INSERT INTO host_routine_deletions(routine_id) VALUES(?1)",
+                [id.to_string()],
+            )?;
             record
         }
         RoutineMutation::RunNow { id } => {
@@ -208,7 +230,7 @@ fn json_column<T: serde::de::DeserializeOwned>(
     })
 }
 pub(super) fn get(db: &Connection, id: Uuid) -> Result<RoutineRecord, RoutineError> {
-    db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE id=?1",[id.to_string()],record).optional()?.ok_or(RoutineError::NotFound)
+    db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id)",[id.to_string()],record).optional()?.ok_or(RoutineError::NotFound)
 }
 pub(super) fn list(
     path: &Path,
@@ -216,7 +238,7 @@ pub(super) fn list(
     after: Option<Uuid>,
 ) -> Result<Vec<RoutineRecord>, RoutineError> {
     let db = catalog::open_verified(path)?;
-    let mut query=db.prepare("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE agent_id=?1 AND id>?2 ORDER BY id LIMIT 20")?;
+    let mut query=db.prepare("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE agent_id=?1 AND id>?2 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY id LIMIT 20")?;
     Ok(query
         .query_map(
             params![
@@ -275,7 +297,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<RoutineRun>, Routi
     if pending.is_some() {
         return Ok(pending);
     }
-    let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE enabled=1 AND next_due_ms<=?1 ORDER BY next_due_ms,id LIMIT 1",[now_ms],record).optional()?;
+    let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY next_due_ms,id LIMIT 1",[now_ms],record).optional()?;
     let Some(mut r) = due else { return Ok(None) };
     let id = stable_id(&format!(
         "renoa.routine.occurrence.v1:{}:{}:{}",

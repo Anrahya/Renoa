@@ -246,7 +246,9 @@ unknown after restart. `inspect` exposes recent routine delivery states. A missi
 channel binding leaves that bot's result waiting without blocking other bots;
 reconnecting Slack drains retained Host results.
 Specialists support one-time dates, daily schedules, and hourly intervals through
-`routine_manage`. For example, ask a specialist to run a task once tomorrow at
+`routine_manage`, including revision-checked deletion. Ask the specialist to delete
+an automation to remove it and stop future runs; past results remain readable and
+already-admitted runs finish. For example, ask a specialist to run a task once tomorrow at
 2 pm in your timezone. One-time schedules disarm when durably queued; an offline
 Host catches up once after restart. Results use the same delivery path.
 Schema 8 freezes delivered routine excerpts into the next admitted chat prompt,
