@@ -282,7 +282,7 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v14 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
+`host.sqlite3` schema v17 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
 snapshots, per-profile attached connection identities, immutable skill revisions,
@@ -697,7 +697,7 @@ modification.
 
 Arcee now creates persistent specialists through the `bot_manage` tool, backed
 by typed Host operations. The Host atomically stores a bot's identity, creating
-Agent, immutable recipe (name, instructions, selected local tools and existing
+Agent, immutable recipe (initial name, instructions, selected local tools and existing
 MCP connections), Agent record, and connection attachments. Every attachment
 must have a complete discovered catalog. Creation derives a stable identity
 from the kernel tool-call identity; identical replay returns the existing bot,
@@ -715,6 +715,12 @@ are capability choices, not a permission or OS isolation guarantee.
 `list_bots` and the model-facing list operation return compact pages of 20
 identities, names, and creator relationships with a continuation cursor. Exact
 recipe lookup is separate. Profile inventory includes persisted specialists.
+`bot_manage rename` edits the Host display name with an expected-current-name
+check and a durable operation receipt. Replay returns the original rename result;
+replaying creation retains its immutable recipe without reverting the current
+name. Agent identity, sessions, workspace, tools, and connections remain intact.
+Names should be short job labels, such as X Desk, News, or Research. Slack
+projects display-name changes onto the existing channel by its retained ID.
 Slack projects the Host specialist inventory into dedicated private channels and
 invites the operator. Its own catalog records provisioning state and conversation
 bindings; creation recovery and external channel IDs remain surface concerns.
@@ -808,7 +814,7 @@ routine IDs, standing tasks, timing, enabled state, revision, and next due time.
 complete routine for inspection or editing.
 Pausing sets enabled=false; it leaves an already admitted occurrence intact.
 
-Host schema 16 stores routines, management receipts, and occurrence records. A tool
+Host schema 16 introduced routines, management receipts, and occurrence records. A tool
 operation derives its stable identity from the session, command, and tool call.
 Replaying a management operation returns its original result even after a later edit;
 conflicting input and stale revisions fail. Creation targets an existing Host
@@ -857,7 +863,8 @@ The supplied systemd unit loads `/etc/renoa/host.json` as `host-config` and the
 shared relay device credential into its own credential directory. For this unit,
 set the relay credential path to `/run/credentials/renoa-host.service/oauth-relay-device`;
 it must not point into a surface service's credential mount.
-All processes sharing the Host must support schema 16 before restarting them after
+Host schema 17 adds durable display-name edit receipts.
+All processes sharing the Host must support schema 17 before restarting them after
 the migration. The integration tests exercise model-driven creation, specialist
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt
 without repeating the kernel's completed file operation.

@@ -73,12 +73,26 @@ async fn call(State(remote): State<Arc<Remote>>, request: Request) -> axum::resp
         assert_eq!(body["is_private"], true);
         *remote.channel.lock().await = json!({"id":"CNEWS","name":body["name"],"creator":"U2","is_private":true,"is_archived":false});
     }
+    if path == "/conversations.rename"
+        && !remote
+            .responses
+            .lock()
+            .await
+            .front()
+            .is_some_and(|(_, body)| body["error"] == "name_taken")
+    {
+        let body: Value = serde_json::from_slice(&bytes).expect("rename request");
+        assert_eq!(body["channel"], "CNEWS");
+        remote.channel.lock().await["name"] = body["name"].clone();
+    }
     if let Some((status, body)) = remote.responses.lock().await.pop_front() {
         return (status, Json(body)).into_response();
     }
     let channel = remote.channel.lock().await.clone();
     let result = match path.as_str() {
-        "/conversations.create" => json!({"ok":true,"channel":channel}),
+        "/conversations.create" | "/conversations.rename" | "/conversations.info" => {
+            json!({"ok":true,"channel":channel})
+        }
         "/conversations.invite" => {
             let body: Value = serde_json::from_slice(&bytes).expect("invite");
             assert_eq!(body["channel"], "CNEWS");
@@ -126,7 +140,12 @@ async fn private_channel_recovery_binds_plain_messages_to_one_durable_specialist
         .expect("idempotent restart");
     assert_eq!(
         *remote.remote.requests.lock().await,
-        ["/conversations.create", "/conversations.invite"]
+        [
+            "/conversations.create",
+            "/conversations.invite",
+            "/conversations.info?channel=CNEWS",
+            "/conversations.rename"
+        ]
     );
     for (event, ts, text) in [
         ("E1", "1.000001", "hello"),
@@ -229,7 +248,8 @@ async fn ambiguous_creation_is_looked_up_across_pages_without_another_create() {
         1
     );
     assert!(requests.iter().any(|p| p.contains("cursor=second")));
-    assert_eq!(requests.last().expect("invite"), "/conversations.invite");
+    assert!(requests.iter().any(|path| path == "/conversations.invite"));
+    assert_eq!(remote.remote.channel.lock().await["name"], "news");
     drop(requests);
     assert!(
         fixture
@@ -378,6 +398,89 @@ async fn dedication_committed_after_selection_lookup_cannot_switch_the_channel_a
             .expect("bound target")
             .to_string(),
         bot.id.to_string()
+    );
+    remote.stop().await;
+    fixture.stop().await;
+}
+
+#[tokio::test]
+async fn readable_names_handle_collisions_and_lost_rename_responses_on_the_same_channel() {
+    let fixture = Fixture::new().await;
+    let bot = super::agents::news_bot(&fixture).await;
+    let remote = TestApi::new().await;
+    let worker = remote.worker(&fixture);
+    worker
+        .provision(&summary(&bot))
+        .await
+        .expect("initial readable name");
+    assert_eq!(remote.remote.channel.lock().await["name"], "news");
+    let before: Vec<(String, String)> = fixture
+        .worker
+        .store
+        .run(|db| {
+            let mut q =
+                db.prepare("SELECT channel,session_id FROM conversations WHERE channel='CNEWS'")?;
+            Ok(q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .expect("binding");
+    let mut renamed = summary(&bot);
+    renamed.name = "Daily News".to_owned();
+    let current = remote.remote.channel.lock().await.clone();
+    remote.remote.responses.lock().await.extend([
+        (StatusCode::OK, json!({"ok":true,"channel":current})),
+        (StatusCode::OK, json!({"ok":false,"error":"name_taken"})),
+    ]);
+    worker
+        .provision(&renamed)
+        .await
+        .expect("reserve next available label");
+    let current = remote.remote.channel.lock().await.clone();
+    remote.remote.responses.lock().await.extend([
+        (StatusCode::OK, json!({"ok":true,"channel":current})),
+        (StatusCode::INTERNAL_SERVER_ERROR, json!({})),
+    ]);
+    worker
+        .provision(&renamed)
+        .await
+        .expect("lost successful rename response");
+    assert_eq!(remote.remote.channel.lock().await["name"], "daily-news-2");
+    worker
+        .provision(&renamed)
+        .await
+        .expect("reconcile exact channel by ID");
+    assert!(
+        fixture
+            .worker
+            .store
+            .channel_description(bot.id.to_string())
+            .await
+            .expect("label")
+            .starts_with("#daily-news-2:")
+    );
+    let after: Vec<(String, String)> = fixture
+        .worker
+        .store
+        .run(|db| {
+            let mut q =
+                db.prepare("SELECT channel,session_id FROM conversations WHERE channel='CNEWS'")?;
+            Ok(q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .expect("binding retained");
+    assert_eq!(before, after);
+    assert_eq!(
+        remote
+            .remote
+            .requests
+            .lock()
+            .await
+            .iter()
+            .filter(|r| *r == "/conversations.create")
+            .count(),
+        1
     );
     remote.stop().await;
     fixture.stop().await;

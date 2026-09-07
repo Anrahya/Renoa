@@ -19,13 +19,14 @@ pub(crate) fn binding(
     session: SessionId,
     command: Option<CommandId>,
 ) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-bot-manage-v1", Arc::new(Manage {
+    AgentToolBinding::new("renoa-bot-manage-v2", Arc::new(Manage {
         host: LocalHost { config: host }, session, command,
         spec: ToolSpec {
             name: "bot_manage".to_owned(),
-            description: "Create or list persistent specialist agents on this Host. Create only when the user asks for a bot with its own job/instructions. Choose a minimal tool set; reuse exact connection names from extension_manage list. Creation persists a separate profile and identity. Return the bot ID so a surface can open its conversation. A repeated tool call reuses the same bot. List returns compact pages; pass next_cursor as cursor until absent. Scheduling is not available in this operation.".to_owned(),
+            description: "Create, list, or rename persistent specialist agents on this Host. Create only when the user asks for a bot with its own job/instructions. Use the user's chosen name, otherwise choose a short job name of 1–3 words, such as X Desk, News, or Research. Avoid technical slugs, IDs, and redundant bot/agent/manager labels. To rename, list first and pass its exact current name as expected_name; identity, sessions, tools, and connections stay the same. Choose a minimal tool set; reuse exact connection names from extension_manage list. Creation persists a separate profile and identity. Return the bot ID so a surface can open its conversation. A repeated tool call reuses the same bot. List returns compact pages; pass next_cursor as cursor until absent. Scheduling is not available in this operation.".to_owned(),
             input_schema: json!({"type":"object","properties":{
-                "action":{"enum":["list","create"]},
+                "action":{"enum":["list","create","rename"]},
+                "id":{"type":"string","format":"uuid"},"expected_name":{"type":"string"},"name":{"type":"string","minLength":1,"maxLength":512},
                 "cursor":{"type":["string","null"],"format":"uuid","description":"For list only: exact next_cursor from the preceding page, or omit for the first page."},
                 "recipe":{"type":"object","properties":{
                     "name":{"type":"string","minLength":1,"maxLength":512},
@@ -34,8 +35,9 @@ pub(crate) fn binding(
                     "connections":{"type":"array","maxItems":64,"uniqueItems":true,"items":{"type":"string"}}
                 },"required":["name","instructions","tools","connections"],"additionalProperties":false}
             },"required":["action"],"additionalProperties":false,"oneOf":[
-                {"properties":{"action":{"const":"list"},"recipe":false}},
-                {"properties":{"action":{"const":"create"},"cursor":false},"required":["recipe"]}
+                {"properties":{"action":{"const":"list"},"recipe":false,"id":false,"expected_name":false,"name":false}},
+                {"properties":{"action":{"const":"create"},"cursor":false,"id":false,"expected_name":false,"name":false},"required":["recipe"]},
+                {"properties":{"action":{"const":"rename"},"cursor":false,"recipe":false},"required":["id","expected_name","name"]}
             ]}),
         }
     }), EffectRecovery::SafeToReplay)
@@ -51,8 +53,17 @@ struct Manage {
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Input {
-    List { cursor: Option<AgentId> },
-    Create { recipe: BotRecipe },
+    List {
+        cursor: Option<AgentId>,
+    },
+    Create {
+        recipe: BotRecipe,
+    },
+    Rename {
+        id: AgentId,
+        expected_name: String,
+        name: String,
+    },
 }
 
 impl Tool for Manage {
@@ -95,6 +106,37 @@ impl Tool for Manage {
                         .await
                         .map_err(|e| ToolError::invalid_input(e.to_string()))?;
                     json!({"current_agent":manifest.agent_id,"bots":page.bots,"next_cursor":page.next_cursor})
+                }
+                Input::Rename {
+                    id,
+                    expected_name,
+                    name,
+                } => {
+                    let operation =
+                        crate::mcp::oauth_operation_id(self.session, self.command, &call.id);
+                    let hash = Sha256::digest(format!("renoa.bot.rename.v1:{operation}"));
+                    let mut bytes = [0; 16];
+                    bytes.copy_from_slice(&hash[..16]);
+                    let result = self
+                        .host
+                        .rename_bot(
+                            manifest.agent_id,
+                            uuid::Uuid::from_bytes(bytes),
+                            super::names::RenameBot {
+                                id,
+                                expected_name,
+                                name,
+                            },
+                            cancellation,
+                        )
+                        .await
+                        .map_err(|e| match e {
+                            crate::LocalHostError::BotRenameCancelled => {
+                                ToolError::cancelled("bot rename cancelled before commit", false)
+                            }
+                            error => ToolError::invalid_input(error.to_string()),
+                        })?;
+                    json!(result)
                 }
                 Input::Create { recipe } => {
                     let operation =

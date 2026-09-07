@@ -71,3 +71,5 @@ pub use host::bots::{BotPage, BotRecipe, BotRecord, BotSummary};
 pub use host::routines::{
     RoutineError, RoutineMutation, RoutineRecord, RoutineRun, RoutineSchedule, RoutineSpec,
 };
+
+pub use host::bots::names::RenameBot;

@@ -201,6 +201,8 @@ pub enum LocalHostError {
     AgentNotFound(renoa_kernel::AgentId),
     #[error("bot creation cancelled before commit")]
     BotCreationCancelled,
+    #[error("bot rename cancelled before commit")]
+    BotRenameCancelled,
     #[error(transparent)]
     Routine(#[from] routines::RoutineError),
     #[error("local Host trace failed: {0}")]
