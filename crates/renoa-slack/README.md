@@ -180,8 +180,11 @@ reconciles unfinished operations. Infrastructure failure leaves the request
 pending for restart; it is not converted to a false terminal outcome.
 
 The initial progress message is receipted separately. Updates to its known Slack
-timestamp are repeatable. Progress is bounded, refreshed at most every two
-seconds, and joined before final delivery. Private reasoning and raw provider
+timestamp are repeatable. Changed previews refresh at most every 1.25 seconds,
+retain the first 3,500 characters, and keep text visible above tool/retry status.
+Identical previews do not issue another update. Progress is joined before final
+delivery. These are periodic message edits, not Slack's thread-only native text
+streams. Private reasoning and raw provider
 payloads are not published. Extension credential setup and provider authorization
 each produce a separate action message in a DM; progress and final answers never
 overwrite those messages. Schema 5 persists a request/tool-call/stage identity,
