@@ -1,4 +1,4 @@
-//! Host-owned GitHub review configuration and durable admission, outside RCP.
+//! Host-owned GitHub review admission and bounded execution, outside RCP.
 use std::collections::BTreeSet;
 
 use renoa_kernel::AgentId;
@@ -8,11 +8,20 @@ use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError, catalog};
 
+mod context;
+mod execution;
+mod findings;
+mod github;
+mod reviewer;
+mod runs;
 mod store;
 #[cfg(test)]
 mod tests;
 mod webhook;
 
+pub use context::{ReviewCheck, ReviewContext, ReviewFile};
+pub use findings::{GitHubReviewEvidence, GitHubReviewFinding, GitHubReviewReport};
+pub use runs::{GitHubReviewOutcome, GitHubReviewRun, GitHubReviewSnapshot};
 pub(super) use store::initialize;
 pub use webhook::GitHubReviewWebhook;
 
@@ -99,6 +108,9 @@ pub enum GitHubReviewCommand {
     Requests {
         after: i64,
     },
+    Run {
+        request_id: Uuid,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +128,9 @@ pub enum GitHubReviewReply {
     Requests {
         records: Vec<GitHubReviewRequest>,
     },
+    Run {
+        record: Option<GitHubReviewRun>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -130,8 +145,21 @@ pub enum GitHubReviewError {
     Capacity,
     #[error("GitHub review webhook authentication failed")]
     Authentication,
-    #[error("GitHub review admission cancelled before commit")]
+    #[error("GitHub review operation cancelled")]
     Cancelled,
+    #[error("GitHub review HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("GitHub review API returned HTTP {status}; retry-after: {retry_after:?}")]
+    Api {
+        status: u16,
+        retry_after: Option<String>,
+    },
+    #[error("GitHub review context exceeds its bounded input limit")]
+    ContextLimit,
+    #[error("GitHub PR changed while gathering context; retry preparation")]
+    MovingPull,
+    #[error("GitHub review runtime: {0}")]
+    Runtime(#[from] renoa_agent_loop::AgentLoopBuildError),
     #[error(transparent)]
     Database(#[from] rusqlite::Error),
     #[error(transparent)]

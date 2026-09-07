@@ -1,7 +1,7 @@
 use super::{LocalHost, LocalHostError, RoutineRun, store};
 use crate::{LocalTurnOutcome, TurnObservation};
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
-use std::{fs::OpenOptions, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 struct HeadlessProgress(CancellationToken);
@@ -39,17 +39,9 @@ impl LocalHost {
     /// commands remain durable and are replayed by the next service instance.
     pub async fn run_routines(&self, shutdown: CancellationToken) -> Result<(), LocalHostError> {
         let lock = self.config.database.with_file_name(".routines.lock");
-        let lease = tokio::task::spawn_blocking(move || {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(lock)?;
-            file.try_lock()?;
-            Ok::<_, std::io::Error>(file)
-        })
-        .await??;
+        let lease =
+            tokio::task::spawn_blocking(move || crate::host::lease::ExecutionLease::acquire(&lock))
+                .await??;
         while !shutdown.is_cancelled() {
             let now = TurnObservation::now()?.unix_milliseconds();
             let database = self.config.database.clone();

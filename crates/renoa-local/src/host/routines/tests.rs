@@ -347,6 +347,8 @@ async fn schema_fifteen_upgrade_preserves_bot_identity_and_runner_has_exclusive_
             .await
             .is_err()
     );
+    lock.unlock()
+        .expect("release simulated owner before inherited fork descriptors close");
     drop(lock);
     let stop = CancellationToken::new();
     stop.cancel();

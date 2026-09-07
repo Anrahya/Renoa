@@ -42,9 +42,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if !(args.len() == 1
         || (args.len() == 6 && args[1] == "rename-bot")
-        || (args.len() == 3 && (args[1] == "github-review" || args[1] == "github-webhook")))
+        || (args.len() == 3
+            && (args[1] == "github-review"
+                || args[1] == "github-webhook"
+                || args[1] == "github-execute")))
     {
-        return Err(std::io::Error::other("usage: renoa-host <config.json> [rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json>]").into());
+        return Err(std::io::Error::other("usage: renoa-host <config.json> [rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]

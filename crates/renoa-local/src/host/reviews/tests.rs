@@ -7,6 +7,7 @@ use ring::hmac;
 use std::{fs, path::Path};
 
 mod admission;
+mod executor;
 
 const SECRET: &[u8] = b"deterministic webhook boundary secret";
 
