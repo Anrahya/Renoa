@@ -62,8 +62,16 @@ impl OAuthCoordinator {
             .secrets
             .load(credential_id, cancellation.clone())
             .await?;
-        if request.restart {
+        let mut flow = self.flows.load(request.connection_id).await?;
+        // A replay of this restart resumes its own flow; only a new operation
+        // may abandon an earlier attempt and issue a new authorization link.
+        if request.restart
+            && flow
+                .as_ref()
+                .is_some_and(|prior| prior.operation_id != request.operation_id)
+        {
             self.flows.delete(request.connection_id).await?;
+            flow = None;
         }
         let authorization = InteractiveAuthorization {
             connection_id: request.connection_id,
@@ -77,7 +85,6 @@ impl OAuthCoordinator {
             updates: request.updates,
             cancellation,
         };
-        let flow = self.flows.load(request.connection_id).await?;
         match flow {
             Some(flow) => self.resume(&authorization, flow, bundle).await,
             None => {

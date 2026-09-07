@@ -244,7 +244,7 @@ async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity()
     drop(store);
     let database = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
     database
-        .execute_batch("ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
+        .execute_batch("DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
         .expect("legacy schema");
     drop(database);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("migrated store");
@@ -290,7 +290,7 @@ async fn schema_three_upgrade_preserves_legacy_prompt_content_and_snapshots_new_
     let original = store.next_work().await.expect("queue").expect("work");
     drop(store);
     let db = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
-    db.execute_batch("ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
+    db.execute_batch("DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
         .expect("old schema");
     drop(db);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("upgrade");
@@ -315,5 +315,90 @@ async fn schema_three_upgrade_preserves_legacy_prompt_content_and_snapshots_new_
     assert_eq!(
         current.surface_context.as_deref(),
         Some(crate::surface_context::CONTEXT)
+    );
+}
+
+#[tokio::test]
+async fn setup_action_recovery_keeps_unknown_posts_uncertain_and_retries_only_known_rejections() {
+    let directory = tempfile::tempdir().expect("directory");
+    let store = Store::open(directory.path(), &binding(directory.path())).expect("store");
+    store
+        .admit(incoming("E1", "1.000001", "connect"), 1)
+        .await
+        .expect("admit");
+    let work = store.next_work().await.expect("queue").expect("request");
+    store.mark_running(work.seq).await.expect("running");
+    assert!(matches!(
+        store
+            .claim_action(
+                work.seq,
+                "call".to_owned(),
+                "authorization".to_owned(),
+                b"digest".to_vec()
+            )
+            .await
+            .expect("claim"),
+        super::DeliveryState::Sending
+    ));
+    drop(store);
+    let store = Store::open(directory.path(), &binding(directory.path())).expect("reopen");
+    store.mark_running(work.seq).await.expect("replay");
+    assert!(matches!(
+        store
+            .claim_action(
+                work.seq,
+                "call".to_owned(),
+                "authorization".to_owned(),
+                b"digest".to_vec()
+            )
+            .await
+            .expect("claim"),
+        super::DeliveryState::Unknown
+    ));
+    assert!(matches!(
+        store
+            .claim_action(
+                work.seq,
+                "next-call".to_owned(),
+                "authorization".to_owned(),
+                b"new-digest".to_vec()
+            )
+            .await
+            .expect("new action"),
+        super::DeliveryState::Sending
+    ));
+    store
+        .action_state(
+            work.seq,
+            "next-call".to_owned(),
+            "authorization".to_owned(),
+            super::DeliveryState::Pending,
+            None,
+            None,
+        )
+        .await
+        .expect("rate limited");
+    assert!(matches!(
+        store
+            .claim_action(
+                work.seq,
+                "next-call".to_owned(),
+                "authorization".to_owned(),
+                b"new-digest".to_vec()
+            )
+            .await
+            .expect("retry"),
+        super::DeliveryState::Sending
+    ));
+    assert!(
+        store
+            .claim_action(
+                work.seq,
+                "next-call".to_owned(),
+                "authorization".to_owned(),
+                b"changed-digest".to_vec()
+            )
+            .await
+            .is_err()
     );
 }

@@ -15,6 +15,8 @@ use crate::mcp::{
 mod registration;
 #[path = "tests/relay.rs"]
 mod relay_tests;
+#[path = "tests/restart.rs"]
+mod restart;
 mod support;
 
 use support::{CONNECTION, ENDPOINT, Fixture};

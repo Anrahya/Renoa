@@ -1,24 +1,29 @@
 use std::{sync::Arc, time::Duration};
 
-use renoa_agent::{AgentEvent, AgentEventSink, AssistantDelta, BoxFuture, ToolOutput};
+use renoa_agent::{AgentEvent, AgentEventSink, AssistantDelta, BoxFuture};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
-use crate::{api::SlackApi, ingress::Topic};
+use crate::{
+    actions::{Action, Actions},
+    api::SlackApi,
+    ingress::Topic,
+};
 
 pub(crate) struct Progress {
     latest: watch::Sender<String>,
-    private_conversation: bool,
+    actions: Option<Actions>,
+    action_error: tokio::sync::Mutex<Option<String>>,
 }
 
 impl Progress {
     pub(crate) fn start(
         api: Arc<SlackApi>,
         topic: Topic,
-        ts: String,
+        ts: Option<String>,
         stop: CancellationToken,
+        actions: Option<Actions>,
     ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
-        let private_conversation = topic.channel.starts_with('D');
         let (latest, mut receiver) = watch::channel("Working…".to_owned());
         let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(2));
@@ -31,9 +36,11 @@ impl Progress {
                         let Ok(changed) = receiver.has_changed() else { break };
                         if !changed && !retry_pending { continue; }
                         let text = receiver.borrow_and_update().clone();
+                        let Some(ts) = &ts else { continue; };
+                        if text.trim().is_empty() { continue; }
                         // The worker joins this task before final delivery, so a
                         // delayed progress update cannot replace the final answer.
-                        match api.update(&topic, &ts, &text).await {
+                        match api.update(&topic, ts, &text).await {
                             Ok(()) => retry_pending = false,
                             Err(crate::api::ApiError::RateLimited(delay)) => {
                                 retry_pending = true;
@@ -56,17 +63,15 @@ impl Progress {
         (
             Arc::new(Self {
                 latest,
-                private_conversation,
+                actions,
+                action_error: tokio::sync::Mutex::new(None),
             }),
             task,
         )
     }
 
-    pub(crate) fn quiet() -> Arc<Self> {
-        Arc::new(Self {
-            latest: watch::channel(String::new()).0,
-            private_conversation: false,
-        })
+    pub(crate) async fn action_error(&self) -> Option<String> {
+        self.action_error.lock().await.take()
     }
 }
 
@@ -111,10 +116,17 @@ impl AgentEventSink for Progress {
             }
             AgentEvent::ToolExecutionUpdate { call, update } => {
                 if call.name == "extension_manage"
-                    && let Some(link) = authorization_link(&update)
+                    && let Some(action) = Action::parse(&update)
+                    && let Some(actions) = &self.actions
                 {
-                    self.latest.send_replace(if self.private_conversation { link } else {
-                        "Account setup needs a private conversation. Use !cancel, then continue setup in a DM with Arcee.".to_owned()
+                    self.latest.send_replace("Account setup needs your action. Check the separate setup message in this conversation.".to_owned());
+                    return Box::pin(async move {
+                        if let Err(error) = actions.deliver(&call.id, action).await {
+                            let message = format!("{error}");
+                            self.latest.send_replace(message.clone());
+                            *self.action_error.lock().await = Some(message);
+                            actions.cancellation.cancel();
+                        }
                     });
                 }
             }
@@ -123,37 +135,6 @@ impl AgentEventSink for Progress {
         }
         Box::pin(async {})
     }
-}
-
-fn authorization_link(update: &ToolOutput) -> Option<String> {
-    #[derive(serde::Deserialize)]
-    struct Action {
-        status: String,
-        authorization_url: Option<String>,
-        setup_url: Option<String>,
-    }
-    let text = update.content.iter().find_map(|block| match block {
-        renoa_agent::ContentBlock::Text { text, .. } => Some(text.as_str()),
-        renoa_agent::ContentBlock::Image { .. } => None,
-    })?;
-    let action: Action = serde_json::from_str(text).ok()?;
-    let link = match action.status.as_str() {
-        "authorization_required" => action.authorization_url?,
-        "credential_required" => action.setup_url?,
-        _ => return None,
-    };
-    let url = url::Url::parse(&link).ok()?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || link.len() > 3000
-    {
-        return None;
-    }
-    Some(format!(
-        "Open this secure page to finish connecting the capability. Keep credentials out of chat.\n{link}"
-    ))
 }
 
 fn tail(text: &str, limit: usize) -> String {
@@ -168,14 +149,14 @@ fn tail(text: &str, limit: usize) -> String {
 mod tests {
     use super::*;
     use axum::{Json, Router, response::IntoResponse as _, routing::post};
-    use renoa_agent::{ContentBlock, ToolCall};
 
     #[tokio::test]
     async fn model_retry_progress_explains_wait_without_publishing_diagnostics() {
         let (latest, receiver) = watch::channel(String::new());
         let progress = Progress {
             latest,
-            private_conversation: false,
+            actions: None,
+            action_error: tokio::sync::Mutex::new(None),
         };
         for (category, reason) in [
             (renoa_agent::ModelErrorKind::RateLimited, "rate limiting"),
@@ -200,7 +181,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn setup_link_retries_rate_limits_and_transient_errors_without_new_events() {
+    async fn progress_retries_rate_limits_and_transient_errors_without_new_events() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         let attempts = Arc::new(AtomicUsize::new(0));
@@ -253,10 +234,11 @@ mod tests {
                 channel: "D1".to_owned(),
                 thread: String::new(),
             },
-            "1.000001".to_owned(),
+            Some("1.000001".to_owned()),
             stop.clone(),
+            None,
         );
-        let link = "https://renoa.live/setup#private-key";
+        let link = "Waiting for the provider.";
         progress.latest.send_replace(link.to_owned());
         tokio::time::timeout(Duration::from_secs(15), async {
             for _ in 0..3 {
@@ -272,45 +254,5 @@ mod tests {
         server_stop.cancel();
         server.await.expect("server task").expect("server exit");
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
-    }
-
-    #[tokio::test]
-    async fn setup_urls_are_only_visible_in_private_conversations() {
-        for (status, key) in [
-            ("authorization_required", "authorization_url"),
-            ("credential_required", "setup_url"),
-        ] {
-            for private in [false, true] {
-                let (latest, receiver) = watch::channel(String::new());
-                let progress = Progress {
-                    latest,
-                    private_conversation: private,
-                };
-                let link = "https://renoa.live/setup#secret-key";
-                progress
-                    .emit(AgentEvent::ToolExecutionUpdate {
-                        call: ToolCall {
-                            id: "tool-1".to_owned(),
-                            name: "extension_manage".to_owned(),
-                            arguments: serde_json::json!({}),
-                            thought_signature: None,
-                            namespace: None,
-                        },
-                        update: ToolOutput {
-                            content: vec![ContentBlock::text(
-                                serde_json::json!({"status":status,key:link}).to_string(),
-                            )],
-                            details: None,
-                            is_error: false,
-                        },
-                    })
-                    .await;
-                let text = receiver.borrow();
-                assert_eq!(text.contains(link), private);
-                if !private {
-                    assert!(text.contains("DM"));
-                }
-            }
-        }
     }
 }

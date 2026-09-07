@@ -46,7 +46,7 @@ pub enum McpOAuthError {
     #[error("MCP OAuth for connection '{0}' is already running; wait for that flow to finish")]
     InProgress(String),
     #[error(
-        "MCP OAuth outcome for connection '{connection}' is unknown; Renoa did not retry the credential exchange. Call extension_manage authorize with restart=true. Boundary error: {detail}"
+        "MCP OAuth outcome for connection '{connection}' is unknown; Renoa did not retry the credential exchange. Retry with restart=true: use extension_manage connect with the retained package, server, connection and credential if unpublished, or authorize if registered. Boundary error: {detail}"
     )]
     OutcomeUnknown { connection: String, detail: String },
     #[error(
@@ -57,7 +57,9 @@ pub enum McpOAuthError {
         "MCP OAuth previously returned a definite credential failure for this recovered operation on connection '{0}'; Renoa did not repeat the authorization flow. Start a new extension_manage authorize call to try again"
     )]
     ReceiptFailure(String),
-    #[error("MCP OAuth callback expired; call extension_manage authorize with restart=true")]
+    #[error(
+        "MCP OAuth callback expired; retry with restart=true. Use extension_manage connect with the retained package, server, connection and credential if no connection was published; use authorize for an existing registered connection"
+    )]
     CallbackExpired,
     #[error("MCP OAuth callback was cancelled")]
     Cancelled,

@@ -177,9 +177,17 @@ pending for restart; it is not converted to a false terminal outcome.
 The initial progress message is receipted separately. Updates to its known Slack
 timestamp are repeatable. Progress is bounded, refreshed at most every two
 seconds, and joined before final delivery. Private reasoning and raw provider
-payloads are not published. Extension authorization/setup links can appear in
-progress only in DMs. Channel progress directs the operator to cancel and
-continue account setup privately; setup URLs are never published into channels.
+payloads are not published. Extension credential setup and provider authorization
+each produce a separate action message in a DM; progress and final answers never
+overwrite those messages. Schema 5 persists a request/tool-call/stage identity,
+content fingerprint, delivery status, and Slack receipt before acknowledging
+successful delivery. Secret-bearing URLs remain in Host recovery state and are
+not stored in the Slack database. Replayed tool updates reuse the receipt. A
+rate-limited post can retry; an ambiguous post is retained as unknown and is not
+blindly repeated. Delivery failures cancel the waiting operation and surface a
+recovery instruction. `inspect` includes these action delivery records.
+In channels, setup stops with an instruction to continue privately; setup URLs
+are never published into channels.
 
 Final output commits before delivery and is split into Unicode-safe chunks.
 Each new post is marked in flight before calling Slack. Rate limits honor

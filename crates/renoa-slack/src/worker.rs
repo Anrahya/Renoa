@@ -113,18 +113,30 @@ impl Worker {
                 .await
                 .unwrap_or_else(|error| format!("Could not apply that setting: {error}")));
         }
+        self.execute_model(&session, work, cancellation).await
+    }
+
+    async fn execute_model(
+        &self,
+        session: &Arc<AgentSession>,
+        work: &Work,
+        cancellation: CancellationToken,
+    ) -> Result<String, SlackError> {
         let progress_stop = CancellationToken::new();
-        let (sink, task) = if let Some(ts) = &work.reply_ts {
-            let (sink, task) = Progress::start(
-                Arc::clone(&self.api),
-                work.topic.clone(),
-                ts.clone(),
-                progress_stop.clone(),
-            );
-            (sink, Some(task))
-        } else {
-            (Progress::quiet(), None)
-        };
+        let (sink, task) = Progress::start(
+            Arc::clone(&self.api),
+            work.topic.clone(),
+            work.reply_ts.clone(),
+            progress_stop.clone(),
+            Some(crate::actions::Actions {
+                api: Arc::clone(&self.api),
+                store: self.store.clone(),
+                topic: work.topic.clone(),
+                seq: work.seq,
+                cancellation: cancellation.clone(),
+            }),
+        );
+        let event_sink = Arc::clone(&sink);
         let outcome = async {
             match (&work.command, work.prompt_content()) {
                 (Command::Prompt(_), Some(content)) => {
@@ -135,14 +147,18 @@ impl Worker {
                             work.request_id,
                             content,
                             observation,
-                            sink,
+                            event_sink,
                             cancellation,
                         )
                         .await
                 }
                 (Command::Compact, _) => {
                     session
-                        .execute_compaction_with_cancellation(work.request_id, sink, cancellation)
+                        .execute_compaction_with_cancellation(
+                            work.request_id,
+                            event_sink,
+                            cancellation,
+                        )
                         .await
                 }
                 _ => Err(renoa_local::LocalHostError::InvalidRequest(
@@ -152,8 +168,9 @@ impl Worker {
         }
         .await;
         progress_stop.cancel();
-        if let Some(task) = task {
-            task.await?;
+        task.await?;
+        if let Some(error) = sink.action_error().await {
+            return Ok(error);
         }
         Ok(format_outcome(outcome?))
     }

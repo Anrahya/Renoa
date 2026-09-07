@@ -21,7 +21,7 @@ use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
 use output::{json_output, plugin_error, registry_error_output};
 
 const TOOL_NAME: &str = "extension_manage";
-const BINDING_REVISION: &str = "renoa-extension-manager-v17";
+const BINDING_REVISION: &str = "renoa-extension-manager-v18";
 
 pub(crate) fn profile_plugin_binding(
     profile_id: AgentProfileId,
@@ -171,6 +171,7 @@ impl ManageTool {
                 connection,
                 credential,
                 replace,
+                restart,
                 required_scope,
             } => {
                 actions::connect(
@@ -181,6 +182,7 @@ impl ManageTool {
                         connection,
                         credential: credential.map_or(PluginCredential::None, Into::into),
                         replace,
+                        restart,
                         required_scope,
                     },
                     ExtensionInvocation::new(operation_id, cancellation, &updates),

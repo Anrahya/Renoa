@@ -1,5 +1,6 @@
 use std::{
     fs,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, SystemTime},
 };
 
@@ -19,12 +20,15 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use super::super::{ManageTool, TOOL_NAME};
+
+mod recovery;
 use crate::{
     ALPHA_PROFILE_ID, AgentProfileId,
     host::catalog,
     mcp::{McpAuthorizationResolver, McpCatalogStore, McpCredentialResolver, McpHostError},
     plugins::{PluginManager, tests::test_skill_store},
 };
+use recovery::recover_pending;
 
 #[tokio::test]
 async fn encrypted_browser_intake_finishes_before_the_connection_is_published() {
@@ -35,6 +39,7 @@ async fn encrypted_browser_intake_finishes_before_the_connection_is_published() 
             "kind": "secret_service_bearer",
             "credential_id": "credential.test"
         }),
+        false,
     )
     .await;
 }
@@ -45,11 +50,28 @@ async fn oauth_setup_is_selected_by_the_host_and_bound_to_the_discovered_issuer(
         "oauth-credential-test",
         "https://mcp.example/oauth-test",
         json!({"kind": "oauth"}),
+        false,
     )
     .await;
 }
 
-async fn run_credential_setup(connection: &str, endpoint: &str, credential: Value) {
+#[tokio::test]
+async fn an_expired_unpublished_connection_restarts_without_another_credential_submission() {
+    run_credential_setup(
+        "pending-oauth",
+        "https://mcp.example/pending",
+        json!({"kind":"oauth"}),
+        true,
+    )
+    .await;
+}
+
+async fn run_credential_setup(
+    connection: &str,
+    endpoint: &str,
+    credential: Value,
+    expire_first: bool,
+) {
     let directory = tempdir().expect("temporary credential setup fixture");
     let relay = CredentialRelayServer::start(&directory).await;
 
@@ -58,6 +80,10 @@ async fn run_credential_setup(connection: &str, endpoint: &str, credential: Valu
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let adapter = directory.path().join("credential-adapter.mjs");
     write_credential_adapter(&adapter);
+    if expire_first {
+        fs::write(directory.path().join("wait-for-consent"), "wait").expect("pause authorization");
+    }
+    let cancellation = CancellationToken::new();
     let authorizations = McpAuthorizationResolver::with_remote_oauth(
         &mcp,
         Some(adapter.clone()),
@@ -87,6 +113,8 @@ async fn run_credential_setup(connection: &str, endpoint: &str, credential: Valu
         http: reqwest::Client::new(),
         catalog: mcp.clone(),
         connection: connection.to_owned(),
+        cancel_on_authorization: expire_first.then(|| cancellation.clone()),
+        credential_prompts: AtomicUsize::new(0),
     };
     let result = invoke_tool(
         Some(&tool),
@@ -109,12 +137,18 @@ async fn run_credential_setup(connection: &str, endpoint: &str, credential: Valu
             thought_signature: None,
             namespace: None,
         },
-        CancellationToken::new(),
+        cancellation,
         Some(&sink),
     )
     .await
     .expect("credential setup has a definite result");
-    assert!(!result.is_error, "credential setup failed: {result:?}");
+    if expire_first {
+        assert!(result.is_error);
+        recover_pending(&tool, &sink, directory.path(), &database, connection).await;
+    } else {
+        assert!(!result.is_error, "credential setup failed: {result:?}");
+    }
+    assert_eq!(sink.credential_prompts.load(Ordering::SeqCst), 1);
     assert_eq!(
         mcp.connection_config(connection)
             .expect("connection is published only after setup")
@@ -184,6 +218,8 @@ struct CredentialSubmitter {
     http: reqwest::Client,
     catalog: McpCatalogStore,
     connection: String,
+    cancel_on_authorization: Option<CancellationToken>,
+    credential_prompts: AtomicUsize,
 }
 
 impl AgentEventSink for CredentialSubmitter {
@@ -198,6 +234,12 @@ impl AgentEventSink for CredentialSubmitter {
             let Ok(value) = serde_json::from_str::<Value>(text) else {
                 return;
             };
+            if value["status"] == "authorization_required" {
+                if let Some(cancellation) = &self.cancel_on_authorization {
+                    cancellation.cancel();
+                }
+                return;
+            }
             if value["status"] != "credential_required" {
                 return;
             }
@@ -205,6 +247,7 @@ impl AgentEventSink for CredentialSubmitter {
                 self.catalog.connection_config(&self.connection),
                 Err(McpHostError::NotFound(_))
             ));
+            self.credential_prompts.fetch_add(1, Ordering::SeqCst);
             submit_encrypted(&self.http, &value).await;
         })
     }
@@ -306,6 +349,7 @@ fn write_credential_adapter(path: &std::path::Path) {
     fs::write(
         path,
         r"
+import fs from 'node:fs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
@@ -323,7 +367,23 @@ if (request.action === 'oauth_discover') {
   });
   process.exit(0);
 }
+if (request.action === 'oauth_token') {
+  send({wire_version:9,event:'oauth_authorized',authorization:{scheme:'bearer',token:'oauth-access'},oauth_state:request.oauth_state});
+  process.exit(0);
+}
 if (request.action === 'oauth_begin') {
+  fs.appendFileSync(new URL('./oauth-begins', import.meta.url), 'begin\n');
+  if (fs.existsSync(new URL('./wait-for-consent', import.meta.url))) {
+    const authorization = new URL('https://accounts.example/authorize');
+    authorization.searchParams.set('state',request.csrf_state);
+    authorization.searchParams.set('redirect_uri',request.redirect_uri);
+    send({wire_version:9,event:'oauth_redirect',authorization_url:authorization.href,oauth_state:{
+      schema_version:1,mcp_endpoint:request.endpoint,csrf_state:request.csrf_state,
+      redirect_uri:request.redirect_uri,authorization_url:authorization.href
+    }});
+    process.exit(0);
+  }
+
   if (request.registration?.mode !== 'pre_registered' ||
       request.registration?.issuer !== 'https://accounts.example' ||
       request.registration?.client_id !== 'browser-client' ||

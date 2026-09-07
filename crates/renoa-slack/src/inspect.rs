@@ -13,7 +13,7 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if !matches!(version, 1..=4) {
+    if !matches!(version, 1..=5) {
         return Err(SlackError::Invalid(format!(
             "unsupported Slack schema {version}"
         )));
@@ -35,5 +35,13 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
     } else {
         Vec::new()
     };
-    Ok(json!({"requests":requests,"delivery_problems":failures,"bot_channels":channels}))
+    let actions = if version >= 5 {
+        let mut query = connection.prepare("SELECT request_seq,stage,state,slack_ts,error FROM setup_actions ORDER BY request_seq DESC LIMIT 50")?;
+        query.query_map([], |row| Ok(json!({"request_seq":row.get::<_,i64>(0)?,"stage":row.get::<_,String>(1)?,"state":row.get::<_,String>(2)?,"slack_ts":row.get::<_,Option<String>>(3)?,"error":row.get::<_,Option<String>>(4)?})))?.collect::<Result<Vec<_>,_>>()?
+    } else {
+        Vec::new()
+    };
+    Ok(
+        json!({"requests":requests,"delivery_problems":failures,"bot_channels":channels,"setup_actions":actions}),
+    )
 }

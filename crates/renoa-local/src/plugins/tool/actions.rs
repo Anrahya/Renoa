@@ -46,6 +46,7 @@ pub(super) struct ConnectRequest {
     pub(super) connection: String,
     pub(super) credential: PluginCredential,
     pub(super) replace: bool,
+    pub(super) restart: bool,
     pub(super) required_scope: Option<String>,
 }
 
@@ -64,6 +65,7 @@ pub(super) async fn connect(
                 connection_id: &request.connection,
                 credential: request.credential,
                 replace: request.replace,
+                restart: request.restart,
                 requested_scope: request.required_scope.as_deref(),
                 operation_id: invocation.operation_id,
                 updates: Some(invocation.updates),

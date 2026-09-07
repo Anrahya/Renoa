@@ -20,6 +20,7 @@ use crate::{
     worker::Worker,
 };
 
+mod actions;
 mod agents;
 mod awareness;
 mod channels;
