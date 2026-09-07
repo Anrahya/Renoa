@@ -11,6 +11,7 @@ use crate::{SlackError, commands::Command, ingress::Topic};
 
 mod actions;
 mod admission;
+mod routines;
 mod schema;
 #[cfg(test)]
 mod tests;
@@ -74,6 +75,7 @@ impl Store {
             "BEGIN IMMEDIATE;
              UPDATE requests SET state='queued' WHERE state='running';
              UPDATE setup_actions SET state='unknown' WHERE state='sending';
+             UPDATE routine_deliveries SET state='unknown' WHERE state='sending';
              UPDATE requests SET reply_state='unknown' WHERE reply_state='sending';
              UPDATE deliveries SET state=CASE WHEN slack_ts IS NULL THEN 'unknown' ELSE 'pending' END
                WHERE state='sending';

@@ -226,3 +226,14 @@ kernel history. Tokens are not stored in the surface database or logged.
 - [Updating messages](https://docs.slack.dev/reference/methods/chat.update/)
 
 The adapter uses existing Rust HTTP, WebSocket, and SQLite dependencies.
+
+## Routine result delivery
+
+The separate `renoa-host` service owns routine scheduling and execution. Slack only
+projects completed Host results into the specialist's ready channel. Schema 6 adds
+a delivery cursor and durable outbox: admission and cursor advancement commit
+together, posting intent precedes the Slack call, and unreceipted posts remain
+unknown after restart. `inspect` exposes recent routine delivery states. A missing
+channel binding leaves that bot's result waiting without blocking other bots;
+reconnecting Slack drains retained Host results.
+See the Host architecture document for routine timing, management, and launch settings.

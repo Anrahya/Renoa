@@ -12,7 +12,7 @@ use migrations::{
     MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
 };
 
-const SCHEMA_VERSION: u32 = 15;
+const SCHEMA_VERSION: u32 = 16;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -286,7 +286,7 @@ fn open(path: &Path) -> Result<Connection, HostCatalogError> {
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if matches!(observed, 1..=14) {
+    if matches!(observed, 1..=15) {
         return migrate(connection);
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -301,6 +301,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.execute_batch(SCHEMA)?;
             agents::initialize(&transaction)?;
             initialize_bots(&transaction)?;
+            super::routines::initialize(&transaction)?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
             verify(connection)
@@ -345,6 +346,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                     agents::initialize(&transaction)?;
                 }
                 initialize_bots(&transaction)?;
+                super::routines::initialize(&transaction)?;
                 transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 transaction.commit()?;
                 Ok(())

@@ -67,3 +67,7 @@ pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 
 pub use host::bots::{BotPage, BotRecipe, BotRecord, BotSummary};
+
+pub use host::routines::{
+    RoutineError, RoutineMutation, RoutineRecord, RoutineRun, RoutineSchedule, RoutineSpec,
+};

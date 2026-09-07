@@ -71,6 +71,15 @@ pub(crate) async fn resolve_runtime(
             command_id,
         ));
     }
+    if profile.id().as_str() == crate::ARCEE_PROFILE_ID
+        || profile.id().as_str().starts_with("renoa.bot.")
+    {
+        extension_tools.push(super::routines::tool::binding(
+            Arc::clone(host),
+            session_id,
+            command_id,
+        ));
+    }
     extension_tools.extend(profile_skill_bindings(
         profile.id().clone(),
         host.skill_store.clone(),

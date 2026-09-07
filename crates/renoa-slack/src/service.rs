@@ -87,6 +87,15 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
         }
         .run(),
     );
+    tasks.spawn(
+        crate::routines::Routines {
+            host: host.clone(),
+            store: store.clone(),
+            api: Arc::clone(&api),
+            shutdown: shutdown.clone(),
+        }
+        .run(),
+    );
     tasks.spawn(socket::run(socket::Receiver {
         host: host.clone(),
         api: Arc::clone(&api),
@@ -114,6 +123,13 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
         .run(),
     );
     eprintln!("Slack operator started: Host {host_id}, Agent {agent_id}");
+    supervise(tasks, shutdown).await
+}
+
+async fn supervise(
+    mut tasks: tokio::task::JoinSet<Result<(), SlackError>>,
+    shutdown: CancellationToken,
+) -> Result<(), SlackError> {
     let first = tokio::select! {
         () = shutdown.cancelled() => None,
         result = tasks.join_next() => result,

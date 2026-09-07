@@ -1,0 +1,17 @@
+[Unit]
+Description=Renoa Host routine scheduler and runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=renoa-arcee
+Group=renoa-arcee
+ExecStart=/usr/local/bin/renoa-host /etc/renoa/host.json
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=300
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 [package]
 name = "renoa-local"
+default-run = "renoa-local"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

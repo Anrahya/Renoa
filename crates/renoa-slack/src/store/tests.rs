@@ -244,7 +244,7 @@ async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity()
     drop(store);
     let database = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
     database
-        .execute_batch("DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
+        .execute_batch("DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
         .expect("legacy schema");
     drop(database);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("migrated store");
@@ -290,7 +290,7 @@ async fn schema_three_upgrade_preserves_legacy_prompt_content_and_snapshots_new_
     let original = store.next_work().await.expect("queue").expect("work");
     drop(store);
     let db = Connection::open(directory.path().join("slack.sqlite3")).expect("database");
-    db.execute_batch("DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
+    db.execute_batch("DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
         .expect("old schema");
     drop(db);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("upgrade");
@@ -401,4 +401,31 @@ async fn setup_action_recovery_keeps_unknown_posts_uncertain_and_retries_only_kn
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn interrupted_routine_delivery_is_not_blindly_posted_again_after_restart() {
+    let directory = tempfile::tempdir().expect("directory");
+    let store = Store::open(directory.path(), &binding(directory.path())).expect("store");
+    let id = Uuid::new_v4().to_string();
+    let inserted = id.clone();
+    store.run(move|db|{db.execute("INSERT INTO routine_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES(?1,0,'00000000-0000-0000-0000-000000000000','C1','digest','pending')",[inserted])?;Ok(())}).await.expect("outbox");
+    store
+        .claim_routine_delivery(id, 0)
+        .await
+        .expect("persist before post");
+    drop(store);
+    let restored = Store::open(directory.path(), &binding(directory.path())).expect("restart");
+    assert!(
+        restored
+            .next_routine_delivery()
+            .await
+            .expect("uncertain delivery excluded")
+            .is_none()
+    );
+    let state: String = restored
+        .run(|db| Ok(db.query_row("SELECT state FROM routine_deliveries", [], |r| r.get(0))?))
+        .await
+        .expect("state");
+    assert_eq!(state, "unknown");
 }
