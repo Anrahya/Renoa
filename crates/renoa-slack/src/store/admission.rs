@@ -90,6 +90,9 @@ impl Store {
                 params![request_id, input.topic.channel, input.topic.thread, input.message_ts, serde_json::to_string(&command)?, command.executes_model(), session_id, observed_at_ms, target,
                     matches!(command, Command::Prompt(_)).then_some(crate::surface_context::CONTEXT)],
             )?;
+            if matches!(command, Command::Prompt(_)) {
+                super::routine_context::attach(&transaction, &request_id, &session_id, &input.topic.channel)?;
+            }
             transaction.execute("INSERT INTO messages VALUES (?1,?2,?3,?4,?5)",params![input.topic.channel,input.message_ts,received_thread,input.text,request_id])?;
             transaction.execute("INSERT INTO receipts VALUES (?1,?2,?3)", params![input.event_id,input.topic.channel,input.message_ts])?;
             let cancel_target = target.as_deref().map(uuid).transpose()?;

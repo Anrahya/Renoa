@@ -141,7 +141,11 @@ fn disarm_once(record: &mut RoutineRecord) -> Result<bool, RoutineError> {
     Ok(true)
 }
 
-fn authorize(db: &Connection, actor: AgentId, target: AgentId) -> Result<(), RoutineError> {
+pub(super) fn authorize(
+    db: &Connection,
+    actor: AgentId,
+    target: AgentId,
+) -> Result<(), RoutineError> {
     let allowed: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM host_agents a JOIN host_bots b ON b.agent_id=?2 WHERE a.agent_id=?1 AND (a.agent_id=b.agent_id OR a.profile_id=?3))",params![actor.to_string(),target.to_string(),crate::ARCEE_PROFILE_ID],|row| row.get(0))?;
     if allowed {
         Ok(())
@@ -188,7 +192,7 @@ fn record(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutineRecord> {
         next_due_ms: row.get(7)?,
     })
 }
-fn parse(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {
+pub(super) fn parse(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Uuid> {
     let value: String = row.get(index)?;
     Uuid::parse_str(&value).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(e))
@@ -248,7 +252,7 @@ fn insert_run(
     tx.execute("INSERT INTO host_routine_runs(id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),session.to_string(),due,admitted_at,r.spec.prompt])?;
     Ok(())
 }
-fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutineRun> {
+pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutineRun> {
     Ok(RoutineRun {
         sequence: row.get(0)?,
         id: parse(row, 1)?,

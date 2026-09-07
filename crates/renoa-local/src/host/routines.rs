@@ -4,7 +4,10 @@ use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError};
 
+pub(crate) mod result_tool;
+mod results;
 mod runner;
+pub use results::RoutineResultSummary;
 mod schedule;
 mod store;
 #[cfg(test)]

@@ -66,3 +66,5 @@ async fn completed_host_results_wait_for_a_channel_and_deliver_once_without_exec
     drop(projector);
     f.stop().await;
 }
+
+mod context;

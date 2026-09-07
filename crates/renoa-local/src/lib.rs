@@ -69,7 +69,8 @@ pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 pub use host::bots::{BotPage, BotRecipe, BotRecord, BotSummary};
 
 pub use host::routines::{
-    RoutineError, RoutineMutation, RoutineRecord, RoutineRun, RoutineSchedule, RoutineSpec,
+    RoutineError, RoutineMutation, RoutineRecord, RoutineResultSummary, RoutineRun,
+    RoutineSchedule, RoutineSpec,
 };
 
 pub use host::bots::names::RenameBot;

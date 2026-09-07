@@ -74,6 +74,10 @@ pub(crate) async fn resolve_runtime(
     if profile.id().as_str() == crate::ARCEE_PROFILE_ID
         || profile.id().as_str().starts_with("renoa.bot.")
     {
+        extension_tools.push(super::routines::result_tool::binding(
+            Arc::clone(host),
+            session_id,
+        ));
         extension_tools.push(super::routines::tool::binding(
             Arc::clone(host),
             session_id,

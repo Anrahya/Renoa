@@ -11,6 +11,7 @@ use crate::{SlackError, commands::Command, ingress::Topic};
 
 mod actions;
 mod admission;
+mod routine_context;
 mod routines;
 mod schema;
 #[cfg(test)]
