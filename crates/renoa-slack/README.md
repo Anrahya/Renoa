@@ -245,4 +245,8 @@ together, posting intent precedes the Slack call, and unreceipted posts remain
 unknown after restart. `inspect` exposes recent routine delivery states. A missing
 channel binding leaves that bot's result waiting without blocking other bots;
 reconnecting Slack drains retained Host results.
+Specialists support one-time dates, daily schedules, and hourly intervals through
+`routine_manage`. For example, ask a specialist to run a task once tomorrow at
+2 pm in your timezone. One-time schedules disarm when durably queued; an offline
+Host catches up once after restart. Results use the same delivery path.
 See the Host architecture document for routine timing, management, and launch settings.

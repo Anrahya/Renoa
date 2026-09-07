@@ -1,4 +1,6 @@
-use super::{RoutineError, RoutineMutation, RoutineRecord, RoutineRun, RoutineSpec};
+use super::{
+    RoutineError, RoutineMutation, RoutineRecord, RoutineRun, RoutineSchedule, RoutineSpec,
+};
 use crate::host::catalog;
 use renoa_kernel::AgentId;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -61,7 +63,7 @@ pub(super) fn mutate(
             let record = RoutineRecord {
                 id: operation,
                 revision: 1,
-                next_due_ms: spec.schedule.next_after(now_ms)?,
+                next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
                 spec,
             };
             save(&tx, &record, true)?;
@@ -82,7 +84,7 @@ pub(super) fn mutate(
                 if old.spec.schedule == spec.schedule && old.spec.enabled == spec.enabled {
                     old.next_due_ms
                 } else {
-                    spec.schedule.next_after(now_ms)?
+                    spec.schedule.first_due(now_ms, spec.enabled)?
                 };
             let revision = old.revision.checked_add(1).ok_or(RoutineError::Conflict)?;
             let record = RoutineRecord {
@@ -95,7 +97,7 @@ pub(super) fn mutate(
             record
         }
         RoutineMutation::RunNow { id } => {
-            let record = get(&tx, id)?;
+            let mut record = get(&tx, id)?;
             authorize(&tx, actor, record.spec.agent_id)?;
             if now_ms < 0 {
                 return Err(RoutineError::Invalid("invalid occurrence time".to_owned()));
@@ -104,6 +106,8 @@ pub(super) fn mutate(
                 return Err(RoutineError::Busy);
             }
             insert_run(&tx, &record, operation, now_ms, now_ms)?;
+            disarm_once(&mut record)?;
+            save(&tx, &record, false)?;
             record
         }
     };
@@ -119,6 +123,22 @@ pub(super) fn mutate(
     )?;
     tx.commit()?;
     Ok(record)
+}
+
+// Disarming and admitting share a transaction. Bump the revision so an edit
+// based on the armed state cannot accidentally re-arm a consumed occurrence.
+fn disarm_once(record: &mut RoutineRecord) -> Result<bool, RoutineError> {
+    if !matches!(record.spec.schedule, RoutineSchedule::Once { .. }) {
+        return Ok(false);
+    }
+    if record.spec.enabled {
+        record.spec.enabled = false;
+        record.revision = record
+            .revision
+            .checked_add(1)
+            .ok_or(RoutineError::Conflict)?;
+    }
+    Ok(true)
 }
 
 fn authorize(db: &Connection, actor: AgentId, target: AgentId) -> Result<(), RoutineError> {
@@ -259,7 +279,9 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<RoutineRun>, Routi
     ));
     insert_run(&tx, &r, id, r.next_due_ms, now_ms)?;
     // Coalesce missed times into one occurrence, then resume from the current clock.
-    r.next_due_ms = r.spec.schedule.advance_past(r.next_due_ms, now_ms)?;
+    if !disarm_once(&mut r)? {
+        r.next_due_ms = r.spec.schedule.advance_past(r.next_due_ms, now_ms)?;
+    }
     save(&tx, &r, false)?;
     let admitted=tx.query_row("SELECT sequence,id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_routine_runs WHERE id=?1",[id.to_string()],run)?;
     tx.commit()?;

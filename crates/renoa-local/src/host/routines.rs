@@ -15,6 +15,10 @@ pub(crate) mod tool;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RoutineSchedule {
+    Once {
+        /// Absolute timestamp with an explicit UTC offset or Z.
+        at: String,
+    },
     Daily {
         hour: i8,
         minute: i8,

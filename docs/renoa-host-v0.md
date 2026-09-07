@@ -282,7 +282,7 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v17 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
+`host.sqlite3` schema v18 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
 snapshots, per-profile attached connection identities, immutable skill revisions,
@@ -831,6 +831,19 @@ Elapsed-hour intervals retain their original phase. Downtime coalesces missed ti
 into one catch-up occurrence. A manual run retains the normal recurring schedule and
 cannot overlap another admitted occurrence of that routine.
 
+One-time schedules use `{"kind":"once","at":"2026-09-08T14:00:00+05:30"}`.
+The timestamp must include an explicit UTC offset or Z, and must be in the future
+when creating or re-arming an enabled task. Relative requests are resolved by the
+agent against the current date/time and the user's timezone. Disarming and
+incrementing the revision commit together with the only timed occurrence's
+admission; the retained due time is historical while enabled=false. An overdue
+armed task catches up once. A crash resumes its admitted run even though it is
+already disarmed. Results and routine records remain available afterward.
+`run_now` also disarms a one-time task, avoiding a second run at its original time;
+a fresh explicit `run_now` may run a disabled task again. Pausing and editing an
+unchanged overdue task are allowed. Re-arming requires a future timestamp and the
+current revision; admitted work is unaffected by subsequent edits.
+
 Each routine has a stable execution session, separate from interactive chats, with
 the same specialist recipe, workspace, and selected Host connections. Its standing
 request must contain the recurring job's requirements; interactive chat history is
@@ -864,7 +877,8 @@ shared relay device credential into its own credential directory. For this unit,
 set the relay credential path to `/run/credentials/renoa-host.service/oauth-relay-device`;
 it must not point into a surface service's credential mount.
 Host schema 17 adds durable display-name edit receipts.
-All processes sharing the Host must support schema 17 before restarting them after
+Schema 18 admits the one-time schedule variant; older readers cannot decode it.
+All processes sharing the Host must support schema 18 before restarting them after
 the migration. The integration tests exercise model-driven creation, specialist
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt
 without repeating the kernel's completed file operation.

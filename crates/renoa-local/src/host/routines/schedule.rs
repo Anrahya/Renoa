@@ -18,6 +18,16 @@ impl RoutineSpec {
 }
 
 impl RoutineSchedule {
+    pub(super) fn first_due(&self, now_ms: i64, enabled: bool) -> Result<i64, RoutineError> {
+        let due = self.next_after(now_ms)?;
+        if enabled && matches!(self, Self::Once { .. }) && due <= now_ms {
+            return Err(RoutineError::Invalid(
+                "one-time schedules must be in the future when armed".to_owned(),
+            ));
+        }
+        Ok(due)
+    }
+
     pub(super) fn advance_past(&self, due_ms: i64, now_ms: i64) -> Result<i64, RoutineError> {
         if let Self::Interval { hours } = self {
             let period = i64::from(*hours) * 3_600_000;
@@ -41,6 +51,20 @@ impl RoutineSchedule {
             ));
         }
         match self {
+            Self::Once { at } => {
+                if at.len() > 128 {
+                    return Err(RoutineError::Invalid(
+                        "one-time timestamp is too long".to_owned(),
+                    ));
+                }
+                let due = at.parse::<Timestamp>()?.as_millisecond();
+                if due < 0 {
+                    return Err(RoutineError::Invalid(
+                        "one-time schedule must follow the Unix epoch".to_owned(),
+                    ));
+                }
+                Ok(due)
+            }
             Self::Interval { hours } => {
                 if !(1..=8760).contains(hours) {
                     return Err(RoutineError::Invalid(

@@ -14,9 +14,9 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   const results=request.messages.slice(index+1).filter(message=>message.role==="tool");
   const invoke=(id,name,args)=>complete([{type:"tool_call",id,name,arguments:args}],"tool_use");
   for(const result of results) if(result.result.is_error) throw Error(JSON.stringify(result.result));
-  if(prompt.startsWith("create routine ")) {
+  if(prompt.startsWith("create routine ") || prompt.startsWith("create once ")) {
     if(results.length) complete(text("Routine created"));
-    else invoke("create-routine","routine_manage",{action:"create",spec:{agent_id:prompt.split(" ")[2],name:"Digest",prompt:"scheduled digest",schedule:{kind:"interval",hours:12},enabled:true}});
+    else invoke("create-routine","routine_manage",{action:"create",spec:{agent_id:prompt.split(" ")[2],name:"Digest",prompt:"scheduled digest",schedule:prompt.startsWith("create once ")?{kind:"once",at:prompt.split(" ")[3]}:{kind:"interval",hours:12},enabled:true}});
   } else if(prompt.startsWith("reschedule ")) {
     if(!results.length) invoke("list-routines","routine_manage",{action:"list"});
     else if(results.length===1) {
