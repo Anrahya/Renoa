@@ -137,25 +137,7 @@ async fn matches_evidence(
             let expected = evidence.quote.clone();
             let cancellation = cancel.clone();
             tokio::task::spawn_blocking(move || {
-                use std::io::BufRead as _;
-                let mut lines = std::io::BufReader::new(std::fs::File::open(path)?).lines();
-                for _ in 0..start {
-                    if cancellation.is_cancelled() {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::Interrupted,
-                            "evidence lookup cancelled",
-                        ));
-                    }
-                    if lines.next().transpose()?.is_none() {
-                        return Ok(false);
-                    }
-                }
-                for expected in expected.lines() {
-                    if lines.next().transpose()?.as_deref() != Some(expected) {
-                        return Ok(false);
-                    }
-                }
-                Ok::<_, std::io::Error>(true)
+                matches_text_evidence(&path, start, &expected, &cancellation)
             })
             .await
             .map_err(|error| GitHubReviewError::Invalid(error.to_string()))??
@@ -175,6 +157,71 @@ async fn matches_evidence(
     };
 
     Ok(!quote.is_empty() && matches)
+}
+
+fn matches_text_evidence(
+    path: &std::path::Path,
+    start: usize,
+    expected: &str,
+    cancel: &CancellationToken,
+) -> std::io::Result<bool> {
+    use std::io::{self, BufRead as _};
+    let mut lines = io::BufReader::new(std::fs::File::open(path)?).lines();
+    let mut next_line = || {
+        if cancel.is_cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "evidence lookup cancelled",
+            ));
+        }
+        match lines.next().transpose() {
+            // A binary line cannot substantiate a textual quotation. Reject this
+            // candidate without aborting validation of the rest of the report.
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => Ok(None),
+            result => result,
+        }
+    };
+    for _ in 0..start {
+        if next_line()?.is_none() {
+            return Ok(false);
+        }
+    }
+    for expected in expected.lines() {
+        if next_line()?.as_deref() != Some(expected) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+#[test]
+fn binary_evidence_is_rejected_without_hiding_io_or_cancellation_failures() {
+    let file = tempfile::NamedTempFile::new().expect("source");
+    let cancel = CancellationToken::new();
+    std::fs::write(file.path(), b"first\n\xff\nwanted\n").expect("binary source");
+    for start in [1, 2] {
+        assert!(
+            !matches_text_evidence(file.path(), start, "wanted", &cancel)
+                .expect("reject binary evidence")
+        );
+    }
+    std::fs::write(file.path(), b"first\nwanted\n").expect("text source");
+    assert!(matches_text_evidence(file.path(), 1, "wanted", &cancel).expect("accept exact text"));
+    cancel.cancel();
+    assert_eq!(
+        matches_text_evidence(file.path(), 1, "wanted", &cancel)
+            .expect_err("cancel read")
+            .kind(),
+        std::io::ErrorKind::Interrupted
+    );
+    let missing = file.path().with_extension("missing");
+    assert_eq!(
+        matches_text_evidence(&missing, 1, "wanted", &CancellationToken::new())
+            .expect_err("missing source remains an IO error")
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
 }
 
 fn added_lines(patch: &str) -> BTreeSet<u32> {
