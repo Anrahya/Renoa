@@ -955,9 +955,16 @@ schema 21 before opening it with these binaries.
 The local CLI exposes the same operations without a browser:
 
 ```text
+renoa-host /absolute/host.json ensure-bot /absolute/bot.json
 renoa-host /absolute/host.json github-review /absolute/request.json
 renoa-host /absolute/host.json github-webhook /absolute/envelope.json
 ```
+
+A bot file contains the existing `BotRecord` shape: `id`, `created_by`, and
+`recipe` (`name`, `instructions`, `tools`, `connections`). `ensure-bot` calls
+the same durable specialist creation operation as the agent tool. The creator
+must already exist in this Host. Repeating the same record is idempotent;
+reusing an ID with a changed recipe conflicts. It starts no model or surface.
 
 A request file is a serialized `GitHubReviewCommand`, for example
 `{"action":"requests","after":0}` or

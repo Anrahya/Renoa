@@ -1,6 +1,6 @@
 use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
-    arcee_profile,
+    BotRecord, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+    ReasoningLevel, arcee_profile,
 };
 use serde::Deserialize;
 use std::{error::Error, path::PathBuf};
@@ -45,9 +45,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
         || (args.len() == 3
             && (args[1] == "github-review"
                 || args[1] == "github-webhook"
-                || args[1] == "github-execute")))
+                || args[1] == "github-execute"
+                || args[1] == "ensure-bot")))
     {
-        return Err(std::io::Error::other("usage: renoa-host <config.json> [rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json>]").into());
+        return Err(std::io::Error::other("usage: renoa-host <config.json> [ensure-bot <bot.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -83,6 +84,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
         adapters,
     )?;
     if args.len() == 3 {
+        if args[1] == "ensure-bot" {
+            let record: BotRecord = serde_json::from_slice(&tokio::fs::read(&args[2]).await?)?;
+            println!(
+                "{}",
+                serde_json::to_string(&host.ensure_bot(record).await?)?
+            );
+            return Ok(());
+        }
         return github_review::run(&host, &args[1], std::path::Path::new(&args[2])).await;
     }
     if args.len() == 6 {

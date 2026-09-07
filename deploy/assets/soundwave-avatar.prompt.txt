@@ -1,0 +1,9 @@
+Generator: built-in image_gen
+Selected by user: dark frontal portrait with cyan waveform.
+
+Use case: stylized-concept
+Asset type: square profile avatar for Soundwave.
+Input image: the provided Transformers Prime screenshot is the character design reference. Follow this reference closely, not the previously generated robot.
+Primary request: Create a new polished avatar portrait of Soundwave that looks like the actual character in the Transformers Prime animated series. Match the reference's broad upper helmet, flat segmented forehead with small violet vent, long tapered almost triangular black face-screen ending in a short flat chin, vivid purple perimeter outlining the entire screen, purple segmented cheek lights, and small irregular cyan audio trace centered on the screen. Preserve the reference's proportions, muted blue-grey metal and simple angular animated-series geometry. The entire face is a display, no eyes, no mouth. No smiling curved waveform. No exaggerated tall crown or spear horns, no rounded dome, no reinterpretation as a generic armored robot.
+Composition: head and a little upper chest centered, frontal, square avatar with full helmet inside frame, recognizable when small. Dark unobtrusive background. Closely match the television CGI rendering, modest surface wear, restrained lighting and purple accents, no elaborate photoreal embellishment. This should feel like a carefully composed still from the show.
+Constraints: no text, no logo, no watermark, no circular border. Single image.
