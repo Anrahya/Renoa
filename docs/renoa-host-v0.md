@@ -1006,8 +1006,11 @@ text at those three commits. It inherits no ordinary bot automation, extension,
 skill, MCP, shell or filesystem tools. Interactive specialist composition stays
 unchanged. No repository code runs on the Host.
 
-Investigation gets at most six logical model calls, validation three, with four
-tool calls per round and an 8,192-token output ceiling per response. Model context
+Investigation gets at most six logical model calls, validation three, with sixteen
+source calls per response and an 8,192-token output ceiling per response. These
+budgets are stated in the model's instructions, including reserving the final
+response for its report. A failed stage retains its specific failure reason in
+the incomplete outcome. Model context
 is capped at the smaller of an estimated 100,000 input tokens or the provider's
 window minus output and safety reserves. The two stages share a 15-minute elapsed
 budget from preparation, retained across restart. Adapter transport retries keep

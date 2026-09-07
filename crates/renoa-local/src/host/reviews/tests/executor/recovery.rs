@@ -2,6 +2,24 @@ use super::*;
 use crate::host::reviews::runs;
 
 #[tokio::test]
+async fn source_batches_complete_both_stages_and_oversized_batches_retain_the_failure() {
+    for mode in ["batch", "oversized-batch"] {
+        let (_directory, host, id, api) = prepared(mode).await;
+        let result = execute(&host, id, &api).await.expect("review outcome");
+        let GitHubReviewRun::Finished { outcome, .. } = result else {
+            panic!("expected finished review");
+        };
+        if mode == "batch" {
+            assert!(matches!(outcome, GitHubReviewOutcome::Reviewed { .. }));
+        } else {
+            assert!(matches!(outcome, GitHubReviewOutcome::Incomplete { reason }
+                if reason == "Investigation failed: model returned 17 tool calls; the per-turn limit is 16"));
+        }
+        api.stop().await;
+    }
+}
+
+#[tokio::test]
 async fn final_commit_failure_reuses_both_completed_model_stages() {
     let (directory, host, id, api) = prepared("").await;
     let db = catalog::open_verified(&host.config.database).expect("catalog");

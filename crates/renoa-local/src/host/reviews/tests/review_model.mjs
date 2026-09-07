@@ -18,9 +18,12 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   const prompt=JSON.parse(request.messages[last].content[0].text);
   const results=request.messages.slice(last+1).filter(m=>m.role==="tool");
   const validation=prompt.task.startsWith("Validate");
+  if(!request.system_prompt.includes("Batch at most 16 review_source calls")) throw Error("missing source batch budget");
+  if(!prompt.task.includes(`at most ${validation?3:6} model responses`)) throw Error("missing stage budget");
   if(mode==="invalid") complete([{type:"text",text:"This is not a structured review"}]);
   else if(!results.length || mode==="exhaust") {
-    complete([{type:"tool_call",id:"read-"+results.length,name:"review_source",arguments:{path:"src/lib.rs",revision:"head",start_line:1,line_count:10}}],"tool_use");
+    const count=mode==="batch"?5:mode==="oversized-batch"?17:1;
+    complete(Array.from({length:count},(_,i)=>({type:"tool_call",id:`read-${results.length}-${i}`,name:"review_source",arguments:{path:"src/lib.rs",revision:"head",start_line:1,line_count:10}})),"tool_use");
   } else {
     if(results.some(m=>m.result.is_error)) throw Error("source lookup failed");
     const finding={path:"src/lib.rs",line:2,title:"Division by zero",trigger:"Calling ratio with a zero count",consequence:"The function panics",correction:"Handle zero before division",evidence:{path:"src/lib.rs",start_line:2,quote:"    10 / count"}};

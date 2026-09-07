@@ -176,8 +176,9 @@ impl LocalHost {
             prepared_at_ms: TurnObservation::now()?.unix_milliseconds(),
             model_spec: model.encoded_spec(),
             system_prompt: format!(
-                "{}\n\nHost-owned reviewer instructions:\n{}",
+                "{}\n\nBatch at most {} review_source calls in one response. The stage task states your model-response budget, including the final JSON response. Finish within that budget and report coverage gaps.\n\nHost-owned reviewer instructions:\n{}",
                 reviewer::INSTRUCTIONS,
+                reviewer::SOURCE_CALLS_PER_RESPONSE,
                 recipe.recipe.instructions
             ),
             context,
@@ -261,7 +262,7 @@ impl LocalHost {
         })
         .await??;
         let prompt = serde_json::to_string(
-            &serde_json::json!({"task":"Investigate defects introduced in this PR. Use review_source for callers, tests and surrounding code. Return candidate findings JSON.","base_sha":snapshot.base_sha,"head_sha":snapshot.head_sha,"context":snapshot.context}),
+            &serde_json::json!({"task":format!("Investigate defects introduced in this PR. Use review_source for callers, tests and surrounding code. You have at most {} model responses for this stage, including the final candidate findings JSON. Reserve the last response for that report.", reviewer::INVESTIGATION_ROUNDS),"base_sha":snapshot.base_sha,"head_sha":snapshot.head_sha,"context":snapshot.context}),
         )?;
         let candidate = self
             .review_stage(&session, snapshot, &github, false, prompt, &cancel)
@@ -278,6 +279,9 @@ impl LocalHost {
                     ));
                 }
             },
+            LocalTurnOutcome::Failed { reason } => {
+                return Ok(incomplete(&format!("Investigation failed: {reason}")));
+            }
             _ => {
                 return Ok(incomplete(
                     "Investigation stopped, failed or exhausted its budget; inspect the durable transcript.",
@@ -285,7 +289,7 @@ impl LocalHost {
             }
         };
         let validation_prompt = serde_json::to_string(
-            &serde_json::json!({"task":"Validate these candidates against pinned source, callers and tests. Seek counterexamples; discard unsupported claims and duplicates. Return final findings JSON in the same schema. Do not add new findings.","candidates":candidates}),
+            &serde_json::json!({"task":format!("Validate these candidates against pinned source, callers and tests. Seek counterexamples; discard unsupported claims and duplicates. Return final findings JSON in the same schema. Do not add new findings. You have at most {} model responses for this stage, including the final JSON report. Reserve the last response for that report.", reviewer::VALIDATION_ROUNDS),"candidates":candidates}),
         )?;
         let validation = self
             .review_stage(
@@ -317,6 +321,9 @@ impl LocalHost {
                     ));
                 }
             },
+            LocalTurnOutcome::Failed { reason } => {
+                return Ok(incomplete(&format!("Validation failed: {reason}")));
+            }
             _ => {
                 return Ok(incomplete(
                     "Validation stopped, failed or exhausted its budget; inspect the durable transcript.",
