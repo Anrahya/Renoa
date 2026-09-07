@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::{LocalHost, LocalHostError};
 use crate::{AgentProfile, AgentProfileId};
 
+pub(crate) mod names;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -67,7 +68,7 @@ pub struct BotRecord {
     pub recipe: BotRecipe,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotSummary {
     pub id: AgentId,
     pub name: String,

@@ -37,8 +37,8 @@ async fn main() {
 }
 async fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 1 {
-        return Err(std::io::Error::other("usage: renoa-host <config.json>").into());
+    if args.len() != 1 && !(args.len() == 6 && args[1] == "rename-bot") {
+        return Err(std::io::Error::other("usage: renoa-host <config.json> [rename-bot <agent-id> <expected-name> <name> <operation-id>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -73,6 +73,28 @@ async fn run() -> Result<(), Box<dyn Error>> {
         vec![arcee_profile(&c.data_directory)?],
         adapters,
     )?;
+    if args.len() == 6 {
+        let text = |index: usize| {
+            args[index]
+                .to_str()
+                .ok_or_else(|| std::io::Error::other("rename arguments must be UTF-8"))
+        };
+        let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
+        let result = host
+            .rename_bot(
+                id,
+                uuid::Uuid::parse_str(text(5)?)?,
+                renoa_local::RenameBot {
+                    id,
+                    expected_name: text(3)?.to_owned(),
+                    name: text(4)?.to_owned(),
+                },
+                CancellationToken::new(),
+            )
+            .await?;
+        println!("{}", serde_json::to_string(&result)?);
+        return Ok(());
+    }
     let stop = CancellationToken::new();
     let runner = host.run_routines(stop.clone());
     tokio::pin!(runner);

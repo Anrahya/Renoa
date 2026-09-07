@@ -19,9 +19,7 @@ impl AgentEventSink for Quiet {
 async fn a_model_creates_a_durable_bot_that_another_live_host_can_execute_after_restart() {
     let directory = tempdir().expect("fixture");
     let root = directory.path();
-    fs::create_dir(root.join("workspace")).expect("workspace");
-    fs::write(root.join("model.mjs"), include_str!("test_model.mjs")).expect("model");
-    fs::write(root.join("auth.sqlite"), "").expect("auth boundary");
+    prepare_fixture(root);
     let host = make_host(root);
     let other = make_host(root);
     let session = host
@@ -109,6 +107,12 @@ async fn a_model_creates_a_durable_bot_that_another_live_host_can_execute_after_
     );
 }
 
+fn prepare_fixture(root: &Path) {
+    fs::create_dir(root.join("workspace")).expect("workspace");
+    fs::write(root.join("model.mjs"), include_str!("test_model.mjs")).expect("model");
+    fs::write(root.join("auth.sqlite"), "").expect("auth boundary");
+}
+
 fn make_host(root: &Path) -> LocalHost {
     LocalHost::assemble(HostInitialization {
         data_directory: root.join("data"),
@@ -128,4 +132,106 @@ fn make_host(root: &Path) -> LocalHost {
         ],
     })
     .expect("Host")
+}
+
+#[tokio::test]
+async fn display_renaming_preserves_creation_replay_sessions_and_rejects_stale_edits() {
+    let d = tempdir().expect("fixture");
+    let root = d.path();
+    prepare_fixture(root);
+    let h = make_host(root);
+    let parent = h
+        .create_session(
+            &AgentProfileId::new(ARCEE_PROFILE_ID).expect("profile"),
+            &root.join("workspace"),
+        )
+        .await
+        .expect("parent");
+    parent
+        .execute_turn(
+            Uuid::new_v4(),
+            vec![ContentBlock::text("create")],
+            Arc::new(Quiet),
+        )
+        .await
+        .expect("create through model");
+    let id = h.list_bots(None).await.expect("list").bots[0].id;
+    let original = h.bot(id).await.expect("get").expect("bot");
+    let op = Uuid::new_v4();
+    let edit = crate::RenameBot {
+        id,
+        expected_name: "News".to_owned(),
+        name: "News Desk".to_owned(),
+    };
+    let renamed = h
+        .rename_bot(
+            parent.agent_id(),
+            op,
+            edit.clone(),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("rename");
+    h.rename_bot(
+        id,
+        Uuid::new_v4(),
+        crate::RenameBot {
+            id,
+            expected_name: "News Desk".to_owned(),
+            name: "Daily News".to_owned(),
+        },
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("later rename");
+    assert_eq!(
+        h.rename_bot(
+            parent.agent_id(),
+            op,
+            edit.clone(),
+            tokio_util::sync::CancellationToken::new()
+        )
+        .await
+        .expect("receipt replay"),
+        renamed
+    );
+    assert!(
+        h.rename_bot(
+            id,
+            Uuid::new_v4(),
+            edit,
+            tokio_util::sync::CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        h.ensure_bot(original.clone())
+            .await
+            .expect("original creation replay"),
+        original
+    );
+    assert_eq!(
+        h.agent(id).await.expect("agent").expect("existing").name,
+        "Daily News"
+    );
+    let child = h
+        .ensure_agent_session(id, &root.join("workspace"), Uuid::new_v4())
+        .await
+        .expect("session still works");
+    child
+        .execute_turn(
+            Uuid::new_v4(),
+            vec![ContentBlock::text("verify")],
+            Arc::new(Quiet),
+        )
+        .await
+        .expect("same recipe/tools");
+    assert!(
+        h.list_agents()
+            .await
+            .expect("legacy import")
+            .iter()
+            .any(|a| a.id == id && a.name == "Daily News")
+    );
 }

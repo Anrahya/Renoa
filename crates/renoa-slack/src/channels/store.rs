@@ -132,7 +132,7 @@ impl Store {
             let result = match row {
                 Some((state, error)) => {
                     let name: String = db.query_row(
-                        "SELECT name FROM bot_channels WHERE agent_id=?1",
+                        "SELECT COALESCE((SELECT desired FROM bot_channel_labels WHERE agent_id=?1 AND applied=1),name) FROM bot_channels WHERE agent_id=?1",
                         [agent],
                         |r| r.get(0),
                     )?;

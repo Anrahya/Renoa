@@ -10,6 +10,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 mod api;
+mod names;
 mod store;
 use store::{Provision, State};
 
@@ -51,7 +52,7 @@ impl Channels {
     pub(crate) async fn provision(&self, bot: &BotSummary) -> Result<(), SlackError> {
         let provision = self.store.channel_provision(bot).await?;
         let channel = match &provision.state {
-            State::Ready => return Ok(()),
+            State::Ready => return self.label(bot).await,
             State::Inviting(id) => id.clone(),
             State::Pending => {
                 if self.shutdown.is_cancelled() { return Ok(()); }
@@ -93,7 +94,8 @@ impl Channels {
             Ok(()) => {
                 self.store
                     .channel_state(&provision.agent, "ready", Some(&channel), None)
-                    .await
+                    .await?;
+                self.label(bot).await
             }
             Err(error) => {
                 self.failed(&provision, "inviting", Some(&channel), error)

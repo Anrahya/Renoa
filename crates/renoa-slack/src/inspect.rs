@@ -13,7 +13,7 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if !matches!(version, 1..=6) {
+    if !matches!(version, 1..=7) {
         return Err(SlackError::Invalid(format!(
             "unsupported Slack schema {version}"
         )));
@@ -47,7 +47,13 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
     } else {
         Vec::new()
     };
+    let labels = if version >= 7 {
+        let mut q=connection.prepare("SELECT agent_id,desired,applied,error FROM bot_channel_labels ORDER BY agent_id LIMIT 50")?;
+        q.query_map([],|r|Ok(json!({"agent_id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"applied":r.get::<_,bool>(2)?,"error":r.get::<_,Option<String>>(3)?})))?.collect::<Result<Vec<_>,_>>()?
+    } else {
+        Vec::new()
+    };
     Ok(
-        json!({"requests":requests,"delivery_problems":failures,"bot_channels":channels,"setup_actions":actions,"routine_deliveries":routines}),
+        json!({"requests":requests,"delivery_problems":failures,"bot_channels":channels,"setup_actions":actions,"routine_deliveries":routines,"channel_labels":labels}),
     )
 }

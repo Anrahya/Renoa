@@ -56,9 +56,18 @@ is not authoritative for the currently active interface.
 A supervised Slack provisioning task discovers Host specialists at startup,
 after Slack turns, and once per minute. This is a surface projection of the Host
 inventory, including bots created through another surface. It never makes Slack
-channel IDs part of the Host recipe. Each bot receives a private channel named
-`renoa-<name>-<agent-id>`; the stable ID suffix distinguishes identical names.
-You can rename a ready channel in Slack because routing uses its channel ID.
+channel IDs part of the Host recipe. Ready channels use short job names, such as
+`x-desk`, `news`, or `research`. Collisions get small suffixes such as `news-2`.
+Ask Arcee to rename a specialist through `bot_manage`; the Host display name
+changes and Slack renames the existing channel, preserving its history and routing.
+Manual Slack renames remain until the Host display name changes again.
+
+Schema 7 stores each desired label before renaming. Creation still uses an
+internal name containing the Agent ID until routing and invitation are ready;
+that stable identity allows recovery of ambiguous creation. Labels are then
+applied by channel ID. A lost rename response is reconciled by reading that
+same channel before retrying; a definitive name collision reserves another
+short label. The internal creation name is not the final visible name.
 
 Slack schema 3 retains setup intent, channel ID, state, and bounded API errors.
 Creation intent commits before calling Slack. An interrupted or ambiguous create
