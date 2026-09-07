@@ -907,6 +907,212 @@ the migration. The integration tests exercise model-driven creation, specialist
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt
 without repeating the kernel's completed file operation.
 
+## GitHub reviewer composition
+
+The Host implements repository policy and durable review-request admission.
+Execution, GitHub publication, and browser management remain design targets,
+not deployed capabilities. The browser currently projects RCP tasks. This
+composition adds no GitHub payload to the kernel and does not settle the open
+RCP wire boundaries.
+
+### Admission boundary
+
+`LocalHost::manage_github_review` is the trusted local management boundary.
+`SetRepository` binds a stable GitHub repository ID and installation ID to an
+existing Host specialist, an informational `owner/repository` name, enabled
+state, selected triggers, and draft handling. Creation uses no expected
+revision; updates require the exact current revision. A stable operation UUID
+and its exact result are committed together. Reusing an operation UUID with
+different input conflicts; retrying an old edit returns its original result
+without restoring obsolete policy. Agent or browser callers still need an
+authenticated authorization adapter before this local API can be exposed.
+
+`Request` admits an explicit manual request, including while automatic reviews
+are paused. `Repositories` and `Requests` return at most 20 records, ordered by
+repository ID and admission sequence respectively. Continue with the last
+record's ID or sequence. Each request retains its original policy snapshot and
+reported base/head commits. They are admission evidence, not a claim that an
+executor reviewed those commits or that the latest-arriving event is newest.
+
+`LocalHost::admit_github_review_webhook` validates HMAC-SHA256 over the original
+body, limits the payload to 1 MiB, checks installation identity against policy,
+and atomically stores a receipt with any new request. Filtered events retain
+their original ignored outcome on replay. Delivery UUIDs deduplicate transport
+retries; repository/policy revision/PR/base/head identity deduplicates separate
+automatic events requesting the same work. Manual requests have their own
+operation identity and can intentionally request another review. Request
+admission is bounded to 1,024 pending requests; capacity failure acknowledges
+no new work, while already-admitted requests remain replayable. This first slice
+does not drain the inbox or call a model.
+
+Host schema 20 adds `host_review_repositories`, `host_review_operations`,
+`host_review_requests`, and `host_review_deliveries`. Existing Host, specialist,
+session, capability, and routine records are preserved. All processes sharing
+the database must support schema 20 before opening it with these binaries.
+
+The local CLI exposes the same operations without a browser:
+
+```text
+renoa-host /absolute/host.json github-review /absolute/request.json
+renoa-host /absolute/host.json github-webhook /absolute/envelope.json
+```
+
+A request file is a serialized `GitHubReviewCommand`, for example
+`{"action":"requests","after":0}` or
+`{"action":"repositories","after":null}`. The webhook envelope contains
+`delivery_id`, `event`, `signature`, `body_file`, and `secret_file`. File paths
+must be absolute. The body file contains the exact signed bytes; the private
+secret file contains the exact secret bytes (no automatic whitespace trimming).
+The CLI never prints the secret or original payload. This is a local admission
+and recovery path, not a public webhook server; GitHub App deployment and a
+supervised executor/publisher follow separately.
+
+### Evidence informing the design
+
+Primary documentation inspected on 2026-09-07 informs the following choices.
+Product capabilities and vendor-reported quality metrics are not independent
+evidence that Renoa has reached equivalent review quality.
+
+| Reference | Relevant behavior | Renoa design consequence |
+| --- | --- | --- |
+| [CodeRabbit review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Repository context, incremental reviews on subsequent commits, severity categories, and discussion of findings. | Keep per-PR review history; inspect surrounding code; publish concise findings that remain discussable. |
+| [Cursor: Building a better Bugbot](https://cursor.com/blog/building-bugbot) | Describes an early multi-pass/validator pipeline, then a move to agentic context gathering; measures findings resolved and evaluates on annotated diffs. | Start with a bounded investigator and a validation stage. Evaluate actual defects and false positives before multiplying model passes. |
+| [Qodo review architecture](https://docs.qodo.ai/code-review) | Specialist review agents with a judge that merges and filters findings; repository history and persistent reviews. | Make investigation and validation replaceable. Retain the evidence and disposition of findings between runs. |
+| [Greptile scoped configuration](https://www.greptile.com/docs/code-review/greptile-config) | Directory-scoped rules and explicit context files, with visible configuration precedence. | Apply relevant repository instructions and architecture documents, and show which sources governed a run. |
+| [GitHub Copilot code review](https://docs.github.com/en/copilot/concepts/agents/code-review) | Project context gathering, configurable triggers and effort, and handoff of findings to a coding agent. | Keep review effort explicit and make structured results reusable by later fix workflows. |
+| [PR-Agent](https://github.com/The-PR-Agent/pr-agent) | A separate community-maintained open-source reviewer with configurable providers and deployment methods; it is not the current hosted Qodo implementation. | A useful inspectable reference, not a replacement Host or proof of parity with Qodo. |
+
+PR-Agent's source was inspected at commit
+`782a4e3a6c02189db3ac24240ebe6789629d40c4` (MIT license). No upstream source
+has been adapted into Renoa as part of this design.
+
+### Ownership and management
+
+Review Desk is a Host-owned reviewer identity with a review recipe. Repository
+subscriptions, trigger policy, frozen run configuration, outcomes, and discussion
+context belong to the Host. A temporary review workspace belongs to one admitted
+run. The GitHub adapter owns webhook parsing, installation authentication, and
+the mapping from Host findings to GitHub reviews and comment identities.
+
+The browser and agent-facing management tools must call the same Host operations.
+The initial control panel manages repository selection, automatic review triggers,
+draft handling, model/reasoning, limits, pause/resume, manual review requests, and
+run/result inspection. Each mutation needs a stable operation identity and a
+revision check where edits can conflict; reconnecting must not submit it twice.
+The UI must explain the effective configuration and the frozen configuration
+used by an existing run rather than silently rewriting history after an edit.
+
+Browser access requires an authenticated management path to the existing shared
+Host. The current one-use passkey ticket authenticates an RCP WebSocket only;
+it is not a reusable HTTP bearer token. A management transport must bind the
+authenticated principal to an explicitly authorized Host and keep credentials
+behind that Host. Sharing `renoa.live` must not grant task authority or cause the
+coordinator to assemble agents. RCP locked decision 21 permits this separate
+management service; it does not implement its authentication or routing.
+
+### Review execution and delivery
+
+1. Validate the GitHub webhook signature over the bounded raw request body.
+   Persist the admitted delivery and its logical work identity before returning
+   success, within GitHub's response deadline. Duplicate delivery IDs and multiple
+   events requesting the same automatic review must not create duplicate work.
+   Authenticate installation/repository ownership before admitting expensive work.
+2. Default to Renoa's selected repository, non-draft PR creation, ready-for-review,
+   and new commits. Support an explicit manual request. Coalesce rapid pushes;
+   resolve the current open PR state through GitHub before selecting work, since
+   webhook arrival order is not authoritative. Closed PRs and revoked installation
+   access cannot continue to publish. GitHub does not automatically retry failed
+   webhook deliveries; a durable reconciliation cursor and redelivery handling
+   must recover missed work after downtime. This is event-triggered work, not a
+   new cron schedule variant.
+3. Freeze repository identity, PR, base/head commits, effective policy, model,
+   instructions, and tool composition with the admitted run. Reuse its stable
+   execution identity during restart recovery. Do not review a moving branch or
+   silently substitute a different model after a provider limit.
+4. Gather the complete changed-file inventory, relevant diff, surrounding code,
+   callers, tests, and available CI results. Explicitly record exclusions,
+   truncation, inaccessible files, and budget exhaustion. Repository instructions
+   come from the trusted base revision; changes to instructions inside the PR
+   are review material, not authority to expand access or suppress the review.
+5. Investigate concrete defects and validate candidate findings against the code.
+   Each published finding must identify the condition that triggers the problem,
+   the consequence, supporting source locations, and a useful correction.
+   Reject unsupported assertions, invalid line anchors, duplicate findings, and
+   generic style advice. A confidence number generated by the model is not proof.
+6. Persist structured findings and a publication intent before calling GitHub.
+   Recheck the PR head immediately before publication, suppress known superseded
+   work, and always bind the review to its actual commit SHA. GitHub provides no
+   atomic compare-head-and-post operation: a concurrent push can still make a
+   correctly bound review outdated, and the UI must show that honestly.
+7. Retain remote review/comment IDs and reconcile an uncertain post before any
+   retry. An unresolvable outcome becomes visible attention-required state;
+   it must not cause a blind duplicate comment. Respect API and provider backoff.
+   Retry infrastructure stages without rerunning a completed model review.
+8. Expose the same durable review result to GitHub replies, the control panel,
+   and authorized agent tools. A follow-up conversation must be able to retrieve
+   the exact output and evidence even when it starts on a different surface.
+
+GitHub's [webhook guidance](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks)
+requires a prompt response and explains that redelivery retains the delivery ID.
+Its [redelivery documentation](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks)
+states that failed deliveries are not automatically redelivered.
+Its [review API](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request)
+accepts an explicit commit and inline locations. These support durable admission
+and exact-commit publication, not a claim of exactly-once external side effects.
+
+### Composition, resource limits, and review quality
+
+The first reviewer should have repository read/search and bounded CI-context
+tools. Its GitHub write authority is exercised by the deterministic publisher,
+not exposed as a general model tool. PR text, files, and logs are untrusted input.
+The reviewer cannot inherit Arcee's shared accounts merely because they are
+available on the Host. Existing filesystem read tools already check workspace
+containment. A checkout must not carry Git credentials in its files or config.
+Use a GitHub App installation credential owned by the Host and mint short-lived
+tokens for the selected repository and required operations. GitHub documents
+[installation-scoped tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
+with a one-hour lifetime and optional repository/permission restrictions. App
+registration and installation remain deployment prerequisites; the existing
+interactive GitHub MCP connection is not proof that a review App is installed.
+
+Current `host/runtime.rs` automatically adds `routine_manage` to every
+`renoa.bot.*` profile. Selecting only read tools in a normal bot recipe therefore
+does not create a read-only review runtime. Review composition must explicitly
+exclude automation, bot, extension, and unrelated MCP management tools while
+preserving existing interactive specialist behavior. This is concrete tool
+composition, not a new popup permission system.
+
+Begin with one review at a time and explicit model-call, input/output, and elapsed
+time budgets. Keep review execution from blocking the existing routine queue.
+Keep the system/tool prefix stable, put run-specific metadata after it, and reuse
+content by immutable commit/blob identity. Record provider-reported token and
+cache usage when available; unknown cache savings or monetary cost stay unknown.
+Incremental review should reuse unchanged context and previous findings while
+still checking the current PR as a whole. Fall back to full context after a
+force-push, changed base, or incompatible review configuration.
+
+A later executor can run tests in a disposable, resource-limited environment
+without Host credentials. Until that boundary exists, use existing CI evidence
+and report that tests were not executed by the reviewer. Automatic fixes,
+cross-repository graph indexing, autonomous rule learning, and multiple parallel
+investigators follow a useful measured baseline rather than precede it.
+
+Quality must be tested on fixed base/head pairs with human-labeled defects and
+clean changes, including Renoa's real persistence, retry, OAuth, and context bugs.
+Separate tuning examples from held-out cases. Track actionable precision,
+labeled-defect recall, duplicate/stale findings, missed coverage, latency, token
+usage, and cost where known. Resolution at merge is useful feedback, but does
+not by itself establish correctness: authors may accept a weak suggestion or
+defer a valid defect. Record dismissals and their reasons without automatically
+turning arbitrary PR comments into permanent review policy.
+
+Before enabling automatic publication, deterministic boundary tests must cover
+signature failure, duplicate and out-of-order events, restart after admission,
+rapid pushes, changed heads, revoked access, provider/API backoff, incomplete
+diffs, path escape, malformed findings, and lost publication responses. A labeled
+review evaluation is separate from these delivery tests; passing Rust tests alone
+does not establish that the reviewer finds useful bugs.
+
 ## Locked decisions
 
 1. The Host, not a surface or loop, resolves runtime composition.

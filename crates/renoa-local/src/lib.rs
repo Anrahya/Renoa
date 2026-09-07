@@ -74,3 +74,9 @@ pub use host::routines::{
 };
 
 pub use host::bots::names::RenameBot;
+
+pub use host::reviews::{
+    GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewPolicy,
+    GitHubReviewReply, GitHubReviewRepository, GitHubReviewRequest, GitHubReviewSkip,
+    GitHubReviewTrigger, GitHubReviewWebhook,
+};

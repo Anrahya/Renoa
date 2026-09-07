@@ -6,6 +6,9 @@ use serde::Deserialize;
 use std::{error::Error, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
+#[path = "renoa-host/github_review.rs"]
+mod github_review;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -37,8 +40,11 @@ async fn main() {
 }
 async fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 1 && !(args.len() == 6 && args[1] == "rename-bot") {
-        return Err(std::io::Error::other("usage: renoa-host <config.json> [rename-bot <agent-id> <expected-name> <name> <operation-id>]").into());
+    if !(args.len() == 1
+        || (args.len() == 6 && args[1] == "rename-bot")
+        || (args.len() == 3 && (args[1] == "github-review" || args[1] == "github-webhook")))
+    {
+        return Err(std::io::Error::other("usage: renoa-host <config.json> [rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -73,6 +79,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         vec![arcee_profile(&c.data_directory)?],
         adapters,
     )?;
+    if args.len() == 3 {
+        return github_review::run(&host, &args[1], std::path::Path::new(&args[2])).await;
+    }
     if args.len() == 6 {
         let text = |index: usize| {
             args[index]

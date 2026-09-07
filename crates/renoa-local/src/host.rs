@@ -14,6 +14,7 @@ pub(crate) mod history;
 mod mcp;
 mod models;
 mod profiles;
+pub(crate) mod reviews;
 pub(crate) mod routines;
 mod runtime;
 mod sessions;
@@ -205,6 +206,8 @@ pub enum LocalHostError {
     BotRenameCancelled,
     #[error(transparent)]
     Routine(#[from] routines::RoutineError),
+    #[error(transparent)]
+    GitHubReview(#[from] reviews::GitHubReviewError),
     #[error("local Host trace failed: {0}")]
     Trace(String),
     #[error("session creation failed: {source}; staging cleanup also failed: {cleanup}")]
