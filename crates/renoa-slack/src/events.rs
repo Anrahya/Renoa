@@ -10,8 +10,11 @@ use crate::{
     ingress::Topic,
 };
 
+mod preview;
+use preview::Preview;
+
 pub(crate) struct Progress {
-    latest: watch::Sender<String>,
+    latest: watch::Sender<Preview>,
     actions: Option<Actions>,
     action_error: tokio::sync::Mutex<Option<String>>,
 }
@@ -24,24 +27,27 @@ impl Progress {
         stop: CancellationToken,
         actions: Option<Actions>,
     ) -> (Arc<Self>, tokio::task::JoinHandle<()>) {
-        let (latest, mut receiver) = watch::channel("Working…".to_owned());
+        let (latest, mut receiver) = watch::channel(Preview::default());
         let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            // 48 updates/minute leaves headroom below chat.update's Tier 3
+            // floor of 50/minute for final delivery and command responses.
+            let mut interval = tokio::time::interval(Duration::from_millis(1250));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             let mut retry_pending = false;
+            let mut delivered = String::new();
             loop {
                 tokio::select! {
                     () = stop.cancelled() => break,
                     _ = interval.tick() => {
                         let Ok(changed) = receiver.has_changed() else { break };
                         if !changed && !retry_pending { continue; }
-                        let text = receiver.borrow_and_update().clone();
+                        let text = receiver.borrow_and_update().render();
                         let Some(ts) = &ts else { continue; };
-                        if text.trim().is_empty() { continue; }
+                        if text.trim().is_empty() || (!retry_pending && text == delivered) { continue; }
                         // The worker joins this task before final delivery, so a
                         // delayed progress update cannot replace the final answer.
                         match api.update(&topic, ts, &text).await {
-                            Ok(()) => retry_pending = false,
+                            Ok(()) => { retry_pending = false; delivered = text; },
                             Err(crate::api::ApiError::RateLimited(delay)) => {
                                 retry_pending = true;
                                 tokio::select! { () = stop.cancelled() => break, () = tokio::time::sleep(delay) => {} }
@@ -70,6 +76,10 @@ impl Progress {
         )
     }
 
+    fn status(&self, status: String) {
+        self.latest.send_modify(|preview| preview.status = status);
+    }
+
     pub(crate) async fn action_error(&self) -> Option<String> {
         self.action_error.lock().await.take()
     }
@@ -81,19 +91,16 @@ impl AgentEventSink for Progress {
             AgentEvent::MessageStart {
                 role: renoa_agent::MessageRole::Assistant,
             } => {
-                self.latest.send_replace(String::new());
+                self.latest.send_modify(Preview::start_message);
             }
             AgentEvent::MessageUpdate {
                 delta: AssistantDelta::Text { text },
                 ..
             } => {
-                self.latest.send_modify(|current| {
-                    current.push_str(&text);
-                    *current = tail(current, 3500);
-                });
+                self.latest.send_modify(|preview| preview.append(&text));
             }
             AgentEvent::ModelRequestStart { .. } | AgentEvent::MessageAbort => {
-                self.latest.send_replace("Thinking…".to_owned());
+                self.status("Thinking…".to_owned());
             }
             AgentEvent::ModelRetryAttempt {
                 next_attempt,
@@ -106,24 +113,24 @@ impl AgentEventSink for Progress {
                 } else {
                     "The model request hit a temporary error."
                 };
-                self.latest.send_replace(format!(
+                self.status(format!(
                     "{reason} Retrying in {}s (attempt {next_attempt}). Use !cancel to stop.",
                     delay_ms.div_ceil(1000)
                 ));
             }
             AgentEvent::ToolExecutionStart { call } => {
-                self.latest.send_replace(format!("Using {}…", call.name));
+                self.status(format!("Using {}…", call.name));
             }
             AgentEvent::ToolExecutionUpdate { call, update } => {
                 if call.name == "extension_manage"
                     && let Some(action) = Action::parse(&update)
                     && let Some(actions) = &self.actions
                 {
-                    self.latest.send_replace("Account setup needs your action. Check the separate setup message in this conversation.".to_owned());
+                    self.status("Account setup needs your action. Check the separate setup message in this conversation.".to_owned());
                     return Box::pin(async move {
                         if let Err(error) = actions.deliver(&call.id, action).await {
                             let message = format!("{error}");
-                            self.latest.send_replace(message.clone());
+                            self.status(message.clone());
                             *self.action_error.lock().await = Some(message);
                             actions.cancellation.cancel();
                         }
@@ -137,22 +144,81 @@ impl AgentEventSink for Progress {
     }
 }
 
-fn tail(text: &str, limit: usize) -> String {
-    let count = text.chars().count();
-    if count <= limit {
-        return text.to_owned();
-    }
-    text.chars().skip(count - limit).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::{Json, Router, response::IntoResponse as _, routing::post};
 
     #[tokio::test]
+    async fn tool_and_retry_events_keep_text_visible_until_the_next_message_has_text() {
+        let (latest, receiver) = watch::channel(Preview::default());
+        let progress = Progress {
+            latest,
+            actions: None,
+            action_error: tokio::sync::Mutex::new(None),
+        };
+        progress.emit(text_event("I will check the logs.")).await;
+        progress
+            .emit(AgentEvent::ToolExecutionStart {
+                call: renoa_agent::ToolCall {
+                    id: "call-1".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                    namespace: None,
+                },
+            })
+            .await;
+        assert_eq!(
+            receiver.borrow().render(),
+            "I will check the logs.\n\nUsing read…"
+        );
+        progress.emit(AgentEvent::MessageAbort).await;
+        progress
+            .emit(AgentEvent::MessageStart {
+                role: renoa_agent::MessageRole::Assistant,
+            })
+            .await;
+        progress.emit(text_event("")).await;
+        assert_eq!(
+            receiver.borrow().render(),
+            "I will check the logs.\n\nThinking…"
+        );
+        progress.emit(text_event("The logs ")).await;
+        progress.emit(text_event("look healthy.")).await;
+        assert_eq!(receiver.borrow().render(), "The logs look healthy.");
+    }
+
+    #[tokio::test]
+    async fn long_unicode_replies_keep_their_beginning_and_bound_the_preview() {
+        let (latest, receiver) = watch::channel(Preview::default());
+        let progress = Progress {
+            latest,
+            actions: None,
+            action_error: tokio::sync::Mutex::new(None),
+        };
+        progress.emit(text_event("Beginning: ")).await;
+        progress.emit(text_event(&"界".repeat(4000))).await;
+        let preview = receiver.borrow().render();
+        assert!(preview.starts_with("Beginning: "));
+        assert!(preview.contains("full response will appear when finished"));
+        assert!(preview.chars().count() < 3600);
+        progress.emit(text_event("later content")).await;
+        assert_eq!(receiver.borrow().render(), preview);
+    }
+
+    fn text_event(text: &str) -> AgentEvent {
+        AgentEvent::MessageUpdate {
+            content_index: 0,
+            delta: AssistantDelta::Text {
+                text: text.to_owned(),
+            },
+        }
+    }
+
+    #[tokio::test]
     async fn model_retry_progress_explains_wait_without_publishing_diagnostics() {
-        let (latest, receiver) = watch::channel(String::new());
+        let (latest, receiver) = watch::channel(Preview::default());
         let progress = Progress {
             latest,
             actions: None,
@@ -172,7 +238,7 @@ mod tests {
                     cause_code: Some("private-diagnostic".to_owned()),
                 })
                 .await;
-            let message = receiver.borrow().clone();
+            let message = receiver.borrow().render();
             assert!(message.contains(reason));
             assert!(message.contains("Retrying in 6s (attempt 2)"));
             assert!(message.contains("!cancel"));
@@ -239,7 +305,7 @@ mod tests {
             None,
         );
         let link = "Waiting for the provider.";
-        progress.latest.send_replace(link.to_owned());
+        progress.status(link.to_owned());
         tokio::time::timeout(Duration::from_secs(15), async {
             for _ in 0..3 {
                 let body = received.recv().await.expect("update attempted");
