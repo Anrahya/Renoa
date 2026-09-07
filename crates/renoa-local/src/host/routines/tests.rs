@@ -327,7 +327,7 @@ async fn schema_fifteen_upgrade_preserves_bot_identity_and_runner_has_exclusive_
     let (d, h, _parent, child) = fixture().await;
     let identity = h.host_id().await.expect("identity");
     let db = crate::host::catalog::open_verified(&h.config.database).expect("database");
-    db.execute_batch("DROP TABLE host_routine_mutations; DROP TABLE host_routine_runs; DROP TABLE host_routines; UPDATE host_metadata SET schema_version=15; PRAGMA user_version=15;").expect("schema fifteen");
+    db.execute_batch("DROP TABLE host_routine_deletions; DROP TABLE host_routine_mutations; DROP TABLE host_routine_runs; DROP TABLE host_routines; UPDATE host_metadata SET schema_version=15; PRAGMA user_version=15;").expect("schema fifteen");
     drop(db);
     drop(h);
     let restored = host(d.path());
@@ -412,3 +412,5 @@ async fn paused_routines_allow_one_idempotent_manual_run_and_intervals_keep_thei
 
 mod once;
 mod results;
+
+mod deletion;

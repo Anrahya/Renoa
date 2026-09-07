@@ -282,7 +282,7 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v18 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
+`host.sqlite3` schema v19 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
 snapshots, per-profile attached connection identities, immutable skill revisions,
@@ -813,6 +813,13 @@ and account connections remains independent. List returns bounded pages with exa
 routine IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
 complete routine for inspection or editing.
 Pausing sets enabled=false; it leaves an already admitted occurrence intact.
+`delete` requires the current revision and records a durable deletion marker in
+Host schema 19 while disabling the routine and incrementing its revision. Deleted
+routines disappear from listing/get and reject update/manual-run operations; they
+cannot be re-armed. Already admitted runs finish, and their results remain readable.
+The original routine row and operation receipts remain for run references and exact
+replay; replaying creation does not resurrect a deleted routine. Deletion and its
+receipt commit atomically, and cancelled/stale/unauthorized requests change nothing.
 
 Host schema 16 introduced routines, management receipts, and occurrence records. A tool
 operation derives its stable identity from the session, command, and tool call.
@@ -894,7 +901,8 @@ set the relay credential path to `/run/credentials/renoa-host.service/oauth-rela
 it must not point into a surface service's credential mount.
 Host schema 17 adds durable display-name edit receipts.
 Schema 18 admits the one-time schedule variant; older readers cannot decode it.
-All processes sharing the Host must support schema 18 before restarting them after
+Schema 19 adds routine deletion markers consumed by listing, lookup, and admission.
+All processes sharing the Host must support schema 19 before restarting them after
 the migration. The integration tests exercise model-driven creation, specialist
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt
 without repeating the kernel's completed file operation.

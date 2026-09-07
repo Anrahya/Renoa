@@ -66,6 +66,10 @@ pub enum RoutineMutation {
     RunNow {
         id: Uuid,
     },
+    Delete {
+        id: Uuid,
+        expected_revision: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

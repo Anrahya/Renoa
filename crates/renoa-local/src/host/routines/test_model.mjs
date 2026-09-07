@@ -27,6 +27,15 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
       const current=JSON.parse(results[1].result.content[0].text).routine;
       invoke("update-routine","routine_manage",{action:"update",id:current.id,expected_revision:current.revision,spec:{...current.spec,schedule:{kind:"interval",hours:24}}});
     } else complete(text("Schedule updated"));
+  } else if(prompt.startsWith("delete routine ")) {
+    if(!results.length) invoke("get-deleting","routine_manage",{action:"get",id:prompt.split(" ")[2]});
+    else if(results.length===1) {
+      const r=JSON.parse(results[0].result.content[0].text).routine;
+      invoke("delete-routine","routine_manage",{action:"delete",id:r.id,expected_revision:r.revision});
+    } else {
+      if(!JSON.parse(results[1].result.content[0].text).deleted) throw Error("missing deletion receipt");
+      complete(text("Automation deleted"));
+    }
   } else if(prompt==="read latest routine result") {
     if(!results.length) invoke("list-results","routine_results",{action:"list"});
     else if(results.length===1) {
