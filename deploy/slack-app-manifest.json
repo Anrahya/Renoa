@@ -4,7 +4,10 @@
     "bot_user": {"display_name": "Arcee", "always_online": false},
     "app_home": {"home_tab_enabled": false, "messages_tab_enabled": true, "messages_tab_read_only_enabled": false}
   },
-  "oauth_config": {"scopes": {"bot": ["app_mentions:read", "chat:write", "im:history", "channels:history", "groups:history", "groups:write", "groups:read"]}},
+  "oauth_config": {
+    "redirect_urls": ["https://renoa.live/v1/oauth/callback"],
+    "scopes": {"bot": ["app_mentions:read", "chat:write", "im:history", "channels:history", "groups:history", "groups:write", "groups:read"]}
+  },
   "settings": {
     "event_subscriptions": {"bot_events": ["app_mention", "message.im", "message.channels", "message.groups"]},
     "socket_mode_enabled": true,
