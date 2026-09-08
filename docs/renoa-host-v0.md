@@ -1244,6 +1244,13 @@ shared compactor can retain them. Responses encrypted reasoning is replayed
 unchanged, but its context estimate uses reported output usage instead of treating
 ciphertext bytes as prompt text; unknown formats retain the conservative fallback.
 
+Incomplete review outcomes remain in the Host's run and trace records for the
+control hub. The publisher settles them as suppressed before requesting GitHub
+credentials, so operational failures do not create PR noise. A submission whose
+acknowledgement was already lost is still reconciled without reposting. The
+current RCP browser console does not yet expose these Host review records; that
+management view is part of the control-panel integration.
+
 Worker entry is distinct from the pre-dispatch lifetime record. Failed launches
 retry with a persisted backoff inside the original deadline, after confirming
 the stable systemd unit is stopped. Partial launch files are then replaced.

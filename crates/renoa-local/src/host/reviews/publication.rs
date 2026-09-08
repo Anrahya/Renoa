@@ -132,6 +132,18 @@ impl LocalHost {
                 GitHubReviewError::Invalid("review has no terminal outcome".to_owned()).into(),
             );
         };
+        // Operational failures belong to the Host control plane. Do not even
+        // acquire a GitHub credential for a new incomplete publication. A prior
+        // uncertain POST must still be reconciled; it may already exist remotely.
+        if matches!(outcome, GitHubReviewOutcome::Incomplete { .. })
+            && !matches!(previous, Some(GitHubReviewPublication::Sending { .. }))
+        {
+            let state = GitHubReviewPublication::Suppressed {
+                reason: "Incomplete review; diagnostics retained by the Host.".to_owned(),
+            };
+            self.save_publication(id, state.clone()).await?;
+            return Ok(state);
+        }
         let sha = snapshot
             .as_ref()
             .map_or(&request.reported_head_sha, |s| &s.head_sha);

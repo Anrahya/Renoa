@@ -7,6 +7,7 @@ use tokio::{
 };
 use url::Url;
 
+mod failure_publication;
 mod jobs;
 mod publication;
 mod recovery;
