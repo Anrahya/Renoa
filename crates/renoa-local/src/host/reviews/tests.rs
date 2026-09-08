@@ -24,7 +24,7 @@ fn host(root: &Path) -> LocalHost {
         mcp_adapter: None,
         mcp_registry_adapter: None,
         shared_plugin_registry: None,
-        global_skill_source: None,
+        global_skill_source: Some(root.join("skills")),
         oauth_relay: None,
         profiles: vec![AgentProfile::new(crate::ARCEE_PROFILE_ID, "Operator").expect("profile")],
     })

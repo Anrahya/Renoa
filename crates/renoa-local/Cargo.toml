@@ -7,6 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
+base64.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 globset.workspace = true
@@ -34,6 +36,7 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 renoa-control = { path = "../renoa-control", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 renoa-registry = { path = "../renoa-registry", version = "0.1.0" }

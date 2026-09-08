@@ -129,7 +129,7 @@ async fn matches_evidence(
     let start =
         usize::try_from(evidence.start_line - 1).map_err(|_| GitHubReviewError::ContextLimit)?;
     let matches = match tools.source {
-        super::reviewer::ReviewToolSource::Container(container) => {
+        super::reviewer::ReviewToolSource::Sandbox(container) => {
             let root = container.checkout().join("head");
             let path = crate::workspace::existing_file(&root, &evidence.path)
                 .await

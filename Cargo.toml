@@ -11,6 +11,7 @@ rust-version = "1.95"
 [workspace.dependencies]
 agent-client-protocol = "2.0.0"
 axum = { version = "0.8.9", default-features = false }
+base64 = "0.22.1"
 futures-util = "0.3.33"
 getrandom = "0.4.3"
 globset = { version = "0.4.20", default-features = false }

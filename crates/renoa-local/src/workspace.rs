@@ -257,7 +257,7 @@ pub(crate) fn ensure_visible_search_path(
         .map_err(|_| ToolError::permission_denied("search path escapes the workspace"))?;
     if has_hidden_component(Path::new(requested)) || has_hidden_component(resolved) {
         return Err(ToolError::invalid_input(
-            "grep and find skip hidden paths; use bash for explicit hidden-file access",
+            "grep and find skip hidden paths by default; set include_hidden to inspect hidden files",
         ));
     }
     Ok(())

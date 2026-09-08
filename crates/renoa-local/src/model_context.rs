@@ -30,9 +30,30 @@ fn message_tokens(message: &Message) -> u64 {
     match message {
         Message::User { content } => content_tokens(content),
         Message::Assistant {
-            content, metadata, ..
+            content,
+            metadata,
+            usage,
+            ..
         } => {
-            let mut total = 0_u64;
+            // Responses replays a structured reasoning item, not its encrypted
+            // transport bytes as text tokens. Bound its contribution by the
+            // provider's whole generated output (including reasoning). Keep the
+            // byte-based fallback when that provider evidence is unavailable.
+            let replay_output = (metadata.api.as_deref() == Some("openai-responses")
+                && content.iter().any(|block| {
+                    matches!(
+                        block,
+                        AssistantContent::Reasoning {
+                            signature: Some(_),
+                            ..
+                        }
+                    )
+                }))
+            .then_some(usage.as_ref())
+            .flatten()
+            .filter(|usage| usage.output > 0)
+            .map(|usage| usage.output);
+            let mut total = replay_output.unwrap_or(0);
             for block in content {
                 total = total
                     .saturating_add(CONTENT_FRAME_TOKENS)
@@ -45,7 +66,11 @@ fn message_tokens(message: &Message) -> u64 {
                             text: value,
                             signature,
                             ..
-                        } => text(value).saturating_add(optional_text(signature.as_deref())),
+                        } => text(value).saturating_add(if replay_output.is_some() {
+                            0
+                        } else {
+                            optional_text(signature.as_deref())
+                        }),
                         AssistantContent::ToolCall { call } => text(&call.id)
                             .saturating_add(text(&call.name))
                             .saturating_add(json(&call.arguments))
@@ -180,6 +205,35 @@ mod tests {
             estimate_input_tokens(&without_details),
             estimate_input_tokens(&with_details)
         );
+    }
+
+    #[test]
+    fn responses_encrypted_replay_is_sized_by_reported_output_not_ciphertext() {
+        let mut assistant = Message::Assistant {
+            content: vec![renoa_agent::AssistantContent::reasoning(
+                "Checked the caller",
+                Some("x".repeat(900_000)),
+                false,
+            )],
+            stop_reason: renoa_agent::StopReason::Stop,
+            usage: Some(renoa_agent::TokenUsage {
+                input: 100_000,
+                output: 5_000,
+                cache_read: 0,
+                cache_write: 0,
+            }),
+            metadata: renoa_agent::AssistantMetadata {
+                api: Some("openai-responses".to_owned()),
+                ..Default::default()
+            },
+        };
+        let sized = estimate_input_tokens(&request(vec![assistant.clone()], Vec::new()));
+        assert!((5_000..6_000).contains(&sized));
+        let Message::Assistant { metadata, .. } = &mut assistant else {
+            panic!("assistant fixture")
+        };
+        metadata.api = Some("unknown-api".to_owned());
+        assert!(estimate_input_tokens(&request(vec![assistant], Vec::new())) > 300_000);
     }
 
     fn request(messages: Vec<Message>, tools: Vec<ToolSpec>) -> ModelRequest {

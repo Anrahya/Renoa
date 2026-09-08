@@ -1,0 +1,25 @@
+[Unit]
+Description=Renoa GitHub webhook receiver and review supervisor
+After=network-online.target user@299.service
+Wants=network-online.target
+Requires=user@299.service
+
+[Service]
+Type=exec
+User=renoa-arcee
+Group=renoa-arcee
+Environment=HOME=/var/lib/renoa-telegram
+Environment=XDG_RUNTIME_DIR=/run/user/299
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/299/bus
+LoadCredential=github-config:/etc/renoa/github.json
+LoadCredential=app-key:/etc/renoa/soundwave-app.der
+LoadCredential=webhook-secret:/etc/renoa/soundwave-webhook-secret
+ExecStart=/usr/local/bin/renoa-host /var/lib/renoa-telegram/soundwave/host.json github-service %d/github-config
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

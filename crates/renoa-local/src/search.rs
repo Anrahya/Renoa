@@ -40,7 +40,7 @@ impl Grep {
                 description: concat!(
                     "Search workspace text with a Rust regular expression. Returns relative paths, ",
                     "line numbers, and matching lines; respects ignore files and skips hidden paths. ",
-                    "Use bash for hidden files."
+                    "Set include_hidden to search hidden paths such as .github (excluding .git)."
                 )
                 .to_owned(),
                 input_schema: json!({
@@ -49,6 +49,7 @@ impl Grep {
                         "pattern": { "type": "string", "minLength": 1 },
                         "path": { "type": "string", "minLength": 1 },
                         "glob": { "type": "string", "minLength": 1 },
+                        "include_hidden": { "type": "boolean", "default": false },
                         "limit": {
                             "type": "integer",
                             "minimum": 1,
@@ -70,6 +71,8 @@ struct GrepInput {
     path: Option<String>,
     glob: Option<String>,
     limit: Option<usize>,
+    #[serde(default)]
+    include_hidden: bool,
 }
 
 impl Tool for Grep {
@@ -92,13 +95,14 @@ impl Tool for Grep {
             let limit = bounded_limit(input.limit, GREP_MATCH_LIMIT)?;
             let requested_path = input.path.as_deref().unwrap_or(".");
             let search_path = existing_path(&self.root, requested_path).await?;
-            ensure_visible_search_path(&self.root, requested_path, &search_path)?;
+            if !input.include_hidden {
+                ensure_visible_search_path(&self.root, requested_path, &search_path)?;
+            }
             let output = grep(
                 &self.root,
                 &self.ripgrep,
                 &search_path,
-                &input.pattern,
-                input.glob.as_deref(),
+                &input,
                 limit,
                 &cancellation,
             )
@@ -130,13 +134,14 @@ impl Find {
                 name: "find".to_owned(),
                 description: concat!(
                     "Find workspace files by glob pattern. Returns sorted relative paths; ",
-                    "respects ignore files and skips hidden paths. Use bash for hidden files."
+                    "respects ignore files and skips hidden paths by default. Set include_hidden to include hidden paths (excluding .git)."
                 )
                 .to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "pattern": { "type": "string", "minLength": 1 },
+                        "include_hidden": { "type": "boolean", "default": false },
                         "path": { "type": "string", "minLength": 1 },
                         "limit": {
                             "type": "integer",
@@ -158,6 +163,8 @@ struct FindInput {
     pattern: String,
     path: Option<String>,
     limit: Option<usize>,
+    #[serde(default)]
+    include_hidden: bool,
 }
 
 impl Tool for Find {
@@ -177,12 +184,14 @@ impl Tool for Find {
             let limit = bounded_limit(input.limit, FIND_RESULT_LIMIT)?;
             let requested_path = input.path.as_deref().unwrap_or(".");
             let search_path = existing_directory(&self.root, requested_path).await?;
-            ensure_visible_search_path(&self.root, requested_path, &search_path)?;
+            if !input.include_hidden {
+                ensure_visible_search_path(&self.root, requested_path, &search_path)?;
+            }
             let output = find(
                 &self.root,
                 &self.ripgrep,
                 &search_path,
-                &input.pattern,
+                &input,
                 limit,
                 &cancellation,
             )
@@ -209,13 +218,15 @@ async fn grep(
     root: &Path,
     ripgrep: &Ripgrep,
     search_path: &Path,
-    pattern: &str,
-    glob: Option<&str>,
+    input: &GrepInput,
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<SearchOutput, ToolError> {
-    let glob = glob.map(compile_glob).transpose()?;
+    let glob = input.glob.as_deref().map(compile_glob).transpose()?;
     let mut command = ripgrep.command(root);
+    if input.include_hidden {
+        command.args(["--hidden", "--glob", "!.git"]);
+    }
     command.args([
         "--json",
         "--line-number",
@@ -223,7 +234,7 @@ async fn grep(
         GREP_LINE_COLUMNS,
         "--max-columns-preview",
     ]);
-    command.arg("--").arg(pattern).arg(search_path);
+    command.arg("--").arg(&input.pattern).arg(search_path);
     let mut process = SearchProcess::start(command, "ripgrep")?;
     let mut reader = BufReader::new(process.take_stdout("ripgrep")?);
     let mut output = HeadOutput::new();
@@ -305,12 +316,15 @@ async fn find(
     root: &Path,
     ripgrep: &Ripgrep,
     search_path: &Path,
-    pattern: &str,
+    input: &FindInput,
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<SearchOutput, ToolError> {
-    let glob = compile_glob(pattern)?;
+    let glob = compile_glob(&input.pattern)?;
     let mut command = ripgrep.command(root);
+    if input.include_hidden {
+        command.args(["--hidden", "--glob", "!.git"]);
+    }
     command
         .args(["--files", "--null"])
         .arg("--")

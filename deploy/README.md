@@ -396,6 +396,89 @@ terminal event. It received a contiguous 13-event task history, 12 events by
 replay, one command admission, and one completed terminal. The coordinator
 remained loopback-only, and the proof used the tailnet-only port above.
 
+## Soundwave GitHub review service
+
+Soundwave uses the shared Host database and review recipe. GitHub is its trigger
+and publication surface. The implementation and remaining control-panel work are
+described in [the Host architecture](../docs/renoa-host-v0.md#github-reviewer-composition).
+
+Install `deploy/skills/renoa-code-review/` into the service account's shared
+`~/.agents/skills/renoa-code-review/` directory, retaining its source/license
+files. The Host pins this skill into new reviews; updating the shared directory
+does not alter an in-progress review. Existing agents can discover the same
+skill through the shared catalog. Without it, the dedicated review system prompt
+still applies.
+
+Build all readers of the shared Host schema together:
+
+```sh
+cargo build --release -p renoa-local -p renoa-slack -p renoa-telegram --bin renoa-host --bin renoa-workspace-tool --bin renoa-slack --bin renoa-telegram
+pnpm --dir adapters/model-provider-node build
+```
+
+Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
+database before upgrading to schema 23. Install the new binaries atomically and
+replace the model adapter's built `dist` files. Do not resume an older reader
+against the migrated database. Keep the backup and previous binaries for rollback
+as a set; rolling back binaries alone is insufficient.
+
+The inspection backend requires Bubblewrap 0.12.0 or later, `/usr/bin/rg`, and
+unprivileged user namespaces. Install only the required security updates; a kernel
+upgrade is not part of this deployment. Install `renoa-workspace-tool` as a
+root-owned executable at `/opt/renoa/review-tools/<source-commit>/renoa-workspace-tool`.
+Keep that versioned path immutable while an execution references it. This version
+does not need Docker, KVM, dependency installation or a test runner.
+
+Create a private GitHub App with selected-repository access, contents/checks read,
+pull requests write, and the `pull_request` event. Enable its webhook at
+`https://renoa.live/v1/github/webhook` with a random secret. Accept the permission
+change in the existing installation as well. Convert the private App key locally:
+
+```sh
+umask 077
+openssl rsa -in app.pem -traditional -outform DER -out app.der
+```
+
+Install the DER key at `/etc/renoa/soundwave-app.der` and the exact webhook secret
+bytes at `/etc/renoa/soundwave-webhook-secret`, root-owned mode 0600. Neither key,
+secret nor installation token belongs in a repository or chat. Use
+`renoa-github.config.example.json` for `/etc/renoa/github.json`, also mode 0600.
+Its `host_config` must point to the same Host used by the daemon; it may omit
+interactive MCP/relay settings because reviews use a dedicated tool composition.
+`app_client_id` is the App's client ID; `bot_login` is its actual `[bot]` login.
+
+Install `renoa-github.service`. The example uses the existing service account
+`renoa-arcee` with UID 299; update both `user@299.service` references and the two
+runtime-directory environment variables if the account has a different UID.
+Enable its independent user manager:
+
+```sh
+sudo loginctl enable-linger renoa-arcee
+sudo systemctl start user@299.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now renoa-github.service
+```
+
+Route only `renoa.live` path `^/v1/github/webhook$` through the Cloudflare tunnel to
+`http://127.0.0.1:7821`, before the existing catch-all host rule. Preserve the RCP
+and OAuth ingress. There is no unauthenticated management API on this listener.
+
+The repository's Host policy controls triggers and draft handling. For a draft-PR
+smoke test set `enabled:true` and `skip_drafts:false` through `SetRepository` with
+the current revision. Open a new draft only after the receiver and route are ready.
+Verify an authentic `opened` delivery returns 202, one Host request is dispatched,
+the saved result produces a GitHub review on the expected SHA, and the unit,
+checkout and temporary credential files are gone afterward. Retain the run's
+transcript. Duplicate delivery must return its existing receipt.
+
+Use `journalctl -u renoa-github` for admission and publication status, and the
+`renoa-review-<request-uuid>.service` user journal for a worker. `github-review`
+actions `requests`, `run`, and `publication` read the same durable Host records.
+Before relying on unattended cleanup, exercise a short-lived test unit with a
+child process and confirm `RuntimeMaxSec`, cgroup termination and `ExecStopPost`
+on the actual host. Normal reviews have 60 minutes total and 30 minutes per model
+call; silence alone is allowed within the call deadline.
+
 ## Shared Agent Plugin registry
 
 The registry is not a remote Host or an Agent runtime. It stores only immutable

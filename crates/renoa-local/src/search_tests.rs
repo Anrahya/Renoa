@@ -78,7 +78,7 @@ async fn grep_and_find_reject_explicit_hidden_search_paths() {
     )
     .await;
     assert!(grep_result.is_error);
-    assert!(result_text(&grep_result).contains("use bash"));
+    assert!(result_text(&grep_result).contains("include_hidden"));
 
     let alias_result = call_tool(
         &grep,
@@ -87,7 +87,7 @@ async fn grep_and_find_reject_explicit_hidden_search_paths() {
     )
     .await;
     assert!(alias_result.is_error);
-    assert!(result_text(&alias_result).contains("use bash"));
+    assert!(result_text(&alias_result).contains("include_hidden"));
 
     let find_result = call_tool(
         &find,
@@ -96,7 +96,7 @@ async fn grep_and_find_reject_explicit_hidden_search_paths() {
     )
     .await;
     assert!(find_result.is_error);
-    assert!(result_text(&find_result).contains("use bash"));
+    assert!(result_text(&find_result).contains("include_hidden"));
 }
 
 #[tokio::test]

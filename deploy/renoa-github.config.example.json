@@ -1,0 +1,12 @@
+{
+  "listen": "127.0.0.1:7821",
+  "host_config": "/var/lib/renoa-telegram/soundwave/host.json",
+  "app_client_id": "REPLACE_WITH_GITHUB_APP_CLIENT_ID",
+  "app_key_der": "/run/credentials/renoa-github.service/app-key",
+  "bot_login": "renoa-soundwave[bot]",
+  "webhook_secret": "/run/credentials/renoa-github.service/webhook-secret",
+  "workspace": {
+    "bubblewrap": "/usr/bin/bwrap",
+    "worker": "/opt/renoa/review-tools/REPLACE_WITH_COMMIT/renoa-workspace-tool"
+  }
+}

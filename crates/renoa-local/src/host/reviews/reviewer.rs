@@ -4,7 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use renoa_agent_loop::{AgentLoopConfig, AgentToolBinding, ModelBinding, build_runtime};
+use renoa_agent_loop::{
+    AgentLoopConfig, AgentToolBinding, ModelBinding, build_runtime_with_events,
+};
 use renoa_kernel::{EffectRecovery, Runtime, SessionId};
 use sha2::{Digest as _, Sha256};
 
@@ -19,6 +21,7 @@ pub(super) async fn runtime(
     host: &HostConfig,
     snapshot: &GitHubReviewSnapshot,
     tools: &ReviewTools<'_>,
+    events: Arc<dyn renoa_agent::AgentEventSink>,
 ) -> Result<Runtime, LocalHostError> {
     let model = Arc::new(
         BridgeModel::load_with_spec(
@@ -62,11 +65,12 @@ pub(super) async fn runtime(
         }),
         NonZeroU64::new(272_000),
     )?;
-    Ok(build_runtime(
+    Ok(build_runtime_with_events(
         config,
         context,
         ModelBinding::new(revision, model, EffectRecovery::SafeToReplay),
         tools.bindings(),
+        events,
     )
     .map_err(GitHubReviewError::from)?)
 }
@@ -76,14 +80,14 @@ pub(super) struct ReviewTools<'a> {
     pub(super) source: ReviewToolSource<'a>,
 }
 pub(super) enum ReviewToolSource<'a> {
-    Container(&'a Arc<crate::isolated_workspace::InspectionContainer>),
+    Sandbox(&'a Arc<crate::isolated_workspace::InspectionSandbox>),
     #[cfg(test)]
     Fixture(&'a GitHubReviewSnapshot),
 }
 impl ReviewTools<'_> {
     fn bindings(&self) -> Vec<AgentToolBinding> {
         match self.source {
-            ReviewToolSource::Container(container) => container.bindings(),
+            ReviewToolSource::Sandbox(container) => container.bindings(),
             #[cfg(test)]
             ReviewToolSource::Fixture(snapshot) => {
                 super::tests::source_tool::bindings(self.github.clone(), snapshot)

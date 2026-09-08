@@ -34,6 +34,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     ) STRICT;",
     )?;
     super::runs::initialize(tx)?;
+    super::jobs::initialize(tx)?;
     Ok(())
 }
 
@@ -45,28 +46,15 @@ pub(super) fn manage(
 ) -> Result<GitHubReviewReply, GitHubReviewError> {
     active(cancellation)?;
     let mut db = catalog::open_verified(path)?;
-    let operation_id = match command {
-        GitHubReviewCommand::Run { request_id } => {
-            return Ok(GitHubReviewReply::Run {
-                record: super::runs::get(&db, *request_id)?,
-            });
-        }
-        GitHubReviewCommand::Repositories { after } => {
-            let mut q = db.prepare("SELECT record_json FROM host_review_repositories WHERE repository_id>?1 ORDER BY repository_id LIMIT 20")?;
-            let records = q
-                .query_map([after.unwrap_or(0)], |row| json(row, 0))?
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(GitHubReviewReply::Repositories { records });
-        }
-        GitHubReviewCommand::Requests { after } => {
-            let mut q = db.prepare("SELECT sequence,id,repository_json,pull_number,base_sha,head_sha,admitted_at_ms FROM host_review_requests WHERE sequence>?1 ORDER BY sequence LIMIT 20")?;
-            let records = q
-                .query_map([after], request_row)?
-                .collect::<Result<Vec<_>, _>>()?;
-            return Ok(GitHubReviewReply::Requests { records });
-        }
-        GitHubReviewCommand::SetRepository { operation_id, .. }
-        | GitHubReviewCommand::Request { operation_id, .. } => operation_id,
+    if let Some(reply) = read_command(&db, path, command)? {
+        return Ok(reply);
+    }
+    let (GitHubReviewCommand::SetRepository { operation_id, .. }
+    | GitHubReviewCommand::Request { operation_id, .. }) = command
+    else {
+        return Err(GitHubReviewError::Invalid(
+            "listing is not a mutation".to_owned(),
+        ));
     };
     if operation_id.is_nil() || now_ms < 0 {
         return Err(GitHubReviewError::Invalid(
@@ -124,6 +112,7 @@ pub(super) fn manage(
         }
         GitHubReviewCommand::Repositories { .. }
         | GitHubReviewCommand::Requests { .. }
+        | GitHubReviewCommand::Publication { .. }
         | GitHubReviewCommand::Run { .. } => {
             return Err(GitHubReviewError::Invalid(
                 "listing is not a mutation".to_owned(),
@@ -141,6 +130,40 @@ pub(super) fn manage(
     )?;
     tx.commit()?;
     Ok(result)
+}
+
+fn read_command(
+    db: &Connection,
+    path: &Path,
+    command: &GitHubReviewCommand,
+) -> Result<Option<GitHubReviewReply>, GitHubReviewError> {
+    Ok(Some(match command {
+        GitHubReviewCommand::Publication { request_id } => GitHubReviewReply::Publication {
+            record: super::publication::get(path, *request_id)?,
+        },
+        GitHubReviewCommand::Run { request_id } => GitHubReviewReply::Run {
+            record: super::runs::get(db, *request_id)?,
+        },
+        GitHubReviewCommand::Repositories { after } => {
+            let mut q = db.prepare("SELECT record_json FROM host_review_repositories WHERE repository_id>?1 ORDER BY repository_id LIMIT 20")?;
+            GitHubReviewReply::Repositories {
+                records: q
+                    .query_map([after.unwrap_or(0)], |row| json(row, 0))?
+                    .collect::<Result<Vec<_>, _>>()?,
+            }
+        }
+        GitHubReviewCommand::Requests { after } => {
+            let mut q = db.prepare("SELECT sequence,id,repository_json,pull_number,base_sha,head_sha,admitted_at_ms FROM host_review_requests WHERE sequence>?1 ORDER BY sequence LIMIT 20")?;
+            GitHubReviewReply::Requests {
+                records: q
+                    .query_map([after], request_row)?
+                    .collect::<Result<Vec<_>, _>>()?,
+            }
+        }
+        GitHubReviewCommand::SetRepository { .. } | GitHubReviewCommand::Request { .. } => {
+            return Ok(None);
+        }
+    }))
 }
 
 fn set_repository(

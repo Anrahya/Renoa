@@ -25,8 +25,8 @@ use crate::model_bridge::{
 };
 use crate::process::child_pid_raw;
 
-const FIRST_OUTPUT_DEADLINE: Duration = Duration::from_mins(5);
-const STREAM_IDLE_DEADLINE: Duration = Duration::from_mins(5);
+const FIRST_OUTPUT_DEADLINE: Duration = Duration::from_mins(30);
+const STREAM_IDLE_DEADLINE: Duration = Duration::from_mins(30);
 const MODEL_TOTAL_DEADLINE: Duration = Duration::from_mins(30);
 
 pub(crate) fn stream_model(
@@ -210,12 +210,12 @@ async fn read_records(
             }
             () = tokio::time::sleep_until(state.deadlines.first_output), if !state.first_output_seen => {
                 return Err(ModelError::timeout(
-                    "model produced no output within its 5-minute first-output deadline",
+                    "model produced no output within its 30-minute first-output deadline",
                 ));
             }
             () = tokio::time::sleep_until(state.idle_deadline) => {
                 return Err(ModelError::timeout(
-                    "model stream was idle for 5 minutes",
+                    "model stream was idle for 30 minutes",
                 ));
             }
             line = lines.next_line() => line.map_err(|error| model_error("read model adapter stream", error))?,

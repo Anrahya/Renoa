@@ -28,7 +28,7 @@ struct Envelope {
 struct Execution {
     request_id: Uuid,
     app_jwt_file: PathBuf,
-    workspace: renoa_local::InspectionContainerConfig,
+    workspace: renoa_local::InspectionSandboxConfig,
 }
 
 pub async fn run(
@@ -60,9 +60,12 @@ pub async fn run(
             cancel.clone(),
         );
         tokio::pin!(run);
+        let mut termination =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let result = tokio::select! {
             result=&mut run=>result?,
             signal=tokio::signal::ctrl_c()=>{ signal?; cancel.cancel(); run.await? }
+            _=termination.recv()=>{ cancel.cancel(); run.await? }
         };
         println!("{}", serde_json::to_string(&result)?);
     } else {
@@ -105,7 +108,7 @@ pub async fn run(
     Ok(())
 }
 
-fn private_credential(path: &Path, limit: u64) -> Result<Vec<u8>, std::io::Error> {
+pub(super) fn private_credential(path: &Path, limit: u64) -> Result<Vec<u8>, std::io::Error> {
     let metadata = std::fs::symlink_metadata(path)?;
     let directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
     if !path.is_absolute() || !credential_file_is_private(path, &metadata, directory.as_deref()) {

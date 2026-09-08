@@ -7,7 +7,12 @@ use tokio::{
 };
 use url::Url;
 
+mod failure_publication;
+mod jobs;
+mod publication;
 mod recovery;
+mod trace_and_skills;
+mod worker;
 
 struct Api {
     origin: Url,
@@ -26,6 +31,8 @@ struct ApiState {
     installation: i64,
     changed_files: Option<usize>,
     large_source: bool,
+    reviews: Vec<serde_json::Value>,
+    review_response: publication::Response,
 }
 
 impl Api {
@@ -122,10 +129,12 @@ fn respond(headers: &str, body: &[u8], state: &Mutex<ApiState>) -> (u16, String)
         assert!(headers.contains("Bearer private-app-jwt"));
         let body: serde_json::Value = serde_json::from_slice(body).expect("token request");
         assert_eq!(body["repository_ids"], serde_json::json!([42]));
-        assert_eq!(
-            body["permissions"],
-            serde_json::json!({"contents":"read","pull_requests":"read","checks":"read"})
-        );
+        assert_eq!(body["permissions"]["contents"], "read");
+        assert_eq!(body["permissions"]["checks"], "read");
+        assert!(matches!(
+            body["permissions"]["pull_requests"].as_str(),
+            Some("read" | "write")
+        ));
         return (
             201,
             serde_json::json!({"token":"secret-installation-token"}).to_string(),
@@ -148,6 +157,9 @@ fn respond(headers: &str, body: &[u8], state: &Mutex<ApiState>) -> (u16, String)
     }
     if path.starts_with("/repos/owner/repository/pulls/14/files") {
         return (200,serde_json::json!([{"filename":"src/lib.rs","status":"modified","patch":"@@ -1,3 +1,3 @@\n fn ratio(count: u32) -> u32 {\n-    10 / count.max(1)\n+    10 / count\n }"}]).to_string());
+    }
+    if path.starts_with("/repos/owner/repository/pulls/14/reviews") {
+        return publication::respond(headers, body, &mut state);
     }
     if path.starts_with("/repos/owner/repository/pulls/14") {
         state.pulls += 1;
