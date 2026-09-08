@@ -1,0 +1,203 @@
+//! Host-owned GitHub review configuration and durable admission, outside RCP.
+use std::collections::BTreeSet;
+
+use renoa_kernel::AgentId;
+use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use super::{LocalHost, LocalHostError, catalog};
+
+mod store;
+#[cfg(test)]
+mod tests;
+mod webhook;
+
+pub(super) use store::initialize;
+pub use webhook::GitHubReviewWebhook;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubReviewTrigger {
+    Opened,
+    Reopened,
+    ReadyForReview,
+    Synchronize,
+}
+
+/// Repository IDs, rather than mutable names, define the subscription boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitHubReviewPolicy {
+    pub repository_id: i64,
+    pub installation_id: i64,
+    pub full_name: String,
+    pub agent_id: AgentId,
+    pub enabled: bool,
+    pub triggers: BTreeSet<GitHubReviewTrigger>,
+    pub skip_drafts: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubReviewRepository {
+    pub revision: i64,
+    pub policy: GitHubReviewPolicy,
+}
+
+/// A request is not an execution. Reported commits must be reconciled with
+/// GitHub before an executor freezes its actual base and head.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubReviewRequest {
+    pub sequence: i64,
+    pub id: Uuid,
+    pub repository: GitHubReviewRepository,
+    pub pull_number: i64,
+    pub reported_base_sha: String,
+    pub reported_head_sha: String,
+    pub admitted_at_ms: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubReviewSkip {
+    UnsupportedEvent,
+    UnconfiguredRepository,
+    Disabled,
+    TriggerDisabled,
+    Draft,
+    Closed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum GitHubReviewAdmission {
+    Queued { request_id: Uuid },
+    Ignored { reason: GitHubReviewSkip },
+}
+
+/// Trusted local management input. Remote surfaces must authenticate and bind
+/// their principal to this Host before calling these operations.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GitHubReviewCommand {
+    SetRepository {
+        operation_id: Uuid,
+        /// None creates a subscription; edits require the current revision.
+        expected_revision: Option<i64>,
+        policy: GitHubReviewPolicy,
+    },
+    Request {
+        operation_id: Uuid,
+        repository_id: i64,
+        pull_number: i64,
+        reported_base_sha: String,
+        reported_head_sha: String,
+    },
+    Repositories {
+        after: Option<i64>,
+    },
+    Requests {
+        after: i64,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GitHubReviewReply {
+    Repository {
+        record: GitHubReviewRepository,
+    },
+    Request {
+        record: GitHubReviewRequest,
+    },
+    Repositories {
+        records: Vec<GitHubReviewRepository>,
+    },
+    Requests {
+        records: Vec<GitHubReviewRequest>,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GitHubReviewError {
+    #[error("invalid GitHub review request: {0}")]
+    Invalid(String),
+    #[error("GitHub review operation or repository revision conflicts")]
+    Conflict,
+    #[error("GitHub review repository not configured")]
+    NotFound,
+    #[error("GitHub review inbox is full; admission remains unacknowledged")]
+    Capacity,
+    #[error("GitHub review webhook authentication failed")]
+    Authentication,
+    #[error("GitHub review admission cancelled before commit")]
+    Cancelled,
+    #[error(transparent)]
+    Database(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Catalog(#[from] catalog::HostCatalogError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+
+impl LocalHost {
+    /// Applies local review management with durable receipts and revision checks.
+    /// Listing is bounded to 20 records; requests are ordered by admission sequence.
+    /// # Errors
+    /// Rejects invalid policies, unknown agents, conflicting retries and stale edits.
+    pub async fn manage_github_review(
+        &self,
+        command: GitHubReviewCommand,
+        now_ms: i64,
+        cancellation: CancellationToken,
+    ) -> Result<GitHubReviewReply, LocalHostError> {
+        let database = self.config.database.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            store::manage(&database, &command, now_ms, &cancellation)
+        })
+        .await??)
+    }
+
+    /// Authenticates raw GitHub bytes and persists admission before returning.
+    /// No model is called, and webhook arrival order never supersedes a request.
+    /// # Errors
+    /// Rejects malformed signatures/payloads, wrong installations, and conflicting replay.
+    pub async fn admit_github_review_webhook(
+        &self,
+        webhook: GitHubReviewWebhook<'_>,
+        secret: &[u8],
+        now_ms: i64,
+        cancellation: CancellationToken,
+    ) -> Result<GitHubReviewAdmission, LocalHostError> {
+        active(&cancellation)?;
+        let delivery = webhook::authenticate(webhook, secret)?;
+        let database = self.config.database.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            store::admit(&database, &delivery, now_ms, &cancellation)
+        })
+        .await??)
+    }
+}
+
+fn active(cancellation: &CancellationToken) -> Result<(), GitHubReviewError> {
+    if cancellation.is_cancelled() {
+        Err(GitHubReviewError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_target(number: i64, base: &str, head: &str) -> Result<(), GitHubReviewError> {
+    let sha = |value: &str| {
+        value.len() == 40
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    if number <= 0 || !sha(base) || !sha(head) {
+        return Err(GitHubReviewError::Invalid(
+            "provide a positive PR number and lowercase 40-character commit SHAs".to_owned(),
+        ));
+    }
+    Ok(())
+}
