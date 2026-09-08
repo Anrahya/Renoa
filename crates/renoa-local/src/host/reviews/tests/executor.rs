@@ -7,8 +7,10 @@ use tokio::{
 };
 use url::Url;
 
+mod jobs;
 mod publication;
 mod recovery;
+mod trace_and_skills;
 
 struct Api {
     origin: Url,

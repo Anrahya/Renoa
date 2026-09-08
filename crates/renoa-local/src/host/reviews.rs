@@ -17,6 +17,7 @@ mod jobs;
 mod publication;
 mod reviewer;
 mod runs;
+mod stages;
 mod store;
 #[cfg(test)]
 mod tests;

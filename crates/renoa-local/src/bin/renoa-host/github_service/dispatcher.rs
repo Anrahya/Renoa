@@ -5,6 +5,10 @@ use tokio::{io::AsyncWriteExt as _, process::Command};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[cfg(test)]
+#[path = "dispatcher_tests.rs"]
+mod tests;
+
 pub(super) async fn run(
     host: &LocalHost,
     data: &Path,
@@ -47,14 +51,28 @@ async fn tick(
         }
     }
     for job in stopped {
+        let observed = now()?;
+        if job.retry_after_ms > observed {
+            continue;
+        }
+        if !job.finished
+            && job.started_at_ms.is_none()
+            && job
+                .deadline_at_ms
+                .is_none_or(|deadline| deadline > observed)
+        {
+            waiting.push(job.request_id);
+            continue;
+        }
         if job.deadline_at_ms.is_some() {
             // An older finished review may await publication while another
             // worker owns the global checkout lease. Do not disturb that owner.
             if active {
                 continue;
             }
-            host.reap_github_review(job.request_id, now()?).await?;
-            remove_launch(data, job.request_id).await?;
+            if !cleanup_stopped(host, data, job.request_id, observed).await? {
+                continue;
+            }
             if job.publish_after_ms > now()? {
                 continue;
             }
@@ -91,10 +109,41 @@ async fn tick(
             waiting.push(job.request_id);
         }
     }
-    if !active && let Some(id) = waiting.first() {
-        launch(host, data, config, auth, *id).await?;
+    if !active
+        && let Some(id) = waiting.first()
+        && let Err(error) = launch(host, data, config, auth, *id).await
+    {
+        // A timed-out dispatch may still have started. The next tick queries
+        // the stable unit before deciding whether this job is retryable.
+        host.defer_github_review(*id, now()?.saturating_add(60_000), error.to_string())
+            .await?;
+        eprintln!("Review {id} launch deferred: {error}");
     }
     Ok(())
+}
+
+/// False defers only this job. Uncertain ownership or catalog failure remains
+/// an error so the caller cannot dispatch another worker on that evidence.
+async fn cleanup_stopped(
+    host: &LocalHost,
+    data: &Path,
+    id: Uuid,
+    observed: i64,
+) -> Result<bool, Box<dyn Error>> {
+    let result = match host.reap_github_review(id, observed).await {
+        Ok(()) => remove_launch(data, id).await.map_err(LocalHostError::from),
+        Err(error) => Err(error),
+    };
+    match result {
+        Ok(()) => Ok(true),
+        Err(LocalHostError::Io(error)) if error.kind() != std::io::ErrorKind::WouldBlock => {
+            host.defer_github_review(id, observed.saturating_add(60_000), error.to_string())
+                .await?;
+            eprintln!("Review {id} cleanup deferred: {error}");
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn unit_active(id: Uuid) -> Result<bool, Box<dyn Error>> {
@@ -137,6 +186,10 @@ async fn launch(
         host.reap_github_review(id, now()?).await?;
         return Ok(());
     }
+    // The stable unit was confirmed stopped before launch. A previous failed
+    // dispatch may have left create_new credential files behind; replace them
+    // only after that ownership check, and retain the original job deadline.
+    remove_launch(data, id).await?;
     let root = data.join("github-executions").join(id.to_string());
     tokio::fs::create_dir_all(&root).await?;
     let jwt = root.join("app.jwt");
@@ -169,6 +222,7 @@ async fn launch(
                 "--property=TimeoutStartSec=30s",
                 "--property=UMask=0077",
                 "--property=StandardOutput=null",
+                "--property=StandardError=journal",
                 "--property=MemoryAccounting=yes",
                 "--property=CPUAccounting=yes",
             ])

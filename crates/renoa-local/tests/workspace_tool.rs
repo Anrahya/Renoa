@@ -57,4 +57,26 @@ fn workspace_worker_exposes_inspection_only_and_pages_large_files() {
         true
     );
     assert!(!directory.path().join("changed").exists());
+    std::fs::create_dir_all(directory.path().join(".github/workflows")).expect("hidden directory");
+    std::fs::write(
+        directory.path().join(".github/workflows/ci.yml"),
+        "workflow_evidence\n",
+    )
+    .expect("workflow");
+    let found = invoke(
+        r#"{"id":"find-hidden","name":"find","arguments":{"pattern":"**/*.yml","include_hidden":true}}"#,
+    );
+    assert_eq!(found["is_error"], false);
+    assert!(found.to_string().contains(".github/workflows/ci.yml"));
+    let found = invoke(
+        r#"{"id":"grep-hidden","name":"grep","arguments":{"path":".github","pattern":"workflow_evidence","include_hidden":true}}"#,
+    );
+    assert_eq!(found["is_error"], false);
+    assert!(found.to_string().contains("workflow_evidence"));
+    assert_eq!(
+        invoke(
+            r#"{"id":"escape-hidden","name":"grep","arguments":{"path":"../outside","pattern":"x","include_hidden":true}}"#
+        )["is_error"],
+        true
+    );
 }

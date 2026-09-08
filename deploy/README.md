@@ -402,6 +402,13 @@ Soundwave uses the shared Host database and review recipe. GitHub is its trigger
 and publication surface. The implementation and remaining control-panel work are
 described in [the Host architecture](../docs/renoa-host-v0.md#github-reviewer-composition).
 
+Install `deploy/skills/renoa-code-review/` into the service account's shared
+`~/.agents/skills/renoa-code-review/` directory, retaining its source/license
+files. The Host pins this skill into new reviews; updating the shared directory
+does not alter an in-progress review. Existing agents can discover the same
+skill through the shared catalog. Without it, the dedicated review system prompt
+still applies.
+
 Build all readers of the shared Host schema together:
 
 ```sh
@@ -410,7 +417,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-database before upgrading to schema 22. Install the new binaries atomically and
+database before upgrading to schema 23. Install the new binaries atomically and
 replace the model adapter's built `dist` files. Do not resume an older reader
 against the migrated database. Keep the backup and previous binaries for rollback
 as a set; rolling back binaries alone is insufficient.

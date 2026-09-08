@@ -4,7 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use renoa_agent_loop::{AgentLoopConfig, AgentToolBinding, ModelBinding, build_runtime};
+use renoa_agent_loop::{
+    AgentLoopConfig, AgentToolBinding, ModelBinding, build_runtime_with_events,
+};
 use renoa_kernel::{EffectRecovery, Runtime, SessionId};
 use sha2::{Digest as _, Sha256};
 
@@ -19,6 +21,7 @@ pub(super) async fn runtime(
     host: &HostConfig,
     snapshot: &GitHubReviewSnapshot,
     tools: &ReviewTools<'_>,
+    events: Arc<dyn renoa_agent::AgentEventSink>,
 ) -> Result<Runtime, LocalHostError> {
     let model = Arc::new(
         BridgeModel::load_with_spec(
@@ -62,11 +65,12 @@ pub(super) async fn runtime(
         }),
         NonZeroU64::new(272_000),
     )?;
-    Ok(build_runtime(
+    Ok(build_runtime_with_events(
         config,
         context,
         ModelBinding::new(revision, model, EffectRecovery::SafeToReplay),
         tools.bindings(),
+        events,
     )
     .map_err(GitHubReviewError::from)?)
 }

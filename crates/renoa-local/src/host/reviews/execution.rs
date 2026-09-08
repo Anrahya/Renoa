@@ -1,5 +1,5 @@
-use renoa_agent::{ContentBlock, StopReason};
-use renoa_kernel::{CommandId, SessionId};
+use renoa_agent::StopReason;
+use renoa_kernel::SessionId;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use uuid::Uuid;
@@ -45,6 +45,8 @@ impl LocalHost {
             })
             .await?;
         }
+        self.start_github_review(request_id, TurnObservation::now()?.unix_milliseconds())
+            .await?;
         let run = self.execute_review_in(
             request_id,
             app_jwt,
@@ -254,6 +256,21 @@ impl LocalHost {
             .bot(agent.id)
             .await?
             .ok_or(LocalHostError::AgentNotFound(agent.id))?;
+        let skills = self.config.skill_store.clone();
+        let workspace = self.config.database.with_file_name("review-sessions");
+        let skill_profile = agent.profile.as_str().to_owned();
+        let id = request.id;
+        let skill = tokio::task::spawn_blocking(move || {
+            crate::skills::frozen_instructions(
+                &skills,
+                &skill_profile,
+                &workspace,
+                SessionId::from_uuid(id),
+                renoa_kernel::CommandId::from_uuid(id),
+                "renoa-code-review",
+            )
+        })
+        .await??;
         let snapshot = Box::new(GitHubReviewSnapshot {
             request,
             base_sha,
@@ -264,11 +281,12 @@ impl LocalHost {
             prepared_at_ms: TurnObservation::now()?.unix_milliseconds(),
             model_spec: model.encoded_spec(),
             system_prompt: format!(
-                "{}\n\nBatch at most {} tool calls in one response. The supplied patches already contain changed source. Prefer targeted ranges for missing callers, tests and surrounding context.\n\nHost-owned reviewer identity: {}\nHost-owned reviewer instructions:\n{}",
+                "{}\n\nBatch at most {} tool calls in one response. The supplied patches already contain changed source. Prefer targeted ranges for missing callers, tests and surrounding context.\n\nHost-owned reviewer identity: {}\nHost-owned reviewer instructions:\n{}\n\n{}",
                 reviewer::INSTRUCTIONS,
                 reviewer::SOURCE_CALLS_PER_RESPONSE,
                 recipe.recipe.name,
-                recipe.recipe.instructions
+                recipe.recipe.instructions,
+                skill
             ),
             context,
         });
@@ -352,7 +370,7 @@ impl LocalHost {
             }
         };
         let validation_prompt = serde_json::to_string(
-            &serde_json::json!({"task":"Validate these candidates against pinned source, callers and tests. Seek counterexamples; discard unsupported claims and duplicates. Investigate as needed, then return final findings JSON in the same schema. Do not add new findings.","candidates":candidates}),
+            &serde_json::json!({"task":"Validate these candidates against pinned source, callers and tests. Independently reconstruct each trigger and seek a counterexample. Challenge the proposed correction as well as the defect: does it preserve durable identity, deadlines, ownership, permissions and crash recovery? Correct unsafe remedies or describe the required behavior without inventing an implementation. Calibrate severity to demonstrated impact and available recovery. Discard unsupported claims and duplicates. Investigate as needed, then return final findings JSON in the same schema. Do not add new findings.","candidates":candidates}),
         )?;
         let validation = self
             .review_stage(&session, snapshot, tools, true, validation_prompt, &cancel)
@@ -421,33 +439,6 @@ impl LocalHost {
         } else {
             Ok(GitHubReviewOutcome::Reviewed { report, usage })
         }
-    }
-
-    async fn review_stage(
-        &self,
-        session: &LocalSession,
-        snapshot: &GitHubReviewSnapshot,
-        tools: &reviewer::ReviewTools<'_>,
-        validation: bool,
-        prompt: String,
-        cancel: &CancellationToken,
-    ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let id = if validation {
-            let mut bytes = *snapshot.request.id.as_bytes();
-            bytes[0] ^= 0x80;
-            Uuid::from_bytes(bytes)
-        } else {
-            snapshot.request.id
-        };
-        let command = CommandId::from_uuid(id);
-        let content = vec![ContentBlock::text(prompt)];
-        if let Some(outcome) = session.replay_settled_turn(command, &content)? {
-            return Ok(outcome);
-        }
-        let runtime = reviewer::runtime(&self.config, snapshot, tools).await?;
-        Ok(session
-            .execute_turn(command, content, &runtime, cancel.child_token())
-            .await?)
     }
 }
 

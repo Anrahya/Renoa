@@ -25,6 +25,24 @@ pub(crate) struct SkillRuntimeContext {
     pub(crate) revision: String,
 }
 
+/// Freeze an optional Host-selected skill from the shared content-addressed
+/// catalog. The caller supplies a trusted workspace, never a PR checkout.
+pub(crate) fn frozen_instructions(
+    store: &SkillStore,
+    profile: &str,
+    workspace: &Path,
+    session_id: SessionId,
+    command_id: CommandId,
+    name: &str,
+) -> Result<String, SkillError> {
+    store.sync(profile, workspace)?;
+    match store.activate(profile, workspace, session_id, command_id, name) {
+        Ok(skill) => render::one(&skill),
+        Err(SkillError::NotFound(_)) => Ok(String::new()),
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) fn runtime_context(
     store: &SkillStore,
     session_id: SessionId,

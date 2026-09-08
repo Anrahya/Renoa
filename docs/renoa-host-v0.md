@@ -1228,6 +1228,29 @@ profiles. The review composer reuses the shared loop and compaction while supply
 only the sandbox's inspection tools. It does not inherit interactive management
 capabilities. This is tool composition, not a new popup permission system.
 
+The review composer selects the optional `renoa-code-review` skill from the
+Host's existing shared skill catalog. It pins the content-addressed revision and
+renders it into the durable review snapshot before inference. PR checkouts are
+never searched for this trusted skill. Changes to the shared skill affect new
+reviews; replay and compaction keep the frozen instructions. The inspection
+tools accept `include_hidden` for configuration and CI paths while retaining
+workspace containment checks.
+
+Each investigation and validation stage also uses the existing Host trace store
+in `review-sessions/<request-id>/trace.sqlite3`. This records model/tool latency,
+first output, reported token/cache usage and provider retries independently of
+kernel recovery state. Progress facts must be ordinary assistant text so the
+shared compactor can retain them. Responses encrypted reasoning is replayed
+unchanged, but its context estimate uses reported output usage instead of treating
+ciphertext bytes as prompt text; unknown formats retain the conservative fallback.
+
+Worker entry is distinct from the pre-dispatch lifetime record. Failed launches
+retry with a persisted backoff inside the original deadline, after confirming
+the stable systemd unit is stopped. Partial launch files are then replaced.
+Per-job filesystem cleanup failures are retained and retried without preventing
+later jobs from progressing. Unknown unit state, a live execution lease and
+catalog errors still prevent dispatch; they do not prove that an owner has died.
+
 Begin with one review at a time and explicit working-context/output settings.
 Do not impose a review-wide model-call budget. The explicit lifetime is 60 minutes,
 with up to 30 minutes for one provider call. Keep review execution from blocking
