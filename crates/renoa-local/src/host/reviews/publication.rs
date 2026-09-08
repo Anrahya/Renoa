@@ -309,5 +309,5 @@ fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str) -> serde_json
         GitHubReviewOutcome::Skipped { reason } => (reason.clone(), Vec::new()),
         GitHubReviewOutcome::Superseded { .. } => ("Review superseded.".to_owned(), Vec::new()),
     };
-    serde_json::json!({"commit_id":sha,"event":"COMMENT","body":format!("{summary}\n\n{marker}"),"comments":comments})
+    serde_json::json!({"commit_id":sha,"event":"COMMENT","body":format!("Soundwave reporting.\n\n{summary}\n\n{marker}"),"comments":comments})
 }
