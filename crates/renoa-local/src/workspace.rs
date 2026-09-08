@@ -4,7 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use renoa_agent::{Tool, ToolError};
+use renoa_agent::{
+    Tool, ToolCall, ToolError, ToolOutcomeUnknown, ToolResult, ToolSpec, invoke_tool,
+};
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::EffectRecovery;
 use sha2::{Digest, Sha256};
@@ -42,6 +44,37 @@ pub struct LocalWorkspace {
 }
 
 impl LocalWorkspace {
+    /// Describes the existing repository inspection tools without mutation tools.
+    #[must_use]
+    pub fn inspection_specs(&self) -> Vec<ToolSpec> {
+        self.tools()
+            .into_iter()
+            .filter(|binding| inspection_tool(&binding.tool.spec().name))
+            .map(|binding| binding.tool.spec().clone())
+            .collect()
+    }
+
+    /// Executes an inspection call using the same implementations as local agents.
+    ///
+    /// # Errors
+    /// Returns an uncertain tool outcome if the execution cannot be reconciled.
+    pub async fn inspect(
+        &self,
+        call: ToolCall,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<ToolResult, ToolOutcomeUnknown> {
+        let tool = self
+            .tools()
+            .into_iter()
+            .find(|binding| inspection_tool(&call.name) && binding.tool.spec().name == call.name);
+        invoke_tool(
+            tool.as_ref().map(|binding| binding.tool.as_ref()),
+            call,
+            cancellation,
+            None,
+        )
+        .await
+    }
     /// Opens one existing directory as the fixed root for every tool call.
     ///
     /// # Errors
@@ -158,6 +191,10 @@ impl LocalWorkspace {
             },
         ]
     }
+}
+
+fn inspection_tool(name: &str) -> bool {
+    matches!(name, "read_file" | "grep" | "find")
 }
 
 struct LocalToolBinding {

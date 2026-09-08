@@ -11,6 +11,7 @@ pub(crate) mod bots;
 pub(crate) mod catalog;
 mod extensions;
 pub(crate) mod history;
+mod lease;
 mod mcp;
 mod models;
 mod profiles;

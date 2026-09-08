@@ -241,7 +241,11 @@ impl AgentLoop {
         events: &[renoa_kernel::SemanticEvent],
         provider_message: &str,
     ) -> Result<LoopDecision, LoopError> {
-        if model_turns >= self.config.max_model_turns.get() {
+        if self
+            .config
+            .max_model_turns
+            .is_some_and(|limit| model_turns >= limit.get())
+        {
             return Self::compaction_failure(format!(
                 "provider rejected model context after the configured model-turn limit: {provider_message}"
             ));

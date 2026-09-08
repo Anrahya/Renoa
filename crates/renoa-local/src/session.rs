@@ -194,4 +194,13 @@ impl LocalSession {
             })
             .collect()
     }
+
+    /// Includes inference used for compaction, which is not an assistant message.
+    pub(crate) fn recorded_token_usage(
+        &self,
+    ) -> Result<Option<renoa_agent::TokenUsage>, LocalSessionError> {
+        Ok(renoa_agent_loop::recorded_token_usage(
+            &self.kernel.inspect(self.session_id)?,
+        ))
+    }
 }

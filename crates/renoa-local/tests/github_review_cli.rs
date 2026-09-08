@@ -65,18 +65,6 @@ fn fixture(root: &Path) -> AgentId {
             })
             .await
             .expect("operator");
-            host.ensure_bot(BotRecord {
-                id: specialist,
-                created_by: operator,
-                recipe: BotRecipe {
-                    name: "Review Desk".to_owned(),
-                    instructions: "Read repository evidence".to_owned(),
-                    tools: ["read_file".to_owned()].into(),
-                    connections: BTreeSet::new(),
-                },
-            })
-            .await
-            .expect("specialist");
         });
     drop(host);
     fs::write(
@@ -88,6 +76,34 @@ fn fixture(root: &Path) -> AgentId {
         .expect("config"),
     )
     .expect("config file");
+    let mut bot = BotRecord {
+        id: specialist,
+        created_by: operator,
+        recipe: BotRecipe {
+            name: "Soundwave".to_owned(),
+            instructions: "Read repository evidence".to_owned(),
+            tools: BTreeSet::new(),
+            connections: BTreeSet::new(),
+        },
+    };
+    let first = invoke(root, "ensure-bot", &bot);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<BotRecord>(&first.stdout).expect("bot reply"),
+        bot
+    );
+    let replay = invoke(root, "ensure-bot", &bot);
+    assert!(replay.status.success());
+    assert_eq!(first.stdout, replay.stdout);
+    "Conflicting name".clone_into(&mut bot.recipe.name);
+    assert!(!invoke(root, "ensure-bot", &bot).status.success());
+    bot.id = AgentId::new();
+    bot.created_by = AgentId::new();
+    assert!(!invoke(root, "ensure-bot", &bot).status.success());
     specialist
 }
 

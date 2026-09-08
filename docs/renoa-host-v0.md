@@ -909,10 +909,11 @@ without repeating the kernel's completed file operation.
 
 ## GitHub reviewer composition
 
-The Host implements repository policy and durable review-request admission.
-Execution, GitHub publication, and browser management remain design targets,
-not deployed capabilities. The browser currently projects RCP tasks. This
-composition adds no GitHub payload to the kernel and does not settle the open
+The Host implements repository policy, durable review-request admission, and a
+disposable inspection executor. Public webhook serving, queue supervision,
+GitHub publication, and browser management remain design targets, not deployed
+capabilities. The browser currently projects RCP tasks. This
+composition adds no GitHub-specific types to the kernel and does not settle the open
 RCP wire boundaries.
 
 ### Admission boundary
@@ -942,20 +943,28 @@ retries; repository/policy revision/PR/base/head identity deduplicates separate
 automatic events requesting the same work. Manual requests have their own
 operation identity and can intentionally request another review. Request
 admission is bounded to 1,024 pending requests; capacity failure acknowledges
-no new work, while already-admitted requests remain replayable. This first slice
-does not drain the inbox or call a model.
+no new work, while already-admitted requests remain replayable. Terminal review
+outcomes release inbox capacity without deleting requests or their receipts.
 
-Host schema 20 adds `host_review_repositories`, `host_review_operations`,
-`host_review_requests`, and `host_review_deliveries`. Existing Host, specialist,
-session, capability, and routine records are preserved. All processes sharing
-the database must support schema 20 before opening it with these binaries.
+Host schema 20 added `host_review_repositories`, `host_review_operations`,
+`host_review_requests`, and `host_review_deliveries`. Schema 21 adds
+`host_review_runs`. Existing Host, specialist, session, capability, routine and
+admission records are preserved. All processes sharing the database must support
+schema 21 before opening it with these binaries.
 
 The local CLI exposes the same operations without a browser:
 
 ```text
+renoa-host /absolute/host.json ensure-bot /absolute/bot.json
 renoa-host /absolute/host.json github-review /absolute/request.json
 renoa-host /absolute/host.json github-webhook /absolute/envelope.json
 ```
+
+A bot file contains the existing `BotRecord` shape: `id`, `created_by`, and
+`recipe` (`name`, `instructions`, `tools`, `connections`). `ensure-bot` calls
+the same durable specialist creation operation as the agent tool. The creator
+must already exist in this Host. Repeating the same record is idempotent;
+reusing an ID with a changed recipe conflicts. It starts no model or surface.
 
 A request file is a serialized `GitHubReviewCommand`, for example
 `{"action":"requests","after":0}` or
@@ -964,8 +973,94 @@ A request file is a serialized `GitHubReviewCommand`, for example
 must be absolute. The body file contains the exact signed bytes; the private
 secret file contains the exact secret bytes (no automatic whitespace trimming).
 The CLI never prints the secret or original payload. This is a local admission
-and recovery path, not a public webhook server; GitHub App deployment and a
-supervised executor/publisher follow separately.
+and recovery path, not a public webhook server.
+
+### Disposable review execution
+
+`LocalHost::execute_github_review` executes an admitted request under the Host's
+exclusive `.reviews.lock` process lease, independent of the routine scheduler:
+
+```text
+renoa-host /absolute/host.json github-execute /absolute/execution.json
+```
+
+The execution file contains `request_id`, `app_jwt_file`, and
+`workspace: {"engine":"/usr/bin/docker","image":"renoa-review-tools:v1"}`.
+The image must already be built from `deploy/review-workspace.Dockerfile` with
+the `renoa-workspace-tool` release binary in its build context. The JWT is a
+private absolute file containing a currently valid GitHub App JWT. Registration,
+private key storage/JWT refresh and automatic queue draining still need their
+deployment adapter. The executor verifies the App installation and repository
+identity, then mints a token restricted to the repository and read-only contents,
+pull requests and checks. Credentials stay outside model context and results.
+
+Before inference, the Host reconciles the PR and freezes base/head and merge-base
+commits, repository policy, specialist instructions, model specification and
+reasoning. Applicable base AGENTS.md files supply conventions. PR instructions
+are review material. Initial context includes changed-file patches, head paths
+and observed CI status.
+
+The Host materializes base/, head/ and merge_base/ checkouts under
+`review-workspaces/<request-id>`. Git credentials go only to the trusted fetch
+process and are not stored in Git config; hooks are disabled. The inspection
+container receives only the checkout, mounted read-only, with no network, added
+capabilities, Host data, credentials or container socket. It runs as an
+unprivileged user. This shares the operating-system kernel and is not a microVM;
+the initial deployment serves the owner's personal review workflow.
+
+The Host assembles the named specialist recipe with `review_instructions.txt`,
+the shared Rust model/tool loop and the existing replaceable compaction strategy.
+`renoa-workspace-tool` executes the same read_file, grep and find implementations
+as local agents; only their transport changes. No generic assistant/coding
+profile is inherited. Bash, dependency installation, test execution, automatic
+fixes and unrelated Host connections are unavailable in this version.
+
+Investigation and validation run until completion, cancellation or failure,
+without model-response or elapsed-review budgets. Tool batches allow 50 calls.
+The output allowance is 32,768 tokens, bounded by the provider's supported output.
+Working input targets 272,000 tokens, automatic compaction starts at 258,400, and
+the post-compaction target is 155,040. Smaller model windows lower those settings
+after reserving output and safety headroom. Compaction can repeat within either
+stage while preserving the transcript and active task. The existing two attempts
+per malformed summary are validation retries, not a limit on compaction cycles.
+Provider retry semantics remain unchanged. Prefixes and provider session identity
+remain stable. Recorded token usage includes summary responses; incomplete
+accounting remains unknown.
+
+Each stage is a durable command in `review-sessions/<request-id>/kernel.sqlite`.
+Settled stages replay before model resolution. A final Host commit failure does
+not repeat completed inference. Unfinished read/model effects retain the kernel's
+safe-to-replay semantics; a crash may repeat unacknowledged inference and cost.
+The resolved container image identity participates in the runtime tool bindings,
+so an incompatible image cannot silently resume an active model/tool command.
+
+New findings require P0–P3 priorities and are sorted by priority. Legacy reports
+without a priority remain readable without assigning an invented one. Validation
+checks added-line anchors, required fields, duplicate anchors and exact evidence
+against the immutable head checkout. These checks do not prove semantic correctness.
+A final PR/policy check retains findings as superseded when the target changed.
+
+The Host saves the result before removing the container and checkout. A recovered
+run recreates its inspection environment from the same commits. Cleanup failure
+is reported; retrying a completed run reconciles leftover workspace resources
+without rerunning inference. Durable transcripts and findings survive cleanup.
+
+`{"action":"run","request_id":"<uuid>"}` through `github-review` retrieves the
+prepared snapshot or immutable outcome (reviewed, superseded, skipped, incomplete)
+without GitHub credentials or inference. Preparation/API failures remain
+retryable; rerunning a terminal review requires a new request identity.
+
+Initial API preparation still accepts up to 500 changed files, 256 KiB of patches
+and 512 KiB of serialized context, with 1 MiB JSON responses and up to 32 applicable
+base instruction paths. These are preparation/transport limits, not investigation
+budgets. Oversized preparation is explicitly incomplete; omitted patches and CI
+context are disclosed. Workspace source reads support large files through the
+existing paged tools (2,000 lines/50 KiB per read). Deletion-only inline anchors,
+legacy CI statuses and full CI logs remain limitations. Dependency installation
+and test execution are deferred. Quality claims still require labeled evaluation.
+The [commit comparison API](https://docs.github.com/en/rest/commits/commits#compare-two-commits)
+supplies the merge base, separately from the current base tip. No upstream code
+was adapted for this executor.
 
 ### Evidence informing the design
 
@@ -976,7 +1071,7 @@ evidence that Renoa has reached equivalent review quality.
 | Reference | Relevant behavior | Renoa design consequence |
 | --- | --- | --- |
 | [CodeRabbit review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Repository context, incremental reviews on subsequent commits, severity categories, and discussion of findings. | Keep per-PR review history; inspect surrounding code; publish concise findings that remain discussable. |
-| [Cursor: Building a better Bugbot](https://cursor.com/blog/building-bugbot) | Describes an early multi-pass/validator pipeline, then a move to agentic context gathering; measures findings resolved and evaluates on annotated diffs. | Start with a bounded investigator and a validation stage. Evaluate actual defects and false positives before multiplying model passes. |
+| [Cursor: Building a better Bugbot](https://cursor.com/blog/building-bugbot) | Describes an early multi-pass/validator pipeline, then a move to agentic context gathering; measures findings resolved and evaluates on annotated diffs. | Use agentic investigation and a validation stage. Evaluate actual defects and false positives before multiplying model passes. |
 | [Qodo review architecture](https://docs.qodo.ai/code-review) | Specialist review agents with a judge that merges and filters findings; repository history and persistent reviews. | Make investigation and validation replaceable. Retain the evidence and disposition of findings between runs. |
 | [Greptile scoped configuration](https://www.greptile.com/docs/code-review/greptile-config) | Directory-scoped rules and explicit context files, with visible configuration precedence. | Apply relevant repository instructions and architecture documents, and show which sources governed a run. |
 | [GitHub Copilot code review](https://docs.github.com/en/copilot/concepts/agents/code-review) | Project context gathering, configurable triggers and effort, and handoff of findings to a coding agent. | Keep review effort explicit and make structured results reusable by later fix workflows. |
@@ -1075,15 +1170,14 @@ with a one-hour lifetime and optional repository/permission restrictions. App
 registration and installation remain deployment prerequisites; the existing
 interactive GitHub MCP connection is not proof that a review App is installed.
 
-Current `host/runtime.rs` automatically adds `routine_manage` to every
-`renoa.bot.*` profile. Selecting only read tools in a normal bot recipe therefore
-does not create a read-only review runtime. Review composition must explicitly
-exclude automation, bot, extension, and unrelated MCP management tools while
-preserving existing interactive specialist behavior. This is concrete tool
-composition, not a new popup permission system.
+`host/runtime.rs` automatically adds `routine_manage` to ordinary `renoa.bot.*`
+profiles. The review composer reuses the shared loop and compaction while supplying
+only the container's inspection tools. It does not inherit interactive management
+capabilities. This is tool composition, not a new popup permission system.
 
-Begin with one review at a time and explicit model-call, input/output, and elapsed
-time budgets. Keep review execution from blocking the existing routine queue.
+Begin with one review at a time and explicit working-context/output settings.
+Do not impose a review-wide model-call or elapsed-time budget. Keep review
+execution from blocking the existing routine queue.
 Keep the system/tool prefix stable, put run-specific metadata after it, and reuse
 content by immutable commit/blob identity. Record provider-reported token and
 cache usage when available; unknown cache savings or monetary cost stay unknown.
@@ -1091,9 +1185,9 @@ Incremental review should reuse unchanged context and previous findings while
 still checking the current PR as a whole. Fall back to full context after a
 force-push, changed base, or incompatible review configuration.
 
-A later executor can run tests in a disposable, resource-limited environment
-without Host credentials. Until that boundary exists, use existing CI evidence
-and report that tests were not executed by the reviewer. Automatic fixes,
+A later workspace capability can install dependencies and execute tests.
+The current inspection environment uses existing CI evidence and reports that
+tests were not executed by the reviewer. Automatic fixes,
 cross-repository graph indexing, autonomous rule learning, and multiple parallel
 investigators follow a useful measured baseline rather than precede it.
 

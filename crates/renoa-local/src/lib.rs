@@ -12,6 +12,7 @@ mod file_lock;
 mod file_tools;
 mod host;
 mod host_storage;
+mod isolated_workspace;
 mod mcp;
 mod model_bridge;
 mod model_catalog;
@@ -46,6 +47,7 @@ pub use host::agents::AgentRecord;
 pub use host::catalog::HostCatalogError;
 pub use host::history::AgentSessionHistory;
 pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
+pub use isolated_workspace::InspectionContainerConfig;
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError, McpFailureKind,
     McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure, ResolvedMcpTool,
@@ -76,7 +78,9 @@ pub use host::routines::{
 pub use host::bots::names::RenameBot;
 
 pub use host::reviews::{
-    GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewPolicy,
-    GitHubReviewReply, GitHubReviewRepository, GitHubReviewRequest, GitHubReviewSkip,
-    GitHubReviewTrigger, GitHubReviewWebhook,
+    GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewEvidence,
+    GitHubReviewFinding, GitHubReviewOutcome, GitHubReviewPolicy, GitHubReviewReply,
+    GitHubReviewReport, GitHubReviewRepository, GitHubReviewRequest, GitHubReviewRun,
+    GitHubReviewSkip, GitHubReviewSnapshot, GitHubReviewTrigger, GitHubReviewWebhook, ReviewCheck,
+    ReviewContext, ReviewFile, ReviewPriority,
 };

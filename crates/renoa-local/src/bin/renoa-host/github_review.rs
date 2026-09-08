@@ -23,6 +23,14 @@ struct Envelope {
     secret_file: PathBuf,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Execution {
+    request_id: Uuid,
+    app_jwt_file: PathBuf,
+    workspace: renoa_local::InspectionContainerConfig,
+}
+
 pub async fn run(
     host: &LocalHost,
     mode: &std::ffi::OsStr,
@@ -37,6 +45,26 @@ pub async fn run(
             .manage_github_review(command, now, CancellationToken::new())
             .await?;
         println!("{}", serde_json::to_string(&reply)?);
+    } else if mode == "github-execute" {
+        let execution: Execution = serde_json::from_slice(&input)?;
+        let jwt = tokio::task::spawn_blocking(move || {
+            private_credential(&execution.app_jwt_file, 16 * 1024)
+        })
+        .await??;
+        let jwt = String::from_utf8(jwt)?;
+        let cancel = CancellationToken::new();
+        let run = host.execute_github_review(
+            execution.request_id,
+            jwt.trim(),
+            &execution.workspace,
+            cancel.clone(),
+        );
+        tokio::pin!(run);
+        let result = tokio::select! {
+            result=&mut run=>result?,
+            signal=tokio::signal::ctrl_c()=>{ signal?; cancel.cancel(); run.await? }
+        };
+        println!("{}", serde_json::to_string(&result)?);
     } else {
         let envelope: Envelope = serde_json::from_slice(&input)?;
         let body_path = envelope.body_file;
@@ -75,6 +103,17 @@ pub async fn run(
         println!("{}", serde_json::to_string(&reply)?);
     }
     Ok(())
+}
+
+fn private_credential(path: &Path, limit: u64) -> Result<Vec<u8>, std::io::Error> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let directory = std::env::var_os("CREDENTIALS_DIRECTORY").map(PathBuf::from);
+    if !path.is_absolute() || !credential_file_is_private(path, &metadata, directory.as_deref()) {
+        return Err(std::io::Error::other(
+            "GitHub App JWT must be in a private absolute credential file",
+        ));
+    }
+    read_bounded(path, limit)
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, std::io::Error> {

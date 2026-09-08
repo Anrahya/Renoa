@@ -33,6 +33,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
         delivery_id TEXT PRIMARY KEY, digest BLOB NOT NULL, result_json TEXT NOT NULL
     ) STRICT;",
     )?;
+    super::runs::initialize(tx)?;
     Ok(())
 }
 
@@ -45,6 +46,11 @@ pub(super) fn manage(
     active(cancellation)?;
     let mut db = catalog::open_verified(path)?;
     let operation_id = match command {
+        GitHubReviewCommand::Run { request_id } => {
+            return Ok(GitHubReviewReply::Run {
+                record: super::runs::get(&db, *request_id)?,
+            });
+        }
         GitHubReviewCommand::Repositories { after } => {
             let mut q = db.prepare("SELECT record_json FROM host_review_repositories WHERE repository_id>?1 ORDER BY repository_id LIMIT 20")?;
             let records = q
@@ -116,7 +122,9 @@ pub(super) fn manage(
                 record: get_request(&tx, *operation_id)?,
             }
         }
-        GitHubReviewCommand::Repositories { .. } | GitHubReviewCommand::Requests { .. } => {
+        GitHubReviewCommand::Repositories { .. }
+        | GitHubReviewCommand::Requests { .. }
+        | GitHubReviewCommand::Run { .. } => {
             return Err(GitHubReviewError::Invalid(
                 "listing is not a mutation".to_owned(),
             ));
@@ -309,9 +317,7 @@ fn insert_request(
     repository: &GitHubReviewRepository,
     pull: &RequestedPull<'_>,
 ) -> Result<(), GitHubReviewError> {
-    // This admission-only slice has no executor/drainer yet. Bound its pending
-    // inbox; the worker will need to exclude terminal runs from this count.
-    let pending: i64 = tx.query_row("SELECT count(*) FROM host_review_requests", [], |row| {
+    let pending: i64 = tx.query_row("SELECT count(*) FROM host_review_requests r WHERE NOT EXISTS(SELECT 1 FROM host_review_runs x WHERE x.request_id=r.id AND x.terminal=1)", [], |row| {
         row.get(0)
     })?;
     if pending >= 1024 {
@@ -322,7 +328,7 @@ fn insert_request(
     Ok(())
 }
 
-fn repository(
+pub(super) fn repository(
     db: &Connection,
     id: i64,
 ) -> Result<Option<GitHubReviewRepository>, GitHubReviewError> {
@@ -335,7 +341,7 @@ fn repository(
         .optional()?)
 }
 
-fn json<T: serde::de::DeserializeOwned>(
+pub(super) fn json<T: serde::de::DeserializeOwned>(
     row: &rusqlite::Row<'_>,
     index: usize,
 ) -> rusqlite::Result<T> {
@@ -360,6 +366,9 @@ fn request_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GitHubReviewRequest>
     })
 }
 
-fn get_request(db: &Connection, id: Uuid) -> Result<GitHubReviewRequest, GitHubReviewError> {
+pub(super) fn get_request(
+    db: &Connection,
+    id: Uuid,
+) -> Result<GitHubReviewRequest, GitHubReviewError> {
     Ok(db.query_row("SELECT sequence,id,repository_json,pull_number,base_sha,head_sha,admitted_at_ms FROM host_review_requests WHERE id=?1", [id.to_string()], request_row)?)
 }
