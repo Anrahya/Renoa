@@ -8,6 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 #[path = "renoa-host/github_review.rs"]
 mod github_review;
+#[path = "renoa-host/github_service.rs"]
+mod github_service;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,9 +48,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
             && (args[1] == "github-review"
                 || args[1] == "github-webhook"
                 || args[1] == "github-execute"
+                || args[1] == "github-service"
+                || args[1] == "github-cleanup"
                 || args[1] == "ensure-bot")))
     {
-        return Err(std::io::Error::other("usage: renoa-host <config.json> [ensure-bot <bot.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json>]").into());
+        return Err(std::io::Error::other("usage: renoa-host <config.json> [ensure-bot <bot.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -84,6 +88,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
         adapters,
     )?;
     if args.len() == 3 {
+        if args[1] == "github-service" {
+            return github_service::run(&host, &c.data_directory, std::path::Path::new(&args[2]))
+                .await;
+        }
+        if args[1] == "github-cleanup" {
+            let id = uuid::Uuid::parse_str(args[2].to_str().ok_or("request ID must be UTF-8")?)?;
+            host.reap_github_review(id, renoa_local::TurnObservation::now()?.unix_milliseconds())
+                .await?;
+            return Ok(());
+        }
         if args[1] == "ensure-bot" {
             let record: BotRecord = serde_json::from_slice(&tokio::fs::read(&args[2]).await?)?;
             println!(
@@ -116,6 +130,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string(&result)?);
         return Ok(());
     }
+    run_routines(&host).await
+}
+
+async fn run_routines(host: &LocalHost) -> Result<(), Box<dyn Error>> {
     let stop = CancellationToken::new();
     let runner = host.run_routines(stop.clone());
     tokio::pin!(runner);

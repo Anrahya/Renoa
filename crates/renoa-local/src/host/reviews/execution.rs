@@ -26,13 +26,42 @@ impl LocalHost {
         &self,
         request_id: Uuid,
         app_jwt: &str,
-        workspace: &crate::InspectionContainerConfig,
+        workspace: &crate::InspectionSandboxConfig,
         cancellation: CancellationToken,
     ) -> Result<GitHubReviewRun, LocalHostError> {
         let origin = Url::parse("https://api.github.com")
             .map_err(|error| GitHubReviewError::Invalid(error.to_string()))?;
-        self.execute_review_in(request_id, app_jwt, cancellation, origin, Some(workspace))
-            .await
+        let deadline = self
+            .begin_github_review(request_id, TurnObservation::now()?.unix_milliseconds())
+            .await?;
+        let remaining = deadline.saturating_sub(TurnObservation::now()?.unix_milliseconds());
+        if remaining <= 0 {
+            self.reap_github_review(request_id, TurnObservation::now()?.unix_milliseconds())
+                .await?;
+            let path = self.config.database.clone();
+            return tokio::task::spawn_blocking(move || {
+                runs::get(&catalog::open_verified(&path)?, request_id)?
+                    .ok_or_else(|| GitHubReviewError::NotFound.into())
+            })
+            .await?;
+        }
+        let run = self.execute_review_in(
+            request_id,
+            app_jwt,
+            cancellation.clone(),
+            origin,
+            Some(workspace),
+        );
+        tokio::pin!(run);
+        tokio::select! {
+            result = &mut run => result,
+            () = tokio::time::sleep(std::time::Duration::from_millis(remaining.unsigned_abs())) => {
+                cancellation.cancel();
+                // Drain the active effect and its children. The systemd service
+                // independently kills the cgroup if cooperative shutdown hangs.
+                run.await
+            }
+        }
     }
 
     #[cfg(test)]
@@ -53,21 +82,17 @@ impl LocalHost {
         app_jwt: &str,
         cancellation: CancellationToken,
         origin: Url,
-        workspace: Option<&crate::InspectionContainerConfig>,
+        workspace: Option<&crate::InspectionSandboxConfig>,
     ) -> Result<GitHubReviewRun, LocalHostError> {
         super::active(&cancellation)?;
         let database = self.config.database.clone();
-        let (lease, request, previous, policy) = tokio::task::spawn_blocking(move || {
-            let lease = crate::host::lease::ExecutionLease::acquire(
-                &database.with_file_name(".reviews.lock"),
-            )?;
-            let db = catalog::open_verified(&database)?;
-            let request = store::get_request(&db, request_id)?;
-            let previous = runs::get(&db, request_id)?;
-            let policy = store::repository(&db, request.repository.policy.repository_id)?;
-            Ok::<_, LocalHostError>((lease, request, previous, policy))
-        })
-        .await??;
+        let runs::OwnedReview {
+            lease,
+            request,
+            previous,
+            policy,
+            automatic,
+        } = tokio::task::spawn_blocking(move || runs::own(&database, request_id)).await??;
         let checkout_root = self
             .config
             .database
@@ -75,8 +100,8 @@ impl LocalHost {
             .join(request_id.to_string());
         // Reap a crashed owner's environment even when changed policy or a
         // closed PR will skip the recovered review before inference.
-        if let Some(config) = workspace {
-            super::checkout::Checkout::remove_abandoned(&checkout_root, config, request_id).await?;
+        if workspace.is_some() {
+            super::checkout::Checkout::remove_abandoned(&checkout_root).await?;
         }
         if let Some(run @ GitHubReviewRun::Finished { .. }) = previous {
             return Ok(run);
@@ -107,13 +132,13 @@ impl LocalHost {
         let snapshot = if let Some(GitHubReviewRun::Prepared { snapshot }) = previous {
             snapshot
         } else {
-            if pull.state == "closed" || (pull.draft && request.repository.policy.skip_drafts) {
+            if let Some(reason) = ineligible(&pull, &request, automatic) {
                 return self
                     .finish_review(
                         request_id,
                         None,
                         GitHubReviewOutcome::Skipped {
-                            reason: "PR is closed or excluded as a draft.".to_owned(),
+                            reason: reason.to_owned(),
                         },
                     )
                     .await;
@@ -158,7 +183,7 @@ impl LocalHost {
         &self,
         snapshot: Box<GitHubReviewSnapshot>,
         github: GitHub,
-        workspace: Option<&crate::InspectionContainerConfig>,
+        workspace: Option<&crate::InspectionSandboxConfig>,
         cancellation: CancellationToken,
         checkout_root: std::path::PathBuf,
     ) -> Result<GitHubReviewRun, LocalHostError> {
@@ -177,13 +202,13 @@ impl LocalHost {
             None => None,
         };
         let source = match &checkout {
-            Some(checkout) => reviewer::ReviewToolSource::Container(&checkout.container),
+            Some(checkout) => reviewer::ReviewToolSource::Sandbox(&checkout.sandbox),
             #[cfg(test)]
             None => reviewer::ReviewToolSource::Fixture(&snapshot),
             #[cfg(not(test))]
             None => {
                 return Err(LocalHostError::Configuration(
-                    "review requires an inspection container".to_owned(),
+                    "review requires an inspection sandbox".to_owned(),
                 ));
             }
         };
@@ -423,6 +448,20 @@ impl LocalHost {
         Ok(session
             .execute_turn(command, content, &runtime, cancel.child_token())
             .await?)
+    }
+}
+
+fn ineligible(
+    pull: &super::github::Pull,
+    request: &GitHubReviewRequest,
+    automatic: bool,
+) -> Option<&'static str> {
+    if automatic && request.reported_head_sha != pull.head.sha {
+        Some("A newer PR commit superseded this queued automatic review.")
+    } else if pull.state == "closed" || (pull.draft && request.repository.policy.skip_drafts) {
+        Some("PR is closed or excluded as a draft.")
+    } else {
+        None
     }
 }
 

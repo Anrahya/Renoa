@@ -181,6 +181,9 @@ async function runAttempt(
   const fetchImpl = capturingFetch(invocation.fetch ?? globalThis.fetch, capture);
   const options = {
     maxTokens: invocation.maxOutputTokens,
+    // The Host owns the same total invocation deadline, including retries.
+    // Avoid a shorter SDK default interrupting quiet, extended reasoning.
+    timeoutMs: 30 * 60 * 1000,
     apiKey,
     signal,
     maxRetries: 0,

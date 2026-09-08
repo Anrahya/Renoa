@@ -3,6 +3,44 @@ use tokio::io::AsyncWriteExt as _;
 
 use super::*;
 
+#[tokio::test(start_paused = true)]
+async fn production_deadlines_allow_ten_minutes_of_silent_reasoning() {
+    let (mut writer, reader) = tokio::io::duplex(512);
+    let (sender, _receiver) = mpsc::channel(1);
+    let cancel = CancellationToken::new();
+    let deadlines = StreamDeadlines::production(tokio::time::Instant::now() + MODEL_TOTAL_DEADLINE);
+    let read = read_records(reader, &cancel, &sender, deadlines);
+    let delayed = async {
+        tokio::time::sleep(Duration::from_mins(10)).await;
+        writer.write_all(b"{\"event\":\"error\",\"error\":\"fixture finished reasoning\",\"error_kind\":\"invalid_request\",\"inference_outcome\":\"known_not_started\"}\n")
+            .await.expect("terminal record");
+    };
+    let (result, ()) = tokio::join!(read, delayed);
+    assert!(matches!(
+        result.expect("ten quiet minutes must not time out"),
+        ReadExit::Finished(_)
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn production_deadline_ends_a_silent_call_after_thirty_minutes() {
+    let (_writer, reader) = tokio::io::duplex(512);
+    let (sender, _receiver) = mpsc::channel(1);
+    let started = tokio::time::Instant::now();
+    let result = read_records(
+        reader,
+        &CancellationToken::new(),
+        &sender,
+        StreamDeadlines::production(started + MODEL_TOTAL_DEADLINE),
+    )
+    .await;
+    assert_eq!(
+        result.expect_err("silence must eventually end").kind(),
+        ModelErrorKind::Timeout
+    );
+    assert_eq!(started.elapsed(), Duration::from_mins(30));
+}
+
 #[tokio::test]
 async fn first_output_deadline_is_enforced_on_the_real_record_reader() {
     let (_writer, reader) = tokio::io::duplex(256);

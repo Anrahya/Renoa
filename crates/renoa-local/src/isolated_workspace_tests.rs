@@ -22,8 +22,8 @@ async fn oversized_process_output_terminates_without_waiting_for_the_writer() {
 }
 
 #[tokio::test]
-#[ignore = "requires a built review tools image and a running Docker-compatible engine"]
-async fn inspection_container_uses_existing_tools_and_cleans_up_recovered_runs() {
+#[ignore = "requires Bubblewrap >=0.12, ripgrep and a built renoa-workspace-tool"]
+async fn inspection_sandbox_uses_existing_tools_without_persistent_processes() {
     let directory = tempfile::tempdir().expect("checkout");
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o755))
         .expect("checkout mode");
@@ -35,14 +35,20 @@ async fn inspection_container_uses_existing_tools_and_cleans_up_recovered_runs()
     .expect("large source");
     std::os::unix::fs::symlink("/etc/passwd", directory.path().join("head/outside"))
         .expect("escape fixture");
-    let config = InspectionContainerConfig {
-        engine: std::env::var_os("RENOA_TEST_CONTAINER_ENGINE")
-            .map_or_else(|| PathBuf::from("/usr/bin/podman"), PathBuf::from),
-        image: "localhost/renoa-review-tools:v1".to_owned(),
+    let config = InspectionSandboxConfig {
+        bubblewrap: PathBuf::from("/usr/bin/bwrap"),
+        worker: std::env::var_os("RENOA_TEST_INSPECTION_WORKER").map_or_else(
+            || {
+                std::env::current_dir()
+                    .expect("cwd")
+                    .join("../../target/debug/renoa-workspace-tool")
+            },
+            PathBuf::from,
+        ),
     };
     let id = Uuid::new_v4();
     let cancel = CancellationToken::new();
-    let first = InspectionContainer::start(&config, id, directory.path(), &cancel)
+    let first = InspectionSandbox::start(&config, id, directory.path(), &cancel)
         .await
         .expect("start container");
     assert_eq!(
@@ -60,7 +66,7 @@ async fn inspection_container_uses_existing_tools_and_cleans_up_recovered_runs()
         thought_signature: None,
         namespace: None,
     };
-    let read = async |container: &InspectionContainer, call: &ToolCall| {
+    let read = async |container: &InspectionSandbox, call: &ToolCall| {
         let bytes = checked_output(
             container.command(),
             &serde_json::to_vec(call).expect("call"),
@@ -84,26 +90,8 @@ async fn inspection_container_uses_existing_tools_and_cleans_up_recovered_runs()
     assert!(read(&first, &call).await.is_error);
     assert!(!directory.path().join("changed").exists());
     // Recreate the same run after a simulated owner crash; never duplicate it.
-    let recovered = InspectionContainer::start(&config, id, directory.path(), &cancel)
+    let recovered = InspectionSandbox::start(&config, id, directory.path(), &cancel)
         .await
         .expect("recover container");
-    assert_eq!(first.image, recovered.image);
-    recovered.remove().await.expect("cleanup");
-    recovered.remove().await.expect("idempotent cleanup");
-    let mut inspect = Command::new(&config.engine);
-    inspect.args([
-        "container",
-        "ls",
-        "--all",
-        "--filter",
-        &format!("name={}", recovered.name),
-        "--format",
-        "{{.Names}}",
-    ]);
-    assert!(
-        checked_output(inspect, &[], &cancel)
-            .await
-            .expect("inspect cleanup")
-            .is_empty()
-    );
+    assert_eq!(first.identity, recovered.identity);
 }

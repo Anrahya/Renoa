@@ -13,6 +13,8 @@ mod context;
 mod execution;
 mod findings;
 mod github;
+mod jobs;
+mod publication;
 mod reviewer;
 mod runs;
 mod store;
@@ -22,6 +24,8 @@ mod webhook;
 
 pub use context::{ReviewCheck, ReviewContext, ReviewFile};
 pub use findings::{GitHubReviewEvidence, GitHubReviewFinding, GitHubReviewReport, ReviewPriority};
+pub use jobs::{GitHubReviewWork, REVIEW_LIFETIME_MS};
+pub use publication::GitHubReviewPublication;
 pub use runs::{GitHubReviewOutcome, GitHubReviewRun, GitHubReviewSnapshot};
 pub(super) use store::initialize;
 pub use webhook::GitHubReviewWebhook;
@@ -112,6 +116,9 @@ pub enum GitHubReviewCommand {
     Run {
         request_id: Uuid,
     },
+    Publication {
+        request_id: Uuid,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +138,9 @@ pub enum GitHubReviewReply {
     },
     Run {
         record: Option<GitHubReviewRun>,
+    },
+    Publication {
+        record: Option<GitHubReviewPublication>,
     },
 }
 
@@ -172,6 +182,23 @@ pub enum GitHubReviewError {
 }
 
 impl LocalHost {
+    /// Checks the durable admission receipt before requesting webhook redelivery.
+    /// # Errors
+    /// Returns Host catalog errors without contacting GitHub.
+    pub async fn has_github_delivery(&self, id: Uuid) -> Result<bool, LocalHostError> {
+        let database = self.config.database.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            catalog::open_verified(&database)?
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM host_review_deliveries WHERE delivery_id=?1)",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(GitHubReviewError::from)
+        })
+        .await??)
+    }
+
     /// Applies local review management with durable receipts and revision checks.
     /// Listing is bounded to 20 records; requests are ordered by admission sequence.
     /// # Errors

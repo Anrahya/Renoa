@@ -1,18 +1,16 @@
-//! Disposable inspection environment. Agent state and credentials remain with
-//! the Host; the container sees only an immutable checkout and existing tools.
-use std::{
-    io,
-    path::{Path, PathBuf},
-    process::Stdio,
-    sync::Arc,
-};
-
+//! Per-call inspection isolation. No worker remains alive during inference.
 use renoa_agent::{
     BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolResult, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::EffectRecovery;
 use serde::{Deserialize, Serialize};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     process::Command,
@@ -26,117 +24,114 @@ mod tests;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct InspectionContainerConfig {
-    pub engine: PathBuf,
-    /// A locally available image; the resolved content identity binds tool replay.
-    pub image: String,
+pub struct InspectionSandboxConfig {
+    pub bubblewrap: PathBuf,
+    pub worker: PathBuf,
 }
 
-pub(crate) struct InspectionContainer {
-    engine: PathBuf,
-    name: String,
-    image: String,
+pub(crate) struct InspectionSandbox {
+    config: InspectionSandboxConfig,
+    identity: String,
     specs: Vec<ToolSpec>,
     checkout: PathBuf,
 }
 
-impl InspectionContainer {
-    pub(crate) async fn remove_for(config: &InspectionContainerConfig, id: Uuid) -> io::Result<()> {
-        Self {
-            engine: config.engine.clone(),
-            name: format!("renoa-inspection-{id}"),
-            image: String::new(),
-            specs: Vec::new(),
-            checkout: PathBuf::new(),
-        }
-        .remove()
-        .await
-    }
+impl InspectionSandbox {
     pub(crate) async fn start(
-        config: &InspectionContainerConfig,
+        config: &InspectionSandboxConfig,
         id: Uuid,
         checkout: &Path,
         cancel: &CancellationToken,
     ) -> io::Result<Self> {
-        if !config.engine.is_absolute() || config.image.starts_with('-') || config.image.is_empty()
+        if !config.bubblewrap.is_absolute()
+            || !config.worker.is_absolute()
+            || !checkout.is_absolute()
         {
-            return Err(io::Error::other(
-                "provide an absolute container engine and a local image",
-            ));
+            return Err(io::Error::other("inspection paths must be absolute"));
         }
-        let mut image = Command::new(&config.engine);
-        image.args(["image", "inspect", "--format", "{{.Id}}", &config.image]);
-        let image = String::from_utf8(checked_output(image, &[], cancel).await?)
-            .map_err(io::Error::other)?
+        let mut version = Command::new(&config.bubblewrap);
+        version.arg("--version");
+        let bytes = checked_output(version, &[], cancel).await?;
+        let version = String::from_utf8(bytes).map_err(io::Error::other)?;
+        let parts: Vec<u32> = version
             .trim()
-            .to_owned();
-        let name = format!("renoa-inspection-{id}");
-        let mut container = Self {
-            engine: config.engine.clone(),
-            name,
-            image,
+            .strip_prefix("bubblewrap ")
+            .ok_or_else(|| io::Error::other("unrecognized Bubblewrap version"))?
+            .split('.')
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .map_err(io::Error::other)?;
+        if parts.as_slice() < [0, 12, 0].as_slice() {
+            return Err(io::Error::other("Bubblewrap 0.12.0 or newer is required"));
+        }
+        let worker = tokio::fs::read(&config.worker).await?;
+        let mut sandbox = Self {
+            config: config.clone(),
+            identity: format!(
+                "{id}/{}/{}",
+                version.trim(),
+                crate::workspace::hex_sha256(&worker)
+            ),
             specs: Vec::new(),
             checkout: checkout.to_owned(),
         };
-        // A previous owner may have died after create. Recreate this read-only
-        // environment; durable model/tool effects stay in the Host's kernel.
-        container.remove().await?;
-        let root = checkout
-            .to_str()
-            .ok_or_else(|| io::Error::other("checkout path is not UTF-8"))?;
-        if root.contains([',', ':', '\n']) || !checkout.is_absolute() {
-            return Err(io::Error::other(
-                "checkout requires an absolute mount-safe path",
-            ));
-        }
-        let mut command = Command::new(&container.engine);
-        command.args([
-            "run",
-            "--detach",
-            "--name",
-            &container.name,
-            "--label",
-            &format!("renoa.inspection={id}"),
-            "--network",
-            "none",
-            "--read-only",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
-            "--user",
-            "65534:65534",
-            "--volume",
-            &format!("{root}:/workspace:ro,Z"),
-            &container.image,
-        ]);
-        let creation = checked_output(command, &[], cancel).await;
-        if let Err(error) = creation {
-            container.remove().await?;
-            return Err(error);
-        }
-        let specs = checked_output(container.command(), &[], cancel).await;
-        match specs.and_then(|bytes| serde_json::from_slice(&bytes).map_err(io::Error::other)) {
-            Ok(specs) => {
-                container.specs = specs;
-                Ok(container)
-            }
-            Err(error) => {
-                container.remove().await?;
-                Err(error)
-            }
-        }
+        sandbox.specs =
+            serde_json::from_slice(&checked_output(sandbox.command(), &[], cancel).await?)
+                .map_err(io::Error::other)?;
+        Ok(sandbox)
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(&self.engine);
-        command.args([
-            "exec",
-            "--interactive",
-            &self.name,
-            "/usr/local/bin/renoa-workspace-tool",
-            "/workspace",
-        ]);
+        let mut command = Command::new(&self.config.bubblewrap);
+        command
+            .env_clear()
+            .args([
+                "--unshare-all",
+                "--unshare-user",
+                "--disable-userns",
+                "--die-with-parent",
+                "--new-session",
+                "--cap-drop",
+                "ALL",
+                "--clearenv",
+                "--setenv",
+                "PATH",
+                "/usr/bin",
+                "--ro-bind",
+                "/usr/bin/rg",
+                "/usr/bin/rg",
+                "--ro-bind",
+                "/usr/lib",
+                "/usr/lib",
+                "--ro-bind-try",
+                "/usr/lib64",
+                "/usr/lib64",
+                "--symlink",
+                "usr/lib",
+                "/lib",
+                "--symlink",
+                "usr/lib64",
+                "/lib64",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--tmpfs",
+                "/tmp",
+                "--ro-bind",
+            ])
+            .arg(&self.checkout)
+            .arg("/workspace")
+            .arg("--ro-bind")
+            .arg(&self.config.worker)
+            .arg("/renoa-workspace-tool")
+            .args([
+                "--chdir",
+                "/workspace",
+                "--",
+                "/renoa-workspace-tool",
+                "/workspace",
+            ]);
         command
     }
 
@@ -149,12 +144,9 @@ impl InspectionContainer {
             .iter()
             .map(|spec| {
                 AgentToolBinding::new(
-                    format!(
-                        "renoa.inspection/v1/{}/{}/{}",
-                        self.name, self.image, spec.name
-                    ),
-                    Arc::new(ContainerTool {
-                        container: Arc::clone(self),
+                    format!("renoa.inspection/v2/{}/{}", self.identity, spec.name),
+                    Arc::new(InspectionTool {
+                        sandbox: Arc::clone(self),
                         spec: spec.clone(),
                     }),
                     EffectRecovery::SafeToReplay,
@@ -162,45 +154,13 @@ impl InspectionContainer {
             })
             .collect()
     }
-
-    pub(crate) async fn remove(&self) -> io::Result<()> {
-        let mut inspect = Command::new(&self.engine);
-        inspect.args([
-            "container",
-            "ls",
-            "--all",
-            "--filter",
-            &format!("name={}", self.name),
-            "--format",
-            "{{.Names}} {{.Label \"renoa.inspection\"}}",
-        ]);
-        let output = checked_output(inspect, &[], &CancellationToken::new()).await?;
-        let expected = format!(
-            "{} {}",
-            self.name,
-            self.name.trim_start_matches("renoa-inspection-")
-        );
-        let output = String::from_utf8(output).map_err(io::Error::other)?;
-        if output.trim().is_empty() {
-            return Ok(());
-        }
-        if output.trim() != expected {
-            return Err(io::Error::other(
-                "container name belongs to a different owner",
-            ));
-        }
-        let mut remove = Command::new(&self.engine);
-        remove.args(["rm", "--force", &self.name]);
-        checked_output(remove, &[], &CancellationToken::new()).await?;
-        Ok(())
-    }
 }
 
-struct ContainerTool {
-    container: Arc<InspectionContainer>,
+struct InspectionTool {
+    sandbox: Arc<InspectionSandbox>,
     spec: ToolSpec,
 }
-impl Tool for ContainerTool {
+impl Tool for InspectionTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
     }
@@ -211,9 +171,9 @@ impl Tool for ContainerTool {
         _updates: ToolUpdates,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-            let input = serde_json::to_vec(&call)
-                .map_err(|error| ToolError::invalid_input(error.to_string()))?;
-            let bytes = checked_output(self.container.command(), &input, &cancellation)
+            let input =
+                serde_json::to_vec(&call).map_err(|e| ToolError::invalid_input(e.to_string()))?;
+            let bytes = checked_output(self.sandbox.command(), &input, &cancellation)
                 .await
                 .map_err(|error| {
                     if error.kind() == io::ErrorKind::Interrupted {
@@ -222,8 +182,8 @@ impl Tool for ContainerTool {
                         ToolError::unavailable(error.to_string())
                     }
                 })?;
-            let result: ToolResult = serde_json::from_slice(&bytes)
-                .map_err(|error| ToolError::internal(error.to_string()))?;
+            let result: ToolResult =
+                serde_json::from_slice(&bytes).map_err(|e| ToolError::internal(e.to_string()))?;
             if result.call_id != call.id || result.name != call.name {
                 return Err(ToolError::internal(
                     "inspection returned a different tool-call identity",

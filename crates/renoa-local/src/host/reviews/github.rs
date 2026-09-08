@@ -56,6 +56,16 @@ impl GitHub {
         policy: &GitHubReviewPolicy,
         cancel: &CancellationToken,
     ) -> Result<Self, GitHubReviewError> {
+        Self::connect_with_permissions(origin, app_jwt, policy, false, cancel).await
+    }
+
+    pub(super) async fn connect_with_permissions(
+        origin: Url,
+        app_jwt: &str,
+        policy: &GitHubReviewPolicy,
+        publish: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Self, GitHubReviewError> {
         #[derive(Deserialize)]
         struct Installation {
             id: i64,
@@ -82,7 +92,7 @@ impl GitHub {
         }
         let token: Token = serde_json::from_slice(&github.request(
             Method::POST, &["app", "installations", &install.id.to_string(), "access_tokens"], &[],
-            Some(serde_json::to_vec(&serde_json::json!({"repository_ids":[policy.repository_id],"permissions":{"contents":"read","pull_requests":"read","checks":"read"}}))?),
+            Some(serde_json::to_vec(&serde_json::json!({"repository_ids":[policy.repository_id],"permissions":{"contents":"read","pull_requests":if publish {"write"} else {"read"},"checks":"read"}}))?),
             false, cancel,
         ).await?)?;
         github.headers = headers(&token.token)?;
@@ -174,7 +184,7 @@ impl GitHub {
             .map_err(|_| GitHubReviewError::Invalid("source is not UTF-8 text".to_owned()))
     }
 
-    async fn request(
+    pub(super) async fn request(
         &self,
         method: Method,
         path: &[&str],
@@ -208,11 +218,7 @@ impl GitHub {
             if !response.status().is_success() {
                 return Err(GitHubReviewError::Api {
                     status: response.status().as_u16(),
-                    retry_after: response
-                        .headers()
-                        .get("retry-after")
-                        .and_then(|v| v.to_str().ok())
-                        .map(str::to_owned),
+                    retry_after: retry_header(response.headers()),
                 });
             }
             let mut bytes = Vec::new();
@@ -226,6 +232,26 @@ impl GitHub {
         };
         tokio::select! { biased; ()=cancel.cancelled()=>Err(GitHubReviewError::Cancelled), result=work=>result }
     }
+}
+
+fn retry_header(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .or_else(|| {
+            if headers.get("x-ratelimit-remaining")?.to_str().ok()? != "0" {
+                return None;
+            }
+            let reset: i64 = headers
+                .get("x-ratelimit-reset")?
+                .to_str()
+                .ok()?
+                .parse()
+                .ok()?;
+            let now = crate::TurnObservation::now().ok()?.unix_milliseconds() / 1000;
+            Some(reset.saturating_sub(now).max(0).to_string())
+        })
 }
 
 fn headers(token: &str) -> Result<HeaderMap, GitHubReviewError> {

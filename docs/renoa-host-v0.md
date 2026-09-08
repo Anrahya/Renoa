@@ -909,10 +909,11 @@ without repeating the kernel's completed file operation.
 
 ## GitHub reviewer composition
 
-The Host implements repository policy, durable review-request admission, and a
-disposable inspection executor. Public webhook serving, queue supervision,
-GitHub publication, and browser management remain design targets, not deployed
-capabilities. The browser currently projects RCP tasks. This
+The Host implements repository policy, durable review-request admission, a
+disposable inspection executor, and durable GitHub publication. The GitHub
+service receives signed webhooks behind HTTPS ingress and supervises separate
+review workers. Browser management remains a design target; the browser
+currently projects RCP tasks. This
 composition adds no GitHub-specific types to the kernel and does not settle the open
 RCP wire boundaries.
 
@@ -948,9 +949,11 @@ outcomes release inbox capacity without deleting requests or their receipts.
 
 Host schema 20 added `host_review_repositories`, `host_review_operations`,
 `host_review_requests`, and `host_review_deliveries`. Schema 21 adds
-`host_review_runs`. Existing Host, specialist, session, capability, routine and
+`host_review_runs`; schema 22 adds `host_review_jobs` (absolute lifetime and
+publication backoff) and `host_review_publications` (intent and remote outcome).
+Existing Host, specialist, session, capability, routine and
 admission records are preserved. All processes sharing the database must support
-schema 21 before opening it with these binaries.
+schema 22 before opening it with these binaries.
 
 The local CLI exposes the same operations without a browser:
 
@@ -973,7 +976,7 @@ A request file is a serialized `GitHubReviewCommand`, for example
 must be absolute. The body file contains the exact signed bytes; the private
 secret file contains the exact secret bytes (no automatic whitespace trimming).
 The CLI never prints the secret or original payload. This is a local admission
-and recovery path, not a public webhook server.
+and recovery path. The separately launched `github-service` supplies HTTP admission.
 
 ### Disposable review execution
 
@@ -985,12 +988,13 @@ renoa-host /absolute/host.json github-execute /absolute/execution.json
 ```
 
 The execution file contains `request_id`, `app_jwt_file`, and
-`workspace: {"engine":"/usr/bin/docker","image":"renoa-review-tools:v1"}`.
-The image must already be built from `deploy/review-workspace.Dockerfile` with
-the `renoa-workspace-tool` release binary in its build context. The JWT is a
-private absolute file containing a currently valid GitHub App JWT. Registration,
-private key storage/JWT refresh and automatic queue draining still need their
-deployment adapter. The executor verifies the App installation and repository
+`workspace: {"bubblewrap":"/usr/bin/bwrap","worker":"/opt/renoa/review-tools/<commit>/renoa-workspace-tool"}`.
+The worker is the release build of the existing workspace tool binary, installed
+at an immutable versioned path. Bubblewrap 0.12.0 or later and unprivileged user
+namespaces are required. The JWT is a private absolute file containing a currently
+valid GitHub App JWT. The GitHub service signs it immediately before dispatch;
+the RSA key stays in that service's systemd credential directory.
+The executor verifies the App installation and repository
 identity, then mints a token restricted to the repository and read-only contents,
 pull requests and checks. Credentials stay outside model context and results.
 
@@ -1002,10 +1006,13 @@ and observed CI status.
 
 The Host materializes base/, head/ and merge_base/ checkouts under
 `review-workspaces/<request-id>`. Git credentials go only to the trusted fetch
-process and are not stored in Git config; hooks are disabled. The inspection
-container receives only the checkout, mounted read-only, with no network, added
-capabilities, Host data, credentials or container socket. It runs as an
-unprivileged user. This shares the operating-system kernel and is not a microVM;
+process and are not stored in Git config; hooks are disabled. Each inspection
+call launches a fresh Bubblewrap sandbox with the checkout mounted read-only,
+the workspace tool, ripgrep and its system libraries. It has isolated namespaces,
+no network, no capabilities, an empty environment and no Host data or credentials.
+Nested user namespaces are disabled. The tool process exits after its response;
+there is no persistent sandbox process during model reasoning. This shares the
+operating-system kernel and is not a microVM;
 the initial deployment serves the owner's personal review workflow.
 
 The Host assembles the named specialist recipe with `review_instructions.txt`,
@@ -1015,8 +1022,10 @@ as local agents; only their transport changes. No generic assistant/coding
 profile is inherited. Bash, dependency installation, test execution, automatic
 fixes and unrelated Host connections are unavailable in this version.
 
-Investigation and validation run until completion, cancellation or failure,
-without model-response or elapsed-review budgets. Tool batches allow 50 calls.
+Investigation and validation run until completion, cancellation, failure or the
+explicit 60-minute review deadline. There is no model-response count limit.
+Each provider call, including silent reasoning, can take up to 30 minutes;
+the Node adapter no longer imposes its shorter SDK default. Tool batches allow 50 calls.
 The output allowance is 32,768 tokens, bounded by the provider's supported output.
 Working input targets 272,000 tokens, automatic compaction starts at 258,400, and
 the post-compaction target is 155,040. Smaller model windows lower those settings
@@ -1031,8 +1040,8 @@ Each stage is a durable command in `review-sessions/<request-id>/kernel.sqlite`.
 Settled stages replay before model resolution. A final Host commit failure does
 not repeat completed inference. Unfinished read/model effects retain the kernel's
 safe-to-replay semantics; a crash may repeat unacknowledged inference and cost.
-The resolved container image identity participates in the runtime tool bindings,
-so an incompatible image cannot silently resume an active model/tool command.
+The Bubblewrap version and worker binary hash participate in runtime tool bindings,
+so an incompatible tool deployment cannot silently resume an active command.
 
 New findings require P0–P3 priorities and are sorted by priority. Legacy reports
 without a priority remain readable without assigning an invented one. Validation
@@ -1040,10 +1049,54 @@ checks added-line anchors, required fields, duplicate anchors and exact evidence
 against the immutable head checkout. These checks do not prove semantic correctness.
 A final PR/policy check retains findings as superseded when the target changed.
 
-The Host saves the result before removing the container and checkout. A recovered
-run recreates its inspection environment from the same commits. Cleanup failure
-is reported; retrying a completed run reconciles leftover workspace resources
+The Host saves the result before removing the checkout. A recovered execution
+recreates its inspection environment from the same commits. Cleanup failure is
+reported; retrying a completed run reconciles leftover workspace resources
 without rerunning inference. Durable transcripts and findings survive cleanup.
+
+### GitHub service, recovery and publication
+
+`renoa-host <host.json> github-service <service.json>` binds a loopback HTTP
+listener at `/v1/github/webhook`. The ingress exposes only that path. Signature
+verification and the Host transaction finish before HTTP 202; no model runs in
+the request handler. The service scans GitHub's retained delivery history every
+five minutes and on first startup, following authenticated same-endpoint pages.
+Failed deliveries without a durable Host receipt are requested again from GitHub;
+the replay uses the same delivery GUID. The next scan time is committed before
+API calls and survives restart. This relies on GitHub's delivery retention window;
+an outage beyond that window needs an explicit review request. Scanning the whole
+retained window avoids assumptions about webhook ordering or cursor monotonicity.
+
+The dispatcher runs one review at a time without blocking Host routines or chat
+surfaces. Queued automatic requests for older heads are skipped using the current
+GitHub PR state; late webhook arrival cannot displace a newer commit. A manual
+request still reconciles the live PR before freezing input.
+
+Before launch, the Host records the absolute deadline. A separate systemd user
+service owns each review's process group: `RuntimeMaxSec` uses the remaining
+deadline, `KillMode=control-group` covers model bridges and tool descendants, and
+`TimeoutStopSec=30s` allows cooperative cancellation before forced termination.
+`ExecStopPost` calls the Host reaper after exit, timeout or crash. It removes only
+that request's checkout and temporary JWT/launcher files under the review lease,
+and records an incomplete outcome when the worker left none. Dispatcher startup
+also reconciles jobs without a live unit, covering a reboot or failed launch.
+The user manager has lingering enabled, so a receiver crash cannot abandon its
+worker's lifetime enforcement. No completed transcript is removed.
+
+Publication uses a fresh write-scoped installation token outside the model loop.
+The Host persists the exact payload before POST and rechecks the PR's current
+head and repository policy. Reviews are bound to the frozen commit, use P0–P3
+inline findings, and disclose incomplete execution or coverage. An uncertain
+POST is reconciled by bot identity, commit and exact body including a stable Host
+request marker. It never causes a blind second POST. An unresolved result is
+`needs_attention`; operator investigation is required before another request.
+Publication errors retain the completed model result and a durable retry time,
+with at least five minutes of backoff and longer GitHub retry/reset hints honored.
+
+`{"action":"publication","request_id":"<uuid>"}` through `github-review`
+retrieves sending, published (review ID and URL), suppressed or attention-required
+state. Individual comment IDs and conversational PR replies remain follow-up
+work; publication currently creates a single GitHub review with inline comments.
 
 `{"action":"run","request_id":"<uuid>"}` through `github-review` retrieves the
 prepared snapshot or immutable outcome (reviewed, superseded, skipped, incomplete)
@@ -1117,8 +1170,8 @@ management service; it does not implement its authentication or routing.
    resolve the current open PR state through GitHub before selecting work, since
    webhook arrival order is not authoritative. Closed PRs and revoked installation
    access cannot continue to publish. GitHub does not automatically retry failed
-   webhook deliveries; a durable reconciliation cursor and redelivery handling
-   must recover missed work after downtime. This is event-triggered work, not a
+   webhook deliveries; reconcile retained delivery history against durable Host
+   receipts and request redelivery to recover missed work after downtime. This is event-triggered work, not a
    new cron schedule variant.
 3. Freeze repository identity, PR, base/head commits, effective policy, model,
    instructions, and tool composition with the admitted run. Reuse its stable
@@ -1172,12 +1225,13 @@ interactive GitHub MCP connection is not proof that a review App is installed.
 
 `host/runtime.rs` automatically adds `routine_manage` to ordinary `renoa.bot.*`
 profiles. The review composer reuses the shared loop and compaction while supplying
-only the container's inspection tools. It does not inherit interactive management
+only the sandbox's inspection tools. It does not inherit interactive management
 capabilities. This is tool composition, not a new popup permission system.
 
 Begin with one review at a time and explicit working-context/output settings.
-Do not impose a review-wide model-call or elapsed-time budget. Keep review
-execution from blocking the existing routine queue.
+Do not impose a review-wide model-call budget. The explicit lifetime is 60 minutes,
+with up to 30 minutes for one provider call. Keep review execution from blocking
+the existing routine queue.
 Keep the system/tool prefix stable, put run-specific metadata after it, and reuse
 content by immutable commit/blob identity. Record provider-reported token and
 cache usage when available; unknown cache savings or monetary cost stay unknown.

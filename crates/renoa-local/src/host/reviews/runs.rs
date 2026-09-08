@@ -11,6 +11,37 @@ use super::{
 };
 use crate::{ModelProvider, ReasoningLevel};
 
+/// Ownership is acquired before reading mutable policy or resumable state.
+pub(super) struct OwnedReview {
+    pub lease: crate::host::lease::ExecutionLease,
+    pub request: GitHubReviewRequest,
+    pub previous: Option<GitHubReviewRun>,
+    pub policy: Option<super::GitHubReviewRepository>,
+    pub automatic: bool,
+}
+
+pub(super) fn own(path: &Path, id: Uuid) -> Result<OwnedReview, crate::LocalHostError> {
+    let lease = crate::host::lease::ExecutionLease::acquire(&path.with_file_name(".reviews.lock"))?;
+    let db = catalog::open_verified(path)?;
+    let request = store::get_request(&db, id)?;
+    let previous = get(&db, id)?;
+    let policy = store::repository(&db, request.repository.policy.repository_id)?;
+    let automatic = db
+        .query_row(
+            "SELECT automatic_key IS NOT NULL FROM host_review_requests WHERE id=?1",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(GitHubReviewError::from)?;
+    Ok(OwnedReview {
+        lease,
+        request,
+        previous,
+        policy,
+        automatic,
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitHubReviewSnapshot {
     pub request: GitHubReviewRequest,

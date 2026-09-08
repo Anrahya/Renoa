@@ -76,14 +76,14 @@ pub(super) struct ReviewTools<'a> {
     pub(super) source: ReviewToolSource<'a>,
 }
 pub(super) enum ReviewToolSource<'a> {
-    Container(&'a Arc<crate::isolated_workspace::InspectionContainer>),
+    Sandbox(&'a Arc<crate::isolated_workspace::InspectionSandbox>),
     #[cfg(test)]
     Fixture(&'a GitHubReviewSnapshot),
 }
 impl ReviewTools<'_> {
     fn bindings(&self) -> Vec<AgentToolBinding> {
         match self.source {
-            ReviewToolSource::Container(container) => container.bindings(),
+            ReviewToolSource::Sandbox(container) => container.bindings(),
             #[cfg(test)]
             ReviewToolSource::Fixture(snapshot) => {
                 super::tests::source_tool::bindings(self.github.clone(), snapshot)
