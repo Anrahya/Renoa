@@ -1,5 +1,7 @@
 use super::{Settings, auth::AppAuth};
-use renoa_local::{GitHubReviewPublication, LocalHost, LocalHostError, TurnObservation};
+use renoa_local::{
+    GitHubReviewPublication, GitHubReviewWork, LocalHost, LocalHostError, TurnObservation,
+};
 use std::{error::Error, path::Path, time::Duration};
 use tokio::{io::AsyncWriteExt as _, process::Command};
 use tokio_util::sync::CancellationToken;
@@ -37,20 +39,13 @@ async fn tick(
     let work = host.github_review_work().await?;
     // Inspect every known unit before dispatching. A service restart must not
     // create a competing owner, and systemd failure is not evidence of inactivity.
-    let mut active = false;
-    let mut stopped = Vec::new();
-    let mut waiting = Vec::new();
-    for job in work {
-        if stop.is_cancelled() {
-            return Ok(());
-        }
-        if unit_active(job.request_id).await? {
-            active = true;
-        } else {
-            stopped.push(job);
-        }
+    let workers = observe_workers(work, stop, unit_active).await;
+    if stop.is_cancelled() {
+        return Ok(());
     }
-    for job in stopped {
+    let mut waiting = Vec::new();
+    let can_launch = !workers.active && !workers.uncertain;
+    for job in workers.stopped {
         let observed = now()?;
         if job.retry_after_ms > observed {
             continue;
@@ -67,7 +62,7 @@ async fn tick(
         if job.deadline_at_ms.is_some() {
             // An older finished review may await publication while another
             // worker owns the global checkout lease. Do not disturb that owner.
-            if active {
+            if workers.active {
                 continue;
             }
             if !cleanup_stopped(host, data, job.request_id, observed).await? {
@@ -109,7 +104,7 @@ async fn tick(
             waiting.push(job.request_id);
         }
     }
-    if !active
+    if can_launch
         && let Some(id) = waiting.first()
         && let Err(error) = launch(host, data, config, auth, *id).await
     {
@@ -120,6 +115,42 @@ async fn tick(
         eprintln!("Review {id} launch deferred: {error}");
     }
     Ok(())
+}
+
+/// Unknown units cannot authorize launches or cleanup of their own work. Other
+/// confirmed-stopped units remain eligible for cleanup under the checkout lease.
+#[derive(Default)]
+struct WorkerObservations {
+    active: bool,
+    uncertain: bool,
+    stopped: Vec<GitHubReviewWork>,
+}
+
+async fn observe_workers<F, Fut>(
+    work: Vec<GitHubReviewWork>,
+    stop: &CancellationToken,
+    mut query: F,
+) -> WorkerObservations
+where
+    F: FnMut(Uuid) -> Fut,
+    Fut: std::future::Future<Output = Result<bool, Box<dyn Error>>>,
+{
+    let mut result = WorkerObservations::default();
+    for job in work {
+        if stop.is_cancelled() {
+            result.uncertain = true;
+            break;
+        }
+        match query(job.request_id).await {
+            Ok(true) => result.active = true,
+            Ok(false) => result.stopped.push(job),
+            Err(error) => {
+                result.uncertain = true;
+                eprintln!("Review {} unit state unavailable: {error}", job.request_id);
+            }
+        }
+    }
+    result
 }
 
 /// False defers only this job. Uncertain ownership or catalog failure remains

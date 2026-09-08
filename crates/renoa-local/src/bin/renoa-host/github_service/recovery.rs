@@ -179,7 +179,22 @@ impl Api {
                     .origin
                     .join(&format!("/app/hook/deliveries/{}/attempts", delivery.id))
                     .map_err(|e| GitHubReviewError::Invalid(e.to_string()))?;
-                self.request(Method::POST, url, stop).await?;
+                if let Err(error) = self.request(Method::POST, url, stop).await {
+                    // A delivery can expire or become ineligible independently
+                    // of later deliveries. Authentication, throttling (including
+                    // Retry-After), and service failures still stop this scan.
+                    if matches!(
+                        error,
+                        GitHubReviewError::Api {
+                            status: 400 | 404 | 409 | 410 | 422,
+                            retry_after: None,
+                        }
+                    ) {
+                        eprintln!("GitHub redelivery {} failed: {error}", delivery.id);
+                        continue;
+                    }
+                    return Err(error);
+                }
                 eprintln!(
                     "Requested GitHub redelivery {} ({})",
                     delivery.guid, delivery.id

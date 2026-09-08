@@ -35,6 +35,7 @@ struct Fixture {
     origin: Url,
     ids: [Uuid; 3],
     posts: Mutex<Vec<u64>>,
+    failure: Mutex<Option<StatusCode>>,
 }
 
 async fn admit(host: &LocalHost, id: Uuid) {
@@ -95,6 +96,11 @@ async fn deliveries(
 
 async fn redeliver(State(state): State<Arc<Fixture>>, RoutePath(id): RoutePath<u64>) -> StatusCode {
     state.posts.lock().expect("posts").push(id);
+    if id == 2
+        && let Some(status) = *state.failure.lock().expect("failure")
+    {
+        return status;
+    }
     // GitHub redelivery preserves the GUID. The HTTP signature/admission path
     // is covered separately; this fixture commits its resulting Host receipt.
     admit(
@@ -122,6 +128,7 @@ async fn missed_deliveries_are_recovered_across_pages_without_repeating_admitted
         origin: origin.clone(),
         ids,
         posts: Mutex::new(Vec::new()),
+        failure: Mutex::new(Some(StatusCode::NOT_FOUND)),
     });
     let router = Router::new()
         .route("/app/hook/deliveries", get(deliveries))
@@ -142,11 +149,41 @@ async fn missed_deliveries_are_recovered_across_pages_without_repeating_admitted
     let api = Api::new(origin, "fixture-jwt").expect("client");
     api.scan(&first, now, &stop).await.expect("recovery");
     assert_eq!(*state.posts.lock().expect("posts"), vec![2, 3]);
+    assert!(!first.has_github_delivery(ids[1]).await.expect("receipt"));
+    assert!(first.has_github_delivery(ids[2]).await.expect("receipt"));
+    // A permanent failure was skipped, not acknowledged. A subsequent scan
+    // can recover that delivery once GitHub accepts it again.
+    *state.failure.lock().expect("failure") = None;
     drop(first);
     api.scan(&host(root.path()), now, &stop)
         .await
         .expect("restart recovery");
-    assert_eq!(*state.posts.lock().expect("posts"), vec![2, 3]);
+    assert_eq!(*state.posts.lock().expect("posts"), vec![2, 3, 2]);
+    api.scan(&host(root.path()), now, &stop)
+        .await
+        .expect("dedup");
+    assert_eq!(*state.posts.lock().expect("posts"), vec![2, 3, 2]);
+
+    // A separate Host has no receipts. Global failures must prevent later
+    // redeliveries, even though an individual 404 above did not.
+    for status in [
+        StatusCode::UNAUTHORIZED,
+        StatusCode::FORBIDDEN,
+        StatusCode::TOO_MANY_REQUESTS,
+        StatusCode::SERVICE_UNAVAILABLE,
+    ] {
+        let fresh = tempfile::tempdir().expect("fresh Host");
+        *state.failure.lock().expect("failure") = Some(status);
+        state.posts.lock().expect("posts").clear();
+        let error = api
+            .scan(&host(fresh.path()), now, &stop)
+            .await
+            .expect_err("global failure");
+        assert!(
+            matches!(error, GitHubReviewError::Api { status: code, .. } if code == status.as_u16())
+        );
+        assert_eq!(*state.posts.lock().expect("posts"), vec![1, 2]);
+    }
     stop.cancel();
     server.await.expect("joined");
 }

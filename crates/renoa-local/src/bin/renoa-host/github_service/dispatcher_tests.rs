@@ -95,6 +95,37 @@ async fn failed_cleanup_defers_one_job_but_preserves_global_ownership_checks() {
     // remove_dir_all even when the test runs as root.
     std::fs::write(checkouts.join(ids[0].to_string()), "broken checkout").expect("bad cleanup");
     std::fs::create_dir(checkouts.join(ids[1].to_string())).expect("healthy checkout");
+    let observations = observe_workers(
+        host.github_review_work().await.expect("work"),
+        &CancellationToken::new(),
+        |id| async move {
+            if id == ids[0] {
+                Err(std::io::Error::other("unit query failed").into())
+            } else {
+                Ok(false)
+            }
+        },
+    )
+    .await;
+    assert!(observations.uncertain);
+    assert!(!observations.active);
+    assert_eq!(observations.stopped.len(), 1);
+    assert_eq!(observations.stopped[0].request_id, ids[1]);
+    for job in observations.stopped {
+        assert!(
+            cleanup_stopped(&host, root.path(), job.request_id, 199)
+                .await
+                .expect("healthy cleanup")
+        );
+        assert!(matches!(
+            host.publish_github_review(job.request_id, "unused", "bot", CancellationToken::new())
+                .await
+                .expect("suppression"),
+            GitHubReviewPublication::Suppressed { .. }
+        ));
+    }
+    assert!(checkouts.join(ids[0].to_string()).is_file());
+    assert!(!checkouts.join(ids[1].to_string()).exists());
     let mut cleaned = Vec::new();
     for id in ids {
         if cleanup_stopped(&host, root.path(), id, 200)
@@ -108,7 +139,9 @@ async fn failed_cleanup_defers_one_job_but_preserves_global_ownership_checks() {
     let jobs = host.github_review_work().await.expect("work");
     assert!(!jobs[0].finished && jobs[0].last_error.is_some());
     assert_eq!(jobs[0].retry_after_ms, 60_200);
-    assert!(jobs[1].finished);
+    // The healthy job was cleaned and its incomplete review suppressed, so it
+    // no longer needs dispatch. The uncertain job remains durable and pending.
+    assert_eq!(jobs.len(), 1);
     let lease = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
