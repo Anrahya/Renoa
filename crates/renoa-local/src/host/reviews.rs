@@ -22,6 +22,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 mod webhook;
+mod worker;
 
 pub use context::{ReviewCheck, ReviewContext, ReviewFile};
 pub use findings::{GitHubReviewEvidence, GitHubReviewFinding, GitHubReviewReport, ReviewPriority};

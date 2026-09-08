@@ -52,6 +52,7 @@ pub async fn run(host: &LocalHost, data: &Path, path: &Path) -> Result<(), Box<d
             );
         }
     }
+    verify_worker_host(data, &config.host_config).await?;
     let owner = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -90,4 +91,17 @@ pub async fn run(host: &LocalHost, data: &Path, path: &Path) -> Result<(), Box<d
     };
     owner.unlock()?;
     result
+}
+
+async fn verify_worker_host(data: &Path, config: &Path) -> Result<(), Box<dyn Error>> {
+    let worker: super::Config = serde_json::from_slice(&tokio::fs::read(config).await?)?;
+    if !worker.data_directory.is_absolute() {
+        return Err("worker Host data directory must be absolute".into());
+    }
+    let supervisor = tokio::fs::canonicalize(data.join("host.sqlite3")).await?;
+    let worker = tokio::fs::canonicalize(worker.data_directory.join("host.sqlite3")).await?;
+    if supervisor != worker {
+        return Err("worker Host database differs from the supervising Host database".into());
+    }
+    Ok(())
 }

@@ -185,3 +185,43 @@ fn separate_cli_processes_configure_admit_and_recover_the_same_review_request() 
     assert!(!rejected.status.success());
     assert!(!String::from_utf8_lossy(&rejected.stderr).contains("private CLI fixture secret"));
 }
+
+#[test]
+fn github_service_rejects_a_different_worker_host_before_loading_credentials() {
+    let supervisor = tempfile::tempdir().expect("supervisor");
+    let worker = tempfile::tempdir().expect("worker");
+    fixture(supervisor.path());
+    fixture(worker.path());
+    let mut config = serde_json::json!({
+        "listen":"127.0.0.1:0", "host_config":worker.path().join("host.json"),
+        "app_client_id":"fixture", "app_key_der":supervisor.path().join("missing-key.der"),
+        "bot_login":"soundwave[bot]", "webhook_secret":supervisor.path().join("missing-secret"),
+        "workspace":{"bubblewrap":"/usr/bin/bwrap", "worker":"/unused/worker"}
+    });
+    let output = invoke(supervisor.path(), "github-service", &config);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("worker Host database differs"));
+    assert!(!supervisor.path().join("data/.github-service.lock").exists());
+    // Separate config files may legitimately select different models on the
+    // same Host. A filesystem alias to that same database is also accepted.
+    let alias = supervisor.path().join("alias");
+    std::os::unix::fs::symlink(supervisor.path().join("data"), &alias).expect("alias");
+    let mut same: serde_json::Value =
+        serde_json::from_slice(&fs::read(supervisor.path().join("host.json")).expect("config"))
+            .expect("json");
+    same["data_directory"] = serde_json::to_value(alias).expect("path");
+    same["model"] = "another-model".into();
+    let path = supervisor.path().join("worker.json");
+    fs::write(&path, serde_json::to_vec(&same).expect("json")).expect("worker config");
+    config["host_config"] = serde_json::to_value(path).expect("path");
+    let output = invoke(supervisor.path(), "github-service", &config);
+    assert!(
+        !output.status.success(),
+        "fixture deliberately has no App key"
+    );
+    assert!(
+        supervisor.path().join("data/.github-service.lock").exists(),
+        "same Host passed identity validation"
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("worker Host database differs"));
+}

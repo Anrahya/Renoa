@@ -93,7 +93,7 @@ impl LocalHost {
         Ok(tokio::task::spawn_blocking(move || begin(&path, id, now)).await??)
     }
 
-    /// Records actual worker entry before any review preparation or inference.
+    /// Records entry for the current attempt before preparation or inference.
     /// # Errors
     /// Rejects unknown jobs, invalid time or storage failure. Does not extend the deadline.
     pub async fn start_github_review(&self, id: Uuid, now: i64) -> Result<(), LocalHostError> {

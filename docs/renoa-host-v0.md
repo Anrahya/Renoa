@@ -951,9 +951,15 @@ Host schema 20 added `host_review_repositories`, `host_review_operations`,
 `host_review_requests`, and `host_review_deliveries`. Schema 21 adds
 `host_review_runs`; schema 22 adds `host_review_jobs` (absolute lifetime and
 publication backoff) and `host_review_publications` (intent and remote outcome).
+Schema 23 adds worker-entry evidence, execution retry timing and the last job failure.
 Existing Host, specialist, session, capability, routine and
 admission records are preserved. All processes sharing the database must support
-schema 22 before opening it with these binaries.
+schema 23 before opening it with these binaries.
+
+The GitHub service verifies at startup that its worker configuration resolves to
+the same canonical Host database as the supervisor. Separate model configuration
+files and filesystem aliases are allowed; a different Host database is rejected
+before loading App credentials or accepting webhook traffic.
 
 The local CLI exposes the same operations without a browser:
 
@@ -1100,8 +1106,15 @@ work; publication currently creates a single GitHub review with inline comments.
 
 `{"action":"run","request_id":"<uuid>"}` through `github-review` retrieves the
 prepared snapshot or immutable outcome (reviewed, superseded, skipped, incomplete)
-without GitHub credentials or inference. Preparation/API failures remain
-retryable; rerunning a terminal review requires a new request identity.
+without GitHub credentials or inference. Recoverable preparation/API failures
+hand the attempt back to dispatch with persisted backoff and the specific cause,
+clearing worker-entry evidence for the next attempt without extending the original
+deadline. Cleanup preserves that handoff. Rate limits, transient HTTP failures,
+changing PR context and cooperative interruption may retry; invalid credentials,
+configuration and other permanent failures retain a specific incomplete outcome.
+Explicit terminal model outcomes are not retried; rerunning a terminal review
+requires a new request identity. Abrupt worker death without a durable handoff
+still produces an incomplete outcome after cleanup.
 
 Initial API preparation still accepts up to 500 changed files, 256 KiB of patches
 and 512 KiB of serialized context, with 1 MiB JSON responses and up to 32 applicable

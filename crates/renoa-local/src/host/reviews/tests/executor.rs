@@ -12,6 +12,7 @@ mod jobs;
 mod publication;
 mod recovery;
 mod trace_and_skills;
+mod worker;
 
 struct Api {
     origin: Url,

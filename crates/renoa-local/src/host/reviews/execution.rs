@@ -21,7 +21,8 @@ impl LocalHost {
     /// per Host owns the execution lease. Cancellation drains the active effect.
     /// # Errors
     /// Returns authentication, context, lease, storage or provider failures.
-    /// Preparation failures remain retryable; terminal runs require a new request.
+    /// Recoverable preparation failures retain backoff and their cause; other
+    /// worker failures become incomplete. Terminal runs require a new request.
     pub async fn execute_github_review(
         &self,
         request_id: Uuid,
@@ -31,39 +32,8 @@ impl LocalHost {
     ) -> Result<GitHubReviewRun, LocalHostError> {
         let origin = Url::parse("https://api.github.com")
             .map_err(|error| GitHubReviewError::Invalid(error.to_string()))?;
-        let deadline = self
-            .begin_github_review(request_id, TurnObservation::now()?.unix_milliseconds())
-            .await?;
-        let remaining = deadline.saturating_sub(TurnObservation::now()?.unix_milliseconds());
-        if remaining <= 0 {
-            self.reap_github_review(request_id, TurnObservation::now()?.unix_milliseconds())
-                .await?;
-            let path = self.config.database.clone();
-            return tokio::task::spawn_blocking(move || {
-                runs::get(&catalog::open_verified(&path)?, request_id)?
-                    .ok_or_else(|| GitHubReviewError::NotFound.into())
-            })
-            .await?;
-        }
-        self.start_github_review(request_id, TurnObservation::now()?.unix_milliseconds())
-            .await?;
-        let run = self.execute_review_in(
-            request_id,
-            app_jwt,
-            cancellation.clone(),
-            origin,
-            Some(workspace),
-        );
-        tokio::pin!(run);
-        tokio::select! {
-            result = &mut run => result,
-            () = tokio::time::sleep(std::time::Duration::from_millis(remaining.unsigned_abs())) => {
-                cancellation.cancel();
-                // Drain the active effect and its children. The systemd service
-                // independently kills the cgroup if cooperative shutdown hangs.
-                run.await
-            }
-        }
+        self.execute_review_worker(request_id, app_jwt, Some(workspace), cancellation, origin)
+            .await
     }
 
     #[cfg(test)]
@@ -78,7 +48,7 @@ impl LocalHost {
             .await
     }
 
-    async fn execute_review_in(
+    pub(super) async fn execute_review_in(
         &self,
         request_id: Uuid,
         app_jwt: &str,
