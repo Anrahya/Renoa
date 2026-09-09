@@ -58,7 +58,7 @@ impl LocalHost {
                             if !invalid.insert(Sha256::digest(output.as_bytes())) {
                                 return Ok(ReportStageResult::Incomplete(format!("Report correction repeated the same invalid output: {error}")));
                             }
-                            prompt = serde_json::json!({"task":"Correct the previous review report to the required JSON schema. Preserve supported findings; do not restart the investigation. evidence must be one object {path,start_line,side,quote}, not an array; choose the strongest exact citation. Return only {findings:[...],limitations:[...]}. The previous output and investigation remain in this durable conversation.","schema_error":error.to_string()}).to_string();
+                            prompt = serde_json::json!({"task":"Correct the previous review report to the required JSON schema. Preserve supported findings; do not restart the investigation. evidence must be one object {path,start_line,side,quote}, not an array; choose the strongest exact citation. Return only {findings:[...],limitations:[...]}. The original report is attached to this turn so correction survives compaction.","schema_error":error.to_string(),"previous_report":output}).to_string();
                         }
                     }
                 }

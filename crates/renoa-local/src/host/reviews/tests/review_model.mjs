@@ -39,8 +39,7 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   if(!request.system_prompt.includes("Batch at most 50 tool calls")) throw Error("missing source batch budget");
   if(prompt.task.includes("model responses")) throw Error("unexpected investigation budget");
   if(mode==="repair" && prompt.task.startsWith("Correct")) {
-    const previous=request.messages.findLast(m=>m.role==="assistant");
-    const report=JSON.parse(previous.content.filter(c=>c.type==="text").map(c=>c.text).join(""));
+    const report=JSON.parse(prompt.previous_report);
     for(const finding of report.findings) finding.evidence=finding.evidence[0];
     complete([{type:"text",text:JSON.stringify(report)}]);
   }

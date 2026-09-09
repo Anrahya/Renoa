@@ -1285,7 +1285,9 @@ Each stage is a durable command in `review-sessions/<request-id>/kernel.sqlite`.
 If a normally completed response violates the report schema, the Host returns
 the parser error as a new durable correction turn in the same session. It keeps
 the investigation and uses stable correction identities, so recovery replays
-settled corrections without redoing inference. Corrections remain subject to
+settled corrections without redoing inference. The invalid report is attached
+to the correction's own input so compaction cannot remove what it must repair.
+Corrections remain subject to
 the review deadline and existing compaction; an identical invalid response
 repeated after feedback is reported as stalled. The schema stays strict and
 findings still require independent validation before publication.
