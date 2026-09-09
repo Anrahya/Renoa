@@ -223,8 +223,10 @@ impl AcpProcess {
         reason = "shared integration-test support is compiled by tests that do not simulate a crash"
     )]
     pub(crate) fn kill(mut self) {
-        drop(self.stdin.take());
+        // EOF requests graceful shutdown; send the crash before closing input
+        // so this fixture cannot race a successful cooperative exit.
         self.child.kill().expect("kill ACP process");
+        drop(self.stdin.take());
         let status = self.child.wait().expect("reap killed ACP process");
         assert!(!status.success(), "killed ACP process exited successfully");
     }

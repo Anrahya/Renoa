@@ -1,5 +1,6 @@
 use super::{
     RoutineError, RoutineMutation, RoutineRecord, RoutineRun, RoutineSchedule, RoutineSpec,
+    receipts::RoutineActor,
 };
 use crate::host::catalog;
 use renoa_kernel::AgentId;
@@ -26,7 +27,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     ) STRICT;
     CREATE INDEX IF NOT EXISTS host_routine_pending ON host_routine_runs(sequence) WHERE output IS NULL;
     UPDATE host_metadata SET schema_version=16 WHERE singleton=1;")?;
-    Ok(())
+    super::receipts::initialize(tx)
 }
 
 fn active(cancellation: &CancellationToken) -> Result<(), RoutineError> {
@@ -39,7 +40,7 @@ fn active(cancellation: &CancellationToken) -> Result<(), RoutineError> {
 
 pub(super) fn mutate(
     path: &Path,
-    actor: AgentId,
+    actor: RoutineActor,
     operation: Uuid,
     mutation: RoutineMutation,
     now_ms: i64,
@@ -50,17 +51,13 @@ pub(super) fn mutate(
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     active(cancellation)?;
     let request = serde_json::to_string(&mutation)?;
-    let receipt: Option<(String,String,String)> = tx.query_row("SELECT actor_id,request_json,result_json FROM host_routine_mutations WHERE operation_id=?1",[operation.to_string()],|row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
-    if let Some((old_actor, old_request, result)) = receipt {
-        if old_actor != actor.to_string() || old_request != request {
-            return Err(RoutineError::Conflict);
-        }
-        return Ok(serde_json::from_str(&result)?);
+    if let Some(record) = actor.replay(&tx, operation, &request)? {
+        return Ok(record);
     }
     let record = match mutation {
         RoutineMutation::Create { spec } => {
             spec.validate(now_ms)?;
-            authorize(&tx, actor, spec.agent_id)?;
+            actor.authorize(&tx, spec.agent_id)?;
             let record = RoutineRecord {
                 id: operation,
                 revision: 1,
@@ -75,25 +72,22 @@ pub(super) fn mutate(
             expected_revision,
             spec,
         } => {
-            spec.validate(now_ms)?;
             let old = get(&tx, id)?;
-            authorize(&tx, actor, old.spec.agent_id)?;
-            if old.revision != expected_revision || old.spec.agent_id != spec.agent_id {
-                return Err(RoutineError::Conflict);
-            }
-            let next_due_ms =
-                if old.spec.schedule == spec.schedule && old.spec.enabled == spec.enabled {
-                    old.next_due_ms
-                } else {
-                    spec.schedule.first_due(now_ms, spec.enabled)?
-                };
-            let revision = old.revision.checked_add(1).ok_or(RoutineError::Conflict)?;
-            let record = RoutineRecord {
-                id,
-                revision,
-                spec,
-                next_due_ms,
-            };
+            actor.authorize(&tx, old.spec.agent_id)?;
+            let record = updated_record(&old, expected_revision, spec, now_ms)?;
+            save(&tx, &record, false)?;
+            record
+        }
+        RoutineMutation::SetEnabled {
+            id,
+            expected_revision,
+            enabled,
+        } => {
+            let old = get(&tx, id)?;
+            actor.authorize(&tx, old.spec.agent_id)?;
+            let mut spec = old.spec.clone();
+            spec.enabled = enabled;
+            let record = updated_record(&old, expected_revision, spec, now_ms)?;
             save(&tx, &record, false)?;
             record
         }
@@ -102,7 +96,7 @@ pub(super) fn mutate(
             expected_revision,
         } => {
             let mut record = get(&tx, id)?;
-            authorize(&tx, actor, record.spec.agent_id)?;
+            actor.authorize(&tx, record.spec.agent_id)?;
             if record.revision != expected_revision {
                 return Err(RoutineError::Conflict);
             }
@@ -120,7 +114,7 @@ pub(super) fn mutate(
         }
         RoutineMutation::RunNow { id } => {
             let mut record = get(&tx, id)?;
-            authorize(&tx, actor, record.spec.agent_id)?;
+            actor.authorize(&tx, record.spec.agent_id)?;
             if now_ms < 0 {
                 return Err(RoutineError::Invalid("invalid occurrence time".to_owned()));
             }
@@ -134,17 +128,32 @@ pub(super) fn mutate(
         }
     };
     active(cancellation)?;
-    tx.execute(
-        "INSERT INTO host_routine_mutations VALUES(?1,?2,?3,?4)",
-        params![
-            operation.to_string(),
-            actor.to_string(),
-            request,
-            serde_json::to_string(&record)?
-        ],
-    )?;
+    actor.save(&tx, operation, &request, &record)?;
     tx.commit()?;
     Ok(record)
+}
+
+fn updated_record(
+    old: &RoutineRecord,
+    expected_revision: i64,
+    spec: RoutineSpec,
+    now_ms: i64,
+) -> Result<RoutineRecord, RoutineError> {
+    if old.revision != expected_revision || old.spec.agent_id != spec.agent_id {
+        return Err(RoutineError::Conflict);
+    }
+    spec.validate(now_ms)?;
+    let next_due_ms = if old.spec.schedule == spec.schedule && old.spec.enabled == spec.enabled {
+        old.next_due_ms
+    } else {
+        spec.schedule.first_due(now_ms, spec.enabled)?
+    };
+    Ok(RoutineRecord {
+        id: old.id,
+        revision: old.revision.checked_add(1).ok_or(RoutineError::Conflict)?,
+        spec,
+        next_due_ms,
+    })
 }
 
 // Disarming and admitting share a transaction. Bump the revision so an edit

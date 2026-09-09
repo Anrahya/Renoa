@@ -10,10 +10,12 @@ use super::{LocalHost, LocalHostError, catalog};
 
 mod checkout;
 mod context;
+mod control;
 mod execution;
 mod findings;
 mod github;
 mod jobs;
+mod preparation;
 mod publication;
 mod reviewer;
 mod runs;
@@ -24,7 +26,8 @@ mod tests;
 mod webhook;
 mod worker;
 
-pub use context::{ReviewCheck, ReviewContext, ReviewFile};
+pub use context::{ReviewCheck, ReviewContext, ReviewFile, ReviewSource};
+pub use control::{HostReviewControl, ReviewPolicyUpdate};
 pub use findings::{GitHubReviewEvidence, GitHubReviewFinding, GitHubReviewReport, ReviewPriority};
 pub use jobs::{GitHubReviewWork, REVIEW_LIFETIME_MS};
 pub use publication::GitHubReviewPublication;
@@ -160,6 +163,8 @@ pub enum GitHubReviewError {
     Capacity,
     #[error("GitHub review webhook authentication failed")]
     Authentication,
+    #[error("this principal does not own the configured Host")]
+    Forbidden,
     #[error("GitHub review operation cancelled")]
     Cancelled,
     #[error("GitHub review HTTP request failed: {0}")]

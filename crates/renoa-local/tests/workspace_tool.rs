@@ -41,7 +41,14 @@ fn workspace_worker_exposes_inspection_only_and_pages_large_files() {
             .iter()
             .map(|spec| spec["name"].as_str().expect("name"))
             .collect::<Vec<_>>(),
-        ["read_file", "grep", "find"]
+        [
+            "read_file",
+            "grep",
+            "find",
+            "git_changes",
+            "git_diff",
+            "git_show"
+        ]
     );
     let output = invoke(
         r#"{"id":"read","name":"read_file","arguments":{"path":"large.txt","offset":20001,"limit":1}}"#,

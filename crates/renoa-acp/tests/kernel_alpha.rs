@@ -56,7 +56,7 @@ fn acp_runs_the_frozen_alpha_profile_through_the_kernel() {
         .as_ref()
         .expect("frozen Alpha manifest");
     assert_eq!(manifest.loop_binding, "renoa.agent.model-tool-loop");
-    assert_eq!(manifest.effect_bindings.len(), 13);
+    assert_eq!(manifest.effect_bindings.len(), 16);
     assert!(manifest.effect_bindings.contains_key("renoa.agent.model"));
     for tool in [
         "read_file",
@@ -65,6 +65,9 @@ fn acp_runs_the_frozen_alpha_profile_through_the_kernel() {
         "bash",
         "grep",
         "find",
+        "git_changes",
+        "git_diff",
+        "git_show",
         "tool_search",
         "tool_load",
         "tool_execute",

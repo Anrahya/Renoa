@@ -4,9 +4,12 @@ use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError};
 
+mod control;
+mod receipts;
 pub(crate) mod result_tool;
 mod results;
 mod runner;
+pub use control::{HostRoutineControl, RoutineEnablement};
 pub use results::RoutineResultSummary;
 mod schedule;
 mod store;
@@ -63,6 +66,11 @@ pub enum RoutineMutation {
         expected_revision: i64,
         spec: RoutineSpec,
     },
+    SetEnabled {
+        id: Uuid,
+        expected_revision: i64,
+        enabled: bool,
+    },
     RunNow {
         id: Uuid,
     },
@@ -97,6 +105,8 @@ pub enum RoutineError {
     Busy,
     #[error("routine operation was cancelled before commit")]
     Cancelled,
+    #[error("this caller does not own the configured Host")]
+    Forbidden,
     #[error(transparent)]
     Database(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -122,7 +132,14 @@ impl LocalHost {
     ) -> Result<RoutineRecord, LocalHostError> {
         let database = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
-            store::mutate(&database, actor, operation, mutation, now_ms, &cancellation)
+            store::mutate(
+                &database,
+                receipts::RoutineActor::Agent(actor),
+                operation,
+                mutation,
+                now_ms,
+                &cancellation,
+            )
         })
         .await??)
     }

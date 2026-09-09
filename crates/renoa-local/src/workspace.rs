@@ -130,7 +130,7 @@ impl LocalWorkspace {
     }
 
     fn tools(&self) -> Vec<LocalToolBinding> {
-        vec![
+        let mut tools = vec![
             LocalToolBinding {
                 id: self.tool_binding_id("read-file-v3-deadline-120s"),
                 tool: Arc::new(DeadlineTool::new(
@@ -189,12 +189,33 @@ impl LocalWorkspace {
                 )),
                 recovery: LocalRecovery::SafeToReplay,
             },
-        ]
+        ];
+        for operation in [
+            crate::git_repository::tools::Operation::Changes,
+            crate::git_repository::tools::Operation::Diff,
+            crate::git_repository::tools::Operation::Show,
+        ] {
+            let tool =
+                crate::git_repository::tools::GitTool::new(Arc::clone(&self.root), operation);
+            tools.push(LocalToolBinding {
+                id: self.tool_binding_id(&format!("{}-v1", tool.spec().name)),
+                tool: Arc::new(DeadlineTool::new(
+                    Arc::new(tool),
+                    DEFAULT_TOOL_DEADLINE,
+                    false,
+                )),
+                recovery: LocalRecovery::SafeToReplay,
+            });
+        }
+        tools
     }
 }
 
 fn inspection_tool(name: &str) -> bool {
-    matches!(name, "read_file" | "grep" | "find")
+    matches!(
+        name,
+        "read_file" | "grep" | "find" | "git_changes" | "git_diff" | "git_show"
+    )
 }
 
 struct LocalToolBinding {

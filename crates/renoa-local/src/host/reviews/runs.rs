@@ -53,6 +53,9 @@ pub struct GitHubReviewSnapshot {
     pub prepared_at_ms: i64,
     pub(crate) model_spec: String,
     pub(crate) system_prompt: String,
+    /// Frozen recipe selection. Historical runs used the complete inspection set.
+    #[serde(default)]
+    pub(crate) tools: Option<std::collections::BTreeSet<String>>,
     pub context: ReviewContext,
 }
 

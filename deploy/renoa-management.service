@@ -1,0 +1,34 @@
+[Unit]
+Description=Renoa personal Host control panel
+After=network-online.target renoa-coordinator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=renoa-arcee
+Group=renoa-arcee
+LoadCredential=config:/etc/renoa/management.json
+ExecStart=/usr/local/bin/renoa-management %d/config
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# Observation opens databases read-only; owner routine operations write the
+# canonical Host catalog and their receipts through the routine domain.
+ReadWritePaths=/var/lib/renoa-telegram
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

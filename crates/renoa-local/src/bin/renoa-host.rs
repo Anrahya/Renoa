@@ -42,6 +42,14 @@ async fn main() {
 }
 async fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 2 && args[0] == "inspect" {
+        let observer = renoa_local::HostObserver::open(std::path::Path::new(&args[1]))?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&observer.snapshot().await?)?
+        );
+        return Ok(());
+    }
     if !(args.len() == 1
         || (args.len() == 6 && args[1] == "rename-bot")
         || (args.len() == 3
@@ -50,9 +58,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 || args[1] == "github-execute"
                 || args[1] == "github-service"
                 || args[1] == "github-cleanup"
-                || args[1] == "ensure-bot")))
+                || args[1] == "ensure-bot"
+                || args[1] == "bot-tools")))
     {
-        return Err(std::io::Error::other("usage: renoa-host <config.json> [ensure-bot <bot.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [ensure-bot <bot.json> | bot-tools <edit.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -88,25 +97,13 @@ async fn run() -> Result<(), Box<dyn Error>> {
         adapters,
     )?;
     if args.len() == 3 {
-        if args[1] == "github-service" {
-            return github_service::run(&host, &c.data_directory, std::path::Path::new(&args[2]))
-                .await;
-        }
-        if args[1] == "github-cleanup" {
-            let id = uuid::Uuid::parse_str(args[2].to_str().ok_or("request ID must be UTF-8")?)?;
-            host.reap_github_review(id, renoa_local::TurnObservation::now()?.unix_milliseconds())
-                .await?;
-            return Ok(());
-        }
-        if args[1] == "ensure-bot" {
-            let record: BotRecord = serde_json::from_slice(&tokio::fs::read(&args[2]).await?)?;
-            println!(
-                "{}",
-                serde_json::to_string(&host.ensure_bot(record).await?)?
-            );
-            return Ok(());
-        }
-        return github_review::run(&host, &args[1], std::path::Path::new(&args[2])).await;
+        return run_command(
+            &host,
+            &c.data_directory,
+            &args[1],
+            std::path::Path::new(&args[2]),
+        )
+        .await;
     }
     if args.len() == 6 {
         let text = |index: usize| {
@@ -155,4 +152,38 @@ async fn run_routines(host: &LocalHost) -> Result<(), Box<dyn Error>> {
         result=signal=>{result?;stop.cancel();runner.await?;}
     }
     Ok(())
+}
+
+async fn run_command(
+    host: &LocalHost,
+    data: &std::path::Path,
+    command: &std::ffi::OsStr,
+    path: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    if command == "bot-tools" {
+        let edit = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        println!(
+            "{}",
+            serde_json::to_string(&host.configure_bot_tools(edit).await?)?
+        );
+        return Ok(());
+    }
+    if command == "github-service" {
+        return github_service::run(host, data, path).await;
+    }
+    if command == "github-cleanup" {
+        let id = uuid::Uuid::parse_str(path.to_str().ok_or("request ID must be UTF-8")?)?;
+        host.reap_github_review(id, renoa_local::TurnObservation::now()?.unix_milliseconds())
+            .await?;
+        return Ok(());
+    }
+    if command == "ensure-bot" {
+        let record: BotRecord = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        println!(
+            "{}",
+            serde_json::to_string(&host.ensure_bot(record).await?)?
+        );
+        return Ok(());
+    }
+    github_review::run(host, command, path).await
 }

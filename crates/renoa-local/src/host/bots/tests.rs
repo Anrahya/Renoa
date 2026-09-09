@@ -107,13 +107,13 @@ async fn a_model_creates_a_durable_bot_that_another_live_host_can_execute_after_
     );
 }
 
-fn prepare_fixture(root: &Path) {
+pub(super) fn prepare_fixture(root: &Path) {
     fs::create_dir(root.join("workspace")).expect("workspace");
     fs::write(root.join("model.mjs"), include_str!("test_model.mjs")).expect("model");
     fs::write(root.join("auth.sqlite"), "").expect("auth boundary");
 }
 
-fn make_host(root: &Path) -> LocalHost {
+pub(super) fn make_host(root: &Path) -> LocalHost {
     LocalHost::assemble(HostInitialization {
         data_directory: root.join("data"),
         bridge: root.join("model.mjs"),

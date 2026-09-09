@@ -7,6 +7,7 @@ use super::{LocalHost, LocalHostError};
 use crate::{AgentProfile, AgentProfileId};
 
 pub(crate) mod names;
+pub(crate) mod selection;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -42,6 +43,9 @@ impl BotRecipe {
                         | "bash"
                         | "grep"
                         | "find"
+                        | "git_changes"
+                        | "git_diff"
+                        | "git_show"
                         | "extension_manage"
                         | "bot_manage"
                 )

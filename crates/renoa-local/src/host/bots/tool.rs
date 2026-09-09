@@ -31,7 +31,7 @@ pub(crate) fn binding(
                 "recipe":{"type":"object","properties":{
                     "name":{"type":"string","minLength":1,"maxLength":512},
                     "instructions":{"type":"string","minLength":1,"maxLength":32768},
-                    "tools":{"type":"array","uniqueItems":true,"items":{"enum":["read_file","write_file","edit_file","bash","grep","find","extension_manage","bot_manage"]}},
+                    "tools":{"type":"array","uniqueItems":true,"items":{"enum":["read_file","write_file","edit_file","bash","grep","find","git_changes","git_diff","git_show","extension_manage","bot_manage"]}},
                     "connections":{"type":"array","maxItems":64,"uniqueItems":true,"items":{"type":"string"}}
                 },"required":["name","instructions","tools","connections"],"additionalProperties":false}
             },"required":["action"],"additionalProperties":false,"oneOf":[

@@ -17,6 +17,120 @@ route. Neither transport is part of a Renoa protocol. Funnel is not used.
 The Telegram surface is different: it makes outbound HTTPS requests to the
 Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
 
+## Personal Host observation
+
+To inspect the existing personal Host without starting models or acquiring agent
+execution ownership, run the current binary as the Host's OS user:
+
+```sh
+sudo -u renoa-arcee /usr/local/bin/renoa-host inspect /var/lib/renoa-telegram
+```
+
+This command emits metadata JSON only; it does not serve a public endpoint or
+change deployment configuration. Use the actual shared Host data root, not the
+separate RCP node's root. The command fails for absent/incompatible catalogs and
+reports individual unreadable sessions without inventing idle states.
+
+## Personal control panel
+
+`renoa-management` is a separate management API and static panel service. It opens the
+existing personal Host and asks the loopback identity service to validate browser
+sessions. It does not start models or share the coordinator's private database.
+The initial panel observes agents, sessions, schedules, shared inventory and review
+outcomes. The browser exposes owner pause/resume of existing automations and edits
+to existing review repository triggers, enabled state and draft policy. Review
+details include captured policy, worker retries and publication state. Full
+automation editing and agent creation remain subsequent work.
+
+Build the coordinator, management adapter and production assets:
+
+```sh
+cargo build --locked --release -p renoa-control --bin renoa-coordinator -p renoa-management
+npm --prefix surfaces/control-room run build
+```
+
+Install the management binary at `/usr/local/bin/renoa-management` and copy only
+`surfaces/control-room/dist/client/` into `/opt/renoa/control-room/`. This is a
+dedicated public asset directory, never the Host data root or source checkout.
+Retain earlier hashed assets during deployment so an already-open browser can
+finish loading its version. The `?preview` example-data route is development-only;
+`?tasks` retains the earlier RCP task surface.
+
+Use `renoa-management.config.example.json` for `/etc/renoa/management.json` with
+root ownership and mode `0600`. Replace both placeholder UUIDs: `host_id` is the
+existing Host identity from `renoa-host inspect`; `owner_principal_id` is the one
+human principal enrolled for this Host's panel. Never infer ownership from the
+first legacy RCP task. Keep that principal and configuration in the Host's backup.
+Set `public_origin` to the exact external HTTPS origin, such as
+`https://renoa.live`. Every management write requires this Origin header and an
+authenticated owner cookie; the server does not trust forwarded headers to select
+the origin. The only development exception is HTTP `localhost`.
+
+The routine control API requires Host schema 24; shared specialist tool selection
+requires schema 25. The current release includes both. Stop all readers/writers
+of the shared Host catalog, including management, Slack, Telegram and GitHub workers,
+and back it up with SQLite's backup API. Build/install all Host consumers from the
+same revision, then start a normal Host process to apply the catalog migration
+before restarting management. Observation and owner-control modules deliberately
+do not migrate storage themselves. The migration preserves schedules, admitted
+runs, results and agent receipts, and adds owner operation receipts and revisioned
+tool selections. Keep the previous binaries and matching database backup together
+for rollback. Browser
+login storage is separate and does not need to be reset for this Host migration.
+
+Back up the coordinator SQLite database with SQLite's backup API before installing
+the new coordinator binary. It upgrades the identity database to schema 11 and
+keeps passkeys and hashed remembered sessions there. A pre-upgrade binary cannot
+open schema 11; rollback requires the matching identity backup as well as the old
+binary. Install `renoa-management.service`, then reload systemd, restart the
+coordinator and enable the management service. The example runs as the existing
+Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
+
+Preserve all existing tunnel rules and add these `renoa.live` path routes before
+the coordinator catch-all:
+
+| Path regex | Loopback destination |
+| --- | --- |
+| `^/v1/host(/.*)?$` | `http://127.0.0.1:7819` |
+| `^/$` | `http://127.0.0.1:7819` |
+| `^/index\\.html$` | `http://127.0.0.1:7819` |
+| `^/assets/.*$` | `http://127.0.0.1:7819` |
+
+Keep `/v1/identity/*`, `/connect`, credential intake and OAuth callbacks routed
+to the coordinator; preserve the separate GitHub webhook route. Both listeners
+remain plaintext and loopback-only behind the same HTTPS origin. Cloudflare's
+[tunnel configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/)
+replaces the full configuration, so read and preserve the current rules first.
+
+The panel defaults to direct browser pairing. Use `pair-browser` in place of
+`bootstrap-passkey` in the systemd wrapper below, with the configured owner
+principal. Capture its 30-minute output in an owner-only file; enter the code at
+`https://renoa.live` → “Pair this browser.” For a phone or another browser with a
+passkey provider, use `bootstrap-passkey` and “Set up a passkey on this device.”
+The two codes authorize different operations and cannot substitute for each other.
+Do not put bootstrap tokens in URLs, Git, logs or chat. Each browser signs in once;
+the `__Host-renoa_session` cookie is Secure, HTTP-only, same-site and remembered
+for 180 days, renewed after half that lifetime during use. The server stores only
+its hash. Ordinary restarts and source-IP changes do not invalidate it. A revoked,
+expired or deleted cookie requires another pairing code or a passkey sign-in. The existing Slack/Telegram
+credentials are independent and require no new enrollment for this panel.
+
+To revoke all remembered browser sessions and existing pairing codes for the owner
+through trusted local administration, run `renoa-coordinator revoke-browser-logins <database-path>
+<principal-uuid>` as the identity store's OS owner using the same systemd wrapper
+as enrollment. Revocation includes unused codes and commits atomically with
+session removal; fresh codes can be issued afterward. Other owners are unaffected.
+The panel's sign-out revokes only its current browser. Neither
+operation revokes native devices, an already-open RCP WebSocket, or an already
+issued transport ticket; unused tickets expire after 60 seconds.
+
+Verify the public shell and login prompt, anonymous inventory rejection, initial
+enrollment, refresh/restart without another ceremony, logout rejection, and the
+real Host UUID/counts. Network/storage failures must show a stale view and retry,
+not become a successful empty inventory or an invalid-password screen. Replacing
+the machine requires restoring both Host state/credentials and identity state,
+and retaining the passkey origin; a DNS name alone does not preserve the system.
+
 ## RCP execution node
 
 Build and install the headless Host node:
@@ -320,9 +434,16 @@ systemd-run --quiet --wait --pipe --collect \
   /var/lib/renoa/control.sqlite <principal-uuid>
 ```
 
-That five-minute token is entered only into the same-origin browser passkey
+The browser bootstrap has a 30-minute window for first-time setup and is consumed
+when a registration ceremony starts. That token is entered only into the same-origin browser passkey
 registration flow. The service unit pins the WebAuthn relying party to
 `renoa.live` and its exact `https://renoa.live` origin.
+
+For direct browser pairing, run the same wrapper with `pair-browser` instead of
+`bootstrap-passkey`. Pairing requires existing, migrated identity storage. A code
+admits one browser; a retry from that same page can recover a lost response without
+creating another login. Keep the page open when retrying. Revoked/logged-out sessions
+cannot be restored by replaying their pairing code.
 
 Use the same wrapper to enroll the execution node and create its task binding:
 
@@ -417,7 +538,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-database before upgrading to schema 23. Install the new binaries atomically and
+database before upgrading to schema 24. Install the new binaries atomically and
 replace the model adapter's built `dist` files. Do not resume an older reader
 against the migrated database. Keep the backup and previous binaries for rollback
 as a set; rolling back binaries alone is insufficient.

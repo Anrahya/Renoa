@@ -26,9 +26,9 @@ Renoa Host
 `renoa-local` is the first Host implementation. The graphical surface remains
 the separate Renoa integration fork of Waku and connects through ACP. The
 repository-owned Telegram surface calls the same Host API directly; it does not
-create another loop or history store. Renoa-specific capability management will
-use a separate logical Host API whose transport is not selected until a real
-management consumer is implemented.
+create another loop or history store. Renoa-specific management uses separate
+logical Host operations. The planned browser consumer uses the HTTPS boundary
+described below; browser, CLI, and model-facing adapters share domain semantics.
 
 The first concrete coding profile is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is
@@ -131,7 +131,223 @@ exact revision to that session. Sharing the library does not share conversation
 history or silently activate another session's instructions. Cross-machine Host
 access and credential sharing between distinct Hosts remain separate work.
 
+### Composition and management boundaries
+
+The personal-system direction below guides the control-panel implementation.
+Authenticated browser observation and owner routine enablement exist; general recipe editing and delegation
+remain future work. Host ownership is a logical boundary, not a requirement that one
+object, executable, or crate implement every subsystem. A laptop and a VPS are
+deployment choices. Preserving a Host across machine replacement requires its
+durable identity, records, and credential material; a hostname is not its identity.
+
+Keep responsibility with the component that implements the behavior:
+
+- Identity authenticates a caller. Host authorization binds that caller to an
+  exact Host and allowed operations. Neither component runs agents.
+- Host composition selects existing provider, loop, context, tool, credential,
+  workspace, and execution components. Their implementations remain outside the
+  management transport, and provider and surface policy remain outside the kernel.
+- Domain operations own their validation, transactions, and durable receipts.
+  Routines retain scheduling semantics; reviews retain review semantics. A
+  management router delegates to those operations rather than reimplementing them.
+- Observation projects committed metadata independently of runtime construction.
+  Inspection and configuration changes that do not execute work must not require
+  model discovery, valid provider credentials, or acquisition of session ownership.
+- Browser, CLI, and model-facing tools adapt the same application operations.
+  They do not access each other's UI or own alternate scheduling or agent stores.
+  RCP continues to own task continuity; its coordinator does not depend on the
+  local Host implementation to assemble agents or interpret Host inventory.
+
+Use concrete modules in the current implementation. Extract a component when a
+real consumer or enforceable dependency boundary requires it; do not introduce a
+generic service bus, universal component trait, or a second competing Host. One
+deployment may compose multiple modules in one process. Process separation is
+needed where execution or credential isolation requires it, not merely to make a
+module appear independent.
+
+Host management is a built-in capability selectable for an agent, not a special
+kind of agent or a dependency on shell access. Its tools bind caller identity in
+the trusted runtime; a model-supplied agent ID is never proof of authority. The
+CLI is another optional adapter and may be run on the Host machine or, after
+device enrollment is implemented, remotely. The owner identity exists before
+any agent. A personal operator receives explicit management authority and can
+be replaced; being the first agent or creating a child grants no implicit root
+authority. Human management must not impersonate Arcee to reuse an agent API.
+
+Future recipe editing selects supported installed components and persists that
+selection before runtime assembly. Installing a capability, attaching it to a
+recipe, and resolving it for an operation remain separate. A surface binding is
+optional and independent of the recipe: schedules or delegated work may target
+an agent without a chat channel. This direction does not promise arbitrary hot
+loading of Rust implementations or make existing built-in profiles editable.
+Future delegation needs durable assignments and result references outside the
+orchestrator's transcript. Add those contracts only with their execution consumer.
+
+### Personal control-panel boundary
+
+The first browser consumer targets the existing shared Host through a separate
+same-origin HTTPS management API. Reuse direct browser pairing and passkey verification while keeping the
+management session separate from RCP's one-use WebSocket tickets. Bind the verified
+principal to the configured Host explicitly. Management sessions must be revocable;
+cookies must be secure and HTTP-only, and state changes must check request origin
+and protect against cross-site request forgery. Identity code may be factored for
+the two real consumers, but the coordinator must not acquire a dependency on
+Host runtime construction. A browser-provided Host ID, path, or actor ID cannot
+choose another data root or substitute an authenticated identity.
+
+The initial overview uses `HostObserver`, with selected detail reads for actual
+results and failure diagnostics. It shows recorded work, attention, schedules,
+agents, and installed capabilities with progressive disclosure. It must preserve
+the observation qualifications below, including unknown worker liveness and the
+difference between reviewed and published. Display refresh time and stale/error
+states. Start with refreshable HTTP snapshots; do not add another event journal
+or infer an event sequence from differences between snapshots. Surface health,
+effective runtime tools, and other details need their own evidence before display.
+
+`renoa-management` serves the built panel and the metadata API independently of
+execution workers. Its configured loopback identity service validates the browser
+cookie; the adapter does not read the identity database or start a model bridge.
+`GET /v1/host/access` reveals only the public owner login identifier. `GET /v1/host`
+and `GET /v1/host/reviews/{request_id}` require that authenticated owner. Review
+detail selects the outcome, findings and model configuration without loading the
+frozen prompt, diff or context. The binary pins one existing Host UUID and refuses
+a replaced Host even at the same storage path.
+
+The browser retries unavailable services and network failures, keeping the last
+snapshot explicitly stale. Only rejected credentials clear the view. Its remembered
+session lives in identity storage, with a secure HTTP-only same-site cookie and a
+180-day lifetime renewed during use; neither source IP nor a process-local secret
+binds the login. The lifetime is not a promise of permanent access: explicit
+revocation, cookie deletion, expiry or loss of identity storage requires signing in.
+Different browsers enroll/sign in once each. Slack and other native surfaces keep
+their existing credentials; they do not run browser passkey ceremonies.
+Direct Host-code pairing is the default for browsers without a passkey provider;
+passkeys remain optional. Both authenticate the same configured human owner. Their
+admission and retry rules live in [identity-v0.md](identity-v0.md), independently
+of Host assembly and surface adapters.
+
+`HostRoutineControl` exposes owner pause/resume without constructing an execution
+Host. `POST /v1/host/routines/{routine_id}/enabled` adapts that domain operation;
+the browser exposes it beside the schedule on both Work and agent detail. The trusted adapter supplies the
+authenticated principal separately from JSON input. Each write requires the
+configured owner cookie and exactly one matching `Origin` header. The management
+configuration names `public_origin`; forwarded headers cannot select it.
+
+The JSON request contains `operation_id` (a fresh UUID for each logical change),
+`expected_revision`, and the desired `enabled` boolean. The server rejects unknown
+fields and bodies over 4 KiB. It persists the routine change and owner receipt in
+one transaction before acknowledging. An identical retry, including after restart,
+returns the original receipt even if another edit has since occurred. Reusing an
+operation ID with different input or applying a stale revision returns 409. The
+response contains the operation ID, routine ID, committed revision, enabled state,
+and next due time; it excludes the standing prompt. Read a new Host snapshot for
+current state rather than treating a historical receipt as the latest revision.
+
+The routine domain retains scheduling semantics and agent restrictions. Pausing
+prevents future admissions, not completion of already-admitted work. Resuming an
+interval starts its next period from the resume time; daily schedules choose the
+next occurrence in their named timezone. Resuming an expired one-time schedule
+returns 422 and needs a new future date through the existing agent editing path.
+Deleted routines return 404; replaying an older receipt cannot restore them.
+Host identity is checked inside the mutation transaction, including on replay.
+Owner receipts remain distinct from agent receipts and cannot grant agent tools
+owner authority. Agent creation, recipe editors, and delegation remain separate
+work; this operation does not require them.
+
+### Consistent management
+
+One configured human owner controls one durable Host. The panel has three entries:
+Work for current attention, unfinished work and upcoming schedules; Agents for
+the records that own that work and their applicable controls; and Shared library
+for installed connections, plugins and recorded skills. Shared connections link
+back to the agents whose profiles select them. Similar names do not justify merging
+agent identities, and a surface process is not a separate human owner.
+
+Management is composition of domain operations, not a second execution system.
+The HTTP adapter authenticates the owner, validates the request origin and adapts
+typed requests; routine and review modules retain their transactions and rules.
+Human operations do not impersonate an agent. Agent tools bind their own actor in
+the trusted runtime. They share domain rules with owner operations without gaining
+owner authority. Adding a future recipe editor, binding editor or management tool
+must follow this boundary rather than introduce another store or an HTTP-only rule.
+
+`HostReviewControl` edits admission policy for existing review repositories through
+`POST /v1/host/repositories/{repository_id}/policy`. The strict request has
+`operation_id`, `expected_revision`, `enabled`, `triggers` and `skip_drafts`.
+Repository, installation and assigned agent identity remain fixed. The domain uses
+the same revision validation and repository update as trusted local management.
+Owner receipts use `owner:<principal>:<operation_id>` keys in the existing review
+operation table, disjoint from trusted-local UUID keys. The request includes its
+repository identity, and the transaction verifies the pinned Host before mutation
+or replay. No new table or schema version is needed for these review controls.
+
+The browser persists a pending operation's identity and configuration-only body
+before sending it. Lost responses survive navigation and reload; retry sends that
+same body. Confirmed receipts cause a fresh observation read, never replacement of
+current state with an old receipt. Definite revision conflicts require reviewing
+the latest record. Configuration controls are unavailable on stale snapshots; a
+network outage does not create a new login requirement. These pending records do
+not contain cookies, credentials, standing prompts or conversation content.
+
+Review observation exposes current repository policies separately from each
+request's captured policy. The latter explains eligibility, not the exact triggering
+event: historical requests do not record whether a particular webhook action or a
+manual request caused admission. Detail also exposes recorded execution deadlines,
+retry times and worker diagnostics. Publication is independently not recorded,
+sending, published, suppressed or needs attention. Sending is an uncertain external
+operation, not proof of a posted review; its potentially large POST body stays out
+of management responses. The overview includes only summary status and an error
+indicator, while diagnostics require an authenticated detail read.
+
+The Work view prioritizes the newest request's incomplete outcome for each PR,
+while preserving every attempt in history. Unresolved publication attention and
+worker errors remain visible even when a newer request exists. Recorded starts and
+deadlines do not establish worker liveness. A changed policy affects new admissions;
+already-admitted requests retain their captured policy, and publication checks the
+current repository revision before a new POST. Changing a schedule is not cancelling
+its agent, and changing review policy is not an immediate worker cancellation.
+
+These controls establish a consistent management path, not general agent assembly.
+Owner creation and editing of recipes, surface-binding controls, runtime capability
+resolution and durable delegation remain future consumers. The existing Host remains
+their composition point; RCP's continuity contracts do not absorb product policy.
+
 ## Agent identity and assembly
+
+### Personal Host observation
+
+The control panel targets one person's existing Host identity. Its agents,
+installed capabilities, automation records and review work belong to that Host;
+surface processes are clients of those records. One logical Host does not require
+one process, and a second data root is not implicitly part of the same Host.
+
+`HostObserver::open` opens an existing compatible data root and pins its Host UUID.
+`snapshot` reads agent identities, ordinary session operation summaries, routines,
+shared connection selections, recorded plugin/skill revisions and GitHub review
+outcomes. `renoa-host inspect <data-directory>` is the first consumer. It requires
+OS read access, not a launch configuration, model provider, adapter or credentials.
+It neither initializes/migrates a Host nor repairs or imports legacy records.
+
+Catalog facts come from one read transaction. Each session has its own subsequent
+read transaction; the response is not a globally atomic view across databases.
+Missing/corrupt sessions are reported individually. Catalog failure fails the
+snapshot, and replacing the Host UUID requires explicit reconnection. Legacy
+session identities are projected without writing them into the catalog.
+
+The kernel's non-owning observation API supplies committed operation state without
+loading command bodies, checkpoints, effect payloads or transcripts. An unfinished
+operation is not proof of a live worker. A stored MCP catalog is not a connection
+health probe. Profile connection selections are not a claim about the frozen tools
+of an already-admitted operation. Recorded skills are not necessarily loaded in
+any session. A reviewed outcome is separate from publication success. Large
+artifacts, instructions, provider diagnostics and credential material stay outside
+the overview response and need separate, deliberate detail reads.
+
+This is local observation, not a browser authentication or management transport.
+The browser path must authenticate its principal against this exact Host before
+exposing inventory or accepting operations. It must not reuse an RCP one-use
+connection ticket as an HTTP bearer token. RCP remains responsible for continuity
+and durable delivery; Host management remains a separate application boundary.
 
 An Agent Instance is durable identity and isolated history. It is not the
 temporary collection of Rust objects used to execute one operation.
@@ -200,6 +416,16 @@ levels, grants, approval records, or a permission trait.
 
 Profiles run with full access through the tools selected for them. Built-in
 profiles advertise all local workspace tools; specialist recipes select a subset.
+The creation recipe remains immutable for exact creation replay. An optional
+revisioned tool selection changes a specialist's effective local tools without
+rewriting that recipe. `configure_bot_tools` is a trusted owner-management
+operation, also available as `renoa-host <config.json> bot-tools <edit.json>`.
+The edit contains `operation_id`, `id`, `expected_revision` (zero before the first
+edit), and `tools`. Its transaction persists the edit and replay receipt together;
+stale revisions and conflicting retries fail. Ordinary bot profiles and review
+assembly consume the same selection. Active reviews retain their frozen selection;
+new runs use the updated one. This operation is not exposed as a self-granting
+model tool or an unauthenticated remote endpoint.
 This selection does not add an OS sandbox or a permission system. External catalogs are
 reached through three fixed registry tools so catalog size does not become
 model context. The current top-level set is:
@@ -211,6 +437,9 @@ write_file
 bash
 grep
 find
+git_changes
+git_diff
+git_show
 tool_search
 tool_load
 tool_execute
@@ -952,9 +1181,13 @@ Host schema 20 added `host_review_repositories`, `host_review_operations`,
 `host_review_runs`; schema 22 adds `host_review_jobs` (absolute lifetime and
 publication backoff) and `host_review_publications` (intent and remote outcome).
 Schema 23 adds worker-entry evidence, execution retry timing and the last job failure.
+Schema 24 adds `host_routine_owner_mutations` for authenticated owner receipts,
+preserving existing agent receipts and their foreign-key restrictions.
+Schema 25 adds `host_bot_tool_selections` and `host_bot_tool_operations` for
+revisioned tool selection and idempotent owner edits, preserving creation recipes.
 Existing Host, specialist, session, capability, routine and
 admission records are preserved. All processes sharing the database must support
-schema 23 before opening it with these binaries.
+schema 25 before opening it with these binaries.
 
 The GitHub service verifies at startup that its worker configuration resolves to
 the same canonical Host database as the supervisor. Separate model configuration
@@ -1006,15 +1239,18 @@ pull requests and checks. Credentials stay outside model context and results.
 
 Before inference, the Host reconciles the PR and freezes base/head and merge-base
 commits, repository policy, specialist instructions, model specification and
-reasoning. Applicable base AGENTS.md files supply conventions. PR instructions
-are review material. Initial context includes changed-file patches, head paths
-and observed CI status.
+reasoning and the recipe's selected tools. Applicable base AGENTS.md files supply
+conventions. PR instructions are review material. Initial model context contains
+the pinned commits, PR metadata, change count and observed CI status. The complete
+change inventory is captured from local Git objects in the durable snapshot;
+patches and repository trees are not copied into the initial prompt. Historical
+API snapshots remain readable and completed runs replay without reinterpretation.
 
 The Host materializes base/, head/ and merge_base/ checkouts under
 `review-workspaces/<request-id>`. Git credentials go only to the trusted fetch
 process and are not stored in Git config; hooks are disabled. Each inspection
 call launches a fresh Bubblewrap sandbox with the checkout mounted read-only,
-the workspace tool, ripgrep and its system libraries. It has isolated namespaces,
+the workspace tool, Git, ripgrep and their system libraries. It has isolated namespaces,
 no network, no capabilities, an empty environment and no Host data or credentials.
 Nested user namespaces are disabled. The tool process exits after its response;
 there is no persistent sandbox process during model reasoning. This shares the
@@ -1023,8 +1259,11 @@ the initial deployment serves the owner's personal review workflow.
 
 The Host assembles the named specialist recipe with `review_instructions.txt`,
 the shared Rust model/tool loop and the existing replaceable compaction strategy.
-`renoa-workspace-tool` executes the same read_file, grep and find implementations
-as local agents; only their transport changes. No generic assistant/coding
+`renoa-workspace-tool` executes the same read_file, grep, find, git_changes,
+git_diff and git_show implementations as local agents; only their transport
+changes. The shared Git capability also supports ordinary registered Git
+worktrees. Each new review freezes its recipe's tool selection and intersects
+it with the inspection environment's read-only capabilities. No generic assistant/coding
 profile is inherited. Bash, dependency installation, test execution, automatic
 fixes and unrelated Host connections are unavailable in this version.
 
@@ -1043,6 +1282,15 @@ remain stable. Recorded token usage includes summary responses; incomplete
 accounting remains unknown.
 
 Each stage is a durable command in `review-sessions/<request-id>/kernel.sqlite`.
+If a normally completed response violates the report schema, the Host returns
+the parser error as a new durable correction turn in the same session. It keeps
+the investigation and uses stable correction identities, so recovery replays
+settled corrections without redoing inference. The invalid report is attached
+to the correction's own input so compaction cannot remove what it must repair.
+Corrections remain subject to
+the review deadline and existing compaction; an identical invalid response
+repeated after feedback is reported as stalled. The schema stays strict and
+findings still require independent validation before publication.
 Settled stages replay before model resolution. A final Host commit failure does
 not repeat completed inference. Unfinished read/model effects retain the kernel's
 safe-to-replay semantics; a crash may repeat unacknowledged inference and cost.
@@ -1051,8 +1299,15 @@ so an incompatible tool deployment cannot silently resume an active command.
 
 New findings require P0–P3 priorities and are sorted by priority. Legacy reports
 without a priority remain readable without assigning an invented one. Validation
-checks added-line anchors, required fields, duplicate anchors and exact evidence
-against the immutable head checkout. These checks do not prove semantic correctness.
+checks changed-path membership, actual source locations, required fields,
+duplicate anchors and exact evidence against immutable Git blobs, independently
+of the model's prompt or retrieved pages. Locations can refer to the head or the
+merge base (before the change). GitHub supports LEFT-side deleted lines and
+RIGHT-side added/context lines; valid locations outside inline diff geometry
+remain findings in the review body. Old paths of renamed files also use the body
+when they cannot be addressed reliably inline. LF and CRLF terminators are
+normalized for quotation matching, but source text must match complete lines.
+These checks do not prove semantic correctness.
 A final PR/policy check retains findings as superseded when the target changed.
 
 The Host saves the result before removing the checkout. A recovered execution
@@ -1104,6 +1359,16 @@ retrieves sending, published (review ID and URL), suppressed or attention-requir
 state. Individual comment IDs and conversational PR replies remain follow-up
 work; publication currently creates a single GitHub review with inline comments.
 
+GitHub's comment-body boundary is an outbound projection rule, not a report
+validation limit. Ordinary bodies remain unchanged. A rendered body exceeding
+65,536 characters becomes an explicitly labelled, escaped preview identifying
+the Host request and finding number where applicable. The complete structured
+report remains available through Host management, including fields and evidence
+not displayed in GitHub. The exact preview and request marker are persisted
+before POST and used for acknowledgement reconciliation. This handles the
+[observed GitHub body-size rejection](https://github.com/actions/dependency-review-action/issues/730)
+without reintroducing arbitrary per-field or aggregate review-context cutoffs.
+
 `{"action":"run","request_id":"<uuid>"}` through `github-review` retrieves the
 prepared snapshot or immutable outcome (reviewed, superseded, skipped, incomplete)
 without GitHub credentials or inference. Recoverable preparation/API failures
@@ -1116,26 +1381,44 @@ Explicit terminal model outcomes are not retried; rerunning a terminal review
 requires a new request identity. Abrupt worker death without a durable handoff
 still produces an incomplete outcome after cleanup.
 
-Initial API preparation still accepts up to 500 changed files, 256 KiB of patches
-and 512 KiB of serialized context, with 1 MiB JSON responses and up to 32 applicable
-base instruction paths. These are preparation/transport limits, not investigation
-budgets. Oversized preparation is explicitly incomplete; omitted patches and CI
-context are disclosed. Workspace source reads support large files through the
-existing paged tools (2,000 lines/50 KiB per read). Deletion-only inline anchors,
-legacy CI statuses and full CI logs remain limitations. Dependency installation
+Review preparation has no 500-file, 256 KiB patch, 512 KiB aggregate context or
+32-instruction-path cutoff. git_changes pages through the full local comparison,
+including hidden paths, renames, deletions and binary files. This also avoids
+GitHub's 3,000-file API inventory ceiling. git_diff and git_show return byte
+cursors, so the existing 50 KiB workspace response size bounds one page, not the
+accessible source. UTF-8 boundaries are preserved; non-UTF-8 pages use lossless
+base64. These tools require full immutable commit IDs and literal relative paths,
+and disable external diff and text-conversion programs. Source survives context
+compaction in the pinned checkout and can be fetched again. Applicable base
+AGENTS.md files are retrieved through git_show, without a candidate-count cap.
+The durable transcript records retrieved inventory pages; missing paths become
+an explicit coverage limitation. Retrieval alone is not proof of review quality.
+
+Remaining boundaries have separate purposes: API JSON responses and sandbox
+transport frames retain their existing 1 MiB ceilings; raw tool pages are smaller
+and have continuation. read_file retains its existing 2,000-line/50 KiB pages;
+git_show provides byte continuation through giant lines. The review deadline,
+provider timeout, context/compaction settings and per-response tool batch size
+remain as described above, without a total tool-call or model-response quota.
+Legacy CI statuses and full CI logs remain unavailable. Dependency installation
 and test execution are deferred. Quality claims still require labeled evaluation.
 The [commit comparison API](https://docs.github.com/en/rest/commits/commits#compare-two-commits)
 supplies the merge base, separately from the current base tip. No upstream code
-was adapted for this executor.
+was adapted for this executor. Merge-base discovery requests comparison page two
+with one commit per page: GitHub returns the same merge-base metadata there,
+without its first-page file patches. This was verified against multi-commit and
+single-commit comparisons, including an empty second-page commit list.
 
 ### Evidence informing the design
 
-Primary documentation inspected on 2026-09-07 informs the following choices.
+Primary documentation inspected on 2026-09-07 and rechecked on 2026-09-09 informs the following choices.
 Product capabilities and vendor-reported quality metrics are not independent
 evidence that Renoa has reached equivalent review quality.
 
 | Reference | Relevant behavior | Renoa design consequence |
 | --- | --- | --- |
+| [GitHub changed-files API](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests-files), [review comment locations](https://docs.github.com/en/rest/pulls/comments#create-a-review-comment-for-a-pull-request) | File listing stops at 3,000; inline locations support LEFT/RIGHT diff sides. | Capture the complete local Git inventory; separate evidence validation from GitHub placement. |
+| [Git diff](https://git-scm.com/docs/git-diff) | Immutable commit comparison, rename detection, and explicit external-diff/textconv controls. | Reuse one pinned Git inspection capability across agents, with lossless continuation. |
 | [CodeRabbit review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Repository context, incremental reviews on subsequent commits, severity categories, and discussion of findings. | Keep per-PR review history; inspect surrounding code; publish concise findings that remain discussable. |
 | [Cursor: Building a better Bugbot](https://cursor.com/blog/building-bugbot) | Describes an early multi-pass/validator pipeline, then a move to agentic context gathering; measures findings resolved and evaluates on annotated diffs. | Use agentic investigation and a validation stage. Evaluate actual defects and false positives before multiplying model passes. |
 | [Qodo review architecture](https://docs.qodo.ai/code-review) | Specialist review agents with a judge that merges and filters findings; repository history and persistent reviews. | Make investigation and validation replaceable. Retain the evidence and disposition of findings between runs. |
@@ -1335,20 +1618,21 @@ does not establish that the reviewer finds useful bugs.
 
 ## Open decisions
 
-- future Host schema migrations beyond the proven v1-through-v13 chain;
+- future Host schema migrations beyond the implemented catalog version;
 - historical resolved-binding retention across explicit catalog/profile
   changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
   and immutable-package garbage collection;
-- durable profile definition storage, profile inheritance, and Agent Instance
-  overrides;
+- editing specialist instructions/connections, profile inheritance, and Agent
+  Instance overrides beyond the existing tool-selection edit;
 - permission vocabulary, scopes, policy inheritance, and enforcement;
 - public package discovery, updates, rollback, removal, and garbage collection;
-- the Host management transport and presentation;
+- Host management beyond the personal HTTPS panel, including remote CLI
+  enrollment and broader configuration operations;
 - whether capability changes pause and continue a task through one or more
   internal operations; and
-- a durable Agent catalog, multiple Sessions per Agent, and process placement
-  for multiple concurrent local Agent Instances;
+- process placement and supervision for multiple concurrent local Agent Instances
+  beyond the existing durable Agent catalog and multiple Sessions per Agent;
 - credential, profile-definition, connection, and attachment distribution
   across Hosts or nodes; and
 - surface routing and cross-node continuity, which remain future RCP/product work.

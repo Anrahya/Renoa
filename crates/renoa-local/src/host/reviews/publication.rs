@@ -192,7 +192,7 @@ impl LocalHost {
             self.save_publication(id, state.clone()).await?;
             return Ok(state);
         }
-        let payload = payload(&outcome, sha, &marker);
+        let payload = payload(&outcome, sha, &marker, id);
         self.save_publication(
             id,
             GitHubReviewPublication::Sending {
@@ -268,7 +268,10 @@ async fn reconcile(
         let reviews: Vec<RemoteReview> = github
             .repo_json(
                 &["pulls", &number.to_string(), "reviews"],
-                &[("per_page", "100"), ("page", &page.to_string())],
+                // A single body may occupy the full GitHub text allowance.
+                // Page individual reviews within the HTTP response frame;
+                // keep following pages without a total review-count cutoff.
+                &[("per_page", "1"), ("page", &page.to_string())],
                 cancel,
             )
             .await?;
@@ -280,35 +283,52 @@ async fn reconcile(
                 url: review.html_url.clone(),
             }));
         }
-        if reviews.len() < 100 {
+        if reviews.is_empty() {
             return Ok(None);
         }
         page = page.checked_add(1).ok_or(GitHubReviewError::ContextLimit)?;
     }
 }
 
-fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str) -> serde_json::Value {
+fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str, id: Uuid) -> serde_json::Value {
     let (summary, comments) = match outcome {
         GitHubReviewOutcome::Reviewed { report, .. } => {
-            let summary = format!(
+            let mut summary = format!(
                 "Soundwave reviewed commit `{sha}`. {} validated finding(s).{}",
                 report.findings.len(),
                 if report.limitations.is_empty() {
                     String::new()
                 } else {
                     format!(
-                        "\n\nReview limitations:\n{}",
+                        "\n\nCoverage and verification limits apply; no findings is not proof of correctness.\n\n<details>\n<summary>Review limitations</summary>\n\n{}\n\n</details>",
                         report
                             .limitations
                             .iter()
-                            .map(|s| format!("- {s}"))
+                            .map(|s| format!(
+                                "- {}",
+                                s.replace('&', "&amp;")
+                                    .replace('<', "&lt;")
+                                    .replace('>', "&gt;")
+                            ))
                             .collect::<Vec<_>>()
                             .join("\n")
                     )
                 }
             );
-            let comments: Vec<_> = report.findings.iter().map(|f| serde_json::json!({
-                "path": f.path, "line": f.line, "side":"RIGHT", "body": format!("**[{:?}] {}**\n\n{}\n\n{}\n\n{}", f.priority.unwrap_or(super::ReviewPriority::P2), f.title, f.trigger, f.consequence, f.correction)
+            for finding in report.findings.iter().filter(|f| !f.in_diff) {
+                use std::fmt::Write as _;
+                write!(
+                    &mut summary,
+                    "\n\n{}\n\nSource: `{}:{}` ({:?} of the pinned comparison).",
+                    finding_body(finding),
+                    finding.path,
+                    finding.line,
+                    finding.side
+                )
+                .expect("writing to String cannot fail");
+            }
+            let comments: Vec<_> = report.findings.iter().enumerate().filter(|(_, f)| f.in_diff).map(|(index, f)| serde_json::json!({
+                "path": f.path, "line": f.line, "side":match f.side { crate::GitSide::Base => "LEFT", crate::GitSide::Head => "RIGHT" }, "body": github_body(&finding_body(f), "", "", &format!("{id}, finding {}", index + 1))
             })).collect();
             (summary, comments)
         }
@@ -321,5 +341,64 @@ fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str) -> serde_json
         GitHubReviewOutcome::Skipped { reason } => (reason.clone(), Vec::new()),
         GitHubReviewOutcome::Superseded { .. } => ("Review superseded.".to_owned(), Vec::new()),
     };
-    serde_json::json!({"commit_id":sha,"event":"COMMENT","body":format!("Soundwave reporting.\n\n{summary}\n\n{marker}"),"comments":comments})
+    let body = github_body(
+        &summary,
+        "Soundwave reporting.\n\n",
+        &format!("\n\n{marker}"),
+        &id.to_string(),
+    );
+    serde_json::json!({"commit_id":sha,"event":"COMMENT","body":body,"comments":comments})
+}
+
+// GitHub rejects comment bodies above 65,536 characters. This is an outbound
+// surface constraint, never a validation rule or a limit on the Host report.
+// Observed API error: github.com/actions/dependency-review-action/issues/730.
+// Preserve short messages exactly; oversized projections identify the durable
+// full record instead of silently dropping findings or risking an invalid POST.
+fn github_body(body: &str, prefix: &str, suffix: &str, reference: &str) -> String {
+    const GITHUB_BODY_CHARACTERS: usize = 65_536;
+    if prefix.chars().count() + body.chars().count() + suffix.chars().count()
+        <= GITHUB_BODY_CHARACTERS
+    {
+        return format!("{prefix}{body}{suffix}");
+    }
+    let mut preview = format!(
+        "{prefix}**GitHub preview: this message exceeds GitHub's text size. The complete report, including all findings and evidence, is retained in Host review `{reference}`.**\n\n<pre>"
+    );
+    let ending =
+        format!("\n[Preview ends; see the Host record for the complete text.]</pre>{suffix}");
+    let mut remaining = GITHUB_BODY_CHARACTERS - preview.chars().count() - ending.chars().count();
+    // Escape one complete character at a time so a clipped Markdown/HTML block
+    // cannot hide the notice, break the suffix, or split an HTML entity.
+    for character in body.chars() {
+        let escaped = match character {
+            '&' => Some("&amp;"),
+            '<' => Some("&lt;"),
+            '>' => Some("&gt;"),
+            _ => None,
+        };
+        let size = escaped.map_or(1, str::len);
+        if size > remaining {
+            break;
+        }
+        if let Some(escaped) = escaped {
+            preview.push_str(escaped);
+        } else {
+            preview.push(character);
+        }
+        remaining -= size;
+    }
+    preview.push_str(&ending);
+    preview
+}
+
+fn finding_body(f: &super::GitHubReviewFinding) -> String {
+    format!(
+        "**[{:?}] {}**\n\n{}\n\n{}\n\n{}",
+        f.priority.unwrap_or(super::ReviewPriority::P2),
+        f.title,
+        f.trigger,
+        f.consequence,
+        f.correction
+    )
 }

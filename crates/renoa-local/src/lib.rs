@@ -10,6 +10,7 @@ mod credential_file;
 mod deadline;
 mod file_lock;
 mod file_tools;
+mod git_repository;
 mod host;
 mod host_storage;
 mod isolated_workspace;
@@ -35,6 +36,7 @@ mod tool_input;
 mod trace;
 mod turn_observation;
 mod workspace;
+pub use git_repository::{GitChange, GitSide};
 
 #[cfg(test)]
 mod model_adapter_process_tests;
@@ -46,6 +48,13 @@ pub use credential_file::credential_file_is_private;
 pub use host::agents::AgentRecord;
 pub use host::catalog::HostCatalogError;
 pub use host::history::AgentSessionHistory;
+pub use host::observation::{
+    HostObservation, HostObserver, ObservedAgent, ObservedConnection, ObservedOperation,
+    ObservedOperationState, ObservedPlugin, ObservedPublicationState, ObservedReview,
+    ObservedReviewDetail, ObservedReviewExecution, ObservedReviewPublication, ObservedReviewState,
+    ObservedRoutine, ObservedSession, ObservedSessionState, ObservedSkill,
+};
+pub use host::reviews::{HostReviewControl, ReviewPolicyUpdate};
 pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
 pub use isolated_workspace::InspectionSandboxConfig;
 pub use mcp::{
@@ -71,11 +80,12 @@ pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 pub use host::bots::{BotPage, BotRecipe, BotRecord, BotSummary};
 
 pub use host::routines::{
-    RoutineError, RoutineMutation, RoutineRecord, RoutineResultSummary, RoutineRun,
-    RoutineSchedule, RoutineSpec,
+    HostRoutineControl, RoutineEnablement, RoutineError, RoutineMutation, RoutineRecord,
+    RoutineResultSummary, RoutineRun, RoutineSchedule, RoutineSpec,
 };
 
 pub use host::bots::names::RenameBot;
+pub use host::bots::selection::{BotToolSelection, BotToolsUpdate};
 
 pub use host::reviews::{
     GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewEvidence,
@@ -83,5 +93,5 @@ pub use host::reviews::{
     GitHubReviewReply, GitHubReviewReport, GitHubReviewRepository, GitHubReviewRequest,
     GitHubReviewRun, GitHubReviewSkip, GitHubReviewSnapshot, GitHubReviewTrigger,
     GitHubReviewWebhook, GitHubReviewWork, REVIEW_LIFETIME_MS, ReviewCheck, ReviewContext,
-    ReviewFile, ReviewPriority,
+    ReviewFile, ReviewPriority, ReviewSource,
 };

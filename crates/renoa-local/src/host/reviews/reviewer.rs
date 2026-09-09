@@ -69,7 +69,7 @@ pub(super) async fn runtime(
         config,
         context,
         ModelBinding::new(revision, model, EffectRecovery::SafeToReplay),
-        tools.bindings(),
+        tools.bindings(snapshot.tools.as_ref()),
         events,
     )
     .map_err(GitHubReviewError::from)?)
@@ -82,12 +82,21 @@ pub(super) struct ReviewTools<'a> {
 pub(super) enum ReviewToolSource<'a> {
     Sandbox(&'a Arc<crate::isolated_workspace::InspectionSandbox>),
     #[cfg(test)]
+    Workspace(&'a crate::LocalWorkspace),
+    #[cfg(test)]
     Fixture(&'a GitHubReviewSnapshot),
 }
 impl ReviewTools<'_> {
-    fn bindings(&self) -> Vec<AgentToolBinding> {
+    fn bindings(
+        &self,
+        selected: Option<&std::collections::BTreeSet<String>>,
+    ) -> Vec<AgentToolBinding> {
         match self.source {
-            ReviewToolSource::Sandbox(container) => container.bindings(),
+            ReviewToolSource::Sandbox(container) => container.bindings(selected),
+            #[cfg(test)]
+            ReviewToolSource::Workspace(workspace) => {
+                workspace.selected_kernel_tool_bindings(selected)
+            }
             #[cfg(test)]
             ReviewToolSource::Fixture(snapshot) => {
                 super::tests::source_tool::bindings(self.github.clone(), snapshot)

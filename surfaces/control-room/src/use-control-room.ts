@@ -5,7 +5,7 @@ import {
   type TaskSummary,
 } from "@renoa/rcp-client/browser";
 
-import { authenticatePasskey, rcpEndpoint, registerPasskey } from "./passkeys";
+import { authenticatePasskey, rememberedConnectionTicket, rcpEndpoint, registerPasskey } from "./passkeys";
 import { ControlRoomStore } from "./rcp-store";
 
 const PRINCIPAL_KEY = "renoa.control-room.principal-id";
@@ -131,7 +131,8 @@ export function useControlRoom(): ControlRoomController {
               ticket = undefined;
               return current;
             }
-            return (await authenticatePasskey(principalId)).connectionTicket;
+            const remembered = await rememberedConnectionTicket(principalId);
+            return (remembered ?? await authenticatePasskey(principalId)).connectionTicket;
           },
         },
         state: store,

@@ -19,8 +19,15 @@ pub struct GitHubReviewFinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<ReviewPriority>,
     pub path: String,
-    /// RIGHT-side line in the pinned head; must be an added diff line.
+    /// One-based source line at the selected immutable comparison side.
     pub line: u32,
+    #[serde(default)]
+    pub side: crate::GitSide,
+    /// Whether the validated source location is in the comparison's diff.
+    /// False findings remain publishable in the review body. Historical reports
+    /// were validated against added lines and therefore default to true.
+    #[serde(default = "historical_in_diff")]
+    pub in_diff: bool,
     pub title: String,
     pub trigger: String,
     pub consequence: String,
@@ -41,8 +48,14 @@ pub enum ReviewPriority {
 pub struct GitHubReviewEvidence {
     pub path: String,
     pub start_line: u32,
-    /// Exact consecutive source lines at the reviewed head.
+    #[serde(default)]
+    pub side: crate::GitSide,
+    /// Exact consecutive source lines at the selected immutable side.
     pub quote: String,
+}
+
+fn historical_in_diff() -> bool {
+    true
 }
 
 pub(super) fn parse(output: &str) -> Result<GitHubReviewReport, GitHubReviewError> {
@@ -60,6 +73,117 @@ pub(super) fn parse(output: &str) -> Result<GitHubReviewReport, GitHubReviewErro
 }
 
 pub(super) async fn validate(
+    report: GitHubReviewReport,
+    snapshot: &GitHubReviewSnapshot,
+    tools: &ReviewTools<'_>,
+    cancel: &CancellationToken,
+) -> Result<GitHubReviewReport, GitHubReviewError> {
+    match tools.source {
+        super::reviewer::ReviewToolSource::Sandbox(container) => {
+            let root = container.checkout().to_owned();
+            let repository = tokio::task::spawn_blocking(move || {
+                crate::git_repository::GitRepository::open(&root)
+            })
+            .await
+            .map_err(|error| GitHubReviewError::Invalid(error.to_string()))??;
+            validate_git(report, snapshot, &repository, cancel).await
+        }
+        #[cfg(test)]
+        super::reviewer::ReviewToolSource::Workspace(workspace) => {
+            let repository = crate::git_repository::GitRepository::open(workspace.root())?;
+            validate_git(report, snapshot, &repository, cancel).await
+        }
+        #[cfg(test)]
+        super::reviewer::ReviewToolSource::Fixture(_) => {
+            validate_fixture(report, snapshot, tools, cancel).await
+        }
+    }
+}
+
+pub(super) async fn validate_git(
+    mut report: GitHubReviewReport,
+    snapshot: &GitHubReviewSnapshot,
+    repository: &crate::git_repository::GitRepository,
+    cancel: &CancellationToken,
+) -> Result<GitHubReviewReport, GitHubReviewError> {
+    let changes = repository
+        .changes(&snapshot.context.merge_base_sha, &snapshot.head_sha, cancel)
+        .await?;
+    let mut accepted = Vec::new();
+    let mut anchors = BTreeSet::new();
+    for mut finding in report.findings {
+        let is_changed_path = changes.iter().any(|change| {
+            change.path == finding.path || change.previous_path.as_ref() == Some(&finding.path)
+        });
+        let commit = match finding.side {
+            crate::GitSide::Base => &snapshot.context.merge_base_sha,
+            crate::GitSide::Head => &snapshot.head_sha,
+        };
+        let evidence_commit = match finding.evidence.side {
+            crate::GitSide::Base => &snapshot.context.merge_base_sha,
+            crate::GitSide::Head => &snapshot.head_sha,
+        };
+        if !is_changed_path
+            || crate::git_repository::relative(&finding.evidence.path).is_err()
+            || [
+                &finding.title,
+                &finding.trigger,
+                &finding.consequence,
+                &finding.correction,
+                &finding.evidence.quote,
+            ]
+            .iter()
+            .any(|s| s.trim().is_empty())
+            || !repository
+                .has_line(commit, &finding.path, finding.line, cancel)
+                .await?
+            || !repository
+                .matches(
+                    evidence_commit,
+                    &finding.evidence.path,
+                    finding.evidence.start_line,
+                    &finding.evidence.quote,
+                    cancel,
+                )
+                .await?
+        {
+            report.limitations.push("Rejected a candidate whose source location or evidence could not be verified against the pinned commits.".to_owned());
+            continue;
+        }
+        finding.in_diff = repository
+            .in_diff(
+                &snapshot.context.merge_base_sha,
+                &snapshot.head_sha,
+                &finding.path,
+                finding.side,
+                finding.line,
+                cancel,
+            )
+            .await?;
+        if changes
+            .iter()
+            .any(|change| change.previous_path.as_ref() == Some(&finding.path))
+        {
+            // GitHub addresses renamed files by their new path. Preserve a base
+            // source location in the body instead of posting it to the wrong file.
+            finding.in_diff = false;
+        }
+        if anchors.insert((finding.path.clone(), finding.side, finding.line)) {
+            accepted.push(finding);
+        }
+    }
+    accepted.sort_by_key(|finding| finding.priority);
+    report.findings = accepted;
+    report
+        .limitations
+        .extend(snapshot.context.limitations.iter().cloned());
+    report.limitations.sort();
+    report.limitations.dedup();
+    Ok(report)
+}
+
+#[cfg(test)]
+async fn validate_fixture(
     mut report: GitHubReviewReport,
     snapshot: &GitHubReviewSnapshot,
     tools: &ReviewTools<'_>,
@@ -83,7 +207,7 @@ pub(super) async fn validate(
             &finding.evidence.quote,
         ]
         .iter()
-        .all(|value| !value.trim().is_empty() && value.len() <= 4096);
+        .all(|value| !value.trim().is_empty());
         if !anchored
             || !bounded
             || finding.evidence.start_line == 0
@@ -120,6 +244,7 @@ pub(super) async fn validate(
     Ok(report)
 }
 
+#[cfg(test)]
 async fn matches_evidence(
     evidence: &GitHubReviewEvidence,
     tools: &ReviewTools<'_>,
@@ -129,6 +254,11 @@ async fn matches_evidence(
     let start =
         usize::try_from(evidence.start_line - 1).map_err(|_| GitHubReviewError::ContextLimit)?;
     let matches = match tools.source {
+        super::reviewer::ReviewToolSource::Workspace(_) => {
+            return Err(GitHubReviewError::Invalid(
+                "Git workspace uses object evidence validation".to_owned(),
+            ));
+        }
         super::reviewer::ReviewToolSource::Sandbox(container) => {
             let root = container.checkout().join("head");
             let path = crate::workspace::existing_file(&root, &evidence.path)
@@ -159,6 +289,7 @@ async fn matches_evidence(
     Ok(!quote.is_empty() && matches)
 }
 
+#[cfg(test)]
 fn matches_text_evidence(
     path: &std::path::Path,
     start: usize,
@@ -224,6 +355,7 @@ fn binary_evidence_is_rejected_without_hiding_io_or_cancellation_failures() {
     );
 }
 
+#[cfg(test)]
 fn added_lines(patch: &str) -> BTreeSet<u32> {
     let mut next = None;
     let mut result = BTreeSet::new();

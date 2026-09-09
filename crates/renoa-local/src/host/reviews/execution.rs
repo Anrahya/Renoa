@@ -1,17 +1,24 @@
-use renoa_agent::StopReason;
 use renoa_kernel::SessionId;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use uuid::Uuid;
 
+#[cfg(test)]
+mod git_fixture;
+
 use super::{
     GitHubReviewError, GitHubReviewOutcome, GitHubReviewRequest, GitHubReviewRun,
-    GitHubReviewSnapshot, catalog, context, findings, github::GitHub, reviewer, runs, store,
+    GitHubReviewSnapshot, catalog, findings, github::GitHub, reviewer, runs, store,
 };
-use crate::{
-    LocalHost, LocalHostError, LocalSession, LocalTurnOutcome, TurnObservation,
-    host::{discover_profile_models, initial_reasoning, require_model},
-};
+use crate::{LocalHost, LocalHostError, LocalSession};
+
+enum PreparedReview {
+    Ready {
+        snapshot: Box<GitHubReviewSnapshot>,
+        github: GitHub,
+    },
+    Finished(GitHubReviewRun),
+}
 
 impl LocalHost {
     /// Executes one admitted review using a short-lived GitHub App JWT supplied
@@ -58,27 +65,58 @@ impl LocalHost {
     ) -> Result<GitHubReviewRun, LocalHostError> {
         super::active(&cancellation)?;
         let database = self.config.database.clone();
-        let runs::OwnedReview {
-            lease,
-            request,
-            previous,
-            policy,
-            automatic,
-        } = tokio::task::spawn_blocking(move || runs::own(&database, request_id)).await??;
+        let mut owned =
+            tokio::task::spawn_blocking(move || runs::own(&database, request_id)).await??;
         let checkout_root = self
             .config
             .database
             .with_file_name("review-workspaces")
             .join(request_id.to_string());
-        // Reap a crashed owner's environment even when changed policy or a
-        // closed PR will skip the recovered review before inference.
-        if workspace.is_some() {
-            super::checkout::Checkout::remove_abandoned(&checkout_root).await?;
+        let root = workspace.map(|_| checkout_root.as_path());
+        if let Some(root) = root {
+            super::checkout::Checkout::remove_abandoned(root).await?;
         }
+        let preparation = self
+            .prepare_owned_review(&mut owned, app_jwt, &cancellation, origin, root)
+            .await;
+        let result = match preparation {
+            Ok(PreparedReview::Ready { snapshot, github }) => {
+                self.run_prepared_review(
+                    snapshot,
+                    github,
+                    workspace,
+                    cancellation,
+                    checkout_root.clone(),
+                )
+                .await
+            }
+            Ok(PreparedReview::Finished(run)) => Ok(run),
+            Err(error) => Err(error),
+        };
+        // Keep the lease through cleanup, including policy changes and failed
+        // preparation. A replacement worker must never race removal of its files.
+        if let Some(root) = root {
+            super::checkout::Checkout::remove_abandoned(root).await?;
+        }
+        drop(owned.lease);
+        result
+    }
+
+    async fn prepare_owned_review(
+        &self,
+        owned: &mut runs::OwnedReview,
+        app_jwt: &str,
+        cancellation: &CancellationToken,
+        origin: Url,
+        root: Option<&std::path::Path>,
+    ) -> Result<PreparedReview, LocalHostError> {
+        let previous = owned.previous.take();
+        let request = &owned.request;
+        let request_id = request.id;
         if let Some(run @ GitHubReviewRun::Finished { .. }) = previous {
-            return Ok(run);
+            return Ok(PreparedReview::Finished(run));
         }
-        if policy.as_ref() != Some(&request.repository) {
+        if owned.policy.as_ref() != Some(&request.repository) {
             let snapshot = match previous {
                 Some(GitHubReviewRun::Prepared { snapshot }) => Some(snapshot),
                 _ => None,
@@ -91,11 +129,12 @@ impl LocalHost {
                         reason: "Repository policy changed after admission.".to_owned(),
                     },
                 )
-                .await;
+                .await
+                .map(PreparedReview::Finished);
         }
         let github =
-            GitHub::connect(origin, app_jwt, &request.repository.policy, &cancellation).await?;
-        let pull = github.pull(request.pull_number, &cancellation).await?;
+            GitHub::connect(origin, app_jwt, &request.repository.policy, cancellation).await?;
+        let pull = github.pull(request.pull_number, cancellation).await?;
         if pull.base.repo.as_ref().map(|repo| repo.id)
             != Some(request.repository.policy.repository_id)
         {
@@ -104,7 +143,7 @@ impl LocalHost {
         let snapshot = if let Some(GitHubReviewRun::Prepared { snapshot }) = previous {
             snapshot
         } else {
-            if let Some(reason) = ineligible(&pull, &request, automatic) {
+            if let Some(reason) = ineligible(&pull, request, owned.automatic) {
                 return self
                     .finish_review(
                         request_id,
@@ -113,26 +152,19 @@ impl LocalHost {
                             reason: reason.to_owned(),
                         },
                     )
-                    .await;
+                    .await
+                    .map(PreparedReview::Finished);
             }
-            let context = match context::gather(&github, &pull, &cancellation).await {
-                Ok(context) => context,
-                Err(GitHubReviewError::ContextLimit) => return self.finish_review(request_id, None, incomplete("Repository context exceeds the bounded preparation limit; no model was called.")).await,
-                Err(error) => return Err(error.into()),
-            };
-            self.prepare_review(
-                request,
-                pull.base.sha.clone(),
-                pull.head.sha.clone(),
-                context,
-            )
-            .await?
+            self.prepare_review_source(request.clone(), &pull, &github, root, cancellation)
+                .await?
         };
-        // A recovered run never substitutes fresh commits for its frozen input.
-        if pull.state == "closed"
-            || pull.base.sha != snapshot.base_sha
-            || pull.head.sha != snapshot.head_sha
-            || (pull.draft && snapshot.request.repository.policy.skip_drafts)
+        // Recheck after checkout; preparation may have taken long enough for
+        // another push. A recovered run also keeps its original frozen commits.
+        let current = github.pull(request.pull_number, cancellation).await?;
+        if current.state == "closed"
+            || current.base.sha != snapshot.base_sha
+            || current.head.sha != snapshot.head_sha
+            || (current.draft && snapshot.request.repository.policy.skip_drafts)
         {
             return self
                 .finish_review(
@@ -142,13 +174,10 @@ impl LocalHost {
                         reason: "Frozen review no longer matches the eligible open PR.".to_owned(),
                     },
                 )
-                .await;
+                .await
+                .map(PreparedReview::Finished);
         }
-        let result = self
-            .run_prepared_review(snapshot, github, workspace, cancellation, checkout_root)
-            .await;
-        drop(lease);
-        result
+        Ok(PreparedReview::Ready { snapshot, github })
     }
 
     async fn run_prepared_review(
@@ -202,72 +231,10 @@ impl LocalHost {
         result
     }
 
-    async fn prepare_review(
+    pub(super) async fn save_review(
         &self,
-        request: GitHubReviewRequest,
-        base_sha: String,
-        head_sha: String,
-        context: context::ReviewContext,
-    ) -> Result<Box<GitHubReviewSnapshot>, LocalHostError> {
-        let agent = self
-            .agent(request.repository.policy.agent_id)
-            .await?
-            .ok_or(LocalHostError::AgentNotFound(
-                request.repository.policy.agent_id,
-            ))?;
-        let profile = self.profile(&agent.profile).await?;
-        let models = discover_profile_models(&self.config, &profile).await?;
-        let provider = profile
-            .model_provider()
-            .unwrap_or(self.config.initial_provider);
-        let model = require_model(&models, provider, &self.config.initial_model, "review")?;
-        let reasoning = initial_reasoning(model, self.config.initial_reasoning)?;
-        let recipe = self
-            .bot(agent.id)
-            .await?
-            .ok_or(LocalHostError::AgentNotFound(agent.id))?;
-        let skills = self.config.skill_store.clone();
-        let workspace = self.config.database.with_file_name("review-sessions");
-        let skill_profile = agent.profile.as_str().to_owned();
-        let id = request.id;
-        let skill = tokio::task::spawn_blocking(move || {
-            crate::skills::frozen_instructions(
-                &skills,
-                &skill_profile,
-                &workspace,
-                SessionId::from_uuid(id),
-                renoa_kernel::CommandId::from_uuid(id),
-                "renoa-code-review",
-            )
-        })
-        .await??;
-        let snapshot = Box::new(GitHubReviewSnapshot {
-            request,
-            base_sha,
-            head_sha,
-            provider,
-            model: model.id().to_owned(),
-            reasoning,
-            prepared_at_ms: TurnObservation::now()?.unix_milliseconds(),
-            model_spec: model.encoded_spec(),
-            system_prompt: format!(
-                "{}\n\nBatch at most {} tool calls in one response. The supplied patches already contain changed source. Prefer targeted ranges for missing callers, tests and surrounding context.\n\nHost-owned reviewer identity: {}\nHost-owned reviewer instructions:\n{}\n\n{}",
-                reviewer::INSTRUCTIONS,
-                reviewer::SOURCE_CALLS_PER_RESPONSE,
-                recipe.recipe.name,
-                recipe.recipe.instructions,
-                skill
-            ),
-            context,
-        });
-        self.save_review(GitHubReviewRun::Prepared {
-            snapshot: snapshot.clone(),
-        })
-        .await?;
-        Ok(snapshot)
-    }
-
-    async fn save_review(&self, run: GitHubReviewRun) -> Result<GitHubReviewRun, LocalHostError> {
+        run: GitHubReviewRun,
+    ) -> Result<GitHubReviewRun, LocalHostError> {
         let database = self.config.database.clone();
         tokio::task::spawn_blocking(move || {
             runs::save(&database, &run)?;
@@ -313,68 +280,44 @@ impl LocalHost {
         })
         .await??;
         let prompt = serde_json::to_string(
-            &serde_json::json!({"task":"Investigate defects introduced in this PR. Inspect callers, tests and surrounding source as needed. Complete the investigation, then return candidate findings in the required JSON schema.","base_sha":snapshot.base_sha,"head_sha":snapshot.head_sha,"context":snapshot.context}),
+            &serde_json::json!({"task":"Investigate defects introduced in this PR. Inspect callers, tests and surrounding source as needed. Complete the investigation, then return candidate findings in the required JSON schema.","base_sha":snapshot.base_sha,"head_sha":snapshot.head_sha,"context":snapshot.context.prompt()?}),
         )?;
-        let candidate = self
-            .review_stage(&session, snapshot, tools, false, prompt, &cancel)
-            .await?;
-        let candidates = match candidate {
-            LocalTurnOutcome::Completed {
-                output,
-                stop_reason: StopReason::Stop,
-            } => match findings::parse(&output) {
-                Ok(report) => report,
-                Err(_) => {
-                    return Ok(incomplete(
-                        "Investigator did not return a valid review report.",
-                    ));
-                }
-            },
-            LocalTurnOutcome::Failed { reason } => {
-                return Ok(incomplete(&format!("Investigation failed: {reason}")));
-            }
-            _ => {
-                return Ok(incomplete(
-                    "Investigation stopped, failed or exhausted its budget; inspect the durable transcript.",
-                ));
-            }
+        let candidates = match self
+            .review_report(&session, snapshot, tools, false, prompt, &cancel)
+            .await?
+        {
+            super::stages::ReportStageResult::Complete(report) => report,
+            super::stages::ReportStageResult::Incomplete(reason) => return Ok(incomplete(&reason)),
         };
         let validation_prompt = serde_json::to_string(
             &serde_json::json!({"task":"Validate these candidates against pinned source, callers and tests. Independently reconstruct each trigger and seek a counterexample. Challenge the proposed correction as well as the defect: does it preserve durable identity, deadlines, ownership, permissions and crash recovery? Correct unsafe remedies or describe the required behavior without inventing an implementation. Calibrate severity to demonstrated impact and available recovery. Discard unsupported claims and duplicates. Investigate as needed, then return final findings JSON in the same schema. Do not add new findings.","candidates":candidates}),
         )?;
-        let validation = self
-            .review_stage(&session, snapshot, tools, true, validation_prompt, &cancel)
-            .await?;
-        let mut report = match validation {
-            LocalTurnOutcome::Completed {
-                output,
-                stop_reason: StopReason::Stop,
-            } => match findings::parse(&output) {
-                Ok(mut report) => {
-                    report.findings.retain(|finding| {
-                        candidates.findings.iter().any(|candidate| {
-                            candidate.path == finding.path && candidate.line == finding.line
-                        })
-                    });
-                    report.limitations.extend(candidates.limitations);
-                    findings::validate(report, snapshot, tools, &cancel).await?
-                }
-                Err(_) => {
-                    return Ok(incomplete(
-                        "Validator did not return a valid bounded report.",
-                    ));
-                }
-            },
-            LocalTurnOutcome::Failed { reason } => {
-                return Ok(incomplete(&format!("Validation failed: {reason}")));
-            }
-            _ => {
-                return Ok(incomplete(
-                    "Validation stopped, failed or exhausted its budget; inspect the durable transcript.",
-                ));
-            }
+        let mut report = match self
+            .review_report(&session, snapshot, tools, true, validation_prompt, &cancel)
+            .await?
+        {
+            super::stages::ReportStageResult::Complete(report) => report,
+            super::stages::ReportStageResult::Incomplete(reason) => return Ok(incomplete(&reason)),
         };
+        report.findings.retain(|finding| {
+            candidates.findings.iter().any(|candidate| {
+                candidate.path == finding.path
+                    && candidate.line == finding.line
+                    && candidate.side == finding.side
+            })
+        });
+        report.limitations.extend(candidates.limitations);
+        let mut report = findings::validate(report, snapshot, tools, &cancel).await?;
         let history = session.history()?;
+        if let Some(limitation) = snapshot.context.inventory_limitation(
+            &snapshot.head_sha,
+            history.iter().filter_map(|entry| match &entry.message {
+                renoa_agent::Message::Tool { result } => Some(result),
+                _ => None,
+            }),
+        ) {
+            report.limitations.push(limitation);
+        }
         if history.iter().any(|entry| matches!(&entry.message, renoa_agent::Message::Tool { result } if result.is_error)) {
             report.limitations.push("At least one source lookup failed; inspect the durable transcript for missing context.".to_owned());
         }

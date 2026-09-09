@@ -120,7 +120,9 @@ pub(super) fn profile(path: &Path, id: &AgentProfileId) -> Result<AgentProfile, 
             "bot profile identity mismatch".to_owned(),
         ));
     }
-    record.recipe.profile(id)
+    let mut profile = record.recipe.profile(id)?;
+    profile.selected_tools = Some(super::selection::load(&connection, &record)?.tools);
+    Ok(profile)
 }
 
 pub(super) fn list(path: &Path, after: Option<AgentId>) -> Result<BotPage, LocalHostError> {

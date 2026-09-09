@@ -9,6 +9,12 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   let input="";for await (const part of process.stdin) input+=part;
   const request=JSON.parse(input);
   const mode=readFileSync(process.env.RENOA_MODEL_AUTH_STORE,"utf8");
+  if(mode==="git") {
+    appendFileSync(process.env.RENOA_MODEL_AUTH_STORE+".calls",process.env.RENOA_MODEL_SESSION_ID+"\n");
+    const {run}=await import("./git_model.mjs");
+    run(request,(content,stop_reason="stop")=>console.log(JSON.stringify({event:"completed",response:{content,stop_reason,usage:{input:10,output:2,cache_read:5,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}})));
+    process.exit(0);
+  }
   if(mode==="compactions" && request.tools.length===0) {
     appendFileSync(process.env.RENOA_MODEL_AUTH_STORE+".compactions", "summary\n");
     console.log(JSON.stringify({event:"completed",response:{content:[{type:"text",text:["Goal and user intent","Hard constraints and preferences","Completed work","Current state and blockers","Decisions and rationale","Exact working facts","Next action and unresolved questions"].map(h=>`## ${h}\nReview ratio at pinned head. The candidate is division by zero at src/lib.rs:2, with exact evidence:     10 / count. Check callers before reporting. Tests were not run.`).join("\n\n")}],stop_reason:"stop",usage:{input:10,output:2,cache_read:0,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}}));
@@ -32,7 +38,12 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   }
   if(!request.system_prompt.includes("Batch at most 50 tool calls")) throw Error("missing source batch budget");
   if(prompt.task.includes("model responses")) throw Error("unexpected investigation budget");
-  if(mode==="invalid") complete([{type:"text",text:"This is not a structured review"}]);
+  if(mode==="repair" && prompt.task.startsWith("Correct")) {
+    const report=JSON.parse(prompt.previous_report);
+    for(const finding of report.findings) finding.evidence=finding.evidence[0];
+    complete([{type:"text",text:JSON.stringify(report)}]);
+  }
+  else if(mode==="invalid") complete([{type:"text",text:"This is not a structured review"}]);
   else if((mode==="compactions" && stageCalls<5) || (mode!=="compactions" && (!results.length || (mode==="exhaust" && results.length < 8)))) {
     const count=mode==="compactions"?20:(mode==="batch"||mode==="large-batch")?5:mode==="oversized-batch"?51:1;
     complete(Array.from({length:count},(_,i)=>({type:"tool_call",id:`read-${stageCalls}-${results.length}-${i}`,name:"review_source",arguments:{path:"src/lib.rs",revision:"head",start_line:1,line_count:(mode==="large-batch"||mode==="compactions")?200:10}})),"tool_use");
@@ -41,7 +52,12 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
     const finding={priority:"P1",path:"src/lib.rs",line:2,title:"Division by zero",trigger:"Calling ratio with a zero count",consequence:"The function panics",correction:"Handle zero before division",evidence:{path:"src/lib.rs",start_line:2,quote:"    10 / count"}};
     if(mode==="forged") finding.evidence.quote="    invented evidence";
     if(mode==="anchor") finding.line=99;
+    if(mode==="repair") finding.evidence=[finding.evidence];
     const report={findings:[finding],limitations:[]};
+    if(mode==="large-report") {
+      finding.trigger += " <&>🦀".repeat(14000);
+      report.limitations.push("Unverified detail <&>🦀 ".repeat(4000));
+    }
     if(mode==="duplicate") report.findings.push(finding);
     if(!validation && !prompt.context.base_instructions["AGENTS.md"].includes("Trusted base convention")) throw Error("base instructions not provided");
     complete([{type:"text",text:JSON.stringify(report)}]);

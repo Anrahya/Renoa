@@ -8,6 +8,7 @@ use std::{fs, path::Path};
 
 mod admission;
 mod executor;
+mod owner_control;
 pub(super) mod source_tool;
 
 const SECRET: &[u8] = b"deterministic webhook boundary secret";
@@ -56,7 +57,16 @@ async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
         recipe: BotRecipe {
             name: "Review Desk".to_owned(),
             instructions: "Investigate code defects".to_owned(),
-            tools: ["read_file".to_owned(), "grep".to_owned()].into(),
+            tools: [
+                "read_file",
+                "grep",
+                "find",
+                "git_changes",
+                "git_diff",
+                "git_show",
+            ]
+            .map(str::to_owned)
+            .into(),
             connections: BTreeSet::new(),
         },
     })

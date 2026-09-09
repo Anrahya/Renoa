@@ -103,6 +103,7 @@ pub struct Coordinator {
 
 pub(crate) struct CoordinatorState {
     pub(crate) browser_identity: Option<BrowserIdentity>,
+    pub(crate) browser_sessions: crate::BrowserSessions,
     pub(crate) oauth_callback_uri: Option<String>,
     pub(crate) connection_slots: Arc<Semaphore>,
     pub(crate) connection_lifecycle: Mutex<()>,
@@ -153,13 +154,16 @@ impl Coordinator {
         browser_identity: Option<BrowserIdentity>,
         oauth_callback_uri: Option<String>,
     ) -> Result<Self, ControlError> {
+        let store = ControlStore::open(path)?;
+        let browser_sessions = crate::BrowserSessions::open(store.path.as_ref())?;
         Ok(Self {
             state: Arc::new(CoordinatorState {
                 browser_identity,
+                browser_sessions,
                 oauth_callback_uri,
                 connection_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS)),
                 connection_lifecycle: Mutex::new(()),
-                store: ControlStore::open(path)?,
+                store,
                 nodes: Mutex::new(HashMap::new()),
                 sessions: Mutex::new(HashMap::new()),
                 task_senders: Mutex::new(HashMap::new()),
@@ -247,6 +251,7 @@ impl Coordinator {
         if self.state.browser_identity.is_some() {
             app = app
                 .merge(browser_identity_http::routes())
+                .merge(crate::browser_sessions_http::routes())
                 .merge(oauth_relay_http::routes())
                 .merge(crate::credential_relay_http::routes());
         }

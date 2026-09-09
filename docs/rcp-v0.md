@@ -45,8 +45,8 @@ RCP.
 
 ## Product outcome
 
-A person enrolls each native device once or authenticates a browser with a
-passkey. When they open any authorized
+A person enrolls each native device once or pairs/authenticates a browser using
+the identity mechanisms in `identity-v0.md`. When they open any authorized
 surface, they can discover their tasks, reconstruct each task from its last
 saved cursor, submit the next command, and observe work performed on the bound
 execution environment.
@@ -688,7 +688,9 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    not depend on the tunnel provider and no public origin port is exposed.
 3. Rust Host targets are statically supplied when the node starts. Their
    admitted task bindings are durable, but remote target provisioning,
-   configuration revisions, and a Host-management API remain unimplemented.
+   configuration revisions, and mutation APIs for those targets remain unimplemented.
+   The separate personal Host management adapter provides authenticated observation,
+   not RCP node provisioning.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
@@ -783,6 +785,15 @@ for a continuity protocol.
 - Exactly-once external side effects
 
 ## Open decisions
+
+For the personal control panel, the management target is one explicitly selected
+Host UUID, not every node or surface sharing an origin. Local Host inventory is
+implemented outside RCP through `HostObserver`; its first consumer is the local
+`renoa-host inspect` command. The `renoa-management` HTTP adapter now binds one
+configured authenticated browser principal to that exact Host. Remembered browser
+sessions can mint fresh one-use transport tickets without another passkey ceremony;
+the remembered cookie is not an RCP wire credential. This follows locked decision 21 and does not add Host
+recipes, credentials or kernel inspection types to the continuity journal.
 
 These questions are intentionally unresolved and must not be filled in from
 assumption after context compaction:

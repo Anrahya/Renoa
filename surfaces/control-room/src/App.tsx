@@ -9,9 +9,10 @@ import {
 
 import { useControlRoom } from "./use-control-room";
 import { Workspace } from "./workspace";
+import { HostPanel } from "./host-panel";
 
 const PreviewApp = import.meta.env.DEV
-  ? lazy(async () => import("./preview-app"))
+  ? lazy(async () => import("./host-preview"))
   : null;
 
 export function App() {
@@ -24,7 +25,8 @@ export function App() {
       </Suspense>
     );
   }
-  return <LiveApp />;
+  // Preserve the existing RCP task surface independently of Host management.
+  return new URLSearchParams(window.location.search).has("tasks") ? <LiveApp /> : <HostPanel />;
 }
 
 function LiveApp() {
@@ -126,7 +128,7 @@ function LockScreen({ control }: { readonly control: ReturnType<typeof useContro
           </button>
           <div className="security-note">
             <ShieldCheck size={18} weight="fill" aria-hidden="true" />
-            <span>Same-origin WebAuthn · one-use RCP ticket · no session cookie</span>
+            <span>Your passkey unlocks Renoa. This browser remembers your login.</span>
           </div>
         </div>
       </section>

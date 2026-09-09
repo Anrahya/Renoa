@@ -20,12 +20,19 @@ use uuid::Uuid;
 const USAGE: &str = "usage:
   renoa-coordinator serve <database-path> <port> <passkey-rp-id> <passkey-origin>
   renoa-coordinator bootstrap-passkey <database-path> <principal-id>
+  renoa-coordinator pair-browser <database-path> <principal-id>
+  renoa-coordinator revoke-browser-logins <database-path> <principal-id>
   renoa-coordinator enroll-surface <database-path> <principal-id> <surface>
   renoa-coordinator enroll-node <database-path> <node-id>
   renoa-coordinator create-task <database-path> <task-id> <principal-id> <node-id> <target>";
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
+const BROWSER_SETUP_LIFETIME: Duration = Duration::from_mins(30);
 
 enum Operation {
+    PairBrowser {
+        database: PathBuf,
+        principal_id: PrincipalId,
+    },
     Serve {
         database: PathBuf,
         port: u16,
@@ -33,6 +40,10 @@ enum Operation {
         passkey_origin: String,
     },
     BootstrapPasskey {
+        database: PathBuf,
+        principal_id: PrincipalId,
+    },
+    RevokeBrowserLogins {
         database: PathBuf,
         principal_id: PrincipalId,
     },
@@ -61,6 +72,24 @@ impl Operation {
             .ok_or_else(|| USAGE.to_owned())?;
 
         match operation.to_str() {
+            Some("pair-browser") => {
+                let principal_id =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
+                no_more_arguments(arguments)?;
+                Ok(Self::PairBrowser {
+                    database,
+                    principal_id,
+                })
+            }
+            Some("revoke-browser-logins") => {
+                let principal_id =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
+                no_more_arguments(arguments)?;
+                Ok(Self::RevokeBrowserLogins {
+                    database,
+                    principal_id,
+                })
+            }
             Some("serve") => {
                 let port = arguments
                     .next()
@@ -189,6 +218,25 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), String> {
     match Operation::parse(env::args_os())? {
+        Operation::PairBrowser {
+            database,
+            principal_id,
+        } => {
+            let expires_at = SystemTime::now() + BROWSER_SETUP_LIFETIME;
+            let token = renoa_control::BrowserSessions::open(database)
+                .map_err(|error| error.to_string())?
+                .create_pairing(principal_id, expires_at)
+                .await
+                .map_err(|error| error.to_string())?;
+            let expires_at_ms = u64::try_from(
+                expires_at
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_millis(),
+            )
+            .map_err(|error| error.to_string())?;
+            write_json(&serde_json::json!({"token":token,"expiresAtMs":expires_at_ms}))
+        }
         Operation::Serve {
             database,
             port,
@@ -199,6 +247,17 @@ async fn run() -> Result<(), String> {
             database,
             principal_id,
         } => create_passkey_bootstrap(database, principal_id).await,
+        Operation::RevokeBrowserLogins {
+            database,
+            principal_id,
+        } => {
+            renoa_control::BrowserSessions::open(database)
+                .map_err(|error| error.to_string())?
+                .revoke(principal_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            write_json(&serde_json::json!({"revoked":true}))
+        }
         Operation::EnrollSurface {
             database,
             principal_id,
@@ -234,6 +293,9 @@ async fn serve(
     let address = listener
         .local_addr()
         .map_err(|error| format!("failed to read listener address: {error}"))?;
+    // Register before readiness: a supervisor may terminate us immediately after it.
+    let signal =
+        shutdown_signal().map_err(|error| format!("failed to listen for shutdown: {error}"))?;
     write_json(&Ready {
         endpoint: format!("ws://{address}/connect"),
     })?;
@@ -243,7 +305,7 @@ async fn serve(
     tokio::pin!(server);
     tokio::select! {
         result = &mut server => result.map_err(|error| error.to_string()),
-        result = shutdown_signal() => {
+        result = signal => {
             result.map_err(|error| format!("failed to listen for shutdown: {error}"))?;
             shutdown.cancel();
             server.await.map_err(|error| error.to_string())
@@ -256,7 +318,7 @@ async fn create_passkey_bootstrap(
     principal_id: PrincipalId,
 ) -> Result<(), String> {
     let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
-    let expires_at = SystemTime::now() + ENROLLMENT_LIFETIME;
+    let expires_at = SystemTime::now() + BROWSER_SETUP_LIFETIME;
     let token = coordinator
         .create_passkey_bootstrap(principal_id, expires_at)
         .await
@@ -302,15 +364,18 @@ fn write_json(value: &impl Serialize) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-async fn shutdown_signal() -> io::Result<()> {
+fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<()>>> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        _ = terminate.recv() => Ok(()),
-    }
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => Ok(()),
+            _ = terminate.recv() => Ok(()),
+        }
+    })
 }
 
 #[cfg(not(unix))]
-async fn shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
+fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<()>>> {
+    Ok(tokio::signal::ctrl_c())
 }

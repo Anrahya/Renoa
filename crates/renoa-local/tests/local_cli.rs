@@ -235,7 +235,7 @@ if (request.system_prompt.includes("read_file") || request.system_prompt.include
 }
 const toolNames = request.tools.map((tool) => tool.name);
 if (JSON.stringify(toolNames) !== JSON.stringify([
-  "read_file", "edit_file", "write_file", "bash", "grep", "find"
+  "read_file", "edit_file", "write_file", "bash", "grep", "find", "git_changes", "git_diff", "git_show"
 ])) {
   throw new Error(`unexpected Alpha tools: ${JSON.stringify(toolNames)}`);
 }

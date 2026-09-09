@@ -7,8 +7,9 @@
 ## Outcome
 
 A client cannot choose who it is. Native surfaces and nodes authenticate as a
-durably enrolled device. A browser proves the person with a passkey and receives
-a short-lived ticket bound by the coordinator to one principal and surface.
+durably enrolled device. A browser pairs through a locally issued owner code or
+proves the person with a passkey. Both establish a remembered browser login that
+can issue a short-lived ticket bound to one principal and surface.
 Both paths establish the same `PeerIdentity` before any RCP operation runs.
 
 A valid identity still cannot access a task owned by another principal. Device
@@ -24,6 +25,10 @@ checks.
 - An **enrollment** is a one-use authority to create a native device.
 - A **passkey bootstrap** is a local, one-use authority to register the first or
   another passkey for one exact principal.
+- A **browser pairing** is a local authority to admit one remembered browser for
+  one exact principal, without requiring a passkey provider.
+- A **remembered browser login** is a revocable, hashed bearer credential carried
+  only as a secure HTTP-only same-site cookie after admission.
 - A **ceremony** is one WebAuthn registration or authentication attempt whose
   challenge state exists only on the server.
 - A **connection ticket** is a 60-second, one-use browser bearer secret bound to
@@ -76,7 +81,7 @@ administrator starts passkey registration with:
 renoa-coordinator bootstrap-passkey <database> <principal-id>
 ```
 
-The command prints a five-minute, one-use token. It is the only implemented
+The command prints a 30-minute, one-use token. It is the only implemented
 passkey-registration authority; no unauthenticated remote endpoint can create
 one.
 
@@ -102,16 +107,57 @@ verify request contains `{ ceremonyId, credential }` and returns:
 }
 ```
 
-Registration verification returns a ticket directly, avoiding a second
-biometric prompt. Later visits run passkey authentication to get another
-ticket. There is no browser session cookie and no long-lived RCP credential in
-JavaScript storage.
+Registration verification returns a ticket directly, avoiding a second biometric
+prompt, and sets `__Host-renoa_session`. Authentication sets the same remembered
+login. Passkey storage belongs to the authenticator, not Renoa; browsers without a
+compatible OS provider, password manager, or security key can use direct pairing.
 
 The browser sends the ticket in its first WebSocket frame. The coordinator
 atomically deletes a valid ticket before replying `authenticated`. A lost reply
-therefore requires another passkey authentication; ticket replay is never
+therefore requires a fresh ticket from the remembered login; ticket replay is never
 treated as a reconnect mechanism. Once established, the WebSocket remains the
 temporary session.
+
+## Direct browser pairing and remembered login
+
+Trusted local administration runs `renoa-coordinator pair-browser <database>
+<principal-id>` against existing identity storage. It prints a random 256-bit code
+with a 30-minute lifetime. No remote endpoint issues pairing codes. The code is a
+bearer enrollment authority: possession permits one browser admission for its
+server-bound principal. It is distinct from a passkey bootstrap and cannot be
+substituted for native enrollment, passkey enrollment, or a transport ticket.
+
+The same-origin browser posts `{ pairingToken, browserNonce }` to
+`/v1/identity/pair`. It generates a random 256-bit nonce and retains the request in
+memory until confirmation. The server derives a session secret with HMAC-SHA-256,
+keyed by the pairing code over a domain-separated nonce. In one transaction it
+claims the code for the resulting session digest and persists that session's
+principal and expiry, then issues the cookie. Neither code, nonce, nor session
+plaintext enters SQLite. There is no long-lived credential in JavaScript storage.
+
+An identical retry before the code expires recovers the same cookie, including
+after service restart or a lost response. Another nonce cannot reuse the code.
+Retry checks the existing session rather than creating it again, so logout,
+revocation, or session expiry cannot be undone by replay. Reloading the page before
+confirmation loses its in-memory nonce and may require a fresh pairing code.
+
+Both login methods use the same 180-day session lifetime, renewed after half its
+lifetime during use. They have no IP or process-local secret binding. The identity
+database stores the principal on each session; passkey-backed sessions additionally
+reference their credential and stop working if that credential disappears. Schema
+11 migrates existing schema-10 sessions without changing their cookies or owners.
+
+`GET /v1/identity/session` validates and renews a login. Same-origin
+`POST /v1/identity/connection-ticket` issues a fresh one-use transport ticket.
+`POST /v1/identity/logout` revokes only the current browser, while local
+`revoke-browser-logins <database> <principal-id>` atomically revokes all remembered
+logins and existing pairing codes for that principal, including codes not yet
+claimed. Redemption and revocation serialize through the same SQLite write
+transaction: an earlier redemption loses its session, and a later redemption
+finds no grant. Another principal is unaffected. Trusted local administration
+can issue new codes afterward for recovery. Existing WebSockets/native device
+credentials and registered passkeys are separate.
+Storage outages remain errors rather than being classified as invalid credentials.
 
 ## Durable state and failure rules
 
@@ -150,7 +196,7 @@ or SQLite details.
 2. Enrollment, bootstrap, device, and ticket secrets use the operating system's
    cryptographically secure random source and separate digest domains.
 3. Enrollment tokens, bootstraps, ceremonies, and tickets expire and are
-   consumed once.
+   consumed once. Pairing codes admit one browser with receipt-bound retries.
 4. The server persists WebAuthn ceremony state; the client never receives it.
 5. Passkey registration requires user verification and asserts that a
    credential ID is globally unique.
@@ -168,9 +214,9 @@ or SQLite details.
 
 ## Remaining work
 
-The browser Control Room implements the baseline registration and
-authentication ceremonies and requests a fresh ticket for every connection
-attempt. It keeps that ticket in memory only. Trusted-device approval for
+The browser Control Room implements pairing, passkey registration and
+authentication, and remembered logins. It requests a fresh ticket for every
+connection attempt and keeps that ticket in memory only. Trusted-device approval for
 headless enrollment, device and passkey administration, recovery, per-source
 throttling, monitoring, and backup restoration remain outside this foundation
 slice.

@@ -12,7 +12,7 @@ use migrations::{
     MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
 };
 
-const SCHEMA_VERSION: u32 = 23;
+const SCHEMA_VERSION: u32 = 25;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -262,19 +262,26 @@ const SCHEMA: &str = "
 ";
 
 pub(crate) fn initialize(path: &Path) -> Result<(), HostCatalogError> {
-    let mut connection = open(path)?;
+    let mut connection = open(path, rusqlite::OpenFlags::default())?;
     restrict_database_permissions(path)?;
     initialize_connection(&mut connection)
 }
 
 pub(crate) fn open_verified(path: &Path) -> Result<Connection, HostCatalogError> {
-    let connection = open(path)?;
+    let connection = open(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     verify(&connection)?;
     Ok(connection)
 }
 
-fn open(path: &Path) -> Result<Connection, HostCatalogError> {
-    let connection = Connection::open(path)?;
+pub(crate) fn open_read_only(path: &Path) -> Result<Connection, HostCatalogError> {
+    let connection = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    verify(&connection)?;
+    Ok(connection)
+}
+
+fn open(path: &Path, flags: rusqlite::OpenFlags) -> Result<Connection, HostCatalogError> {
+    let connection = Connection::open_with_flags(path, flags)?;
     connection.busy_timeout(Duration::from_secs(5))?;
     connection.execute_batch(
         "PRAGMA foreign_keys = ON;
@@ -304,6 +311,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             super::routines::initialize(&transaction)?;
             super::bots::names::initialize(&transaction)?;
             super::reviews::initialize(&transaction)?;
+            super::bots::selection::initialize(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -355,6 +363,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 super::routines::initialize(&transaction)?;
                 super::bots::names::initialize(&transaction)?;
                 super::reviews::initialize(&transaction)?;
+                super::bots::selection::initialize(&transaction)?;
                 transaction.execute(
                     "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                     [SCHEMA_VERSION],
