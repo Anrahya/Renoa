@@ -410,7 +410,8 @@ systemd-run --quiet --wait --pipe --collect \
   /var/lib/renoa/control.sqlite <principal-uuid>
 ```
 
-That five-minute token is entered only into the same-origin browser passkey
+The browser bootstrap has a 30-minute window for first-time setup and is consumed
+when a registration ceremony starts. That token is entered only into the same-origin browser passkey
 registration flow. The service unit pins the WebAuthn relying party to
 `renoa.live` and its exact `https://renoa.live` origin.
 

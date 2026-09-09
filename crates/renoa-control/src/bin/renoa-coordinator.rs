@@ -25,6 +25,7 @@ const USAGE: &str = "usage:
   renoa-coordinator enroll-node <database-path> <node-id>
   renoa-coordinator create-task <database-path> <task-id> <principal-id> <node-id> <target>";
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
+const PASSKEY_BOOTSTRAP_LIFETIME: Duration = Duration::from_mins(30);
 
 enum Operation {
     Serve {
@@ -259,6 +260,9 @@ async fn serve(
     let address = listener
         .local_addr()
         .map_err(|error| format!("failed to read listener address: {error}"))?;
+    // Register before readiness: a supervisor may terminate us immediately after it.
+    let signal =
+        shutdown_signal().map_err(|error| format!("failed to listen for shutdown: {error}"))?;
     write_json(&Ready {
         endpoint: format!("ws://{address}/connect"),
     })?;
@@ -268,7 +272,7 @@ async fn serve(
     tokio::pin!(server);
     tokio::select! {
         result = &mut server => result.map_err(|error| error.to_string()),
-        result = shutdown_signal() => {
+        result = signal => {
             result.map_err(|error| format!("failed to listen for shutdown: {error}"))?;
             shutdown.cancel();
             server.await.map_err(|error| error.to_string())
@@ -281,7 +285,7 @@ async fn create_passkey_bootstrap(
     principal_id: PrincipalId,
 ) -> Result<(), String> {
     let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
-    let expires_at = SystemTime::now() + ENROLLMENT_LIFETIME;
+    let expires_at = SystemTime::now() + PASSKEY_BOOTSTRAP_LIFETIME;
     let token = coordinator
         .create_passkey_bootstrap(principal_id, expires_at)
         .await
@@ -327,15 +331,18 @@ fn write_json(value: &impl Serialize) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-async fn shutdown_signal() -> io::Result<()> {
+fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<()>>> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        _ = terminate.recv() => Ok(()),
-    }
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    Ok(async move {
+        tokio::select! {
+            _ = interrupt.recv() => Ok(()),
+            _ = terminate.recv() => Ok(()),
+        }
+    })
 }
 
 #[cfg(not(unix))]
-async fn shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
+fn shutdown_signal() -> io::Result<impl std::future::Future<Output = io::Result<()>>> {
+    Ok(tokio::signal::ctrl_c())
 }
