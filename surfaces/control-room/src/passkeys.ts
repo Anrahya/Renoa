@@ -15,15 +15,32 @@ interface IdentityFailure {
   readonly message?: unknown;
 }
 
+// An options request consumes the bootstrap. Keep its ceremony in this page so a
+// blocked/cancelled native prompt can retry without spending the bootstrap again.
+// The server still enforces the ceremony's expiry and single-use verification.
+let pendingRegistration: {
+  readonly bootstrapToken: string;
+  readonly ceremony: OptionsEnvelope<PublicKeyCredentialCreationOptionsJSON>;
+} | undefined;
+
 export async function registerPasskey(bootstrapToken: string): Promise<TicketGrant> {
   assertWebAuthnSupport();
-  const ceremony = await postJson<OptionsEnvelope<PublicKeyCredentialCreationOptionsJSON>>(
-    "/v1/identity/passkeys/registration/options",
-    { bootstrapToken, surface: SURFACE },
-  );
+  assertActiveDocument();
+  if (pendingRegistration?.bootstrapToken !== bootstrapToken) {
+    pendingRegistration = undefined;
+    const ceremony = await postJson<OptionsEnvelope<PublicKeyCredentialCreationOptionsJSON>>(
+      "/v1/identity/passkeys/registration/options",
+      { bootstrapToken, surface: SURFACE },
+    );
+    pendingRegistration = { bootstrapToken, ceremony };
+  }
+  const { ceremony } = pendingRegistration;
   const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(ceremony.options.publicKey);
-  const created = await navigator.credentials.create({ publicKey });
+  // Fetching options may outlast a tab switch. Firefox rejects an inactive tab.
+  assertActiveDocument();
+  const created = await navigator.credentials.create({ publicKey }).catch(passkeyPromptFailure);
   const credential = requirePublicKeyCredential(created);
+  pendingRegistration = undefined;
   const grant = await postJson<unknown>("/v1/identity/passkeys/registration/verify", {
     ceremonyId: ceremony.ceremonyId,
     credential: credential.toJSON(),
@@ -33,12 +50,14 @@ export async function registerPasskey(bootstrapToken: string): Promise<TicketGra
 
 export async function authenticatePasskey(principalId: string): Promise<TicketGrant> {
   assertWebAuthnSupport();
+  assertActiveDocument();
   const ceremony = await postJson<OptionsEnvelope<PublicKeyCredentialRequestOptionsJSON>>(
     "/v1/identity/passkeys/authentication/options",
     { principalId, surface: SURFACE },
   );
   const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(ceremony.options.publicKey);
-  const received = await navigator.credentials.get({ publicKey });
+  assertActiveDocument();
+  const received = await navigator.credentials.get({ publicKey }).catch(passkeyPromptFailure);
   const credential = requirePublicKeyCredential(received);
   const grant = await postJson<unknown>("/v1/identity/passkeys/authentication/verify", {
     ceremonyId: ceremony.ceremonyId,
@@ -74,6 +93,22 @@ function assertWebAuthnSupport(): void {
   ) {
     throw new Error("This browser cannot use Renoa passkeys from the current origin");
   }
+}
+
+function assertActiveDocument(): void {
+  if (document.visibilityState !== "visible" || !document.hasFocus()) {
+    throw new Error("Keep the Renoa tab in the foreground, then try again without reloading this page.");
+  }
+}
+
+function passkeyPromptFailure(failure: unknown): never {
+  if (failure instanceof DOMException && failure.name === "NotAllowedError") {
+    throw new Error(
+      "The passkey prompt was blocked, cancelled, or timed out. Keep Renoa in the foreground and try again without reloading this page.",
+      { cause: failure },
+    );
+  }
+  throw failure;
 }
 
 function requirePublicKeyCredential(value: Credential | null): PublicKeyCredential {

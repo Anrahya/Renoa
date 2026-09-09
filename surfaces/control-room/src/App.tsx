@@ -128,7 +128,7 @@ function LockScreen({ control }: { readonly control: ReturnType<typeof useContro
           </button>
           <div className="security-note">
             <ShieldCheck size={18} weight="fill" aria-hidden="true" />
-            <span>Same-origin WebAuthn · one-use RCP ticket · no session cookie</span>
+            <span>Your passkey unlocks Renoa. This browser remembers your login.</span>
           </div>
         </div>
       </section>
