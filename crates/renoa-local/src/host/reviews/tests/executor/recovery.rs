@@ -160,7 +160,7 @@ async fn moving_pr_during_preparation_never_calls_model_and_retry_reconciles() {
 #[tokio::test]
 async fn new_commit_after_investigation_preserves_findings_as_superseded() {
     let (_directory, host, id, api) = prepared("").await;
-    api.state.lock().expect("state").change_at = Some(3);
+    api.state.lock().expect("state").change_at = Some(4);
     let result = execute(&host, id, &api).await.expect("review");
     let GitHubReviewRun::Finished {
         outcome: GitHubReviewOutcome::Superseded { report, .. },
@@ -236,15 +236,14 @@ async fn policy_edit_before_execution_skips_without_network_or_inference() {
 }
 
 #[tokio::test]
-async fn oversized_preparation_is_durably_incomplete_without_a_model_call() {
+async fn remote_file_count_does_not_reject_a_review_before_inspection() {
     let (directory, host, id, api) = prepared("").await;
     api.state.lock().expect("state").changed_files = Some(501);
     let result = execute(&host, id, &api).await.expect("outcome");
     assert!(matches!(
         result,
         GitHubReviewRun::Finished {
-            snapshot: None,
-            outcome: GitHubReviewOutcome::Incomplete { .. },
+            outcome: GitHubReviewOutcome::Reviewed { .. },
             ..
         }
     ));
@@ -262,7 +261,7 @@ async fn oversized_preparation_is_durably_incomplete_without_a_model_call() {
             record: Some(result)
         }
     );
-    assert!(!directory.path().join("auth.sqlite.calls").exists());
+    assert!(directory.path().join("auth.sqlite.calls").exists());
     api.stop().await;
 }
 

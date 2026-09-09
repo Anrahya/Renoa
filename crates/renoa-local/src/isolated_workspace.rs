@@ -101,6 +101,9 @@ impl InspectionSandbox {
                 "/usr/bin/rg",
                 "/usr/bin/rg",
                 "--ro-bind",
+                "/usr/bin/git",
+                "/usr/bin/git",
+                "--ro-bind",
                 "/usr/lib",
                 "/usr/lib",
                 "--ro-bind-try",
@@ -139,9 +142,13 @@ impl InspectionSandbox {
         &self.checkout
     }
 
-    pub(crate) fn bindings(self: &Arc<Self>) -> Vec<AgentToolBinding> {
+    pub(crate) fn bindings(
+        self: &Arc<Self>,
+        selected: Option<&std::collections::BTreeSet<String>>,
+    ) -> Vec<AgentToolBinding> {
         self.specs
             .iter()
+            .filter(|spec| selected.is_none_or(|names| names.contains(&spec.name)))
             .map(|spec| {
                 AgentToolBinding::new(
                     format!("renoa.inspection/v2/{}/{}", self.identity, spec.name),

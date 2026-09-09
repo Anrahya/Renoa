@@ -9,6 +9,12 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   let input="";for await (const part of process.stdin) input+=part;
   const request=JSON.parse(input);
   const mode=readFileSync(process.env.RENOA_MODEL_AUTH_STORE,"utf8");
+  if(mode==="git") {
+    appendFileSync(process.env.RENOA_MODEL_AUTH_STORE+".calls",process.env.RENOA_MODEL_SESSION_ID+"\n");
+    const {run}=await import("./git_model.mjs");
+    run(request,(content,stop_reason="stop")=>console.log(JSON.stringify({event:"completed",response:{content,stop_reason,usage:{input:10,output:2,cache_read:5,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}})));
+    process.exit(0);
+  }
   if(mode==="compactions" && request.tools.length===0) {
     appendFileSync(process.env.RENOA_MODEL_AUTH_STORE+".compactions", "summary\n");
     console.log(JSON.stringify({event:"completed",response:{content:[{type:"text",text:["Goal and user intent","Hard constraints and preferences","Completed work","Current state and blockers","Decisions and rationale","Exact working facts","Next action and unresolved questions"].map(h=>`## ${h}\nReview ratio at pinned head. The candidate is division by zero at src/lib.rs:2, with exact evidence:     10 / count. Check callers before reporting. Tests were not run.`).join("\n\n")}],stop_reason:"stop",usage:{input:10,output:2,cache_read:0,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}}));

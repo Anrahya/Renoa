@@ -57,7 +57,14 @@ async fn inspection_sandbox_uses_existing_tools_without_persistent_processes() {
             .iter()
             .map(|spec| spec.name.as_str())
             .collect::<Vec<_>>(),
-        ["read_file", "grep", "find"]
+        [
+            "read_file",
+            "grep",
+            "find",
+            "git_changes",
+            "git_diff",
+            "git_show"
+        ]
     );
     let mut call = ToolCall {
         id: "read".to_owned(),
@@ -94,4 +101,70 @@ async fn inspection_sandbox_uses_existing_tools_without_persistent_processes() {
         .await
         .expect("recover container");
     assert_eq!(first.identity, recovered.identity);
+}
+
+#[tokio::test]
+#[ignore = "requires Bubblewrap >=0.12, Git and a built renoa-workspace-tool"]
+async fn git_tools_read_pinned_objects_inside_real_inspection_sandbox() {
+    let (directory, _, base, head) = crate::git_repository::tests::fixture();
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o755))
+        .expect("mount mode");
+    let config = InspectionSandboxConfig {
+        bubblewrap: PathBuf::from("/usr/bin/bwrap"),
+        worker: std::env::var_os("RENOA_TEST_INSPECTION_WORKER").map_or_else(
+            || {
+                std::env::current_dir()
+                    .expect("cwd")
+                    .join("../../target/debug/renoa-workspace-tool")
+            },
+            PathBuf::from,
+        ),
+    };
+    let cancel = CancellationToken::new();
+    let container = Arc::new(
+        InspectionSandbox::start(&config, Uuid::new_v4(), directory.path(), &cancel)
+            .await
+            .expect("sandbox"),
+    );
+    let selected = ["git_show".to_owned()].into_iter().collect();
+    assert_eq!(container.bindings(Some(&selected)).len(), 1);
+    for (name, arguments, expected) in [
+        (
+            "git_changes",
+            serde_json::json!({"base":base,"head":head}),
+            "f0000-",
+        ),
+        (
+            "git_diff",
+            serde_json::json!({"base":base,"head":head,"path":"removed.rs"}),
+            "-check_owner();",
+        ),
+        (
+            "git_show",
+            serde_json::json!({"commit":head,"path":"z-bug.rs"}),
+            "10 / count",
+        ),
+    ] {
+        let call = ToolCall {
+            id: name.to_owned(),
+            name: name.to_owned(),
+            arguments,
+            thought_signature: None,
+            namespace: None,
+        };
+        let bytes = checked_output(
+            container.command(),
+            &serde_json::to_vec(&call).expect("call"),
+            &cancel,
+        )
+        .await
+        .expect("worker");
+        let result: ToolResult = serde_json::from_slice(&bytes).expect("result");
+        assert!(!result.is_error, "{result:?}");
+        assert!(
+            serde_json::to_string(&result)
+                .expect("text")
+                .contains(expected)
+        );
+    }
 }

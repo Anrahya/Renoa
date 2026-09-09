@@ -276,6 +276,7 @@ Confirm restoration.` }]);
 }
 const expectedTools = [
   "read_file", "edit_file", "write_file", "bash", "grep", "find",
+  "git_changes", "git_diff", "git_show",
   "tool_search", "tool_load", "tool_execute", "extension_manage",
   "skill_search", "skill_load"
 ];

@@ -15,7 +15,13 @@ pub(super) fn respond(headers: &str, body: &[u8], state: &mut ApiState) -> (u16,
         }
         let body: serde_json::Value = serde_json::from_slice(body).expect("publication");
         assert_eq!(body["event"], "COMMENT");
-        assert_eq!(body["commit_id"], "b".repeat(40));
+        assert_eq!(
+            body["commit_id"],
+            state
+                .commits
+                .as_ref()
+                .map_or_else(|| "b".repeat(40), |c| c.1.clone())
+        );
         let review = serde_json::json!({
             "id": 123, "body":body["body"], "commit_id":body["commit_id"],
             "html_url":"https://github.com/owner/repository/pull/14#pullrequestreview-123",
@@ -30,7 +36,7 @@ pub(super) fn respond(headers: &str, body: &[u8], state: &mut ApiState) -> (u16,
     (200, serde_json::to_string(&state.reviews).expect("reviews"))
 }
 
-async fn publish(
+pub(super) async fn publish(
     host: &LocalHost,
     id: Uuid,
     api: &Api,

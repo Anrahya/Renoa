@@ -15,6 +15,7 @@ mod execution;
 mod findings;
 mod github;
 mod jobs;
+mod preparation;
 mod publication;
 mod reviewer;
 mod runs;
@@ -25,7 +26,7 @@ mod tests;
 mod webhook;
 mod worker;
 
-pub use context::{ReviewCheck, ReviewContext, ReviewFile};
+pub use context::{ReviewCheck, ReviewContext, ReviewFile, ReviewSource};
 pub use control::{HostReviewControl, ReviewPolicyUpdate};
 pub use findings::{GitHubReviewEvidence, GitHubReviewFinding, GitHubReviewReport, ReviewPriority};
 pub use jobs::{GitHubReviewWork, REVIEW_LIFETIME_MS};

@@ -12,7 +12,7 @@ use migrations::{
     MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
 };
 
-const SCHEMA_VERSION: u32 = 24;
+const SCHEMA_VERSION: u32 = 25;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -311,6 +311,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             super::routines::initialize(&transaction)?;
             super::bots::names::initialize(&transaction)?;
             super::reviews::initialize(&transaction)?;
+            super::bots::selection::initialize(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -362,6 +363,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 super::routines::initialize(&transaction)?;
                 super::bots::names::initialize(&transaction)?;
                 super::reviews::initialize(&transaction)?;
+                super::bots::selection::initialize(&transaction)?;
                 transaction.execute(
                     "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                     [SCHEMA_VERSION],

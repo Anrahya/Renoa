@@ -290,7 +290,7 @@ async fn reconcile(
 fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str) -> serde_json::Value {
     let (summary, comments) = match outcome {
         GitHubReviewOutcome::Reviewed { report, .. } => {
-            let summary = format!(
+            let mut summary = format!(
                 "Soundwave reviewed commit `{sha}`. {} validated finding(s).{}",
                 report.findings.len(),
                 if report.limitations.is_empty() {
@@ -312,8 +312,20 @@ fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str) -> serde_json
                     )
                 }
             );
-            let comments: Vec<_> = report.findings.iter().map(|f| serde_json::json!({
-                "path": f.path, "line": f.line, "side":"RIGHT", "body": format!("**[{:?}] {}**\n\n{}\n\n{}\n\n{}", f.priority.unwrap_or(super::ReviewPriority::P2), f.title, f.trigger, f.consequence, f.correction)
+            for finding in report.findings.iter().filter(|f| !f.in_diff) {
+                use std::fmt::Write as _;
+                write!(
+                    &mut summary,
+                    "\n\n{}\n\nSource: `{}:{}` ({:?} of the pinned comparison).",
+                    finding_body(finding),
+                    finding.path,
+                    finding.line,
+                    finding.side
+                )
+                .expect("writing to String cannot fail");
+            }
+            let comments: Vec<_> = report.findings.iter().filter(|f| f.in_diff).map(|f| serde_json::json!({
+                "path": f.path, "line": f.line, "side":match f.side { crate::GitSide::Base => "LEFT", crate::GitSide::Head => "RIGHT" }, "body": finding_body(f)
             })).collect();
             (summary, comments)
         }
@@ -327,4 +339,15 @@ fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str) -> serde_json
         GitHubReviewOutcome::Superseded { .. } => ("Review superseded.".to_owned(), Vec::new()),
     };
     serde_json::json!({"commit_id":sha,"event":"COMMENT","body":format!("Soundwave reporting.\n\n{summary}\n\n{marker}"),"comments":comments})
+}
+
+fn finding_body(f: &super::GitHubReviewFinding) -> String {
+    format!(
+        "**[{:?}] {}**\n\n{}\n\n{}\n\n{}",
+        f.priority.unwrap_or(super::ReviewPriority::P2),
+        f.title,
+        f.trigger,
+        f.consequence,
+        f.correction
+    )
 }

@@ -4,8 +4,9 @@ import { triggerLabels } from "./host-controls";
 
 interface Finding {
   priority?: "P0" | "P1" | "P2" | "P3";
+  side?: "base" | "head"; in_diff?: boolean;
   path: string; line: number; title: string; trigger: string; consequence: string; correction: string;
-  evidence: { path: string; start_line: number; quote: string };
+  evidence: { path: string; start_line: number; quote: string; side?: "base" | "head" };
 }
 interface ReviewDetail {
   request_id: string; provider: string | null; model: string | null; reasoning: string | null;
@@ -18,6 +19,7 @@ const record = (value: unknown): value is Record<string, unknown> => typeof valu
 const text = (value: unknown): value is string => typeof value === "string";
 const line = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) > 0;
 const time = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+const side = (value: unknown): boolean => value === undefined || value === "base" || value === "head";
 function publication(value: unknown): boolean {
   return record(value) && publicationState(value.state) && (value.state === "published" ? line(value.review_id) && text(value.url)
     : ["suppressed", "needs_attention"].includes(value.state) ? text(value.reason) : true);
@@ -33,8 +35,9 @@ export function parseReviewDetail(value: unknown, request: string): ReviewDetail
       Array.isArray(value.report.limitations) && value.report.limitations.every(text) &&
       Array.isArray(value.report.findings) && value.report.findings.every(f => record(f) &&
         (f.priority === undefined || ["P0", "P1", "P2", "P3"].includes(f.priority as string)) &&
+        side(f.side) && (f.in_diff === undefined || typeof f.in_diff === "boolean") &&
         [f.path, f.title, f.trigger, f.consequence, f.correction].every(text) && line(f.line) &&
-        record(f.evidence) && text(f.evidence.path) && line(f.evidence.start_line) && text(f.evidence.quote)))) {
+        record(f.evidence) && side(f.evidence.side) && text(f.evidence.path) && line(f.evidence.start_line) && text(f.evidence.quote)))) {
     throw new Error("The Host returned incompatible review details.");
   }
   return value as unknown as ReviewDetail;
@@ -93,10 +96,10 @@ export function ReviewEvidence({ request, state }: { request: string; state: str
       <p>{detail.report.findings.length ? `${detail.report.findings.length} recorded findings` : "No findings were recorded."}</p>
       {detail.report.findings.map((finding, index) => <article key={index}>
         <h3>{finding.priority && `${finding.priority} · `}{finding.title}</h3>
-        <p className="host-caption"><code>{finding.path}:{finding.line}</code></p>
+        <p className="host-caption"><code>{finding.path}:{finding.line}</code> · {finding.side === "base" ? "Before the change" : "PR head"}{finding.in_diff === false && " · Review body (outside inline diff)"}</p>
         <p>{finding.trigger}</p><p>{finding.consequence}</p><p>{finding.correction}</p>
         <details className="host-details"><summary>Supporting evidence</summary><div>
-          <p className="host-caption"><code>{finding.evidence.path}:{finding.evidence.start_line}</code></p>
+          <p className="host-caption"><code>{finding.evidence.path}:{finding.evidence.start_line}</code> · {finding.evidence.side === "base" ? "Before the change" : "PR head"}</p>
           <pre>{finding.evidence.quote}</pre>
         </div></details>
       </article>)}

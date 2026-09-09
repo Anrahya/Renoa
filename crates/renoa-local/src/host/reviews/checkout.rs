@@ -31,12 +31,20 @@ impl Checkout {
         github: &GitHub,
         cancel: &CancellationToken,
     ) -> Result<Self, LocalHostError> {
-        remove_tree(&root).await?;
-        tokio::fs::create_dir_all(&root).await?;
-        let prepared = materialize(&root, snapshot, github, cancel).await;
-        if let Err(error) = prepared {
-            remove_tree(&root).await?;
-            return Err(error.into());
+        if !tokio::fs::try_exists(root.join(".git")).await? {
+            let prepared = materialize(
+                &root,
+                &snapshot.base_sha,
+                &snapshot.head_sha,
+                &snapshot.context.merge_base_sha,
+                github,
+                cancel,
+            )
+            .await;
+            if let Err(error) = prepared {
+                remove_tree(&root).await?;
+                return Err(error.into());
+            }
         }
         match InspectionSandbox::start(config, snapshot.request.id, &root, cancel).await {
             Ok(sandbox) => Ok(Self {
@@ -64,12 +72,15 @@ pub(super) async fn remove_tree(root: &Path) -> io::Result<()> {
     }
 }
 
-async fn materialize(
+pub(super) async fn materialize(
     root: &Path,
-    snapshot: &GitHubReviewSnapshot,
+    base: &str,
+    head: &str,
+    merge_base: &str,
     github: &GitHub,
     cancel: &CancellationToken,
 ) -> io::Result<()> {
+    tokio::fs::create_dir_all(root).await?;
     let git_dir = root.join(".git");
     let mut init = git(&git_dir);
     init.args(["init", "--bare"]);
@@ -80,13 +91,9 @@ async fn materialize(
     fetch.arg("-c").arg("credential.helper=!f() { echo username=x-access-token; printf 'password=%s\\n' \"$RENOA_REVIEW_GIT_TOKEN\"; }; f")
         .env("RENOA_REVIEW_GIT_TOKEN", github.installation_token()?)
         .args(["fetch", "--no-tags", "--depth=1", &format!("https://github.com/{}.git", github.repository),
-            &snapshot.base_sha, &snapshot.head_sha, &snapshot.context.merge_base_sha]);
+            base, head, merge_base]);
     checked_output(fetch, &[], cancel).await?;
-    for (name, sha) in [
-        ("base", &snapshot.base_sha),
-        ("head", &snapshot.head_sha),
-        ("merge_base", &snapshot.context.merge_base_sha),
-    ] {
+    for (name, sha) in [("base", base), ("head", head), ("merge_base", merge_base)] {
         let mut checkout = git(&git_dir);
         checkout
             .args(["worktree", "add", "--detach"])

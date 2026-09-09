@@ -10,6 +10,7 @@ mod credential_file;
 mod deadline;
 mod file_lock;
 mod file_tools;
+mod git_repository;
 mod host;
 mod host_storage;
 mod isolated_workspace;
@@ -35,6 +36,7 @@ mod tool_input;
 mod trace;
 mod turn_observation;
 mod workspace;
+pub use git_repository::{GitChange, GitSide};
 
 #[cfg(test)]
 mod model_adapter_process_tests;
@@ -83,6 +85,7 @@ pub use host::routines::{
 };
 
 pub use host::bots::names::RenameBot;
+pub use host::bots::selection::{BotToolSelection, BotToolsUpdate};
 
 pub use host::reviews::{
     GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewEvidence,
@@ -90,5 +93,5 @@ pub use host::reviews::{
     GitHubReviewReply, GitHubReviewReport, GitHubReviewRepository, GitHubReviewRequest,
     GitHubReviewRun, GitHubReviewSkip, GitHubReviewSnapshot, GitHubReviewTrigger,
     GitHubReviewWebhook, GitHubReviewWork, REVIEW_LIFETIME_MS, ReviewCheck, ReviewContext,
-    ReviewFile, ReviewPriority,
+    ReviewFile, ReviewPriority, ReviewSource,
 };

@@ -416,6 +416,16 @@ levels, grants, approval records, or a permission trait.
 
 Profiles run with full access through the tools selected for them. Built-in
 profiles advertise all local workspace tools; specialist recipes select a subset.
+The creation recipe remains immutable for exact creation replay. An optional
+revisioned tool selection changes a specialist's effective local tools without
+rewriting that recipe. `configure_bot_tools` is a trusted owner-management
+operation, also available as `renoa-host <config.json> bot-tools <edit.json>`.
+The edit contains `operation_id`, `id`, `expected_revision` (zero before the first
+edit), and `tools`. Its transaction persists the edit and replay receipt together;
+stale revisions and conflicting retries fail. Ordinary bot profiles and review
+assembly consume the same selection. Active reviews retain their frozen selection;
+new runs use the updated one. This operation is not exposed as a self-granting
+model tool or an unauthenticated remote endpoint.
 This selection does not add an OS sandbox or a permission system. External catalogs are
 reached through three fixed registry tools so catalog size does not become
 model context. The current top-level set is:
@@ -427,6 +437,9 @@ write_file
 bash
 grep
 find
+git_changes
+git_diff
+git_show
 tool_search
 tool_load
 tool_execute
@@ -1170,9 +1183,11 @@ publication backoff) and `host_review_publications` (intent and remote outcome).
 Schema 23 adds worker-entry evidence, execution retry timing and the last job failure.
 Schema 24 adds `host_routine_owner_mutations` for authenticated owner receipts,
 preserving existing agent receipts and their foreign-key restrictions.
+Schema 25 adds `host_bot_tool_selections` and `host_bot_tool_operations` for
+revisioned tool selection and idempotent owner edits, preserving creation recipes.
 Existing Host, specialist, session, capability, routine and
 admission records are preserved. All processes sharing the database must support
-schema 24 before opening it with these binaries.
+schema 25 before opening it with these binaries.
 
 The GitHub service verifies at startup that its worker configuration resolves to
 the same canonical Host database as the supervisor. Separate model configuration
@@ -1224,15 +1239,18 @@ pull requests and checks. Credentials stay outside model context and results.
 
 Before inference, the Host reconciles the PR and freezes base/head and merge-base
 commits, repository policy, specialist instructions, model specification and
-reasoning. Applicable base AGENTS.md files supply conventions. PR instructions
-are review material. Initial context includes changed-file patches, head paths
-and observed CI status.
+reasoning and the recipe's selected tools. Applicable base AGENTS.md files supply
+conventions. PR instructions are review material. Initial model context contains
+the pinned commits, PR metadata, change count and observed CI status. The complete
+change inventory is captured from local Git objects in the durable snapshot;
+patches and repository trees are not copied into the initial prompt. Historical
+API snapshots remain readable and completed runs replay without reinterpretation.
 
 The Host materializes base/, head/ and merge_base/ checkouts under
 `review-workspaces/<request-id>`. Git credentials go only to the trusted fetch
 process and are not stored in Git config; hooks are disabled. Each inspection
 call launches a fresh Bubblewrap sandbox with the checkout mounted read-only,
-the workspace tool, ripgrep and its system libraries. It has isolated namespaces,
+the workspace tool, Git, ripgrep and their system libraries. It has isolated namespaces,
 no network, no capabilities, an empty environment and no Host data or credentials.
 Nested user namespaces are disabled. The tool process exits after its response;
 there is no persistent sandbox process during model reasoning. This shares the
@@ -1241,8 +1259,11 @@ the initial deployment serves the owner's personal review workflow.
 
 The Host assembles the named specialist recipe with `review_instructions.txt`,
 the shared Rust model/tool loop and the existing replaceable compaction strategy.
-`renoa-workspace-tool` executes the same read_file, grep and find implementations
-as local agents; only their transport changes. No generic assistant/coding
+`renoa-workspace-tool` executes the same read_file, grep, find, git_changes,
+git_diff and git_show implementations as local agents; only their transport
+changes. The shared Git capability also supports ordinary registered Git
+worktrees. Each new review freezes its recipe's tool selection and intersects
+it with the inspection environment's read-only capabilities. No generic assistant/coding
 profile is inherited. Bash, dependency installation, test execution, automatic
 fixes and unrelated Host connections are unavailable in this version.
 
@@ -1269,8 +1290,15 @@ so an incompatible tool deployment cannot silently resume an active command.
 
 New findings require P0–P3 priorities and are sorted by priority. Legacy reports
 without a priority remain readable without assigning an invented one. Validation
-checks added-line anchors, required fields, duplicate anchors and exact evidence
-against the immutable head checkout. These checks do not prove semantic correctness.
+checks changed-path membership, actual source locations, required fields,
+duplicate anchors and exact evidence against immutable Git blobs, independently
+of the model's prompt or retrieved pages. Locations can refer to the head or the
+merge base (before the change). GitHub supports LEFT-side deleted lines and
+RIGHT-side added/context lines; valid locations outside inline diff geometry
+remain findings in the review body. Old paths of renamed files also use the body
+when they cannot be addressed reliably inline. LF and CRLF terminators are
+normalized for quotation matching, but source text must match complete lines.
+These checks do not prove semantic correctness.
 A final PR/policy check retains findings as superseded when the target changed.
 
 The Host saves the result before removing the checkout. A recovered execution
@@ -1334,26 +1362,44 @@ Explicit terminal model outcomes are not retried; rerunning a terminal review
 requires a new request identity. Abrupt worker death without a durable handoff
 still produces an incomplete outcome after cleanup.
 
-Initial API preparation still accepts up to 500 changed files, 256 KiB of patches
-and 512 KiB of serialized context, with 1 MiB JSON responses and up to 32 applicable
-base instruction paths. These are preparation/transport limits, not investigation
-budgets. Oversized preparation is explicitly incomplete; omitted patches and CI
-context are disclosed. Workspace source reads support large files through the
-existing paged tools (2,000 lines/50 KiB per read). Deletion-only inline anchors,
-legacy CI statuses and full CI logs remain limitations. Dependency installation
+Review preparation has no 500-file, 256 KiB patch, 512 KiB aggregate context or
+32-instruction-path cutoff. git_changes pages through the full local comparison,
+including hidden paths, renames, deletions and binary files. This also avoids
+GitHub's 3,000-file API inventory ceiling. git_diff and git_show return byte
+cursors, so the existing 50 KiB workspace response size bounds one page, not the
+accessible source. UTF-8 boundaries are preserved; non-UTF-8 pages use lossless
+base64. These tools require full immutable commit IDs and literal relative paths,
+and disable external diff and text-conversion programs. Source survives context
+compaction in the pinned checkout and can be fetched again. Applicable base
+AGENTS.md files are retrieved through git_show, without a candidate-count cap.
+The durable transcript records retrieved inventory pages; missing paths become
+an explicit coverage limitation. Retrieval alone is not proof of review quality.
+
+Remaining boundaries have separate purposes: API JSON responses and sandbox
+transport frames retain their existing 1 MiB ceilings; raw tool pages are smaller
+and have continuation. read_file retains its existing 2,000-line/50 KiB pages;
+git_show provides byte continuation through giant lines. The review deadline,
+provider timeout, context/compaction settings and per-response tool batch size
+remain as described above, without a total tool-call or model-response quota.
+Legacy CI statuses and full CI logs remain unavailable. Dependency installation
 and test execution are deferred. Quality claims still require labeled evaluation.
 The [commit comparison API](https://docs.github.com/en/rest/commits/commits#compare-two-commits)
 supplies the merge base, separately from the current base tip. No upstream code
-was adapted for this executor.
+was adapted for this executor. Merge-base discovery requests comparison page two
+with one commit per page: GitHub returns the same merge-base metadata there,
+without its first-page file patches. This was verified against multi-commit and
+single-commit comparisons, including an empty second-page commit list.
 
 ### Evidence informing the design
 
-Primary documentation inspected on 2026-09-07 informs the following choices.
+Primary documentation inspected on 2026-09-07 and rechecked on 2026-09-09 informs the following choices.
 Product capabilities and vendor-reported quality metrics are not independent
 evidence that Renoa has reached equivalent review quality.
 
 | Reference | Relevant behavior | Renoa design consequence |
 | --- | --- | --- |
+| [GitHub changed-files API](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests-files), [review comment locations](https://docs.github.com/en/rest/pulls/comments#create-a-review-comment-for-a-pull-request) | File listing stops at 3,000; inline locations support LEFT/RIGHT diff sides. | Capture the complete local Git inventory; separate evidence validation from GitHub placement. |
+| [Git diff](https://git-scm.com/docs/git-diff) | Immutable commit comparison, rename detection, and explicit external-diff/textconv controls. | Reuse one pinned Git inspection capability across agents, with lossless continuation. |
 | [CodeRabbit review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Repository context, incremental reviews on subsequent commits, severity categories, and discussion of findings. | Keep per-PR review history; inspect surrounding code; publish concise findings that remain discussable. |
 | [Cursor: Building a better Bugbot](https://cursor.com/blog/building-bugbot) | Describes an early multi-pass/validator pipeline, then a move to agentic context gathering; measures findings resolved and evaluates on annotated diffs. | Use agentic investigation and a validation stage. Evaluate actual defects and false positives before multiplying model passes. |
 | [Qodo review architecture](https://docs.qodo.ai/code-review) | Specialist review agents with a judge that merges and filters findings; repository history and persistent reviews. | Make investigation and validation replaceable. Retain the evidence and disposition of findings between runs. |
@@ -1558,8 +1604,8 @@ does not establish that the reviewer finds useful bugs.
   changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
   and immutable-package garbage collection;
-- editing durable specialist recipes, profile inheritance, and Agent Instance
-  overrides beyond the existing creation recipes;
+- editing specialist instructions/connections, profile inheritance, and Agent
+  Instance overrides beyond the existing tool-selection edit;
 - permission vocabulary, scopes, policy inheritance, and enforcement;
 - public package discovery, updates, rollback, removal, and garbage collection;
 - Host management beyond the personal HTTPS panel, including remote CLI

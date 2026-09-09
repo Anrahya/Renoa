@@ -136,7 +136,10 @@ impl GitHub {
         let comparison: Comparison = self
             .repo_json(
                 &["compare", &format!("{}...{}", pull.base.sha, pull.head.sha)],
-                &[("per_page", "1")],
+                // GitHub includes the comparison's file patches only on page
+                // one, even with per_page=1. Later pages retain merge-base
+                // metadata even when there are no more commits to list.
+                &[("per_page", "1"), ("page", "2")],
                 cancel,
             )
             .await?;
@@ -165,6 +168,7 @@ impl GitHub {
         )?)
     }
 
+    #[cfg(test)]
     pub(super) async fn source(
         &self,
         path: &str,
@@ -274,6 +278,7 @@ fn headers(token: &str) -> Result<HeaderMap, GitHubReviewError> {
     Ok(headers)
 }
 
+#[cfg(test)]
 pub(super) fn valid_path(path: &str) -> Result<(), GitHubReviewError> {
     if path.len() > 1024
         || path
