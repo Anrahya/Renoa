@@ -17,8 +17,8 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-# SQLite read transactions may need WAL shared-memory bookkeeping; this grants
-# filesystem access, while HostObserver still opens all databases read-only.
+# Observation opens databases read-only; owner routine operations write the
+# canonical Host catalog and their receipts through the routine domain.
 ReadWritePaths=/var/lib/renoa-telegram
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

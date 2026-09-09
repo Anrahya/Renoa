@@ -15,6 +15,7 @@ struct Config {
     host_id: Uuid,
     identity_address: SocketAddr,
     owner_principal_id: PrincipalId,
+    public_origin: String,
     listen: SocketAddr,
 }
 
@@ -40,6 +41,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         config.host_id,
         config.identity_address,
         config.owner_principal_id,
+        &config.public_origin,
     )?
     .with_assets(&config.assets_directory)?;
     let listener = TcpListener::bind(config.listen).await?;

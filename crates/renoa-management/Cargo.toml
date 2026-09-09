@@ -19,6 +19,7 @@ tower-http = { workspace = true, features = ["fs"] }
 uuid.workspace = true
 
 [dev-dependencies]
+renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
 renoa-control = { path = "../renoa-control", version = "0.1.0" }
 rusqlite.workspace = true
 tempfile.workspace = true

@@ -2205,6 +2205,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "renoa-control",
+ "renoa-kernel",
  "renoa-local",
  "renoa-protocol",
  "reqwest",

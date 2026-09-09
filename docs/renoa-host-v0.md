@@ -134,7 +134,7 @@ access and credential sharing between distinct Hosts remain separate work.
 ### Composition and management boundaries
 
 The personal-system direction below guides the control-panel implementation.
-Authenticated browser observation exists; general recipe editing and delegation
+Authenticated browser observation and owner routine enablement exist; general recipe editing and delegation
 remain future work. Host ownership is a logical boundary, not a requirement that one
 object, executable, or crate implement every subsystem. A laptop and a VPS are
 deployment choices. Preserving a Host across machine replacement requires its
@@ -226,15 +226,33 @@ passkeys remain optional. Both authenticate the same configured human owner. The
 admission and retry rules live in [identity-v0.md](identity-v0.md), independently
 of Host assembly and surface adapters.
 
-After authenticated observation, the next browser mutation is pausing/resuming
-an existing automation through the routine domain operation. Expose that operation
-without initializing models and with an authenticated owner actor distinct from
-an agent actor. Preserve existing agent restrictions, revision conflicts, and
-receipt-backed retries. Pausing prevents future admissions, not completion of an
-already-admitted run; resuming uses existing scheduling semantics and may require
-a new date for an expired one-time schedule. The UI must describe those effects.
-Do not implement agent creation, recipe editors, or generic delegation merely to
-make this first management action work.
+`HostRoutineControl` exposes owner pause/resume without constructing an execution
+Host. `POST /v1/host/routines/{routine_id}/enabled` adapts that domain operation;
+the browser controls are not implemented yet. The trusted adapter supplies the
+authenticated principal separately from JSON input. Each write requires the
+configured owner cookie and exactly one matching `Origin` header. The management
+configuration names `public_origin`; forwarded headers cannot select it.
+
+The JSON request contains `operation_id` (a fresh UUID for each logical change),
+`expected_revision`, and the desired `enabled` boolean. The server rejects unknown
+fields and bodies over 4 KiB. It persists the routine change and owner receipt in
+one transaction before acknowledging. An identical retry, including after restart,
+returns the original receipt even if another edit has since occurred. Reusing an
+operation ID with different input or applying a stale revision returns 409. The
+response contains the operation ID, routine ID, committed revision, enabled state,
+and next due time; it excludes the standing prompt. Read a new Host snapshot for
+current state rather than treating a historical receipt as the latest revision.
+
+The routine domain retains scheduling semantics and agent restrictions. Pausing
+prevents future admissions, not completion of already-admitted work. Resuming an
+interval starts its next period from the resume time; daily schedules choose the
+next occurrence in their named timezone. Resuming an expired one-time schedule
+returns 422 and needs a new future date through the existing agent editing path.
+Deleted routines return 404; replaying an older receipt cannot restore them.
+Host identity is checked inside the mutation transaction, including on replay.
+Owner receipts remain distinct from agent receipts and cannot grant agent tools
+owner authority. Agent creation, recipe editors, and delegation remain separate
+work; this operation does not require them.
 
 The observation boundary is tested against unauthenticated, revoked and wrong-owner
 access, identity-service restart and unavailability, and observation without provider
@@ -1101,9 +1119,11 @@ Host schema 20 added `host_review_repositories`, `host_review_operations`,
 `host_review_runs`; schema 22 adds `host_review_jobs` (absolute lifetime and
 publication backoff) and `host_review_publications` (intent and remote outcome).
 Schema 23 adds worker-entry evidence, execution retry timing and the last job failure.
+Schema 24 adds `host_routine_owner_mutations` for authenticated owner receipts,
+preserving existing agent receipts and their foreign-key restrictions.
 Existing Host, specialist, session, capability, routine and
 admission records are preserved. All processes sharing the database must support
-schema 23 before opening it with these binaries.
+schema 24 before opening it with these binaries.
 
 The GitHub service verifies at startup that its worker configuration resolves to
 the same canonical Host database as the supervisor. Separate model configuration

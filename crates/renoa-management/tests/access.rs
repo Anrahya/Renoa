@@ -113,14 +113,11 @@ async fn real_passkey_owner_is_required_and_outages_do_not_become_logout() {
         PrincipalId::from_uuid(Uuid::new_v4()),
     )
     .await;
-    assert!(ManagementApi::open(&root, Uuid::new_v4(), identity, owner).is_err());
-    assert!(
-        ManagementApi::open(&root, id, "0.0.0.0:7818".parse().expect("address"), owner).is_err()
-    );
+    check_configured_binding(&root, id, identity, owner);
     let assets = files.path().join("assets");
     std::fs::create_dir(&assets).expect("asset directory");
     std::fs::write(assets.join("index.html"), "control panel").expect("app shell");
-    let api = ManagementApi::open(&root, id, identity, owner)
+    let api = ManagementApi::open(&root, id, identity, owner, "http://localhost")
         .expect("bind exact Host")
         .with_assets(&assets)
         .expect("public assets");
@@ -186,6 +183,32 @@ async fn real_passkey_owner_is_required_and_outages_do_not_become_logout() {
     task.await
         .expect("management task")
         .expect("management stop");
+}
+
+fn check_configured_binding(root: &Path, id: Uuid, identity: SocketAddr, owner: PrincipalId) {
+    assert!(
+        ManagementApi::open(root, Uuid::new_v4(), identity, owner, "http://localhost").is_err()
+    );
+    assert!(
+        ManagementApi::open(
+            root,
+            id,
+            "0.0.0.0:7818".parse().expect("address"),
+            owner,
+            "http://localhost"
+        )
+        .is_err()
+    );
+    for origin in [
+        "http://example.com",
+        "https://user:secret@example.com",
+        "https://example.com/path",
+        "https://example.com?redirect=evil",
+        "https://example.com#fragment",
+        "null",
+    ] {
+        assert!(ManagementApi::open(root, id, identity, owner, origin).is_err());
+    }
 }
 
 async fn check_paired_browser_access(

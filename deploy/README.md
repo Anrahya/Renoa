@@ -33,11 +33,12 @@ reports individual unreadable sessions without inventing idle states.
 
 ## Personal control panel
 
-`renoa-management` is a separate read API and static panel service. It opens the
+`renoa-management` is a separate management API and static panel service. It opens the
 existing personal Host and asks the loopback identity service to validate browser
 sessions. It does not start models or share the coordinator's private database.
 The initial panel observes agents, sessions, schedules, shared inventory and review
-outcomes; automation edits and agent creation are subsequent work.
+outcomes. The API also exposes owner pause/resume of existing automations; browser
+controls, full automation editing, and agent creation are subsequent work.
 
 Build the coordinator, management adapter and production assets:
 
@@ -58,6 +59,20 @@ root ownership and mode `0600`. Replace both placeholder UUIDs: `host_id` is the
 existing Host identity from `renoa-host inspect`; `owner_principal_id` is the one
 human principal enrolled for this Host's panel. Never infer ownership from the
 first legacy RCP task. Keep that principal and configuration in the Host's backup.
+Set `public_origin` to the exact external HTTPS origin, such as
+`https://renoa.live`. Every management write requires this Origin header and an
+authenticated owner cookie; the server does not trust forwarded headers to select
+the origin. The only development exception is HTTP `localhost`.
+
+The routine control API requires Host schema 24. Stop all readers/writers of the
+shared Host catalog, including management, Slack, Telegram and GitHub workers,
+and back it up with SQLite's backup API. Build/install all Host consumers from the
+same revision, then start a normal Host process to apply the catalog migration
+before restarting management. `HostObserver` and `HostRoutineControl` deliberately
+do not migrate storage themselves. The migration preserves schedules, admitted
+runs, results and agent receipts, and adds owner operation receipts. Keep the
+previous binaries and matching database backup together for rollback. Browser
+login storage is separate and does not need to be reset for this Host migration.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
 the new coordinator binary. It upgrades the identity database to schema 11 and
@@ -517,7 +532,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-database before upgrading to schema 23. Install the new binaries atomically and
+database before upgrading to schema 24. Install the new binaries atomically and
 replace the model adapter's built `dist` files. Do not resume an older reader
 against the migrated database. Keep the backup and previous binaries for rollback
 as a set; rolling back binaries alone is insufficient.

@@ -8,12 +8,12 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{Path as RequestPath, State},
+    extract::{DefaultBodyLimit, Path as RequestPath, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
-use renoa_local::HostObserver;
+use renoa_local::{HostObserver, HostRoutineControl};
 use renoa_protocol::PrincipalId;
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod identity;
+mod routines;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ManagementError {
@@ -38,6 +39,10 @@ pub enum ManagementError {
     HostMismatch,
     #[error("the plaintext management listener must be loopback-only")]
     PublicListener,
+    #[error(
+        "public_origin must be an HTTPS origin (or HTTP localhost), without a path or credentials"
+    )]
+    InvalidOrigin,
 }
 
 #[derive(Clone)]
@@ -50,29 +55,36 @@ struct ManagementState {
     observer: HostObserver,
     identity: identity::IdentityClient,
     owner: PrincipalId,
+    routines: HostRoutineControl,
+    origin: String,
 }
 
 impl ManagementApi {
     /// Binds one existing Host to an explicitly configured authenticated owner.
     /// Does not initialize a Host, discover providers, or load credentials.
     /// # Errors
-    /// Returns unavailable storage or a mismatched Host identity.
+    /// Returns unavailable storage, a mismatched Host identity, or invalid origin
+    /// or identity-service configuration.
     pub fn open(
         root: &Path,
         host_id: Uuid,
         identity_address: SocketAddr,
         owner: PrincipalId,
+        public_origin: &str,
     ) -> Result<Self, ManagementError> {
         let observer = HostObserver::open(root)?;
         if observer.host_id() != host_id {
             return Err(ManagementError::HostMismatch);
         }
+        let origin = routines::validate_origin(public_origin)?;
         Ok(Self {
             assets: None,
             state: Arc::new(ManagementState {
                 observer,
                 identity: identity::IdentityClient::new(identity_address)?,
                 owner,
+                routines: HostRoutineControl::open(root, host_id, owner.as_uuid())?,
+                origin,
             }),
         })
     }
@@ -102,6 +114,11 @@ impl ManagementApi {
             .route("/v1/host/access", get(access))
             .route("/v1/host", get(observe))
             .route("/v1/host/reviews/{request_id}", get(review_detail))
+            .route(
+                "/v1/host/routines/{routine_id}/enabled",
+                axum::routing::post(routines::set_enabled),
+            )
+            .layer(DefaultBodyLimit::max(4096))
             .route(
                 "/v1/{*path}",
                 axum::routing::any(|| async { StatusCode::NOT_FOUND }),
