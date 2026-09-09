@@ -164,6 +164,7 @@ async fn real_passkey_owner_is_required_and_outages_do_not_become_logout() {
     let snapshot: Value = response.json().await.expect("snapshot");
     assert_eq!(snapshot["host_id"], id.to_string());
     assert_eq!(snapshot["agents"], json!([]));
+    check_paired_browser_access(&client, &database, identity, &url, owner).await;
     assert!(!root.join("absent-model").exists());
     assert!(!root.join("absent-credentials").exists());
 
@@ -185,6 +186,53 @@ async fn real_passkey_owner_is_required_and_outages_do_not_become_logout() {
     task.await
         .expect("management task")
         .expect("management stop");
+}
+
+async fn check_paired_browser_access(
+    client: &Client,
+    database: &std::path::Path,
+    identity: std::net::SocketAddr,
+    management_url: &str,
+    owner: PrincipalId,
+) {
+    let sessions = renoa_control::BrowserSessions::open(database).expect("pairing issuer");
+    for (principal, expected) in [
+        (owner, StatusCode::OK),
+        (
+            PrincipalId::from_uuid(Uuid::new_v4()),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let token = sessions
+            .create_pairing(principal, SystemTime::now() + Duration::from_mins(30))
+            .await
+            .expect("owner pairing code");
+        let paired = client
+            .post(format!("http://{identity}/v1/identity/pair"))
+            .header("origin", "http://localhost")
+            .json(&json!({"pairingToken":token,"browserNonce":"78".repeat(32)}))
+            .send()
+            .await
+            .expect("pair browser")
+            .error_for_status()
+            .expect("paired");
+        let cookie = paired.headers()["set-cookie"]
+            .to_str()
+            .expect("cookie")
+            .split(';')
+            .next()
+            .expect("cookie pair");
+        assert_eq!(
+            client
+                .get(format!("{management_url}/v1/host"))
+                .header("cookie", cookie)
+                .send()
+                .await
+                .expect("paired Host observation")
+                .status(),
+            expected
+        );
+    }
 }
 
 async fn check_public_shell_and_private_detail(client: &Client, url: &str, cookie: &str) {

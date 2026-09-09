@@ -15,6 +15,36 @@ use webauthn_authenticator_rs::{WebauthnAuthenticator, softpasskey::SoftPasskey}
 
 const ORIGIN: &str = "http://localhost";
 
+#[tokio::test]
+async fn schema_ten_migration_preserves_existing_passkey_logins() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("identity.sqlite");
+    let principal = PrincipalId::from_uuid(Uuid::new_v4());
+    let (client, server, cookie, verification) = register_browser(&path, principal).await;
+    server.stop().await;
+    let db = rusqlite::Connection::open(&path).expect("legacy fixture");
+    db.execute_batch("BEGIN;
+        ALTER TABLE browser_sessions RENAME TO current_sessions;
+        CREATE TABLE browser_sessions (
+            token_hash BLOB PRIMARY KEY CHECK(length(token_hash)=32),
+            credential_id BLOB NOT NULL REFERENCES passkeys(credential_id) ON DELETE CASCADE,
+            expires_at_ms INTEGER NOT NULL
+        );
+        INSERT INTO browser_sessions SELECT token_hash,credential_id,expires_at_ms FROM current_sessions;
+        DROP TABLE current_sessions;
+        DROP TABLE browser_pairings;
+        PRAGMA user_version=10;
+        COMMIT;").expect("schema 10 fixture");
+    let server = Server::start(&path).await;
+    assert_restored_browser(&client, &server, &cookie, principal, verification).await;
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .expect("version"),
+        11
+    );
+    server.stop().await;
+}
+
 struct Server {
     url: String,
     cancel: CancellationToken,

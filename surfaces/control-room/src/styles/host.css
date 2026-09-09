@@ -64,6 +64,7 @@
 .host-footer summary { cursor: pointer; }
 .host-login, .host-loading { margin-top: clamp(80px, 15vh, 160px); }
 .host-login form { margin: 45px 0 20px; }
+.host-login-methods { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 24px; }
 .host-primary { display: inline-flex; align-items: center; gap: 18px; background: #34472b; color: white !important; border: 0; padding: 15px 22px; }
 .host-primary:hover { background: #26371e; }
 .host-token { display: block; max-width: 430px; margin-bottom: 22px; font-size: 15px; }

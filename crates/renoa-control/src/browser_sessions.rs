@@ -11,7 +11,7 @@ use renoa_protocol::{PrincipalId, SurfaceRef};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{
-    ConnectionTicket, ControlError,
+    BrowserPairingToken, ConnectionTicket, ControlError,
     browser_identity::TicketGrant,
     browser_ticket_store::insert_ticket,
     identity::BrowserSessionToken,
@@ -62,10 +62,46 @@ impl BrowserSessions {
         })?;
         let db = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(sqlite_error)?;
-        db.prepare("SELECT token_hash, credential_id, expires_at_ms FROM browser_sessions")
-            .map_err(sqlite_error)?;
+        db.prepare(
+            "SELECT token_hash, principal_id, credential_id, expires_at_ms FROM browser_sessions",
+        )
+        .map_err(sqlite_error)?;
         Ok(Self {
             path: Arc::new(path),
+        })
+    }
+
+    /// Creates a one-use browser pairing grant through trusted local administration.
+    /// # Errors
+    /// Returns storage, clock, or random-source failures. The database must already exist.
+    pub async fn create_pairing(
+        &self,
+        principal: PrincipalId,
+        expires_at: SystemTime,
+    ) -> Result<BrowserPairingToken, ControlError> {
+        crate::browser_pairing_store::create(Arc::clone(&self.path), principal, expires_at).await
+    }
+
+    pub(crate) async fn pair(
+        &self,
+        token: BrowserPairingToken,
+        nonce: String,
+        now: SystemTime,
+    ) -> Result<BrowserSession, ControlError> {
+        let session = token
+            .session_for(&nonce)
+            .ok_or_else(ControlError::authentication_failed)?;
+        let (principal, expires_at_ms) = crate::browser_pairing_store::redeem(
+            Arc::clone(&self.path),
+            token,
+            session.clone(),
+            now,
+        )
+        .await?;
+        Ok(BrowserSession {
+            principal,
+            token: session,
+            expires_at_ms,
         })
     }
 
@@ -95,9 +131,10 @@ impl BrowserSessions {
                 .map_err(sqlite_error)?;
             let found: Option<(String, i64)> = tx
                 .query_row(
-                    "SELECT p.principal_id, s.expires_at_ms FROM browser_sessions s
-                 JOIN passkeys p ON p.credential_id=s.credential_id
-                 WHERE s.token_hash=?1 AND s.expires_at_ms>?2",
+                    "SELECT s.principal_id, s.expires_at_ms FROM browser_sessions s
+                 LEFT JOIN passkeys p ON p.credential_id=s.credential_id
+                 WHERE s.token_hash=?1 AND s.expires_at_ms>?2
+                 AND (s.credential_id IS NULL OR p.principal_id=s.principal_id)",
                     params![hash.as_slice(), now_ms],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
@@ -152,8 +189,7 @@ impl BrowserSessions {
         blocking(move || {
             existing_connection(&path)?
                 .execute(
-                    "DELETE FROM browser_sessions WHERE credential_id IN
-                (SELECT credential_id FROM passkeys WHERE principal_id=?1)",
+                    "DELETE FROM browser_sessions WHERE principal_id=?1",
                     [principal.to_string()],
                 )
                 .map_err(sqlite_error)?;
@@ -185,8 +221,9 @@ impl BrowserSessions {
             let mut db = existing_connection(&path)?;
             let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sqlite_error)?;
             // Recheck inside issuance transaction so logout cannot race a new admission.
-            let principal: Option<String> = tx.query_row("SELECT p.principal_id FROM browser_sessions s
-                JOIN passkeys p ON p.credential_id=s.credential_id WHERE s.token_hash=?1 AND s.expires_at_ms>?2",
+            let principal: Option<String> = tx.query_row("SELECT s.principal_id FROM browser_sessions s
+                LEFT JOIN passkeys p ON p.credential_id=s.credential_id WHERE s.token_hash=?1 AND s.expires_at_ms>?2
+                AND (s.credential_id IS NULL OR p.principal_id=s.principal_id)",
                 params![hash.as_slice(), now_ms], |r| r.get(0)).optional().map_err(sqlite_error)?;
             let Some(principal) = principal else { return Ok(None) };
             tx.execute("DELETE FROM browser_connection_tickets WHERE expires_at_ms<=?1", [now_ms]).map_err(sqlite_error)?;
@@ -197,7 +234,7 @@ impl BrowserSessions {
     }
 }
 
-fn existing_connection(path: &Path) -> Result<Connection, ControlError> {
+pub(crate) fn existing_connection(path: &Path) -> Result<Connection, ControlError> {
     let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
         .map_err(sqlite_error)?;
     db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;")
@@ -207,6 +244,7 @@ fn existing_connection(path: &Path) -> Result<Connection, ControlError> {
 
 pub(crate) fn insert_session(
     db: &Connection,
+    principal: PrincipalId,
     credential: &[u8],
     grant: &TicketGrant,
 ) -> Result<(), ControlError> {
@@ -221,8 +259,8 @@ pub(crate) fn insert_session(
     )
     .map_err(sqlite_error)?;
     db.execute(
-        "INSERT INTO browser_sessions(token_hash,credential_id,expires_at_ms) VALUES(?1,?2,?3)",
-        params![hash.as_slice(), credential, expiry],
+        "INSERT INTO browser_sessions(token_hash,principal_id,credential_id,expires_at_ms) VALUES(?1,?2,?3,?4)",
+        params![hash.as_slice(), principal.to_string(), credential, expiry],
     )
     .map_err(sqlite_error)?;
     Ok(())

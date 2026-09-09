@@ -20,14 +20,19 @@ use uuid::Uuid;
 const USAGE: &str = "usage:
   renoa-coordinator serve <database-path> <port> <passkey-rp-id> <passkey-origin>
   renoa-coordinator bootstrap-passkey <database-path> <principal-id>
+  renoa-coordinator pair-browser <database-path> <principal-id>
   renoa-coordinator revoke-browser-logins <database-path> <principal-id>
   renoa-coordinator enroll-surface <database-path> <principal-id> <surface>
   renoa-coordinator enroll-node <database-path> <node-id>
   renoa-coordinator create-task <database-path> <task-id> <principal-id> <node-id> <target>";
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
-const PASSKEY_BOOTSTRAP_LIFETIME: Duration = Duration::from_mins(30);
+const BROWSER_SETUP_LIFETIME: Duration = Duration::from_mins(30);
 
 enum Operation {
+    PairBrowser {
+        database: PathBuf,
+        principal_id: PrincipalId,
+    },
     Serve {
         database: PathBuf,
         port: u16,
@@ -67,6 +72,15 @@ impl Operation {
             .ok_or_else(|| USAGE.to_owned())?;
 
         match operation.to_str() {
+            Some("pair-browser") => {
+                let principal_id =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
+                no_more_arguments(arguments)?;
+                Ok(Self::PairBrowser {
+                    database,
+                    principal_id,
+                })
+            }
             Some("revoke-browser-logins") => {
                 let principal_id =
                     PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
@@ -204,6 +218,25 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), String> {
     match Operation::parse(env::args_os())? {
+        Operation::PairBrowser {
+            database,
+            principal_id,
+        } => {
+            let expires_at = SystemTime::now() + BROWSER_SETUP_LIFETIME;
+            let token = renoa_control::BrowserSessions::open(database)
+                .map_err(|error| error.to_string())?
+                .create_pairing(principal_id, expires_at)
+                .await
+                .map_err(|error| error.to_string())?;
+            let expires_at_ms = u64::try_from(
+                expires_at
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_millis(),
+            )
+            .map_err(|error| error.to_string())?;
+            write_json(&serde_json::json!({"token":token,"expiresAtMs":expires_at_ms}))
+        }
         Operation::Serve {
             database,
             port,
@@ -285,7 +318,7 @@ async fn create_passkey_bootstrap(
     principal_id: PrincipalId,
 ) -> Result<(), String> {
     let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
-    let expires_at = SystemTime::now() + PASSKEY_BOOTSTRAP_LIFETIME;
+    let expires_at = SystemTime::now() + BROWSER_SETUP_LIFETIME;
     let token = coordinator
         .create_passkey_bootstrap(principal_id, expires_at)
         .await

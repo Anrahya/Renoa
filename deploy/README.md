@@ -60,9 +60,9 @@ human principal enrolled for this Host's panel. Never infer ownership from the
 first legacy RCP task. Keep that principal and configuration in the Host's backup.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
-the new coordinator binary. It upgrades the identity database to schema 10 and
+the new coordinator binary. It upgrades the identity database to schema 11 and
 keeps passkeys and hashed remembered sessions there. A pre-upgrade binary cannot
-open schema 10; rollback requires the matching identity backup as well as the old
+open schema 11; rollback requires the matching identity backup as well as the old
 binary. Install `renoa-management.service`, then reload systemd, restart the
 coordinator and enable the management service. The example runs as the existing
 Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
@@ -83,14 +83,17 @@ remain plaintext and loopback-only behind the same HTTPS origin. Cloudflare's
 [tunnel configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/)
 replaces the full configuration, so read and preserve the current rules first.
 
-The panel's initial passkey enrollment uses `bootstrap-passkey` below with the
-configured owner principal. Capture its short-lived output in an owner-only file;
-enter the token at `https://renoa.live` → first-time setup, then create a passkey.
+The panel defaults to direct browser pairing. Use `pair-browser` in place of
+`bootstrap-passkey` in the systemd wrapper below, with the configured owner
+principal. Capture its 30-minute output in an owner-only file; enter the code at
+`https://renoa.live` → “Pair this browser.” For a phone or another browser with a
+passkey provider, use `bootstrap-passkey` and “Set up a passkey on this device.”
+The two codes authorize different operations and cannot substitute for each other.
 Do not put bootstrap tokens in URLs, Git, logs or chat. Each browser signs in once;
 the `__Host-renoa_session` cookie is Secure, HTTP-only, same-site and remembered
 for 180 days, renewed after half that lifetime during use. The server stores only
 its hash. Ordinary restarts and source-IP changes do not invalidate it. A revoked,
-expired or deleted cookie requires a passkey again. The existing Slack/Telegram
+expired or deleted cookie requires another pairing code or a passkey sign-in. The existing Slack/Telegram
 credentials are independent and require no new enrollment for this panel.
 
 To revoke all remembered browser sessions for the owner through trusted local
@@ -414,6 +417,12 @@ The browser bootstrap has a 30-minute window for first-time setup and is consume
 when a registration ceremony starts. That token is entered only into the same-origin browser passkey
 registration flow. The service unit pins the WebAuthn relying party to
 `renoa.live` and its exact `https://renoa.live` origin.
+
+For direct browser pairing, run the same wrapper with `pair-browser` instead of
+`bootstrap-passkey`. Pairing requires existing, migrated identity storage. A code
+admits one browser; a retry from that same page can recover a lost response without
+creating another login. Keep the page open when retrying. Revoked/logged-out sessions
+cannot be restored by replaying their pairing code.
 
 Use the same wrapper to enroll the execution node and create its task binding:
 

@@ -3,6 +3,8 @@
 mod browser_identity;
 mod browser_identity_http;
 mod browser_identity_store;
+mod browser_pairing_store;
+mod browser_session_schema;
 mod browser_sessions;
 mod browser_sessions_http;
 mod browser_ticket_store;
@@ -28,7 +30,8 @@ mod wire;
 pub use browser_sessions::{BrowserSession, BrowserSessions};
 pub use coordinator::{ControlError, Coordinator, TaskSpec};
 pub use identity::{
-    ConnectionTicket, DeviceCredential, DeviceCredentials, EnrollmentToken, PasskeyBootstrapToken,
+    BrowserPairingToken, ConnectionTicket, DeviceCredential, DeviceCredentials, EnrollmentToken,
+    PasskeyBootstrapToken,
 };
 pub use ids::{DeviceId, NodeId, TaskEventId, TaskId};
 pub use json_ws::{ClientMessage, JSON_WS_VERSION, ServerMessage};

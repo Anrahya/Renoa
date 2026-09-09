@@ -186,7 +186,7 @@ orchestrator's transcript. Add those contracts only with their execution consume
 ### Personal control-panel boundary
 
 The first browser consumer targets the existing shared Host through a separate
-same-origin HTTPS management API. Reuse passkey verification while keeping the
+same-origin HTTPS management API. Reuse direct browser pairing and passkey verification while keeping the
 management session separate from RCP's one-use WebSocket tickets. Bind the verified
 principal to the configured Host explicitly. Management sessions must be revocable;
 cookies must be secure and HTTP-only, and state changes must check request origin
@@ -221,6 +221,10 @@ binds the login. The lifetime is not a promise of permanent access: explicit
 revocation, cookie deletion, expiry or loss of identity storage requires signing in.
 Different browsers enroll/sign in once each. Slack and other native surfaces keep
 their existing credentials; they do not run browser passkey ceremonies.
+Direct Host-code pairing is the default for browsers without a passkey provider;
+passkeys remain optional. Both authenticate the same configured human owner. Their
+admission and retry rules live in [identity-v0.md](identity-v0.md), independently
+of Host assembly and surface adapters.
 
 After authenticated observation, the next browser mutation is pausing/resuming
 an existing automation through the routine domain operation. Expose that operation

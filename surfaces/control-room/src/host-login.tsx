@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { Fingerprint, ArrowRight } from "@phosphor-icons/react";
 import { authenticatePasskey, registerPasskey } from "./passkeys";
+import { pairBrowser } from "./browser-pairing";
 
 export function HostLogin({ refresh, forbidden }: { refresh: () => void; forbidden: boolean }) {
-  const [register, setRegister] = useState(false);
+  const [method, setMethod] = useState<"pair" | "passkey" | "register">("pair");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -11,7 +12,8 @@ export function HostLogin({ refresh, forbidden }: { refresh: () => void; forbidd
     event.preventDefault();
     setBusy(true); setError(null);
     try {
-      if (register) await registerPasskey(token.trim());
+      if (method === "pair") await pairBrowser(token.trim());
+      else if (method === "register") await registerPasskey(token.trim());
       else {
         const access = await fetch("/v1/host/access", { cache: "no-store", credentials: "same-origin" });
         if (!access.ok) throw new Error("The Host is unavailable. Try again when it returns.");
@@ -26,18 +28,21 @@ export function HostLogin({ refresh, forbidden }: { refresh: () => void; forbidd
   }
   return <main className="host-login host-content">
     <p className="host-kicker">Your system, within reach</p>
-    <h1>{register ? "Make yourself at home." : "Welcome back."}</h1>
+    <h1>{method === "passkey" ? "Welcome back." : "Make yourself at home."}</h1>
     <p className="host-intro">One Host. Every agent. A place to see the work and what comes next.</p>
     <form onSubmit={event => void signIn(event)}>
-      {forbidden && <p className="host-notice">Your current login belongs to another owner. Sign in with this Host’s passkey.</p>}
-      {register && <label className="host-token">One-time setup token<input type="password" autoComplete="off" required value={token}
+      {forbidden && <p className="host-notice">Your current login belongs to another owner. Pair or sign in as this Host’s owner.</p>}
+      {method !== "passkey" && <label className="host-token">{method === "pair" ? "One-time pairing code" : "Passkey setup code"}<input type="password" autoComplete="off" required value={token}
         onChange={event => setToken(event.target.value)} placeholder="From your Host’s setup command" /></label>}
       {error && <p role="alert" className="host-error">{error}</p>}
       <button className="host-primary" type="submit" disabled={busy}><Fingerprint size={20} />
-        {busy ? "Waiting for your passkey…" : register ? "Create a passkey" : "Continue with passkey"}<ArrowRight size={18} /></button>
+        {busy ? (method === "pair" ? "Pairing this browser…" : "Waiting for your passkey…")
+          : method === "pair" ? "Pair this browser" : method === "register" ? "Create a passkey" : "Continue with passkey"}<ArrowRight size={18} /></button>
     </form>
     <p className="host-caption">This browser stays signed in across visits and connection changes.</p>
-    <button className="host-link" disabled={busy} onClick={() => { setRegister(!register); setError(null); }}>
-      {register ? "I already have a passkey" : "First time here? Set up your passkey"}</button>
+    <div className="host-login-methods">{(["pair", "passkey", "register"] as const).filter(value => value !== method).map(value =>
+      <button key={value} className="host-link" disabled={busy} onClick={() => { setMethod(value); setError(null); setToken(""); }}>
+        {value === "pair" ? "Use a Host pairing code" : value === "passkey" ? "Sign in with a passkey" : "Set up a passkey on this device"}
+      </button>)}</div>
   </main>;
 }

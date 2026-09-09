@@ -56,7 +56,7 @@ impl ControlStore {
                 &surface,
                 ticket_expires_at_ms,
             )?;
-            insert_session(&transaction, &credential_id, &grant)?;
+            insert_session(&transaction, principal_id, &credential_id, &grant)?;
             transaction.commit().map_err(sqlite_error)
         })
         .await
@@ -123,7 +123,7 @@ impl ControlStore {
                 &surface,
                 ticket_expires_at_ms,
             )?;
-            insert_session(&transaction, &credential_id, &grant)?;
+            insert_session(&transaction, principal_id, &credential_id, &grant)?;
             transaction.commit().map_err(sqlite_error)
         })
         .await

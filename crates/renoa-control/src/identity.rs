@@ -43,6 +43,20 @@ secret_type!(DeviceCredential, b"renoa device credential v1\0");
 secret_type!(PasskeyBootstrapToken, b"renoa passkey bootstrap v1\0");
 secret_type!(ConnectionTicket, b"renoa browser connection ticket v1\0");
 secret_type!(BrowserSessionToken, b"renoa browser session v1\0");
+secret_type!(BrowserPairingToken, b"renoa browser pairing v1\0");
+
+impl BrowserPairingToken {
+    // A retry from the same browser recreates its cookie without storing plaintext.
+    // A different nonce cannot redeem an already-claimed pairing grant.
+    pub(crate) fn session_for(&self, nonce: &str) -> Option<BrowserSessionToken> {
+        self.digest()?;
+        secret_digest(b"renoa browser pairing nonce v1\0", nonce)?;
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.0.as_bytes());
+        let proof = format!("renoa paired browser session v1\0{nonce}");
+        let tag = ring::hmac::sign(&key, proof.as_bytes());
+        Some(BrowserSessionToken(encode_secret(tag.as_ref())))
+    }
+}
 
 impl BrowserSessionToken {
     pub(crate) fn from_encoded(value: &str) -> Option<Self> {
@@ -68,12 +82,16 @@ fn random_secret() -> Result<String, ControlError> {
     getrandom::fill(&mut bytes).map_err(|error| {
         ControlError::store(format!("secure random generation failed: {error}"))
     })?;
-    let mut encoded = String::with_capacity(SECRET_HEX_LENGTH);
+    Ok(encode_secret(&bytes))
+}
+
+fn encode_secret(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         encoded.push(char::from(HEX[usize::from(byte >> 4)]));
         encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
-    Ok(encoded)
+    encoded
 }
 
 fn secret_digest(domain: &[u8], secret: &str) -> Option<[u8; 32]> {

@@ -2111,6 +2111,7 @@ dependencies = [
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

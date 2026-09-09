@@ -45,8 +45,8 @@ RCP.
 
 ## Product outcome
 
-A person enrolls each native device once or authenticates a browser with a
-passkey. When they open any authorized
+A person enrolls each native device once or pairs/authenticates a browser using
+the identity mechanisms in `identity-v0.md`. When they open any authorized
 surface, they can discover their tasks, reconstruct each task from its last
 saved cursor, submit the next command, and observe work performed on the bound
 execution environment.

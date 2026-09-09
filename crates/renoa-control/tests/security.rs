@@ -125,7 +125,7 @@ mod security_behaviors {
                 |row| row.get::<_, bool>(0),
             )
             .expect("inspect credential relay table");
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         assert!(pending_table_exists);
         assert!(stream_table_exists);
         assert_eq!(browser_identity_tables, 5);

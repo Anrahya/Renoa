@@ -2,7 +2,7 @@ use std::{sync::Arc, time::SystemTime};
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
     routing::{get, post},
@@ -10,7 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ControlError,
+    BrowserPairingToken, ControlError,
     browser_identity::parse_surface,
     browser_identity_http::{error_response, secure_json},
     browser_sessions::CLEAR_COOKIE,
@@ -23,6 +23,36 @@ pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
         .route("/v1/identity/session", get(session))
         .route("/v1/identity/logout", post(logout))
         .route("/v1/identity/connection-ticket", post(ticket))
+        .route(
+            "/v1/identity/pair",
+            post(pair).layer(DefaultBodyLimit::max(4096)),
+        )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PairRequest {
+    pairing_token: BrowserPairingToken,
+    browser_nonce: String,
+}
+
+async fn pair(
+    State(state): State<Arc<CoordinatorState>>,
+    headers: HeaderMap,
+    Json(request): Json<PairRequest>,
+) -> Response {
+    if !same_origin(&state, &headers) {
+        return error_response(&ControlError::authentication_failed());
+    }
+    let now = SystemTime::now();
+    match state
+        .browser_sessions
+        .pair(request.pairing_token, request.browser_nonce, now)
+        .await
+    {
+        Ok(session) => session_response(&session, now),
+        Err(error) => error_response(&error),
+    }
 }
 
 #[derive(Serialize)]
@@ -34,22 +64,24 @@ struct Identity {
 async fn session(State(state): State<Arc<CoordinatorState>>, headers: HeaderMap) -> Response {
     let now = SystemTime::now();
     match state.browser_sessions.authenticate(&headers, now).await {
-        Ok(Some(session)) => {
-            let mut response = secure_json(
-                StatusCode::OK,
-                &Identity {
-                    principal_id: session.principal_id(),
-                },
-            );
-            match session.cookie(now) {
-                Ok(cookie) => {
-                    response.headers_mut().insert(header::SET_COOKIE, cookie);
-                    response
-                }
-                Err(error) => error_response(&error),
-            }
-        }
+        Ok(Some(session)) => session_response(&session, now),
         Ok(None) => error_response(&ControlError::authentication_failed()),
+        Err(error) => error_response(&error),
+    }
+}
+
+fn session_response(session: &crate::BrowserSession, now: SystemTime) -> Response {
+    let mut response = secure_json(
+        StatusCode::OK,
+        &Identity {
+            principal_id: session.principal_id(),
+        },
+    );
+    match session.cookie(now) {
+        Ok(cookie) => {
+            response.headers_mut().insert(header::SET_COOKIE, cookie);
+            response
+        }
         Err(error) => error_response(&error),
     }
 }
