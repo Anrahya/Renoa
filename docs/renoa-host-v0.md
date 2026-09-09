@@ -1359,6 +1359,16 @@ retrieves sending, published (review ID and URL), suppressed or attention-requir
 state. Individual comment IDs and conversational PR replies remain follow-up
 work; publication currently creates a single GitHub review with inline comments.
 
+GitHub's comment-body boundary is an outbound projection rule, not a report
+validation limit. Ordinary bodies remain unchanged. A rendered body exceeding
+65,536 characters becomes an explicitly labelled, escaped preview identifying
+the Host request and finding number where applicable. The complete structured
+report remains available through Host management, including fields and evidence
+not displayed in GitHub. The exact preview and request marker are persisted
+before POST and used for acknowledgement reconciliation. This handles the
+[observed GitHub body-size rejection](https://github.com/actions/dependency-review-action/issues/730)
+without reintroducing arbitrary per-field or aggregate review-context cutoffs.
+
 `{"action":"run","request_id":"<uuid>"}` through `github-review` retrieves the
 prepared snapshot or immutable outcome (reviewed, superseded, skipped, incomplete)
 without GitHub credentials or inference. Recoverable preparation/API failures

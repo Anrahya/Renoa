@@ -11,6 +11,7 @@ mod failure_publication;
 mod git_execution;
 mod jobs;
 mod publication;
+mod publication_projection;
 mod recovery;
 mod trace_and_skills;
 mod worker;

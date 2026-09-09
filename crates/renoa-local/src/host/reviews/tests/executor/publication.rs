@@ -14,6 +14,21 @@ pub(super) fn respond(headers: &str, body: &[u8], state: &mut ApiState) -> (u16,
             return (500, "{}".to_owned());
         }
         let body: serde_json::Value = serde_json::from_slice(body).expect("publication");
+        if std::iter::once(&body["body"])
+            .chain(
+                body["comments"]
+                    .as_array()
+                    .expect("comments")
+                    .iter()
+                    .map(|c| &c["body"]),
+            )
+            .any(|text| text.as_str().expect("text").chars().count() > 65_536)
+        {
+            return (
+                422,
+                r#"{"message":"Body is too long (maximum is 65536 characters)"}"#.to_owned(),
+            );
+        }
         assert_eq!(body["event"], "COMMENT");
         assert_eq!(
             body["commit_id"],
@@ -33,7 +48,37 @@ pub(super) fn respond(headers: &str, body: &[u8], state: &mut ApiState) -> (u16,
         }
         return (200, review.to_string());
     }
-    (200, serde_json::to_string(&state.reviews).expect("reviews"))
+    let path = headers
+        .lines()
+        .next()
+        .expect("request")
+        .split_whitespace()
+        .nth(1)
+        .expect("path");
+    let url = Url::parse(&format!("http://fixture{path}")).expect("review page URL");
+    assert!(
+        url.query_pairs()
+            .any(|(key, value)| key == "per_page" && value == "1")
+    );
+    let page: usize = url
+        .query_pairs()
+        .find(|(key, _)| key == "page")
+        .expect("page")
+        .1
+        .parse()
+        .expect("number");
+    (
+        200,
+        serde_json::to_string(
+            &state
+                .reviews
+                .iter()
+                .skip(page - 1)
+                .take(1)
+                .collect::<Vec<_>>(),
+        )
+        .expect("reviews"),
+    )
 }
 
 pub(super) async fn publish(

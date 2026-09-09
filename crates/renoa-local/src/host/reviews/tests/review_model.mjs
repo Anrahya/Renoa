@@ -54,6 +54,10 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
     if(mode==="anchor") finding.line=99;
     if(mode==="repair") finding.evidence=[finding.evidence];
     const report={findings:[finding],limitations:[]};
+    if(mode==="large-report") {
+      finding.trigger += " <&>🦀".repeat(14000);
+      report.limitations.push("Unverified detail <&>🦀 ".repeat(4000));
+    }
     if(mode==="duplicate") report.findings.push(finding);
     if(!validation && !prompt.context.base_instructions["AGENTS.md"].includes("Trusted base convention")) throw Error("base instructions not provided");
     complete([{type:"text",text:JSON.stringify(report)}]);
