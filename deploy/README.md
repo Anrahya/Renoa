@@ -66,14 +66,16 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-The routine control API requires Host schema 24. Stop all readers/writers of the
-shared Host catalog, including management, Slack, Telegram and GitHub workers,
+The routine control API requires Host schema 24; shared specialist tool selection
+requires schema 25. The current release includes both. Stop all readers/writers
+of the shared Host catalog, including management, Slack, Telegram and GitHub workers,
 and back it up with SQLite's backup API. Build/install all Host consumers from the
 same revision, then start a normal Host process to apply the catalog migration
 before restarting management. Observation and owner-control modules deliberately
 do not migrate storage themselves. The migration preserves schedules, admitted
-runs, results and agent receipts, and adds owner operation receipts. Keep the
-previous binaries and matching database backup together for rollback. Browser
+runs, results and agent receipts, and adds owner operation receipts and revisioned
+tool selections. Keep the previous binaries and matching database backup together
+for rollback. Browser
 login storage is separate and does not need to be reset for this Host migration.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
@@ -113,10 +115,12 @@ its hash. Ordinary restarts and source-IP changes do not invalidate it. A revoke
 expired or deleted cookie requires another pairing code or a passkey sign-in. The existing Slack/Telegram
 credentials are independent and require no new enrollment for this panel.
 
-To revoke all remembered browser sessions for the owner through trusted local
-administration, run `renoa-coordinator revoke-browser-logins <database-path>
+To revoke all remembered browser sessions and existing pairing codes for the owner
+through trusted local administration, run `renoa-coordinator revoke-browser-logins <database-path>
 <principal-uuid>` as the identity store's OS owner using the same systemd wrapper
-as enrollment. The panel's sign-out revokes only its current browser. Neither
+as enrollment. Revocation includes unused codes and commits atomically with
+session removal; fresh codes can be issued afterward. Other owners are unaffected.
+The panel's sign-out revokes only its current browser. Neither
 operation revokes native devices, an already-open RCP WebSocket, or an already
 issued transport ticket; unused tickets expire after 60 seconds.
 

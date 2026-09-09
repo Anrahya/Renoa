@@ -150,8 +150,13 @@ reference their credential and stop working if that credential disappears. Schem
 `GET /v1/identity/session` validates and renews a login. Same-origin
 `POST /v1/identity/connection-ticket` issues a fresh one-use transport ticket.
 `POST /v1/identity/logout` revokes only the current browser, while local
-`revoke-browser-logins <database> <principal-id>` revokes all remembered logins for
-that principal. Existing WebSockets/native device credentials are separate.
+`revoke-browser-logins <database> <principal-id>` atomically revokes all remembered
+logins and existing pairing codes for that principal, including codes not yet
+claimed. Redemption and revocation serialize through the same SQLite write
+transaction: an earlier redemption loses its session, and a later redemption
+finds no grant. Another principal is unaffected. Trusted local administration
+can issue new codes afterward for recovery. Existing WebSockets/native device
+credentials and registered passkeys are separate.
 Storage outages remain errors rather than being classified as invalid credentials.
 
 ## Durable state and failure rules

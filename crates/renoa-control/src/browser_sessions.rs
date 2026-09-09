@@ -181,19 +181,31 @@ impl BrowserSessions {
         .await
     }
 
-    /// Revokes all remembered browser logins for an owner through trusted local administration.
+    /// Revokes an owner's remembered logins and existing pairing codes atomically.
+    /// Trusted local administration can issue fresh codes afterward.
     /// # Errors
     /// Returns a storage failure.
     pub async fn revoke(&self, principal: PrincipalId) -> Result<(), ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
-            existing_connection(&path)?
-                .execute(
-                    "DELETE FROM browser_sessions WHERE principal_id=?1",
-                    [principal.to_string()],
-                )
+            let mut db = existing_connection(&path)?;
+            let tx = db
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(sqlite_error)?;
-            Ok(())
+            let principal = principal.to_string();
+            // Pairing redemption takes the same write transaction: it either
+            // precedes this revocation and loses its session, or finds no grant.
+            tx.execute(
+                "DELETE FROM browser_sessions WHERE principal_id=?1",
+                [&principal],
+            )
+            .map_err(sqlite_error)?;
+            tx.execute(
+                "DELETE FROM browser_pairings WHERE principal_id=?1",
+                [&principal],
+            )
+            .map_err(sqlite_error)?;
+            tx.commit().map_err(sqlite_error)
         })
         .await
     }

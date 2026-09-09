@@ -237,3 +237,135 @@ async fn expired_or_wrong_authority_codes_cannot_pair_and_failures_do_not_consum
     );
     server.close().await;
 }
+
+#[tokio::test]
+async fn revocation_invalidates_outstanding_codes_for_only_that_owner_across_restart() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("identity.sqlite");
+    let server = Server::start(&path).await;
+    let sessions = BrowserSessions::open(&path).expect("sessions");
+    let owner = PrincipalId::from_uuid(Uuid::new_v4());
+    let other = PrincipalId::from_uuid(Uuid::new_v4());
+    let expiry = SystemTime::now() + Duration::from_mins(30);
+    let client = Client::new();
+    let mut browsers = Vec::new();
+    for principal in [owner, other] {
+        let claimed = sessions
+            .create_pairing(principal, expiry)
+            .await
+            .expect("claimed grant");
+        let pending = sessions
+            .create_pairing(principal, expiry)
+            .await
+            .expect("unused grant");
+        let claimed = json!({"pairingToken":claimed,"browserNonce":"11".repeat(32)});
+        let pending = json!({"pairingToken":pending,"browserNonce":"22".repeat(32)});
+        let response = server.pair(&client, &claimed).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookie = response.headers()["set-cookie"]
+            .to_str()
+            .expect("cookie")
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_owned();
+        browsers.push((principal, claimed, pending, cookie));
+    }
+    sessions
+        .revoke(owner)
+        .await
+        .expect("revoke existing authority");
+    server.close().await;
+    let server = Server::start(&path).await;
+    for (principal, claimed, pending, cookie) in browsers {
+        let expected = if principal == owner {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(
+            server.pair(&client, &pending).await.status(),
+            expected,
+            "unused code for {principal}"
+        );
+        assert_eq!(
+            server.pair(&client, &claimed).await.status(),
+            expected,
+            "claimed-code replay for {principal}"
+        );
+        assert_eq!(
+            client
+                .get(format!("{}/v1/identity/session", server.url))
+                .header("cookie", cookie)
+                .send()
+                .await
+                .expect("existing login")
+                .status(),
+            expected
+        );
+    }
+    sessions.revoke(owner).await.expect("repeated revocation");
+    let fresh = sessions
+        .create_pairing(owner, expiry)
+        .await
+        .expect("new recovery grant");
+    assert_eq!(
+        server
+            .pair(
+                &client,
+                &json!({"pairingToken":fresh,"browserNonce":"33".repeat(32)})
+            )
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    server.close().await;
+}
+
+#[tokio::test]
+async fn failed_revocation_rolls_back_both_sessions_and_pairing_codes() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("identity.sqlite");
+    let server = Server::start(&path).await;
+    let sessions = BrowserSessions::open(&path).expect("sessions");
+    let owner = PrincipalId::from_uuid(Uuid::new_v4());
+    let expiry = SystemTime::now() + Duration::from_mins(30);
+    let claimed = sessions
+        .create_pairing(owner, expiry)
+        .await
+        .expect("claimed grant");
+    let pending = sessions
+        .create_pairing(owner, expiry)
+        .await
+        .expect("unused grant");
+    let claimed = json!({"pairingToken":claimed,"browserNonce":"44".repeat(32)});
+    let pending = json!({"pairingToken":pending,"browserNonce":"55".repeat(32)});
+    let client = Client::new();
+    assert_eq!(
+        server.pair(&client, &claimed).await.status(),
+        StatusCode::OK
+    );
+    let db = rusqlite::Connection::open(&path).expect("fault injection");
+    db.execute_batch("CREATE TRIGGER fail_revoke BEFORE DELETE ON browser_pairings BEGIN SELECT RAISE(ABORT,'unavailable'); END;")
+        .expect("fail second write");
+    assert!(sessions.revoke(owner).await.is_err());
+    // The existing session and the unused code both survive the failed transaction.
+    assert_eq!(
+        server.pair(&client, &claimed).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        server.pair(&client, &pending).await.status(),
+        StatusCode::OK
+    );
+    db.execute_batch("DROP TRIGGER fail_revoke;")
+        .expect("recover storage");
+    sessions.revoke(owner).await.expect("retry revocation");
+    for body in [&claimed, &pending] {
+        assert_eq!(
+            server.pair(&client, body).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    server.close().await;
+}
