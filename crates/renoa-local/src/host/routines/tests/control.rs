@@ -309,3 +309,37 @@ async fn a_missing_catalog_is_not_recreated_by_an_owner_write() {
     );
     assert!(!h.config.database.exists());
 }
+
+#[tokio::test]
+async fn a_fresh_owner_operation_checks_host_identity_before_receipt_lookup_or_mutation() {
+    let (_d, h, parent, child) = fixture().await;
+    let routine = create(&h, parent, spec(child)).await;
+    let (control, owner) = controls(&h).await;
+    let db = catalog::open_verified(&h.config.database).expect("catalog");
+    db.execute(
+        "UPDATE host_identity SET host_id=?1",
+        [Uuid::new_v4().to_string()],
+    )
+    .expect("replacement Host");
+    let error = control
+        .set_enabled(owner, routine.id, command(1, false), 1_000)
+        .await
+        .expect_err("fresh operation must check identity before lookup returns None");
+    assert!(
+        error.to_string().contains("Host identity changed"),
+        "{error}"
+    );
+    assert_eq!(
+        h.routine(routine.id).await.expect("unchanged routine"),
+        routine
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM host_routine_owner_mutations",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .expect("receipts"),
+        0
+    );
+}

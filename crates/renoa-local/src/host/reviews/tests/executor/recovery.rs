@@ -104,7 +104,13 @@ async fn source_batches_complete_both_stages_and_oversized_batches_retain_the_fa
 
 #[tokio::test]
 async fn final_commit_failure_reuses_both_completed_model_stages() {
-    let (directory, host, id, api) = prepared("").await;
+    for mode in ["", "repair"] {
+        verify_final_commit_replay(mode).await;
+    }
+}
+
+async fn verify_final_commit_replay(mode: &str) {
+    let (directory, host, id, api) = prepared(mode).await;
     let db = catalog::open_verified(&host.config.database).expect("catalog");
     db.execute_batch("CREATE TRIGGER fail_review_result BEFORE UPDATE ON host_review_runs WHEN NEW.terminal=1 BEGIN SELECT RAISE(ABORT,'injected final result failure'); END;").expect("fault");
     assert!(execute(&host, id, &api).await.is_err());
@@ -113,6 +119,13 @@ async fn final_commit_failure_reuses_both_completed_model_stages() {
         Some(GitHubReviewRun::Prepared { .. })
     ));
     let calls = fs::read(directory.path().join("auth.sqlite.calls")).expect("calls");
+    assert_eq!(
+        calls
+            .split(|b| *b == b'\n')
+            .filter(|s| !s.is_empty())
+            .count(),
+        if mode == "repair" { 6 } else { 4 }
+    );
     fs::write(
         directory.path().join("model.mjs"),
         "throw Error('completed model stages must replay')",

@@ -1282,6 +1282,13 @@ remain stable. Recorded token usage includes summary responses; incomplete
 accounting remains unknown.
 
 Each stage is a durable command in `review-sessions/<request-id>/kernel.sqlite`.
+If a normally completed response violates the report schema, the Host returns
+the parser error as a new durable correction turn in the same session. It keeps
+the investigation and uses stable correction identities, so recovery replays
+settled corrections without redoing inference. Corrections remain subject to
+the review deadline and existing compaction; an identical invalid response
+repeated after feedback is reported as stalled. The schema stays strict and
+findings still require independent validation before publication.
 Settled stages replay before model resolution. A final Host commit failure does
 not repeat completed inference. Unfinished read/model effects retain the kernel's
 safe-to-replay semantics; a crash may repeat unacknowledged inference and cost.

@@ -1,4 +1,3 @@
-use renoa_agent::StopReason;
 use renoa_kernel::SessionId;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -11,7 +10,7 @@ use super::{
     GitHubReviewError, GitHubReviewOutcome, GitHubReviewRequest, GitHubReviewRun,
     GitHubReviewSnapshot, catalog, findings, github::GitHub, reviewer, runs, store,
 };
-use crate::{LocalHost, LocalHostError, LocalSession, LocalTurnOutcome};
+use crate::{LocalHost, LocalHostError, LocalSession};
 
 enum PreparedReview {
     Ready {
@@ -283,67 +282,32 @@ impl LocalHost {
         let prompt = serde_json::to_string(
             &serde_json::json!({"task":"Investigate defects introduced in this PR. Inspect callers, tests and surrounding source as needed. Complete the investigation, then return candidate findings in the required JSON schema.","base_sha":snapshot.base_sha,"head_sha":snapshot.head_sha,"context":snapshot.context.prompt()?}),
         )?;
-        let candidate = self
-            .review_stage(&session, snapshot, tools, false, prompt, &cancel)
-            .await?;
-        let candidates = match candidate {
-            LocalTurnOutcome::Completed {
-                output,
-                stop_reason: StopReason::Stop,
-            } => match findings::parse(&output) {
-                Ok(report) => report,
-                Err(_) => {
-                    return Ok(incomplete(
-                        "Investigator did not return a valid review report.",
-                    ));
-                }
-            },
-            LocalTurnOutcome::Failed { reason } => {
-                return Ok(incomplete(&format!("Investigation failed: {reason}")));
-            }
-            _ => {
-                return Ok(incomplete(
-                    "Investigation stopped, failed or exhausted its budget; inspect the durable transcript.",
-                ));
-            }
+        let candidates = match self
+            .review_report(&session, snapshot, tools, false, prompt, &cancel)
+            .await?
+        {
+            super::stages::ReportStageResult::Complete(report) => report,
+            super::stages::ReportStageResult::Incomplete(reason) => return Ok(incomplete(&reason)),
         };
         let validation_prompt = serde_json::to_string(
             &serde_json::json!({"task":"Validate these candidates against pinned source, callers and tests. Independently reconstruct each trigger and seek a counterexample. Challenge the proposed correction as well as the defect: does it preserve durable identity, deadlines, ownership, permissions and crash recovery? Correct unsafe remedies or describe the required behavior without inventing an implementation. Calibrate severity to demonstrated impact and available recovery. Discard unsupported claims and duplicates. Investigate as needed, then return final findings JSON in the same schema. Do not add new findings.","candidates":candidates}),
         )?;
-        let validation = self
-            .review_stage(&session, snapshot, tools, true, validation_prompt, &cancel)
-            .await?;
-        let mut report = match validation {
-            LocalTurnOutcome::Completed {
-                output,
-                stop_reason: StopReason::Stop,
-            } => match findings::parse(&output) {
-                Ok(mut report) => {
-                    report.findings.retain(|finding| {
-                        candidates.findings.iter().any(|candidate| {
-                            candidate.path == finding.path
-                                && candidate.line == finding.line
-                                && candidate.side == finding.side
-                        })
-                    });
-                    report.limitations.extend(candidates.limitations);
-                    findings::validate(report, snapshot, tools, &cancel).await?
-                }
-                Err(_) => {
-                    return Ok(incomplete(
-                        "Validator did not return a valid bounded report.",
-                    ));
-                }
-            },
-            LocalTurnOutcome::Failed { reason } => {
-                return Ok(incomplete(&format!("Validation failed: {reason}")));
-            }
-            _ => {
-                return Ok(incomplete(
-                    "Validation stopped, failed or exhausted its budget; inspect the durable transcript.",
-                ));
-            }
+        let mut report = match self
+            .review_report(&session, snapshot, tools, true, validation_prompt, &cancel)
+            .await?
+        {
+            super::stages::ReportStageResult::Complete(report) => report,
+            super::stages::ReportStageResult::Incomplete(reason) => return Ok(incomplete(&reason)),
         };
+        report.findings.retain(|finding| {
+            candidates.findings.iter().any(|candidate| {
+                candidate.path == finding.path
+                    && candidate.line == finding.line
+                    && candidate.side == finding.side
+            })
+        });
+        report.limitations.extend(candidates.limitations);
+        let mut report = findings::validate(report, snapshot, tools, &cancel).await?;
         let history = session.history()?;
         if let Some(limitation) = snapshot.context.inventory_limitation(
             &snapshot.head_sha,
