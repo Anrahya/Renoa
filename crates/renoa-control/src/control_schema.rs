@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -39,7 +39,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     create_oauth_relay_schema(connection)?;
     create_credential_relay_schema(connection)?;
     connection
-        .execute_batch("PRAGMA user_version = 9;")
+        .execute_batch("PRAGMA user_version = 10;")
         .map_err(sqlite_error)
 }
 
@@ -240,6 +240,12 @@ fn create_browser_identity_schema(connection: &Connection) -> Result<(), Control
                 principal_id TEXT NOT NULL,
                 surface TEXT NOT NULL,
                 state_json TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS browser_sessions (
+                token_hash BLOB PRIMARY KEY CHECK(length(token_hash) = 32),
+                credential_id BLOB NOT NULL REFERENCES passkeys(credential_id) ON DELETE CASCADE,
                 expires_at_ms INTEGER NOT NULL
             );
 

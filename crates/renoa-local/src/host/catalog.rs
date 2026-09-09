@@ -273,6 +273,13 @@ pub(crate) fn open_verified(path: &Path) -> Result<Connection, HostCatalogError>
     Ok(connection)
 }
 
+pub(crate) fn open_read_only(path: &Path) -> Result<Connection, HostCatalogError> {
+    let connection = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    verify(&connection)?;
+    Ok(connection)
+}
+
 fn open(path: &Path) -> Result<Connection, HostCatalogError> {
     let connection = Connection::open(path)?;
     connection.busy_timeout(Duration::from_secs(5))?;

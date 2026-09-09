@@ -1,0 +1,101 @@
+.host-app {
+  --host-ink: #171c20; --host-muted: #60685f; --host-rule: #dfdfd5; --host-olive: #536a37;
+  min-height: 100vh; background: #faf9f5; color: var(--host-ink);
+  font-family: Arial, "Liberation Sans", sans-serif; font-size: 16px; line-height: 1.55;
+  display: flex; flex-direction: column;
+}
+.host-app button { cursor: pointer; }
+.host-app button:disabled { cursor: wait; opacity: .6; }
+.host-app :is(button, a, summary, input):focus-visible { outline: 2px solid var(--host-olive); outline-offset: 5px; }
+.host-header { min-height: 76px; display: flex; align-items: center; gap: 64px; padding: 0 40px; border-bottom: 1px solid var(--host-rule); }
+.host-brand { font-family: "Times New Roman", "Liberation Serif", serif; font-size: 35px; letter-spacing: -.04em; text-decoration: none; color: inherit; }
+.host-header nav { display: flex; align-self: stretch; gap: 22px; }
+.host-header nav button { border: 0; border-bottom: 2px solid transparent; background: none; padding: 0 12px; }
+.host-header nav button[aria-current] { border-bottom-color: var(--host-olive); color: var(--host-olive); }
+.host-header-status { margin-left: auto; display: flex; align-items: center; gap: 18px; font-size: 14px; }
+.host-online { color: var(--host-olive); }
+.host-icon { border: 0; background: none; padding: 7px; display: inline-flex; }
+.host-content { width: min(880px, calc(100% - 64px)); margin: 66px auto 90px; }
+.host-content h1, .host-content h2, .host-content h3, .host-intro, .host-subtitle, .host-status-line, .host-capabilities {
+  font-family: "Times New Roman", "Liberation Serif", serif; font-weight: 400;
+}
+.host-content h1 { font-size: clamp(46px, 5vw, 66px); line-height: 1.05; letter-spacing: -.038em; margin: 0 0 13px; }
+.host-content h2 { font-size: 34px; line-height: 1.2; letter-spacing: -.025em; margin: 0 0 18px; }
+.host-content h2 small { font: 15px Arial, sans-serif; color: var(--host-muted); margin-left: 9px; }
+.host-content h3 { font-size: 27px; line-height: 1.2; margin: 0 0 4px; }
+.host-content p { margin: 0 0 9px; }
+.host-kicker { color: var(--host-olive); font-size: 13px; margin-bottom: 19px !important; letter-spacing: .06em; }
+.host-intro { font-size: 25px; line-height: 1.4; max-width: 750px; color: #4e574e; }
+.host-subtitle { font-size: 24px; color: var(--host-muted); }
+.host-status-line { font-size: 24px; margin-top: 36px !important; }
+.host-status-line .host-link { font: 16px Arial, sans-serif; margin-left: 16px; }
+.host-section { margin-top: 46px; }
+.host-secondary, .host-caption { color: var(--host-muted); }
+.host-caption { font-size: 15px; line-height: 1.6; }
+.host-link { background: none; border: 0; padding: 0; font: inherit; color: #3f5337; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: #a1ad98; }
+.host-link:hover { color: #1f3315; text-decoration-color: currentColor; }
+.host-agent-detail { margin-top: 28px; }
+.host-back { margin-bottom: 16px; }
+.host-record { border-bottom: 1px solid var(--host-rule); }
+.host-record > summary { padding: 15px 0; display: flex; align-items: baseline; gap: 20px; cursor: pointer; list-style: none; }
+.host-record > summary::-webkit-details-marker { display: none; }
+.host-record > summary > span:first-child { font-size: 18px; overflow-wrap: anywhere; }
+.host-record > summary:hover > span:first-child { color: var(--host-olive); text-decoration: underline; text-underline-offset: 4px; }
+.host-record-state { margin-left: auto; text-align: right; font-size: 14px; color: var(--host-muted); flex-shrink: 0; }
+.host-record[open] > summary { color: var(--host-olive); }
+.host-record-body { padding: 6px 0 23px 22px; max-width: 810px; }
+.host-record-body p { font-size: 15px; }
+.host-app code { font: 12px/1.6 ui-monospace, monospace; overflow-wrap: anywhere; }
+.host-routine { margin: 22px 0 28px 26px; }
+.host-routine > p:first-of-type { font-family: "Times New Roman", "Liberation Serif", serif; font-size: 21px; }
+.host-owner-link { font-size: 14px; margin-top: 10px; }
+.host-details { color: var(--host-muted); font-size: 15px; }
+.host-details summary { cursor: pointer; text-decoration: underline; text-underline-offset: 4px; }
+.host-details > div, .host-details > p { margin-top: 14px; }
+.host-capabilities { font-size: 25px; }
+.host-agent-row { width: 100%; display: flex; align-items: baseline; justify-content: space-between; gap: 20px; text-align: left; border: 0; border-bottom: 1px solid var(--host-rule); background: none; padding: 23px 0; }
+.host-agent-row > span:first-child { font: 30px "Times New Roman", "Liberation Serif", serif; }
+.host-agent-row small { margin-left: 12px; font: 13px ui-monospace, monospace; color: var(--host-muted); }
+.host-agent-row:hover > span:first-child { color: var(--host-olive); }
+.host-banner { background: #f2eedf; padding: 12px 40px; display: flex; gap: 24px; justify-content: space-between; font-size: 14px; }
+.host-banner .host-link { white-space: nowrap; }
+.host-error { color: #964635; }
+.host-footer { margin-top: auto; padding: 25px 40px; display: flex; gap: 25px; justify-content: space-between; color: var(--host-muted); font-size: 13px; }
+.host-footer summary { cursor: pointer; }
+.host-login, .host-loading { margin-top: clamp(80px, 15vh, 160px); }
+.host-login form { margin: 45px 0 20px; }
+.host-primary { display: inline-flex; align-items: center; gap: 18px; background: #34472b; color: white !important; border: 0; padding: 15px 22px; }
+.host-primary:hover { background: #26371e; }
+.host-token { display: block; max-width: 430px; margin-bottom: 22px; font-size: 15px; }
+.host-token input { display: block; width: 100%; margin-top: 9px; padding: 12px; border: 1px solid #aab19f; background: transparent; color: inherit; }
+.host-notice { margin-bottom: 24px !important; color: #964635; }
+@media (max-width: 850px) {
+  .host-header { padding: 0 24px; gap: 20px; flex-wrap: wrap; min-height: 72px; }
+  .host-header-status { gap: 9px; font-size: 12px; }
+  .host-header-status > span:first-child { display: none; }
+  .host-header nav { gap: 4px; }
+  .host-header nav button { padding: 20px 9px; font-size: 14px; }
+  .host-content { width: calc(100% - 48px); margin-top: 45px; }
+  .host-agent-row { align-items: start; flex-direction: column; gap: 8px; }
+  .host-banner { padding: 12px 24px; }
+}
+@media (max-width: 520px) {
+  .host-header { gap: 0; padding: 12px 20px 0; }
+  .host-header nav { order: 3; width: 100%; justify-content: space-between; }
+  .host-header nav button { padding: 13px 8px; }
+  .host-header-status { margin-left: auto; }
+  .host-content { width: calc(100% - 40px); margin-top: 36px; }
+  .host-content h2 { font-size: 29px; }
+  .host-intro { font-size: 23px; }
+  .host-record > summary { gap: 10px; flex-wrap: wrap; }
+  .host-record-state { margin-left: 0; text-align: left; }
+  .host-record > summary > span:first-child { width: 100%; }
+  .host-routine { margin-left: 12px; }
+  .host-footer { padding: 20px; flex-wrap: wrap; gap: 10px; }
+  .host-banner { padding: 12px 20px; }
+  .host-status-line .host-link { margin: 8px 0 0; display: block; }
+}
+@media (prefers-reduced-motion: reduce) { .host-app * { scroll-behavior: auto; } }
+.host-diagnostic, .host-review-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.host-review-evidence article { margin: 28px 0; }
+.host-review-evidence pre { font-size: 13px; line-height: 1.6; }

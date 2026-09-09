@@ -9,9 +9,10 @@ import {
 
 import { useControlRoom } from "./use-control-room";
 import { Workspace } from "./workspace";
+import { HostPanel } from "./host-panel";
 
 const PreviewApp = import.meta.env.DEV
-  ? lazy(async () => import("./preview-app"))
+  ? lazy(async () => import("./host-preview"))
   : null;
 
 export function App() {
@@ -24,7 +25,8 @@ export function App() {
       </Suspense>
     );
   }
-  return <LiveApp />;
+  // Preserve the existing RCP task surface independently of Host management.
+  return new URLSearchParams(window.location.search).has("tasks") ? <LiveApp /> : <HostPanel />;
 }
 
 function LiveApp() {

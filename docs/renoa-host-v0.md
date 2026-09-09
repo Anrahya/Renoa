@@ -26,9 +26,9 @@ Renoa Host
 `renoa-local` is the first Host implementation. The graphical surface remains
 the separate Renoa integration fork of Waku and connects through ACP. The
 repository-owned Telegram surface calls the same Host API directly; it does not
-create another loop or history store. Renoa-specific capability management will
-use a separate logical Host API whose transport is not selected until a real
-management consumer is implemented.
+create another loop or history store. Renoa-specific management uses separate
+logical Host operations. The planned browser consumer uses the HTTPS boundary
+described below; browser, CLI, and model-facing adapters share domain semantics.
 
 The first concrete coding profile is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is
@@ -131,7 +131,152 @@ exact revision to that session. Sharing the library does not share conversation
 history or silently activate another session's instructions. Cross-machine Host
 access and credential sharing between distinct Hosts remain separate work.
 
+### Composition and management boundaries
+
+The personal-system direction below guides the control-panel implementation.
+Authenticated browser observation exists; general recipe editing and delegation
+remain future work. Host ownership is a logical boundary, not a requirement that one
+object, executable, or crate implement every subsystem. A laptop and a VPS are
+deployment choices. Preserving a Host across machine replacement requires its
+durable identity, records, and credential material; a hostname is not its identity.
+
+Keep responsibility with the component that implements the behavior:
+
+- Identity authenticates a caller. Host authorization binds that caller to an
+  exact Host and allowed operations. Neither component runs agents.
+- Host composition selects existing provider, loop, context, tool, credential,
+  workspace, and execution components. Their implementations remain outside the
+  management transport, and provider and surface policy remain outside the kernel.
+- Domain operations own their validation, transactions, and durable receipts.
+  Routines retain scheduling semantics; reviews retain review semantics. A
+  management router delegates to those operations rather than reimplementing them.
+- Observation projects committed metadata independently of runtime construction.
+  Inspection and configuration changes that do not execute work must not require
+  model discovery, valid provider credentials, or acquisition of session ownership.
+- Browser, CLI, and model-facing tools adapt the same application operations.
+  They do not access each other's UI or own alternate scheduling or agent stores.
+  RCP continues to own task continuity; its coordinator does not depend on the
+  local Host implementation to assemble agents or interpret Host inventory.
+
+Use concrete modules in the current implementation. Extract a component when a
+real consumer or enforceable dependency boundary requires it; do not introduce a
+generic service bus, universal component trait, or a second competing Host. One
+deployment may compose multiple modules in one process. Process separation is
+needed where execution or credential isolation requires it, not merely to make a
+module appear independent.
+
+Host management is a built-in capability selectable for an agent, not a special
+kind of agent or a dependency on shell access. Its tools bind caller identity in
+the trusted runtime; a model-supplied agent ID is never proof of authority. The
+CLI is another optional adapter and may be run on the Host machine or, after
+device enrollment is implemented, remotely. The owner identity exists before
+any agent. A personal operator receives explicit management authority and can
+be replaced; being the first agent or creating a child grants no implicit root
+authority. Human management must not impersonate Arcee to reuse an agent API.
+
+Future recipe editing selects supported installed components and persists that
+selection before runtime assembly. Installing a capability, attaching it to a
+recipe, and resolving it for an operation remain separate. A surface binding is
+optional and independent of the recipe: schedules or delegated work may target
+an agent without a chat channel. This direction does not promise arbitrary hot
+loading of Rust implementations or make existing built-in profiles editable.
+Future delegation needs durable assignments and result references outside the
+orchestrator's transcript. Add those contracts only with their execution consumer.
+
+### Personal control-panel boundary
+
+The first browser consumer targets the existing shared Host through a separate
+same-origin HTTPS management API. Reuse passkey verification while keeping the
+management session separate from RCP's one-use WebSocket tickets. Bind the verified
+principal to the configured Host explicitly. Management sessions must be revocable;
+cookies must be secure and HTTP-only, and state changes must check request origin
+and protect against cross-site request forgery. Identity code may be factored for
+the two real consumers, but the coordinator must not acquire a dependency on
+Host runtime construction. A browser-provided Host ID, path, or actor ID cannot
+choose another data root or substitute an authenticated identity.
+
+The initial overview uses `HostObserver`, with selected detail reads for actual
+results and failure diagnostics. It shows recorded work, attention, schedules,
+agents, and installed capabilities with progressive disclosure. It must preserve
+the observation qualifications below, including unknown worker liveness and the
+difference between reviewed and published. Display refresh time and stale/error
+states. Start with refreshable HTTP snapshots; do not add another event journal
+or infer an event sequence from differences between snapshots. Surface health,
+effective runtime tools, and other details need their own evidence before display.
+
+`renoa-management` serves the built panel and the metadata API independently of
+execution workers. Its configured loopback identity service validates the browser
+cookie; the adapter does not read the identity database or start a model bridge.
+`GET /v1/host/access` reveals only the public owner login identifier. `GET /v1/host`
+and `GET /v1/host/reviews/{request_id}` require that authenticated owner. Review
+detail selects the outcome, findings and model configuration without loading the
+frozen prompt, diff or context. The binary pins one existing Host UUID and refuses
+a replaced Host even at the same storage path.
+
+The browser retries unavailable services and network failures, keeping the last
+snapshot explicitly stale. Only rejected credentials clear the view. Its remembered
+session lives in identity storage, with a secure HTTP-only same-site cookie and a
+180-day lifetime renewed during use; neither source IP nor a process-local secret
+binds the login. The lifetime is not a promise of permanent access: explicit
+revocation, cookie deletion, expiry or loss of identity storage requires signing in.
+Different browsers enroll/sign in once each. Slack and other native surfaces keep
+their existing credentials; they do not run browser passkey ceremonies.
+
+After authenticated observation, the next browser mutation is pausing/resuming
+an existing automation through the routine domain operation. Expose that operation
+without initializing models and with an authenticated owner actor distinct from
+an agent actor. Preserve existing agent restrictions, revision conflicts, and
+receipt-backed retries. Pausing prevents future admissions, not completion of an
+already-admitted run; resuming uses existing scheduling semantics and may require
+a new date for an expired one-time schedule. The UI must describe those effects.
+Do not implement agent creation, recipe editors, or generic delegation merely to
+make this first management action work.
+
+The observation boundary is tested against unauthenticated, revoked and wrong-owner
+access, identity-service restart and unavailability, and observation without provider
+startup. The subsequent mutation boundary will be proven when
+inspection still works during execution and provider failure; both browser and
+agent changes use the same routine transaction; retries and restart preserve one
+logical mutation; stale edits cannot overwrite newer state; and the displayed
+result survives refresh. Browser tests must cover login, navigation, unavailable
+data, the automation action, and narrow-screen/keyboard use with real contracts.
+
 ## Agent identity and assembly
+
+### Personal Host observation
+
+The control panel targets one person's existing Host identity. Its agents,
+installed capabilities, automation records and review work belong to that Host;
+surface processes are clients of those records. One logical Host does not require
+one process, and a second data root is not implicitly part of the same Host.
+
+`HostObserver::open` opens an existing compatible data root and pins its Host UUID.
+`snapshot` reads agent identities, ordinary session operation summaries, routines,
+shared connection selections, recorded plugin/skill revisions and GitHub review
+outcomes. `renoa-host inspect <data-directory>` is the first consumer. It requires
+OS read access, not a launch configuration, model provider, adapter or credentials.
+It neither initializes/migrates a Host nor repairs or imports legacy records.
+
+Catalog facts come from one read transaction. Each session has its own subsequent
+read transaction; the response is not a globally atomic view across databases.
+Missing/corrupt sessions are reported individually. Catalog failure fails the
+snapshot, and replacing the Host UUID requires explicit reconnection. Legacy
+session identities are projected without writing them into the catalog.
+
+The kernel's non-owning observation API supplies committed operation state without
+loading command bodies, checkpoints, effect payloads or transcripts. An unfinished
+operation is not proof of a live worker. A stored MCP catalog is not a connection
+health probe. Profile connection selections are not a claim about the frozen tools
+of an already-admitted operation. Recorded skills are not necessarily loaded in
+any session. A reviewed outcome is separate from publication success. Large
+artifacts, instructions, provider diagnostics and credential material stay outside
+the overview response and need separate, deliberate detail reads.
+
+This is local observation, not a browser authentication or management transport.
+The browser path must authenticate its principal against this exact Host before
+exposing inventory or accepting operations. It must not reuse an RCP one-use
+connection ticket as an HTTP bearer token. RCP remains responsible for continuity
+and durable delivery; Host management remains a separate application boundary.
 
 An Agent Instance is durable identity and isolated history. It is not the
 temporary collection of Rust objects used to execute one operation.
@@ -1335,20 +1480,21 @@ does not establish that the reviewer finds useful bugs.
 
 ## Open decisions
 
-- future Host schema migrations beyond the proven v1-through-v13 chain;
+- future Host schema migrations beyond the implemented catalog version;
 - historical resolved-binding retention across explicit catalog/profile
   changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
   and immutable-package garbage collection;
-- durable profile definition storage, profile inheritance, and Agent Instance
-  overrides;
+- editing durable specialist recipes, profile inheritance, and Agent Instance
+  overrides beyond the existing creation recipes;
 - permission vocabulary, scopes, policy inheritance, and enforcement;
 - public package discovery, updates, rollback, removal, and garbage collection;
-- the Host management transport and presentation;
+- Host management beyond the personal HTTPS panel, including remote CLI
+  enrollment and broader configuration operations;
 - whether capability changes pause and continue a task through one or more
   internal operations; and
-- a durable Agent catalog, multiple Sessions per Agent, and process placement
-  for multiple concurrent local Agent Instances;
+- process placement and supervision for multiple concurrent local Agent Instances
+  beyond the existing durable Agent catalog and multiple Sessions per Agent;
 - credential, profile-definition, connection, and attachment distribution
   across Hosts or nodes; and
 - surface routing and cross-node continuity, which remain future RCP/product work.

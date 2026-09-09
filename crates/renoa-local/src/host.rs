@@ -14,6 +14,7 @@ pub(crate) mod history;
 mod lease;
 mod mcp;
 mod models;
+pub(crate) mod observation;
 mod profiles;
 pub(crate) mod reviews;
 pub(crate) mod routines;

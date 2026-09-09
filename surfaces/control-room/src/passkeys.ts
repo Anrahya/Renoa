@@ -47,6 +47,15 @@ export async function authenticatePasskey(principalId: string): Promise<TicketGr
   return parseTicketGrant(grant);
 }
 
+export async function rememberedConnectionTicket(principalId: string): Promise<TicketGrant | null> {
+  const response = await fetch("/v1/identity/session", { credentials: "same-origin", cache: "no-store" });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error("Renoa login service is unavailable. Reconnect when it returns.");
+  const identity: unknown = await response.json();
+  if (typeof identity !== "object" || identity === null || !("principalId" in identity) || identity.principalId !== principalId) return null;
+  return parseTicketGrant(await postJson("/v1/identity/connection-ticket", { surface: SURFACE }));
+}
+
 export function rcpEndpoint(): string {
   const configured = import.meta.env.VITE_RENOA_RCP_ENDPOINT;
   if (typeof configured === "string" && configured !== "") {

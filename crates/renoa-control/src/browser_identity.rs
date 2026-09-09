@@ -12,6 +12,7 @@ use webauthn_rs::{
 };
 
 use crate::{ConnectionTicket, ControlError, PasskeyBootstrapToken, store::ControlStore};
+use crate::{browser_sessions::SESSION_LIFETIME, identity::BrowserSessionToken};
 
 const CEREMONY_LIFETIME: Duration = Duration::from_mins(5);
 const TICKET_LIFETIME: Duration = Duration::from_mins(1);
@@ -20,6 +21,7 @@ const MAX_SURFACE_BYTES: usize = 64;
 #[derive(Clone)]
 pub(crate) struct BrowserIdentity {
     webauthn: Webauthn,
+    origin: String,
 }
 
 pub(crate) struct CeremonyOptions<T> {
@@ -27,9 +29,12 @@ pub(crate) struct CeremonyOptions<T> {
     pub(crate) options: T,
 }
 
+#[derive(Clone)]
 pub(crate) struct TicketGrant {
     pub(crate) ticket: ConnectionTicket,
     pub(crate) expires_at: SystemTime,
+    pub(crate) session: BrowserSessionToken,
+    pub(crate) session_expires_at: SystemTime,
 }
 
 impl BrowserIdentity {
@@ -42,7 +47,14 @@ impl BrowserIdentity {
             .rp_name("Renoa")
             .build()
             .map_err(|_| ControlError::invalid("invalid passkey configuration"))?;
-        Ok(Self { webauthn })
+        Ok(Self {
+            webauthn,
+            origin: origin.origin().ascii_serialization(),
+        })
+    }
+
+    pub(crate) fn origin(&self) -> &str {
+        &self.origin
     }
 
     pub(crate) async fn start_registration(
@@ -108,8 +120,7 @@ impl BrowserIdentity {
                 ceremony.principal_id,
                 ceremony.surface,
                 passkey,
-                grant.ticket.clone(),
-                grant.expires_at,
+                grant.clone(),
                 now,
             )
             .await?;
@@ -167,8 +178,7 @@ impl BrowserIdentity {
                 ceremony.principal_id,
                 ceremony.surface,
                 authentication,
-                grant.ticket.clone(),
-                grant.expires_at,
+                grant.clone(),
                 now,
             )
             .await?;
@@ -194,6 +204,8 @@ fn new_ticket(now: SystemTime) -> Result<TicketGrant, ControlError> {
     Ok(TicketGrant {
         ticket: ConnectionTicket::generate()?,
         expires_at: expiry(now, TICKET_LIFETIME)?,
+        session: BrowserSessionToken::generate()?,
+        session_expires_at: expiry(now, SESSION_LIFETIME)?,
     })
 }
 

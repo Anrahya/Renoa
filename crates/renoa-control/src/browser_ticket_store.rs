@@ -10,6 +10,7 @@ use crate::{
     identity_store::timestamp_millis,
     store::{ControlStore, blocking, id_error, json_error, sqlite_error},
 };
+use crate::{browser_identity::TicketGrant, browser_sessions::insert_session};
 
 impl ControlStore {
     pub(crate) async fn store_registration_and_ticket(
@@ -17,16 +18,16 @@ impl ControlStore {
         principal_id: PrincipalId,
         surface: SurfaceRef,
         passkey: Passkey,
-        ticket: ConnectionTicket,
-        ticket_expires_at: SystemTime,
+        grant: TicketGrant,
         now: SystemTime,
     ) -> Result<(), ControlError> {
         let credential_id = passkey.cred_id().as_ref().to_vec();
         let passkey_json = serde_json::to_string(&passkey).map_err(json_error)?;
-        let ticket_hash = ticket
+        let ticket_hash = grant
+            .ticket
             .digest()
             .ok_or_else(|| ControlError::store("generated an invalid connection ticket"))?;
-        let ticket_expires_at_ms = timestamp_millis(ticket_expires_at)?;
+        let ticket_expires_at_ms = timestamp_millis(grant.expires_at)?;
         let created_at_ms = timestamp_millis(now)?;
         let path = Arc::clone(&self.path);
         blocking(move || {
@@ -55,30 +56,27 @@ impl ControlStore {
                 &surface,
                 ticket_expires_at_ms,
             )?;
+            insert_session(&transaction, &credential_id, &grant)?;
             transaction.commit().map_err(sqlite_error)
         })
         .await
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "these values form the complete authenticated ticket-issuance transaction"
-    )]
     pub(crate) async fn update_passkey_and_store_ticket(
         &self,
         principal_id: PrincipalId,
         surface: SurfaceRef,
         authentication: AuthenticationResult,
-        ticket: ConnectionTicket,
-        ticket_expires_at: SystemTime,
+        grant: TicketGrant,
         now: SystemTime,
     ) -> Result<(), ControlError> {
         let credential_id = authentication.cred_id().as_ref().to_vec();
         let observed_counter = i64::from(authentication.counter());
-        let ticket_hash = ticket
+        let ticket_hash = grant
+            .ticket
             .digest()
             .ok_or_else(|| ControlError::store("generated an invalid connection ticket"))?;
-        let ticket_expires_at_ms = timestamp_millis(ticket_expires_at)?;
+        let ticket_expires_at_ms = timestamp_millis(grant.expires_at)?;
         let now_ms = timestamp_millis(now)?;
         let path = Arc::clone(&self.path);
         blocking(move || {
@@ -125,6 +123,7 @@ impl ControlStore {
                 &surface,
                 ticket_expires_at_ms,
             )?;
+            insert_session(&transaction, &credential_id, &grant)?;
             transaction.commit().map_err(sqlite_error)
         })
         .await
@@ -176,7 +175,7 @@ impl ControlStore {
     }
 }
 
-fn insert_ticket(
+pub(crate) fn insert_ticket(
     connection: &Connection,
     ticket_hash: &[u8; 32],
     principal_id: PrincipalId,

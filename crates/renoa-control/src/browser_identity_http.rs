@@ -177,6 +177,16 @@ async fn json_request<T: DeserializeOwned>(
     request: Request,
     state: &Arc<CoordinatorState>,
 ) -> Result<T, Response> {
+    // Existing native clients need not send Origin. Browser requests with an
+    // Origin must match the passkey relying party before a cookie can be issued.
+    if let Some(origin) = request.headers().get(header::ORIGIN)
+        && state
+            .browser_identity
+            .as_ref()
+            .is_none_or(|identity| origin != identity.origin())
+    {
+        return Err(error_response(&ControlError::authentication_failed()));
+    }
     Json::<T>::from_request(request, state)
         .await
         .map(|Json(value)| value)
@@ -198,13 +208,26 @@ fn ticket_response(grant: TicketGrant) -> Response {
         Ok(expires_at_ms) => expires_at_ms,
         Err(error) => return error_response(&error),
     };
-    secure_json(
+    let cookie = match crate::browser_sessions::session_cookie(
+        &grant.session,
+        match timestamp_millis(grant.session_expires_at) {
+            Ok(expiry) => expiry,
+            Err(error) => return error_response(&error),
+        },
+        std::time::SystemTime::now(),
+    ) {
+        Ok(cookie) => cookie,
+        Err(error) => return error_response(&error),
+    };
+    let mut response = secure_json(
         StatusCode::OK,
         &TicketResponse {
             connection_ticket: grant.ticket,
             expires_at_ms,
         },
-    )
+    );
+    response.headers_mut().insert(header::SET_COOKIE, cookie);
+    response
 }
 
 fn invalid_request_response() -> Response {
@@ -227,7 +250,7 @@ fn unavailable_response() -> Response {
     )
 }
 
-fn error_response(error: &ControlError) -> Response {
+pub(crate) fn error_response(error: &ControlError) -> Response {
     let (status, code, message) = match error.kind() {
         ControlErrorKind::Authentication => (
             StatusCode::UNAUTHORIZED,
@@ -255,7 +278,7 @@ fn error_response(error: &ControlError) -> Response {
     secure_json(status, &ErrorResponse { code, message })
 }
 
-fn secure_json<T: Serialize>(status: StatusCode, value: &T) -> Response {
+pub(crate) fn secure_json<T: Serialize>(status: StatusCode, value: &T) -> Response {
     let mut response = (status, Json(value)).into_response();
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));

@@ -17,6 +17,96 @@ route. Neither transport is part of a Renoa protocol. Funnel is not used.
 The Telegram surface is different: it makes outbound HTTPS requests to the
 Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
 
+## Personal Host observation
+
+To inspect the existing personal Host without starting models or acquiring agent
+execution ownership, run the current binary as the Host's OS user:
+
+```sh
+sudo -u renoa-arcee /usr/local/bin/renoa-host inspect /var/lib/renoa-telegram
+```
+
+This command emits metadata JSON only; it does not serve a public endpoint or
+change deployment configuration. Use the actual shared Host data root, not the
+separate RCP node's root. The command fails for absent/incompatible catalogs and
+reports individual unreadable sessions without inventing idle states.
+
+## Personal control panel
+
+`renoa-management` is a separate read API and static panel service. It opens the
+existing personal Host and asks the loopback identity service to validate browser
+sessions. It does not start models or share the coordinator's private database.
+The initial panel observes agents, sessions, schedules, shared inventory and review
+outcomes; automation edits and agent creation are subsequent work.
+
+Build the coordinator, management adapter and production assets:
+
+```sh
+cargo build --locked --release -p renoa-control --bin renoa-coordinator -p renoa-management
+npm --prefix surfaces/control-room run build
+```
+
+Install the management binary at `/usr/local/bin/renoa-management` and copy only
+`surfaces/control-room/dist/client/` into `/opt/renoa/control-room/`. This is a
+dedicated public asset directory, never the Host data root or source checkout.
+Retain earlier hashed assets during deployment so an already-open browser can
+finish loading its version. The `?preview` example-data route is development-only;
+`?tasks` retains the earlier RCP task surface.
+
+Use `renoa-management.config.example.json` for `/etc/renoa/management.json` with
+root ownership and mode `0600`. Replace both placeholder UUIDs: `host_id` is the
+existing Host identity from `renoa-host inspect`; `owner_principal_id` is the one
+human principal enrolled for this Host's panel. Never infer ownership from the
+first legacy RCP task. Keep that principal and configuration in the Host's backup.
+
+Back up the coordinator SQLite database with SQLite's backup API before installing
+the new coordinator binary. It upgrades the identity database to schema 10 and
+keeps passkeys and hashed remembered sessions there. A pre-upgrade binary cannot
+open schema 10; rollback requires the matching identity backup as well as the old
+binary. Install `renoa-management.service`, then reload systemd, restart the
+coordinator and enable the management service. The example runs as the existing
+Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
+
+Preserve all existing tunnel rules and add these `renoa.live` path routes before
+the coordinator catch-all:
+
+| Path regex | Loopback destination |
+| --- | --- |
+| `^/v1/host(/.*)?$` | `http://127.0.0.1:7819` |
+| `^/$` | `http://127.0.0.1:7819` |
+| `^/index\\.html$` | `http://127.0.0.1:7819` |
+| `^/assets/.*$` | `http://127.0.0.1:7819` |
+
+Keep `/v1/identity/*`, `/connect`, credential intake and OAuth callbacks routed
+to the coordinator; preserve the separate GitHub webhook route. Both listeners
+remain plaintext and loopback-only behind the same HTTPS origin. Cloudflare's
+[tunnel configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/)
+replaces the full configuration, so read and preserve the current rules first.
+
+The panel's initial passkey enrollment uses `bootstrap-passkey` below with the
+configured owner principal. Capture its short-lived output in an owner-only file;
+enter the token at `https://renoa.live` → first-time setup, then create a passkey.
+Do not put bootstrap tokens in URLs, Git, logs or chat. Each browser signs in once;
+the `__Host-renoa_session` cookie is Secure, HTTP-only, same-site and remembered
+for 180 days, renewed after half that lifetime during use. The server stores only
+its hash. Ordinary restarts and source-IP changes do not invalidate it. A revoked,
+expired or deleted cookie requires a passkey again. The existing Slack/Telegram
+credentials are independent and require no new enrollment for this panel.
+
+To revoke all remembered browser sessions for the owner through trusted local
+administration, run `renoa-coordinator revoke-browser-logins <database-path>
+<principal-uuid>` as the identity store's OS owner using the same systemd wrapper
+as enrollment. The panel's sign-out revokes only its current browser. Neither
+operation revokes native devices, an already-open RCP WebSocket, or an already
+issued transport ticket; unused tickets expire after 60 seconds.
+
+Verify the public shell and login prompt, anonymous inventory rejection, initial
+enrollment, refresh/restart without another ceremony, logout rejection, and the
+real Host UUID/counts. Network/storage failures must show a stale view and retry,
+not become a successful empty inventory or an invalid-password screen. Replacing
+the machine requires restoring both Host state/credentials and identity state,
+and retaining the passkey origin; a DNS name alone does not preserve the system.
+
 ## RCP execution node
 
 Build and install the headless Host node:

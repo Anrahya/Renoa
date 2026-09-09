@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
 use crate::{KernelError, StoreError};
 
-const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 pub(crate) const OPERATION_STATE_VERSION: u32 = 1;
 
 const SCHEMA: &str = "CREATE TABLE agents (

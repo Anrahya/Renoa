@@ -23,6 +23,15 @@ local workspace edit without moving those concerns into the kernel.
 
 ## Purpose
 
+`observe_session(path, session_id)` is a non-owning, read-only projection for Host
+inventory. It opens only existing compatible storage, takes no writer lease and
+performs no migration. A single read transaction reports the session's agent,
+event count, queued count, active operation and latest operation, without reading
+command, checkpoint or effect payloads. The projection describes committed state,
+not worker liveness: a running operation can remain after its owner disappears.
+`Kernel::inspect` remains the richer owner-held inspection path. The Host maps
+observation into its own presentation types; this does not add an RCP wire type.
+
 Renoa needs one small, non-replaceable layer that preserves truth while agent
 implementations vary without bound. The kernel owns identities, durable work
 admission, ordering, effect safety, recovery, and observation. An agent kind is

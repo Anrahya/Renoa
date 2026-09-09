@@ -46,6 +46,11 @@ pub use credential_file::credential_file_is_private;
 pub use host::agents::AgentRecord;
 pub use host::catalog::HostCatalogError;
 pub use host::history::AgentSessionHistory;
+pub use host::observation::{
+    HostObservation, HostObserver, ObservedAgent, ObservedConnection, ObservedOperation,
+    ObservedOperationState, ObservedPlugin, ObservedReview, ObservedReviewDetail,
+    ObservedReviewState, ObservedRoutine, ObservedSession, ObservedSessionState, ObservedSkill,
+};
 pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
 pub use isolated_workspace::InspectionSandboxConfig;
 pub use mcp::{

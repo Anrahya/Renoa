@@ -3,6 +3,8 @@
 mod browser_identity;
 mod browser_identity_http;
 mod browser_identity_store;
+mod browser_sessions;
+mod browser_sessions_http;
 mod browser_ticket_store;
 mod connection;
 mod control_migrations;
@@ -23,6 +25,7 @@ mod operations;
 mod store;
 mod wire;
 
+pub use browser_sessions::{BrowserSession, BrowserSessions};
 pub use coordinator::{ControlError, Coordinator, TaskSpec};
 pub use identity::{
     ConnectionTicket, DeviceCredential, DeviceCredentials, EnrollmentToken, PasskeyBootstrapToken,

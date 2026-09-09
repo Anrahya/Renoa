@@ -42,6 +42,14 @@ async fn main() {
 }
 async fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 2 && args[0] == "inspect" {
+        let observer = renoa_local::HostObserver::open(std::path::Path::new(&args[1]))?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&observer.snapshot().await?)?
+        );
+        return Ok(());
+    }
     if !(args.len() == 1
         || (args.len() == 6 && args[1] == "rename-bot")
         || (args.len() == 3
@@ -52,7 +60,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 || args[1] == "github-cleanup"
                 || args[1] == "ensure-bot")))
     {
-        return Err(std::io::Error::other("usage: renoa-host <config.json> [ensure-bot <bot.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [ensure-bot <bot.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]

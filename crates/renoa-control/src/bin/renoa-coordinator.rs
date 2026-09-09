@@ -20,6 +20,7 @@ use uuid::Uuid;
 const USAGE: &str = "usage:
   renoa-coordinator serve <database-path> <port> <passkey-rp-id> <passkey-origin>
   renoa-coordinator bootstrap-passkey <database-path> <principal-id>
+  renoa-coordinator revoke-browser-logins <database-path> <principal-id>
   renoa-coordinator enroll-surface <database-path> <principal-id> <surface>
   renoa-coordinator enroll-node <database-path> <node-id>
   renoa-coordinator create-task <database-path> <task-id> <principal-id> <node-id> <target>";
@@ -33,6 +34,10 @@ enum Operation {
         passkey_origin: String,
     },
     BootstrapPasskey {
+        database: PathBuf,
+        principal_id: PrincipalId,
+    },
+    RevokeBrowserLogins {
         database: PathBuf,
         principal_id: PrincipalId,
     },
@@ -61,6 +66,15 @@ impl Operation {
             .ok_or_else(|| USAGE.to_owned())?;
 
         match operation.to_str() {
+            Some("revoke-browser-logins") => {
+                let principal_id =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
+                no_more_arguments(arguments)?;
+                Ok(Self::RevokeBrowserLogins {
+                    database,
+                    principal_id,
+                })
+            }
             Some("serve") => {
                 let port = arguments
                     .next()
@@ -199,6 +213,17 @@ async fn run() -> Result<(), String> {
             database,
             principal_id,
         } => create_passkey_bootstrap(database, principal_id).await,
+        Operation::RevokeBrowserLogins {
+            database,
+            principal_id,
+        } => {
+            renoa_control::BrowserSessions::open(database)
+                .map_err(|error| error.to_string())?
+                .revoke(principal_id)
+                .await
+                .map_err(|error| error.to_string())?;
+            write_json(&serde_json::json!({"revoked":true}))
+        }
         Operation::EnrollSurface {
             database,
             principal_id,
