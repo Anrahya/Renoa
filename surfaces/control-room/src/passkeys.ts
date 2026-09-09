@@ -2,7 +2,7 @@ const SURFACE = "control_room";
 
 interface OptionsEnvelope<T> {
   readonly ceremonyId: string;
-  readonly options: T;
+  readonly options: { readonly publicKey: T };
 }
 
 interface TicketGrant {
@@ -21,7 +21,7 @@ export async function registerPasskey(bootstrapToken: string): Promise<TicketGra
     "/v1/identity/passkeys/registration/options",
     { bootstrapToken, surface: SURFACE },
   );
-  const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(ceremony.options);
+  const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(ceremony.options.publicKey);
   const created = await navigator.credentials.create({ publicKey });
   const credential = requirePublicKeyCredential(created);
   const grant = await postJson<unknown>("/v1/identity/passkeys/registration/verify", {
@@ -37,7 +37,7 @@ export async function authenticatePasskey(principalId: string): Promise<TicketGr
     "/v1/identity/passkeys/authentication/options",
     { principalId, surface: SURFACE },
   );
-  const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(ceremony.options);
+  const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(ceremony.options.publicKey);
   const received = await navigator.credentials.get({ publicKey });
   const credential = requirePublicKeyCredential(received);
   const grant = await postJson<unknown>("/v1/identity/passkeys/authentication/verify", {
