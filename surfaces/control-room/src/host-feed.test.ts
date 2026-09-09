@@ -3,7 +3,7 @@ import { HostFeed, type FeedState } from "./host-feed";
 import { parseHost, type HostSnapshot } from "./host-contract";
 
 const snapshot: HostSnapshot = { host_id: "00000000-0000-0000-0000-000000000001", agents: [], sessions: [],
-  routines: [], connections: [], plugins: [], skills: [], reviews: [] };
+  routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [] };
 const response = () => new Response(JSON.stringify(snapshot));
 const flush = async () => { await vi.advanceTimersByTimeAsync(0); };
 

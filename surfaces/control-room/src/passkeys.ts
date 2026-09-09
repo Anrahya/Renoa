@@ -72,7 +72,12 @@ export async function rememberedConnectionTicket(principalId: string): Promise<T
   if (!response.ok) throw new Error("Renoa login service is unavailable. Reconnect when it returns.");
   const identity: unknown = await response.json();
   if (typeof identity !== "object" || identity === null || !("principalId" in identity) || identity.principalId !== principalId) return null;
-  return parseTicketGrant(await postJson("/v1/identity/connection-ticket", { surface: SURFACE }));
+  try {
+    return parseTicketGrant(await postJson("/v1/identity/connection-ticket", { surface: SURFACE }));
+  } catch (error) {
+    if (error instanceof IdentityRequestError && error.status === 401) return null;
+    throw error;
+  }
 }
 
 export function rcpEndpoint(): string {
@@ -118,6 +123,10 @@ function requirePublicKeyCredential(value: Credential | null): PublicKeyCredenti
   return value;
 }
 
+class IdentityRequestError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
 async function postJson<T>(path: string, body: object): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
@@ -129,7 +138,7 @@ async function postJson<T>(path: string, body: object): Promise<T> {
   });
   const value: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
-    throw new Error(identityError(response.status, value));
+    throw new IdentityRequestError(response.status, identityError(response.status, value));
   }
   return value as T;
 }

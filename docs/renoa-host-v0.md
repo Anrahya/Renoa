@@ -228,7 +228,7 @@ of Host assembly and surface adapters.
 
 `HostRoutineControl` exposes owner pause/resume without constructing an execution
 Host. `POST /v1/host/routines/{routine_id}/enabled` adapts that domain operation;
-the browser controls are not implemented yet. The trusted adapter supplies the
+the browser exposes it beside the schedule on both Work and agent detail. The trusted adapter supplies the
 authenticated principal separately from JSON input. Each write requires the
 configured owner cookie and exactly one matching `Origin` header. The management
 configuration names `public_origin`; forwarded headers cannot select it.
@@ -254,14 +254,63 @@ Owner receipts remain distinct from agent receipts and cannot grant agent tools
 owner authority. Agent creation, recipe editors, and delegation remain separate
 work; this operation does not require them.
 
-The observation boundary is tested against unauthenticated, revoked and wrong-owner
-access, identity-service restart and unavailability, and observation without provider
-startup. The subsequent mutation boundary will be proven when
-inspection still works during execution and provider failure; both browser and
-agent changes use the same routine transaction; retries and restart preserve one
-logical mutation; stale edits cannot overwrite newer state; and the displayed
-result survives refresh. Browser tests must cover login, navigation, unavailable
-data, the automation action, and narrow-screen/keyboard use with real contracts.
+### Consistent management
+
+One configured human owner controls one durable Host. The panel has three entries:
+Work for current attention, unfinished work and upcoming schedules; Agents for
+the records that own that work and their applicable controls; and Shared library
+for installed connections, plugins and recorded skills. Shared connections link
+back to the agents whose profiles select them. Similar names do not justify merging
+agent identities, and a surface process is not a separate human owner.
+
+Management is composition of domain operations, not a second execution system.
+The HTTP adapter authenticates the owner, validates the request origin and adapts
+typed requests; routine and review modules retain their transactions and rules.
+Human operations do not impersonate an agent. Agent tools bind their own actor in
+the trusted runtime. They share domain rules with owner operations without gaining
+owner authority. Adding a future recipe editor, binding editor or management tool
+must follow this boundary rather than introduce another store or an HTTP-only rule.
+
+`HostReviewControl` edits admission policy for existing review repositories through
+`POST /v1/host/repositories/{repository_id}/policy`. The strict request has
+`operation_id`, `expected_revision`, `enabled`, `triggers` and `skip_drafts`.
+Repository, installation and assigned agent identity remain fixed. The domain uses
+the same revision validation and repository update as trusted local management.
+Owner receipts use `owner:<principal>:<operation_id>` keys in the existing review
+operation table, disjoint from trusted-local UUID keys. The request includes its
+repository identity, and the transaction verifies the pinned Host before mutation
+or replay. No new table or schema version is needed for these review controls.
+
+The browser persists a pending operation's identity and configuration-only body
+before sending it. Lost responses survive navigation and reload; retry sends that
+same body. Confirmed receipts cause a fresh observation read, never replacement of
+current state with an old receipt. Definite revision conflicts require reviewing
+the latest record. Configuration controls are unavailable on stale snapshots; a
+network outage does not create a new login requirement. These pending records do
+not contain cookies, credentials, standing prompts or conversation content.
+
+Review observation exposes current repository policies separately from each
+request's captured policy. The latter explains eligibility, not the exact triggering
+event: historical requests do not record whether a particular webhook action or a
+manual request caused admission. Detail also exposes recorded execution deadlines,
+retry times and worker diagnostics. Publication is independently not recorded,
+sending, published, suppressed or needs attention. Sending is an uncertain external
+operation, not proof of a posted review; its potentially large POST body stays out
+of management responses. The overview includes only summary status and an error
+indicator, while diagnostics require an authenticated detail read.
+
+The Work view prioritizes the newest request's incomplete outcome for each PR,
+while preserving every attempt in history. Unresolved publication attention and
+worker errors remain visible even when a newer request exists. Recorded starts and
+deadlines do not establish worker liveness. A changed policy affects new admissions;
+already-admitted requests retain their captured policy, and publication checks the
+current repository revision before a new POST. Changing a schedule is not cancelling
+its agent, and changing review policy is not an immediate worker cancellation.
+
+These controls establish a consistent management path, not general agent assembly.
+Owner creation and editing of recipes, surface-binding controls, runtime capability
+resolution and durable delegation remain future consumers. The existing Host remains
+their composition point; RCP's continuity contracts do not absorb product policy.
 
 ## Agent identity and assembly
 

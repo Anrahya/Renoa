@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use renoa_local::{HostObserver, HostRoutineControl};
+use renoa_local::{HostObserver, HostReviewControl, HostRoutineControl};
 use renoa_protocol::PrincipalId;
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -21,7 +21,23 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod identity;
+mod reviews;
 mod routines;
+
+fn origin_failure(state: &ManagementState, headers: &HeaderMap) -> Option<Response> {
+    let mut origins = headers.get_all(header::ORIGIN).iter();
+    (origins
+        .next()
+        .is_none_or(|value| value != state.origin.as_str())
+        || origins.next().is_some())
+    .then(|| {
+        failure(
+            StatusCode::FORBIDDEN,
+            "wrong_origin",
+            "Open the control panel at its configured Host address.",
+        )
+    })
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ManagementError {
@@ -56,6 +72,7 @@ struct ManagementState {
     identity: identity::IdentityClient,
     owner: PrincipalId,
     routines: HostRoutineControl,
+    reviews: HostReviewControl,
     origin: String,
 }
 
@@ -84,6 +101,7 @@ impl ManagementApi {
                 identity: identity::IdentityClient::new(identity_address)?,
                 owner,
                 routines: HostRoutineControl::open(root, host_id, owner.as_uuid())?,
+                reviews: HostReviewControl::open(root, host_id, owner.as_uuid())?,
                 origin,
             }),
         })
@@ -114,6 +132,10 @@ impl ManagementApi {
             .route("/v1/host/access", get(access))
             .route("/v1/host", get(observe))
             .route("/v1/host/reviews/{request_id}", get(review_detail))
+            .route(
+                "/v1/host/repositories/{repository_id}/policy",
+                axum::routing::post(reviews::update_policy),
+            )
             .route(
                 "/v1/host/routines/{routine_id}/enabled",
                 axum::routing::post(routines::set_enabled),

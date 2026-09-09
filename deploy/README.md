@@ -37,8 +37,10 @@ reports individual unreadable sessions without inventing idle states.
 existing personal Host and asks the loopback identity service to validate browser
 sessions. It does not start models or share the coordinator's private database.
 The initial panel observes agents, sessions, schedules, shared inventory and review
-outcomes. The API also exposes owner pause/resume of existing automations; browser
-controls, full automation editing, and agent creation are subsequent work.
+outcomes. The browser exposes owner pause/resume of existing automations and edits
+to existing review repository triggers, enabled state and draft policy. Review
+details include captured policy, worker retries and publication state. Full
+automation editing and agent creation remain subsequent work.
 
 Build the coordinator, management adapter and production assets:
 
@@ -68,7 +70,7 @@ The routine control API requires Host schema 24. Stop all readers/writers of the
 shared Host catalog, including management, Slack, Telegram and GitHub workers,
 and back it up with SQLite's backup API. Build/install all Host consumers from the
 same revision, then start a normal Host process to apply the catalog migration
-before restarting management. `HostObserver` and `HostRoutineControl` deliberately
+before restarting management. Observation and owner-control modules deliberately
 do not migrate storage themselves. The migration preserves schedules, admitted
 runs, results and agent receipts, and adds owner operation receipts. Keep the
 previous binaries and matching database backup together for rollback. Browser

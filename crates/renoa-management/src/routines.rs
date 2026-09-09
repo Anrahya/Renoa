@@ -44,17 +44,8 @@ pub(super) async fn set_enabled(
     request: Result<Json<RoutineEnablement>, JsonRejection>,
 ) -> Response {
     // Never derive authority from Host/Forwarded headers or a model-supplied actor.
-    let mut origins = headers.get_all(header::ORIGIN).iter();
-    if origins
-        .next()
-        .is_none_or(|value| value != state.origin.as_str())
-        || origins.next().is_some()
-    {
-        return failure(
-            StatusCode::FORBIDDEN,
-            "wrong_origin",
-            "Open the control panel at its configured Host address.",
-        );
+    if let Some(response) = super::origin_failure(&state, &headers) {
+        return response;
     }
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,

@@ -166,7 +166,7 @@ fn read_command(
     }))
 }
 
-fn set_repository(
+pub(super) fn set_repository(
     tx: &Transaction<'_>,
     expected: Option<i64>,
     policy: &GitHubReviewPolicy,

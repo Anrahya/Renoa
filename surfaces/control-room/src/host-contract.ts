@@ -13,9 +13,14 @@ export interface Plugin { digest: string; name: string; version: string | null }
 export interface Skill { digest: string; name: string }
 export interface Review { request_id: string; agent_id: string; repository: string; pull_number: number;
   admitted_at_ms: number; reported_head_sha: string; reviewed_head_sha: string | null;
+  publication: PublicationState; worker_error: boolean; retry_after_ms: number | null;
   state: "queued" | "prepared" | "reviewed" | "skipped" | "incomplete" | "superseded" }
+export type PublicationState = "not_recorded" | "sending" | "published" | "suppressed" | "needs_attention";
+export type ReviewTrigger = "opened" | "reopened" | "ready_for_review" | "synchronize";
+export interface ReviewRepository { revision: number; policy: { repository_id: number; installation_id: number;
+  full_name: string; agent_id: string; enabled: boolean; triggers: ReviewTrigger[]; skip_drafts: boolean } }
 export interface HostSnapshot { host_id: string; agents: Agent[]; sessions: Session[]; routines: Routine[];
-  connections: Connection[]; plugins: Plugin[]; skills: Skill[]; reviews: Review[] }
+  connections: Connection[]; plugins: Plugin[]; skills: Skill[]; reviews: Review[]; review_repositories: ReviewRepository[] }
 
 type RecordValue = Record<string, unknown>;
 const record = (v: unknown): v is RecordValue => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -24,6 +29,15 @@ const id = (v: unknown): v is string => text(v) && /^[\da-f]{8}-[\da-f]{4}-[\da-
 const count = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 const array = (v: unknown, check: (v: unknown) => boolean): boolean => Array.isArray(v) && v.every(check);
 const nullable = (v: unknown, check: (v: unknown) => boolean): boolean => v === null || check(v);
+export const publicationState = (v: unknown): v is PublicationState =>
+  ["not_recorded", "sending", "published", "suppressed", "needs_attention"].includes(v as string);
+export function reviewRepository(v: unknown): v is ReviewRepository {
+  if (!record(v) || !count(v.revision) || v.revision < 1 || !record(v.policy)) return false;
+  const p = v.policy;
+  return count(p.repository_id) && p.repository_id > 0 && count(p.installation_id) && p.installation_id > 0 &&
+    text(p.full_name) && id(p.agent_id) && typeof p.enabled === "boolean" && typeof p.skip_drafts === "boolean" &&
+    array(p.triggers, t => ["opened", "reopened", "ready_for_review", "synchronize"].includes(t as string));
+}
 function operation(v: unknown): boolean {
   return nullable(v, v => record(v) && id(v.id) && id(v.command_id) && count(v.position) &&
     ["queued", "unfinished", "outcome_unknown", "waiting", "completed", "failed", "cancelled"].includes(v.state as string));
@@ -45,7 +59,9 @@ export function parseHost(value: unknown): HostSnapshot {
     !array(value.connections, v => record(v) && text(v.id) && typeof v.catalog_available === "boolean" && count(v.tool_count) && array(v.selected_by_profiles, text)) ||
     !array(value.plugins, v => record(v) && text(v.digest) && text(v.name) && nullable(v.version, text)) ||
     !array(value.skills, v => record(v) && text(v.digest) && text(v.name)) ||
+    !array(value.review_repositories, reviewRepository) ||
     !array(value.reviews, v => record(v) && id(v.request_id) && id(v.agent_id) && text(v.repository) && count(v.pull_number) &&
+      publicationState(v.publication) && typeof v.worker_error === "boolean" && nullable(v.retry_after_ms, count) &&
       count(v.admitted_at_ms) && text(v.reported_head_sha) && nullable(v.reviewed_head_sha, text) &&
       ["queued", "prepared", "reviewed", "skipped", "incomplete", "superseded"].includes(v.state as string))) {
     throw new Error("The Host returned an incompatible snapshot. Your last received state is preserved.");

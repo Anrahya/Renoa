@@ -22,7 +22,11 @@ const example: HostSnapshot = {
     { id: "github", catalog_available: true, tool_count: 8, selected_by_profiles: ["review"] },
   ],
   plugins: [{ digest: "example-package-revision", name: "Research tools", version: "1.0" }],
-  skills: [], reviews: [],
+  skills: [],
+  review_repositories: [{ revision: 2, policy: { repository_id: 42, installation_id: 7, full_name: "Anrahya/Renoa", agent_id: id(4), enabled: true,
+    triggers: ["opened", "reopened", "ready_for_review", "synchronize"], skip_drafts: false } }],
+  reviews: [{ request_id: id(7), agent_id: id(4), repository: "Anrahya/Renoa", pull_number: 19, admitted_at_ms: Date.parse("2026-09-09T14:00:00Z"),
+    reported_head_sha: "23955af".padEnd(40, "0"), reviewed_head_sha: null, state: "prepared", publication: "not_recorded", worker_error: true, retry_after_ms: Date.parse("2026-09-09T14:02:00Z") }],
 };
 export default function HostPreview() {
   return <HostPanelView preview host={{ status: "connected", snapshot: example, receivedAt: Date.now(), error: null,

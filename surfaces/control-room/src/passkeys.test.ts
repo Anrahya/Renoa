@@ -17,6 +17,15 @@ it("distinguishes missing login from an identity service outage", async () => {
   await expect(rememberedConnectionTicket("owner")).rejects.toThrow("unavailable");
 });
 
+it("falls back to sign-in if login is revoked between session lookup and ticket issue", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ principalId: "owner" }))
+    .mockResolvedValueOnce(new Response(null, { status: 401 })));
+  expect(await rememberedConnectionTicket("owner")).toBeNull();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ principalId: "owner" }))
+    .mockResolvedValueOnce(Response.json({ message: "service unavailable" }, { status: 503 })));
+  await expect(rememberedConnectionTicket("owner")).rejects.toThrow("unavailable");
+});
+
 it("unwraps the Rust WebAuthn challenge envelope for both browser ceremonies", async () => {
   const options = { challenge: "public-challenge" };
   const parse = vi.fn((value: unknown) => {

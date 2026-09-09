@@ -20,6 +20,9 @@ use uuid::Uuid;
 
 const ORIGIN: &str = "http://localhost";
 
+#[path = "support/review_policy.rs"]
+mod review_policy;
+
 struct Fixture {
     files: tempfile::TempDir,
     host: LocalHost,

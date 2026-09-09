@@ -297,11 +297,16 @@ fn payload(outcome: &GitHubReviewOutcome, sha: &str, marker: &str) -> serde_json
                     String::new()
                 } else {
                     format!(
-                        "\n\nReview limitations:\n{}",
+                        "\n\nCoverage and verification limits apply; no findings is not proof of correctness.\n\n<details>\n<summary>Review limitations</summary>\n\n{}\n\n</details>",
                         report
                             .limitations
                             .iter()
-                            .map(|s| format!("- {s}"))
+                            .map(|s| format!(
+                                "- {}",
+                                s.replace('&', "&amp;")
+                                    .replace('<', "&lt;")
+                                    .replace('>', "&gt;")
+                            ))
                             .collect::<Vec<_>>()
                             .join("\n")
                     )

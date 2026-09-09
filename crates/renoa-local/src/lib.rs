@@ -48,9 +48,11 @@ pub use host::catalog::HostCatalogError;
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
     HostObservation, HostObserver, ObservedAgent, ObservedConnection, ObservedOperation,
-    ObservedOperationState, ObservedPlugin, ObservedReview, ObservedReviewDetail,
-    ObservedReviewState, ObservedRoutine, ObservedSession, ObservedSessionState, ObservedSkill,
+    ObservedOperationState, ObservedPlugin, ObservedPublicationState, ObservedReview,
+    ObservedReviewDetail, ObservedReviewExecution, ObservedReviewPublication, ObservedReviewState,
+    ObservedRoutine, ObservedSession, ObservedSessionState, ObservedSkill,
 };
+pub use host::reviews::{HostReviewControl, ReviewPolicyUpdate};
 pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
 pub use isolated_workspace::InspectionSandboxConfig;
 pub use mcp::{

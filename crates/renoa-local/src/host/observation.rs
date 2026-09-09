@@ -9,6 +9,7 @@ use super::catalog::{self, HostCatalogError};
 use crate::LocalHostError;
 
 mod inventory;
+mod review_activity;
 mod reviews;
 mod sessions;
 #[cfg(test)]
@@ -16,6 +17,9 @@ mod tests;
 
 pub use inventory::{
     ObservedAgent, ObservedConnection, ObservedPlugin, ObservedRoutine, ObservedSkill,
+};
+pub use review_activity::{
+    ObservedPublicationState, ObservedReviewExecution, ObservedReviewPublication,
 };
 pub use reviews::ObservedReviewDetail;
 pub use reviews::{ObservedReview, ObservedReviewState};
@@ -36,6 +40,7 @@ pub struct HostObservation {
     pub plugins: Vec<ObservedPlugin>,
     pub skills: Vec<ObservedSkill>,
     pub reviews: Vec<ObservedReview>,
+    pub review_repositories: Vec<crate::GitHubReviewRepository>,
 }
 
 /// Read access to one existing Host, pinned to its durable identity. It cannot
@@ -116,6 +121,7 @@ impl HostObserver {
             plugins: inventory::plugins(&tx)?,
             skills: inventory::skills(&tx)?,
             reviews: reviews::read(&tx)?,
+            review_repositories: review_activity::repositories(&tx)?,
         };
         tx.commit().map_err(HostCatalogError::from)?;
         result.sessions = sessions::read(&self.root.join("sessions"), &mut result.agents)?;

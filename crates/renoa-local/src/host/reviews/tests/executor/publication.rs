@@ -79,6 +79,10 @@ async fn publishes_exact_commit_and_replays_without_another_github_call() {
                 .expect("POST"),
         )
         .expect("payload");
+        let summary = body["body"].as_str().expect("summary");
+        assert!(summary.starts_with("Soundwave reporting."));
+        assert!(summary.contains("<summary>Review limitations</summary>"));
+        assert!(summary.contains("no findings is not proof of correctness"));
         assert_eq!(body["comments"][0]["line"], 2);
         assert_eq!(body["comments"][0]["side"], "RIGHT");
         assert!(
