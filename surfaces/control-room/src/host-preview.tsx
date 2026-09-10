@@ -1,5 +1,5 @@
 import { HostPanelView } from "./host-panel";
-import type { HostSnapshot } from "./host-contract";
+import { parseHost, type HostSnapshot } from "./host-contract";
 
 const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`;
 const example: HostSnapshot = {
@@ -29,6 +29,11 @@ const example: HostSnapshot = {
     reported_head_sha: "23955af".padEnd(40, "0"), reviewed_head_sha: null, state: "prepared", publication: "not_recorded", worker_error: true, retry_after_ms: Date.parse("2026-09-09T14:02:00Z") }],
 };
 export default function HostPreview() {
-  return <HostPanelView preview host={{ status: "connected", snapshot: example, receivedAt: Date.now(), error: null,
+  // DEV-only entry point. Local snapshots are ignored by Git and must never
+  // become public assets; the production build excludes this entire module.
+  const captures = import.meta.glob<{ received_at_ms: number; snapshot: unknown }>("../.impeccable/review/host-snapshot.json", { eager: true, import: "default" });
+  const saved = Object.values(captures)[0];
+  const snapshot = saved ? parseHost(saved.snapshot) : example;
+  return <HostPanelView preview previewLabel={saved ? "Saved VPS snapshot" : "Example data"} host={{ status: "connected", snapshot, receivedAt: saved?.received_at_ms ?? null, error: null,
     refresh: () => undefined, lock: () => undefined }} />;
 }
