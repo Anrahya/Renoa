@@ -47,7 +47,8 @@ export function agentActivity(host: HostSnapshot, agent: Agent) {
   const reviews = host.reviews.filter(r => r.agent_id === agent.id);
   const sessions = host.sessions.filter(s => s.agent_id === agent.id);
   const attention = attentionReviews(reviews).length + sessions.filter(sessionNeedsAttention).length;
-  const unfinished = reviews.filter(r => ["queued", "prepared"].includes(r.state)).length + sessions.filter(sessionUnfinished).length;
+  const unfinished = currentReviews(host.reviews).filter(r => r.agent_id === agent.id && ["queued", "prepared"].includes(r.state)).length +
+    sessions.filter(sessionUnfinished).length + host.routines.filter(r => r.agent_id === agent.id).reduce((count, r) => count + r.pending_runs, 0);
   const next = host.routines.filter(r => r.agent_id === agent.id && r.enabled).sort((a, b) => a.next_due_ms - b.next_due_ms)[0];
   if (attention) return { tone: "attention", label: `${attention} ${attention === 1 ? "record needs" : "records need"} attention` };
   if (unfinished) return { tone: "pending", label: `${unfinished} unfinished ${unfinished === 1 ? "record" : "records"}` };

@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-11T02:11:01+05:30",
+  "generatedAt": "2026-09-11T02:40:05+05:30",
   "title": "Design System: Renoa Web Surfaces",
   "extensions": {
     "colorMeta": {
-      "host-paper": { "role": "neutral", "displayName": "Host Ivory", "canonical": "#f6f3ec" },
-      "host-ink": { "role": "neutral", "displayName": "Host Charcoal", "canonical": "#30291f" },
-      "host-muted": { "role": "neutral", "displayName": "Host Muted Brown", "canonical": "#736755" },
-      "host-accent": { "role": "primary", "displayName": "Host Antique Gold", "canonical": "#805b1b" },
-      "host-rule": { "role": "neutral", "displayName": "Host Hairline", "canonical": "#d9d0bd" },
-      "host-soft": { "role": "neutral", "displayName": "Host Soft Wash", "canonical": "#eee7d8" },
-      "host-record": { "role": "neutral", "displayName": "Host Record Wash", "canonical": "#eee9df" },
-      "host-node-line": { "role": "neutral", "displayName": "Host Node Line", "canonical": "#a88b52" },
-      "host-ownership-line": { "role": "neutral", "displayName": "Host Ownership Line", "canonical": "#bdab88" },
-      "host-quiet-dot": { "role": "neutral", "displayName": "Host Quiet Dot", "canonical": "#807563" },
-      "host-selection": { "role": "neutral", "displayName": "Host Selection", "canonical": "#e8d2a3" },
-      "host-portrait-backdrop": { "role": "neutral", "displayName": "Portrait Charcoal", "canonical": "#24211c" },
-      "host-warning": { "role": "tertiary", "displayName": "Recorded Warning", "canonical": "#9c3d26" },
-      "host-success": { "role": "tertiary", "displayName": "Recorded Success", "canonical": "#286448" },
-      "host-success-wash": { "role": "tertiary", "displayName": "Success Wash", "canonical": "#e0eee6" },
-      "host-muted-wash": { "role": "neutral", "displayName": "Recorded Muted Wash", "canonical": "#e9e3d6" },
-      "host-error-wash": { "role": "tertiary", "displayName": "Error Banner Wash", "canonical": "#f5e8e1" }
+      "charcoal": { "role": "neutral", "displayName": "Warm Charcoal", "canonical": "#181714" },
+      "ivory": { "role": "neutral", "displayName": "Readable Ivory", "canonical": "#eee8dc" },
+      "muted-ivory": { "role": "neutral", "displayName": "Muted Ivory", "canonical": "#b4aa96" },
+      "polished-gold": { "role": "primary", "displayName": "Polished Gold", "canonical": "#d3b66f" },
+      "dark-rule": { "role": "neutral", "displayName": "Dark Hairline", "canonical": "#39352b" },
+      "soft-charcoal": { "role": "neutral", "displayName": "Soft Charcoal", "canonical": "#28251e" },
+      "record-charcoal": { "role": "neutral", "displayName": "Record Charcoal", "canonical": "#22201b" },
+      "footer-charcoal": { "role": "neutral", "displayName": "Footer Charcoal", "canonical": "#211f1a" },
+      "node-gold": { "role": "neutral", "displayName": "Node Gold", "canonical": "#8c774c" },
+      "connection-gold": { "role": "neutral", "displayName": "Connection Gold", "canonical": "#7b6946" },
+      "idle-stone": { "role": "neutral", "displayName": "Idle Stone", "canonical": "#a4977c" },
+      "recorded-warning": { "role": "tertiary", "displayName": "Recorded Warning", "canonical": "#efa18a" },
+      "recorded-success": { "role": "tertiary", "displayName": "Recorded Success", "canonical": "#9bbc91" },
+      "success-wash": { "role": "tertiary", "displayName": "Success Wash", "canonical": "#253025" },
+      "muted-wash": { "role": "neutral", "displayName": "Recorded Muted Wash", "canonical": "#2b2820" },
+      "banner-charcoal": { "role": "neutral", "displayName": "Banner Charcoal", "canonical": "#24221c" },
+      "error-wash": { "role": "tertiary", "displayName": "Error Wash", "canonical": "#352520" }
     },
     "typographyMeta": {
       "display": { "displayName": "Hero statement", "purpose": "The oversized public first-viewport statement." },
@@ -28,21 +28,25 @@
       "title": { "displayName": "Explanation title", "purpose": "The selected public system-part explanation." },
       "body": { "displayName": "Public body", "purpose": "Homepage copy and descriptions." },
       "label": { "displayName": "Public control label", "purpose": "Homepage navigation, actions, and system controls." },
-      "host-page-title": { "displayName": "Host page title", "purpose": "Top-level authenticated Host views and agent identities." },
+      "host-page-title": { "displayName": "Host page title", "purpose": "Top-level Host views and agent identities." },
       "host-section-title": { "displayName": "Host section title", "purpose": "Ruled work, library, and responsibility sections." },
       "host-body": { "displayName": "Host body", "purpose": "Dense operating copy and record titles." },
       "host-label": { "displayName": "Host control label", "purpose": "Hash navigation, buttons, and subnavigation." },
       "host-caption": { "displayName": "Host caption", "purpose": "Record metadata, statuses, counts, and preview truth." }
     },
-    "shadows": [],
+    "shadows": [
+      { "name": "agent-hover", "value": "0 8px 20px #090806", "purpose": "Lifts an interactive agent portrait by 2px on hover or keyboard focus." }
+    ],
     "motion": [
-      { "name": "arrow-travel", "value": "240ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Moves public text-action arrows 4px on hover." },
+      { "name": "arrow-travel", "value": "240ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Moves text-action arrows 4px on hover." },
       { "name": "part-state", "value": "180ms", "purpose": "Transitions the public system-part mark background and color." },
-      { "name": "canvas-response", "value": "requestAnimationFrame; 1 - exp(-elapsed * 8)", "purpose": "Eases pointer tilt and selection emphasis in the public system form." },
-      { "name": "host-feed-orbit", "value": "24s linear infinite", "purpose": "Turns the connected Host ring only while the live System map is visible and unpaused." },
-      { "name": "record-delta-sweep", "value": "1800ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Marks a newly received execution-record delta along the affected Host connection and agent ring." },
+      { "name": "canvas-response", "value": "requestAnimationFrame; 1 - exp(-elapsed * 8)", "purpose": "Eases pointer tilt and selection emphasis in the conceptual gold system form." },
+      { "name": "host-emblem-breathe", "value": "6s ease-in-out infinite", "purpose": "Brightens and scales the live connected Host emblem subtly." },
+      { "name": "host-feed-orbit", "value": "24s linear infinite", "purpose": "Turns the connected-feed ring only while the live System map is visible and unpaused." },
+      { "name": "record-delta-sweep", "value": "1800ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Marks a newly received execution-record delta without claiming a worker heartbeat." },
+      { "name": "branch-reveal", "value": "320ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Opens and closes multi-schedule branches while preserving access to every entry." },
       { "name": "schedule-clock", "value": "1s shared timer; 140ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Updates all live due times from one clock and turns each compact clock hand." },
-      { "name": "host-motion-suppression", "value": "pause; page visibility; intersection visibility; prefers-reduced-motion: reduce", "purpose": "Stops or removes System motion while preserving the complete structural map; saved snapshots remain still." }
+      { "name": "motion-suppression", "value": "pause; page visibility; intersection visibility; prefers-reduced-motion: reduce", "purpose": "Stops or removes homepage and Host motion while preserving their complete structures." }
     ],
     "breakpoints": [
       { "name": "host-phone", "value": "max-width: 640px" },
@@ -54,55 +58,62 @@
   },
   "components": [
     {
-      "name": "Open Host Action",
+      "name": "Filled Primary Action",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The compact filled homepage entry, labeled Preview Host in development and Open Host in production.",
-      "html": "<a class=\"ds-open-host\" href=\"#\">Open Host <svg viewBox=\"0 0 256 256\" aria-hidden=\"true\"><path d=\"M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z\"/></svg></a>",
-      "css": ".ds-open-host{display:inline-flex;align-items:center;gap:10px;background:#182448;color:#fff;padding:12px 18px;border-radius:5px;font:650 13px/1.6 Manrope,sans-serif;text-decoration:none}.ds-open-host svg{width:17px;height:17px;fill:currentColor}.ds-open-host:hover{background:#294acc}.ds-open-host:focus-visible{outline:2px solid #294acc;outline-offset:7px}"
+      "description": "The polished-gold action used for the homepage Host entry and live Host saves.",
+      "html": "<a class=\"ds-primary\" href=\"#\">Open Host <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7 17 17 7M9 7h8v8\"/></svg></a>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;gap:10px;background:#d3b66f;color:#181714;padding:12px 18px;border-radius:5px;font:650 13px/1.6 Manrope,sans-serif;text-decoration:none}.ds-primary svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.5}.ds-primary:hover{background:#e5cd92}.ds-primary:focus-visible{outline:2px solid #d3b66f;outline-offset:7px}"
     },
     {
       "name": "Text Action",
       "kind": "button",
       "refersTo": "button-text",
-      "description": "The open underlined action used for public exploration and the closing Host invitation.",
-      "html": "<button class=\"ds-text-action\">Explore the system <svg viewBox=\"0 0 256 256\" aria-hidden=\"true\"><path d=\"M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z\"/></svg></button>",
-      "css": ".ds-text-action{display:inline-flex;align-items:center;gap:18px;border:0;border-bottom:1px solid #ccd5e7;background:none;color:#182448;padding:0 0 9px;font:650 14px/1.6 Manrope,sans-serif}.ds-text-action svg{width:21px;height:21px;fill:currentColor;transition:transform 240ms cubic-bezier(.16,1,.3,1)}.ds-text-action:hover{border-color:#294acc;color:#294acc}.ds-text-action:hover svg{transform:translateX(4px)}.ds-text-action:focus-visible{outline:2px solid #294acc;outline-offset:7px}"
+      "description": "The open underlined action used for public exploration and quiet Host links.",
+      "html": "<button class=\"ds-text-action\">Explore the system <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M5 12h14m-5-5 5 5-5 5\"/></svg></button>",
+      "css": ".ds-text-action{display:inline-flex;align-items:center;gap:18px;border:0;border-bottom:1px solid #39352b;background:none;color:#eee8dc;padding:0 0 9px;font:650 14px/1.6 Manrope,sans-serif}.ds-text-action svg{width:21px;height:21px;fill:none;stroke:currentColor;transition:transform 240ms cubic-bezier(.16,1,.3,1)}.ds-text-action:hover{border-color:#d3b66f;color:#d3b66f}.ds-text-action:hover svg{transform:translateX(4px)}.ds-text-action:focus-visible{outline:2px solid #d3b66f;outline-offset:7px}"
     },
     {
       "name": "System Part Control",
       "kind": "chip",
-      "description": "The circular plus-mark control that selects Models, Tools, or Agents on the public homepage.",
-      "html": "<button class=\"ds-part\" aria-pressed=\"true\"><span><svg viewBox=\"0 0 256 256\" aria-hidden=\"true\"><path d=\"M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z\"/></svg></span>Models</button>",
-      "css": ".ds-part{display:flex;align-items:center;gap:9px;background:transparent;border:0;padding:10px 4px;color:#53617e;font:650 13px/1.6 Manrope,sans-serif}.ds-part span{width:22px;height:22px;border:1px solid #8092be;border-radius:50%;display:grid;place-items:center;transition:background 180ms,color 180ms}.ds-part svg{width:14px;height:14px;fill:currentColor}.ds-part:hover{color:#294acc}.ds-part[aria-pressed=true]{color:#294acc}.ds-part[aria-pressed=true] span{background:#294acc;border-color:#294acc;color:#fff}.ds-part[aria-pressed=true] svg{transform:rotate(45deg)}.ds-part:focus-visible{outline:2px solid #294acc;outline-offset:7px}"
+      "description": "The circular plus-mark control that selects Models, Tools, or Agents on the conceptual homepage.",
+      "html": "<button class=\"ds-part\" aria-pressed=\"true\"><span>+</span>Models</button>",
+      "css": ".ds-part{display:flex;align-items:center;gap:9px;background:transparent;border:0;padding:10px 4px;color:#b4aa96;font:650 13px/1.6 Manrope,sans-serif}.ds-part span{width:22px;height:22px;border:1px solid #8c774c;border-radius:50%;display:grid;place-items:center;transition:background 180ms,color 180ms}.ds-part:hover,.ds-part[aria-pressed=true]{color:#d3b66f}.ds-part[aria-pressed=true] span{background:#d3b66f;border-color:#d3b66f;color:#181714}.ds-part:focus-visible{outline:2px solid #d3b66f;outline-offset:7px}"
     },
     {
-      "name": "Public Wordmark",
+      "name": "Wordmark",
       "kind": "nav",
-      "description": "The lowercase public-homepage Renoa wordmark with a blue period; the private Host uses the same type treatment with a gold period.",
-      "html": "<a class=\"ds-wordmark\" href=\"#\" aria-label=\"Renoa home\">renoa<span>.</span></a>",
-      "css": ".ds-wordmark{color:#182448;font:800 34px/1 Manrope,sans-serif;letter-spacing:-.04em;text-decoration:none}.ds-wordmark span{color:#294acc}.ds-wordmark:focus-visible{outline:2px solid #294acc;outline-offset:7px}"
+      "description": "The lowercase ivory Renoa wordmark with a polished-gold period, shared by homepage and Host.",
+      "html": "<a class=\"ds-wordmark\" href=\"#\">renoa<span>.</span></a>",
+      "css": ".ds-wordmark{color:#eee8dc;font:800 34px/1 Manrope,sans-serif;letter-spacing:-.04em;text-decoration:none}.ds-wordmark span{color:#d3b66f}.ds-wordmark:focus-visible{outline:2px solid #d3b66f;outline-offset:7px}"
     },
     {
       "name": "Host Header Navigation",
       "kind": "nav",
-      "description": "Compact hash navigation for the separate System, Agents, Work, and Library destinations.",
-      "html": "<nav class=\"ds-host-nav\" aria-label=\"Host navigation\"><a href=\"#overview\" aria-current=\"page\">System</a><a href=\"#agents\">Agents</a><a href=\"#work\">Work</a><a href=\"#library\">Library</a></nav>",
-      "css": ".ds-host-nav{height:76px;display:flex;align-items:stretch;gap:28px;border-bottom:1px solid #d9d0bd;padding:0 40px;background:#f6f3ec}.ds-host-nav a{display:flex;align-items:center;padding:0 4px;border-bottom:2px solid transparent;color:#736755;font:600 .875rem/1.6 Manrope,sans-serif;text-decoration:none}.ds-host-nav a:hover,.ds-host-nav a[aria-current]{color:#805b1b}.ds-host-nav a[aria-current]{border-color:#805b1b}.ds-host-nav a:focus-visible{outline:2px solid #805b1b;outline-offset:4px}"
+      "description": "Compact dark navigation for System, Agents, Work, and Library.",
+      "html": "<nav class=\"ds-host-nav\"><a href=\"#overview\" aria-current=\"page\">System</a><a href=\"#agents\">Agents</a><a href=\"#work\">Work</a><a href=\"#library\">Library</a></nav>",
+      "css": ".ds-host-nav{height:76px;display:flex;align-items:stretch;gap:28px;border-bottom:1px solid #39352b;padding:0 40px;background:#181714}.ds-host-nav a{display:flex;align-items:center;padding:0 4px;border-bottom:2px solid transparent;color:#b4aa96;font:600 .875rem/1.6 Manrope,sans-serif;text-decoration:none}.ds-host-nav a:hover,.ds-host-nav a[aria-current]{color:#d3b66f}.ds-host-nav a[aria-current]{border-color:#d3b66f}.ds-host-nav a:focus-visible{outline:2px solid #d3b66f;outline-offset:4px}"
     },
     {
-      "name": "Host System Identities",
+      "name": "Host System Identity",
       "kind": "custom",
-      "description": "The original polished-gold Renoa emblem and reusable agent portrait treatment. Arcee and Soundwave use approved Transformers Prime portraits; the small GitHub badge remains separate and appears only from recorded repository assignment.",
-      "html": "<div class=\"ds-system-identities\"><span class=\"ds-host-emblem\"><img src=\"/assets/identities/renoa-host-gold.webp\" alt=\"\" width=\"96\" height=\"96\"></span><a class=\"ds-system-agent-link\" href=\"#agent/arcee\"><span class=\"ds-system-agent-orb\"><img src=\"/assets/identities/arcee-prime.webp\" alt=\"\" width=\"64\" height=\"64\"><span class=\"ds-github-badge\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\"><path d=\"M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.58 9.58 0 0 1 12 6.82c.85 0 1.71.11 2.51.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.86v2.76c0 .27.18.58.69.48A10 10 0 0 0 12 2Z\"/></svg></span><span class=\"ds-system-agent-dot\" aria-hidden=\"true\"></span></span><span class=\"ds-system-agent-name\"><strong>Arcee</strong><small>GitHub reviews</small></span></a></div>",
-      "css": ".ds-system-identities{display:flex;align-items:center;gap:54px;padding:24px;background:#f6f3ec;color:#30291f;font-family:Manrope,sans-serif}.ds-host-emblem{position:relative;display:grid;place-items:center;width:112px;height:112px;border:1px solid #a88b52;border-radius:50%}.ds-host-emblem img{display:block;width:96px;height:96px;border-radius:50%;object-fit:contain}.ds-system-agent-link{display:flex;align-items:center;gap:20px;min-height:72px;color:inherit;text-decoration:none}.ds-system-agent-orb{position:relative;display:grid;place-items:center;flex:none;width:64px;height:64px;background:#24211c;border:1px solid #a88b52;border-radius:50%}.ds-system-agent-orb>img{display:block;width:100%;height:100%;border-radius:inherit;object-fit:cover}.ds-github-badge{position:absolute;left:-3px;bottom:-3px;width:24px;height:24px;display:grid;place-items:center;border-radius:50%;color:#30291f;background:#f6f3ec;border:1px solid #a88b52}.ds-github-badge svg{width:15px;height:15px;fill:currentColor}.ds-system-agent-dot{position:absolute;right:-3px;bottom:-1px;width:7px;height:7px;border:2px solid #f6f3ec;border-radius:50%;background:#807563}.ds-system-agent-name{display:flex;flex-direction:column;gap:4px}.ds-system-agent-name strong{font-size:1.375rem;line-height:1.3;font-weight:600;letter-spacing:-.025em}.ds-system-agent-name small{color:#736755;font-size:.75rem}.ds-system-agent-link:hover strong{color:#805b1b}.ds-system-agent-link:hover .ds-system-agent-orb{border-color:#805b1b}.ds-system-agent-link:focus-visible{outline:2px solid #805b1b;outline-offset:4px}"
+      "description": "The original gold Host emblem and reusable agent portrait treatment; GitHub remains a separate repository-policy badge.",
+      "html": "<div class=\"ds-identities\"><span class=\"ds-host-emblem\"><img src=\"/assets/identities/renoa-host-gold.webp\" alt=\"\"></span><a class=\"ds-agent\" href=\"#\"><span class=\"ds-avatar\"><img src=\"/assets/identities/arcee-prime.webp\" alt=\"\"><span class=\"ds-github\" aria-label=\"Assigned to GitHub repositories\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M12 .7a11.5 11.5 0 0 0-3.64 22.41c.58.11.79-.25.79-.56v-2.24c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.16.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.4-1.26.73-1.55-2.57-.29-5.27-1.29-5.27-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.16 1.18A11 11 0 0 1 12 6.11c.98 0 1.96.13 2.87.38 2.2-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.83 1.19 3.09 0 4.4-2.71 5.38-5.29 5.67.42.36.79 1.07.79 2.16v3.26c0 .31.21.68.8.56A11.5 11.5 0 0 0 12 .7Z\"/></svg></span></span><strong>Arcee</strong></a></div>",
+      "css": ".ds-identities{display:flex;align-items:center;gap:54px;padding:24px;background:#181714;color:#eee8dc;font-family:Manrope,sans-serif}.ds-host-emblem{display:grid;place-items:center;width:112px;height:112px;border:1px solid #8c774c;border-radius:50%}.ds-host-emblem img{width:96px;height:96px;object-fit:contain}.ds-agent{display:flex;align-items:center;gap:20px;color:inherit;text-decoration:none}.ds-avatar{position:relative;width:64px;height:64px;border:1px solid #8c774c;border-radius:50%;transition:transform 300ms cubic-bezier(.16,1,.3,1),box-shadow 300ms}.ds-avatar>img{width:100%;height:100%;border-radius:inherit;object-fit:cover}.ds-github{position:absolute;left:-3px;bottom:-3px;width:24px;height:24px;display:grid;place-items:center;border-radius:50%;color:#eee8dc;background:#181714;border:1px solid #8c774c}.ds-github svg{width:13px;height:13px}.ds-agent:hover{color:#d3b66f}.ds-agent:hover .ds-avatar,.ds-agent:focus-visible .ds-avatar{transform:translateY(-2px);box-shadow:0 8px 20px #090806}.ds-agent:focus-visible{outline:2px solid #d3b66f;outline-offset:4px}"
+    },
+    {
+      "name": "System Branches",
+      "kind": "custom",
+      "description": "Compact schedule and review branches: schedule groups expose count, pending or enabled state, next due timer, and every ordered entry; review links show the recorded stage.",
+      "html": "<div class=\"ds-branches\"><section class=\"ds-branch\"><button aria-expanded=\"false\">◷ <span>3 schedules</span><small>1 pending</small><b>⌄</b></button><a href=\"#\">Next · Evening recap <span>01:29</span></a></section><a class=\"ds-review\" href=\"#\"><span>Review</span><small>Prepared</small></a></div>",
+      "css": ".ds-branches{width:290px;padding-left:16px;background:#181714;color:#b4aa96;font:400 .75rem/1.6 Manrope,sans-serif;border-left:1px solid #7b6946}.ds-branch button,.ds-branch a,.ds-review{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;border:0;background:transparent;color:inherit;font:inherit;text-decoration:none}.ds-branch button span,.ds-review span{color:#eee8dc}.ds-branch small,.ds-branch a span,.ds-review small{margin-left:auto;font:inherit;font-variant-numeric:tabular-nums}.ds-branches :is(button,a):hover{color:#d3b66f}.ds-branches :is(button,a):focus-visible{outline:2px solid #d3b66f;outline-offset:2px}"
     },
     {
       "name": "Host Record Disclosure",
       "kind": "custom",
       "description": "A ruled record that unfolds into stored evidence without leaving document flow.",
-      "html": "<details class=\"ds-record\" open><summary><span>renoa/project <small>Arcee · a13f5c2 · saved 14:32</small></span><span>reviewed</span></summary><div>Requested commit <code>a13f5c20</code></div></details>",
-      "css": ".ds-record{border-bottom:1px solid #d9d0bd;background:#f6f3ec;color:#30291f;font-family:Manrope,sans-serif}.ds-record summary{display:flex;align-items:center;gap:24px;padding:18px 26px 18px 0;cursor:pointer}.ds-record summary>span:first-child{font-size:.9375rem;font-weight:600}.ds-record summary>span:last-child{margin-left:auto;color:#736755;font-size:.8125rem}.ds-record small{display:block;margin-top:4px;color:#736755;font-size:.8125rem;font-weight:400}.ds-record[open] summary{color:#805b1b}.ds-record>div{margin:0 0 18px;padding:18px 24px 24px;background:#eee9df;font:400 .8125rem/1.6 Manrope,sans-serif}.ds-record summary:hover{color:#805b1b}.ds-record summary:focus-visible{outline:2px solid #805b1b;outline-offset:4px}"
+      "html": "<details class=\"ds-record\" open><summary><span>renoa/project <small>Arcee · saved 14:32</small></span><span>reviewed</span></summary><div>Requested commit <code>a13f5c20</code></div></details>",
+      "css": ".ds-record{border-bottom:1px solid #39352b;background:#181714;color:#eee8dc;font-family:Manrope,sans-serif}.ds-record summary{display:flex;gap:24px;padding:18px 26px 18px 0;cursor:pointer}.ds-record summary>span:last-child{margin-left:auto;color:#b4aa96;font-size:.8125rem}.ds-record small{display:block;color:#b4aa96;font-size:.8125rem}.ds-record[open] summary{color:#d3b66f}.ds-record>div{margin:0 0 18px;padding:18px 24px 24px;background:#22201b;font:400 .8125rem/1.6 Manrope,sans-serif}.ds-record summary:hover{color:#d3b66f}.ds-record summary:focus-visible{outline:2px solid #d3b66f;outline-offset:4px}"
     },
     {
       "name": "Host Primary Action",
@@ -110,7 +121,7 @@
       "refersTo": "host-button-primary",
       "description": "The live Host save action for revision-aware settings.",
       "html": "<button class=\"ds-host-primary\">Save policy</button>",
-      "css": ".ds-host-primary{min-height:44px;display:inline-flex;align-items:center;gap:12px;padding:12px 18px;border:0;border-radius:5px;background:#805b1b;color:#fff;font:600 .875rem/1.6 Manrope,sans-serif}.ds-host-primary:hover:not(:disabled){background:#705019}.ds-host-primary:focus-visible{outline:2px solid #805b1b;outline-offset:4px}.ds-host-primary:disabled{cursor:not-allowed;opacity:.55}"
+      "css": ".ds-host-primary{min-height:44px;padding:12px 18px;border:0;border-radius:5px;background:#d3b66f;color:#181714;font:600 .875rem/1.6 Manrope,sans-serif}.ds-host-primary:hover:not(:disabled){background:#e5cd92}.ds-host-primary:focus-visible{outline:2px solid #d3b66f;outline-offset:4px}.ds-host-primary:disabled{cursor:not-allowed;opacity:.55}"
     },
     {
       "name": "Host Secondary Action",
@@ -118,29 +129,22 @@
       "refersTo": "host-button-secondary",
       "description": "The outlined Host action for schedule and policy controls.",
       "html": "<button class=\"ds-host-action\">Pause schedule</button>",
-      "css": ".ds-host-action{min-height:44px;padding:9px 16px;border:1px solid #a88b52;border-radius:5px;background:transparent;color:#805b1b;font:600 .875rem/1.6 Manrope,sans-serif}.ds-host-action:hover:not(:disabled){background:#eee7d8}.ds-host-action:focus-visible{outline:2px solid #805b1b;outline-offset:4px}.ds-host-action:disabled{cursor:not-allowed;opacity:.55}"
-    },
-    {
-      "name": "Recorded Work Selector",
-      "kind": "nav",
-      "description": "One of four ruled selectors on the separate Work destination for attention, unfinished work, schedules, and reviews.",
-      "html": "<nav class=\"ds-work-tabs\" aria-label=\"Recorded work\"><button aria-pressed=\"true\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v6\"/><path d=\"M12 17h.01\"/></svg>Attention <span>2</span></button><button aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7 3h10M7 21h10M8 3c0 4 1 6 4 9-3 3-4 5-4 9m8-18c0 4-1 6-4 9 3 3 4 5 4 9\"/></svg>Unfinished <span>1</span></button><button aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5l3 2\"/></svg>Schedules <span>0</span></button><button aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M8 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3m8-14h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3M8 3v18m8-18v18M8 8h8m-8 8h8\"/></svg>Reviews <span>5</span></button></nav>",
-      "css": ".ds-work-tabs{display:flex;gap:28px;border-bottom:1px solid #d9d0bd;background:#f6f3ec;font-family:Manrope,sans-serif}.ds-work-tabs button{display:inline-flex;align-items:center;gap:8px;padding:12px 0;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;background:none;color:#736755;font:600 .875rem/1.6 Manrope,sans-serif;white-space:nowrap}.ds-work-tabs button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.ds-work-tabs button span{font-size:.8125rem;font-weight:400}.ds-work-tabs button:hover,.ds-work-tabs button[aria-pressed=true]{color:#805b1b}.ds-work-tabs button[aria-pressed=true]{border-bottom-color:#805b1b}.ds-work-tabs button:focus-visible{outline:2px solid #805b1b;outline-offset:4px}"
+      "css": ".ds-host-action{min-height:44px;padding:9px 16px;border:1px solid #8c774c;border-radius:5px;background:transparent;color:#d3b66f;font:600 .875rem/1.6 Manrope,sans-serif}.ds-host-action:hover:not(:disabled){background:#28251e}.ds-host-action:focus-visible{outline:2px solid #d3b66f;outline-offset:4px}.ds-host-action:disabled{cursor:not-allowed;opacity:.55}"
     }
   ],
   "narrative": {
-    "northStar": "The Open Filament Field",
-    "overview": "Renoa's web system presents a personal, modular AI system through two deliberately distinct surfaces. The public homepage remains spacious and conceptual: pale blue atmosphere, deep indigo language, and a fine connected form whose visible parts meet at one center. The authenticated Host is warmer and more personal, using ivory, charcoal, and polished antique gold around real records and recognizable agent identities.\n\nThe public and private surfaces stay distinct in purpose. The homepage explains without exposing data. The Host opens with a direct ownership map of the Host, every persistent agent, and each agent's target schedules. Work, Library, and detailed controls remain separate destinations that expand evidence only when the owner asks for it.",
-    "keyCharacteristics": ["Pale blue and indigo remain exclusive to the public homepage's conceptual field.", "Warm ivory, charcoal, and antique gold define the authenticated Host.", "Self-hosted Manrope from large public statements through compact Host labels.", "An original gold Host emblem and reusable circular agent portraits replace letter placeholders.", "Conceptual motion on the homepage; restrained state motion and reduced-motion support in the Host."],
+    "northStar": "The Golden Signal Field",
+    "overview": "Renoa's web system is one dark-only visual world. Warm charcoal holds every public and private surface; readable ivory carries the language; polished gold identifies the Host, selected concepts, links, focus, and action. Fine gold fibers and measured ownership lines keep the system open and connected without turning it into a dashboard of boxes.\n\nThe public homepage remains conceptual and contains no Host work data. The authenticated Host uses the same palette for recorded structure and controls: every persistent agent connects directly to the Host, then compact schedule and review branches reveal only admitted state. Generated identities add specific character without determining tools, ownership, or policy.",
+    "keyCharacteristics": ["Dark charcoal is the only page ground; there is no light theme or theme toggle.", "Polished gold carries identity, interaction, selection, focus, and connection.", "Readable ivory and muted warm gray maintain hierarchy across both surfaces.", "One original Host emblem, two approved personal portraits, and twelve stable generic agent portraits replace placeholders.", "Conceptual homepage motion and observed Host updates share strict pause, visibility, and reduced-motion behavior."],
     "rules": [
-      { "name": "The Separate Surface Palette Rule", "body": "Keep Action Blue on the public homepage. Use Host Antique Gold for interaction and selection inside the private Host; do not blend the two palettes.", "section": "colors" },
-      { "name": "The Recorded State Rule", "body": "Green and rust communicate states already present in Host records. They do not imply live telemetry.", "section": "colors" },
+      { "name": "The One Gold Rule", "body": "Use Polished Gold as the single accent on both homepage and Host. Blue and light-surface tokens are superseded.", "section": "colors" },
+      { "name": "The Recorded State Rule", "body": "Sage and coral communicate states already present in Host records. They do not imply live telemetry.", "section": "colors" },
       { "name": "The One Voice Rule", "body": "Use Manrope for every web role; hierarchy comes from scale, weight, tracking, and space.", "section": "typography" },
       { "name": "The Identifier Rule", "body": "Use the monospace fallback only for stored identifiers, digests, and revisions, never for headings or navigation.", "section": "typography" },
       { "name": "The Direct Host Ownership Rule", "body": "Connect every persistent agent directly to the Host. Use creation history only as provenance in agent detail, never as operational grouping or hierarchy.", "section": "layout" },
-      { "name": "The Flat Evidence Rule", "body": "Records expand within the document flow. Use tonal change and rules to reveal evidence, never floating panels or permanent inspectors.", "section": "elevation" }
+      { "name": "The Flat Evidence Rule", "body": "Records and branches expand within the document flow. Reserve lift for an interactive agent portrait under hover or keyboard focus.", "section": "elevation" }
     ],
-    "dos": ["Do preserve the blue public homepage as a no-data product introduction and keep the warm ivory-and-gold Host behind authentication.", "Do connect the Host directly to every persistent agent and attach schedules only to their recorded target agent.", "Do keep System structural; place work records and shared resources in their separate destinations.", "Do use stable record identities, timestamps, and explicit read-only language wherever a preview cannot act.", "Do preserve revision-safe schedule and repository policy controls on the live Host.", "Do reuse the approved Host emblem and agent portraits at their recorded map, directory, and detail sizes; retain their prompt sidecars and provenance record.", "Do preserve a still, complete homepage composition; keep saved Host snapshots still and suppress System motion when paused, hidden, offscreen, or reduced motion is preferred."],
-    "donts": ["Don't introduce card grids, decorative rooms, or a permanent inspector into the Host.", "Don't use portraits to infer tools, ownership, agent role, or policy; keep GitHub as a separate badge sourced from repository assignment.", "Don't apply the Host's ivory, charcoal, gold, or identity artwork to the accepted blue public homepage.", "Don't derive operational grouping from `created_by`, names, assignments, or creator history; creation is provenance only.", "Don't present record-delta sweeps, stored records, unfinished operations, schedule countdowns, or preview data as worker heartbeats or confirmed execution.", "Don't mix private Host data into the public homepage's conceptual Canvas.", "Don't imply model or tool recipe editing or cross-agent collaboration until those APIs and controls exist."]
+    "dos": ["Do keep the public homepage conceptual and free of Host work data while using the same dark charcoal, ivory, and gold visual system as the private Host.", "Do connect the Host directly to every persistent agent and attach schedules only to their recorded target agent.", "Do keep System structural; place work records and shared resources in their separate destinations.", "Do use stable record identities, timestamps, and explicit read-only language wherever a preview cannot act.", "Do preserve revision-safe schedule and repository policy controls on the live Host.", "Do preserve stable ID-based assignment across the twelve generic portraits and retain the named Arcee and Soundwave artwork; keep prompt sidecars and provenance with generated assets.", "Do preserve a still, complete homepage composition; keep saved Host snapshots still and suppress System motion when paused, hidden, offscreen, or reduced motion is preferred."],
+    "donts": ["Don't introduce card grids, decorative rooms, or a permanent inspector into the Host.", "Don't use portraits to infer tools, ownership, agent role, or policy; keep GitHub as a separate badge sourced from repository assignment.", "Don't add a light theme, blue accents, or a theme toggle.", "Don't invent Slack or Telegram binding badges when the Host snapshot does not expose that telemetry.", "Don't derive operational grouping from `created_by`, names, assignments, or creator history; creation is provenance only.", "Don't present record-delta sweeps, stored records, unfinished operations, schedule countdowns, or preview data as worker heartbeats or confirmed execution.", "Don't mix private Host data into the public homepage's conceptual Canvas.", "Don't imply model or tool recipe editing or cross-agent collaboration until those APIs and controls exist."]
   }
 }

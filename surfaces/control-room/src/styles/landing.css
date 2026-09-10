@@ -7,83 +7,84 @@
 }
 
 .renoa-home {
-  --home-paper: #f0f3fa;
-  --home-ink: #182448;
-  --home-muted: #53617e;
-  --home-blue: #294acc;
-  --home-rule: #ccd5e7;
+  --home-paper: #181714;
+  --home-ink: #eee8dc;
+  --home-muted: #b4aa96;
+  --home-accent: #d3b66f;
+  --home-rule: #39352b;
+  color-scheme: dark;
   min-height: 100svh;
   background: var(--home-paper);
   color: var(--home-ink);
   font-family: "Manrope", sans-serif;
   font-size: 16px;
   line-height: 1.6;
-  scrollbar-color: #8997b6 var(--home-paper);
+  scrollbar-color: #8e8167 var(--home-paper);
 }
 
-.renoa-home ::selection { background: #c6d3ff; color: #152752; }
+.renoa-home ::selection { background: #d3b66f; color: #181714; }
 .renoa-home a { color: inherit; text-decoration: none; text-underline-offset: 5px; }
 .renoa-home button { cursor: pointer; }
-.renoa-home :is(a, button):focus-visible { outline: 2px solid var(--home-blue); outline-offset: 7px; }
+.renoa-home :is(a, button):focus-visible { outline: 2px solid var(--home-accent); outline-offset: 7px; }
 .renoa-home :is(h1, h2, p, figure) { margin: 0; }
 .renoa-home :is(h1, h2) { text-wrap: balance; }
 .renoa-home-header, .renoa-home main, .renoa-home-footer { max-width: 1600px; margin: 0 auto; padding-inline: clamp(24px, 5.2vw, 88px); }
 
 .renoa-home-header { height: 110px; display: flex; justify-content: space-between; align-items: center; }
 .renoa-wordmark { font-size: 34px; font-weight: 800; letter-spacing: -0.04em; line-height: 1; }
-.renoa-wordmark span { color: var(--home-blue); }
+.renoa-wordmark span { color: var(--home-accent); }
 .renoa-home-header nav { display: flex; align-items: center; gap: 34px; font-size: 13px; font-weight: 650; }
 .renoa-nav-source, .renoa-open { display: inline-flex; align-items: center; gap: 10px; }
 .renoa-home-header nav a:not(.renoa-open):hover { text-decoration: underline; }
-.renoa-home .renoa-open { background: var(--home-ink); color: #fff; padding: 12px 18px; border-radius: 5px; }
-.renoa-open:hover { background: var(--home-blue); }
+.renoa-home .renoa-open { background: var(--home-accent); color: var(--home-paper); padding: 12px 18px; border-radius: 5px; }
+.renoa-open:hover { background: #e5cd92; }
 
 .renoa-hero { display: grid; grid-template-columns: 0.84fr 1.16fr; align-items: center; min-height: min(660px, 70vw); }
 .renoa-introduction { padding-block: 60px 100px; position: relative; z-index: 1; }
 .renoa-introduction h1 { font-weight: 500; font-size: clamp(58px, 5.65vw, 90px); line-height: 1.08; letter-spacing: -0.04em; }
-.renoa-introduction h1 em { font-style: normal; color: var(--home-blue); }
+.renoa-introduction h1 em { font-style: normal; color: var(--home-accent); }
 .renoa-introduction p { color: var(--home-muted); margin-top: 32px; font-size: clamp(15px, 1.2vw, 18px); line-height: 1.85; }
 .renoa-text-action { display: inline-flex; gap: 18px; align-items: center; border: none; border-bottom: 1px solid var(--home-rule); background: none; padding: 0 0 9px; font-size: 14px; font-weight: 650; }
 .renoa-introduction .renoa-text-action { margin-top: 36px; }
 .renoa-text-action svg { transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1); }
-.renoa-text-action:hover { border-color: var(--home-blue); color: var(--home-blue); }
+.renoa-text-action:hover { border-color: var(--home-accent); color: var(--home-accent); }
 .renoa-text-action:hover svg { transform: translateX(4px); }
 
 .renoa-system { position: relative; width: calc(100% + 36px); margin-left: -18px !important; aspect-ratio: 760 / 720; }
 .renoa-form-canvas { display: block; width: 100%; height: 100%; }
-.renoa-form-host { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 62px; height: 62px; display: flex; align-items: center; justify-content: center; background: var(--home-paper); border: 1px solid #728bd8; border-radius: 50%; font-size: 36px; font-weight: 650; letter-spacing: -0.04em; line-height: 1; }
+.renoa-form-host { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 62px; height: 62px; display: flex; align-items: center; justify-content: center; background: var(--home-paper); border: 1px solid #8c774c; border-radius: 50%; font-size: 36px; font-weight: 650; letter-spacing: -0.04em; line-height: 1; }
 .renoa-form-host > svg { position: absolute; right: 9px; top: 12px; }
-.renoa-form-host:hover { background: #e0e7fa; }
+.renoa-form-host:hover { background: #28251e; }
 .renoa-part { position: absolute; display: flex; align-items: center; gap: 9px; background: transparent; border: none; padding: 10px 4px; color: var(--home-muted); font-size: 13px; font-weight: 650; }
 .renoa-part-0 { top: 1%; left: 50%; transform: translateX(-50%); }
 .renoa-part-1 { top: 73%; right: 0; }
 .renoa-part-2 { top: 73%; left: 0; }
-.renoa-part-mark { border: 1px solid #8092be; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; transition: background 180ms, color 180ms; }
-.renoa-part:is([aria-pressed="true"], :hover) { color: var(--home-blue); }
-.renoa-part[aria-pressed="true"] .renoa-part-mark { background: var(--home-blue); border-color: var(--home-blue); color: white; }
+.renoa-part-mark { border: 1px solid #8c774c; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; transition: background 180ms, color 180ms; }
+.renoa-part:is([aria-pressed="true"], :hover) { color: var(--home-accent); }
+.renoa-part[aria-pressed="true"] .renoa-part-mark { background: var(--home-accent); border-color: var(--home-accent); color: var(--home-paper); }
 .renoa-part[aria-pressed="true"] .renoa-part-mark svg { transform: rotate(45deg); }
 .renoa-form-caption { position: absolute; bottom: 6%; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--home-muted); white-space: nowrap; }
 .renoa-motion { position: absolute; right: 3px; bottom: 4%; border: 1px solid var(--home-rule); width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--home-muted); }
-.renoa-motion:hover { background: #e0e7fa; color: var(--home-ink); }
+.renoa-motion:hover { background: #28251e; color: var(--home-ink); }
 
 .renoa-explanation { border-top: 1px solid var(--home-rule); display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: start; padding-block: 34px 44px; min-height: 160px; }
 .renoa-explanation-heading { display: flex; align-items: center; gap: 18px; padding-top: 2px; }
 .renoa-explanation h2 { font-size: clamp(17px, 1.5vw, 22px); font-weight: 500; letter-spacing: -0.025em; line-height: 1.4; }
-.renoa-small-orbit { width: 22px; height: 22px; flex-shrink: 0; border: 1px solid var(--home-blue); border-radius: 50%; position: relative; }
-.renoa-small-orbit::after { content: ""; position: absolute; inset: 4px; border: 1px solid var(--home-blue); border-radius: 50%; }
+.renoa-small-orbit { width: 22px; height: 22px; flex-shrink: 0; border: 1px solid var(--home-accent); border-radius: 50%; position: relative; }
+.renoa-small-orbit::after { content: ""; position: absolute; inset: 4px; border: 1px solid var(--home-accent); border-radius: 50%; }
 .renoa-explanation p { font-size: 14px; color: var(--home-muted); max-width: 65ch; line-height: 1.8; }
 
 .renoa-idea { display: grid; grid-template-columns: 1fr 3fr; padding-block: 100px 120px; border-top: 1px solid var(--home-rule); scroll-margin-top: 30px; }
 .renoa-idea-mark { align-self: start; justify-self: start; padding: 15px; border: 1px solid var(--home-rule); border-radius: 50%; display: flex; }
-.renoa-idea-mark:hover { color: var(--home-blue); border-color: var(--home-blue); }
+.renoa-idea-mark:hover { color: var(--home-accent); border-color: var(--home-accent); }
 .renoa-idea h2 { font-size: clamp(34px, 3.5vw, 54px); font-weight: 500; letter-spacing: -0.04em; line-height: 1.18; }
 .renoa-idea-body { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-block: 36px; color: var(--home-muted); font-size: 15px; line-height: 1.85; max-width: 850px; }
-.renoa-home-footer { display: flex; align-items: center; gap: 36px; padding-block: 32px; background: #e6ebf5; }
+.renoa-home-footer { display: flex; align-items: center; gap: 36px; padding-block: 32px; background: #211f1a; }
 .renoa-home-footer .renoa-wordmark { font-size: 27px; }
 .renoa-home-footer p { font-size: 12px; color: var(--home-muted); }
 .renoa-home-footer > a:last-child { margin-left: auto; display: flex; align-items: center; gap: 9px; font-size: 12px; }
 .renoa-home-footer > a:last-child:hover { text-decoration: underline; }
-.renoa-skip { position: fixed; left: 24px; top: -100px; z-index: 10; padding: 12px 20px; background: white; }
+.renoa-skip { position: fixed; left: 24px; top: -100px; z-index: 10; padding: 12px 20px; background: #28251e; }
 .renoa-skip:focus { top: 16px; }
 
 @media (min-width: 1600px) {

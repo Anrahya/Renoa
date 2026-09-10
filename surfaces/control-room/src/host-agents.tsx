@@ -40,7 +40,7 @@ function AgentView({ host, agent, section, controls }: { host: HostSnapshot; age
   const active = section === "policy" && !repositories.length ? "work" : section;
   return <main id="host-main" className="host-content host-agent-detail">
     <a className="host-link host-back" href="#agents"><ArrowLeft size={16} aria-hidden="true" /> All agents</a>
-    <div className="host-page-heading"><div className="host-agent-heading-identity"><AgentAvatar name={agent.name} github={repositories.length > 0} /><div><h1>{displayName(agent.name)}</h1><p className="host-intro">Host-owned agent{creator && <> · Created by <a className="host-link" href={agentHref(creator.id)}>{displayName(creator.name)}</a></>}</p></div></div>
+    <div className="host-page-heading"><div className="host-agent-heading-identity"><AgentAvatar agentId={agent.id} name={agent.name} github={repositories.length > 0} /><div><h1>{displayName(agent.name)}</h1><p className="host-intro">Host-owned agent{creator && <> · Created by <a className="host-link" href={agentHref(creator.id)}>{displayName(creator.name)}</a></>}</p></div></div>
       <span className={`host-activity host-activity-${activity.tone}`}>{activity.label}</span></div>
     <nav className="host-subnav" aria-label="Agent sections">{sections.map(item => <a key={item.id} href={agentHref(agent.id, item.id)} aria-current={active === item.id ? "page" : undefined}>{item.label}<span>{item.count}</span></a>)}</nav>
     <div className="host-agent-section" key={active}>

@@ -1,4 +1,24 @@
-import type { Agent, HostSnapshot, Routine } from "./host-contract";
+import type { Agent, HostSnapshot, Review, Routine } from "./host-contract";
+import { currentReviews } from "./host-presentation";
+
+export function scheduleSummary(routines: Routine[]) {
+  const priority = (r: Routine) => r.pending_runs ? 0 : r.enabled ? 1 : 2;
+  const ordered = [...routines].sort((a, b) => priority(a) - priority(b) || a.next_due_ms - b.next_due_ms || a.id.localeCompare(b.id));
+  return { ordered, next: ordered.filter(r => r.enabled && !r.pending_runs).sort((a, b) => a.next_due_ms - b.next_due_ms)[0],
+    pending: routines.reduce((total, r) => total + r.pending_runs, 0), paused: routines.filter(r => !r.enabled).length };
+}
+
+export function openReviews(reviews: Review[]): Review[] {
+  return currentReviews(reviews).filter(r => r.state === "queued" || r.state === "prepared" ||
+    r.state === "reviewed" && (r.publication === "not_recorded" || r.publication === "sending" || r.publication === "needs_attention"));
+}
+
+export function reviewStage(review: Review): string {
+  if (review.publication === "needs_attention") return "Attention";
+  if (review.worker_error) return review.retry_after_ms !== null ? "Retry pending" : "Attention";
+  if (review.state === "reviewed") return "Publishing pending";
+  return review.state === "prepared" ? "Prepared" : "Queued";
+}
 
 export function findAgents(agents: Agent[], query: string): Agent[] {
   const term = query.trim().toLocaleLowerCase();

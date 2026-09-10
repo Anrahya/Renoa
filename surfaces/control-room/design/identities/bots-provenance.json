@@ -1,0 +1,79 @@
+{
+  "generator": "OpenAI built-in imagegen",
+  "created": "2026-09-11",
+  "purpose": "Original background-agent portraits. No role or permission semantics.",
+  "assets": [
+    {
+      "name": "relay",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a rounded rectangular graphite head, two warm amber square eyes, compact brass ear discs, calm expression. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-4a9dfc72-06ab-43ec-bf14-b9eea05f722f.png",
+      "asset": "/assets/identities/bots/relay.webp"
+    },
+    {
+      "name": "scout",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a small wedge-shaped brushed bronze helmet, a single broad horizontal glowing ivory visor, compact swept-back ears. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-feab3771-24f5-4c8d-aa47-fdbae7c3d956.png",
+      "asset": "/assets/identities/bots/scout.webp"
+    },
+    {
+      "name": "scribe",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: an ivory ceramic capsule head, two narrow amber eyes, a slim gold center ridge, thoughtful expression. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-c7a20c66-d8bd-40eb-ae53-4edccb26e954.png",
+      "asset": "/assets/identities/bots/scribe.webp"
+    },
+    {
+      "name": "beacon",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a round graphite head with one large central amber camera eye and concentric brass lens rings. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-ee9c56a4-9641-4af4-b85a-a62305defc05.png",
+      "asset": "/assets/identities/bots/beacon.webp"
+    },
+    {
+      "name": "courier",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a compact angular titanium face, two pale-gold circular eyes and warm copper side panels, friendly alert expression. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-179e93aa-9d2b-43b6-afbb-451a66b688a3.png",
+      "asset": "/assets/identities/bots/courier.webp"
+    },
+    {
+      "name": "orbit",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a spherical dark bronze head, a narrow champagne visor and one elegant curved brass antenna. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-2a75354f-fd31-4e60-ada3-9db82e122dfd.png",
+      "asset": "/assets/identities/bots/orbit.webp"
+    },
+    {
+      "name": "forge",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a broad squared gunmetal head, inset amber rectangular optics and substantial brushed gold cheek plates. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-70171f99-7c51-4741-88ad-62df8b959962.png",
+      "asset": "/assets/identities/bots/forge.webp"
+    },
+    {
+      "name": "patch",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a small mint-gray ceramic round-square head, two warm white dot eyes, tiny brass side joints, gentle expression. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-1c7d72bc-2995-4452-b0b6-f8effba48366.png",
+      "asset": "/assets/identities/bots/patch.webp"
+    },
+    {
+      "name": "vault",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a hexagonal charcoal helmet, a compact triangular gold visor and silver inset faceplate, quiet confident expression. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-87bfeb72-36ae-4798-bf04-a33813f29264.png",
+      "asset": "/assets/identities/bots/vault.webp"
+    },
+    {
+      "name": "lens",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a low wide ivory head with two differently sized dark camera lenses, brass trim, slightly curious expression. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-8052035d-a6cf-4052-95bf-4bdff5d31555.png",
+      "asset": "/assets/identities/bots/lens.webp"
+    },
+    {
+      "name": "signal",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a slim tapered matte graphite head, three small warm gold optical sensors in a horizontal row, copper neck joint. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-26915d7a-6a1f-4fea-a878-671fd0b59c38.png",
+      "asset": "/assets/identities/bots/signal.webp"
+    },
+    {
+      "name": "tally",
+      "prompt": "Use case: stylized-concept. Produce one finished square generic helper robot avatar for Renoa's dark gold control panel. Character: a rounded brass head with a dark recessed face screen and two simple ivory oval eyes, cheerful but understated. Original non-franchise utility droid, NOT Transformers or a humanoid superhero. Consistent premium clean 3D CGI design, simple bold silhouette and broad geometric surfaces, restrained polished-metal highlights, almost front-facing head with a short visible neck, fills 78% of square. Make it recognizable at 48px. Entire head and attachments inside a central circular safe area with generous padding, no cropped tips. Warm gold/bronze/ivory highlights, dark charcoal backdrop #181714, soft amber rim lighting, no blue background, no neon glow clouds, no scene or floor. No letters, numbers, text, icon badges, outer border, watermark, extra robot, or UI mockup. One avatar only.",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-02b250dc-107b-439b-8019-3e29dd85016d.png",
+      "asset": "/assets/identities/bots/tally.webp"
+    }
+  ]
+}

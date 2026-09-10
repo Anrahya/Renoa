@@ -1,6 +1,7 @@
 :root {
+  color-scheme: dark;
   color: #111827;
-  background: #f4f6fa;
+  background: #181714;
   font-family: Inter, "SF Pro Display", "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -27,7 +28,7 @@ body {
 
 body {
   margin: 0;
-  background: #f4f6fa;
+  background: #181714;
   -webkit-font-smoothing: antialiased;
 }
 

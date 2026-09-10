@@ -1,5 +1,5 @@
 import { GithubLogo } from "@phosphor-icons/react";
-import { displayName } from "./host-presentation";
+import { genericPortrait } from "./host-identity";
 import "./styles/host-avatar.css";
 
 // Personal display artwork only. Names never determine tools, ownership, or role.
@@ -9,11 +9,10 @@ const portraits = new Map([
   ["soundwave", "/assets/identities/soundwave-prime.webp"],
 ]);
 
-export function AgentAvatar({ name, github = false }: { name: string; github?: boolean }) {
-  const portrait = portraits.get(name.trim().toLocaleLowerCase());
-  const initials = displayName(name).split(/\s+/).map(part => part[0]).join("").slice(0, 2);
-  return <span className={`host-avatar${portrait ? " host-avatar-portrait" : ""}`} aria-hidden="true">
-    {portrait ? <img src={portrait} alt="" width="96" height="96" decoding="async" /> : <span className="host-avatar-initials">{initials}</span>}
+export function AgentAvatar({ agentId, name, github = false }: { agentId: string; name: string; github?: boolean }) {
+  const portrait = portraits.get(name.trim().toLocaleLowerCase()) ?? genericPortrait(agentId);
+  return <span className="host-avatar host-avatar-portrait" aria-hidden="true">
+    <img src={portrait} alt="" width="96" height="96" decoding="async" loading="lazy" />
     {github && <span className="host-avatar-surface"><GithubLogo weight="fill" size={15} /></span>}
   </span>;
 }

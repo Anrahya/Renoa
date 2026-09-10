@@ -3,15 +3,16 @@
   src: url("/fonts/manrope-latin.woff2") format("woff2");
 }
 .host-app {
-  --host-ink: #30291f; --host-muted: #736755; --host-rule: #d9d0bd;
-  --host-accent: #805b1b; --host-paper: #f6f3ec; --host-soft: #eee7d8;
-  --host-node-line: #a88b52; --host-connection: #bdab88; --host-idle: #807563;
-  --host-warning: #9c3d26;
+  --host-ink: #eee8dc; --host-muted: #b4aa96; --host-rule: #39352b;
+  --host-accent: #d3b66f; --host-paper: #181714; --host-soft: #28251e;
+  --host-node-line: #8c774c; --host-connection: #7b6946; --host-idle: #a4977c;
+  --host-warning: #efa18a;
+  color-scheme: dark;
   min-height: 100svh; background: var(--host-paper); color: var(--host-ink);
   font: 400 0.9375rem/1.6 "Manrope", sans-serif;
-  display: flex; flex-direction: column; scrollbar-color: #a4967c var(--host-paper);
+  display: flex; flex-direction: column; scrollbar-color: #8e8167 var(--host-paper);
 }
-.host-app ::selection { background: #e8d2a3; color: #30291f; }
+.host-app ::selection { background: #d3b66f; color: #181714; }
 .host-app button { cursor: pointer; }
 .host-app button:disabled { cursor: not-allowed; opacity: .55; }
 .host-app :is(button, a, summary, input):focus-visible { outline: 2px solid var(--host-accent); outline-offset: 4px; }
@@ -29,7 +30,7 @@
 .host-header nav a[aria-current] { border-color: var(--host-accent); color: var(--host-accent); }
 .host-header nav a:hover { color: var(--host-accent); }
 .host-header-status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: .8125rem; }
-.host-online { color: #286448; }
+.host-online { color: #9bbc91; }
 .host-online::before { content: ""; display: inline-block; width: 6px; height: 6px; background: currentColor; border-radius: 50%; margin-right: 8px; }
 .host-icon { border: 0; background: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; }
 .host-icon:hover { background: var(--host-soft); }
@@ -44,14 +45,14 @@
 .host-page-heading > .host-activity { padding-bottom: 4px; }
 .host-secondary, .host-caption { color: var(--host-muted); }
 .host-caption { font-size: .8125rem; line-height: 1.65; }
-.host-link { background: none; border: 0; padding: 0; font: inherit; color: var(--host-accent) !important; text-decoration: underline; text-decoration-color: #b29a68; text-underline-offset: 4px; }
+.host-link { background: none; border: 0; padding: 0; font: inherit; color: var(--host-accent) !important; text-decoration: underline; text-decoration-color: #89754b; text-underline-offset: 4px; }
 .host-link:hover { text-decoration-color: currentColor; }
 .host-link svg { margin-left: 4px; }
 .host-quiet-link { white-space: nowrap; }
 .host-system { margin-top: 36px; }
 .host-agent-roster { display: flex; flex-wrap: wrap; }
-.host-agent-entry { flex: 1 1 240px; min-width: 0; position: relative; display: flex; flex-direction: column; gap: 9px; padding: 24px 28px 46px; border-bottom: 1px solid #bdab88; text-decoration: none; }
-.host-agent-entry::after { content: ""; position: absolute; bottom: 0; left: 28px; height: 22px; border-left: 1px solid #bdab88; }
+.host-agent-entry { flex: 1 1 240px; min-width: 0; position: relative; display: flex; flex-direction: column; gap: 9px; padding: 24px 28px 46px; border-bottom: 1px solid #65573b; text-decoration: none; }
+.host-agent-entry::after { content: ""; position: absolute; bottom: 0; left: 28px; height: 22px; border-left: 1px solid #65573b; }
 .host-agent-entry:first-child { padding-left: 0; }
 .host-agent-entry:first-child::after { left: 0; }
 .host-agent-entry:last-child { padding-right: 0; }
@@ -66,7 +67,7 @@
 .host-activity-pending, .host-activity-scheduled { color: var(--host-accent); }
 .host-activity:is(.host-activity-attention, .host-activity-pending)::before { content: ""; width: 5px; height: 5px; flex-shrink: 0; align-self: center; background: currentColor; border-radius: 50%; }
 .host-common-ground { display: flex; align-items: center; gap: 12px; width: fit-content; margin: 0 auto; padding: 20px 12px 12px; text-decoration: none; font-size: .8125rem; position: relative; }
-.host-common-ground::before { content: ""; position: absolute; top: 0; left: 50%; height: 12px; border-left: 1px solid #bdab88; }
+.host-common-ground::before { content: ""; position: absolute; top: 0; left: 50%; height: 12px; border-left: 1px solid #65573b; }
 .host-common-ground:hover { color: var(--host-accent); }
 .host-ownership-mark { width: 12px; height: 12px; border: 1px solid var(--host-accent); border-radius: 50%; position: relative; flex-shrink: 0; }
 .host-ownership-mark::after { content: ""; position: absolute; inset: 3px; background: var(--host-accent); border-radius: 50%; }
@@ -86,20 +87,20 @@
 .host-record-state { margin-left: auto; text-align: right; font-size: .8125rem; flex-shrink: 0; color: var(--host-muted); }
 .host-record-meta, .host-record-state small { display: block; font-size: .8125rem; color: var(--host-muted); margin-top: 4px; font-weight: 400; }
 .host-record[open] > summary { color: var(--host-accent); }
-.host-record-body { padding: 18px 24px 24px; background: #eee9df; margin: 0 0 18px; }
+.host-record-body { padding: 18px 24px 24px; background: #22201b; margin: 0 0 18px; }
 .host-record-body > :is(p, div, details) + :is(p, div, details) { margin-top: 12px; }
 .host-record-body > .host-link { display: inline-block; margin-top: 16px; font-size: .875rem; }
 .host-routine { padding: 24px 0; border-bottom: 1px solid var(--host-rule); }
 .host-routine > p { margin-top: 8px; }
 .host-row-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; }
-.host-state { font-size: .8125rem; color: #286448; background: #e0eee6; padding: 3px 9px; border-radius: 4px; white-space: nowrap; }
-.host-state-muted, .host-state.host-secondary { color: var(--host-muted); background: #e9e3d6; }
+.host-state { font-size: .8125rem; color: #9bbc91; background: #253025; padding: 3px 9px; border-radius: 4px; white-space: nowrap; }
+.host-state-muted, .host-state.host-secondary { color: var(--host-muted); background: #2b2820; }
 .host-control { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 20px 0; }
 .host-control > p { flex-basis: 100%; }
-.host-action { min-height: 44px; padding: 9px 16px; border: 1px solid #a88b52; background: transparent; color: var(--host-accent); border-radius: 5px; font-size: .875rem; font-weight: 600; }
+.host-action { min-height: 44px; padding: 9px 16px; border: 1px solid #8c774c; background: transparent; color: var(--host-accent); border-radius: 5px; font-size: .875rem; font-weight: 600; }
 .host-action:hover:not(:disabled) { background: var(--host-soft); }
-.host-primary { min-height: 44px; display: inline-flex; align-items: center; gap: 12px; background: var(--host-accent); color: #fff !important; border: 0; padding: 12px 18px; border-radius: 5px; font-size: .875rem; font-weight: 600; }
-.host-primary:hover:not(:disabled) { background: #705019; }
+.host-primary { min-height: 44px; display: inline-flex; align-items: center; gap: 12px; background: var(--host-accent); color: #181714 !important; border: 0; padding: 12px 18px; border-radius: 5px; font-size: .875rem; font-weight: 600; }
+.host-primary:hover:not(:disabled) { background: #e5cd92; }
 .host-policy { padding: 28px 0; }
 .host-policy > p { margin-top: 8px; }
 .host-policy > .host-action { margin-top: 20px; }
@@ -136,9 +137,9 @@
 .host-earlier-agent .host-agent-name { font-size: 1rem; font-weight: 600; letter-spacing: 0; justify-content: flex-start; }
 .host-earlier-agent > .host-activity { justify-content: end; }
 .host-earlier-agent:hover .host-agent-name { color: var(--host-accent); }
-.host-banner { background: #ece5d6; padding: 10px 40px; display: flex; gap: 24px; justify-content: space-between; font-size: .8125rem; }
+.host-banner { background: #24221c; padding: 10px 40px; display: flex; gap: 24px; justify-content: space-between; font-size: .8125rem; }
 .host-banner .host-link { white-space: nowrap; }
-.host-banner-error { background: #f5e8e1; }
+.host-banner-error { background: #352520; }
 .host-error, .host-notice { color: var(--host-warning); }
 .host-notice { margin-block: 20px !important; }
 .host-footer { margin-top: auto; padding: 24px 40px; display: flex; gap: 24px; justify-content: space-between; color: var(--host-muted); font-size: .8125rem; border-top: 1px solid var(--host-rule); }
@@ -147,13 +148,13 @@
 .host-login form { margin: 32px 0 20px; }
 .host-login-methods { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 24px; font-size: .875rem; }
 .host-token { display: block; max-width: 430px; margin-bottom: 24px; font-size: .875rem; font-weight: 600; }
-.host-token input { display: block; width: 100%; margin-top: 12px; padding: 12px; border: 1px solid #a4967c; border-radius: 5px; background: #fff; color: inherit; }
+.host-token input { display: block; width: 100%; margin-top: 12px; padding: 12px; border: 1px solid #8e8167; border-radius: 5px; background: #22201b; color: inherit; }
 .host-token input::placeholder { color: var(--host-muted); font-weight: 400; }
 .host-diagnostic, .host-review-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .host-review-evidence article { margin: 28px 0; }
 .host-review-evidence pre { font-size: .8125rem; line-height: 1.6; }
 .host-review-evidence p { margin-top: 10px; }
-.host-skip { position: fixed; left: 20px; top: -100px; z-index: 10; background: white; padding: 12px 20px; }
+.host-skip { position: fixed; left: 20px; top: -100px; z-index: 10; background: var(--host-soft); padding: 12px 20px; }
 .host-skip:focus { top: 12px; }
 @media (max-width: 900px) {
   .host-header { padding-inline: 24px; gap: 28px; }
@@ -176,12 +177,12 @@
   .host-page-heading { display: block; }
   .host-page-heading > .host-link, .host-page-heading > .host-activity { display: inline-flex; margin-top: 16px; }
   .host-system { margin-top: 24px; }
-  .host-agent-roster { display: block; border-left: 1px solid #bdab88; }
+  .host-agent-roster { display: block; border-left: 1px solid #65573b; }
   .host-agent-entry, .host-agent-entry:first-child, .host-agent-entry:last-child { border-bottom: 0; padding: 18px 0 18px 22px; }
-  .host-agent-entry::after, .host-agent-entry:first-child::after { left: 0; top: 35px; bottom: auto; height: 0; width: 12px; border-left: 0; border-top: 1px solid #bdab88; }
+  .host-agent-entry::after, .host-agent-entry:first-child::after { left: 0; top: 35px; bottom: auto; height: 0; width: 12px; border-left: 0; border-top: 1px solid #65573b; }
   .host-agent-entry .host-activity { max-width: none; }
-  .host-common-ground { margin: 0; padding: 20px 0 12px 22px; flex-wrap: wrap; gap: 8px; border-left: 1px solid #bdab88; }
-  .host-common-ground::before { top: 32px; left: 0; width: 12px; height: 0; border-left: 0; border-top: 1px solid #bdab88; }
+  .host-common-ground { margin: 0; padding: 20px 0 12px 22px; flex-wrap: wrap; gap: 8px; border-left: 1px solid #65573b; }
+  .host-common-ground::before { top: 32px; left: 0; width: 12px; height: 0; border-left: 0; border-top: 1px solid #65573b; }
   .host-common-ground > .host-secondary { flex-basis: 100%; padding-left: 20px; }
   .host-common-ground > svg { position: absolute; right: 0; top: 23px; }
   .host-common-ground > span:nth-child(2) { padding-right: 24px; }

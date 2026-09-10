@@ -16,9 +16,11 @@
 .system-host-ring { position: absolute; inset: 0; width: 100%; height: 100%; fill: none; stroke: var(--host-node-line); stroke-width: 1; overflow: visible; animation: host-feed-orbit 24s linear infinite; animation-play-state: paused; }
 .system-host-ring .system-feed-dot { fill: var(--host-accent); stroke: var(--host-paper); stroke-width: 2; }
 .system-map[data-moving=true] .system-host-ring { animation-play-state: running; }
+.system-host-orb > img { animation: host-emblem-breathe 6s ease-in-out infinite; animation-play-state: paused; }
+.system-map[data-moving=true] .system-host-orb > img { animation-play-state: running; }
 .system-host > strong { font-size: .9375rem; font-weight: 650; margin-top: 8px; }
 .system-host > span { color: var(--host-muted); font-size: .75rem; }
-.system-host > .system-connected { color: #286448; }
+.system-host > .system-connected { color: #9bbc91; }
 .system-connections { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .system-connection { fill: none; stroke: var(--host-connection); stroke-width: 1; }
 .system-connection-pulse { fill: none; stroke: var(--host-accent); stroke-width: 2; stroke-linecap: round; stroke-dasharray: .08 .92; animation: record-transfer 1800ms cubic-bezier(.16,1,.3,1) both; }
@@ -38,16 +40,32 @@
 .system-agent-link:is(:hover, :focus-visible) .system-open-arrow { opacity: 1; transform: none; }
 .system-agent-link:hover strong { color: var(--host-accent); }
 .system-agent-link:hover .system-agent-orb { border-color: var(--host-accent); }
+.system-agent-orb { transition: border-color 220ms, box-shadow 300ms, transform 300ms cubic-bezier(.16,1,.3,1); }
+.system-agent-link:is(:hover, :focus-visible) .system-agent-orb { transform: translateY(-2px); box-shadow: 0 8px 20px #090806; }
 .system-activity-ring { position: absolute; inset: -8px; width: 80px; height: 80px; overflow: visible; fill: none; stroke: var(--host-accent); stroke-width: 1.5; }
 .system-activity-ring circle { stroke-dasharray: .28 .72; transform-origin: center; animation: record-arrival 1800ms cubic-bezier(.16,1,.3,1) both; }
 .system-map[data-moving=false] .system-activity-ring circle { animation: none; }
-.system-schedules { list-style: none; padding: 4px 0 0 84px; margin: 0; }
-.system-schedules li { position: relative; }
-.system-schedules li::before { content: ""; position: absolute; left: -53px; width: 37px; top: 0; height: 21px; border-left: 1px solid var(--host-rule); border-bottom: 1px solid var(--host-rule); border-bottom-left-radius: 16px; }
-.system-schedules a { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--host-muted); font-size: .75rem; text-decoration: none; }
-.system-schedules a:hover { color: var(--host-accent); }
-.system-schedule-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 24ch; }
+.system-schedules, .system-schedule-group, .system-review-branch { position: relative; margin: 4px 0 0 84px; padding: 0; list-style: none; min-width: 0; }
+.system-schedules::before, .system-schedule-group::before, .system-review-branch::before { content: ""; position: absolute; left: -53px; width: 37px; top: -4px; height: 26px; border-left: 1px solid var(--host-connection); border-bottom: 1px solid var(--host-connection); border-bottom-left-radius: 16px; }
+.system-schedule-link, .system-review-branch a { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--host-muted); font-size: .75rem; text-decoration: none; }
+.system-schedule-link:hover, .system-review-branch a:hover { color: var(--host-accent); }
+.system-schedule-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .system-timer { margin-left: auto; color: var(--host-ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.system-branch-toggle, .system-review-branch > summary { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; border: 0; padding: 0; background: transparent; color: var(--host-muted); font-size: .75rem; text-align: left; cursor: pointer; }
+.system-branch-toggle > span:first-of-type { color: var(--host-ink); }
+.system-branch-state { margin-left: auto; font-variant-numeric: tabular-nums; }
+.system-branch-toggle > svg:last-child, .system-review-branch > summary > svg:last-child { transition: transform 280ms cubic-bezier(.16,1,.3,1); }
+.system-branch-toggle[aria-expanded=true] > svg:last-child, .system-review-branch[open] > summary > svg:last-child { transform: rotate(180deg); }
+.system-branch-toggle:hover, .system-review-branch > summary:hover { color: var(--host-accent); }
+.system-branch-reveal { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 320ms cubic-bezier(.16,1,.3,1), visibility 320ms; }
+.system-branch-reveal[data-open=true] { grid-template-rows: 1fr; visibility: visible; }
+.system-branch-reveal > div { min-height: 0; overflow: hidden; }
+.system-schedule-list, .system-review-list { list-style: none; padding: 0 10px 0 0; margin: 0; max-height: 264px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.system-schedule-list:focus-visible { outline-offset: -2px; }
+.system-next-schedule { padding-right: 22px; }
+.system-review-branch > summary { list-style: none; }
+.system-review-branch > summary::-webkit-details-marker { display: none; }
+.system-review-branch > summary > svg:last-child { margin-left: auto; }
 .system-clock { display: inline-block; width: 15px; height: 15px; border: 1px solid currentColor; border-radius: 50%; position: relative; flex-shrink: 0; }
 .system-clock::after { content: ""; position: absolute; left: 6px; bottom: 6px; height: 5px; border-left: 1px solid currentColor; transform-origin: bottom center; transform: rotate(var(--clock-angle)); transition: transform 140ms cubic-bezier(.16,1,.3,1); }
 .system-key { border-top: 1px solid var(--host-rule); padding-top: 16px; display: flex; flex-wrap: wrap; align-items: start; gap: 12px 24px; font-size: .75rem; color: var(--host-muted); }
@@ -66,6 +84,7 @@
 .host-directory .host-agent-name { font-size: 1.375rem; }
 .host-banner > button { min-height: 44px; }
 @keyframes host-feed-orbit { to { transform: rotate(360deg); } }
+@keyframes host-emblem-breathe { 0%, 100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.035); filter: brightness(1.2); } }
 @keyframes record-transfer { 0% { stroke-dashoffset: 1; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
 @keyframes record-arrival { 0% { transform: rotate(-100deg); opacity: 0; } 15% { opacity: 1; } 75% { opacity: 1; } 100% { transform: rotate(260deg); opacity: 0; } }
 @media (max-width: 900px) {
@@ -90,11 +109,14 @@
   .system-agent-name strong { font-size: 1.125rem; }
   .system-open-arrow { display: none; }
   .system-activity-ring { inset: -6px; width: 60px; height: 60px; }
-  .system-schedules { padding-left: 16px; padding-top: 8px; }
-  .system-schedules li::before { left: -12px; width: 8px; }
-  .system-schedules a { flex-wrap: wrap; gap: 0 8px; }
+  .system-schedules, .system-schedule-group, .system-review-branch { margin-left: 16px; }
+  .system-schedules::before, .system-schedule-group::before, .system-review-branch::before { left: -12px; width: 8px; }
+  .system-schedule-link, .system-review-branch a { flex-wrap: wrap; gap: 0 8px; padding-block: 5px; }
   .system-schedule-name { max-width: 100%; flex: 1; }
   .system-timer { flex-basis: 100%; margin-left: 23px; }
+  .system-branch-toggle { flex-wrap: wrap; gap: 0 8px; }
+  .system-branch-state { margin-left: auto; }
+  .system-next-schedule { padding-right: 0; }
   .system-key { gap: 0 16px; }
   .system-key details { margin-left: 0; }
   .host-work-tabs { flex-wrap: wrap; gap: 0 16px; }
@@ -102,7 +124,8 @@
   .host-banner { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .system-host-ring, .system-activity-ring circle { animation: none !important; }
+  .system-host-ring, .system-host-orb > img, .system-activity-ring circle { animation: none !important; }
+  .system-agent-link:is(:hover, :focus-visible) .system-agent-orb { transform: none; }
   .system-connection-pulse { display: none; }
   .system-clock::after { transition: none; transform: none; }
   .system-open-arrow { transition: none; transform: none; }

@@ -72,8 +72,8 @@ export function SystemForm({ selected, paused }: FormProps) {
             else context.lineTo(projectedX, projectedY);
           }
           // Thin transparent fibers create depth through their actual overlap.
-          const light = 39 + Math.sin(crossAngle) * 14;
-          context.strokeStyle = `hsla(228, 76%, ${light}%, ${0.12 + intensity * 0.31})`;
+          const light = 60 + Math.sin(crossAngle) * 16;
+          context.strokeStyle = `hsla(42, 49%, ${light}%, ${0.12 + intensity * 0.31})`;
           context.lineWidth = 0.7 + intensity * 0.18;
           context.stroke();
         }
