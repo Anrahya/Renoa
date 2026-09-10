@@ -1,10 +1,11 @@
 import { useRef, useState, type CSSProperties } from "react";
-import { ArrowUpRight, Clock, GithubLogo, Hourglass, MagnifyingGlass, Pause, Play, WarningCircle } from "@phosphor-icons/react";
+import { ArrowUpRight, Clock, Hourglass, MagnifyingGlass, Pause, Play, WarningCircle } from "@phosphor-icons/react";
 import type { Agent, HostSnapshot, Routine } from "./host-contract";
 import { agentActivity, agentHref, displayName, isEarlier, scheduleText } from "./host-presentation";
 import { findAgents, scheduleCountdown } from "./host-system-model";
 import { useSystemMotion } from "./host-system-motion";
 import { SystemConnections } from "./host-system-connections";
+import { AgentAvatar } from "./host-avatar";
 import "./styles/host-map.css";
 
 export function AgentMap({ host, live = false, receivedAt = null }: { host: HostSnapshot; live?: boolean; receivedAt?: number | null }) {
@@ -28,7 +29,7 @@ export function AgentMap({ host, live = false, receivedAt = null }: { host: Host
     <div ref={viewport} className="system-viewport" tabIndex={0} role="region" aria-label="Host and persistent agents">
       <div ref={stage} className="system-stage">
         <SystemConnections {...{ stage, viewport, identity }} pulses={motion.pulses} />
-        <div className="system-host"><div data-host-anchor className="system-host-orb"><span>r.</span><svg className="system-host-ring" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="56" /><circle className="system-feed-dot" cx="60" cy="4" r="3" /></svg></div>
+        <div className="system-host"><div data-host-anchor className="system-host-orb"><img src="/assets/identities/renoa-host-gold.webp" alt="" width="112" height="112" /><svg className="system-host-ring" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="56" /><circle className="system-feed-dot" cx="60" cy="4" r="3" /></svg></div>
           <strong>Renoa Host</strong><span className={live ? "system-connected" : ""}>{live ? "Connected" : "Saved state"}</span>
         </div>
         <ul className="system-agents" aria-label="Host-owned agents">{agents.map(agent => <li className="system-agent" key={agent.id}>
@@ -47,9 +48,8 @@ export function AgentMap({ host, live = false, receivedAt = null }: { host: Host
 function SystemAgent({ host, agent, pulse }: { host: HostSnapshot; agent: Agent; pulse: number | null }) {
   const state = agentActivity(host, agent);
   const review = host.review_repositories.some(repository => repository.policy.agent_id === agent.id);
-  const initials = displayName(agent.name).split(/\s+/).map(part => part[0]).join("").slice(0, 2);
   return <a className={`system-agent-link system-state-${state.tone}`} href={agentHref(agent.id)} aria-label={`${displayName(agent.name)}: ${review ? "GitHub reviews. " : ""}${state.label}`} title={state.label}>
-    <span className="system-agent-orb" data-agent-anchor={agent.id}><span aria-hidden="true">{review ? <GithubLogo size={30} /> : initials}</span>
+    <span className="system-agent-orb" data-agent-anchor={agent.id}><AgentAvatar name={agent.name} github={review} />
       {pulse !== null && <svg key={pulse} className="system-activity-ring" viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="36" pathLength="1" /></svg>}
       <span className="system-agent-indicator" aria-hidden="true">{state.tone === "attention" ? <WarningCircle size={19} weight="fill" /> : state.tone === "pending" ? <Hourglass size={17} /> : <span />}</span>
     </span>

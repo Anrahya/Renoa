@@ -5,9 +5,9 @@ primary_target: "src/host-panel.tsx"
 related_targets: ["src/host-agent-map.tsx","src/host-system-model.ts","src/host-system-motion.ts","src/host-system-connections.tsx","src/host-system.tsx","src/host-work.tsx","src/host-agents.tsx","src/host-library.tsx","src/host-records.tsx","src/host-controls.tsx","src/host-navigation.ts","src/styles/host.css","src/styles/host-map.css"]
 ---
 
-THESIS: Show the Host, its persistent agents, and their target schedules at a glance. All agents connect directly to the Host; creation provenance does not imply operational subordination. Keep the accepted pale-blue visual language.
+THESIS: Show the Host, its persistent agents, and their target schedules at a glance. All agents connect directly to the Host; creation provenance does not imply operational subordination. The owner replaced the blue Host palette with warm gold and charcoal on ivory.
 
-OWN-WORLD: Pale blue ground, ink, Manrope, precise blue actions. No rooms, portraits, boxed KPI grid, imagined live activity, or permanent inspector. Agent identities and their real selected resources do the visual work.
+OWN-WORLD: Warm ivory ground, charcoal text, Manrope, and readable antique-gold actions. Original polished-gold Renoa Host emblem; faithful Transformers Prime Arcee and Soundwave portraits as explicitly requested by the owner, superseding the prior portrait restriction. GitHub is a separate small role badge based on repository assignment. No rooms, boxed KPI grid, imagined live activity, or permanent inspector.
 
 STORY: See who belongs here, notice recorded problems, then use hash-linked agent sections to inspect work, connections, schedules, or review policy. The shared library explains reuse across profiles.
 
@@ -17,4 +17,4 @@ FORM: Circular nodes, measured continuous Host connections, and indented target 
 
 METHOD: Code-led and user-pinned. The owner explicitly requested direct implementation after exhausting mockups; no new interview or image tournament. Inspect the completed interface using actual Host metadata, then desktop and mobile screenshots.
 
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance. No new raster is planned.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance. Three generated identity assets are shipped with full prompts and source provenance.

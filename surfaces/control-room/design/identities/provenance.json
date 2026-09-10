@@ -1,0 +1,27 @@
+{
+  "created": "2026-09-11",
+  "purpose": "Personal Renoa Host identity artwork. Arcee and Soundwave depict Transformers Prime characters, not original Renoa characters.",
+  "assets": [
+    {
+      "file": "renoa-host-gold.webp",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-ebb1f527-00f1-4cf0-8783-823764f5dc2c.png",
+      "generation": "Built-in image_gen",
+      "prompt": "Use case: logo-brand. Create one original premium 3D emblem for Renoa, a personal modular AI Host that connects independent agents. This is a finished small web UI avatar asset, not a mockup or a page. Subject: three beautifully sculpted interlocking gold arcs gathering around a small luminous central gold seed, forming a distinctive open asymmetric knot. Coherent bold silhouette, clear at 64 pixels, few broad surfaces, physical polished champagne gold with rich bronze shadows and narrow specular highlights. Almost straight-on view with subtle dimensional depth. Centered subject fills 78% of a square, with generous symmetric safe padding for a circular crop. Background solid very dark warm charcoal #24211c, no scene or floor. Original symbol; absolutely no letters, no r, no dot, no typography, no existing brand mark, no blue, no blue lighting, no circuitry clutter, no decorative outer frame. One asset only, square image.",
+      "derivative": "384px WebP, quality 88; alpha preserved; no creative retouching."
+    },
+    {
+      "file": "arcee-prime.webp",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-6c3d8792-7a39-4950-b45b-3932d4dc0a6e.png",
+      "generation": "Built-in image_gen",
+      "prompt": "Use case: stylized-concept. Create a finished square avatar portrait of ARCEE, the actual character as designed in the 2010 Transformers Prime animated television series. Faithfully reproduce the show's character model and recognizable proportions, not a generic robot or a redesign: feminine silver face, narrow cyan eyes, cobalt-blue angular helmet with tall pointed swept-up sides and pink/magenta accents, slender elegant face and neck, small angular blue shoulder armor. Show-style polished CGI animation, clean geometric planes, minimal fine detail. Tight head and upper-shoulders portrait, almost front-facing with a slight three-quarter turn, composed and alert. Entire helmet tips and chin comfortably inside a central circular crop; strong silhouette that reads at 64px. Soft warm studio rim light, character's original blue and silver colors retained, flat very dark WARM charcoal #24211c background, no blue background, no environment. No text, letters, badges, logos, border, watermark, or additional characters. This is one personal-use app avatar asset, not UI mockup. Square image.",
+      "derivative": "384px WebP, quality 88; alpha preserved; no creative retouching."
+    },
+    {
+      "file": "soundwave-prime.webp",
+      "source": "/home/anrahya/.codex/generated_images/01a06dc8-31f3-7753-a850-27bee684a1dc/exec-54eae1fb-b76b-42bf-840a-a76786649511.png",
+      "generation": "Built-in image_gen",
+      "prompt": "Use case: stylized-concept. Create a finished square avatar portrait of SOUNDWAVE, the actual Decepticon design from the 2010 Transformers Prime animated series. Faithful show character geometry, not G1 and not a generic robot. Narrow angular faceless triangular black reflective visor descending into a long pointed jaw, very dark charcoal and gunmetal armor, two sharply swept-out tall helmet fins, vivid restrained purple/violet luminous lines bordering visor and forehead. No mouth, no human face, no visible eyes. Head and a little upper shoulder armor, almost front-facing, quiet imposing presence. Show-style high quality clean CGI animation; broad crisp planes readable at 64px, subtle warm studio rim light. Entire fins and chin within central circular safe crop. Centered subject fills 82% of a square; solid very dark warm charcoal #24211c background. No text, no GitHub logo (will be a separate UI badge), no border, no other characters, no environment, no watermark. Single personal-use app avatar asset. Square image.",
+      "derivative": "384px WebP, quality 88; alpha preserved; no creative retouching."
+    }
+  ]
+}

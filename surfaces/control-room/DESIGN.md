@@ -9,18 +9,23 @@ colors:
   rule: "#ccd5e7"
   hover-wash: "#e0e7fa"
   white: "#ffffff"
-  host-rule: "#cbd5e7"
-  host-soft: "#e4eafa"
-  host-record: "#e8edf7"
+  host-paper: "#f6f3ec"
+  host-ink: "#30291f"
+  host-muted: "#736755"
+  host-accent: "#805b1b"
+  host-rule: "#d9d0bd"
+  host-soft: "#eee7d8"
+  host-record: "#eee9df"
+  host-node-line: "#a88b52"
+  host-ownership-line: "#bdab88"
+  host-quiet-dot: "#807563"
+  host-selection: "#e8d2a3"
+  host-portrait-backdrop: "#24211c"
   host-warning: "#9c3d26"
   host-success: "#286448"
   host-success-wash: "#e0eee6"
-  host-muted-wash: "#e2e7f1"
+  host-muted-wash: "#e9e3d6"
   host-error-wash: "#f5e8e1"
-  host-feed-line: "#9aadd5"
-  host-ownership-line: "#a8b8da"
-  host-agent-outline: "#91a5ce"
-  host-quiet-dot: "#8392ad"
 typography:
   display:
     fontFamily: "Manrope, sans-serif"
@@ -115,19 +120,25 @@ components:
     rounded: "{rounded.circle}"
     size: "44px"
   host-button-primary:
-    backgroundColor: "{colors.action-blue}"
+    backgroundColor: "{colors.host-accent}"
     textColor: "{colors.white}"
     typography: "{typography.host-label}"
     rounded: "{rounded.tight}"
     padding: "12px 18px"
     height: "44px"
+  host-button-primary-hover:
+    backgroundColor: "#705019"
+    textColor: "{colors.white}"
   host-button-secondary:
     backgroundColor: "transparent"
-    textColor: "{colors.action-blue}"
+    textColor: "{colors.host-accent}"
     typography: "{typography.host-label}"
     rounded: "{rounded.tight}"
     padding: "9px 16px"
     height: "44px"
+  host-button-secondary-hover:
+    backgroundColor: "{colors.host-soft}"
+    textColor: "{colors.host-accent}"
   host-status:
     backgroundColor: "{colors.host-success-wash}"
     textColor: "{colors.host-success}"
@@ -142,45 +153,50 @@ components:
 
 **Creative North Star: "The Open Filament Field"**
 
-Renoa's web system presents a personal, modular AI system as one open field with a precise operating interior. The public homepage is spacious and conceptual: pale atmosphere, dark language, and a fine connected form whose visible parts meet at one center. The authenticated Host carries that same palette, typeface, rules, and exact interaction blue into a denser surface for operating real records.
+Renoa's web system presents a personal, modular AI system through two deliberately distinct surfaces. The public homepage remains spacious and conceptual: pale blue atmosphere, deep indigo language, and a fine connected form whose visible parts meet at one center. The authenticated Host is warmer and more personal, using ivory, charcoal, and polished antique gold around real records and recognizable agent identities.
 
 The public and private surfaces stay distinct in purpose. The homepage explains without exposing data. The Host opens with a direct ownership map of the Host, every persistent agent, and each agent's target schedules. Work, Library, and detailed controls remain separate destinations that expand evidence only when the owner asks for it.
 
 **Key Characteristics:**
-- Pale blue continuous ground with deep indigo type.
-- One clear blue for emphasis, selection, focus, and action.
+- Pale blue and indigo remain exclusive to the public homepage's conceptual field.
+- Warm ivory, charcoal, and antique gold define the authenticated Host.
 - Self-hosted Manrope from large public statements through compact Host labels.
-- Fine rules, circular agent nodes, and open flow instead of decorative chrome.
+- An original gold Host emblem and reusable circular agent portraits replace letter placeholders.
 - Conceptual motion on the homepage; restrained state motion and reduced-motion support in the Host.
 
 ## Colors
 
-The shared palette is a cool, low-contrast field anchored by dark indigo ink and one clear action blue. The Host adds only the status and tonal surfaces required to operate real records.
+The public homepage and authenticated Host use separate palettes. The homepage keeps its cool pale-blue field and exact action blue. The private Host uses a warmer ivory field, charcoal text, and antique gold for actions, focus, connecting lines, and identity framing.
 
 ### Primary
-- **Action Blue:** Emphasizes selected words, active navigation, focus outlines, links, primary Host actions, and interaction states.
+- **Action Blue:** Emphasizes selected words, active navigation, focus outlines, links, and interaction states on the public homepage.
+- **Host Antique Gold:** Emphasizes Host navigation, links, focus outlines, actions, identity borders, and observed-record sweeps inside the private Host.
 
 ### Neutral
-- **Open Paper:** The uninterrupted ground for both public and authenticated surfaces.
-- **Deep Ink:** Headlines, wordmarks, and primary text.
-- **Muted Ink:** Supporting copy, labels, captions, quiet controls, and inactive navigation.
+- **Open Paper:** The uninterrupted pale-blue homepage ground.
+- **Deep Ink:** Homepage headlines, wordmark, and primary text.
+- **Muted Ink:** Homepage supporting copy, labels, and quiet controls.
 - **Homepage Hairline:** Public-page dividers and resting control borders.
-- **Host Hairline:** Host headers, sections, records, and history dividers.
 - **Hover Wash:** The public circular-control hover fill.
-- **Host Soft Wash:** The Host icon and secondary-action hover fill.
-- **Record Wash:** The expanded Host record body.
-- **Connected Feed Line:** The fine ring around a connected live Host.
+- **Host Ivory:** The private Host ground and light framing around circular identities.
+- **Host Charcoal:** Private Host headings, wordmark, records, and primary text.
+- **Host Muted Brown:** Supporting copy, labels, captions, quiet controls, and inactive navigation in the Host.
+- **Host Hairline:** Warm Host headers, sections, records, and history dividers.
+- **Host Soft Wash:** Host icon and secondary-action hover fill.
+- **Host Record Wash:** Expanded record bodies.
+- **Host Node Line:** The connected-feed ring, portrait borders, small GitHub role badge, and secondary-action border.
 - **Host Ownership Line:** Direct measured curves from the Host to visible persistent agents.
-- **Agent Outline:** Resting borders around persistent agent identities.
-- **Quiet Dot:** The compact no-pending-work indicator.
+- **Host Quiet Dot:** The compact no-pending-work indicator.
+- **Host Selection:** Text selection inside the private Host.
+- **Portrait Charcoal:** The fallback ground behind agent portrait assets and the baked background of the approved Arcee and Soundwave images.
 - **White:** Text on filled actions and selected marks.
 
 ### Tertiary
 - **Recorded Success:** Connected, enabled, and scheduled states; its pale wash backs compact status labels.
 - **Recorded Warning:** Failed, interrupted, unavailable, and attention states; its pale wash is reserved for error banners.
-- **Recorded Muted:** Paused and secondary status labels use a cool neutral wash.
+- **Recorded Muted:** Paused and secondary status labels use a warm neutral wash inside the Host.
 
-**The One Blue Rule.** Use Action Blue for interaction and selection across both surfaces; leave the ground and most content neutral.
+**The Separate Surface Palette Rule.** Keep Action Blue on the public homepage. Use Host Antique Gold for interaction and selection inside the private Host; do not blend the two palettes.
 
 **The Recorded State Rule.** Green and rust communicate states already present in Host records. They do not imply live telemetry.
 
@@ -226,29 +242,31 @@ At `900px`, the System stage narrows its Host column and connecting gap. At `640
 
 ## Elevation & Depth
 
-Both surfaces use no shadows. The homepage gets depth from translucent Canvas fibers. The Host uses one-pixel rules and tonal fills: expanded records, status labels, preview banners, and error banners sit on quiet washes without appearing elevated.
+Both surfaces use no CSS shadows. The homepage gets depth from translucent Canvas fibers. The Host uses warm one-pixel rules and tonal fills for structure, while the generated identity artwork carries its own polished highlights and modeled depth. Expanded records, status labels, preview banners, and error banners sit on quiet washes without appearing elevated.
 
 **The Flat Evidence Rule.** Records expand within the document flow. Use tonal change and rules to reveal evidence, never floating panels or permanent inspectors.
 
 ## Shapes
 
-The system is mostly borderless and rectangular. Tight `5px` corners belong to compact actions and inputs; `4px` corners belong to status labels. True circles identify the public system form, the `112px` Host ring with its `84px` core, `64px` agent nodes, and recorded attention dots. On phones the Host ring becomes `72px` with a `56px` core, and agent nodes become `48px`. One-pixel measured curves express direct Host ownership; smaller elbow rules attach schedules to their target agent without creating card containers.
+The system is mostly borderless and rectangular. Tight `5px` corners belong to compact actions and inputs; `4px` corners belong to status labels. True circles identify the public system form, the `112px` Host ring around its `96px` emblem, `64px` agent portraits, and recorded attention dots. On phones the Host ring becomes `72px` with a `62px` emblem, and agent nodes become `48px`; agent-directory portraits use `44px`, while agent-detail portraits use `80px` and reduce to `64px` on phones. One-pixel measured curves express direct Host ownership; smaller elbow rules attach schedules to their target agent without creating card containers.
 
 ## Components
 
 ### Buttons
 - **Public primary:** The compact Host entry link uses Deep Ink, white text, and a tight corner; hover changes the fill to Action Blue. Its label is `Preview Host` in development and `Open Host` in production.
 - **Public text action:** An open semibold label sits on a one-pixel underline. Hover turns rule and text blue while its arrow travels `4px` over `240ms` with `cubic-bezier(0.16, 1, 0.3, 1)`.
-- **Host primary:** A filled Action Blue control is at least `44px` high; hover deepens the blue.
-- **Host secondary:** A transparent, blue, one-pixel control is at least `44px` high; hover gains Host Soft Wash.
-- **Focus:** Public actions use a `2px` Action Blue outline with `7px` offset. Host controls and links use the same outline with `4px` offset.
+- **Host primary:** A filled Host Antique Gold control is at least `44px` high; hover deepens to dark bronze.
+- **Host secondary:** A transparent antique-gold control with a Host Node Line border is at least `44px` high; hover gains Host Soft Wash.
+- **Focus:** Public actions use a `2px` Action Blue outline with `7px` offset. Host controls and links use a `2px` Host Antique Gold outline with `4px` offset.
 
 ### Navigation
-- The wordmark remains heavy, tightly tracked Manrope with its period in Action Blue.
-- Host header links label the four destinations System, Agents, Work, and Library in muted semibold type, with a two-pixel bottom rule for the current hash route. Agent subnavigation repeats that active rule and exposes direct links to each responsibility.
+- The wordmark remains heavy, tightly tracked Manrope. Its period is Action Blue on the homepage and Host Antique Gold inside the private Host.
+- Host header links label the four destinations System, Agents, Work, and Library in muted semibold type, with a two-pixel antique-gold bottom rule for the current hash route. Agent subnavigation repeats that active rule and exposes direct links to each responsibility.
 
 ### Host System Map
-- A filled Host core and orbiting connected-feed ring anchor the map. Every outlined agent node connects directly to the Host; initials identify ordinary agents, while the GitHub mark appears only when repository policy assigns that agent to reviews.
+- An original polished-gold Renoa emblem with preserved transparency and an orbiting connected-feed ring anchor the map directly on the ivory surface. Every circular agent identity connects directly to the Host. Arcee and Soundwave use faithful Transformers Prime portraits on warm charcoal; unfamiliar agents fall back to initials.
+- The same portrait component appears in System, the agent directory, and agent detail. A small separate GitHub badge appears only when recorded repository policy assigns that agent to reviews; portrait choice never determines role or runtime policy.
+- The three identity WebPs retain generated prompt sidecars beside the shipped assets; `design/identities/provenance.json` records their built-in ImageGen sources, prompts, derivative dimensions, and quality.
 - Compact indicators distinguish quiet, unfinished, and attention states without counts. Each node links to agent detail and may carry one or more indented schedules with a ticking due time or the factual state `Pending`, `Paused`, `Scheduled`, or `Due`.
 - Search filters all displayed persistent agents. The earlier-identities control expands the inventory explicitly. Creator breadcrumbs, creator branches, resource counts, the shared-library summary, and the work ledger do not belong on System.
 - Curves are measured from rendered node bounds and redraw for resizing and scrolling. Offscreen agents remain in the inventory while their unseen connection paths are omitted. On phones, direct Host connections bend through the open vertical map.
@@ -256,7 +274,7 @@ The system is mostly borderless and rectangular. Tight `5px` corners belong to c
 - One shared one-second clock updates live due times. Pause stops the ring, sweeps, and timers; hidden or offscreen views stop updates; reduced-motion preferences remove orbit, sweep, and clock-hand movement. Saved snapshots remain still. A development-only control labels synthetic activity as a motion demo and offers a return to the saved Host.
 
 ### Work View Selectors
-- On the separate Work destination, four ruled selectors organize Attention, Unfinished, Schedules, and Reviews. Each uses a familiar icon, a factual count, and a two-pixel Action Blue rule for the selected state.
+- On the separate Work destination, four ruled selectors organize Attention, Unfinished, Schedules, and Reviews. Each uses a familiar icon, a factual count, and a two-pixel Host Antique Gold rule for the selected state.
 - Only the selected record group is rendered in the Work flow. Empty copy names the absence directly; review history remains inside the Reviews selection.
 
 ### System Form
@@ -275,15 +293,18 @@ The system is mostly borderless and rectangular. Tight `5px` corners belong to c
 ## Do's and Don'ts
 
 ### Do:
-- **Do** preserve the public homepage as a no-data product introduction and keep the private Host behind authentication.
+- **Do** preserve the blue public homepage as a no-data product introduction and keep the warm ivory-and-gold Host behind authentication.
 - **Do** connect the Host directly to every persistent agent and attach schedules only to their recorded target agent.
 - **Do** keep System structural; place work records and shared resources in their separate destinations.
 - **Do** use stable record identities, timestamps, and explicit read-only language wherever a preview cannot act.
 - **Do** preserve revision-safe schedule and repository policy controls on the live Host.
+- **Do** reuse the approved Host emblem and agent portraits at their recorded map, directory, and detail sizes; retain their prompt sidecars and provenance record.
 - **Do** preserve a still, complete homepage composition; keep saved Host snapshots still and suppress System motion when paused, hidden, offscreen, or reduced motion is preferred.
 
 ### Don't:
-- **Don't** introduce card grids, portraits, decorative rooms, or a permanent inspector into the Host.
+- **Don't** introduce card grids, decorative rooms, or a permanent inspector into the Host.
+- **Don't** use portraits to infer tools, ownership, agent role, or policy; keep GitHub as a separate badge sourced from repository assignment.
+- **Don't** apply the Host's ivory, charcoal, gold, or identity artwork to the accepted blue public homepage.
 - **Don't** derive operational grouping from `created_by`, names, assignments, or creator history; creation is provenance only.
 - **Don't** present record-delta sweeps, stored records, unfinished operations, schedule countdowns, or preview data as worker heartbeats or confirmed execution.
 - **Don't** mix private Host data into the public homepage's conceptual Canvas.
