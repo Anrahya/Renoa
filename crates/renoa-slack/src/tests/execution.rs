@@ -77,7 +77,8 @@ async fn admitted_slack_request_executes_arcee_and_delivers_without_repeating_a_
             .lock()
             .await
             .iter()
-            .any(|message| message["text"] == "Arcee executed this Slack request.")
+            .any(|message| message["blocks"]
+                == json!([{"type":"markdown","text":"Arcee executed this Slack request."}]))
     );
     fixture.stop().await;
 }

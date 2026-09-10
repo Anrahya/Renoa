@@ -6,6 +6,7 @@ mod commands;
 mod config;
 mod controls;
 mod events;
+mod formatting;
 mod routines;
 mod service;
 mod socket;
