@@ -10,6 +10,9 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Renoa control-room decisions
 
+- On 2026-09-11 the owner requested direct factual homepage copy, removing metaphoric slogans while preserving the approved filament visual. Local development entry links explicitly open a read-only preview; its live Host link opens renoa.live.
+- The owner replaced the horizontal overview roster with a visual creation map. Show a creator with the agents it created, keep all agents Host-owned, and use searchable group navigation for large inventories. Familiar icons may convey actual repository roles and resource counts; a Slack MCP selection does not establish a Slack chat binding. Detailed work and settings remain inside agent pages. The map must use recorded creator links, not imply live communication, root authority, or shared thoughts.
+
 - On 2026-09-07 the owner authorized a complete redesign into a visually impressive, informative Host control panel. `design/tasks-reference.png` and the existing decorative task console are historical references, not constraints on the redesign.
 - On 2026-09-09 the owner superseded the room metaphor with a quiet, flowing editorial interface: warm ivory, ink, restrained olive, readable typography, and generous whitespace. The room image is a historical reference, not the current layout target.
 - Present work in a continuous readable flow, with completed activity compact and selected activity or evidence expanded inline. Avoid card grids, boxed sections, persistent inspector columns, and decorative network diagrams. Connecting lines must express recorded sequence or explicit dependencies, not imply causation between unrelated tasks or configuration fields.

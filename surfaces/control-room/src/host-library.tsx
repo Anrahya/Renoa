@@ -27,7 +27,7 @@ export function ConnectionList({ host, connections }: { host: HostSnapshot; conn
 export function ConnectionsView({ host }: { host: HostSnapshot }) {
   const [section, setSection] = useState("connections");
   return <main id="host-main" className="host-content"><h1>Shared library</h1>
-    <p className="host-intro">The Host’s reusable pieces. Open a connection to see who selects it.</p>
+    <p className="host-intro">Installed connections, plugins, and skills. Open a connection to see which agents use it.</p>
     <nav className="host-subnav" aria-label="Library sections">{[{ id: "connections", label: "Connections", count: host.connections.length },
       { id: "plugins", label: "Plugins", count: host.plugins.length }, { id: "skills", label: "Skills", count: host.skills.length }].map(item =>
         <button key={item.id} aria-pressed={section === item.id} onClick={() => setSection(item.id)}>{item.label}<span>{item.count}</span></button>)}</nav>

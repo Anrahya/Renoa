@@ -1,17 +1,17 @@
 import { ArrowRight } from "@phosphor-icons/react";
+import { useState } from "react";
 import type { Agent, HostSnapshot } from "./host-contract";
 import { agentActivity, agentHref, displayName, isEarlier } from "./host-presentation";
 
 export function AgentRoster({ host }: { host: HostSnapshot }) {
-  const agents = host.agents.filter(a => !isEarlier(a));
-  return <div className="host-system">
+  const [query, setQuery] = useState("");
+  const agents = host.agents.filter(a => !isEarlier(a) && a.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  return <div className="host-system host-directory">
+    <label className="host-map-search"><span className="sr-only">Find an agent</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find an agent…" /></label>
     <div className="host-agent-roster" aria-label="Your agents">
       {agents.map(agent => <AgentEntry key={agent.id} {...{ host, agent }} />)}
-      {!agents.length && <p className="host-empty">No named agents yet. Existing identities are available under Agents.</p>}
+      {!agents.length && <p className="host-empty">{query.trim() ? "No matching agents." : "No named agents yet. Earlier identities are listed below."}</p>}
     </div>
-    <a href="#library" className="host-common-ground"><span className="host-ownership-mark" aria-hidden="true" />
-      <span>One shared Host</span><span className="host-secondary">{host.connections.length} connections · {host.plugins.length} plugin revisions</span><ArrowRight size={18} aria-hidden="true" />
-    </a>
   </div>;
 }
 export function AgentEntry({ host, agent, earlier = false }: { host: HostSnapshot; agent: Agent; earlier?: boolean }) {

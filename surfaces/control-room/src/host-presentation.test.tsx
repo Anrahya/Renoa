@@ -68,6 +68,7 @@ describe("Host navigation and rendered controls", () => {
     expect(html).toContain('href="#agent/reviewer/automations"');
   });
   it("preserves live schedule controls while making saved previews read-only", () => {
+    vi.stubGlobal("localStorage", { getItem: () => null });
     const snapshot: HostSnapshot = { ...host, routines: [{ id: "r", agent_id: "reviewer", name: "Brief", enabled: false, revision: 1,
       schedule: { kind: "interval", hours: 12 }, next_due_ms: 1, pending_runs: 0, completed_runs: 1 }] };
     expect(render("#agent/reviewer/automations", snapshot)).toContain('disabled="">Resume schedule');

@@ -5,6 +5,7 @@ import { HostLogin } from "./host-login";
 import { AgentsView } from "./host-agents";
 import { ConnectionsView } from "./host-library";
 import { WorkView } from "./host-work";
+import { liveHostHref } from "./host-entry";
 import { hostRoute } from "./host-navigation";
 import { timestamp } from "./host-presentation";
 import "./styles/host.css";
@@ -56,7 +57,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
       {signedIn && !preview && <><button aria-label="Refresh Host" title="Refresh Host" className="host-icon" onClick={host.refresh}><ArrowClockwise size={18} /></button>
         <button aria-label="Sign out of this browser" title="Sign out of this browser" className="host-icon" onClick={() => void logout()}><SignOut size={18} /></button></>}
     </div></header>
-    {preview && <div className="host-banner"><span>{previewLabel}{host.receivedAt && ` · ${timestamp(host.receivedAt)}`}</span><a className="host-link" href="/?host">Open live Host</a></div>}
+    {preview && <div className="host-banner"><span>{previewLabel}{host.receivedAt && ` · ${timestamp(host.receivedAt)}`}</span><a className="host-link" href={liveHostHref(import.meta.env.DEV)}>Open live Host</a></div>}
     {(host.error || logoutError) && host.status !== "forbidden" && <div className="host-banner host-banner-error" role="status">
       <span>{logoutError ?? host.error}{host.receivedAt && ` Showing records from ${timestamp(host.receivedAt)}.`}</span>
       <button className="host-link" onClick={host.refresh}>Retry now</button></div>}

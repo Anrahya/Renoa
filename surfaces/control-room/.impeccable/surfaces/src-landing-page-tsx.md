@@ -12,7 +12,7 @@ OWN-WORLD
 An open, pale-blue field with deep blue ink and a flowing sculpture of fine connected filaments. Self-hosted Manrope supplies a clear, human voice. No cards, telemetry, character portraits, or decorative dashboard chrome.
 
 STORY
-Meet Renoa → explore models, tools, and agents → open your Host. Existing functionality is described without promising future autonomous collaboration.
+Meet Renoa → explore models, tools, and agents → open the Host. Development labels the saved surface Preview Host and routes to `/?preview#overview`; production labels it Open Host and routes to `/?host`. From the local saved preview, Open live Host routes to `https://renoa.live/?host`. Existing functionality is described without promising future autonomous collaboration.
 
 FIRST VIEWPORT
 An oversized, concise statement balances a dominant three-part filament form. Selecting a part changes its emphasis and a short explanation. The form represents architecture, never current activity.

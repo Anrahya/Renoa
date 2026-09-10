@@ -1,0 +1,119 @@
+.host-map { margin-top: 28px; }
+.host-map-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; border-block: 1px solid var(--host-rule); padding-block: 8px; }
+.host-map-path { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.host-map-path > span { display: inline-flex; align-items: center; min-width: 0; }
+.host-map-path button { min-height: 44px; padding: 8px; border: 0; background: none; font: inherit; font-size: .8125rem; color: var(--host-muted); overflow-wrap: anywhere; }
+.host-map-path button[aria-current] { color: var(--host-ink); font-weight: 650; }
+.host-map-path button:hover { color: var(--host-blue); }
+.host-map-path button > span { margin-left: 8px; font-variant-numeric: tabular-nums; }
+.host-map-search { display: flex; gap: 8px; align-items: center; color: var(--host-muted); max-width: 260px; }
+.host-map-search input { width: 100%; min-width: 0; min-height: 44px; background: none; border: 0; color: var(--host-ink); font: inherit; font-size: .875rem; }
+.host-map-search input::placeholder { color: var(--host-muted); }
+.host-map-scroll { max-height: 520px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 20px 32px; }
+.host-branch { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(260px, 1.25fr); align-items: start; width: min(100%, 840px); min-height: 320px; margin-inline: auto; gap: 96px; }
+.host-branch-origin { position: sticky; top: 60px; margin-top: 72px; padding-block: 16px; }
+.host-branch-single .host-branch-origin { margin-top: 10px; }
+.host-map-central { position: relative; }
+.host-map-central::before { content: ""; position: absolute; width: 144px; height: 144px; top: -30px; left: calc(50% - 72px); border: 1px solid var(--host-rule); border-radius: 50%; pointer-events: none; }
+.host-map-central .host-node-open { flex-direction: column; text-align: center; gap: 24px; }
+.host-map-central .host-node-copy { align-items: center; }
+.host-node-open { display: flex; gap: 20px; align-items: center; text-decoration: none; position: relative; }
+.host-node-orb { width: 56px; height: 56px; border: 1px solid #8b9cc5; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--host-paper); flex-shrink: 0; color: var(--host-blue); font-size: 1.125rem; font-weight: 600; position: relative; }
+.host-map-central .host-node-orb { width: 84px; height: 84px; background: var(--host-blue); color: #fff; border-color: var(--host-blue); font-size: 1.75rem; }
+.host-node-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.host-node-copy > strong { display: flex; align-items: center; gap: 12px; font-size: 1.375rem; line-height: 1.3; font-weight: 600; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.host-node-copy > strong > svg { color: var(--host-blue); opacity: 0; }
+.host-node-open:is(:hover, :focus-visible) strong { color: var(--host-blue); }
+.host-node-open:is(:hover, :focus-visible) strong > svg { opacity: 1; }
+.host-node-open:hover .host-node-orb { border-color: var(--host-blue); }
+.host-node-role, .host-node-state { font-size: .8125rem; line-height: 1.6; color: var(--host-muted); }
+.host-node-state.host-activity-attention { color: var(--host-warning); }
+.host-node-state:is(.host-activity-scheduled, .host-activity-pending) { color: var(--host-blue); }
+.host-node-alert { position: absolute; bottom: -2px; right: -4px; display: flex; background: var(--host-paper); border-radius: 50%; color: var(--host-warning); }
+.host-node-resources { display: flex; align-items: center; margin-left: 76px; }
+.host-map-central .host-node-resources { margin-left: 0; justify-content: center; }
+.host-map-central .host-node-resources a { justify-content: center; }
+.host-node-resources a { display: inline-flex; min-width: 48px; min-height: 44px; align-items: center; justify-content: start; gap: 6px; color: var(--host-muted); text-decoration: none; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.host-node-resources a:hover { color: var(--host-blue); }
+.host-map-relationship { display: flex; gap: 8px; align-items: center; justify-content: center; margin-top: 12px; color: var(--host-muted); font-size: .8125rem; }
+.host-satellites { list-style: none; padding: 0; margin: 0; position: relative; }
+.host-satellite { position: relative; padding-block: 28px; }
+.host-satellite::before { content: ""; position: absolute; left: -56px; top: 0; bottom: 0; width: 56px; border-left: 1px solid #9aadd5; pointer-events: none; }
+.host-satellite::after { content: ""; position: absolute; left: -56px; top: 68px; width: 40px; border-top: 1px solid #9aadd5; pointer-events: none; }
+.host-satellite:first-child::before { top: 68px; border-top-left-radius: 36px; border-top: 1px solid #9aadd5; }
+.host-satellite:first-child::after, .host-satellite:last-child::after { display: none; }
+.host-satellite:last-child::before { bottom: calc(100% - 68px); border-bottom-left-radius: 36px; border-bottom: 1px solid #9aadd5; }
+.host-satellite:only-child::before { top: 68px; height: 0; border-bottom: 0; border-left: 0; border-radius: 0; }
+.host-branch-origin::after { content: ""; position: absolute; left: calc(50% + 42px); right: -40px; top: 58px; border-top: 1px solid #9aadd5; }
+.host-branch-empty .host-branch-origin::after { display: none; }
+.host-group-link { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; padding: 0; margin-left: 76px; border: 0; background: none; color: var(--host-blue); font: inherit; font-size: .8125rem; }
+.host-group-link:hover { text-decoration: underline; text-underline-offset: 4px; }
+.host-origin { display: flex; align-items: center; flex-direction: column; text-align: center; gap: 8px; }
+.host-origin-mark { display: flex; align-items: center; justify-content: center; width: 84px; height: 84px; border: 1px solid #8b9cc5; border-radius: 50%; color: var(--host-blue); font-size: 2.5rem; font-weight: 750; }
+.host-origin > span:last-child { font-size: .8125rem; color: var(--host-muted); }
+.host-map-key { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; font-size: .75rem; color: var(--host-muted); padding: 8px 0 16px; }
+.host-map-key p { display: flex; align-items: center; gap: 8px; }
+.host-map-key label { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.host-map-key input { accent-color: var(--host-blue); width: 16px; height: 16px; }
+.host-map-library { display: flex; align-items: center; gap: 12px; padding: 20px 0; border-block: 1px solid var(--host-rule); text-decoration: none; font-size: .875rem; }
+.host-map-library > span { color: var(--host-muted); font-size: .8125rem; }
+.host-map-library > svg:last-child { margin-left: auto; color: var(--host-blue); }
+.host-map-library:hover strong { color: var(--host-blue); }
+.host-map-results { padding-block: 20px; }
+.host-map-result { padding: 20px 0; border-bottom: 1px solid var(--host-rule); }
+.host-map-result > .host-caption { display: block; margin-left: 76px; }
+.host-map-result .host-group-link { margin-top: 8px; }
+.host-map-result:last-child { border-bottom: 0; }
+.host-work-tabs { margin-top: 28px; }
+.host-work-tabs button { display: inline-flex; align-items: center; gap: 8px; }
+.host-work-tabs + section { margin-top: 20px; }
+.host-directory .host-agent-roster { display: block; border: 0; }
+.host-directory .host-agent-entry, .host-directory .host-agent-entry:first-child, .host-directory .host-agent-entry:last-child { padding: 24px 0; border-bottom: 1px solid var(--host-rule); }
+.host-directory .host-agent-entry::after { display: none; }
+.host-directory .host-agent-name { font-size: 1.375rem; }
+.host-directory .host-common-ground { display: none; }
+@media (max-width: 900px) {
+  .host-map-scroll { padding-inline: 16px; }
+  .host-branch { gap: 64px; grid-template-columns: minmax(160px, 1fr) minmax(200px, 1fr); }
+  .host-satellite::before, .host-satellite::after { left: -32px; width: 32px; }
+  .host-branch-origin::after { right: -32px; }
+}
+@media (max-width: 640px) {
+  .host-map-toolbar { flex-direction: column; align-items: stretch; gap: 0; }
+  .host-map-search { max-width: none; padding-inline: 8px; }
+  .host-map-scroll { padding: 24px 0 12px; max-height: none; overflow: visible; }
+  .host-branch { display: block; min-height: 0; }
+  .host-branch-origin { position: relative; top: auto; margin: 0; padding: 0 0 20px; }
+  .host-branch-single .host-branch-origin { margin-top: 0; }
+  .host-map-central::before { display: none; }
+  .host-map-central .host-node-open { flex-direction: row; align-items: center; gap: 16px; }
+  .host-map-central .host-node-copy { align-items: start; text-align: left; }
+  .host-map-central .host-node-orb { width: 64px; height: 64px; font-size: 1.5rem; }
+  .host-map-central .host-node-resources { margin-left: 80px; justify-content: start; }
+  .host-map-central .host-node-resources a { justify-content: start; }
+  .host-map-relationship { margin-top: 4px; justify-content: start; }
+  .host-branch-origin::after { display: none; }
+  .host-satellites { margin-left: 20px; padding-left: 28px; }
+  .host-satellite { padding-block: 20px; }
+  .host-satellite::before, .host-satellite::after { left: -28px; width: 20px; }
+  .host-satellite::after, .host-satellite:first-child::before, .host-satellite:only-child::before { top: 54px; }
+  .host-satellite:last-child::before { bottom: calc(100% - 54px); }
+  .host-satellite:first-child::before { top: 0; border-radius: 0; border-top: 0; }
+  .host-satellite:first-child::after { display: block; }
+  .host-satellite:only-child::before { height: 54px; top: 0; border-left: 1px solid #9aadd5; border-bottom: 1px solid #9aadd5; border-bottom-left-radius: 16px; }
+  .host-node-open { gap: 12px; }
+  .host-node-orb { width: 44px; height: 44px; font-size: 1rem; }
+  .host-node-copy > strong { font-size: 1.1875rem; }
+  .host-node-copy > strong > svg { display: none; }
+  .host-node-resources, .host-group-link { margin-left: 56px; }
+  .host-map-library { flex-wrap: wrap; gap: 8px; }
+  .host-map-library > span { order: 4; flex-basis: 100%; padding-left: 28px; }
+  .host-map-key { align-items: start; }
+  .host-map-key p { align-items: start; }
+  .host-map-key p > svg { margin-top: 2px; }
+  .host-origin { flex-direction: row; text-align: left; flex-wrap: wrap; gap: 12px; }
+  .host-origin-mark { width: 56px; height: 56px; font-size: 2rem; }
+  .host-origin > span:last-child { flex-basis: 100%; padding-left: 68px; margin-top: -12px; }
+  .host-work-tabs { flex-wrap: wrap; gap: 0 16px; }
+  .host-work-tabs button { min-height: 48px; }
+}

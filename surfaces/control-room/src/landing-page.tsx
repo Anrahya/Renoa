@@ -1,27 +1,29 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, ArrowUp, ArrowUpRight, Pause, Play, Plus } from "@phosphor-icons/react";
 import { SystemForm } from "./system-form";
+import { homepageHostEntry } from "./host-entry";
 import "./styles/landing.css";
 
 const parts = [
   {
     name: "Models",
-    title: "Change the mind. Keep the system.",
-    description: "Choose the model that suits the work. Providers are replaceable parts of Renoa, so your system can evolve with them.",
+    title: "Choose a model for each agent.",
+    description: "Assign the model that fits the work. Models and providers are configurable parts of Renoa.",
   },
   {
     name: "Tools",
-    title: "Connect once. Build on it.",
-    description: "Connections belong to your Host. Give agents the tools they need from a shared collection, without setting up the same account again on every surface.",
+    title: "Share tools through the Host.",
+    description: "Connect tools to your Host and make them available to the agents that need them.",
   },
   {
     name: "Agents",
-    title: "Different purposes. Common ground.",
-    description: "Combine instructions, a model, and tools for a particular job. Each agent has its own purpose, with its records and schedules held by the Host.",
+    title: "Define agents for specific work.",
+    description: "Combine instructions, a model, and tools in each agent. The Host keeps their records and schedules together.",
   },
 ] as const;
 
 export function LandingPage() {
+  const hostEntry = homepageHostEntry(import.meta.env.DEV);
   const [selected, setSelected] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -58,21 +60,21 @@ export function LandingPage() {
       <nav aria-label="Main navigation">
         <a className="renoa-nav-idea" href="#the-idea">The idea</a>
         <a className="renoa-nav-source" href="https://github.com/Anrahya/Renoa">Source <ArrowUpRight size={16} aria-hidden="true" /></a>
-        <a className="renoa-open" href="/?host">Open your Host <ArrowUpRight size={17} aria-hidden="true" /></a>
+        <a className="renoa-open" href={hostEntry.href}>{hostEntry.label} <ArrowUpRight size={17} aria-hidden="true" /></a>
       </nav>
     </header>
 
     <main id="home-main">
       <section className="renoa-hero" aria-labelledby="home-heading">
         <div className="renoa-introduction">
-          <h1 id="home-heading">A system<br />of your <em>own.</em></h1>
-          <p>Your models. Your tools. Your agents.<br />Connected through one personal Host.</p>
+          <h1 id="home-heading">A modular<br />AI <em>system.</em></h1>
+          <p>Create agents from models, instructions, and tools.<br />Manage them through one shared Host.</p>
           <button className="renoa-text-action" onClick={explore}>Explore the system <ArrowRight size={21} aria-hidden="true" /></button>
         </div>
 
         <figure className="renoa-system" aria-label="Explore how models, tools, and agents connect through a Renoa Host">
           <SystemForm selected={selected} paused={paused || reducedMotion} />
-          <a className="renoa-form-host" href="/?host" aria-label="Open your Host">r<ArrowUpRight size={11} aria-hidden="true" /></a>
+          <a className="renoa-form-host" href={hostEntry.href} aria-label={hostEntry.label}>r<ArrowUpRight size={11} aria-hidden="true" /></a>
           <div className="renoa-form-parts" role="group" aria-label="Parts of the system">
             {parts.map((item, index) => <button
               key={item.name}
@@ -83,7 +85,7 @@ export function LandingPage() {
               onClick={() => selectPart(index)}
             ><span className="renoa-part-mark" aria-hidden="true"><Plus size={14} weight="bold" /></span>{item.name}</button>)}
           </div>
-          <figcaption className="renoa-form-caption">Separate parts. Shared possibilities.</figcaption>
+          <figcaption className="renoa-form-caption">Models, tools, and agents connected through one Host.</figcaption>
           {!reducedMotion && <button className="renoa-motion" onClick={() => setPaused(!paused)} aria-label={paused ? "Play visual motion" : "Pause visual motion"}>
             {paused ? <Play size={16} aria-hidden="true" /> : <Pause size={16} aria-hidden="true" />}
           </button>}
@@ -92,27 +94,27 @@ export function LandingPage() {
 
       <section className="renoa-explanation" id="system-explanation" aria-live="polite" aria-atomic="true">
         <div className="renoa-explanation-heading"><span className="renoa-small-orbit" aria-hidden="true" />
-          <h2>{part?.title ?? "Many parts. A whole that’s yours."}</h2>
+          <h2>{part?.title ?? "Configure the parts of your AI system."}</h2>
         </div>
-        <p>{part?.description ?? "Renoa is a modular AI system. Bring the pieces together, give them a purpose, and keep shaping what your system can do."}</p>
+        <p>{part?.description ?? "Renoa combines agents, models, instructions, and tools under one shared Host."}</p>
       </section>
 
       <section className="renoa-idea" id="the-idea" aria-labelledby="idea-heading">
         <a href="#home-main" className="renoa-idea-mark" aria-label="Return to the system"><ArrowUp size={25} aria-hidden="true" /></a>
         <div>
-          <h2 id="idea-heading">The pieces will change.<br />Your system stays yours.</h2>
+          <h2 id="idea-heading">Configure each agent.<br />Manage them from one Host.</h2>
           <div className="renoa-idea-body">
-            <p>A new model. A useful connection. An agent with a different job. Renoa is built to make room for what comes next.</p>
-            <p>Your Host holds the continuity: the agents, their records, and the connections they use. Slack, GitHub, and the browser are ways into that system.</p>
+            <p>Choose an agent’s instructions, model, and tools for the work it performs. Update that configuration as requirements change.</p>
+            <p>The Host stores agents, records, schedules, and shared connections. Surfaces such as Slack, GitHub, and the browser connect to it.</p>
           </div>
-          <a href="/?host" className="renoa-text-action">Make yourself at home <ArrowUpRight size={21} aria-hidden="true" /></a>
+          <a href={hostEntry.href} className="renoa-text-action">{hostEntry.label} <ArrowUpRight size={21} aria-hidden="true" /></a>
         </div>
       </section>
     </main>
 
     <footer className="renoa-home-footer">
       <a href="/" className="renoa-wordmark" aria-label="Renoa home">renoa<span>.</span></a>
-      <p>A personal system. Room to evolve.</p>
+      <p>A modular AI system managed through one Host.</p>
       <a href="https://github.com/Anrahya/Renoa">Built in the open <ArrowUpRight size={16} aria-hidden="true" /></a>
     </footer>
   </div>;

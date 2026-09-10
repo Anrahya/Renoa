@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-10T23:32:45+05:30",
+  "generatedAt": "2026-09-11T01:07:51+05:30",
   "title": "Design System: Renoa Web Surfaces",
   "extensions": {
     "colorMeta": {
@@ -30,7 +30,6 @@
       { "name": "arrow-travel", "value": "240ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Moves public text-action arrows 4px on hover." },
       { "name": "part-state", "value": "180ms", "purpose": "Transitions the public system-part mark background and color." },
       { "name": "canvas-response", "value": "requestAnimationFrame; 1 - exp(-elapsed * 8)", "purpose": "Eases pointer tilt and selection emphasis in the public system form." },
-      { "name": "host-agent-arrow", "value": "180ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Moves an agent roster arrow 4px while its connector and name turn blue." },
       { "name": "host-reduced-motion", "value": "prefers-reduced-motion: reduce", "purpose": "Removes Host transitions and automatic smooth scrolling." }
     ],
     "breakpoints": [
@@ -46,8 +45,8 @@
       "name": "Open Host Action",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The compact filled link from the public page into the authenticated Host.",
-      "html": "<a class=\"ds-open-host\" href=\"#\">Open your Host <svg viewBox=\"0 0 256 256\" aria-hidden=\"true\"><path d=\"M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z\"/></svg></a>",
+      "description": "The compact filled homepage entry, labeled Preview Host in development and Open Host in production.",
+      "html": "<a class=\"ds-open-host\" href=\"#\">Open Host <svg viewBox=\"0 0 256 256\" aria-hidden=\"true\"><path d=\"M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z\"/></svg></a>",
       "css": ".ds-open-host{display:inline-flex;align-items:center;gap:10px;background:#182448;color:#fff;padding:12px 18px;border-radius:5px;font:650 13px/1.6 Manrope,sans-serif;text-decoration:none}.ds-open-host svg{width:17px;height:17px;fill:currentColor}.ds-open-host:hover{background:#294acc}.ds-open-host:focus-visible{outline:2px solid #294acc;outline-offset:7px}"
     },
     {
@@ -80,11 +79,11 @@
       "css": ".ds-host-nav{height:76px;display:flex;align-items:stretch;gap:28px;border-bottom:1px solid #cbd5e7;padding:0 40px}.ds-host-nav a{display:flex;align-items:center;padding:0 4px;border-bottom:2px solid transparent;color:#53617e;font:600 .875rem/1.6 Manrope,sans-serif;text-decoration:none}.ds-host-nav a:hover,.ds-host-nav a[aria-current]{color:#294acc}.ds-host-nav a[aria-current]{border-color:#294acc}.ds-host-nav a:focus-visible{outline:2px solid #294acc;outline-offset:4px}"
     },
     {
-      "name": "Agent Roster Entry",
+      "name": "Agent Creation Node",
       "kind": "custom",
-      "description": "A borderless agent identity on the shared ownership baseline.",
-      "html": "<a class=\"ds-agent\" href=\"#agent/arcee\"><strong>Arcee <span aria-hidden=\"true\">→</span></strong><small>2 review repositories · 3 connections</small><small>Review needs attention</small></a>",
-      "css": ".ds-agent{position:relative;display:flex;flex-direction:column;gap:9px;padding:24px 28px 46px;border-bottom:1px solid #97aad5;color:#182448;font-family:Manrope,sans-serif;text-decoration:none}.ds-agent:after{content:\"\";position:absolute;bottom:0;left:28px;height:22px;border-left:1px solid #97aad5}.ds-agent strong{display:flex;justify-content:space-between;gap:16px;font-size:1.75rem;line-height:1.3;font-weight:550;letter-spacing:-.035em}.ds-agent strong span{color:#294acc;transition:transform 180ms cubic-bezier(.16,1,.3,1)}.ds-agent small{color:#53617e;font-size:.8125rem;line-height:1.6}.ds-agent:hover strong{color:#294acc}.ds-agent:hover strong span{transform:translateX(4px)}.ds-agent:hover:after{border-color:#294acc}.ds-agent:focus-visible{outline:2px solid #294acc;outline-offset:4px}"
+      "description": "A circular agent identity with recorded state and linked MCP, session, and schedule counts.",
+      "html": "<div class=\"ds-agent-node\"><a class=\"ds-agent-open\" href=\"#agent/arcee\"><span class=\"ds-agent-orb\">A</span><span class=\"ds-agent-copy\"><strong>Arcee <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M5 12h14m-5-5 5 5-5 5\"/></svg></strong><small>Agent</small><small>No pending work</small></span></a><div class=\"ds-agent-resources\"><a href=\"#connections\" aria-label=\"7 MCP connections\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M8 7V3m4 4V3M6 7h8v3a4 4 0 0 1-4 4v4m-3 0h6\"/></svg>7</a><a href=\"#work\" aria-label=\"3 sessions\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M20 11a8 8 0 1 1-4-6.9A8 8 0 0 1 20 11Zm0 0v7l-4-2\"/></svg>3</a><a href=\"#automations\" aria-label=\"0 enabled schedules\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5l3 2\"/></svg>0</a></div></div>",
+      "css": ".ds-agent-node{color:#182448;font-family:Manrope,sans-serif}.ds-agent-open{display:flex;align-items:center;gap:20px;color:inherit;text-decoration:none}.ds-agent-orb{width:56px;height:56px;border:1px solid #8b9cc5;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;background:#f0f3fa;color:#294acc;font-size:1.125rem;font-weight:600}.ds-agent-copy{display:flex;flex-direction:column;gap:4px}.ds-agent-copy strong{display:flex;align-items:center;gap:12px;font-size:1.375rem;line-height:1.3;font-weight:600;letter-spacing:-.025em}.ds-agent-copy strong svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;opacity:0}.ds-agent-copy small{color:#53617e;font-size:.8125rem;line-height:1.6}.ds-agent-open:hover strong,.ds-agent-open:focus-visible strong{color:#294acc}.ds-agent-open:hover .ds-agent-orb{border-color:#294acc}.ds-agent-open:hover strong svg,.ds-agent-open:focus-visible strong svg{opacity:1}.ds-agent-open:focus-visible{outline:2px solid #294acc;outline-offset:4px}.ds-agent-resources{display:flex;margin-left:76px}.ds-agent-resources a{display:inline-flex;align-items:center;gap:6px;min-width:48px;min-height:44px;color:#53617e;font-size:.75rem;text-decoration:none}.ds-agent-resources a svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.ds-agent-resources a:hover{color:#294acc}.ds-agent-resources a:focus-visible{outline:2px solid #294acc;outline-offset:4px}"
     },
     {
       "name": "Host Record Disclosure",
@@ -110,27 +109,26 @@
       "css": ".ds-host-action{min-height:44px;padding:9px 16px;border:1px solid #8b9cc5;border-radius:5px;background:transparent;color:#294acc;font:600 .875rem/1.6 Manrope,sans-serif}.ds-host-action:hover:not(:disabled){background:#e4eafa}.ds-host-action:focus-visible{outline:2px solid #294acc;outline-offset:4px}.ds-host-action:disabled{cursor:not-allowed;opacity:.55}"
     },
     {
-      "name": "Host Status",
-      "kind": "chip",
-      "refersTo": "host-status",
-      "description": "A compact label for a recorded enabled, scheduled, or paused state.",
-      "html": "<span class=\"ds-host-state\">Scheduled</span>",
-      "css": ".ds-host-state{display:inline-block;padding:3px 9px;border-radius:4px;background:#e0eee6;color:#286448;font:400 .8125rem/1.6 Manrope,sans-serif;white-space:nowrap}.ds-host-state[data-muted=true]{background:#e2e7f1;color:#53617e}"
+      "name": "Recorded Work Selector",
+      "kind": "nav",
+      "description": "One of four ruled selectors that switches the overview among attention, unfinished work, schedules, and reviews.",
+      "html": "<nav class=\"ds-work-tabs\" aria-label=\"Recorded work\"><button aria-pressed=\"true\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v6\"/><path d=\"M12 17h.01\"/></svg>Attention <span>2</span></button><button aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7 3h10M7 21h10M8 3c0 4 1 6 4 9-3 3-4 5-4 9m8-18c0 4-1 6-4 9 3 3 4 5 4 9\"/></svg>Unfinished <span>1</span></button><button aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5l3 2\"/></svg>Schedules <span>0</span></button><button aria-pressed=\"false\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M8 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3m8-14h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3M8 3v18m8-18v18M8 8h8m-8 8h8\"/></svg>Reviews <span>5</span></button></nav>",
+      "css": ".ds-work-tabs{display:flex;gap:28px;border-bottom:1px solid #cbd5e7;font-family:Manrope,sans-serif}.ds-work-tabs button{display:inline-flex;align-items:center;gap:8px;padding:12px 0;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;background:none;color:#53617e;font:600 .875rem/1.6 Manrope,sans-serif;white-space:nowrap}.ds-work-tabs button svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.ds-work-tabs button span{font-size:.8125rem;font-weight:400}.ds-work-tabs button:hover,.ds-work-tabs button[aria-pressed=true]{color:#294acc}.ds-work-tabs button[aria-pressed=true]{border-bottom-color:#294acc}.ds-work-tabs button:focus-visible{outline:2px solid #294acc;outline-offset:4px}"
     }
   ],
   "narrative": {
     "northStar": "The Open Filament Field",
-    "overview": "Renoa's web system presents a personal, modular AI system as one open field with a precise operating interior. The public homepage is spacious and conceptual: pale atmosphere, dark language, and a fine connected form whose visible parts meet at one center. The authenticated Host carries that same palette, typeface, rules, and exact interaction blue into a denser surface for operating real records.\n\nThe public and private surfaces stay distinct in purpose. The homepage explains without exposing data. The Host is an agent-focused flow of roster, shared ownership, and ruled records; it avoids a card grid and expands details only when the owner asks for evidence or controls.",
-    "keyCharacteristics": ["Pale blue continuous ground with deep indigo type.", "One clear blue for emphasis, selection, focus, and action.", "Self-hosted Manrope from large public statements through compact Host labels.", "Fine rules, circular ownership marks, and open flow instead of decorative chrome.", "Conceptual motion on the homepage; restrained state motion and reduced-motion support in the Host."],
+    "overview": "Renoa's web system presents a personal, modular AI system as one open field with a precise operating interior. The public homepage is spacious and conceptual: pale atmosphere, dark language, and a fine connected form whose visible parts meet at one center. The authenticated Host carries that same palette, typeface, rules, and exact interaction blue into a denser surface for operating real records.\n\nThe public and private surfaces stay distinct in purpose. The homepage explains without exposing data. The Host is an agent-focused flow of recorded creation relationships, shared resources, selectable work summaries, and ruled records; it avoids a card grid and expands details only when the owner asks for evidence or controls.",
+    "keyCharacteristics": ["Pale blue continuous ground with deep indigo type.", "One clear blue for emphasis, selection, focus, and action.", "Self-hosted Manrope from large public statements through compact Host labels.", "Fine rules, circular agent nodes, and open flow instead of decorative chrome.", "Conceptual motion on the homepage; restrained state motion and reduced-motion support in the Host."],
     "rules": [
       { "name": "The One Blue Rule", "body": "Use Action Blue for interaction and selection across both surfaces; leave the ground and most content neutral.", "section": "colors" },
       { "name": "The Recorded State Rule", "body": "Green and rust communicate states already present in Host records. They do not imply live telemetry.", "section": "colors" },
       { "name": "The One Voice Rule", "body": "Use Manrope for every web role; hierarchy comes from scale, weight, tracking, and space.", "section": "typography" },
       { "name": "The Identifier Rule", "body": "Use the monospace fallback only for stored identifiers, digests, and revisions, never for headings or navigation.", "section": "typography" },
-      { "name": "The Agent-First Flow Rule", "body": "Lead with named agents and their real resources, then unfold work and evidence in reading order; do not convert the Host into a boxed metric grid.", "section": "layout" },
+      { "name": "The Agent-First Flow Rule", "body": "Lead with named agents, recorded creator relationships, and real resource counts, then unfold selected work and evidence in reading order; do not convert the Host into a boxed metric grid.", "section": "layout" },
       { "name": "The Flat Evidence Rule", "body": "Records expand within the document flow. Use tonal change and rules to reveal evidence, never floating panels or permanent inspectors.", "section": "elevation" }
     ],
-    "dos": ["Do preserve the public homepage as a no-data product introduction and keep the private Host behind authentication.", "Do keep agents, shared resources, work records, and controls in one flowing reading order.", "Do use stable record identities, timestamps, and explicit read-only language wherever a preview cannot act.", "Do preserve revision-safe schedule and repository policy controls on the live Host.", "Do preserve a still, complete homepage composition and remove Host transitions for reduced-motion preferences."],
-    "donts": ["Don't introduce card grids, portraits, decorative rooms, or a permanent inspector into the Host.", "Don't present stored records, unfinished operations, or preview data as live agent telemetry.", "Don't mix private Host data into the public homepage's conceptual Canvas.", "Don't imply model or tool recipe editing or cross-agent collaboration until those APIs and controls exist."]
+    "dos": ["Do preserve the public homepage as a no-data product introduction and keep the private Host behind authentication.", "Do keep the creation map, shared resources, selected work records, and controls in one flowing reading order.", "Do derive GitHub review roles, resource counts, and creator branches from recorded Host data.", "Do use stable record identities, timestamps, and explicit read-only language wherever a preview cannot act.", "Do preserve revision-safe schedule and repository policy controls on the live Host.", "Do preserve a still, complete homepage composition and remove Host transitions for reduced-motion preferences."],
+    "donts": ["Don't introduce card grids, portraits, decorative rooms, or a permanent inspector into the Host.", "Don't use creation connectors or resource icons to imply agent authority, live communication, shared thoughts, or a surface binding that the Host contract does not record.", "Don't present stored records, unfinished operations, or preview data as live agent telemetry.", "Don't mix private Host data into the public homepage's conceptual Canvas.", "Don't imply model or tool recipe editing or cross-agent collaboration until those APIs and controls exist."]
   }
 }

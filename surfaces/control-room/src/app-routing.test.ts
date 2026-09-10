@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { App } from "./App";
+import { homepageHostEntry, liveHostHref } from "./host-entry";
 import { useHost } from "./use-host";
 import { useControlRoom } from "./use-control-room";
 
@@ -14,10 +15,18 @@ describe("the public homepage and private surfaces", () => {
   it("renders the product introduction without mounting either private controller", () => {
     vi.stubGlobal("window", { location: { search: "" } });
     const html = renderToStaticMarkup(createElement(App));
-    expect(html).toContain("A system<br/>of your");
-    expect(html).toContain('href="/?host"');
+    expect(html).toContain("A modular<br/>AI");
+    expect(html).toContain('href="/?preview#overview"');
+    expect(html).toContain("Preview Host");
     expect(useHost).not.toHaveBeenCalled();
     expect(useControlRoom).not.toHaveBeenCalled();
+  });
+
+  it("selects development preview and production Host entries", () => {
+    expect(homepageHostEntry(true)).toEqual({ href: "/?preview#overview", label: "Preview Host" });
+    expect(homepageHostEntry(false)).toEqual({ href: "/?host", label: "Open Host" });
+    expect(liveHostHref(true)).toBe("https://renoa.live/?host");
+    expect(liveHostHref(false)).toBe("/?host");
   });
 
   it("opens the existing Host surface through the homepage's query route", () => {

@@ -140,13 +140,13 @@ components:
 
 Renoa's web system presents a personal, modular AI system as one open field with a precise operating interior. The public homepage is spacious and conceptual: pale atmosphere, dark language, and a fine connected form whose visible parts meet at one center. The authenticated Host carries that same palette, typeface, rules, and exact interaction blue into a denser surface for operating real records.
 
-The public and private surfaces stay distinct in purpose. The homepage explains without exposing data. The Host is an agent-focused flow of roster, shared ownership, and ruled records; it avoids a card grid and expands details only when the owner asks for evidence or controls.
+The public and private surfaces stay distinct in purpose. The homepage explains without exposing data. The Host is an agent-focused flow of recorded creation relationships, shared resources, selectable work summaries, and ruled records; it avoids a card grid and expands details only when the owner asks for evidence or controls.
 
 **Key Characteristics:**
 - Pale blue continuous ground with deep indigo type.
 - One clear blue for emphasis, selection, focus, and action.
 - Self-hosted Manrope from large public statements through compact Host labels.
-- Fine rules, circular ownership marks, and open flow instead of decorative chrome.
+- Fine rules, circular agent nodes, and open flow instead of decorative chrome.
 - Conceptual motion on the homepage; restrained state motion and reduced-motion support in the Host.
 
 ## Colors
@@ -208,11 +208,11 @@ At `1000px`, proportions tighten. At `720px`, the page becomes a single column, 
 
 ### Authenticated Host
 
-The Host uses a centered `1120px` content column with `56px` side clearance, a `76px` ruled header, and a recurring `36px` section rhythm. The first view flows from page heading to a flexible agent roster, a shared ownership line, and then priority-ordered work records. Hash navigation links directly to overview, agents, shared library, an individual agent, and that agent's work, connections, automations, or review policy.
+The Host uses a centered `1120px` content column with `56px` side clearance, a `76px` ruled header, and a recurring `36px` section rhythm. The first view flows from page heading to a searchable creation map, the shared library, four recorded-work selectors, and the selected records. A focused creator and its direct descendants occupy a two-column branch inside an `840px` maximum map; groups larger than the `520px` viewport scroll without dropping agents. Breadcrumbs move among recorded creator groups, and search reaches agents inside unopened groups. Hash navigation links directly to overview, agents, shared library, an individual agent, and that agent's work, connections, automations, or review policy.
 
-At `900px`, gutters and roster cells tighten. At `640px`, the header wraps, content uses `20px` side gutters, the ownership baseline becomes a vertical connection, records stack their state under the title, and agent subnavigation becomes a two-column flow. Controls keep a `44px` minimum height.
+At `900px`, gutters and branch spacing tighten. At `640px`, the header wraps, content uses `20px` side gutters, the map toolbar stacks, the branch becomes an uncapped indented tree, records stack their state under the title, and agent subnavigation becomes a two-column flow. Work selectors wrap and keep a `48px` minimum height; other controls keep a `44px` minimum height.
 
-**The Agent-First Flow Rule.** Lead with named agents and their real resources, then unfold work and evidence in reading order; do not convert the Host into a boxed metric grid.
+**The Agent-First Flow Rule.** Lead with named agents, recorded creator relationships, and real resource counts, then unfold selected work and evidence in reading order; do not convert the Host into a boxed metric grid.
 
 ## Elevation & Depth
 
@@ -222,12 +222,12 @@ Both surfaces use no shadows. The homepage gets depth from translucent Canvas fi
 
 ## Shapes
 
-The system is mostly borderless and rectangular. Tight `5px` corners belong to compact actions and inputs; `4px` corners belong to status labels. True circles identify the public system form, ownership marks, and recorded attention dots. One-pixel rules describe hierarchy and connection without creating card containers.
+The system is mostly borderless and rectangular. Tight `5px` corners belong to compact actions and inputs; `4px` corners belong to status labels. True circles identify the public system form, Host and agent nodes, and recorded attention dots. Focused map nodes grow from `56px` to `84px`; mobile nodes reduce to `44px`, with a `64px` focused node. One-pixel rules describe hierarchy and recorded creation without creating card containers.
 
 ## Components
 
 ### Buttons
-- **Public primary:** The compact Open your Host link uses Deep Ink, white text, and a tight corner; hover changes the fill to Action Blue.
+- **Public primary:** The compact Host entry link uses Deep Ink, white text, and a tight corner; hover changes the fill to Action Blue. Its label is `Preview Host` in development and `Open Host` in production.
 - **Public text action:** An open semibold label sits on a one-pixel underline. Hover turns rule and text blue while its arrow travels `4px` over `240ms` with `cubic-bezier(0.16, 1, 0.3, 1)`.
 - **Host primary:** A filled Action Blue control is at least `44px` high; hover deepens the blue.
 - **Host secondary:** A transparent, blue, one-pixel control is at least `44px` high; hover gains Host Soft Wash.
@@ -237,9 +237,15 @@ The system is mostly borderless and rectangular. Tight `5px` corners belong to c
 - The wordmark remains heavy, tightly tracked Manrope with its period in Action Blue.
 - Host header links use muted semibold labels and a two-pixel bottom rule for the current hash route. Agent subnavigation repeats that active rule and exposes direct links to each responsibility.
 
-### Agent Roster
-- Named agents flow in flexible columns above one quiet ownership baseline. Each entry uses a large medium-weight name, factual counts, and recorded activity text. Hover turns the name and local connector blue and moves the arrow `4px` over `180ms` with `cubic-bezier(0.16, 1, 0.3, 1)`.
-- On phones, the shared baseline turns into a vertical line so the same ownership topology survives without a grid.
+### Agent Creation Map
+- A focused creator uses a filled `84px` circular node and branches to outlined `56px` child nodes. Initials identify ordinary agents; the GitHub mark appears only when repository policy assigns that agent to reviews. Rust attention marks and factual state text surface recorded problems.
+- Each node links to the agent and exposes three labeled icon counts: selected MCP connections, recorded sessions, and enabled schedules. These counts describe stored resources and records; they do not imply chat bindings, live presence, or agent-to-agent communication.
+- Breadcrumbs focus one creator group at a time. Search spans unopened groups, the earlier-identity control expands the inventory explicitly, and child-group links preserve branch context.
+- Desktop groups scroll inside a `520px` maximum map without record caps. On phones, the same creator links become an uncapped indented tree.
+
+### Recorded Work Selectors
+- Four ruled selectors replace the stacked overview ledger: Attention, Unfinished, Schedules, and Reviews. Each uses a familiar icon, a factual count, and a two-pixel Action Blue rule for the selected state.
+- Only the selected record group is rendered in the overview flow. Empty copy names the absence directly; review history remains inside the Reviews selection.
 
 ### System Form
 - The public native Canvas draws three 64-strand bundles from one center. Each strand is a subpixel indigo-blue line with varying lightness and transparency; selection fades unselected bundles while the matching HTML control remains keyboard and touch operable.
@@ -258,13 +264,15 @@ The system is mostly borderless and rectangular. Tight `5px` corners belong to c
 
 ### Do:
 - **Do** preserve the public homepage as a no-data product introduction and keep the private Host behind authentication.
-- **Do** keep agents, shared resources, work records, and controls in one flowing reading order.
+- **Do** keep the creation map, shared resources, selected work records, and controls in one flowing reading order.
+- **Do** derive GitHub review roles, resource counts, and creator branches from recorded Host data.
 - **Do** use stable record identities, timestamps, and explicit read-only language wherever a preview cannot act.
 - **Do** preserve revision-safe schedule and repository policy controls on the live Host.
 - **Do** preserve a still, complete homepage composition and remove Host transitions for reduced-motion preferences.
 
 ### Don't:
 - **Don't** introduce card grids, portraits, decorative rooms, or a permanent inspector into the Host.
+- **Don't** use creation connectors or resource icons to imply agent authority, live communication, shared thoughts, or a surface binding that the Host contract does not record.
 - **Don't** present stored records, unfinished operations, or preview data as live agent telemetry.
 - **Don't** mix private Host data into the public homepage's conceptual Canvas.
 - **Don't** imply model or tool recipe editing or cross-agent collaboration until those APIs and controls exist.

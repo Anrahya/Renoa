@@ -12,11 +12,11 @@ export function AgentsView({ host, route, controls }: { host: HostSnapshot; rout
   if (agent) return <AgentView key={agent.id} {...{ host, agent, controls }} section={route.section} />;
   const earlier = host.agents.filter(isEarlier);
   return <main id="host-main" className="host-content"><h1>Your agents</h1>
-    <p className="host-intro">Each has its own work. The Host keeps them together.</p>
+    <p className="host-intro">Open an agent to inspect its work and configuration.</p>
     {route.agent && <p role="status" className="host-notice">That agent is not in this Host snapshot. Choose an available agent below.</p>}
     {!host.agents.length ? <p className="host-empty">This Host has no recorded agents yet.</p> : <AgentRoster host={host} />}
     {!!earlier.length && <details className="host-history host-section"><summary>Earlier identities <span>{earlier.length} records</span></summary>
-      <p className="host-caption">Original profile-named identities, retained as separate agents. Their work has not been merged into Arcee.</p>
+      <p className="host-caption">Original profile-named identities, retained with their own records.</p>
       <div className="host-earlier-list">{earlier.map(agent => <AgentEntry key={agent.id} {...{ host, agent }} earlier />)}</div>
     </details>}
   </main>;
