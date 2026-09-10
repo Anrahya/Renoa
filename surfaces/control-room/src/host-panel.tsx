@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowClockwise, SignOut } from "@phosphor-icons/react";
 import { useHost } from "./use-host";
 import { HostLogin } from "./host-login";
 import { AgentsView } from "./host-agents";
 import { ConnectionsView } from "./host-library";
 import { WorkView } from "./host-work";
+import { SystemView } from "./host-system";
 import { liveHostHref } from "./host-entry";
 import { hostRoute } from "./host-navigation";
 import { timestamp } from "./host-presentation";
@@ -14,8 +15,8 @@ export function HostPanel() {
   const host = useHost();
   return <HostPanelView host={host} />;
 }
-export function HostPanelView({ host, preview = false, previewLabel = "Example data" }: {
-  host: ReturnType<typeof useHost>; preview?: boolean; previewLabel?: string;
+export function HostPanelView({ host, preview = false, previewLabel = "Example data", previewAction, demo = false }: {
+  host: ReturnType<typeof useHost>; preview?: boolean; previewLabel?: string; previewAction?: ReactNode; demo?: boolean;
 }) {
   const [hash, setHash] = useState(() => window.location.hash);
   const route = hostRoute(hash);
@@ -50,26 +51,27 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
     if (main) { main.tabIndex = -1; main.focus(); }
   }}>Skip to content</a><header className="host-header">
     <a className="host-brand" href="/" aria-label="Renoa home">renoa<span>.</span></a>
-    {signedIn && <nav aria-label="Host navigation">{(["overview", "agents", "library"] as const).map(item =>
-      <a key={item} href={`#${item}`} aria-current={route.view === item ? "page" : undefined}>{item === "library" ? "Shared library" : item === "overview" ? "Overview" : "Agents"}</a>)}</nav>}
+    {signedIn && <nav aria-label="Host navigation">{(["overview", "agents", "work", "library"] as const).map(item =>
+      <a key={item} href={`#${item}`} aria-current={route.view === item ? "page" : undefined}>{item === "library" ? "Library" : item === "overview" ? "System" : item === "work" ? "Work" : "Agents"}</a>)}</nav>}
     <div className="host-header-status"><span className={host.status === "connected" && !preview ? "host-online" : "host-secondary"}>
       {preview ? "Read-only preview" : host.status === "connected" ? "Host connected" : host.status === "reconnecting" ? "Reconnecting" : host.status === "connecting" ? "Connecting" : "Private Host"}</span>
       {signedIn && !preview && <><button aria-label="Refresh Host" title="Refresh Host" className="host-icon" onClick={host.refresh}><ArrowClockwise size={18} /></button>
         <button aria-label="Sign out of this browser" title="Sign out of this browser" className="host-icon" onClick={() => void logout()}><SignOut size={18} /></button></>}
     </div></header>
-    {preview && <div className="host-banner"><span>{previewLabel}{host.receivedAt && ` · ${timestamp(host.receivedAt)}`}</span><a className="host-link" href={liveHostHref(import.meta.env.DEV)}>Open live Host</a></div>}
+    {preview && <div className="host-banner"><span>{previewLabel}{host.receivedAt && !demo && ` · ${timestamp(host.receivedAt)}`}</span>{previewAction}<a className="host-link" href={liveHostHref(import.meta.env.DEV)}>Open live Host</a></div>}
     {(host.error || logoutError) && host.status !== "forbidden" && <div className="host-banner host-banner-error" role="status">
       <span>{logoutError ?? host.error}{host.receivedAt && ` Showing records from ${timestamp(host.receivedAt)}.`}</span>
       <button className="host-link" onClick={host.refresh}>Retry now</button></div>}
     {host.status === "locked" || host.status === "forbidden" ? <HostLogin refresh={host.refresh} forbidden={host.status === "forbidden"} />
       : host.snapshot ? <>
-        {route.view === "overview" && <WorkView host={host.snapshot} controls={controls} />}
+        {route.view === "overview" && <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} />}
+        {route.view === "work" && <WorkView host={host.snapshot} controls={controls} />}
         {route.view === "agents" && <AgentsView host={host.snapshot} route={route} controls={controls} />}
         {route.view === "library" && <ConnectionsView host={host.snapshot} />}
       </> : <main id="host-main" className="host-content host-loading" aria-busy="true">
         <h1>{host.status === "reconnecting" ? "Waiting for your Host" : "Opening your Host"}</h1>
         <p className="host-intro">{host.status === "reconnecting" ? "We’ll reconnect when it returns. Your login stays in this browser." : "Restoring your browser’s remembered session."}</p></main>}
     {host.snapshot && <footer className="host-footer"><details><summary>Host identity</summary><code>{host.snapshot.host_id}</code></details>
-      <span>{host.receivedAt && `${preview ? "Snapshot saved" : "Last received"} ${timestamp(host.receivedAt)}`}</span></footer>}
+      <span>{demo ? "Example activity" : host.receivedAt && `${preview ? "Snapshot saved" : "Last received"} ${timestamp(host.receivedAt)}`}</span></footer>}
   </div>;
 }

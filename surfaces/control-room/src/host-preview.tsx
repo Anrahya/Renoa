@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { HostPanelView } from "./host-panel";
 import { parseHost, type HostSnapshot } from "./host-contract";
 
@@ -33,7 +34,36 @@ export default function HostPreview() {
   // become public assets; the production build excludes this entire module.
   const captures = import.meta.glob<{ received_at_ms: number; snapshot: unknown }>("../.impeccable/review/host-snapshot.json", { eager: true, import: "default" });
   const saved = Object.values(captures)[0];
-  const snapshot = saved ? parseHost(saved.snapshot) : example;
-  return <HostPanelView preview previewLabel={saved ? "Saved VPS snapshot" : "Example data"} host={{ status: "connected", snapshot, receivedAt: saved?.received_at_ms ?? null, error: null,
+  const snapshot = useMemo(() => saved ? parseHost(saved.snapshot) : example, [saved]);
+  const [demoStart, setDemoStart] = useState<number | null>(null);
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    if (demoStart === null) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") setStep(value => value + 1);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [demoStart]);
+  const demo = useMemo(() => demoStart === null ? null : motionExample(demoStart, step), [demoStart, step]);
+  return <HostPanelView key={demoStart ?? "saved"} preview demo={demo !== null}
+    previewLabel={demo ? "Motion demo · example activity, no live actions" : saved ? "Saved VPS snapshot" : "Example data"}
+    previewAction={<button className="host-link" onClick={() => {
+      window.location.hash = "overview";
+      setStep(0); setDemoStart(demo ? null : Date.now());
+    }}>{demo ? "Show saved Host" : "Show motion demo"}</button>}
+    host={{ status: "connected", snapshot: demo ?? snapshot, receivedAt: demo ? Date.now() : saved?.received_at_ms ?? null, error: null,
     refresh: () => undefined, lock: () => undefined }} />;
+}
+
+// Synthetic execution updates exercise the same record-diff path as real polling.
+// This module, including all fixtures, is excluded from production.
+function motionExample(start: number, step: number): HostSnapshot {
+  return { ...example, sessions: [{ id: id(8), agent_id: id(2), observation: "available", event_count: step,
+    queued_operations: 0, active_operation: { id: id(9), command_id: id(10), position: 1, state: "unfinished" }, latest_operation: null }],
+    routines: [
+      { id: id(11), agent_id: id(2), name: "Evening recap", enabled: true, revision: 1,
+        schedule: { kind: "once", at: new Date(start + 90_000).toISOString() }, next_due_ms: start + 90_000, pending_runs: 0, completed_runs: 0 },
+      { ...example.routines[0]!, next_due_ms: start + 3_600_000, schedule: { kind: "interval", hours: 12 } },
+      { ...example.routines[1]!, enabled: false },
+    ] };
 }

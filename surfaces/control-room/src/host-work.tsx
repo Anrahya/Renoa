@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Clock, GitPullRequest, Hourglass, WarningCircle } from "@phosphor-icons/react";
 import type { HostSnapshot } from "./host-contract";
 import type { Controls } from "./host-controls";
-import { AgentMap } from "./host-agent-map";
 import { ReviewRow, RoutineRow, SessionRow } from "./host-records";
 import { agentHref, agentName, attentionReviews, currentReviews, sessionNeedsAttention, sessionUnfinished } from "./host-presentation";
 
@@ -20,9 +19,7 @@ export function WorkView({ host, controls }: { host: HostSnapshot; controls: Con
     { id: "reviews", name: "Reviews", count: currentReviews(host.reviews).length, Icon: GitPullRequest },
   ];
   return <main id="host-main" className="host-content">
-    <div className="host-page-heading"><div><h1>Your Host</h1><p className="host-intro">Agents, their connections, and recorded work.</p></div>
-      <a href="#agents" className="host-link host-quiet-link">Agent directory</a></div>
-    <AgentMap host={host} />
+    <h1>Work</h1>
     <nav className="host-subnav host-work-tabs" aria-label="Recorded work">{sections.map(({ id, name, count, Icon }) => <button key={id} aria-pressed={section === id} onClick={() => setSection(id)}><Icon size={18} aria-hidden="true" />{name}<span>{count}</span></button>)}</nav>
     {section === "attention" && <section className="host-section host-attention"><h2 className="sr-only">Needs attention</h2>
       {attention.map(review => <ReviewRow key={review.request_id} {...{ review, host }} preview={controls.preview} />)}
