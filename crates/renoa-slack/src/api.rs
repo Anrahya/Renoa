@@ -95,7 +95,7 @@ impl SlackApi {
     }
 
     pub(crate) async fn post(&self, topic: &Topic, text: &str) -> Result<SentMessage, ApiError> {
-        let mut body = json!({"channel": topic.channel, "text": text, "mrkdwn": false, "unfurl_links": false, "unfurl_media": false});
+        let mut body = message_body(topic, text);
         if !topic.thread.is_empty() {
             body["thread_ts"] = json!(topic.thread);
         }
@@ -109,13 +109,9 @@ impl SlackApi {
     }
 
     pub(crate) async fn update(&self, topic: &Topic, ts: &str, text: &str) -> Result<(), ApiError> {
-        let _: Value = self
-            .call(
-                "chat.update",
-                &self.bot_token,
-                json!({"channel": topic.channel, "ts": ts, "text": text, "mrkdwn": false}),
-            )
-            .await?;
+        let mut body = message_body(topic, text);
+        body["ts"] = json!(ts);
+        let _: Value = self.call("chat.update", &self.bot_token, body).await?;
         Ok(())
     }
 
@@ -209,4 +205,18 @@ impl SlackApi {
         serde_json::from_value(value)
             .map_err(|_| ApiError::Unknown("incomplete Slack response".to_owned()))
     }
+}
+
+fn message_body(topic: &Topic, text: &str) -> Value {
+    // Slack translates standard Markdown into native rich text. The top-level
+    // text remains a notification/accessibility fallback, not a second renderer.
+    json!({
+        "channel": topic.channel,
+        "text": text,
+        "mrkdwn": false,
+        "parse": "none",
+        "blocks": [{"type": "markdown", "text": text}],
+        "unfurl_links": false,
+        "unfurl_media": false
+    })
 }

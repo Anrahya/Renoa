@@ -128,7 +128,7 @@ async fn restart_does_not_repeat_unknown_posts_but_retries_known_message_updates
         .reply_state(work.seq, ReplyState::Known, Some("2.000001".to_owned()))
         .await
         .expect("receipt");
-    let output = "🦀".repeat(4000);
+    let output = "🦀".repeat(crate::formatting::MESSAGE_CHARACTERS + 500);
     store
         .finish(work.seq, output.clone())
         .await
@@ -166,7 +166,7 @@ async fn restart_does_not_repeat_unknown_posts_but_retries_known_message_updates
             .expect("no post retry")
             .is_none()
     );
-    assert_eq!(super::work::chunks(&output).concat(), output);
+    assert_eq!(crate::formatting::chunks(&output).concat(), output);
 }
 
 #[tokio::test]
@@ -180,7 +180,10 @@ async fn uncertain_middle_chunk_blocks_the_remaining_suffix_across_restart() {
     let work = store.next_work().await.expect("queue").expect("request");
     store.mark_running(work.seq).await.expect("running");
     store
-        .finish(work.seq, "x".repeat(8000))
+        .finish(
+            work.seq,
+            "x".repeat(crate::formatting::MESSAGE_CHARACTERS * 2 + 1000),
+        )
         .await
         .expect("long result");
     store
