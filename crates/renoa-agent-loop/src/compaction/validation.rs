@@ -165,11 +165,12 @@ mod tests {
         );
     }
 
-    /// Models the shipped provider estimator's fixed shape: one request frame,
-    /// one message and content frame per message, one frame per tool, and
-    /// three bytes per estimated token. Fixed request overhead is derived from
-    /// the request, so a request carrying neither a prompt nor tools
-    /// contributes none of it.
+    /// A stand-in for the shipped Host estimator, which this crate cannot
+    /// reach. It reproduces that estimator's shape — one request frame, one
+    /// message and content frame per message, one frame per tool, and three
+    /// bytes per token — so it charges fixed request overhead only to the
+    /// request that carries it. The shipped estimator itself is exercised by
+    /// `renoa_local::model_context`, which drives the real one end to end.
     struct RequestShapeSizer;
 
     const REQUEST_FRAME_TOKENS: u64 = 64;
@@ -215,8 +216,8 @@ mod tests {
         u64::try_from(length).unwrap_or(u64::MAX).div_ceil(3)
     }
 
-    /// Returns the activated request shape of a profile whose system prompt and
-    /// tool schemas alone consume ten thousand estimated tokens.
+    /// Returns an activated request shape whose system prompt and tool schemas
+    /// alone exceed the checkpoint budget used below.
     fn oversized_request_shape() -> (String, Vec<ToolSpec>) {
         let tools = (0..19)
             .map(|index| ToolSpec {
@@ -236,9 +237,9 @@ mod tests {
         // Charging that fixed overhead to the checkpoint made every attempt
         // fail, which permanently blocked the conversation at its trigger.
         let charged_to_the_checkpoint = RequestShapeSizer.estimate_input_tokens(&ModelRequest {
-            system_prompt: system_prompt.clone(),
+            system_prompt,
             messages: vec![checkpoint_message(VALID)],
-            tools: tools.clone(),
+            tools,
         });
         assert!(
             charged_to_the_checkpoint > 10_000,
