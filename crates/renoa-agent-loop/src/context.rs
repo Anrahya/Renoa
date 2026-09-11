@@ -264,6 +264,16 @@ pub trait ContextStrategy: Send + Sync {
 
     /// Validates one complete response to a plan produced by this strategy.
     ///
+    /// A strategy owns its summary budget and measures a candidate checkpoint
+    /// against that budget alone. The built-in compactor splits the
+    /// post-compaction target into one retained-tail slice, which bounds the
+    /// system prompt, every tool schema, and the retained messages together,
+    /// and one checkpoint slice, which bounds the activated summary alone.
+    /// Charging the fixed request shape to a checkpoint candidate as well
+    /// makes the checkpoint budget unreachable whenever the prompt and tools
+    /// alone exceed it, which permanently blocks every conversation that
+    /// crosses the trigger.
+    ///
     /// # Errors
     ///
     /// Rejection consumes one bounded compaction attempt but activates no
@@ -272,8 +282,6 @@ pub trait ContextStrategy: Send + Sync {
         &self,
         _plan: &CompactionPlan,
         _response: &ModelResponse,
-        _system_prompt: &str,
-        _tools: &[ToolSpec],
     ) -> Result<String, CompactionValidationError> {
         Err(CompactionValidationError::new(
             "context strategy does not support compaction responses",
