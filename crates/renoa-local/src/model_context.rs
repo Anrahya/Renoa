@@ -204,10 +204,13 @@ mod tests {
         summary
     }
 
+    /// Arcee's resolved limits on `deepseek-v4-flash`: a 1,000,000-token window
+    /// with `reserved = MAX_OUTPUT_TOKENS + max(window / 50, MIN_CONTEXT_SAFETY)`
+    /// and `max_summary = min(MAX_CHECKPOINT_TOKENS, target / 4)`.
     fn arcee_limits() -> CompactionLimits {
         CompactionLimits::new(
             NonZeroU64::new(1_000_000).expect("context window"),
-            404_000,
+            32_768 + 20_000,
             NonZeroU64::new(40_000).expect("post-compaction target"),
             NonZeroU64::new(10_000).expect("summary budget"),
         )
