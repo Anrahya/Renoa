@@ -148,9 +148,117 @@ fn bytes(value: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use renoa_agent::{ContentBlock, Message, ModelRequest, ToolSpec};
+    use std::{fmt::Write as _, num::NonZeroU64, sync::Arc};
+
+    use renoa_agent::{
+        AssistantContent, AssistantMetadata, ContentBlock, Message, ModelRequest, ModelResponse,
+        StopReason, ToolSpec,
+    };
+    use renoa_agent_loop::{
+        CompactingContextStrategy, CompactionLimits, CompactionPlan, ContextSizer, ContextStrategy,
+    };
 
     use super::estimate_input_tokens;
+
+    /// Feeds the shipped provider estimator to the compaction strategy exactly
+    /// as `BridgeModel` does in production.
+    struct ProductionSizer;
+
+    impl ContextSizer for ProductionSizer {
+        fn estimate_input_tokens(&self, request: &ModelRequest) -> u64 {
+            estimate_input_tokens(request)
+        }
+    }
+
+    /// Reproduces Arcee's activated Slack request shape: a 12,164-byte system
+    /// prompt and nineteen tool schemas whose serialized form totals 24,316
+    /// bytes.
+    fn arcee_request_shape() -> (String, Vec<ToolSpec>) {
+        let tools = (0..19)
+            .map(|index| ToolSpec {
+                name: format!("arcee_tool_{index}"),
+                description: "d".repeat(1_228),
+                input_schema: serde_json::json!({ "type": "object" }),
+            })
+            .collect::<Vec<_>>();
+        ("p".repeat(12_164), tools)
+    }
+
+    /// Reproduces the size of the summary that Arcee's live compaction
+    /// produced: 12,473 bytes carrying all seven required headings.
+    fn arcee_summary() -> String {
+        const HEADINGS: [&str; 7] = [
+            "## Goal and user intent",
+            "## Hard constraints and preferences",
+            "## Completed work",
+            "## Current state and blockers",
+            "## Decisions and rationale",
+            "## Exact working facts",
+            "## Next action and unresolved questions",
+        ];
+        let mut summary = String::new();
+        for heading in HEADINGS {
+            write!(summary, "{heading}\n{}\n", "detail ".repeat(240))
+                .expect("writing to a String cannot fail");
+        }
+        summary
+    }
+
+    /// Arcee's resolved limits on `deepseek-v4-flash`: a 1,000,000-token window
+    /// with `reserved = MAX_OUTPUT_TOKENS + max(window / 50, MIN_CONTEXT_SAFETY)`
+    /// and `max_summary = min(MAX_CHECKPOINT_TOKENS, target / 4)`.
+    fn arcee_limits() -> CompactionLimits {
+        CompactionLimits::new(
+            NonZeroU64::new(1_000_000).expect("context window"),
+            32_768 + 20_000,
+            NonZeroU64::new(40_000).expect("post-compaction target"),
+            NonZeroU64::new(10_000).expect("summary budget"),
+        )
+        .expect("valid limits")
+    }
+
+    #[test]
+    fn an_arcee_sized_request_shape_keeps_its_checkpoint_budget_reachable() {
+        let (system_prompt, tools) = arcee_request_shape();
+        let overhead = estimate_input_tokens(&ModelRequest {
+            system_prompt,
+            messages: Vec::new(),
+            tools,
+        });
+
+        // The fixed request shape alone exceeded the 10_000-token checkpoint
+        // budget. Charging it to a checkpoint rejected every summary, which
+        // permanently blocked the conversation once it crossed the trigger.
+        assert!(overhead > 10_000, "fixed request overhead {overhead}");
+
+        let strategy = CompactingContextStrategy::new(
+            arcee_limits(),
+            std::num::NonZeroU32::MIN,
+            Arc::new(ProductionSizer),
+        );
+        let summary = arcee_summary();
+        let plan = CompactionPlan::new(
+            ModelRequest {
+                system_prompt: "checkpoint".to_owned(),
+                messages: vec![Message::user_text("summarize")],
+                tools: Vec::new(),
+            },
+            1,
+        )
+        .expect("valid plan");
+        let response = ModelResponse {
+            content: vec![AssistantContent::text(&summary)],
+            stop_reason: StopReason::Stop,
+            usage: None,
+            metadata: AssistantMetadata::default(),
+        };
+
+        let accepted = strategy
+            .validate_compaction(&plan, &response)
+            .expect("a summary within its own budget must be accepted");
+
+        assert_eq!(accepted, summary);
+    }
 
     #[test]
     fn text_and_tool_schema_increase_the_estimate() {
