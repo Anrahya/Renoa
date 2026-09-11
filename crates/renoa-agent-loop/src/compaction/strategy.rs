@@ -1,6 +1,6 @@
 use std::{num::NonZeroU32, sync::Arc};
 
-use renoa_agent::{Message, ModelRequest, ModelResponse, ToolSpec};
+use renoa_agent::{Message, ModelRequest, ModelResponse};
 
 use super::{CompactionLimits, CompactionPlanner, ContextSizer, checkpoint_message, validation};
 use crate::context::{
@@ -232,13 +232,9 @@ impl ContextStrategy for CompactingContextStrategy {
         &self,
         _plan: &super::CompactionPlan,
         response: &ModelResponse,
-        system_prompt: &str,
-        tools: &[ToolSpec],
     ) -> Result<String, CompactionValidationError> {
         validation::summary(
             response,
-            system_prompt,
-            tools,
             self.planner.limits.max_summary_tokens(),
             self.sizer.as_ref(),
         )

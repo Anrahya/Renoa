@@ -1,6 +1,6 @@
 use std::num::NonZeroU64;
 
-use renoa_agent::{AssistantContent, ModelRequest, ModelResponse, StopReason, ToolSpec};
+use renoa_agent::{AssistantContent, ModelRequest, ModelResponse, StopReason};
 
 use super::{ContextSizer, checkpoint_message};
 use crate::context::CompactionValidationError;
@@ -15,10 +15,22 @@ const REQUIRED_HEADINGS: [&str; 7] = [
     "## Next action and unresolved questions",
 ];
 
+/// Sizes one completed summary response against its exact checkpoint budget.
+///
+/// The measurement covers the activated checkpoint alone. The post-compaction
+/// target already bounds the system prompt and every tool schema through the
+/// retained-tail budget, so charging that fixed request overhead here would
+/// make the limit unreachable whenever the prompt and tools alone exceed it.
+fn checkpoint_footprint(summary: &str) -> ModelRequest {
+    ModelRequest {
+        system_prompt: String::new(),
+        messages: vec![checkpoint_message(summary)],
+        tools: Vec::new(),
+    }
+}
+
 pub(super) fn summary(
     response: &ModelResponse,
-    system_prompt: &str,
-    tools: &[ToolSpec],
     max_summary_tokens: NonZeroU64,
     sizer: &dyn ContextSizer,
 ) -> Result<String, CompactionValidationError> {
@@ -41,12 +53,7 @@ pub(super) fn summary(
         })
         .collect::<String>();
     validate_sections(&summary)?;
-    let footprint = ModelRequest {
-        system_prompt: system_prompt.to_owned(),
-        messages: vec![checkpoint_message(&summary)],
-        tools: tools.to_vec(),
-    };
-    let estimated = sizer.estimate_input_tokens(&footprint);
+    let estimated = sizer.estimate_input_tokens(&checkpoint_footprint(&summary));
     if estimated > max_summary_tokens.get() {
         return invalid(format!(
             "checkpoint alone requires an estimated {estimated} tokens, above its limit {}",
@@ -102,11 +109,12 @@ mod tests {
     use std::num::NonZeroU64;
 
     use renoa_agent::{
-        AssistantContent, AssistantMetadata, ModelRequest, ModelResponse, StopReason,
+        AssistantContent, AssistantMetadata, ModelRequest, ModelResponse, StopReason, ToolSpec,
     };
+    use serde_json::json;
 
     use super::summary;
-    use crate::ContextSizer;
+    use crate::{ContextSizer, compaction::checkpoint_message};
 
     const VALID: &str = "## Goal and user intent\nContinue the task.\n\
 ## Hard constraints and preferences\nKeep exact facts.\n\
@@ -122,8 +130,6 @@ mod tests {
 
         let accepted = summary(
             &response,
-            "system",
-            &[],
             NonZeroU64::new(10).expect("non-zero limit"),
             &FixedSizer(10),
         )
@@ -138,8 +144,6 @@ mod tests {
         assert_eq!(
             summary(
                 &length,
-                "system",
-                &[],
                 NonZeroU64::new(10).expect("non-zero limit"),
                 &FixedSizer(1),
             )
@@ -152,14 +156,121 @@ mod tests {
         assert_eq!(
             summary(
                 &complete,
-                "system",
-                &[],
                 NonZeroU64::new(10).expect("non-zero limit"),
                 &FixedSizer(11),
             )
             .expect_err("oversized summary must fail")
             .to_string(),
             "checkpoint alone requires an estimated 11 tokens, above its limit 10"
+        );
+    }
+
+    /// Models the shipped provider estimator's fixed shape: one request frame,
+    /// one message and content frame per message, one frame per tool, and
+    /// three bytes per estimated token. Fixed request overhead is derived from
+    /// the request, so a request carrying neither a prompt nor tools
+    /// contributes none of it.
+    struct RequestShapeSizer;
+
+    const REQUEST_FRAME_TOKENS: u64 = 64;
+    const MESSAGE_FRAME_TOKENS: u64 = 12;
+    const CONTENT_FRAME_TOKENS: u64 = 4;
+    const TOOL_FRAME_TOKENS: u64 = 24;
+
+    impl ContextSizer for RequestShapeSizer {
+        fn estimate_input_tokens(&self, request: &ModelRequest) -> u64 {
+            let tools = request
+                .tools
+                .iter()
+                .map(|tool| {
+                    TOOL_FRAME_TOKENS
+                        .saturating_add(estimated_bytes(tool.name.len()))
+                        .saturating_add(estimated_bytes(tool.description.len()))
+                        .saturating_add(
+                            serde_json::to_vec(&tool.input_schema)
+                                .map_or(u64::MAX, |schema| estimated_bytes(schema.len())),
+                        )
+                })
+                .sum::<u64>();
+            let messages = request
+                .messages
+                .iter()
+                .map(|message| {
+                    MESSAGE_FRAME_TOKENS
+                        .saturating_add(CONTENT_FRAME_TOKENS)
+                        .saturating_add(
+                            serde_json::to_vec(message)
+                                .map_or(u64::MAX, |encoded| estimated_bytes(encoded.len())),
+                        )
+                })
+                .sum::<u64>();
+            REQUEST_FRAME_TOKENS
+                .saturating_add(estimated_bytes(request.system_prompt.len()))
+                .saturating_add(tools)
+                .saturating_add(messages)
+        }
+    }
+
+    fn estimated_bytes(length: usize) -> u64 {
+        u64::try_from(length).unwrap_or(u64::MAX).div_ceil(3)
+    }
+
+    /// Returns the activated request shape of a profile whose system prompt and
+    /// tool schemas alone consume ten thousand estimated tokens.
+    fn oversized_request_shape() -> (String, Vec<ToolSpec>) {
+        let tools = (0..19)
+            .map(|index| ToolSpec {
+                name: format!("tool_{index}"),
+                description: "d".repeat(1_228),
+                input_schema: json!({ "type": "object" }),
+            })
+            .collect::<Vec<_>>();
+        ("p".repeat(12_164), tools)
+    }
+
+    #[test]
+    fn a_summary_within_its_budget_survives_an_unsatisfiable_request_shape() {
+        let (system_prompt, tools) = oversized_request_shape();
+        let response = response(VALID, StopReason::Stop);
+
+        // Charging that fixed overhead to the checkpoint made every attempt
+        // fail, which permanently blocked the conversation at its trigger.
+        let charged_to_the_checkpoint = RequestShapeSizer.estimate_input_tokens(&ModelRequest {
+            system_prompt: system_prompt.clone(),
+            messages: vec![checkpoint_message(VALID)],
+            tools: tools.clone(),
+        });
+        assert!(
+            charged_to_the_checkpoint > 10_000,
+            "the pre-fix measurement must exceed the checkpoint budget: {charged_to_the_checkpoint}"
+        );
+
+        let accepted = summary(
+            &response,
+            NonZeroU64::new(10_000).expect("non-zero limit"),
+            &RequestShapeSizer,
+        )
+        .expect("a summary within its own budget must be accepted");
+
+        assert_eq!(accepted, VALID);
+    }
+
+    #[test]
+    fn a_summary_above_its_budget_is_still_rejected_under_the_same_shape() {
+        let response = response(VALID, StopReason::Stop);
+
+        let error = summary(
+            &response,
+            NonZeroU64::new(1).expect("non-zero limit"),
+            &RequestShapeSizer,
+        )
+        .expect_err("an oversized checkpoint must still fail");
+
+        assert!(
+            error
+                .to_string()
+                .starts_with("checkpoint alone requires an estimated "),
+            "unexpected message: {error}"
         );
     }
 
