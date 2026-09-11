@@ -74,7 +74,12 @@ optional earlier automatic trigger. Crossing the trigger starts the same
 durable summary path as capacity recovery, while the provider's real limit
 remains available to one indivisible active request that has no safe cut. Its
 post-compaction target bounds the checkpoint plus retained request shape; it is
-not a replacement model context window.
+not a replacement model context window. That target splits into a retained-tail
+budget, which bounds the system prompt, every tool schema, and the retained
+messages together, and a checkpoint budget, which bounds the activated summary
+alone. The automatic planner and the summary validator enforce one slice each,
+so fixed request overhead is charged exactly once and a checkpoint budget stays
+reachable even when the activated prompt and tool schemas alone exceed it.
 
 The same strategy boundary owns user-requested compaction. It borrows one
 already-decoded idle `ContextInput` and returns either an exact summary plan, an
@@ -200,10 +205,12 @@ may run. While compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 10 adds durable per-turn timing and deterministic
-model-facing projection without changing content-only commands. Revision 9
-keeps durable structured tool details available to the Host while removing
-them from every normal and compaction model request.
+Loop binding revision 11 validates a candidate checkpoint against its own
+budget, so fixed request overhead is charged exactly once instead of once as
+retained shape and again as checkpoint. Revision 10 adds durable per-turn
+timing and deterministic model-facing projection without changing content-only
+commands. Revision 9 keeps durable structured tool details available to the
+Host while removing them from every normal and compaction model request.
 Revision 8 added typed manual compaction, its durable result, and model-free
 completion after summary activation. Revision 7 added durable
 summary execution, checkpoint activation, and typed provider-overflow recovery.
@@ -217,7 +224,7 @@ validation and typed live tool uncertainty.
 Runtime revisions are forward-only for unfinished operations. The Host
 currently supplies only the current loop revision, while the kernel freezes the
 exact manifest per admitted operation. An operation left unfinished under
-revision 9 therefore returns `RuntimeMismatch` under a revision-10-only Host and
+revision 10 therefore returns `RuntimeMismatch` under a revision-11-only Host and
 must be finished with its original runtime; Renoa does not guess a migration.
 Terminal operations and their semantic history remain loadable. Likewise, a
 pre-revision-8 loop cannot decode the compact control command.

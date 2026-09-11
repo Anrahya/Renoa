@@ -174,17 +174,7 @@ impl AgentLoop {
         };
         match output {
             ModelEffectOutput::Completed { response } => {
-                let tools = self
-                    .tools
-                    .iter()
-                    .map(|tool| tool.spec.clone())
-                    .collect::<Vec<_>>();
-                match self.context.validate_compaction(
-                    &plan,
-                    &response,
-                    &self.config.system_prompt,
-                    &tools,
-                ) {
+                match self.context.validate_compaction(&plan, &response) {
                     Ok(summary) => match continuation {
                         CompactionContinuation::Model { model_turns } => {
                             Ok(LoopDecision::AppendEventsAndContinue {

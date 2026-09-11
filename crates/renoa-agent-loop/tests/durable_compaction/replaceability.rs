@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use renoa_agent::{AssistantContent, Message, ModelRequest, ModelResponse, StopReason, ToolSpec};
+use renoa_agent::{AssistantContent, Message, ModelRequest, ModelResponse, StopReason};
 use renoa_agent_loop::{
     CompactingContextStrategy, CompactionLimits, CompactionPlan, CompactionValidationError,
     ContextInput, ContextPreparation, ContextProjector, ContextSizer, ContextStrategy,
@@ -108,8 +108,6 @@ impl ContextStrategy for CustomCompactionStrategy {
         &self,
         _plan: &CompactionPlan,
         response: &ModelResponse,
-        _system_prompt: &str,
-        _tools: &[ToolSpec],
     ) -> Result<String, CompactionValidationError> {
         if response.stop_reason != StopReason::Stop {
             return Err(CompactionValidationError::new(
