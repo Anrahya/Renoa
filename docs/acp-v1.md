@@ -284,8 +284,8 @@ an interrupted runtime under a different configuration.
 - Earlier pre-release session manifests used storage versions 1 and 2. This
   adapter rejects them explicitly instead of guessing at an execution or trace
   migration.
-- Agent-loop revision 9 and checkpoint schema 3 are forward-only for unfinished
-  operations. A revision-8 operation needs its original runtime to finish; the
+- Agent-loop revision 11 and checkpoint schema 3 are forward-only for unfinished
+  operations. A revision-10 operation needs its original runtime to finish; the
   current Host does not migrate frozen manifests. An older binary also cannot
   decode the new compact control command.
 - If the client loses the successful `session/new` response, stable ACP v1
