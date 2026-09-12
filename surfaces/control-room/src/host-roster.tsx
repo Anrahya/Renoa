@@ -3,10 +3,11 @@ import { useState } from "react";
 import type { Agent, HostSnapshot } from "./host-contract";
 import { agentActivity, agentHref, displayName, isEarlier } from "./host-presentation";
 import { AgentAvatar } from "./host-avatar";
+import { findAgents } from "./host-system-model";
 
 export function AgentRoster({ host }: { host: HostSnapshot }) {
   const [query, setQuery] = useState("");
-  const agents = host.agents.filter(a => !isEarlier(a) && a.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const agents = findAgents(host.agents.filter(a => !isEarlier(a)), query);
   return <div className="host-system host-directory">
     <label className="host-map-search"><span className="sr-only">Find an agent</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find an agent…" /></label>
     <div className="host-agent-roster" aria-label="Your agents">

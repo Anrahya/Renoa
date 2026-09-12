@@ -29,12 +29,18 @@ export function useSystemMotion(stage: RefObject<HTMLDivElement | null>, host: H
     return () => clearInterval(timer);
   }, [live, visible, paused]);
   useEffect(() => {
-    const changed = live && visible && !paused ? changedAgents(previous.current, host) : [];
+    const sameHost = previous.current?.host_id === host.host_id;
+    const enabled = live && visible && !paused && !reduced;
+    const changed = enabled ? changedAgents(previous.current, host) : [];
     previous.current = host;
-    setPulses(new Map(changed.map(id => [id, receivedAt ?? Date.now()])));
-    if (!changed.length) return;
+    if (!enabled || !sameHost) setPulses(new Map());
+    else if (changed.length) setPulses(new Map(changed.map(id => [id, receivedAt ?? Date.now()])));
+  }, [host, live, visible, paused, reduced, receivedAt]);
+  // Expiry follows an actual pulse change, not identical polling snapshots.
+  useEffect(() => {
+    if (!pulses.size) return;
     const timeout = window.setTimeout(() => setPulses(new Map()), 1800);
     return () => clearTimeout(timeout);
-  }, [host, live, visible, paused, receivedAt]);
+  }, [pulses]);
   return { now: live ? now : receivedAt, pulses, moving: live && visible && !paused && !reduced, reduced };
 }
