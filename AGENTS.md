@@ -23,3 +23,6 @@
   `cargo clippy --workspace --all-targets -- -D warnings`, and
   `cargo test --workspace`.
 - Record the source commit and license before adapting upstream code.
+- Do not add AI tools or models as commit co-authors or add generated-by
+  footers to commits and pull requests. Preserve required upstream license
+  and source attribution.
