@@ -17,6 +17,26 @@ route. Neither transport is part of a Renoa protocol. Funnel is not used.
 The Telegram surface is different: it makes outbound HTTPS requests to the
 Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
 
+## Release retention
+
+Keep the current installation and exactly one consolidated backup of the
+immediately previous release at `/opt/renoa/previous-release/`. Put that release's
+binaries, configuration, static files, and required SQLite snapshots together;
+do not scatter additional `.pre-*`, `.previous`, or per-step copies around the
+installation. Use SQLite's backup API for database snapshots.
+
+On the next deployment, stage the new backup, verify the new release's running
+binaries, services, and Host records, then replace `previous-release` and delete
+the superseded backup. Remove older release directories, uploaded archives,
+duplicate staging binaries, and unused review-tool versions after verification.
+Keep only the current release manifest under `/opt/renoa/releases/`.
+
+Drain active work before replacing its runtime or deleting its tools. Deploy
+only the current runtime; do not keep historical runtimes or compatibility
+paths solely to support old releases. Recovery is an explicit owner action,
+not an automatic rollback. Live conversation history, credentials, and current
+Host databases are application data and are not release backups.
+
 ## Personal Host observation
 
 To inspect the existing personal Host without starting models or acquiring agent
@@ -52,8 +72,9 @@ npm --prefix surfaces/control-room run build
 Install the management binary at `/usr/local/bin/renoa-management` and copy only
 `surfaces/control-room/dist/client/` into `/opt/renoa/control-room/`. This is a
 dedicated public asset directory, never the Host data root or source checkout.
-Retain earlier hashed assets during deployment so an already-open browser can
-finish loading its version. The `?preview` example-data route is development-only;
+Retain hashed assets for the current and immediately previous release so an
+already-open browser can finish loading its version. Remove assets from older
+releases; older browser pages need a reload. The `?preview` example-data route is development-only;
 `?tasks` retains the earlier RCP task surface.
 
 Use `renoa-management.config.example.json` for `/etc/renoa/management.json` with
@@ -74,15 +95,15 @@ same revision, then start a normal Host process to apply the catalog migration
 before restarting management. Observation and owner-control modules deliberately
 do not migrate storage themselves. The migration preserves schedules, admitted
 runs, results and agent receipts, and adds owner operation receipts and revisioned
-tool selections. Keep the previous binaries and matching database backup together
-for rollback. Browser
+tool selections. Keep the previous binaries and matching database snapshot in
+the single previous-release backup described above. Browser
 login storage is separate and does not need to be reset for this Host migration.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
 the new coordinator binary. It upgrades the identity database to schema 11 and
 keeps passkeys and hashed remembered sessions there. A pre-upgrade binary cannot
-open schema 11; rollback requires the matching identity backup as well as the old
-binary. Install `renoa-management.service`, then reload systemd, restart the
+open schema 11; any owner-requested recovery requires the matching identity
+snapshot and binary from that same backup. Install `renoa-management.service`, then reload systemd, restart the
 coordinator and enable the management service. The example runs as the existing
 Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
 
@@ -540,8 +561,9 @@ pnpm --dir adapters/model-provider-node build
 Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
 database before upgrading to schema 24. Install the new binaries atomically and
 replace the model adapter's built `dist` files. Do not resume an older reader
-against the migrated database. Keep the backup and previous binaries for rollback
-as a set; rolling back binaries alone is insufficient.
+against the migrated database. Keep the matching database snapshot and binaries
+inside the single previous-release backup. Any owner-requested recovery must
+use that matching set; do not restore binaries automatically or retain older sets.
 
 The inspection backend requires Bubblewrap 0.12.0 or later, `/usr/bin/rg`, and
 unprivileged user namespaces. Install only the required security updates; a kernel

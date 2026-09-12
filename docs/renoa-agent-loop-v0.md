@@ -226,6 +226,8 @@ currently supplies only the current loop revision, while the kernel freezes the
 exact manifest per admitted operation. An operation left unfinished under
 revision 10 therefore returns `RuntimeMismatch` under a revision-11-only Host and
 must be finished with its original runtime; Renoa does not guess a migration.
+Deployments drain active work before replacing the runtime and do not retain
+historical runtime installations to satisfy these mismatches.
 Terminal operations and their semantic history remain loadable. Likewise, a
 pre-revision-8 loop cannot decode the compact control command.
 
