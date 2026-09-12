@@ -194,7 +194,7 @@ The palette is shared across the public homepage and authenticated Host. Near-bl
 
 **Label/Mono Font:** Manrope for labels; `ui-monospace` for durable identifiers
 
-Manrope is self-hosted as a Latin variable font across weights 400–800. Its open shapes support the homepage's oversized statements and the Host's compact operating density without changing voice. The font source and SIL Open Font License 1.1 are recorded in `public/fonts/README.md` and `public/fonts/OFL-Manrope.txt`.
+Manrope is self-hosted as a Latin variable font across weights 400–800. Its open shapes support the homepage's oversized statements and the Host's compact operating density without changing voice. The font source and SIL Open Font License 1.1 are recorded in `public/assets/fonts/README.md` and `public/assets/fonts/OFL-Manrope.txt`. Font files use the Host's existing `/assets/` public route.
 
 ### Hierarchy
 - **Display:** The public two-line first-viewport statement; medium weight, tight tracking, and balanced wrapping. On phones it changes to `clamp(52px, 10vw, 72px)`.

@@ -3,7 +3,7 @@
   font-style: normal;
   font-weight: 400 800;
   font-display: swap;
-  src: url("/fonts/manrope-latin.woff2") format("woff2");
+  src: url("/assets/fonts/manrope-latin.woff2") format("woff2");
 }
 
 .renoa-home {
