@@ -26,10 +26,9 @@ export function HostLogin({ refresh, forbidden }: { refresh: () => void; forbidd
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Sign-in failed."); }
     finally { setBusy(false); }
   }
-  return <main className="host-login host-content">
-    <p className="host-kicker">Your system, within reach</p>
-    <h1>{method === "passkey" ? "Welcome back." : "Make yourself at home."}</h1>
-    <p className="host-intro">One Host. Every agent. A place to see the work and what comes next.</p>
+  return <main id="host-main" className="host-login host-content">
+    <h1>{method === "passkey" ? "Welcome back" : "Connect to your Host"}</h1>
+    <p className="host-intro">Pair this browser to open your agents, shared connections, and work.</p>
     <form onSubmit={event => void signIn(event)}>
       {forbidden && <p className="host-notice">Your current login belongs to another owner. Pair or sign in as this Host’s owner.</p>}
       {method !== "passkey" && <label className="host-token">{method === "pair" ? "One-time pairing code" : "Passkey setup code"}<input type="password" autoComplete="off" required value={token}

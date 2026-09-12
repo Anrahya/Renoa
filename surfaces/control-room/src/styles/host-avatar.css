@@ -1,0 +1,17 @@
+.host-avatar { position: relative; display: grid; place-items: center; width: 100%; height: 100%; flex-shrink: 0; border-radius: 50%; color: var(--host-accent); background: var(--host-paper); }
+.host-avatar-portrait { background: #24211c; }
+.host-avatar img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.host-avatar-initials { font-size: 1.125rem; font-weight: 600; }
+.host-avatar-surface { position: absolute; left: -3px; bottom: -3px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: var(--host-ink); background: var(--host-paper); border: 1px solid var(--host-node-line); }
+.host-agent-heading-identity { display: flex; gap: 24px; align-items: center; min-width: 0; }
+.host-agent-heading-identity > .host-avatar { width: 80px; height: 80px; border: 1px solid var(--host-node-line); }
+.host-agent-heading-identity > div { min-width: 0; }
+.host-agent-heading-identity h1 { margin-bottom: 6px; }
+.host-roster-identity { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.host-roster-identity > .host-avatar { width: 44px; height: 44px; border: 1px solid var(--host-node-line); }
+.host-roster-identity .host-avatar-surface { width: 19px; height: 19px; }
+.host-roster-identity .host-avatar-surface svg { width: 12px; height: 12px; }
+@media (max-width: 640px) {
+  .host-agent-heading-identity { gap: 16px; }
+  .host-agent-heading-identity > .host-avatar { width: 64px; height: 64px; }
+}
