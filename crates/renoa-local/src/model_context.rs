@@ -170,9 +170,8 @@ mod tests {
         }
     }
 
-    /// Reproduces Arcee's activated Slack request shape: a 12,164-byte system
-    /// prompt and nineteen tool schemas whose serialized form totals 24,316
-    /// bytes.
+    /// Returns a fixed request shape the size of Arcee's activated Slack
+    /// request: a 12,164-byte system prompt and nineteen tool schemas.
     fn arcee_request_shape() -> (String, Vec<ToolSpec>) {
         let tools = (0..19)
             .map(|index| ToolSpec {
@@ -184,8 +183,8 @@ mod tests {
         ("p".repeat(12_164), tools)
     }
 
-    /// Reproduces the size of the summary that Arcee's live compaction
-    /// produced: 12,473 bytes carrying all seven required headings.
+    /// Returns a summary of the size Arcee's live compaction produced, carrying
+    /// all seven headings the validator requires.
     fn arcee_summary() -> String {
         const HEADINGS: [&str; 7] = [
             "## Goal and user intent",
@@ -204,17 +203,19 @@ mod tests {
         summary
     }
 
-    /// Arcee's resolved limits on `deepseek-v4-flash`: a 1,000,000-token window
-    /// with `reserved = MAX_OUTPUT_TOKENS + max(window / 50, MIN_CONTEXT_SAFETY)`
-    /// and `max_summary = min(MAX_CHECKPOINT_TOKENS, target / 4)`.
+    /// Derives Arcee's limits on `deepseek-v4-flash` from the same values
+    /// `runtime.rs` derives them from: a reserve of `MAX_OUTPUT_TOKENS` plus the
+    /// larger of a proportional and a fixed safety margin, and a summary capped
+    /// by both the checkpoint ceiling and a quarter of the post-compaction
+    /// target.
     fn arcee_limits() -> CompactionLimits {
-        CompactionLimits::new(
-            NonZeroU64::new(1_000_000).expect("context window"),
-            32_768 + 20_000,
-            NonZeroU64::new(40_000).expect("post-compaction target"),
-            NonZeroU64::new(10_000).expect("summary budget"),
-        )
-        .expect("valid limits")
+        let window = NonZeroU64::new(1_000_000).expect("context window");
+        let target = NonZeroU64::new(40_000).expect("post-compaction target");
+        let reserved = u64::from(crate::runtime::MAX_OUTPUT_TOKENS.get())
+            + (window.get() / 50).max(crate::runtime::MIN_CONTEXT_SAFETY_TOKENS);
+        let summary = NonZeroU64::new(crate::runtime::MAX_CHECKPOINT_TOKENS.min(target.get() / 4))
+            .expect("summary budget");
+        CompactionLimits::new(window, reserved, target, summary).expect("valid limits")
     }
 
     #[test]
