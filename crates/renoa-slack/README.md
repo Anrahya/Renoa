@@ -206,7 +206,16 @@ recovery instruction. `inspect` includes these action delivery records.
 In channels, setup stops with an instruction to continue privately; setup URLs
 are never published into channels.
 
-Final output commits before delivery and is split into Unicode-safe chunks.
+Replies, progress updates, and routine results use Slack's native `markdown`
+block, so ordinary model Markdown renders as headings, lists, links, and code.
+Top-level text is retained for notification and accessibility fallback. Rendering
+stays in this adapter; the Host and kernel retain the original response.
+
+Final output commits before delivery and is split into Unicode-safe pages within
+Slack's documented 12,000-character Markdown payload limit. Paragraphs and fenced
+code blocks stay together when they fit; oversized code blocks repeat their
+opening language and closing fence across pages. This limits each Slack payload,
+not the response length. Existing durable outbox chunks keep their identities.
 Each new post is marked in flight before calling Slack. Rate limits honor
 `Retry-After`. Model-provider retries update the working message with the wait
 and next attempt; `!cancel` can interrupt the wait. Exhausted model rate limits
@@ -233,6 +242,7 @@ kernel history. Tokens are not stored in the surface database or logged.
 - [App manifests](https://docs.slack.dev/reference/app-manifest/)
 - [Posting messages](https://docs.slack.dev/reference/methods/chat.postMessage/)
 - [Updating messages](https://docs.slack.dev/reference/methods/chat.update/)
+- [Native Markdown blocks](https://docs.slack.dev/reference/block-kit/blocks/markdown-block/)
 
 The adapter uses existing Rust HTTP, WebSocket, and SQLite dependencies.
 

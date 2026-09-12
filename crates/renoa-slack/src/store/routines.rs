@@ -27,7 +27,7 @@ impl Store {
             if run.sequence<=cursor{return Ok(())}
             let channel:Option<String>=tx.query_row("SELECT channel_id FROM bot_channels WHERE agent_id=?1 AND state='ready'",[run.agent_id.to_string()],|r|r.get(0)).optional()?;
             let output=run.output.ok_or_else(||SlackError::Invalid("routine result is unfinished".to_owned()))?;
-            for (index,text) in super::work::chunks(&format!("Routine result\n\n{output}")).into_iter().enumerate(){
+            for (index,text) in crate::formatting::chunks(&format!("Routine result\n\n{output}")).into_iter().enumerate(){
                 let index=i64::try_from(index).map_err(|_|SlackError::Invalid("too many routine output chunks".to_owned()))?;
                 tx.execute("INSERT INTO routine_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES(?1,?2,?3,?4,?5,?6)",params![run.id.to_string(),index,run.agent_id.to_string(),channel,text,if channel.is_some(){"pending"}else{"waiting"}])?;
             }

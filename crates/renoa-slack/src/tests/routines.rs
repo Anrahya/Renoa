@@ -13,7 +13,7 @@ async fn completed_host_results_wait_for_a_channel_and_deliver_once_without_exec
         due_ms: 1,
         admitted_at_ms: 1,
         prompt: "digest".to_owned(),
-        output: Some("Saved digest.md".to_owned()),
+        output: Some("**Digest**\n- Saved `digest.md`".to_owned()),
     };
     let mut blocked = run.clone();
     blocked.sequence = 1;
@@ -61,7 +61,14 @@ async fn completed_host_results_wait_for_a_channel_and_deliver_once_without_exec
     let sent = f.sent.lock().await;
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0]["channel"], "C1");
-    assert_eq!(sent[0]["text"], "Routine result\n\nSaved digest.md");
+    assert_eq!(
+        sent[0]["text"],
+        "Routine result\n\n**Digest**\n- Saved `digest.md`"
+    );
+    assert_eq!(
+        sent[0]["blocks"],
+        json!([{"type":"markdown","text":"Routine result\n\n**Digest**\n- Saved `digest.md`"}])
+    );
     drop(sent);
     drop(projector);
     f.stop().await;

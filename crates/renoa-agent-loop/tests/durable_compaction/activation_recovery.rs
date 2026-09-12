@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use renoa_agent::{Message, ModelResponse, ToolSpec};
+use renoa_agent::{Message, ModelResponse};
 use renoa_agent_loop::{
     COMPACTION_RESULT_EVENT_KIND, CONTEXT_CHECKPOINT_EVENT_KIND, CompactionPlan,
     CompactionValidationError, ContextInput, ContextPreparation, ContextStrategy,
@@ -177,15 +177,12 @@ impl ContextStrategy for PanicOnceAfterSummarySettlement {
         &self,
         plan: &CompactionPlan,
         response: &ModelResponse,
-        system_prompt: &str,
-        tools: &[ToolSpec],
     ) -> Result<String, CompactionValidationError> {
         assert!(
             self.panicked.swap(true, Ordering::SeqCst),
             "injected process loss after summary settlement"
         );
-        self.inner
-            .validate_compaction(plan, response, system_prompt, tools)
+        self.inner.validate_compaction(plan, response)
     }
 }
 

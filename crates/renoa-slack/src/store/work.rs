@@ -69,7 +69,7 @@ impl Store {
                 [seq],
                 |row| row.get(0),
             )?;
-            for (index, text) in chunks(&result).iter().enumerate() {
+            for (index, text) in crate::formatting::chunks(&result).iter().enumerate() {
                 let chunk = i64::try_from(index)
                     .map_err(|_| SlackError::Invalid("too many output chunks".to_owned()))?;
                 let ts = if chunk == 0 { reply.as_deref() } else { None };
@@ -112,20 +112,4 @@ impl Store {
             Ok(())
         }).await
     }
-}
-
-pub(crate) fn chunks(text: &str) -> Vec<String> {
-    if text.is_empty() {
-        return vec!["Done.".to_owned()];
-    }
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    for (count, (offset, _)) in text.char_indices().enumerate() {
-        if count > 0 && count % 3500 == 0 {
-            chunks.push(text[start..offset].to_owned());
-            start = offset;
-        }
-    }
-    chunks.push(text[start..].to_owned());
-    chunks
 }
