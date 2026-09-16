@@ -18,6 +18,7 @@ import { hostRoute } from "./host-navigation";
 import { timestamp } from "./host-presentation";
 import "./styles/host.css";
 
+const SystemPreview = import.meta.env.DEV ? (await import("./host-design-preview/system")).SystemPreview : null;
 const WorkPreview = import.meta.env.DEV ? (await import("./host-design-preview/work")).WorkPreview : null;
 const ConnectionsPreview = import.meta.env.DEV ? (await import("./host-design-preview/connections")).ConnectionsPreview : null;
 
@@ -57,9 +58,9 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
   const controls = { hostId: host.snapshot?.host_id ?? "", refresh: host.refresh, available: host.status === "connected", preview };
   if (host.snapshot && host.status !== "locked" && host.status !== "forbidden") {
     const designPreview = workDesignPreview(preview);
-    const redesigned = route.view === "agents" || (designPreview && (route.view === "library" || route.view === "work"));
+    const redesigned = route.view === "agents" || designPreview;
     const page = <>
-      {route.view === "overview" && <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} />}
+      {route.view === "overview" && (designPreview && SystemPreview ? <SystemPreview host={host.snapshot} /> : <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} />)}
       {route.view === "work" && (designPreview && WorkPreview ? <WorkPreview host={host.snapshot} route={route} /> : <WorkView host={host.snapshot} controls={controls} />)}
       {route.view === "agents" && <AgentsView host={host.snapshot} route={route} controls={controls} />}
       {route.view === "library" && (designPreview && ConnectionsPreview ? <ConnectionsPreview host={host.snapshot} tab={route.tab ?? "plugins"} /> : <ConnectionsView host={host.snapshot} />)}

@@ -140,7 +140,7 @@ components:
     padding: "3px 9px"
 ---
 
-## Current foundation — 2026-09-16
+## Current foundation — 2026-09-17
 
 The Agents design preview is a navigable map of management spaces and shared
 plugin access. Fixed portraits sit inside organic contours; selecting a plugin
@@ -165,11 +165,22 @@ and installed component paths are defined in `components.json`; the canonical
 tokens are `src/styles/design-system.css`. Compose these upstream primitives
 for subsequent pages. Do not reintroduce per-page palettes or custom controls.
 
-Migration proceeds one page at a time. Work, Connections, System,
-authentication, and the public homepage retain their existing interiors until
-their slice is implemented. Their appearance below is historical, not a constraint.
-Host observations, supported writes, and separation of preview/live data remain
-required. Source provenance and license notices are in `licenses/`.
+The Host design preview now covers all four primary destinations. Work brings
+agent executions onto a common daily timeline, prioritizes interruptions and
+requests for input, and reuses the agent automation timeline with shared pause
+state. Execution detail returns to the Work filter and position it came from.
+Connections separates plugin contents and agent selections from account access;
+connecting an example account does not select its tools. Account state follows
+the user through Configure, Connections, and System for the life of the tab.
+System separates the control panel, Host coordinator, and execution node, with
+resource history, run-linked diagnostics, and a simulated recovery flow. Its
+unreachable-Host example presents unknown health and no remote restart action.
+
+These new page interiors remain development-only and explicitly illustrative;
+they define no backend contract or live write. The production Host retains its
+supported observation/control views until backend integration. Authentication
+and the separately approved public homepage remain unchanged. Source provenance
+and license notices are in `licenses/`. The specification below is historical.
 
 ## Historical visual specification
 

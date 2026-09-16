@@ -59,6 +59,20 @@ describe("Host navigation and rendered controls", () => {
     expect(render("#agents", host, false, "?preview")).not.toContain("Agent relationship map");
     expect(render("#agents", host, true)).not.toContain("Agent relationship map");
   });
+  it("isolates new workspace fixtures from live and saved Host observations", () => {
+    for (const [route, marker] of [["#work", "Today across your agents"], ["#library", "One plugin. Any mix of capabilities."], ["#overview", "Example system condition"]]) {
+      expect(render(route!, host, true, "?preview")).toContain(marker);
+      expect(render(route!, host, false, "?preview")).not.toContain(marker);
+      expect(render(route!, host, true)).not.toContain(marker);
+    }
+  });
+  it("opens work executions only under their agent and handles invalid links", () => {
+    expect(render("#work/reviewer/run-107", host, true, "?preview")).toContain("Jump to interruption");
+    expect(render("#work/missing/run-107", host, true, "?preview")).not.toContain("Execution timeline");
+    expect(hostRoute("#work/%/run-107")).toEqual({ view: "work", agent: null, section: "work" });
+    expect(hostRoute("#work/reviewer/%")).toEqual({ view: "work", agent: null, section: "work" });
+    expect(hostRoute("#library/accounts").tab).toBe("accounts");
+  });
   it("handles direct agent links and malformed locations without breaking the Host", () => {
     expect(hostRoute("#agent/reviewer")).toEqual({ view: "agents", agent: "reviewer", section: "overview" });
     expect(hostRoute("#agent/reviewer/identity")).toEqual({ view: "agents", agent: "reviewer", section: "identity" });
