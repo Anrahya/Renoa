@@ -15,7 +15,7 @@ import { ProfileConfigure } from "./host-agent-profile-configure";
 import { ProfileAutomations, ProfileActivity } from "./host-agent-profile-details";
 import "./styles/host-agent-profile.css";
 import { AgentWorkPreview } from "./agent-work-preview/preview";
-import { initialConfiguration } from "./agent-work-preview/configuration-model";
+import { usePreviewConfiguration } from "./agent-work-preview/configuration-state";
 import { workDesignPreview } from "./agent-work-preview/mode";
 
 const pages: { value: AgentPage; label: string }[] = [
@@ -26,8 +26,8 @@ const pages: { value: AgentPage; label: string }[] = [
 export function HostAgentProfile({ host, agent, section, controls, execution }: { host: HostSnapshot; agent: Agent; section: AgentSection; controls: Controls; execution: string | undefined }) {
   const page = agentPage(section);
   const designPreview = workDesignPreview(controls.preview);
-  const [previewConfiguration, savePreviewConfiguration] = useState(() => initialConfiguration(displayName(agent.name)));
-  const agentName = designPreview ? previewConfiguration.name : displayName(agent.name);
+  const configuration = usePreviewConfiguration(agent.id, displayName(agent.name));
+  const agentName = designPreview ? configuration.saved.name : displayName(agent.name);
   const inspecting = designPreview && execution !== undefined;
   const [visited, setVisited] = useState<AgentPage[]>([page]);
   const root = useRef<HTMLElement>(null);
@@ -65,7 +65,7 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
       <div hidden={inspecting} className="overflow-x-auto border-b pb-1"><TabsList variant="line" aria-label="Agent workspace" className="w-full justify-start sm:w-fit">
         {pages.map(item => <TabsTrigger key={item.value} value={item.value} className="sm:px-4">{item.label}</TabsTrigger>)}
       </TabsList></div>
-      {designPreview && <AgentWorkPreview page={page} navigate={navigate} execution={execution} agentId={agent.id} agentName={agentName} configuration={previewConfiguration} saveConfiguration={savePreviewConfiguration} />}
+      {designPreview && <AgentWorkPreview page={page} navigate={navigate} execution={execution} agentId={agent.id} agentName={agentName} configuration={configuration} />}
       {pages.filter(() => !designPreview).map(({ value }) => <TabsContent key={value} value={value} forceMount hidden={inspecting || page !== value}>
         {(page === value || visited.includes(value)) && <>
           {value === "overview" && <ProfileOverview {...{ host, agent, navigate }} />}

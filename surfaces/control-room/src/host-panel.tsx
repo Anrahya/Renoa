@@ -1,4 +1,5 @@
 import { workDesignPreview } from "./agent-work-preview/mode";
+import { PreviewConfigurationProvider } from "./agent-work-preview/configuration-state";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowClockwise, SignOut } from "@phosphor-icons/react";
 import { useHost } from "./use-host";
@@ -58,7 +59,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
       {route.view === "library" && <ConnectionsView host={host.snapshot} />}
     </>;
     const designPreview = workDesignPreview(preview) && !!route.agent && ["overview", "configure", "identity", "connections", "automations", "activity", "work", "policy"].includes(route.section);
-    return <HostShell {...{ route, preview, designPreview }} snapshot={host.snapshot} status={host.status} receivedAt={host.receivedAt} refresh={host.refresh} logout={() => void logout()}>
+    return <PreviewConfigurationProvider key={host.snapshot.host_id}><HostShell {...{ route, preview, designPreview }} snapshot={host.snapshot} status={host.status} receivedAt={host.receivedAt} refresh={host.refresh} logout={() => void logout()}>
       {preview && <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:px-6">
         <span>{designPreview ? "Example data · 17 Sep, 11:30 · Changes stay in this tab" : <>{previewLabel}{host.receivedAt && !demo && ` · ${timestamp(host.receivedAt)}`}</>}</span>
         <Button asChild size="xs" variant="ghost"><a href={liveHostHref(import.meta.env.DEV)}>Open live Host</a></Button>
@@ -69,7 +70,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
         <Button variant="outline" size="sm" className="mt-2 w-fit" onClick={logoutError ? () => void logout() : host.refresh}>{logoutError ? "Retry sign-out" : "Retry now"}</Button>
       </Alert>}
       {redesigned ? page : <div className="host-app host-legacy-page">{page}{preview && previewAction && <div className="host-content">{previewAction}</div>}</div>}
-    </HostShell>;
+    </HostShell></PreviewConfigurationProvider>;
   }
   return <div className="host-app"><a className="host-skip" href="#host-main" onClick={event => {
     event.preventDefault();

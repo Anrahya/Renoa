@@ -1,16 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { capabilitySources, changedSections, initialConfiguration, setCapabilities } from "./configuration-model";
+import { capabilityPlugins, pluginCapabilities, changedSections, initialConfiguration, setCapabilities } from "./configuration-model";
 describe("configuration preview drafts", () => {
   it("keeps the source library and other selections when a group is disabled", () => {
     const saved = initialConfiguration("Test agent");
-    const mail = capabilitySources.find(source => source.id === "mail")!;
-    const withoutMail = setCapabilities(saved.capabilities, mail.items.map(item => item.id), false);
+    const mail = capabilityPlugins.find(plugin => plugin.id === "mail")!;
+    const items = pluginCapabilities(mail);
+    const withoutMail = setCapabilities(saved.capabilities, items.map(item => item.id), false);
     expect(withoutMail).not.toContain("mail-read");
     expect(withoutMail).not.toContain("mail-send");
     expect(withoutMail).toContain("web");
     expect(saved.capabilities).toContain("mail-read");
-    expect(mail.items).toHaveLength(2);
-    expect(setCapabilities(withoutMail, mail.items.map(item => item.id), true).sort()).toEqual([...saved.capabilities].sort());
+    expect(items).toHaveLength(2);
+    expect(setCapabilities(withoutMail, items.map(item => item.id), true).sort()).toEqual([...saved.capabilities].sort());
+  });
+  it("selects a plugin's tools and skills together without changing other plugins", () => {
+    const saved = initialConfiguration("Test agent");
+    const research = capabilityPlugins.find(plugin => plugin.id === "research")!;
+    const ids = pluginCapabilities(research).map(item => item.id);
+    const disabled = setCapabilities(saved.capabilities, ids, false);
+    expect(disabled).toEqual(["read", "search", "mail-read", "mail-send"]);
+    expect(setCapabilities(disabled, ids, true)).toEqual([...disabled, "web", "research", "writing", "review"]);
   });
   it("reports only changed sections and ignores selection ordering", () => {
     const saved = initialConfiguration("Test agent");

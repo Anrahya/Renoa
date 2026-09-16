@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { ArrowRight, CaretLeft, CaretRight, Clock, Lightning, Pause, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,16 @@ export function AutomationTimeline({ enabled, setEnabled, selected, select, open
   const ticks = Array.from({ length: range === "day" ? 5 : 7 }, (_, i) => start + (range === "day" ? i * DAY / 4 : i * DAY));
   function zoomDay(id: string, day: number) { setRange("day"); setOffset(Math.round((day - TODAY) / DAY)); setSelectedTime(null); select(id); }
   function selectTime(id: string, value: number) { setSelectedTime({ id, timestamp: value }); select(id); }
+  useEffect(() => {
+    if (!selected) return;
+    const frame = requestAnimationFrame(() => {
+      const heading = document.getElementById("automation-inspection-title");
+      if (!heading?.getClientRects().length) return;
+      heading.focus({ preventScroll: true });
+      heading.scrollIntoView({ block: "start", behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selected, selectedTime]);
   return <div className="flex flex-col gap-6">
     <div className="work-heading"><div><h2>Automations</h2><p>What starts this agent’s work.</p></div><span className="work-caption">{Object.values(enabled).filter(Boolean).length} enabled · {Object.values(enabled).filter(value => !value).length} paused</span></div>
     <Tabs value={range} onValueChange={value => { setRange(value); setOffset(0); }} className="gap-5">
@@ -53,7 +63,7 @@ export function AutomationTimeline({ enabled, setEnabled, selected, select, open
                   <div className={cn("work-track-line", !active && "work-track-paused")} />
                   {NOW >= start && NOW < end && <div className="work-now-line" style={{ left: `${(NOW - start) / span * 100}%` }} />}
                   {range === "day" && past.map(run => <TimelineMark runId={run.id} key={run.id} position={(run.started - start) / span * 100} kind={run.status} square={automation.schedule.kind === "event"} label={`${automation.name} · ${date(run.started)}, ${time(run.started)} · ${statusLabel[run.status]}`} onClick={event => openRun(run.id, event.currentTarget)} />)}
-                  {range === "day" && active && future.map(timestamp => <TimelineMark key={timestamp} position={(timestamp - start) / span * 100} kind="scheduled" square={false} label={`${automation.name} · ${date(timestamp)}, ${time(timestamp)} · Scheduled`} onClick={() => selectTime(automation.id, timestamp)} />)}
+                  {range === "day" && active && future.map(timestamp => <TimelineMark key={timestamp} position={(timestamp - start) / span * 100} kind="scheduled" square={false} selected={selected === automation.id && selectedTime?.id === automation.id && selectedTime.timestamp === timestamp} label={`${automation.name} · ${date(timestamp)}, ${time(timestamp)} · Scheduled`} onClick={() => selectTime(automation.id, timestamp)} />)}
                   {range === "week" && <WeekOccurrences start={start} past={past} future={active ? future : []} name={automation.name} openDay={day => zoomDay(automation.id, day)} />}
                   {range === "day" && automation.schedule.kind === "event" && <span className="work-lane-note" style={{ left: `${NOW >= start && NOW < end ? Math.min(78, (NOW - start) / span * 100 + 5) : 55}%` }}><Lightning size={12} />{active ? "Listening for events" : "Paused"}</span>}
                   {!active && automation.schedule.kind !== "event" && <span className="work-lane-note"><Pause size={12} />Paused</span>}
@@ -70,14 +80,14 @@ export function AutomationTimeline({ enabled, setEnabled, selected, select, open
     {current ? <AutomationInspection automation={current} enabled={enabled[current.id] ?? false} selectedTime={selectedTime?.id === current.id ? selectedTime.timestamp : null} close={() => select(null)} openRun={openRun} /> : <div className="work-timeline-hint"><Clock size={16} /><p>Select an occurrence to follow its work. Select an automation to see its instructions and timing.</p></div>}
   </div>;
 }
-function TimelineMark({ position, kind, square, label, onClick, runId }: { runId?: string; position: number; kind: string; square: boolean; label: string; onClick: (event: MouseEvent<HTMLButtonElement>) => void }) {
-  return <Tooltip><TooltipTrigger asChild><button data-run-id={runId} className="work-mark-hit" style={{ left: `${position}%` }} aria-label={label} onClick={onClick}><span className={cn("work-mark", kind, square && "work-mark-square")} /></button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
+function TimelineMark({ position, kind, square, label, onClick, runId, selected }: { runId?: string; selected?: boolean; position: number; kind: string; square: boolean; label: string; onClick: (event: MouseEvent<HTMLButtonElement>) => void }) {
+  return <Tooltip><TooltipTrigger asChild><button data-run-id={runId} className="work-mark-hit" style={{ left: `${position}%` }} aria-label={label} aria-pressed={selected} onClick={onClick}><span className={cn("work-mark", kind, square && "work-mark-square")} /></button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 function AutomationInspection({ automation, enabled, selectedTime, close, openRun }: { automation: Automation; enabled: boolean; selectedTime: number | null; close: () => void; openRun: (id: string, element: HTMLElement) => void }) {
   const upcoming = scheduledTimes(automation, NOW, NOW + 8 * DAY).slice(0, 3);
   const recent = executions.filter(run => run.automationId === automation.id).slice(0, 3);
   return <section id="automation-inspection" className="work-inspection" aria-label={`${automation.name} details`}>
-    <div className="work-heading"><div><div className="flex flex-wrap items-center gap-2"><h3>{automation.name}</h3><Badge variant="outline">{enabled ? "Enabled" : "Paused"}</Badge></div><p>{automation.rule}</p></div><Button variant="ghost" size="icon" aria-label="Close automation details" onClick={close}><X /></Button></div>
+    <div className="work-heading"><div><div className="flex flex-wrap items-center gap-2"><h3 id="automation-inspection-title" tabIndex={-1}>{automation.name}</h3><Badge variant="outline">{enabled ? "Enabled" : "Paused"}</Badge></div><p>{automation.rule}</p></div><Button variant="ghost" size="icon" aria-label="Close automation details" onClick={close}><X /></Button></div>
     <div className="work-automation-detail"><div><h4>Instructions</h4><p>{automation.description}</p></div><div>{selectedTime !== null && enabled && <p className="work-selected-time">Selected: {date(selectedTime)} · {time(selectedTime)}</p>}<h4>{automation.schedule.kind === "event" ? "Trigger" : enabled ? "Next occurrences" : "Schedule paused"}</h4>
       {automation.schedule.kind === "event" ? <p>{automation.schedule.condition}. {enabled ? "There is no predicted run time." : "New events will not start work."}</p> : enabled ? <div className="flex flex-wrap gap-2">{upcoming.map(timestamp => <Badge key={timestamp} variant={selectedTime === timestamp ? "secondary" : "outline"}>{date(timestamp)} · {time(timestamp)}</Badge>)}</div> : <p>Its history stays available. Enable it to resume scheduled work.</p>}
     </div></div>

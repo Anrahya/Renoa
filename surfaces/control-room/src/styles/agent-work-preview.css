@@ -34,7 +34,11 @@
 .work-now-line { position: absolute; inset-block: 0; width: 1px; background: color-mix(in oklch, var(--foreground) 40%, transparent); }
 .work-mark-hit { position: absolute; inset-block-start: 50%; transform: translate(-50%, -50%); width: 26px; height: 34px; display: grid; place-items: center; border-radius: 5px; }
 .work-mark { width: 10px; height: 10px; border-radius: 50%; outline: 4px solid var(--background); background: var(--work-success); transition: transform .15s ease; }
-.work-mark-hit:hover .work-mark, .work-mark-hit:focus-visible .work-mark { transform: scale(1.3); }
+@media (hover: hover) and (pointer: fine) {
+  .work-mark-hit:hover .work-mark { transform: scale(1.3); }
+}
+.work-mark-hit[aria-pressed="true"] .work-mark { box-shadow: 0 0 0 2px var(--foreground); background: var(--work-model); }
+#automation-inspection-title { scroll-margin-top: 80px; }
 .work-mark-square { border-radius: 2px; }
 .work-mark.scheduled { background: var(--background); border: 1px solid var(--muted-foreground); }
 .work-mark.interrupted { background: var(--destructive); }
@@ -108,4 +112,11 @@
   .work-timeline { min-width: 620px; }
   .work-axis, .work-lane { grid-template-columns: 145px minmax(0, 1fr) 32px; column-gap: 14px; }
   .work-lane-name { position: sticky; inset-inline-start: 0; z-index: 1; background: var(--background); }
+}
+
+@media (pointer: coarse) {
+  .work-mark-hit { width: 44px; height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-mark, .work-lane { transition: none; transform: none !important; }
 }

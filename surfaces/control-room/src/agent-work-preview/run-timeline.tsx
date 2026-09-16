@@ -9,7 +9,7 @@ type Props = { events: TraceEvent[]; total: number; window: TimeWindow; setWindo
 export function RunTimeline({ events, total, window, setWindow, selected, select, agentName }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [brush, setBrush] = useState<TimeWindow | null>(null);
-  const anchor = useRef<number | null>(null);
+  const anchor = useRef<{ pointerId: number; time: number } | null>(null);
   const span = window.end - window.start;
   const bins = traceBins(events, { start: 0, end: total }, 72);
   const max = Math.max(1, ...bins.map(bin => bin.events.length));
@@ -17,18 +17,19 @@ export function RunTimeline({ events, total, window, setWindow, selected, select
   const view = brush ?? window;
   function zoom(factor: number) { setWindow(boundedWindow((window.start + window.end - span * factor) / 2, span * factor, total)); }
   function pointerTime(event: PointerEvent<HTMLDivElement>) { const bounds = event.currentTarget.getBoundingClientRect(); return Math.max(0, Math.min(total, (event.clientX - bounds.left) / bounds.width * total)); }
-  function begin(event: PointerEvent<HTMLDivElement>) { if (event.button !== 0) return; anchor.current = pointerTime(event); event.currentTarget.setPointerCapture(event.pointerId); }
-  function move(event: PointerEvent<HTMLDivElement>) { if (anchor.current === null) return; const value = pointerTime(event); setBrush({ start: Math.min(value, anchor.current), end: Math.max(value, anchor.current) }); }
+  function begin(event: PointerEvent<HTMLDivElement>) { if (event.button !== 0 || anchor.current !== null || !event.isPrimary) return; anchor.current = { pointerId: event.pointerId, time: pointerTime(event) }; event.currentTarget.setPointerCapture(event.pointerId); }
+  function move(event: PointerEvent<HTMLDivElement>) { if (anchor.current?.pointerId !== event.pointerId) return; const value = pointerTime(event); setBrush({ start: Math.min(value, anchor.current.time), end: Math.max(value, anchor.current.time) }); }
   function finish(event: PointerEvent<HTMLDivElement>) {
-    if (anchor.current === null) return;
+    if (anchor.current?.pointerId !== event.pointerId) return;
     const value = pointerTime(event);
-    const distance = Math.abs(value - anchor.current);
-    setWindow(distance > total * .015 ? boundedWindow(Math.min(value, anchor.current), distance, total) : boundedWindow(value - span / 2, span, total));
+    const distance = Math.abs(value - anchor.current.time);
+    setWindow(distance > total * .015 ? boundedWindow(Math.min(value, anchor.current.time), distance, total) : boundedWindow(value - span / 2, span, total));
     anchor.current = null; setBrush(null);
   }
+  function cancel(event: PointerEvent<HTMLDivElement>) { if (anchor.current?.pointerId === event.pointerId) { anchor.current = null; setBrush(null); } }
   return <section className="run-timeline" aria-labelledby="run-timeline-title">
     <div className="run-section-heading"><div><h2 id="run-timeline-title" tabIndex={-1}>Execution timeline</h2><p>{events.length} events on a shared clock</p></div><div className="run-zoom-controls"><Button variant="ghost" size="sm" onClick={() => setWindow({ start: 0, end: total })}>Fit all</Button><Button variant="outline" size="icon" aria-label="Zoom out" disabled={span >= total} onClick={() => zoom(2)}><Minus /></Button><Button variant="outline" size="icon" aria-label="Zoom in" disabled={span <= 1} onClick={() => zoom(.5)}><Plus /></Button></div></div>
-    <div className="run-overview" role="group" aria-label="Whole execution. Drag to select a time range." onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={() => { anchor.current = null; setBrush(null); }}>
+    <div className="run-overview" role="group" aria-label="Whole execution. Drag to select a time range." onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={cancel} onLostPointerCapture={cancel}>
       <svg viewBox="0 0 720 40" preserveAspectRatio="none" aria-hidden="true">{bins.map((bin, index) => <rect key={index} className={bin.events.some(event => issueFor(event) && !issueFor(event)!.recovered) ? "failed" : bin.events.some(event => issueFor(event)) ? "recovered" : undefined} x={index * 10 + 1} y={38 - bin.events.length / max * 30} width="7" height={Math.max(2, bin.events.length / max * 30)} rx="1" />)}</svg>
       <div className="run-brush" style={{ left: `${view.start / total * 100}%`, width: `${(view.end - view.start) / total * 100}%` }}><span /><span /></div>
     </div>

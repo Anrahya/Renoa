@@ -130,9 +130,12 @@
 /* A little color ties future occurrences together; motion stays interaction-led. */
 .work-upcoming > button:not(:last-child)::after { background: color-mix(in oklch, var(--work-model) 55%, var(--border)); }
 .work-upcoming i { border-color: var(--work-model); transition: background-color 150ms, transform 150ms cubic-bezier(.2,0,0,1); }
-.work-upcoming button:hover i, .work-upcoming button:focus-visible i { background: var(--work-model); transform: scale(1.2); }
+.work-upcoming button:focus-visible i { background: var(--work-model); transition: none; }
 .work-outcome-segment { transition: filter 150ms, transform 150ms cubic-bezier(.2,0,0,1); }
-.work-outcome-segment:hover, .work-outcome-segment:focus-visible { transform: translateY(-2px); }
+@media (hover: hover) and (pointer: fine) {
+  .work-upcoming button:hover i { background: var(--work-model); transform: scale(1.2); }
+  .work-outcome-segment:hover { transform: translateY(-2px); }
+}
 .run-overview rect.failed { fill: var(--destructive); }
 .run-overview rect.recovered { fill: var(--work-wait); }
 @media (prefers-reduced-motion: reduce) {

@@ -8,20 +8,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { ConfigureCapabilities } from "./configure-capabilities";
-import { capabilitySources, changedSections, exampleModels, type Configuration } from "./configuration-model";
+import { capabilityPlugins, pluginCapabilities, changedSections, exampleModels, type Configuration } from "./configuration-model";
+import type { ConfigurationEditor } from "./configuration-state";
 import "../styles/agent-configure-preview.css";
-type Props = { saved: Configuration; save: (value: Configuration) => void };
-export function ConfigurePreview({ saved, save }: Props) {
-  const [draft, setDraft] = useState(saved);
+export function ConfigurePreview({ saved, draft, setDraft, save, discard }: ConfigurationEditor) {
   const [notice, setNotice] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [saveCount, setSaveCount] = useState(0);
   const id = useId();
   const changes = changedSections(saved, draft);
   const nameError = submitted && !draft.name.trim();
   const purposeError = submitted && !draft.purpose.trim();
   const tokenError = submitted && (!Number.isInteger(draft.maxTokens) || draft.maxTokens < 1 || draft.maxTokens > 131072);
-  const needsConnection = capabilitySources.some(source => source.needsConnection && source.items.some(item => draft.capabilities.includes(item.id)));
+  const needsConnection = capabilityPlugins.some(plugin => plugin.needsConnection && pluginCapabilities(plugin).some(item => draft.capabilities.includes(item.id)));
   function update<K extends keyof Configuration>(key: K, value: Configuration[K]) { setDraft(current => ({ ...current, [key]: value })); setNotice(""); }
   function jump(section: string) { const target = document.getElementById(`${id}-${section}`); target?.scrollIntoView({ block: "start", behavior: "instant" }); target?.focus({ preventScroll: true }); }
   function submit(event: FormEvent) {
@@ -31,7 +29,7 @@ export function ConfigurePreview({ saved, save }: Props) {
       document.getElementById(`${id}-${target}`)?.focus(); return;
     }
     const next = { ...draft, name: draft.name.trim(), purpose: draft.purpose.trim() };
-    save(next); setDraft(next); setSubmitted(false); setSaveCount(count => count + 1); setNotice("Saved in this preview");
+    save(next); setSubmitted(false); setNotice("Saved in this preview");
   }
   return <form className="config-preview" onSubmit={submit} noValidate>
     <div className="work-heading"><div><h2>Configure</h2><p>The pieces that make this agent yours.</p></div><Badge variant="outline">Example configuration</Badge></div>
@@ -48,7 +46,7 @@ export function ConfigurePreview({ saved, save }: Props) {
       <details className="config-instruction"><summary><CaretRight size={15} />Your preferences<span>Personal context</span></summary><Field><FieldLabel htmlFor={`${id}-preferences`} className="sr-only">Your preferences</FieldLabel><Textarea id={`${id}-preferences`} rows={3} value={draft.preferences} onChange={event => update("preferences", event.target.value)} /></Field></details>
     </FieldGroup></section>
     <Separator />
-    <section className="config-section" aria-labelledby={`${id}-capabilities`}><div className="config-section-label"><h3 id={`${id}-capabilities`} tabIndex={-1}>Capabilities</h3><p>The tools and skills available to this agent.</p><span className="config-selection-count">{draft.capabilities.length} selected</span></div><ConfigureCapabilities selected={draft.capabilities} change={value => update("capabilities", value)} /></section>
-    <footer className="config-save-bar" data-dirty={changes.length > 0}><div><p role="status" className="config-save-status">{notice ? <><Check size={15} key={saveCount} className="config-saved-check" />{notice}</> : changes.length ? "Unsaved changes" : "Preview only · no live changes"}</p><span className="config-change-summary">{changes.length ? changes.join(" · ") : "Changes apply to this agent preview."}</span></div><div className="config-save-actions"><Button type="button" variant="ghost" disabled={!changes.length} onClick={() => { setDraft(saved); setSubmitted(false); setNotice("Draft discarded"); }}>Discard</Button><Button type="submit" disabled={!changes.length}>Save preview</Button></div></footer>
+    <section className="config-section" aria-labelledby={`${id}-capabilities`}><div className="config-section-label"><h3 id={`${id}-capabilities`} tabIndex={-1}>Capabilities</h3><p>Plugins bundle tools, skills and integrations. Choose what this agent can use.</p><span className="config-selection-count">{draft.capabilities.length} capabilities selected</span></div><ConfigureCapabilities selected={draft.capabilities} change={value => update("capabilities", value)} /></section>
+    <footer className="config-save-bar" data-dirty={changes.length > 0}><div><p role="status" className="config-save-status">{notice ? <><Check size={15} />{notice}</> : changes.length ? "Unsaved changes" : "Preview only · no live changes"}</p><span className="config-change-summary">{changes.length ? changes.join(" · ") : "Kept while browsing; reload resets examples."}</span></div><div className="config-save-actions"><Button type="button" variant="ghost" disabled={!changes.length} onClick={() => { discard(); setSubmitted(false); setNotice("Draft discarded"); }}>Discard</Button><Button type="submit" disabled={!changes.length}>Save preview</Button></div></footer>
   </form>;
 }

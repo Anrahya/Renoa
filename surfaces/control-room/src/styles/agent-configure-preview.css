@@ -4,8 +4,11 @@
 .config-composition button { position: relative; display: flex; align-items: flex-start; gap: 10px; text-align: start; padding: 9px 12px; min-width: 0; border-radius: 5px; }
 .config-composition button:not(:last-child)::after { content: ""; position: absolute; width: 28px; height: 1px; right: 6px; top: 15px; background: color-mix(in oklch, var(--work-model) 45%, var(--border)); }
 .config-composition i { width: 7px; height: 7px; border: 1px solid var(--work-model); border-radius: 50%; margin-block-start: 3px; flex-shrink: 0; transition: background-color 150ms, transform 150ms cubic-bezier(.2,0,0,1); }
-.config-composition button:hover i, .config-composition button:focus-visible i { background: var(--work-model); transform: scale(1.15); }
-.config-composition button:hover { background: color-mix(in oklch, var(--muted) 35%, transparent); }
+.config-composition button:focus-visible i { background: var(--work-model); transition: none; }
+@media (hover: hover) and (pointer: fine) {
+  .config-composition button:hover i { background: var(--work-model); transform: scale(1.15); }
+  .config-composition button:hover { background: color-mix(in oklch, var(--muted) 35%, transparent); }
+}
 .config-composition span { color: var(--muted-foreground); font-size: 12px; min-width: 0; }
 .config-composition strong { display: block; color: var(--foreground); font-size: 14px; font-weight: 500; margin-block-start: 6px; overflow-wrap: anywhere; }
 .config-section { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 40px; max-width: 960px; }
@@ -36,6 +39,8 @@
 .config-chevron { flex-shrink: 0; color: var(--muted-foreground); transition: transform 150ms cubic-bezier(.2,0,0,1); }
 .config-source-toggle[aria-expanded="true"] .config-chevron { transform: rotate(90deg); }
 .config-source-body { padding: 4px 12px 20px 32px; }
+.config-source-body > fieldset + fieldset { margin-block-start: 24px; }
+.config-capability-kind { display: flex; align-items: center; gap: 8px; }
 .config-capability [data-slot="checkbox"] { margin-block-start: 4px; flex-shrink: 0; }
 .config-capability [data-slot="field-label"] { min-height: 24px; cursor: pointer; }
 .config-note { color: var(--muted-foreground); font-size: 13px; line-height: 1.7; max-width: 72ch; }
@@ -46,10 +51,8 @@
 .config-save-status > svg { color: var(--work-success); }
 .config-change-summary { display: block; font-size: 12px; color: var(--muted-foreground); margin-block-start: 4px; }
 .config-save-actions { display: flex; gap: 8px; flex-shrink: 0; }
-.config-saved-check { animation: config-confirm 200ms cubic-bezier(.2,0,0,1); }
-@keyframes config-confirm { from { opacity: 0; transform: scale(.25); filter: blur(4px); } to { opacity: 1; transform: scale(1); filter: blur(0); } }
-@media (hover: hover) {
-  .config-save-actions [data-slot="button"]:active { transform: scale(.96); }
+@media (hover: hover) and (pointer: fine) {
+  .config-save-actions [data-slot="button"]:active:not(:focus-visible) { transform: scale(.97); }
   .config-save-actions [data-slot="button"] { transition: transform 120ms cubic-bezier(.2,0,0,1); }
 }
 @media (max-width: 1000px) {
@@ -75,3 +78,5 @@
 @media (prefers-reduced-motion: reduce) {
   .config-preview *, .config-preview *::before { animation: none !important; transition: none !important; }
 }
+
+.config-preview :focus-visible, .config-preview :focus-visible > svg { transition: none; }
