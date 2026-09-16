@@ -1,0 +1,6 @@
+@layer theme, base, legacy, components, utilities;
+@import "./base.css" layer(legacy);
+@import "./workspace.css" layer(legacy);
+@import "./history.css" layer(legacy);
+@import "./lock.css" layer(legacy);
+@import "./responsive.css" layer(legacy);

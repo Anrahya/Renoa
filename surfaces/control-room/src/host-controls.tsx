@@ -4,7 +4,7 @@ import type { ReviewRepository, ReviewTrigger, Routine } from "./host-contract";
 
 export interface Controls { hostId: string; refresh: () => void; available: boolean; preview: boolean }
 
-function useChange(controls: Controls, path: string) {
+export function useChange(controls: Controls, path: string) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   let pending = false;
@@ -18,8 +18,10 @@ function useChange(controls: Controls, path: string) {
       const result = await saveChange(controls.hostId, path, fields);
       setNotice(result.message);
       if (result.kind !== "uncertain") controls.refresh();
+      return result.kind;
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not preserve this change in browser storage."); }
     finally { setBusy(false); }
+    return undefined;
   }
   return { busy, pending, notice: storageError ?? notice,
     disabled: busy || !controls.available || controls.preview || !!storageError, save };
@@ -55,7 +57,7 @@ export function ReviewPolicy({ repository, controls }: { repository: ReviewRepos
     <p>{policy.skip_drafts ? "Draft PRs are skipped." : "Draft PRs are included."}</p>
     <p className="host-caption">{policy.triggers.map(t => triggerLabels[t]).join(" · ") || "No automatic triggers selected."}</p>
     {!editing && !change.pending && <button ref={editButton} className="host-action" disabled={!controls.available || change.busy} onClick={edit}>Edit review policy</button>}
-    {editing && <form className="host-policy-form" onSubmit={event => { event.preventDefault(); void change.save(fields).then(close); }}>
+    {editing && <form className="host-policy-form" onSubmit={event => { event.preventDefault(); void change.save(fields).then(result => { if (result === "saved") close(); }); }}>
       <fieldset disabled={change.busy || !controls.available || change.pending}>
         <legend>When should this agent review?</legend>
         <label><input type="checkbox" autoFocus checked={enabled} onChange={e => setEnabled(e.target.checked)} /> Enable automatic reviews</label>

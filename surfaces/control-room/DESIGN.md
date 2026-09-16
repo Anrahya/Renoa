@@ -140,6 +140,25 @@ components:
     padding: "3px 9px"
 ---
 
+## Current foundation — 2026-09-16
+
+Agent profiles use Overview / Configure / Automations / Activity tabs under a persistent identity header. Configuration is an in-page document of sections; schedules and repository policies live in Automations. Hash links select pages or focus their relevant sections. Policy drafts survive tab changes within the agent. The former customization drawer is retired.
+
+The owner retired the bespoke visual system below. The shared Host shell, Agents directory, and agent profile use shadcn radix-nova, neutral semantic colors, Geist Variable,
+and Phosphor icons, with Efferd App Shell 5 as the layout reference. The preset
+and installed component paths are defined in `components.json`; the canonical
+tokens are `src/styles/design-system.css`. Compose these upstream primitives
+for subsequent pages. Do not reintroduce per-page palettes or custom controls.
+
+Migration proceeds one page at a time. Work, Connections, System,
+authentication, and the public homepage retain their existing interiors until
+their slice is implemented. Their appearance below is historical, not a constraint.
+Host observations, supported writes, and separation of preview/live data remain
+required. Source provenance and license notices are in `licenses/`.
+
+## Historical visual specification
+
+
 # Design System: Renoa Web Surfaces
 
 ## Overview

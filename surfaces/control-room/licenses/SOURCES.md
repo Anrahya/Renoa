@@ -1,0 +1,29 @@
+# UI sources
+
+`src/components/ui/`, `src/hooks/use-mobile.ts`, and the Nova tokens in
+`src/styles/design-system.css` were installed through shadcn CLI 4.21.0 from
+its radix-nova registry on 2026-09-16. Upstream repository:
+https://github.com/shadcn-ui/ui, observed source commit
+`f5bb039c749afd2d111ad970dfaa9ab30bd90b3b`. License: MIT; full notice in
+`public/licenses/shadcn-MIT.txt`. The registry is a published endpoint, not a Git-pinned
+installation; the checked-in component files are Renoa's exact vendored source.
+
+Local adaptations: split sidebar context/layout/menu to keep modules below
+500 lines, removed its write-only preference cookie, changed SidebarInset to
+a div to avoid nested main landmarks, replaced the Radix umbrella imports with
+individual packages (the umbrella exposes an unrelated Select type error under
+exactOptionalPropertyTypes), and scoped styling for incremental migration.
+
+Layout reference: https://efferd.com/view/app-shell-5. Renoa's shell composes
+upstream shadcn primitives around its own navigation and Host state; it does
+not vendor the Efferd block's demo content or source. The MIT Efferd repository
+https://github.com/shabanhr/efferd-ui at
+`d0748f4fd12ba6553557f297d2ad4832a33d46cb` is the older collection and does not
+contain app-shell-5.
+
+Geist Variable 5.3.0 is bundled from `@fontsource-variable/geist` under OFL-1.1.
+The font license ships at `public/licenses/geist-OFL.txt`.
+
+On 2026-09-17, `native-select.tsx` was added through the same shadcn CLI and
+radix-nova registry. Observed upstream commit:
+`f5bb039c749afd2d111ad970dfaa9ab30bd90b3b`; MIT notice as above.

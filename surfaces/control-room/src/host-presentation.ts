@@ -63,4 +63,4 @@ export function connectionName(host: HostSnapshot, connection: Connection): stri
   const packages = host.plugins.filter(p => p.digest.startsWith(match[1]!));
   return packages.length === 1 ? packages[0]!.name : connection.id;
 }
-export const agentHref = (id: string, section = "work") => `#agent/${encodeURIComponent(id)}/${section}`;
+export const agentHref = (id: string, section = "overview") => `#agent/${encodeURIComponent(id)}/${section}`;

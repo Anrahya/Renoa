@@ -1,3 +1,4 @@
+import { workDesignPreview } from "./agent-work-preview/mode";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowClockwise, SignOut } from "@phosphor-icons/react";
 import { useHost } from "./use-host";
@@ -6,6 +7,9 @@ import { AgentsView } from "./host-agents";
 import { ConnectionsView } from "./host-library";
 import { WorkView } from "./host-work";
 import { SystemView } from "./host-system";
+import { HostShell } from "./host-shell";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { liveHostHref } from "./host-entry";
 import { hostRoute } from "./host-navigation";
 import { timestamp } from "./host-presentation";
@@ -32,7 +36,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
     const before = hostRoute(previous.current); previous.current = hash;
     // Keep section-navigation focus in place; focus the title on page changes.
     if (before.view === route.view && before.agent === route.agent) return;
-    const heading = document.querySelector<HTMLElement>(".host-content h1");
+    const heading = document.querySelector<HTMLElement>("#host-main h1");
     if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
     window.scrollTo({ top: 0 });
   }, [hash, route.agent, route.view]);
@@ -45,6 +49,28 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
   }
   const signedIn = host.snapshot !== null;
   const controls = { hostId: host.snapshot?.host_id ?? "", refresh: host.refresh, available: host.status === "connected", preview };
+  if (host.snapshot && host.status !== "locked" && host.status !== "forbidden") {
+    const redesigned = route.view === "agents";
+    const page = <>
+      {route.view === "overview" && <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} />}
+      {route.view === "work" && <WorkView host={host.snapshot} controls={controls} />}
+      {route.view === "agents" && <AgentsView host={host.snapshot} route={route} controls={controls} />}
+      {route.view === "library" && <ConnectionsView host={host.snapshot} />}
+    </>;
+    const designPreview = workDesignPreview(preview) && !!route.agent && ["overview", "configure", "identity", "connections", "automations", "activity", "work", "policy"].includes(route.section);
+    return <HostShell {...{ route, preview, designPreview }} snapshot={host.snapshot} status={host.status} receivedAt={host.receivedAt} refresh={host.refresh} logout={() => void logout()}>
+      {preview && <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:px-6">
+        <span>{designPreview ? "Example data · 17 Sep, 11:30 · Changes stay in this tab" : <>{previewLabel}{host.receivedAt && !demo && ` · ${timestamp(host.receivedAt)}`}</>}</span>
+        <Button asChild size="xs" variant="ghost"><a href={liveHostHref(import.meta.env.DEV)}>Open live Host</a></Button>
+      </div>}
+      {(host.error || logoutError) && <Alert variant="destructive" className="mx-4 mt-4 w-auto md:mx-6">
+        <AlertTitle>{logoutError ? "Sign-out failed" : "Host update unavailable"}</AlertTitle>
+        <AlertDescription>{logoutError ?? host.error}{host.receivedAt && ` Showing records from ${timestamp(host.receivedAt)}.`}</AlertDescription>
+        <Button variant="outline" size="sm" className="mt-2 w-fit" onClick={logoutError ? () => void logout() : host.refresh}>{logoutError ? "Retry sign-out" : "Retry now"}</Button>
+      </Alert>}
+      {redesigned ? page : <div className="host-app host-legacy-page">{page}{preview && previewAction && <div className="host-content">{previewAction}</div>}</div>}
+    </HostShell>;
+  }
   return <div className="host-app"><a className="host-skip" href="#host-main" onClick={event => {
     event.preventDefault();
     const main = document.getElementById("host-main");
@@ -63,12 +89,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
       <span>{logoutError ?? host.error}{host.receivedAt && ` Showing records from ${timestamp(host.receivedAt)}.`}</span>
       <button className="host-link" onClick={host.refresh}>Retry now</button></div>}
     {host.status === "locked" || host.status === "forbidden" ? <HostLogin refresh={host.refresh} forbidden={host.status === "forbidden"} />
-      : host.snapshot ? <>
-        {route.view === "overview" && <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} />}
-        {route.view === "work" && <WorkView host={host.snapshot} controls={controls} />}
-        {route.view === "agents" && <AgentsView host={host.snapshot} route={route} controls={controls} />}
-        {route.view === "library" && <ConnectionsView host={host.snapshot} />}
-      </> : <main id="host-main" className="host-content host-loading" aria-busy="true">
+      : <main id="host-main" className="host-content host-loading" aria-busy="true">
         <h1>{host.status === "reconnecting" ? "Waiting for your Host" : "Opening your Host"}</h1>
         <p className="host-intro">{host.status === "reconnecting" ? "We’ll reconnect when it returns. Your login stays in this browser." : "Restoring your browser’s remembered session."}</p></main>}
     {host.snapshot && <footer className="host-footer"><details><summary>Host identity</summary><code>{host.snapshot.host_id}</code></details>

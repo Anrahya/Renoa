@@ -1,4 +1,44 @@
+## Cloud Host profile integration — 2026-09-16
+
+The production agent route now uses the open profile composition with the existing Host observation contract. Connections join by exact profile; schedules, reviews, sessions and policies join by exact agent ID. No model, instruction, preset, tool-selection or sharing settings are invented. Default agent links open the overview; existing work/connections/automations/policy links open their detail drawer.
+
+Browser checks used the labelled saved VPS snapshot at `/?preview`, including Soundwave's review policy. Outside click and Escape dismiss the native modal and restore opener focus. Drawer opening updates the section URL; browser Back closes it, reloading a section reopens it, and Escape restores the overview URL. An edited policy checkbox survived dismissal/reopening; Cancel discarded the preview draft. Compact 390px layout and full-width drawer had no horizontal overflow. Live server writes were not performed during this visual check; existing mutation tests cover request identity, revision conflicts and uncertain receipts. The production build uses the existing authenticated Host feed and real routine/review controls. Deployed on 2026-09-16 as frontend release `4a960c6-panel-78e73c0ccd3f` to `https://renoa.live`. Public and loopback shell/JS/CSS hashes match the built files, anonymous Host access remains 401, and all six service PIDs stayed unchanged. The live Host UUID and inventory counts matched before/after. The browser rendered the expected pairing screen; an authenticated browser mutation was not exercised. Exactly one previous-release backup remains, and staging uploads were removed.
+
+Validation: TypeScript, 59 frontend tests, production build, four Sites tests, Rust formatting, workspace Clippy with warnings denied, and all workspace tests passed. The new projection test proves agent isolation, paused-schedule exclusion, admission-order review selection and unchanged source records. The saved design preview remains separate and development-only. A later workspace rerun hit an intermittent Slack restart-test lease contention (`uncertain_middle_chunk_blocks_the_remaining_suffix_across_restart`); its isolated rerun and subsequent full workspace rerun passed. No Slack code was changed.
+
 # Control Room design QA
+
+## Agent profile — interaction revision, 16 September 2026
+
+The owner's latest feedback supersedes the initial raster where interactions differ. Keep the open composition and dark palette; simplify editing and remove non-actionable branches.
+
+- Final evidence: `design/agent-profile-desktop.png`, `design/agent-profile-drawer.png`, and `design/agent-profile-mobile.png`.
+- Historical visual comparison: `design/agent-profile-comparison.webp`, reference left and revised overview right, each normalized to 800 px high with aspect ratio preserved.
+- Desktop was checked at 1309 × 931 CSS pixels and mobile at 390 × 844. The browser's temporary viewport override was reset afterward.
+- Runnable surface: development-only `/?agent-design`; example data and edits stay in the tab. Production excludes the prototype.
+
+**Changes established by interaction checks**
+
+- Customize opens Basics with name, role, purpose, and an overview of the other building blocks. Model, Instructions, and Capabilities are sections of the same editor. Direct page shortcuts select the corresponding section.
+- Outside click, Close, and Escape dismiss the panel. An edited name remained unsaved on the overview and was restored by Resume unsaved changes. Save commits the draft; Discard removes it. No extra confirmation blocks dismissal.
+- Tools, skills, and MCP connections are stable checkboxes inside expandable groups. Unchecking Google Drive and checking GitHub preserved both library rows. Toggling Read files off and on returned to No changes. Search, empty results, and Clear search worked.
+- A Coding preset replaced only draft purpose and capabilities, with its effect described before application. A later 4,096-token output limit and the preset saved together and appeared on the overview. Zero-token input disabled Save and presented a useful error; Discard restored the original limit.
+- Saving an enabled daily schedule left a separate agent draft unsaved. Deterministic tests prove that older drafts cannot overwrite unrelated saved configuration or schedules.
+- Generic Context copy was removed. Runtime became a secondary identity detail, removing an unnecessary connector and avoiding collisions with longer identities. Future peer access and context-sharing policy remain unimplemented.
+
+**Visual and accessibility checks**
+
+- Desktop and mobile retain clear grouping, readable labels, native form controls, visible focus, scrollable panel content, and reachable footer actions. No horizontal overflow was measured on the page or dialog at 390 px.
+- The manual design detector reported advisory typography/palette differences. New editor metadata was moved to 13 px and the hover border uses the existing gold token. Existing map scale choices remain intentional.
+- No browser warnings or errors appeared. No actionable P0/P1/P2 findings remain in the inspected preview flows.
+
+**Scope and limits**
+
+Live Host configuration, actual model-limit validation, account authorization, presets, and cross-agent sharing require backend support. These controls are an explicitly labeled interactive design. Agent drafts and schedule drafts are separate to prevent unintended combined saves. Refreshing the page restores the original examples.
+
+final result: passed
+
+## Previous task-console verification
 
 - Source visual truth: `design/tasks-reference.png`
 - Rendered implementation: `design/implementation-desktop.png`
