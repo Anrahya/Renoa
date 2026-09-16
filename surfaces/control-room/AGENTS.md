@@ -10,6 +10,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Renoa control-room decisions
 
+- Later on 2026-09-17 the owner rejected the refreshed horizontal agent rows and requested a substantially more visual, relationship-led direction. Remove model names from the directory; model choice belongs in Configure. Represent the owner-described RC → X Desk management relationship in the design, while distinguishing creation provenance from control and leaving independent agents independent. Keep Agents separate from System: the Host and kernel are foundational system components, not agents. Explore a new visual composition before committing to another directory implementation.
+
 - On 2026-09-17 the owner requested an Agents directory refresh using the profile workspace’s data presentation and useful shadcn/Efferd patterns. Continue one bounded page at a time: Agents directory, Connections, Work, then System. Keep directory summaries consistent with the agent they open, including tab-local configuration and automation edits.
 
 - On 2026-09-17 the owner locked the agent-workspace direction and requested small, understandable commits before moving to other pages. Capabilities are organized by plugin bundles, with tools/skills and MCP/API implementation details nested inside; account connections remain distinct. The preview illustrates this classification without defining a backend plugin contract. Configuration drafts and saved values must survive visits to the Host library and other agents. Timeline selections reveal their details on phones. Finish the remaining design slices before backend integration, keeping motion restrained and interaction-led.
