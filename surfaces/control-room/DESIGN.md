@@ -142,6 +142,16 @@ components:
 
 ## Current foundation — 2026-09-16
 
+The Agents design preview is a navigable map of management spaces and shared
+plugin access. Fixed portraits sit inside organic contours; selecting a plugin
+highlights its member agents across those spaces. The selected agent's work and
+profile link appear below the map. Fit, search, pan, pinch, and group focus provide
+navigation; zoomed-out groups show counts and retained attention. Phones reflow
+the small scene. A labelled 50-agent example exercises larger layouts without
+creating Host records. This view is DEV-only until relationship and capability
+contracts are available; live observations retain their factual directory.
+Contour motion stops on pause, reduced motion, hidden/offscreen views, and phones.
+
 Capabilities use plugin bundles as their top-level rows, expanding to tools and skills with integration details such as MCP or HTTP API beneath them. Account connections supply access separately. The development preview keeps saved configuration and drafts per agent while navigating; reloading resets its illustrative data. This UI classification does not define the runtime plugin schema.
 
 Agent profiles use Overview / Configure / Automations / Activity tabs under a persistent identity header. Configuration is an in-page document of sections; schedules and repository policies live in Automations. Hash links select pages or focus their relevant sections. Policy drafts survive tab changes within the agent. The former customization drawer is retired.

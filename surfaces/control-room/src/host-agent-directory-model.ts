@@ -9,7 +9,6 @@ export type DirectorySummary = {
   tone: DirectoryTone; status: string; title: string; detail: string; workHref: string;
   automated: boolean; automationCount: number;
   next: { title: string; detail: string; href: string };
-  day?: { bins: DirectoryTone[]; completed: number; attention: number; total: number };
 };
 
 export function directorySummary(host: HostSnapshot, agent: Agent, example?: AgentExample): DirectorySummary {
@@ -40,14 +39,9 @@ function exampleSummary(agentId: string, example: AgentExample): DirectorySummar
   const interrupted = today.filter(run => run.status === "interrupted");
   const waiting = today.filter(run => run.status === "waiting");
   const focus = interrupted[0] ?? waiting[0] ?? today[0];
-  const completed = today.filter(run => run.status === "completed").length;
   const upcoming = example.automations.filter(item => item.enabled).flatMap(item => scheduledTimes(item, NOW, NOW + 8 * DAY).map(at => ({ item, at }))).sort((a, b) => a.at - b.at)[0];
   const listeners = example.automations.filter(item => item.enabled && item.schedule.kind === "event").length;
   const paused = example.automations.filter(item => !item.enabled).length;
-  const bins = Array.from({ length: 24 }, (_, hour): DirectoryTone => {
-    const runs = today.filter(run => Math.floor((run.started - TODAY) / (DAY / 24)) === hour);
-    return runs.some(run => run.status === "interrupted") ? "interrupted" : runs.some(run => run.status === "waiting") ? "waiting" : runs.length ? "completed" : "quiet";
-  });
   return {
     tone: focus?.status ?? "quiet", status: focus ? statusLabel[focus.status] : "No activity today",
     title: focus?.title ?? "No work recorded today",
@@ -59,6 +53,5 @@ function exampleSummary(agentId: string, example: AgentExample): DirectorySummar
       detail: upcoming ? upcoming.item.rule : listeners ? `${listeners} event ${listeners === 1 ? "trigger" : "triggers"} enabled` : paused ? `${paused} paused · History is kept` : "Starts when you assign work.",
       href: agentHref(agentId, "automations"),
     },
-    day: { bins, completed, attention: interrupted.length + waiting.length, total: today.length },
   };
 }

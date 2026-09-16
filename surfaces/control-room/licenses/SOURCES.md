@@ -32,3 +32,14 @@ The Agents directory refresh uses the existing shadcn Item/Avatar/Tooltip
 primitives. Efferd's https://efferd.com/view/dashboard-14 was inspected as a
 reference for compact activity summaries; no source or assets from that block
 were copied. Its billing charts and card grid are not part of this implementation.
+
+The development-only agent-space map uses `@xyflow/react` 12.11.6 as a package
+for pan, pinch, viewport fitting, and node rendering. MIT license, upstream
+https://github.com/xyflow/xyflow at tag `@xyflow/react@12.11.6`, source commit
+`0a1f9575b25679f2880175de8d3eae21aedde921`. Its notice ships at
+`public/licenses/xyflow-MIT.txt`. The scene, contours, and nodes are Renoa code;
+no example source was copied. The map is excluded from production builds.
+
+TypeScript retains strict checking, including `exactOptionalPropertyTypes`,
+for application source. `skipLibCheck` avoids errors inside xyflow's published
+generic declarations under that flag; it does not suppress application errors.

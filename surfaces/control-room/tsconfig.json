@@ -25,6 +25,7 @@
       ]
     },
     "strict": true,
+    "skipLibCheck": true,
     "target": "ES2024",
     "types": [
       "vite/client"

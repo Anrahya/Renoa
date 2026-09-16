@@ -9,7 +9,6 @@ const host: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], rou
 describe("agent directory observations", () => {
   it("keeps missing live telemetry explicit instead of substituting preview activity", () => {
     const summary = directorySummary(host, agent);
-    expect(summary.day).toBeUndefined();
     expect(summary.tone).toBe("quiet");
     expect(summary.title).toBe("No unfinished work recorded");
     expect(summary.next.title).toBe("No scheduled work");
@@ -21,14 +20,11 @@ describe("agent directory observations", () => {
     }, agent);
     expect(summary.tone).toBe("interrupted");
     expect(summary.title).toBe("1 record needs attention");
-    expect(summary.day).toBeUndefined();
   });
   it("keeps the interruption visible when another run completes in its hour", () => {
     const example = agentExample(agent.id);
     const summary = directorySummary(host, agent, example);
-    expect(summary.day).toMatchObject({ total: 6, completed: 3, attention: 3 });
-    expect(summary.day?.bins[10]).toBe("interrupted");
-    expect(summary.day?.bins[11]).toBe("waiting");
+    expect(summary.tone).toBe("interrupted");
     expect(summary.workHref).toBe("#agent/agent/activity/run-107");
     expect(example.executions.some(run => summary.workHref.endsWith(run.id))).toBe(true);
   });
@@ -40,7 +36,6 @@ describe("agent directory observations", () => {
     expect(paused.next.title).toBe("Automations paused");
     expect(paused.automated).toBe(true);
     expect(paused.tone).toBe(enabled.tone);
-    expect(paused.day).toEqual(enabled.day);
   });
   it("opens only records available in that agent's profile", () => {
     for (const id of ["20340f86-7f10-4c52-8757-c3124d9af0e1", "42357f5e-ae1f-0802-5218-d7f65a043086", "c8a63c3b-166d-45a0-9324-2b9db6f3d2df"]) {

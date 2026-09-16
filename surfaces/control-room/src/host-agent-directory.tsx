@@ -7,35 +7,23 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemContent, ItemGroup, ItemMedia } from "@/components/ui/item";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { Agent, HostSnapshot } from "./host-contract";
 import { agentHref, displayName, isEarlier } from "./host-presentation";
 import { portraitForAgent } from "./host-identity";
 import { directorySummary, type DirectorySummary } from "./host-agent-directory-model";
-import { workDesignPreview } from "./agent-work-preview/mode";
-import { usePreviewWork } from "./agent-work-preview/work-state";
-import { useSavedPreviewConfiguration } from "./agent-work-preview/configuration-state";
-import { cn } from "@/lib/utils";
 
 type Filter = "all" | "attention" | "automated";
 const needsAttention = (summary: DirectorySummary) => summary.tone === "interrupted" || summary.tone === "waiting";
 
-export function HostAgentDirectory({ host, preview = false, missingAgent = false }: { host: HostSnapshot; preview?: boolean; missingAgent?: boolean }) {
+export function HostAgentDirectory({ host, missingAgent = false }: { host: HostSnapshot; missingAgent?: boolean }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [earlierOpen, setEarlierOpen] = useState(false);
-  const designPreview = workDesignPreview(preview);
-  const { exampleFor } = usePreviewWork();
-  const savedConfiguration = useSavedPreviewConfiguration();
   const earlier = host.agents.filter(isEarlier);
-  const summaries = host.agents.filter(agent => !isEarlier(agent)).map(agent => {
-    const configuration = designPreview ? savedConfiguration(agent.id, displayName(agent.name)) : null;
-    return { agent, name: configuration?.name ?? displayName(agent.name),
-      subtitle: configuration?.model ?? "Host-owned agent",
-      summary: directorySummary(host, agent, designPreview ? exampleFor(agent.id) : undefined),
-    };
-  });
+  const summaries = host.agents.filter(agent => !isEarlier(agent)).map(agent => ({
+    agent, name: displayName(agent.name), summary: directorySummary(host, agent),
+  }));
   const attention = summaries.filter(({ summary }) => needsAttention(summary)).length;
   const automated = summaries.filter(({ summary }) => summary.automated).length;
   const term = query.trim().toLocaleLowerCase();
@@ -48,7 +36,6 @@ export function HostAgentDirectory({ host, preview = false, missingAgent = false
     <div className="directory-heading">
       <div className="flex flex-col gap-2"><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold tracking-tight">Agents</h1><Badge variant="secondary">{summaries.length}</Badge></div>
         <p className="text-sm text-muted-foreground">See what needs you and what happens next.</p></div>
-      {designPreview && <span className="directory-date">17 September <span>Today · Asia/Kolkata</span></span>}
     </div>
     {missingAgent && <Alert><AlertDescription>That agent is not in this Host snapshot. Choose an available agent below.</AlertDescription></Alert>}
     <Tabs value={filter} onValueChange={value => setFilter(value as Filter)} className="gap-2">
@@ -65,7 +52,7 @@ export function HostAgentDirectory({ host, preview = false, missingAgent = false
         </InputGroup>
       </div>
       <TabsContent value={filter}>
-        {visible.length > 0 ? <ItemGroup aria-label="Agents" className="gap-0">{visible.map(({ agent, name, subtitle, summary }) => <DirectoryRow key={agent.id} {...{ agent, name, subtitle, summary }} />)}</ItemGroup> : <Empty className="min-h-64 border border-dashed">
+        {visible.length > 0 ? <ItemGroup aria-label="Agents" className="gap-0">{visible.map(({ agent, name, summary }) => <DirectoryRow key={agent.id} {...{ agent, name, summary }} />)}</ItemGroup> : <Empty className="min-h-64 border border-dashed">
           <EmptyHeader><EmptyMedia variant="icon"><CirclesThree /></EmptyMedia>
             <EmptyTitle>{term ? "No matching agents" : filter === "attention" ? "No agents need attention" : filter === "automated" ? "No automations assigned" : "No named agents yet"}</EmptyTitle>
             <EmptyDescription>{term ? "Try another name, profile, or agent ID." : filter === "attention" ? "There are no attention records for these agents." : filter === "automated" ? "Agents with schedules or event triggers appear here, including paused ones." : earlier.length ? "Earlier identities are available below." : "Agents will appear here when they are registered on your Host."}</EmptyDescription>
@@ -74,8 +61,7 @@ export function HostAgentDirectory({ host, preview = false, missingAgent = false
         </Empty>}
       </TabsContent>
     </Tabs>
-    <div className="directory-footer"><p role="status">{visible.length} of {summaries.length} agents · {designPreview ? "Example activity" : "Status reflects recorded work"}</p>
-      {designPreview && <div className="directory-legend"><span><i data-tone="completed" />Completed</span><span><i data-tone="waiting" />Needs input</span><span><i data-tone="interrupted" />Interrupted</span></div>}
+    <div className="directory-footer"><p role="status">{visible.length} of {summaries.length} agents · Status reflects recorded work</p>
     </div>
     {earlier.length > 0 && <details open={earlierOpen} onToggle={event => setEarlierOpen(event.currentTarget.open)} className="border-t pt-5">
       <summary className="text-sm text-muted-foreground">Earlier identities <span className="ml-2">{visibleEarlier.length}</span></summary>
@@ -86,11 +72,11 @@ export function HostAgentDirectory({ host, preview = false, missingAgent = false
   </main>;
 }
 
-function DirectoryRow({ agent, name, subtitle, summary }: { agent: Agent; name: string; subtitle: string; summary: DirectorySummary }) {
+function DirectoryRow({ agent, name, summary }: { agent: Agent; name: string; summary: DirectorySummary }) {
   return <Item role="listitem" className="directory-agent" data-tone={summary.tone}>
     <ItemMedia className="directory-identity"><a href={agentHref(agent.id)} className="directory-agent-link">
       <Avatar size="lg"><AvatarImage src={portraitForAgent(agent.id, agent.name)} alt="" /><AvatarFallback><CirclesThree aria-hidden="true" /></AvatarFallback></Avatar>
-      <span><h2>{name}</h2><span className="directory-profile" title={agent.profile}>{subtitle}</span></span>
+      <span><h2>{name}</h2><span className="directory-profile" title={agent.profile}>Host-owned agent</span></span>
       <CaretRight aria-hidden="true" />
     </a></ItemMedia>
     <ItemContent className="directory-work">
@@ -98,16 +84,6 @@ function DirectoryRow({ agent, name, subtitle, summary }: { agent: Agent; name: 
       <a className="directory-work-link" href={summary.workHref}><strong>{summary.title}</strong><p>{summary.detail}</p></a>
       <a className="directory-next" href={summary.next.href}><Clock size={16} aria-hidden="true" /><span><strong>{summary.next.title}</strong><small>{summary.next.detail}</small></span><CaretRight size={14} aria-hidden="true" /></a>
     </ItemContent>
-    <div className="directory-day">{summary.day ? <DayStrip name={name} agentId={agent.id} day={summary.day} /> : <a href={agentHref(agent.id, "automations")} className="directory-observation"><span>Automations</span><strong>{summary.automationCount}</strong><span>Schedules & event triggers</span></a>}</div>
+    <div className="directory-day"><a href={agentHref(agent.id, "automations")} className="directory-observation"><span>Automations</span><strong>{summary.automationCount}</strong><span>Schedules & event triggers</span></a></div>
   </Item>;
-}
-
-function DayStrip({ name, agentId, day }: { name: string; agentId: string; day: NonNullable<DirectorySummary["day"]> }) {
-  const label = `${name} today: ${day.total} ${day.total === 1 ? "run" : "runs"}, ${day.completed} completed, ${day.attention} ${day.attention === 1 ? "needs" : "need"} attention. Open activity`;
-  return <Tooltip delayDuration={150}><TooltipTrigger asChild><a className="directory-day-link" href={agentHref(agentId, "activity")} aria-label={label}>
-    <span className="directory-day-heading"><strong>Today’s work</strong><span>{day.total} {day.total === 1 ? "run" : "runs"}<ArrowRight size={12} /></span></span>
-    <span className="directory-hour-strip" aria-hidden="true">{day.bins.map((tone, hour) => <i key={hour} data-tone={tone} className={cn(hour >= 12 && "directory-hour-future")} />)}<span className="directory-now" style={{ left: `${11.5 / 24 * 100}%` }} /></span>
-    <span className="directory-hours" aria-hidden="true"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></span>
-    <span className="directory-outcomes">{day.completed} completed{day.attention > 0 && <span> · {day.attention} {day.attention === 1 ? "needs" : "need"} attention</span>}</span>
-  </a></TooltipTrigger><TooltipContent className="flex max-w-72 flex-col gap-1"><strong>{day.completed} completed · {day.attention} {day.attention === 1 ? "needs" : "need"} attention</strong><span>Runs are grouped by their start hour. Interruptions stay visible when outcomes overlap.</span><span>Observation: 11:30 · Open activity for individual runs.</span></TooltipContent></Tooltip>;
 }
