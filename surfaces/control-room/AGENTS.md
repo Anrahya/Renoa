@@ -10,6 +10,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Renoa control-room decisions
 
+- The owner preferred the second 2026-09-17 visual concept (overlapping organic agent spaces, generated image `exec-82875198-e115-4643-ad58-617f60a26edc.png`) and proposed extending it into a zoomable nebula-like map with managed agents, shared plugin/MCP capability regions, and restrained liquid motion. Explore how this remains understandable around 50 agents and on phones. This is a feasibility/design direction, not a new runtime ownership or access contract; creation, management, and shared capability access must remain distinguishable.
+
 - Later on 2026-09-17 the owner rejected the refreshed horizontal agent rows and requested a substantially more visual, relationship-led direction. Remove model names from the directory; model choice belongs in Configure. Represent the owner-described RC → X Desk management relationship in the design, while distinguishing creation provenance from control and leaving independent agents independent. Keep Agents separate from System: the Host and kernel are foundational system components, not agents. Explore a new visual composition before committing to another directory implementation.
 
 - On 2026-09-17 the owner requested an Agents directory refresh using the profile workspace’s data presentation and useful shadcn/Efferd patterns. Continue one bounded page at a time: Agents directory, Connections, Work, then System. Keep directory summaries consistent with the agent they open, including tab-local configuration and automation edits.
