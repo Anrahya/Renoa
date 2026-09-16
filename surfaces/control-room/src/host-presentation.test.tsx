@@ -54,6 +54,11 @@ describe("Host navigation and rendered controls", () => {
     vi.stubGlobal("window", { location: { hash, search } });
     return renderToStaticMarkup(<HostPanelView preview={preview} host={{ snapshot, status: "connected", receivedAt: null, error: null, refresh() {}, lock() {} }} />);
   }
+  it("shows directory example telemetry only in the explicit development preview", () => {
+    expect(render("#agents", host, true, "?preview")).toContain("Today’s work");
+    expect(render("#agents", host, false, "?preview")).not.toContain("Today’s work");
+    expect(render("#agents", host, true)).not.toContain("Today’s work");
+  });
   it("handles direct agent links and malformed locations without breaking the Host", () => {
     expect(hostRoute("#agent/reviewer")).toEqual({ view: "agents", agent: "reviewer", section: "overview" });
     expect(hostRoute("#agent/reviewer/identity")).toEqual({ view: "agents", agent: "reviewer", section: "identity" });

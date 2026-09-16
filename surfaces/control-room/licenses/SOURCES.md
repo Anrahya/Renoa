@@ -27,3 +27,8 @@ The font license ships at `public/licenses/geist-OFL.txt`.
 On 2026-09-17, `native-select.tsx` was added through the same shadcn CLI and
 radix-nova registry. Observed upstream commit:
 `f5bb039c749afd2d111ad970dfaa9ab30bd90b3b`; MIT notice as above.
+
+The Agents directory refresh uses the existing shadcn Item/Avatar/Tooltip
+primitives. Efferd's https://efferd.com/view/dashboard-14 was inspected as a
+reference for compact activity summaries; no source or assets from that block
+were copied. Its billing charts and card grid are not part of this implementation.

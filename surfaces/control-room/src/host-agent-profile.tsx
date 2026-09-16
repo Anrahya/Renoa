@@ -16,6 +16,7 @@ import { ProfileAutomations, ProfileActivity } from "./host-agent-profile-detail
 import "./styles/host-agent-profile.css";
 import { AgentWorkPreview } from "./agent-work-preview/preview";
 import { usePreviewConfiguration } from "./agent-work-preview/configuration-state";
+import { usePreviewWork } from "./agent-work-preview/work-state";
 import { workDesignPreview } from "./agent-work-preview/mode";
 
 const pages: { value: AgentPage; label: string }[] = [
@@ -26,6 +27,7 @@ const pages: { value: AgentPage; label: string }[] = [
 export function HostAgentProfile({ host, agent, section, controls, execution }: { host: HostSnapshot; agent: Agent; section: AgentSection; controls: Controls; execution: string | undefined }) {
   const page = agentPage(section);
   const designPreview = workDesignPreview(controls.preview);
+  const example = usePreviewWork().exampleFor(agent.id);
   const configuration = usePreviewConfiguration(agent.id, displayName(agent.name));
   const agentName = designPreview ? configuration.saved.name : displayName(agent.name);
   const inspecting = designPreview && execution !== undefined;
@@ -55,8 +57,8 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
         <span className="text-xs text-muted-foreground">Renoa agent · Cloud Host</span>
         <h1 className="break-words text-3xl font-semibold tracking-tight">{agentName}</h1>
         <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Host-owned</Badge>
-          {data.activity.tone === "attention" && <Badge variant="destructive">Needs attention</Badge>}
-          {data.activity.tone === "pending" && <Badge variant="secondary">Unfinished work</Badge>}
+          {(designPreview ? example.executions.some(run => run.status !== "completed") : data.activity.tone === "attention") && <Badge variant="destructive">Needs attention</Badge>}
+          {!designPreview && data.activity.tone === "pending" && <Badge variant="secondary">Unfinished work</Badge>}
         </div>
       </div>
       <Button variant="outline" className="col-span-2 w-fit sm:col-span-1" onClick={() => navigate("configure")}><SlidersHorizontal data-icon="inline-start" />Customize</Button>

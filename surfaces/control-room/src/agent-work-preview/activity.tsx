@@ -1,12 +1,13 @@
 import { CaretRight, Check, WarningCircle, Hourglass } from "@phosphor-icons/react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { date, duration, executions, statusLabel, time, TODAY, totalSeconds, type Execution } from "./data";
+import { date, duration, statusLabel, time, TODAY, totalSeconds, type Execution } from "./data";
 const statusIcons = { completed: Check, interrupted: WarningCircle, waiting: Hourglass };
-export function ActivityExplorer({ openRun, filter, setFilter }: { openRun: (id: string, element: HTMLElement) => void; filter: string; setFilter: (value: string) => void }) {
+export function ActivityExplorer({ executions, openRun, filter, setFilter }: { executions: Execution[]; openRun: (id: string, element: HTMLElement) => void; filter: string; setFilter: (value: string) => void }) {
+  const lastMessage = executions.filter(run => run.source === "Direct message").sort((a, b) => b.started - a.started)[0];
   const visible = executions.filter(run => filter === "all" || (filter === "attention" ? run.status !== "completed" : run.status === "completed")).sort((a, b) => b.started - a.started);
   return <div className="flex flex-col gap-6">
-    <div className="work-heading"><div><h2>Activity</h2><p>The work, its outcome, and the record behind it.</p></div><span className="work-caption">Last message received · 11:12</span></div>
+    <div className="work-heading"><div><h2>Activity</h2><p>The work, its outcome, and the record behind it.</p></div><span className="work-caption">{lastMessage ? `Last message received · ${time(lastMessage.started)}` : "No direct messages recorded"}</span></div>
     <Tabs value={filter} onValueChange={setFilter} className="gap-5">
       <div className="max-w-full overflow-x-auto pb-1"><TabsList variant="line" aria-label="Filter activity"><TabsTrigger value="all">All <span className="work-filter-count">{executions.length}</span></TabsTrigger><TabsTrigger value="attention">Needs attention <span className="work-filter-count">{executions.filter(run => run.status !== "completed").length}</span></TabsTrigger><TabsTrigger value="completed">Completed</TabsTrigger></TabsList></div>
       <TabsContent value={filter}><div>{[TODAY, TODAY - 86400000].map(day => {

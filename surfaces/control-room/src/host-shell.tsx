@@ -1,3 +1,4 @@
+import { useSavedPreviewConfiguration } from "./agent-work-preview/configuration-state";
 import { useEffect, type ReactNode } from "react";
 import { ArrowClockwise, ArrowSquareOut, CirclesThree, Cube, House, Plugs, SignOut, Stack } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +26,9 @@ export function HostShell({ route, snapshot, status, preview, receivedAt, refres
   route: HostRoute; snapshot: HostSnapshot; status: HostStatus; preview: boolean; designPreview?: boolean;
   receivedAt: number | null; refresh: () => void; logout: () => void; children: ReactNode;
 }) {
-  const name = snapshot.agents.find(agent => agent.id === route.agent)?.name;
+  const savedConfiguration = useSavedPreviewConfiguration();
+  const agent = snapshot.agents.find(agent => agent.id === route.agent);
+  const name = agent ? designPreview ? savedConfiguration(agent.id, displayName(agent.name)).name : agent.name : undefined;
   const label = destinations.find(item => item.view === route.view)?.label;
   return <div className="renoa-ui dark min-h-svh">
     <a className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-background focus:p-3" href="#host-main" onClick={event => {
@@ -34,7 +37,7 @@ export function HostShell({ route, snapshot, status, preview, receivedAt, refres
       if (main) { main.tabIndex = -1; main.focus(); }
     }}>Skip to content</a>
     <TooltipProvider><SidebarProvider>
-      <HostSidebar {...{ route, snapshot, status, preview, receivedAt, logout }} />
+      <HostSidebar {...{ route, snapshot, status, preview, designPreview, receivedAt, logout }} />
       <SidebarInset className="min-w-0">
         <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4 md:px-6">
           <SidebarTrigger />
@@ -53,10 +56,12 @@ export function HostShell({ route, snapshot, status, preview, receivedAt, refres
   </div>;
 }
 
-function HostSidebar({ route, snapshot, status, preview, receivedAt, logout }: {
-  route: HostRoute; snapshot: HostSnapshot; status: HostStatus; preview: boolean;
+function HostSidebar({ route, snapshot, status, preview, designPreview, receivedAt, logout }: {
+  route: HostRoute; snapshot: HostSnapshot; status: HostStatus; preview: boolean; designPreview: boolean;
   receivedAt: number | null; logout: () => void;
 }) {
+  const savedConfiguration = useSavedPreviewConfiguration();
+  const nameFor = (id: string, name: string) => designPreview ? savedConfiguration(id, displayName(name)).name : displayName(name);
   const { setOpenMobile } = useSidebar();
   const agents = snapshot.agents.filter(agent => !isEarlier(agent));
   useEffect(() => { setOpenMobile(false); }, [route.view, route.agent, setOpenMobile]);
@@ -81,8 +86,8 @@ function HostSidebar({ route, snapshot, status, preview, receivedAt, logout }: {
       {agents.length > 0 && <SidebarGroup>
         <SidebarGroupLabel>Agents</SidebarGroupLabel>
         <SidebarMenu>{agents.map(agent => <SidebarMenuItem key={agent.id}>
-          <SidebarMenuButton asChild tooltip={displayName(agent.name)} isActive={route.agent === agent.id}>
-            <a href={agentHref(agent.id)} onClick={() => setOpenMobile(false)}><CirclesThree /><span>{displayName(agent.name)}</span></a>
+          <SidebarMenuButton asChild tooltip={nameFor(agent.id, agent.name)} isActive={route.agent === agent.id}>
+            <a href={agentHref(agent.id)} onClick={() => setOpenMobile(false)}><CirclesThree /><span>{nameFor(agent.id, agent.name)}</span></a>
           </SidebarMenuButton>
         </SidebarMenuItem>)}</SidebarMenu>
       </SidebarGroup>}
@@ -94,8 +99,8 @@ function HostSidebar({ route, snapshot, status, preview, receivedAt, logout }: {
       </SidebarMenu>
       <Separator />
       <div className="flex flex-col gap-1 px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-        <span>{preview ? "Saved observation" : status === "connected" ? "Connected to your Host" : "Showing saved records"}</span>
-        {receivedAt !== null && <time dateTime={new Date(receivedAt).toISOString()}>{timestamp(receivedAt)}</time>}
+        <span>{designPreview ? "Example activity · 17 September" : preview ? "Saved observation" : status === "connected" ? "Connected to your Host" : "Showing saved records"}</span>
+        {!designPreview && receivedAt !== null && <time dateTime={new Date(receivedAt).toISOString()}>{timestamp(receivedAt)}</time>}
         <details><summary>Host identity</summary><code className="mt-2 block break-all">{snapshot.host_id}</code></details>
       </div>
     </SidebarFooter>

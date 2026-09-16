@@ -10,6 +10,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Renoa control-room decisions
 
+- On 2026-09-17 the owner requested an Agents directory refresh using the profile workspace’s data presentation and useful shadcn/Efferd patterns. Continue one bounded page at a time: Agents directory, Connections, Work, then System. Keep directory summaries consistent with the agent they open, including tab-local configuration and automation edits.
+
 - On 2026-09-17 the owner locked the agent-workspace direction and requested small, understandable commits before moving to other pages. Capabilities are organized by plugin bundles, with tools/skills and MCP/API implementation details nested inside; account connections remain distinct. The preview illustrates this classification without defining a backend plugin contract. Configuration drafts and saved values must survive visits to the Host library and other agents. Timeline selections reveal their details on phones. Finish the remaining design slices before backend integration, keeping motion restrained and interaction-led.
 
 - On 2026-09-17 the owner approved the execution/Overview direction and requested a focused Configure pass in the same shadcn style. On failed runs, initially select and frame the interruption while retaining the whole-run overview. Today’s work needs hover/focus detail; upcoming timing lines can use restrained color. Prioritize phone usability, persistent capability checkboxes, and subtle state-driven motion with reduced-motion support. Avoid decorative particle loops or a new visual system.

@@ -32,3 +32,9 @@ export function usePreviewConfiguration(agentId: string, name: string) {
 }
 
 export type ConfigurationEditor = ReturnType<typeof usePreviewConfiguration>;
+
+export function useSavedPreviewConfiguration() {
+  const context = useContext(PreviewConfigurations);
+  if (!context) throw new Error("Agent configuration preview needs its Host provider");
+  return (agentId: string, name: string) => context.entries[agentId]?.saved ?? initialConfiguration(name);
+}

@@ -6,13 +6,15 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { automations, executions, DAY, TODAY, NOW, date, time, scheduledTimes, statusLabel, type Automation, type Execution } from "./data";
+import { DAY, TODAY, NOW, date, time, scheduledTimes, statusLabel, type Automation, type Execution } from "./data";
 
-type Props = {
+import type { AgentExample } from "./agent-example";
+
+type Props = AgentExample & {
   enabled: Record<string, boolean>; setEnabled: (id: string, value: boolean) => void;
   selected: string | null; select: (id: string | null) => void; openRun: (id: string, element: HTMLElement) => void;
 };
-export function AutomationTimeline({ enabled, setEnabled, selected, select, openRun }: Props) {
+export function AutomationTimeline({ automations, executions, enabled, setEnabled, selected, select, openRun }: Props) {
   const [range, setRange] = useState("day");
   const [offset, setOffset] = useState(0);
   const [selectedTime, setSelectedTime] = useState<{ id: string; timestamp: number } | null>(null);
@@ -77,13 +79,13 @@ export function AutomationTimeline({ enabled, setEnabled, selected, select, open
         <div className="work-legend"><span><i className="work-key completed" />Completed</span><span><i className="work-key interrupted" />Interrupted</span><span><i className="work-key scheduled" />Scheduled</span><span className="work-caption work-scroll-hint">Swipe to explore the timeline</span></div>
       </TabsContent>
     </Tabs>
-    {current ? <AutomationInspection automation={current} enabled={enabled[current.id] ?? false} selectedTime={selectedTime?.id === current.id ? selectedTime.timestamp : null} close={() => select(null)} openRun={openRun} /> : <div className="work-timeline-hint"><Clock size={16} /><p>Select an occurrence to follow its work. Select an automation to see its instructions and timing.</p></div>}
+    {current ? <AutomationInspection executions={executions} automation={current} enabled={enabled[current.id] ?? false} selectedTime={selectedTime?.id === current.id ? selectedTime.timestamp : null} close={() => select(null)} openRun={openRun} /> : <div className="work-timeline-hint"><Clock size={16} /><p>Select an occurrence to follow its work. Select an automation to see its instructions and timing.</p></div>}
   </div>;
 }
 function TimelineMark({ position, kind, square, label, onClick, runId, selected }: { runId?: string; selected?: boolean; position: number; kind: string; square: boolean; label: string; onClick: (event: MouseEvent<HTMLButtonElement>) => void }) {
   return <Tooltip><TooltipTrigger asChild><button data-run-id={runId} className="work-mark-hit" style={{ left: `${position}%` }} aria-label={label} aria-pressed={selected} onClick={onClick}><span className={cn("work-mark", kind, square && "work-mark-square")} /></button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
-function AutomationInspection({ automation, enabled, selectedTime, close, openRun }: { automation: Automation; enabled: boolean; selectedTime: number | null; close: () => void; openRun: (id: string, element: HTMLElement) => void }) {
+function AutomationInspection({ executions, automation, enabled, selectedTime, close, openRun }: { executions: Execution[]; automation: Automation; enabled: boolean; selectedTime: number | null; close: () => void; openRun: (id: string, element: HTMLElement) => void }) {
   const upcoming = scheduledTimes(automation, NOW, NOW + 8 * DAY).slice(0, 3);
   const recent = executions.filter(run => run.automationId === automation.id).slice(0, 3);
   return <section id="automation-inspection" className="work-inspection" aria-label={`${automation.name} details`}>
