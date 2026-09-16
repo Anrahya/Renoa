@@ -103,7 +103,7 @@ function AgentMap({ scene }: { scene: AgentScene }) {
   const matchIds = new Set(matches.map(agent => agent.id));
   const nodes: Node[] = [
     ...scene.regions.map((region): RegionNode => ({ id: `region-${region.id}`, type: "region", position: { x: region.bounds.x, y: region.bounds.y },
-      width: region.bounds.width, height: region.bounds.height, data: { region, focus: focusRegion }, selectable: false, draggable: false, zIndex: distant ? 3 : 0 })),
+      width: region.bounds.width, height: region.bounds.height, data: { region, moving: motionAllowed && !paused, focus: focusRegion }, selectable: false, draggable: false, zIndex: distant ? 3 : 0 })),
     ...scene.agents.map((agent): PortraitNode => {
       const parent = scene.agents.find(item => item.id === agent.managerId);
       const children = scene.agents.filter(item => item.managerId === agent.id).length;
@@ -135,7 +135,7 @@ function AgentMap({ scene }: { scene: AgentScene }) {
     }}>
       {scene.agents.length ? <ReactFlow nodes={nodes} nodeTypes={spaceNodeTypes} fitView fitViewOptions={initialFit} colorMode="dark"
         minZoom={.12} maxZoom={1.7} nodesDraggable={false} nodesConnectable={false} nodesFocusable={false} edgesFocusable={false} elementsSelectable={false}
-        deleteKeyCode={null} selectionKeyCode={null} zoomOnDoubleClick={false} zoomOnScroll={false} zoomOnPinch preventScrolling={false}
+        deleteKeyCode={null} selectionKeyCode={null} zoomOnDoubleClick={false} zoomOnScroll zoomOnPinch preventScrolling
         attributionPosition="bottom-left" aria-label="Explore agent spaces" onPaneClick={() => { setQuery(""); setPluginId(""); }}>
         <Background gap={28} size={.7} color="#ffffff19" />
         {pluginId && members.length > 0 && <ViewportPortal><svg className="space-shared-field" aria-hidden="true"><path d={regionPath(members.map(agent => agent.position), 128)} /></svg>
@@ -148,7 +148,7 @@ function AgentMap({ scene }: { scene: AgentScene }) {
       const count = pluginMembers(scene.agents, plugin.id).length;
       return <button key={plugin.id} className="space-plugin" data-active={pluginId === plugin.id} aria-pressed={pluginId === plugin.id} aria-label={`${plugin.name}, ${count} agents`} onClick={() => selectPlugin(plugin.id)}><i aria-hidden="true" />{plugin.name}<span>{count}</span></button>;
     })}</div></div>
-    <div className="space-caption"><span>{pluginId ? "Shared access crosses agent spaces. It doesn’t imply shared context." : "Regions show management. Select a plugin to reveal shared access."}</span><span>Drag to pan · Pinch to zoom</span></div>
+    <div className="space-caption"><span>{pluginId ? "Shared access crosses agent spaces. It doesn’t imply shared context." : "Regions show management. Select a plugin to reveal shared access."}</span><span>Drag to pan · Scroll or pinch to zoom</span></div>
     <AgentSelection agent={scene.agents.find(agent => agent.id === selected)} scene={scene} pluginId={pluginId} onSelect={focusAgent} />
   </>;
 }

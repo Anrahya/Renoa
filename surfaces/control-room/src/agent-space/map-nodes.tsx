@@ -3,9 +3,10 @@ import { useStore, type Node, type NodeProps } from "@xyflow/react";
 import { WarningCircle } from "@phosphor-icons/react";
 import { portraitForAgent } from "../host-identity";
 import { regionPath, type AgentRegion, type PlacedAgent } from "./scene";
+import { LiquidRegion } from "./liquid-region";
 
 export type PortraitNode = Node<{ agent: PlacedAgent; active: boolean; dimmed: boolean; crowded: boolean; relationship: string; choose: (id: string) => void }, "portrait">;
-export type RegionNode = Node<{ region: AgentRegion; focus: (id: string) => void }, "region">;
+export type RegionNode = Node<{ region: AgentRegion; moving: boolean; focus: (id: string) => void }, "region">;
 export const isDistant = (state: { transform: [number, number, number] }) => state.transform[2] < .42;
 
 export const AgentPortrait = memo(function AgentPortrait({ data }: NodeProps<PortraitNode>) {
@@ -30,11 +31,7 @@ export const ManagementRegion = memo(function ManagementRegion({ data }: NodePro
   const path = useMemo(() => regionPath(region.members.map(agent => ({ x: agent.position.x - region.bounds.x, y: agent.position.y - region.bounds.y }))), [region]);
   const attention = region.members.filter(agent => agent.summary?.tone === "interrupted" || agent.summary?.tone === "waiting").length;
   return <div className="space-region" style={{ "--region-color": region.color, width: region.bounds.width, height: region.bounds.height } as CSSProperties}>
-    <svg viewBox={`0 0 ${region.bounds.width} ${region.bounds.height}`} aria-hidden="true" className="space-contours">
-      <path className="space-region-fill" d={path} />
-      <path className="space-contour space-contour-outer" d={path} />
-      <path className="space-contour space-contour-inner" d={path} />
-    </svg>
+    <LiquidRegion path={path} width={region.bounds.width} height={region.bounds.height} identity={region.id} moving={data.moving} />
     <button className="space-region-label nodrag nopan" data-region-id={region.id} data-distant={distant} data-far={zoom < .2} data-independent={region.members.length === 1} onClick={() => focus(region.id)}
       style={{ transform: `translateX(-50%) scale(${Math.max(1, 1 / zoom)})` }}
       aria-label={`Focus ${region.name}’s space, ${region.members.length} ${region.members.length === 1 ? "agent" : "agents"}${attention ? `, ${attention} ${attention === 1 ? "needs" : "need"} attention` : ""}`}>

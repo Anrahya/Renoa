@@ -150,7 +150,9 @@ navigation; zoomed-out groups show counts and retained attention. Phones reflow
 the small scene. A labelled 50-agent example exercises larger layouts without
 creating Host records. This view is DEV-only until relationship and capability
 contracts are available; live observations retain their factual directory.
-Contour motion stops on pause, reduced motion, hidden/offscreen views, and phones.
+Bubble bodies morph and float, with light moving inside their contours; portraits
+and labels remain fixed. Motion stops on pause, reduced motion, or hidden/offscreen
+views, at every screen width. Mouse-wheel zoom applies while over the map.
 
 Capabilities use plugin bundles as their top-level rows, expanding to tools and skills with integration details such as MCP or HTTP API beneath them. Account connections supply access separately. The development preview keeps saved configuration and drafts per agent while navigating; reloading resets its illustrative data. This UI classification does not define the runtime plugin schema.
 

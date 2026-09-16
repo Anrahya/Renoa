@@ -62,7 +62,7 @@ export function pluginMembers(agents: PlacedAgent[], pluginId: string): PlacedAg
 }
 
 // A smooth hull of the members' occupied space. Geometry describes membership;
-// the two moving contour copies never move the agents or their hit targets.
+// animating the region never moves the agents or their hit targets.
 export function regionPath(points: Point[], radius = 148): string {
   if (!points.length) return "";
   const samples = points.flatMap(({ x, y }) => Array.from({ length: 12 }, (_, i) => {
