@@ -144,8 +144,9 @@ components:
 
 The Agents design preview is a navigable map of management spaces and shared
 plugin access. Fixed portraits sit inside organic contours; selecting a plugin
-highlights its member agents across those spaces. The selected agent's work and
-profile link appear below the map. Fit, search, pan, pinch, and group focus provide
+highlights its member agents across those spaces. The map uses the available
+viewport; portraits open profiles directly, without a duplicate detail block.
+Fit, search, pan, pinch, and group focus provide
 navigation; zoomed-out groups show counts and retained attention. Phones reflow
 the small scene. A labelled 50-agent example exercises larger layouts without
 creating Host records. This view is DEV-only until relationship and capability

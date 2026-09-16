@@ -11,7 +11,6 @@ import { usePreviewWork } from "../agent-work-preview/work-state";
 import type { HostSnapshot } from "../host-contract";
 import { agentHref, displayName, isEarlier } from "../host-presentation";
 import { directorySummary } from "../host-agent-directory-model";
-import { AgentSelection } from "./selection";
 import { createScene, pluginMembers, previewManager, regionPath, type AgentScene } from "./scene";
 import { isDistant, spaceNodeTypes, type PortraitNode, type RegionNode } from "./map-nodes";
 import "@xyflow/react/dist/style.css";
@@ -53,7 +52,7 @@ export function AgentSpacePreview({ host, missingAgent }: { host: HostSnapshot; 
 function AgentMap({ scene }: { scene: AgentScene }) {
   const flow = useReactFlow();
   const distant = useStore(isDistant);
-  const [selected, setSelected] = useState<string | undefined>(scene.agents.find(agent => agent.managerId)?.id ?? scene.agents[0]?.id);
+  const [selected, setSelected] = useState<string | undefined>();
   const [pluginId, setPluginId] = useState("");
   const [query, setQuery] = useState("");
   const [paused, setPaused] = useState(false);
@@ -127,7 +126,7 @@ function AgentMap({ scene }: { scene: AgentScene }) {
     </div>
     <div ref={map} className="space-map" data-motion={motionAllowed && !paused} aria-label="Agent relationship map" onFocusCapture={event => {
       const target = event.target;
-      if (!(target instanceof HTMLButtonElement) || !map.current || !(target.dataset.agentId || target.dataset.regionId)) return;
+      if (!(target instanceof HTMLButtonElement || target instanceof HTMLAnchorElement) || !map.current || !(target.dataset.agentId || target.dataset.regionId)) return;
       const item = target.getBoundingClientRect(), frame = map.current.getBoundingClientRect();
       if (item.left >= frame.left && item.right <= frame.right && item.top >= frame.top && item.bottom <= frame.bottom) return;
       const agent = scene.agents.find(candidate => candidate.id === (target.dataset.agentId ?? target.dataset.regionId));
@@ -148,8 +147,7 @@ function AgentMap({ scene }: { scene: AgentScene }) {
       const count = pluginMembers(scene.agents, plugin.id).length;
       return <button key={plugin.id} className="space-plugin" data-active={pluginId === plugin.id} aria-pressed={pluginId === plugin.id} aria-label={`${plugin.name}, ${count} agents`} onClick={() => selectPlugin(plugin.id)}><i aria-hidden="true" />{plugin.name}<span>{count}</span></button>;
     })}</div></div>
-    <div className="space-caption"><span>{pluginId ? "Shared access crosses agent spaces. It doesn’t imply shared context." : "Regions show management. Select a plugin to reveal shared access."}</span><span>Drag to pan · Scroll or pinch to zoom</span></div>
-    <AgentSelection agent={scene.agents.find(agent => agent.id === selected)} scene={scene} pluginId={pluginId} onSelect={focusAgent} />
+    <div className="space-caption"><span>{pluginId ? `${members.length} agents share access to ${capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}. Each keeps its own capabilities.` : "Open an agent from its portrait. Select a plugin to reveal shared access."} <a href="#library">Manage capabilities</a></span><span>Drag to pan · Scroll or pinch to zoom</span></div>
   </>;
 }
 

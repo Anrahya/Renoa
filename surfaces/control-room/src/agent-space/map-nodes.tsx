@@ -1,6 +1,7 @@
 import { memo, useMemo, type CSSProperties } from "react";
 import { useStore, type Node, type NodeProps } from "@xyflow/react";
 import { WarningCircle } from "@phosphor-icons/react";
+import { agentHref } from "../host-presentation";
 import { portraitForAgent } from "../host-identity";
 import { regionPath, type AgentRegion, type PlacedAgent } from "./scene";
 import { LiquidRegion } from "./liquid-region";
@@ -14,14 +15,15 @@ export const AgentPortrait = memo(function AgentPortrait({ data }: NodeProps<Por
   const zoom = useStore(state => state.transform[2]);
   const { agent, active, dimmed, relationship, choose } = data;
   const attention = agent.summary?.tone === "interrupted" || agent.summary?.tone === "waiting";
-  return <button className="space-agent nodrag nopan" style={{ "--label-scale": Math.max(1, 1 / zoom) } as CSSProperties} data-agent-id={agent.id} data-selected={active} data-dimmed={dimmed} data-distant={distant} data-compact={data.crowded && zoom < .65} aria-pressed={active}
-    tabIndex={distant ? -1 : 0} aria-label={`Select ${agent.name}. ${relationship}${attention ? `. ${agent.summary!.status}` : ""}`} onClick={() => choose(agent.id)}>
+  const Target = agent.synthetic ? "button" : "a";
+  return <Target href={agent.synthetic ? undefined : agentHref(agent.id)} className="space-agent nodrag nopan" style={{ "--label-scale": Math.max(1, 1 / zoom) } as CSSProperties} data-agent-id={agent.id} data-selected={active} data-dimmed={dimmed} data-distant={distant} data-compact={data.crowded && zoom < .65} aria-pressed={agent.synthetic ? active : undefined}
+    tabIndex={distant ? -1 : 0} aria-label={`${agent.synthetic ? "Focus example agent" : "Open"} ${agent.name}. ${relationship}${attention ? `. ${agent.summary!.status}` : ""}`} onClick={() => choose(agent.id)} title={agent.synthetic ? "Example agent — no Host records" : `Open ${agent.name}`}>
     <span className="space-portrait"><img src={portraitForAgent(agent.id, agent.originalName)} alt="" draggable={false} />
       {attention && <span className="space-attention" aria-hidden="true"><WarningCircle weight="fill" /></span>}
     </span>
     <strong title={agent.name}>{agent.name}</strong>
     <span className="space-agent-state" data-tone={agent.summary?.tone ?? "quiet"}>{attention ? agent.summary!.status : relationship}</span>
-  </button>;
+  </Target>;
 });
 
 export const ManagementRegion = memo(function ManagementRegion({ data }: NodeProps<RegionNode>) {
