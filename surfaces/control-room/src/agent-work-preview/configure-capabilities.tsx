@@ -8,6 +8,8 @@ import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend, FieldDescription 
 import { Input } from "@/components/ui/input";
 import { capabilityPlugins, pluginCapabilities, setCapabilities, type CapabilityPlugin } from "./configuration-model";
 
+import { usePreviewConnections } from "./connection-state";
+
 type Selection = { selected: string[]; change: (ids: string[]) => void };
 export function ConfigureCapabilities({ selected, change }: Selection) {
   const [query, setQuery] = useState("");
@@ -19,11 +21,12 @@ export function ConfigureCapabilities({ selected, change }: Selection) {
     <div className="config-capability-list">{plugins.map(({ plugin, groups }) => <PluginCapabilities key={plugin.id} {...{ plugin, groups, selected, change, prefix }} searching={!!term} />)}</div>
     {!plugins.length && <Empty><EmptyHeader><EmptyTitle>No matching capabilities</EmptyTitle><EmptyDescription>Try a plugin, tool or skill name.</EmptyDescription></EmptyHeader><Button type="button" size="sm" variant="outline" onClick={() => setQuery("")}>Clear search</Button></Empty>}
     <p className="config-note">Selections apply to this agent. Plugins stay in the Host library when unchecked; connections supply account access where needed.</p>
-    <Button asChild variant="outline" className="w-fit"><a href="#library">Manage Host connections<ArrowUpRight data-icon="inline-end" /></a></Button>
+    <Button asChild variant="outline" className="w-fit"><a href="#library/accounts">Manage Host connections<ArrowUpRight data-icon="inline-end" /></a></Button>
   </div>;
 }
 function PluginCapabilities({ plugin, groups, selected, change, prefix, searching }: Selection & { plugin: CapabilityPlugin; groups: CapabilityPlugin["groups"]; prefix: string; searching: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const { connected } = usePreviewConnections();
   const items = pluginCapabilities(plugin);
   const count = items.filter(item => selected.includes(item.id)).length;
   const checked = count === items.length ? true : count ? "indeterminate" : false;
@@ -34,7 +37,7 @@ function PluginCapabilities({ plugin, groups, selected, change, prefix, searchin
     </div>
     <div id={`${prefix}-plugin-${plugin.id}`} hidden={!expanded} className="config-source-body">
       {groups.map(group => <FieldSet key={`${group.kind}-${group.via}`}><FieldLegend variant="label"><span className="config-capability-kind">{group.kind}{group.via && <Badge variant="outline">{group.via}</Badge>}</span></FieldLegend><FieldGroup>{group.items.map(item => <Field key={item.id} orientation="horizontal" className="config-capability"><Checkbox id={`${prefix}-capability-${item.id}`} checked={selected.includes(item.id)} onCheckedChange={value => change(setCapabilities(selected, [item.id], value === true))} /><div className="flex min-w-0 flex-col gap-1"><FieldLabel htmlFor={`${prefix}-capability-${item.id}`}>{item.name}</FieldLabel><FieldDescription>{item.detail}</FieldDescription></div></Field>)}</FieldGroup></FieldSet>)}
-      {plugin.needsConnection && count > 0 && <p className="config-connection-note">Selected for this agent. Connect Personal Drive in the Host library before these tools can run.</p>}
+      {plugin.connectionId && !connected[plugin.connectionId] && count > 0 && <p className="config-connection-note">Selected for this agent. Connect the account in the Host library before these tools can run.</p>}
     </div>
   </div>;
 }

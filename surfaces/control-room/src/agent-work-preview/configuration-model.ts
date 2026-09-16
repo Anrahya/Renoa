@@ -8,7 +8,7 @@ export type CapabilityGroup = {
   kind: "Tools" | "Skills"; via?: "Built-in" | "MCP" | "HTTP API";
   items: { id: string; name: string; detail: string }[];
 };
-export type CapabilityPlugin = { id: string; name: string; detail: string; needsConnection?: boolean; groups: CapabilityGroup[] };
+export type CapabilityPlugin = { id: string; name: string; detail: string; connectionId?: string; groups: CapabilityGroup[] };
 export const capabilityPlugins: CapabilityPlugin[] = [
   { id: "builtin", name: "Workspace", detail: "Local files and commands · no account needed", groups: [{ kind: "Tools", via: "Built-in", items: [
     { id: "read", name: "Read files", detail: "Read files in the assigned workspace." },
@@ -16,15 +16,15 @@ export const capabilityPlugins: CapabilityPlugin[] = [
     { id: "write", name: "Write files", detail: "Create and update workspace files." },
     { id: "shell", name: "Run commands", detail: "Execute commands in the assigned environment." },
   ] }] },
-  { id: "mail", name: "AgentMail", detail: "Connection · Personal inbox", groups: [{ kind: "Tools", via: "MCP", items: [
+  { id: "mail", connectionId: "mail", name: "AgentMail", detail: "Connection · Personal inbox", groups: [{ kind: "Tools", via: "MCP", items: [
     { id: "mail-read", name: "Read messages", detail: "Read messages and threads in the selected inbox." },
     { id: "mail-send", name: "Send messages", detail: "Send email from the selected inbox." },
   ] }] },
-  { id: "github", name: "GitHub", detail: "Connection · Personal GitHub", groups: [{ kind: "Tools", via: "MCP", items: [
+  { id: "github", connectionId: "github", name: "GitHub", detail: "Connection · Personal GitHub", groups: [{ kind: "Tools", via: "MCP", items: [
     { id: "github-read", name: "Read repositories", detail: "Read repository files, issues and pull requests." },
     { id: "github-write", name: "Update repositories", detail: "Create branches, changes and pull requests." },
   ] }] },
-  { id: "drive", name: "Google Drive", detail: "Connection required · Personal Drive", needsConnection: true, groups: [{ kind: "Tools", via: "MCP", items: [
+  { id: "drive", connectionId: "drive", name: "Google Drive", detail: "Connection · Personal Drive", groups: [{ kind: "Tools", via: "MCP", items: [
     { id: "drive-read", name: "Read documents", detail: "Read and search documents in the selected Drive." },
   ] }] },
   { id: "research", name: "Research & writing", detail: "Public web and reusable methods · no account needed", groups: [

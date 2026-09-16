@@ -1,5 +1,5 @@
 export type AgentSection = "overview" | "configure" | "activity" | "identity" | "work" | "connections" | "automations" | "policy";
-export type HostRoute = { view: "overview" | "agents" | "work" | "library"; agent: string | null; section: AgentSection; execution?: string };
+export type HostRoute = { view: "overview" | "agents" | "work" | "library"; agent: string | null; section: AgentSection; execution?: string; tab?: "plugins" | "accounts" };
 export function hostRoute(hash: string): HostRoute {
   const [view, id, section, run] = hash.replace(/^#/, "").split("/");
   if (view === "agent" && id) {
@@ -10,7 +10,8 @@ export function hostRoute(hash: string): HostRoute {
     }
     return { view: "agents", agent, section: section === "configure" || section === "activity" || section === "identity" || section === "work" || section === "connections" || section === "automations" || section === "policy" ? section : "overview" };
   }
-  return { view: view === "agents" || view === "library" || view === "work" ? view : "overview", agent: null, section: "work" };
+  if (view === "library") return { view: "library", agent: null, section: "work", tab: id === "accounts" ? "accounts" : "plugins" };
+  return { view: view === "agents" || view === "work" ? view : "overview", agent: null, section: "work" };
 }
 
 export type AgentPage = "overview" | "configure" | "automations" | "activity";

@@ -1,3 +1,4 @@
+import { PreviewConnectionProvider } from "./agent-work-preview/connection-state";
 import { PreviewWorkProvider } from "./agent-work-preview/work-state";
 import { workDesignPreview } from "./agent-work-preview/mode";
 import { PreviewConfigurationProvider } from "./agent-work-preview/configuration-state";
@@ -16,6 +17,8 @@ import { liveHostHref } from "./host-entry";
 import { hostRoute } from "./host-navigation";
 import { timestamp } from "./host-presentation";
 import "./styles/host.css";
+
+const ConnectionsPreview = import.meta.env.DEV ? (await import("./host-design-preview/connections")).ConnectionsPreview : null;
 
 export function HostPanel() {
   const host = useHost();
@@ -52,15 +55,15 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
   const signedIn = host.snapshot !== null;
   const controls = { hostId: host.snapshot?.host_id ?? "", refresh: host.refresh, available: host.status === "connected", preview };
   if (host.snapshot && host.status !== "locked" && host.status !== "forbidden") {
-    const redesigned = route.view === "agents";
+    const designPreview = workDesignPreview(preview);
+    const redesigned = route.view === "agents" || (designPreview && route.view === "library");
     const page = <>
       {route.view === "overview" && <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} />}
       {route.view === "work" && <WorkView host={host.snapshot} controls={controls} />}
       {route.view === "agents" && <AgentsView host={host.snapshot} route={route} controls={controls} />}
-      {route.view === "library" && <ConnectionsView host={host.snapshot} />}
+      {route.view === "library" && (designPreview && ConnectionsPreview ? <ConnectionsPreview host={host.snapshot} tab={route.tab ?? "plugins"} /> : <ConnectionsView host={host.snapshot} />)}
     </>;
-    const designPreview = workDesignPreview(preview) && route.view === "agents";
-    return <PreviewConfigurationProvider key={host.snapshot.host_id}><PreviewWorkProvider><HostShell {...{ route, preview, designPreview }} snapshot={host.snapshot} status={host.status} receivedAt={host.receivedAt} refresh={host.refresh} logout={() => void logout()}>
+    return <PreviewConfigurationProvider key={host.snapshot.host_id}><PreviewWorkProvider><PreviewConnectionProvider><HostShell {...{ route, preview, designPreview }} snapshot={host.snapshot} status={host.status} receivedAt={host.receivedAt} refresh={host.refresh} logout={() => void logout()}>
       {preview && <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:px-6">
         <span>{designPreview ? "Example data · 17 Sep, 11:30 · Changes stay in this tab" : <>{previewLabel}{host.receivedAt && !demo && ` · ${timestamp(host.receivedAt)}`}</>}</span>
         <Button asChild size="xs" variant="ghost"><a href={liveHostHref(import.meta.env.DEV)}>Open live Host</a></Button>
@@ -71,7 +74,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
         <Button variant="outline" size="sm" className="mt-2 w-fit" onClick={logoutError ? () => void logout() : host.refresh}>{logoutError ? "Retry sign-out" : "Retry now"}</Button>
       </Alert>}
       {redesigned ? page : <div className="host-app host-legacy-page">{page}{preview && previewAction && <div className="host-content">{previewAction}</div>}</div>}
-    </HostShell></PreviewWorkProvider></PreviewConfigurationProvider>;
+    </HostShell></PreviewConnectionProvider></PreviewWorkProvider></PreviewConfigurationProvider>;
   }
   return <div className="host-app"><a className="host-skip" href="#host-main" onClick={event => {
     event.preventDefault();

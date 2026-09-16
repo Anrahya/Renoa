@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
+import { usePreviewConnections } from "./connection-state";
 import { ConfigureCapabilities } from "./configure-capabilities";
 import { capabilityPlugins, pluginCapabilities, changedSections, exampleModels, type Configuration } from "./configuration-model";
 import type { ConfigurationEditor } from "./configuration-state";
@@ -15,11 +16,12 @@ export function ConfigurePreview({ saved, draft, setDraft, save, discard }: Conf
   const [notice, setNotice] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const id = useId();
+  const { connected } = usePreviewConnections();
   const changes = changedSections(saved, draft);
   const nameError = submitted && !draft.name.trim();
   const purposeError = submitted && !draft.purpose.trim();
   const tokenError = submitted && (!Number.isInteger(draft.maxTokens) || draft.maxTokens < 1 || draft.maxTokens > 131072);
-  const needsConnection = capabilityPlugins.some(plugin => plugin.needsConnection && pluginCapabilities(plugin).some(item => draft.capabilities.includes(item.id)));
+  const needsConnection = capabilityPlugins.some(plugin => plugin.connectionId && !connected[plugin.connectionId] && pluginCapabilities(plugin).some(item => draft.capabilities.includes(item.id)));
   function update<K extends keyof Configuration>(key: K, value: Configuration[K]) { setDraft(current => ({ ...current, [key]: value })); setNotice(""); }
   function jump(section: string) { const target = document.getElementById(`${id}-${section}`); target?.scrollIntoView({ block: "start", behavior: "instant" }); target?.focus({ preventScroll: true }); }
   function submit(event: FormEvent) {
