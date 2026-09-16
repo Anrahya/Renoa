@@ -1,5 +1,5 @@
 export type AgentSection = "overview" | "configure" | "activity" | "identity" | "work" | "connections" | "automations" | "policy";
-export type HostRoute = { view: "overview" | "agents" | "work" | "library"; agent: string | null; section: AgentSection; execution?: string; tab?: "plugins" | "accounts" };
+export type HostRoute = { view: "overview" | "agents" | "work" | "library"; agent: string | null; section: AgentSection; execution?: string; workAgent?: string; tab?: "plugins" | "accounts" };
 export function hostRoute(hash: string): HostRoute {
   const [view, id, section, run] = hash.replace(/^#/, "").split("/");
   if (view === "agent" && id) {
@@ -9,6 +9,9 @@ export function hostRoute(hash: string): HostRoute {
       try { return { view: "agents", agent, section: "activity", execution: decodeURIComponent(run) }; } catch { return { view: "agents", agent, section: "activity" }; }
     }
     return { view: "agents", agent, section: section === "configure" || section === "activity" || section === "identity" || section === "work" || section === "connections" || section === "automations" || section === "policy" ? section : "overview" };
+  }
+  if (view === "work" && id && section) {
+    try { return { view: "work", agent: null, section: "work", workAgent: decodeURIComponent(id), execution: decodeURIComponent(section) }; } catch { return { view: "work", agent: null, section: "work" }; }
   }
   if (view === "library") return { view: "library", agent: null, section: "work", tab: id === "accounts" ? "accounts" : "plugins" };
   return { view: view === "agents" || view === "work" ? view : "overview", agent: null, section: "work" };

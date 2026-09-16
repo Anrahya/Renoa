@@ -11,10 +11,11 @@ import { DAY, TODAY, NOW, date, time, scheduledTimes, statusLabel, type Automati
 import type { AgentExample } from "./agent-example";
 
 type Props = AgentExample & {
+  description?: string;
   enabled: Record<string, boolean>; setEnabled: (id: string, value: boolean) => void;
   selected: string | null; select: (id: string | null) => void; openRun: (id: string, element: HTMLElement) => void;
 };
-export function AutomationTimeline({ automations, executions, enabled, setEnabled, selected, select, openRun }: Props) {
+export function AutomationTimeline({ automations, executions, enabled, setEnabled, selected, select, openRun, description = "What starts this agent’s work." }: Props) {
   const [range, setRange] = useState("day");
   const [offset, setOffset] = useState(0);
   const [selectedTime, setSelectedTime] = useState<{ id: string; timestamp: number } | null>(null);
@@ -36,7 +37,7 @@ export function AutomationTimeline({ automations, executions, enabled, setEnable
     return () => cancelAnimationFrame(frame);
   }, [selected, selectedTime]);
   return <div className="flex flex-col gap-6">
-    <div className="work-heading"><div><h2>Automations</h2><p>What starts this agent’s work.</p></div><span className="work-caption">{Object.values(enabled).filter(Boolean).length} enabled · {Object.values(enabled).filter(value => !value).length} paused</span></div>
+    <div className="work-heading"><div><h2>Automations</h2><p>{description}</p></div><span className="work-caption">{Object.values(enabled).filter(Boolean).length} enabled · {Object.values(enabled).filter(value => !value).length} paused</span></div>
     <Tabs value={range} onValueChange={value => { setRange(value); setOffset(0); }} className="gap-5">
       <div className="work-toolbar">
         <div className="flex items-center gap-2">

@@ -17,9 +17,8 @@ export function useDesignAgents(host: HostSnapshot) {
   });
 }
 export type DesignAgent = ReturnType<typeof useDesignAgents>[number];
-export const runHref = (agentId: string, runId: string) => `${agentHref(agentId, "activity")}/${encodeURIComponent(runId)}`;
 export function PageHeading({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
-  return <div className="desk-heading"><div><h1>{title}</h1><p>{description}</p></div>{children}</div>;
+  return <div className="desk-heading"><div><h1 tabIndex={-1}>{title}</h1><p>{description}</p></div>{children}</div>;
 }
 export function AgentLink({ agent, configure = false }: { agent: DesignAgent; configure?: boolean }) {
   return <a className="desk-agent-link" href={agentHref(agent.id, configure ? "configure" : "overview")}><img src={portraitForAgent(agent.id, agent.originalName)} alt="" />{agent.name}</a>;
