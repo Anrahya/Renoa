@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowClockwise, SignOut } from "@phosphor-icons/react";
 import { useHost } from "./use-host";
 import { HostLogin } from "./host-login";
+import { HostLoadingState } from "./host-loading";
 import { AgentsView } from "./host-agents";
 import { ConnectionsView } from "./host-library";
 import { WorkView } from "./host-work";
@@ -96,9 +97,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
       <span>{logoutError ?? host.error}{host.receivedAt && ` Showing records from ${timestamp(host.receivedAt)}.`}</span>
       <button className="host-link" onClick={host.refresh}>Retry now</button></div>}
     {host.status === "locked" || host.status === "forbidden" ? <HostLogin refresh={host.refresh} forbidden={host.status === "forbidden"} />
-      : <main id="host-main" className="host-content host-loading" aria-busy="true">
-        <h1>{host.status === "reconnecting" ? "Waiting for your Host" : "Opening your Host"}</h1>
-        <p className="host-intro">{host.status === "reconnecting" ? "We’ll reconnect when it returns. Your login stays in this browser." : "Restoring your browser’s remembered session."}</p></main>}
+      : <HostLoadingState reconnecting={host.status === "reconnecting"} />}
     {host.snapshot && <footer className="host-footer"><details><summary>Host identity</summary><code>{host.snapshot.host_id}</code></details>
       <span>{demo ? "Example activity" : host.receivedAt && `${preview ? "Snapshot saved" : "Last received"} ${timestamp(host.receivedAt)}`}</span></footer>}
   </div>;

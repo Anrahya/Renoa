@@ -31,12 +31,17 @@ export function WorkPreview({ host, route }: { host: HostSnapshot; route: HostRo
   const returnTo = useRef<{ id?: string | undefined; scroll: number }>({ scroll: 0 });
   const previous = useRef(route.execution);
   useEffect(() => {
-    if (previous.current && !route.execution) requestAnimationFrame(() => {
+    const returning = previous.current && !route.execution;
+    previous.current = route.execution;
+    if (!returning) return;
+    // Cancel on unmount: a stale frame would scroll and focus this list from
+    // whatever destination the user reached instead.
+    const frame = requestAnimationFrame(() => {
       window.scrollTo({ top: returnTo.current.scroll });
       const target = [...document.querySelectorAll<HTMLElement>("[data-work-id]")].find(element => element.dataset.workId === returnTo.current.id) ?? document.querySelector<HTMLElement>("#host-main h1");
       target?.focus({ preventScroll: true });
     });
-    previous.current = route.execution;
+    return () => cancelAnimationFrame(frame);
   }, [route.execution]);
   const all = agents.flatMap(agent => agent.executions.map(run => ({ agent, run }))).sort((a, b) => b.run.started - a.run.started);
   const scoped = agents.filter(agent => owner === "all" || owner === agent.id);
