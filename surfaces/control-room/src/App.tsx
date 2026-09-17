@@ -15,14 +15,7 @@ import { LandingPage } from "./landing-page";
 const PreviewApp = import.meta.env.DEV
   ? lazy(async () => import("./host-preview"))
   : null;
-const AgentProfileDesign = import.meta.env.DEV
-  ? lazy(async () => import("./agent-profile/page"))
-  : null;
-
 export function App() {
-  if (AgentProfileDesign && new URLSearchParams(window.location.search).has("agent-design")) {
-    return <Suspense fallback={null}><AgentProfileDesign /></Suspense>;
-  }
   const previewEnabled =
     import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview");
   if (previewEnabled && PreviewApp !== null) {

@@ -157,7 +157,7 @@ views, at every screen width. Mouse-wheel zoom applies while over the map.
 
 Capabilities use plugin bundles as their top-level rows, expanding to tools and skills with integration details such as MCP or HTTP API beneath them. Account connections supply access separately. The development preview keeps saved configuration and drafts per agent while navigating; reloading resets its illustrative data. This UI classification does not define the runtime plugin schema.
 
-Agent profiles use Overview / Configure / Automations / Activity tabs under a persistent identity header. Configuration is an in-page document of sections; schedules and repository policies live in Automations. Hash links select pages or focus their relevant sections. Policy drafts survive tab changes within the agent. The former customization drawer is retired.
+Agent profiles use Overview / Configure / Automations / Activity tabs under a persistent identity header. Configuration is an in-page document of sections; schedules and repository policies live in Automations. Hash links select pages or focus their relevant sections. Policy drafts survive tab changes within the agent. The former customization drawer and standalone `?agent-design` prototype are retired; the current design entry is `/?preview#agents`.
 
 The owner retired the bespoke visual system below. The shared Host shell, Agents directory, and agent profile use shadcn radix-nova, neutral semantic colors, Geist Variable,
 and Phosphor icons, with Efferd App Shell 5 as the layout reference. The preset
