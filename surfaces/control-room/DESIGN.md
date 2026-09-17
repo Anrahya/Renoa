@@ -140,6 +140,51 @@ components:
     padding: "3px 9px"
 ---
 
+## Current foundation — 2026-09-17
+
+The Agents design preview is a navigable map of management spaces and shared
+plugin access. Fixed portraits sit inside organic contours; selecting a plugin
+highlights its member agents across those spaces. The map uses the available
+viewport; portraits open profiles directly, without a duplicate detail block.
+Fit, search, pan, pinch, and group focus provide
+navigation; zoomed-out groups show counts and retained attention. Phones reflow
+the small scene. A labelled 50-agent example exercises larger layouts without
+creating Host records. This view is DEV-only until relationship and capability
+contracts are available; live observations retain their factual directory.
+Bubble bodies morph and float, with light moving inside their contours; portraits
+and labels remain fixed. Motion stops on pause, reduced motion, or hidden/offscreen
+views, at every screen width. Mouse-wheel zoom applies while over the map.
+
+Capabilities use plugin bundles as their top-level rows, expanding to tools and skills with integration details such as MCP or HTTP API beneath them. Account connections supply access separately. The development preview keeps saved configuration and drafts per agent while navigating; reloading resets its illustrative data. This UI classification does not define the runtime plugin schema.
+
+Agent profiles use Overview / Configure / Automations / Activity tabs under a persistent identity header. Configuration is an in-page document of sections; schedules and repository policies live in Automations. Hash links select pages or focus their relevant sections. Policy drafts survive tab changes within the agent. The former customization drawer and standalone `?agent-design` prototype are retired; the current design entry is `/?preview#agents`.
+
+The owner retired the bespoke visual system below. The shared Host shell, Agents directory, and agent profile use shadcn radix-nova, neutral semantic colors, Geist Variable,
+and Phosphor icons, with Efferd App Shell 5 as the layout reference. The preset
+and installed component paths are defined in `components.json`; the canonical
+tokens are `src/styles/design-system.css`. Compose these upstream primitives
+for subsequent pages. Do not reintroduce per-page palettes or custom controls.
+
+The Host design preview now covers all four primary destinations. Work brings
+agent executions onto a common daily timeline, prioritizes interruptions and
+requests for input, and reuses the agent automation timeline with shared pause
+state. Execution detail returns to the Work filter and position it came from.
+Connections separates plugin contents and agent selections from account access;
+connecting an example account does not select its tools. Account state follows
+the user through Configure, Connections, and System for the life of the tab.
+System separates the control panel, Host coordinator, and execution node, with
+resource history, run-linked diagnostics, and a simulated recovery flow. Its
+unreachable-Host example presents unknown health and no remote restart action.
+
+These new page interiors remain development-only and explicitly illustrative;
+they define no backend contract or live write. The production Host retains its
+supported observation/control views until backend integration. Authentication
+and the separately approved public homepage remain unchanged. Source provenance
+and license notices are in `licenses/`. The specification below is historical.
+
+## Historical visual specification
+
+
 # Design System: Renoa Web Surfaces
 
 ## Overview

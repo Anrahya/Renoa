@@ -134,8 +134,8 @@ access and credential sharing between distinct Hosts remain separate work.
 ### Composition and management boundaries
 
 The personal-system direction below guides the control-panel implementation.
-Authenticated browser observation and owner routine enablement exist; general recipe editing and delegation
-remain future work. Host ownership is a logical boundary, not a requirement that one
+Authenticated browser observation, owner routine enablement, and review-policy
+editing exist; general recipe editing and delegation remain future work. Host ownership is a logical boundary, not a requirement that one
 object, executable, or crate implement every subsystem. A laptop and a VPS are
 deployment choices. Preserving a Host across machine replacement requires its
 durable identity, records, and credential material; a hostname is not its identity.
@@ -511,11 +511,13 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v19 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
+`host.sqlite3` schema v25 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
 snapshots, per-profile attached connection identities, immutable skill revisions,
-source/profile bindings, rejected skill entries, and session activation pins.
+source/profile bindings, rejected skill entries, session activation pins, routines
+and their results and receipts, GitHub review policy and execution/publication
+records, authenticated-owner routine receipts, and revisioned bot-tool selections.
 Registration, discovery, and profile attachment remain separate states.
 Catalog replacement and attachment are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
@@ -1131,8 +1133,9 @@ it must not point into a surface service's credential mount.
 Host schema 17 adds durable display-name edit receipts.
 Schema 18 admits the one-time schedule variant; older readers cannot decode it.
 Schema 19 adds routine deletion markers consumed by listing, lookup, and admission.
-All processes sharing the Host must support schema 19 before restarting them after
-the migration. The integration tests exercise model-driven creation, specialist
+At that migration, all processes sharing the Host had to support schema 19 before
+restarting. The current schema and later migrations are summarized in the
+GitHub-review section below. The integration tests exercise model-driven creation, specialist
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt
 without repeating the kernel's completed file operation.
 
@@ -1141,8 +1144,9 @@ without repeating the kernel's completed file operation.
 The Host implements repository policy, durable review-request admission, a
 disposable inspection executor, and durable GitHub publication. The GitHub
 service receives signed webhooks behind HTTPS ingress and supervises separate
-review workers. Browser management remains a design target; the browser
-currently projects RCP tasks. This
+review workers. The separate authenticated management adapter now observes review
+work and edits existing repository policy, while the browser projects RCP tasks on
+its distinct continuity surface. This
 composition adds no GitHub-specific types to the kernel and does not settle the open
 RCP wire boundaries.
 

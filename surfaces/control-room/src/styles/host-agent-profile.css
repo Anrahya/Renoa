@@ -1,0 +1,10 @@
+/* Renoa identity artwork within the shared Nova foundation. */
+.renoa-agent-portrait { padding: 5px; border: 1px solid var(--border); border-radius: 50%; }
+.renoa-agent-profile [data-slot="item"] { text-align: left; }
+.renoa-agent-profile [data-slot="item-description"], .renoa-agent-profile code { overflow-wrap: anywhere; }
+.renoa-agent-profile [role="tabpanel"][hidden] { display: none; }
+.renoa-agent-profile [role="tablist"] { scroll-margin-top: 80px; }
+.profile-settings-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+@media (min-width: 1024px) { .profile-settings-section { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; } }
+.renoa-agent-profile summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+.renoa-agent-profile .profile-evidence { --host-ink: var(--foreground); --host-muted: var(--muted-foreground); --host-rule: var(--border); --host-accent: var(--primary); --host-paper: var(--background); --host-soft: var(--muted); --host-warning: var(--destructive); min-height: 0; font: inherit; }

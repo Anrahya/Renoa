@@ -1,12 +1,18 @@
 # VPS deployment
 
-This directory contains four independent services and one transport process:
+This directory contains the supplied service units and configuration examples for
+the current deployment:
 
 - `renoa-coordinator` carries RCP task continuity and the separate short-lived
   Host OAuth callback relay; and
 - `renoa-node` executes statically bound RCP tasks through a local Host; and
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
-- `renoa-telegram` runs the Arcee personal-operator profile on Telegram; while
+- `renoa-host` runs the surface-independent routine scheduler; and
+- `renoa-management` serves the authenticated personal Host control panel; and
+- `renoa-github` receives signed review webhooks and supervises review work; and
+- `renoa-slack` and `renoa-telegram` expose the configured Host through their
+  respective surfaces (`renoa-slack.service` and `renoa-slack-host.service` are
+  alternative Slack deployment units); while
 - `cloudflared` gives the loopback-only coordinator a public HTTPS route.
 
 The coordinator and registry do not require each other. Both remain plaintext
@@ -492,6 +498,11 @@ exchange it immediately. These local commands do not create a remote
 administration protocol.
 
 ## Current proof status
+
+The dated paragraphs below are deployment receipts, not declarations of the wire
+version compiled by the current checkout. Current code requires RCP JSON/WebSocket
+binding version 9; the recorded version-8 proof establishes only the deployment
+state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a
 valid Cloudflare-managed certificate. The remotely managed `renoa-control`

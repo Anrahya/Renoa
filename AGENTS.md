@@ -26,6 +26,8 @@
 - Do not add AI tools or models as commit co-authors or add generated-by
   footers to commits and pull requests. Preserve required upstream license
   and source attribution.
+- For non-trivial repository work, apply R-Stack. These engineering rules
+  remain authoritative.
 - Keep exactly one consolidated backup of the immediately previous release.
   After the next release passes health checks, replace that backup and delete
   older release archives, snapshots, and unused versioned binaries.

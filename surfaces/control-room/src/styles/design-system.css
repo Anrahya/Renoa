@@ -1,0 +1,204 @@
+@layer theme, base, legacy, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Contain the reset while the remaining pages migrate. */
+@layer base {
+  @scope (.renoa-ui) {
+    @import "tailwindcss/preflight.css";
+  }
+}
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+.renoa-ui {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.145 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.145 0 0);
+    --primary: oklch(0.205 0 0);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --accent: oklch(0.97 0 0);
+    --accent-foreground: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --border: oklch(0.922 0 0);
+    --input: oklch(0.922 0 0);
+    --ring: oklch(0.708 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.708 0 0);
+}
+
+.renoa-ui.dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.488 0.243 264.376);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  .renoa-ui {
+    @apply bg-background text-foreground font-sans border-border;
+    color-scheme: dark;
+    line-height: 1.5;
+  }
+  .renoa-ui *, .renoa-ui *::before, .renoa-ui *::after {
+    @apply border-border outline-ring/50;
+  }
+  .renoa-ui :is(a, button, input):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+  }
+  .renoa-ui button:not(:disabled), .renoa-ui summary { cursor: pointer; }
+}
+
+html:has(.renoa-ui), body:has(.renoa-ui) { min-width: 0; }
+
+/* Live observation directory, until relationship contracts are available. */
+.agent-directory {
+  --directory-success: oklch(.74 .10 163);
+  --directory-wait: oklch(.80 .10 85);
+  --directory-scheduled: oklch(.72 .085 260);
+}
+.directory-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.directory-agent[data-slot=item] { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(240px, 1.6fr) minmax(200px, 1fr); align-items: start; gap: 32px; padding: 28px 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.directory-agent:last-child { border-bottom: 1px solid var(--border); }
+.directory-identity[data-slot=item-media] { min-width: 0; display: block; }
+.directory-agent-link { display: flex; align-items: center; gap: 12px; border-radius: 6px; }
+.directory-agent-link > span:nth-child(2) { min-width: 0; }
+.directory-agent-link h2 { font-size: 17px; font-weight: 550; overflow-wrap: anywhere; }
+.directory-agent-link > svg { flex-shrink: 0; color: var(--muted-foreground); width: 14px; }
+.directory-profile { display: block; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
+.directory-work[data-slot=item-content] { min-width: 0; gap: 10px; }
+.directory-status { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px; font-size: 12px; }
+.directory-state { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
+.directory-state[data-tone=interrupted] { color: var(--destructive); }
+.directory-state[data-tone=waiting], .directory-state[data-tone=pending] { color: var(--directory-wait); }
+.directory-state[data-tone=completed] { color: var(--directory-success); }
+.directory-state i { width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
+.directory-configure { display: flex; gap: 5px; align-items: center; color: var(--muted-foreground); min-height: 24px; }
+.directory-work-link { display: flex; flex-direction: column; gap: 5px; border-radius: 4px; }
+.directory-work-link strong { font-weight: 500; font-size: 15px; }
+.directory-work-link p { color: var(--muted-foreground); line-height: 1.6; font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.directory-next { margin-top: 8px; display: flex; gap: 10px; align-items: center; min-height: 44px; border-radius: 4px; }
+.directory-next > svg:first-child { color: var(--directory-scheduled); flex-shrink: 0; }
+.directory-next > svg:last-child { color: var(--muted-foreground); flex-shrink: 0; margin-left: auto; }
+.directory-next > span { display: flex; flex-direction: column; gap: 3px; }
+.directory-next strong { font-size: 13px; font-weight: 500; }
+.directory-next small { font-size: 12px; color: var(--muted-foreground); }
+.directory-day { min-width: 0; padding-top: 5px; }
+.directory-observation { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+.directory-observation strong { font-size: 25px; font-weight: 500; color: var(--foreground); }
+.directory-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; font-size: 12px; color: var(--muted-foreground); }
+@media (hover: hover) and (pointer: fine) {
+  .directory-agent-link:hover h2, .directory-work-link:hover strong, .directory-next:hover strong { text-decoration: underline; text-underline-offset: 4px; }
+  .directory-configure:hover { color: var(--foreground); }
+}
+@media (max-width: 1150px) {
+  .directory-agent[data-slot=item] { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); column-gap: 28px; row-gap: 22px; }
+  .directory-identity[data-slot=item-media] { grid-column: 1 / -1; }
+  .directory-agent-link { width: fit-content; max-width: 100%; }
+}
+@media (max-width: 600px) {
+  .directory-heading { align-items: flex-start; }
+  .directory-agent[data-slot=item] { grid-template-columns: minmax(0, 1fr); padding-block: 24px; gap: 20px; }
+  .directory-agent-link { width: 100%; }
+  .directory-agent-link > svg { margin-left: auto; }
+  .directory-day { padding-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .renoa-ui *, .renoa-ui *::before, .renoa-ui *::after {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}

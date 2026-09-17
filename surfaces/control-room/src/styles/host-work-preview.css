@@ -1,0 +1,48 @@
+.desk-day-map { margin-bottom: 36px; padding: 24px 24px 18px; border: 1px solid var(--border); border-radius: 14px; }
+.desk-day-scroll { overflow-x: auto; padding: 0 10px 0 0; }
+.desk-day-lanes { min-width: 490px; }
+.desk-day-axis, .desk-day-lane { display: grid; grid-template-columns: 135px 1fr; gap: 22px; align-items: center; }
+.desk-day-axis { height: 30px; font-size: 11px; color: var(--muted-foreground); }
+.desk-day-axis > div { position: relative; height: 100%; }
+.desk-day-axis > div > span { position: absolute; transform: translateX(-50%); top: 8px; font-variant-numeric: tabular-nums; }
+.desk-day-axis > div > span:first-child { transform: none; }
+.desk-day-axis > div > span:last-child { transform: translateX(-100%); }
+.desk-day-axis > div > .desk-day-now-label { transform: translateX(-50%); color: var(--foreground); }
+.desk-day-lane { min-height: 59px; }
+.desk-day-track { height: 59px; position: relative; background: linear-gradient(to right,var(--border) 1px,transparent 1px); background-size: 25% 100%; }
+.desk-day-track::after { content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: var(--border); }
+.desk-day-elapsed { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--muted) 40%,transparent); }
+.desk-day-now { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--muted-foreground); opacity: .55; }
+.desk-day-mark { position: absolute; top: 50%; min-width: 10px; height: 18px; border-radius: 4px; transform: translateY(-50%); z-index: 1; background: var(--desk-success); border: 2px solid var(--background); transition: height 150ms; }
+.desk-day-mark:hover, .desk-day-mark:focus-visible { height: 28px; z-index: 2; }
+.desk-day-mark[data-tone=interrupted], .desk-day-legend i[data-tone=interrupted] { background: var(--destructive); }
+.desk-day-mark[data-tone=waiting], .desk-day-legend i[data-tone=waiting] { background: var(--desk-warning); }
+.desk-day-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; color: var(--muted-foreground); font-size: 11px; margin-top: 14px; }
+.desk-day-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.desk-day-legend span:last-child { margin-left: auto; }
+.desk-day-legend i { width: 6px; height: 6px; border-radius: 2px; background: var(--desk-success); }
+.desk-work-row { display: flex; gap: 18px; padding: 24px 3px; border-bottom: 1px solid var(--border); }
+.desk-work-icon { color: var(--desk-success); padding-top: 3px; }
+.desk-work-row[data-tone=interrupted] .desk-work-icon, .desk-work-row[data-tone=interrupted] .desk-work-outcome > span { color: var(--destructive); }
+.desk-work-row[data-tone=waiting] .desk-work-icon, .desk-work-row[data-tone=waiting] .desk-work-outcome > span { color: var(--desk-warning); }
+.desk-work-body { flex: 1; min-width: 0; }
+.desk-work-title { display: inline-flex; align-items: center; gap: 10px; text-align: left; font-size: 16px; font-weight: 550; }
+.desk-work-title:hover { text-decoration: underline; text-underline-offset: 4px; }
+.desk-work-title svg { color: var(--muted-foreground); flex-shrink: 0; }
+.desk-work-body > p { font-size: 14px; color: var(--muted-foreground); line-height: 1.6; margin-top: 7px; max-width: 70ch; }
+.desk-work-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 15px; }
+.desk-work-meta > span, .desk-work-meta > time { color: var(--muted-foreground); font-size: 12px; }
+.desk-work-outcome { margin-left: auto; text-align: right; min-width: 120px; font-size: 13px; }
+.desk-work-outcome small { display: block; color: var(--muted-foreground); margin-top: 7px; }
+.desk-work-day { margin-bottom: 25px; }
+.desk-work-day > h3 { display: flex; gap: 12px; font-size: 13px; padding-block: 12px; }
+.desk-work-day > h3 > span { color: var(--muted-foreground); }
+@media(max-width:700px) {
+  .desk-day-map { padding: 18px 14px; margin-inline: -2px; }
+  .desk-day-axis, .desk-day-lane { grid-template-columns: 100px 1fr; gap: 12px; }
+  .desk-day-legend span:last-child { margin-left: 0; }
+  .desk-work-row { gap: 11px; flex-wrap: wrap; }
+  .desk-work-body { flex-basis: calc(100% - 32px); }
+  .desk-work-outcome { display: flex; align-items: center; gap: 14px; margin: 0 0 0 30px; text-align: left; }
+  .desk-work-outcome small { margin: 0; }
+}

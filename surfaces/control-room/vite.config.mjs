@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
 const rcpBrowserEntry = fileURLToPath(
@@ -16,6 +17,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@renoa/rcp-client/browser": rcpBrowserEntry,
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
   server: {
@@ -33,5 +35,5 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
   },
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
 });

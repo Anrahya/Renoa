@@ -201,3 +201,6 @@
   .host-back { margin-bottom: 20px; }
 }
 @media (prefers-reduced-motion: reduce) { .host-app *, .host-app *::before, .host-app *::after { transition: none; scroll-behavior: auto; } }
+
+/* The shared shell has migrated; remaining page interiors retain their layout. */
+.host-app.host-legacy-page { min-height: 0; flex: 1; }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { App } from "./App";
 import { homepageHostEntry, liveHostHref } from "./host-entry";
 import { useHost } from "./use-host";
@@ -29,9 +29,11 @@ describe("the public homepage and private surfaces", () => {
     expect(liveHostHref(false)).toBe("/?host");
   });
 
-  it("opens the existing Host surface through the homepage's query route", () => {
+  it("opens the existing Host surface through the homepage's query route", async () => {
     vi.stubGlobal("window", { location: { search: "?host", hash: "" } });
-    const html = renderToStaticMarkup(createElement(App));
+    const stream = await renderToReadableStream(createElement(App));
+    await stream.allReady;
+    const html = await new Response(stream).text();
     expect(useHost).toHaveBeenCalledOnce();
     expect(useControlRoom).not.toHaveBeenCalled();
     expect(html).toContain("Opening your Host");
