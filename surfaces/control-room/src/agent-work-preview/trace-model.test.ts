@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executions } from "./data";
+import { executions } from "./example-data";
 import { boundedWindow, findEvents, issueFor, overlaps, traceBins, traceDuration, traceEvents } from "./trace-model";
 const longRun = executions.find(run => run.id === "run-107")!;
 const events = traceEvents(longRun);

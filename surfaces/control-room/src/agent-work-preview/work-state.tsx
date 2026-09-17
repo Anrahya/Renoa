@@ -1,9 +1,13 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { agentExample } from "./agent-example";
+import type { AgentExample } from "./agent-example";
+
+// Development-only fixtures. The static equivalent shipped the example chain to
+// the production Host chunk; the DEV gate drops it from that build.
+const agentExample = import.meta.env.DEV ? (await import("./agent-example")).agentExample : null;
 
 type Overrides = Record<string, Record<string, boolean>>;
 const PreviewWork = createContext<{
-  exampleFor: typeof agentExample;
+  exampleFor: (agentId: string) => AgentExample;
   setEnabled: (agentId: string, automationId: string, enabled: boolean) => void;
 } | null>(null);
 
@@ -11,6 +15,7 @@ const PreviewWork = createContext<{
 export function PreviewWorkProvider({ children }: { children: ReactNode }) {
   const [overrides, setOverrides] = useState<Overrides>({});
   function exampleFor(agentId: string) {
+    if (!agentExample) throw new Error("Example work is only available with the development preview");
     const example = agentExample(agentId);
     return { ...example, automations: example.automations.map(item => ({ ...item, enabled: overrides[agentId]?.[item.id] ?? item.enabled })) };
   }

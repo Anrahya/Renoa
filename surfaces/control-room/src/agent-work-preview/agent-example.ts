@@ -1,4 +1,5 @@
-import { automations, executions, type Automation, type Execution } from "./data";
+import type { Automation, Execution } from "./data";
+import { automations, executions } from "./example-data";
 
 export type AgentExample = { automations: Automation[]; executions: Execution[] };
 // View fixtures, never agent roles or runtime policy. Sharing this selection

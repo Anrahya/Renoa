@@ -21,6 +21,9 @@ import "../styles/host-work-preview.css";
 type WorkRecord = { agent: DesignAgent; run: Execution };
 const icons = { completed: Check, interrupted: WarningCircle, waiting: Hourglass };
 const key = (agent: string, record: string) => `${agent}/${record}`;
+// Daily and activity rows expose data-work-id; timeline marks and recent-execution
+// buttons expose data-run-id. Both hold the same agent/record identity.
+const anchorId = (element: HTMLElement) => element.dataset.workId ?? element.dataset.runId;
 export function WorkPreview({ host, route }: { host: HostSnapshot; route: HostRoute }) {
   const agents = useDesignAgents(host);
   const work = usePreviewWork();
@@ -38,7 +41,7 @@ export function WorkPreview({ host, route }: { host: HostSnapshot; route: HostRo
     // whatever destination the user reached instead.
     const frame = requestAnimationFrame(() => {
       window.scrollTo({ top: returnTo.current.scroll });
-      const target = [...document.querySelectorAll<HTMLElement>("[data-work-id]")].find(element => element.dataset.workId === returnTo.current.id) ?? document.querySelector<HTMLElement>("#host-main h1");
+      const target = [...document.querySelectorAll<HTMLElement>("[data-work-id], [data-run-id]")].find(element => anchorId(element) === returnTo.current.id) ?? document.querySelector<HTMLElement>("#host-main h1");
       target?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
@@ -49,7 +52,7 @@ export function WorkPreview({ host, route }: { host: HostSnapshot; route: HostRo
   const records = all.filter(({ agent, run }) => (owner === "all" || owner === agent.id) && `${agent.name} ${run.title} ${run.result}`.toLowerCase().includes(term));
   const attention = all.filter(({ agent, run }) => (owner === "all" || owner === agent.id) && run.status !== "completed");
   function openRun(agentId: string, runId: string, element: HTMLElement) {
-    returnTo.current = { id: element.dataset.workId, scroll: window.scrollY };
+    returnTo.current = { id: anchorId(element), scroll: window.scrollY };
     window.location.hash = `#work/${encodeURIComponent(agentId)}/${encodeURIComponent(runId)}`;
   }
   if (route.execution) {
