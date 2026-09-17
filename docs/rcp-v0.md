@@ -689,8 +689,8 @@ The proof deliberately does not yet satisfy the full RCP architecture:
 3. Rust Host targets are statically supplied when the node starts. Their
    admitted task bindings are durable, but remote target provisioning,
    configuration revisions, and mutation APIs for those targets remain unimplemented.
-   The separate personal Host management adapter provides authenticated observation,
-   not RCP node provisioning.
+   The separate personal Host management adapter provides authenticated observation
+   plus narrow routine and review-policy mutations, not RCP node provisioning.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.

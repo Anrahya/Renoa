@@ -44,7 +44,7 @@ export function createScene(source: SpaceAgent[], expanded: boolean, columns = 4
     const small = !expanded && agents.length <= 6;
     const origin = small ? { x: group === 0 ? 0 : 780 + (group - 1) * 390, y: 0 } : { x: group % columns * (columns === 2 ? 950 : 760), y: Math.floor(group / columns) * 760 };
     const placed = members.map((agent, i): PlacedAgent => ({ ...agent, position: small
-      ? columns === 2 ? { x: group === 0 ? 120 + i * 225 : 220, y: group === 0 ? 145 + i * 115 : 510 + (group - 1) * 340 }
+      ? columns === 2 ? { x: group === 0 ? 120 + i * 225 : 220, y: group === 0 ? 145 + i * 115 : 600 + (group - 1) * 380 }
         : { x: origin.x + 175 + i * 290, y: (group ? 285 : 195) + i * 165 }
       : { x: origin.x + 160 + (3 - Math.min(3, members.length)) * 105 + i % 3 * 210, y: origin.y + 185 + Math.floor(i / 3) * 200 } }));
     const xs = placed.map(agent => agent.position.x), ys = placed.map(agent => agent.position.y);

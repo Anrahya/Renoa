@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { HostSnapshot } from "../host-contract";
 import { capabilityPlugins, pluginCapabilities, type CapabilityPlugin } from "../agent-work-preview/configuration-model";
 import { accountExamples, usePreviewConnections } from "../agent-work-preview/connection-state";
-import { AgentLink, NoResults, PageHeading, useDesignAgents, type DesignAgent } from "./shared";
+import { AgentLink, NoResults, PageHeading, agentCount, useDesignAgents, type DesignAgent } from "./shared";
 import "../styles/host-connections-preview.css";
 
 export function ConnectionsPreview({ host, tab }: { host: HostSnapshot; tab: string }) {
@@ -36,7 +36,7 @@ export function ConnectionsPreview({ host, tab }: { host: HostSnapshot; tab: str
           const users = agents.filter(agent => account.id === "model" ? agent.configuration.model.startsWith("DeepSeek") : capabilityPlugins.some(plugin => plugin.connectionId === account.id && pluginCapabilities(plugin).some(capability => agent.configuration.capabilities.includes(capability.id))));
           const ready = connected[account.id] ?? false;
           return <details key={account.id} className="desk-disclosure"><summary><span className="desk-icon"><Key /></span><span className="desk-disclosure-title"><strong>{account.name}</strong><small>{account.service} · {account.method}</small></span><span className="desk-status" data-tone={ready ? "good" : "warning"}>{ready ? "Connected" : "Not connected"}</span><CaretRight size={17} /></summary>
-            <div className="desk-disclosure-body"><dl className="desk-facts"><div><dt>Access</dt><dd>{account.scope}</dd></div><div><dt>Credentials</dt><dd>Held by the Host</dd></div><div><dt>Selected by</dt><dd>{users.length} agents</dd></div></dl>
+            <div className="desk-disclosure-body"><dl className="desk-facts"><div><dt>Access</dt><dd>{account.scope}</dd></div><div><dt>Credentials</dt><dd>Held by the Host</dd></div><div><dt>Selected by</dt><dd>{agentCount(users.length)}</dd></div></dl>
               <div className="desk-agent-links">{users.map(agent => <AgentLink key={agent.id} agent={agent} configure />)}</div>
               <div className="library-account-action"><p className="desk-note">{ready ? "Disconnecting access leaves agent capability selections intact." : "Connecting restores access for agents that already select these capabilities."} This action only changes the preview.</p><Button variant="outline" onClick={() => { setConnected(account.id, !ready); setNotice(`${account.name} ${ready ? "disconnected" : "connected"} in this preview.`); }}>{ready ? "Disconnect" : "Connect"} in preview</Button></div>
             </div></details>;
@@ -54,7 +54,7 @@ function Plugin({ plugin, agents, searching }: { plugin: CapabilityPlugin; agent
   const ready = !plugin.connectionId || connected[plugin.connectionId];
   const account = accountExamples.find(item => item.id === plugin.connectionId);
   return <details className="desk-disclosure" open={searching || undefined}>
-    <summary><span className="desk-icon"><Cube /></span><span className="desk-disclosure-title"><strong>{plugin.name}</strong><small>{pluginCapabilities(plugin).length} {pluginCapabilities(plugin).length === 1 ? "capability" : "capabilities"} · {plugin.groups.map(group => group.via ?? group.kind).join(" + ")}</small></span><span className="library-member-count">{members.length} agents</span><span className="desk-status" data-tone={ready ? "good" : "warning"}>{ready ? "Available" : "Needs account"}</span><CaretRight size={17} /></summary>
+    <summary><span className="desk-icon"><Cube /></span><span className="desk-disclosure-title"><strong>{plugin.name}</strong><small>{pluginCapabilities(plugin).length} {pluginCapabilities(plugin).length === 1 ? "capability" : "capabilities"} · {plugin.groups.map(group => group.via ?? group.kind).join(" + ")}</small></span><span className="library-member-count">{agentCount(members.length)}</span><span className="desk-status" data-tone={ready ? "good" : "warning"}>{ready ? "Available" : "Needs account"}</span><CaretRight size={17} /></summary>
     <div className="desk-disclosure-body">
       <div className="library-bundle">{plugin.groups.map(group => <section key={`${group.kind}-${group.via}`}><div className="desk-section-heading"><h3>{group.kind}</h3>{group.via && <Badge variant="outline">{group.via}</Badge>}</div><ul>{group.items.map(item => <li key={item.id}><strong>{item.name}</strong><p>{item.detail}</p></li>)}</ul></section>)}</div>
       <div className="library-access"><div><h3>Used by</h3><p className="desk-note">{members.length ? "Open an agent to change its selection." : "No agents have selected this plugin yet."}</p><div className="desk-agent-links">{members.map(agent => <AgentLink key={agent.id} agent={agent} configure />)}</div>{!members.length && <Button asChild variant="outline" size="sm"><a href="#agents">Choose an agent<ArrowUpRight data-icon="inline-end" /></a></Button>}</div>

@@ -11,6 +11,7 @@ import { usePreviewWork } from "../agent-work-preview/work-state";
 import type { HostSnapshot } from "../host-contract";
 import { agentHref, displayName, isEarlier } from "../host-presentation";
 import { directorySummary } from "../host-agent-directory-model";
+import { agentCount } from "../host-design-preview/shared";
 import { createScene, pluginMembers, previewManager, regionPath, type AgentScene } from "./scene";
 import { isDistant, spaceNodeTypes, type PortraitNode, type RegionNode } from "./map-nodes";
 import "@xyflow/react/dist/style.css";
@@ -121,7 +122,7 @@ function AgentMap({ scene }: { scene: AgentScene }) {
           if (event.key === "Enter" && matches.length === 1) focusAgent(matches[0]!.id);
         }} />
         {query && <InputGroupAddon align="inline-end"><InputGroupButton aria-label="Clear search" size="icon-xs" onClick={() => setQuery("")}><X /></InputGroupButton></InputGroupAddon>}
-      </InputGroup>{term && <div className="space-search-results"><p role="status">{matches.length ? `${matches.length} matching agents` : "No matching agents"}</p>{matches.map(agent => <button key={agent.id} onClick={() => focusAgent(agent.id)}>{agent.name}<span>Go to agent</span></button>)}</div>}</div>
+      </InputGroup>{term && <div className="space-search-results"><p role="status">{matches.length ? `${agentCount(matches.length)} matching` : "No matching agents"}</p>{matches.map(agent => <button key={agent.id} onClick={() => focusAgent(agent.id)}>{agent.name}<span>Go to agent</span></button>)}</div>}</div>
       <div className="space-view-controls"><Button variant="outline" onClick={fit}><ArrowsOutSimple />Fit view</Button><Button variant="ghost" size="icon" aria-label={paused ? "Resume map motion" : "Pause map motion"} aria-pressed={paused} onClick={() => setPaused(value => !value)}>{paused ? <Play /> : <Pause />}</Button></div>
     </div>
     <div ref={map} className="space-map" data-motion={motionAllowed && !paused} aria-label="Agent relationship map" onFocusCapture={event => {
@@ -138,16 +139,16 @@ function AgentMap({ scene }: { scene: AgentScene }) {
         attributionPosition="bottom-left" aria-label="Explore agent spaces" onPaneClick={() => { setQuery(""); setPluginId(""); }}>
         <Background gap={28} size={.7} color="#ffffff19" />
         {pluginId && members.length > 0 && <ViewportPortal><svg className="space-shared-field" aria-hidden="true"><path d={regionPath(members.map(agent => agent.position), 128)} /></svg>
-          <div className="space-capability-label" style={{ left: members.reduce((sum, agent) => sum + agent.position.x, 0) / members.length, top: Math.min(...members.map(agent => agent.position.y)) - 90 }}><Cube size={18} /><span>{capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}<small>{members.length} agents · shared access</small></span></div>
+          <div className="space-capability-label" style={{ left: members.reduce((sum, agent) => sum + agent.position.x, 0) / members.length, top: Math.min(...members.map(agent => agent.position.y)) - 90 }}><Cube size={18} /><span>{capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}<small>{agentCount(members.length)} · shared access</small></span></div>
         </ViewportPortal>}
         <ZoomControls />
       </ReactFlow> : <div className="space-map-empty">No agents yet. Agents will appear here when registered on this Host.</div>}
     </div>
     <div className="space-plugins" aria-label="Shared capabilities"><span><Cube size={16} />Shared capabilities</span><div>{capabilityPlugins.map(plugin => {
       const count = pluginMembers(scene.agents, plugin.id).length;
-      return <button key={plugin.id} className="space-plugin" data-active={pluginId === plugin.id} aria-pressed={pluginId === plugin.id} aria-label={`${plugin.name}, ${count} agents`} onClick={() => selectPlugin(plugin.id)}><i aria-hidden="true" />{plugin.name}<span>{count}</span></button>;
+      return <button key={plugin.id} className="space-plugin" data-active={pluginId === plugin.id} aria-pressed={pluginId === plugin.id} aria-label={`${plugin.name}, ${agentCount(count)}`} onClick={() => selectPlugin(plugin.id)}><i aria-hidden="true" />{plugin.name}<span>{count}</span></button>;
     })}</div></div>
-    <div className="space-caption"><span>{pluginId ? `${members.length} agents share access to ${capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}. Each keeps its own capabilities.` : "Open an agent from its portrait. Select a plugin to reveal shared access."} <a href="#library">Manage capabilities</a></span><span>Drag to pan · Scroll or pinch to zoom</span></div>
+    <div className="space-caption"><span>{pluginId ? `${agentCount(members.length)} ${members.length === 1 ? "shares" : "share"} access to ${capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}. Each keeps its own capabilities.` : "Open an agent from its portrait. Select a plugin to reveal shared access."} <a href="#library">Manage capabilities</a></span><span>Drag to pan · Scroll or pinch to zoom</span></div>
   </>;
 }
 

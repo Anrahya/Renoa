@@ -17,6 +17,9 @@ export function useDesignAgents(host: HostSnapshot) {
   });
 }
 export type DesignAgent = ReturnType<typeof useDesignAgents>[number];
+export function agentCount(count: number) {
+  return `${count} ${count === 1 ? "agent" : "agents"}`;
+}
 export function PageHeading({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
   return <div className="desk-heading"><div><h1 tabIndex={-1}>{title}</h1><p>{description}</p></div>{children}</div>;
 }

@@ -42,6 +42,9 @@ describe("Agent-space preview boundaries", () => {
     expect(phone.agents.map(agent => agent.id)).toEqual(desktop.agents.map(agent => agent.id));
     expect(phone.agents[2]!.position.y).toBeGreaterThan(phone.agents[1]!.position.y);
     expect(pluginMembers(phone.agents, "builtin").map(agent => agent.id)).toEqual([rc.id, desk.id]);
+    const managedContentBottom = Math.max(...phone.regions[0]!.members.map(agent => agent.position.y)) + 115;
+    const independentLabelTop = phone.regions[1]!.bounds.y + phone.regions[1]!.bounds.height * .04;
+    expect(independentLabelTop - managedContentBottom).toBeGreaterThanOrEqual(32);
   });
   it("handles empty scenes and produces finite closed contours for every crowded group", () => {
     expect(createScene([], false)).toEqual({ agents: [], regions: [] });

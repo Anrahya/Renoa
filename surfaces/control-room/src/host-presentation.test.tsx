@@ -66,6 +66,21 @@ describe("Host navigation and rendered controls", () => {
       expect(render(route!, host, true)).not.toContain(marker);
     }
   });
+  it("uses singular agent labels for one preview member", () => {
+    for (const route of ["#agents", "#library", "#library/accounts", "#overview"]) {
+      const html = render(route, host, true, "?preview");
+      expect(html).toContain("1 agent");
+      expect(html).not.toContain("1 agents");
+    }
+  });
+  it("keeps System terminology aligned with the runtime boundaries", () => {
+    const html = render("#overview", host, true, "?preview");
+    expect(html).toContain("RCP coordinator");
+    expect(html).toContain("Execution node");
+    expect(html).toContain("Host + Renoa kernel");
+    expect(html).not.toContain("Host coordinator");
+    expect(html).not.toContain("replaceable execution harness");
+  });
   it("opens work executions only under their agent and handles invalid links", () => {
     expect(render("#work/reviewer/run-107", host, true, "?preview")).toContain("Jump to interruption");
     expect(render("#work/missing/run-107", host, true, "?preview")).not.toContain("Execution timeline");
