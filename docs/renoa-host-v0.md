@@ -860,7 +860,7 @@ either. If the process dies before that result is persisted, the kernel's
 conservative `OutcomeUnknown` recovery boundary still applies; the kernel
 never invents an uncertain result, and a safe-to-replay effect's live unknown
 report from its first durable dispatch is replayed once before that outcome
-becomes durable.
+becomes durable, unless a cancellation is already recorded for the operation.
 
 Local Host state has one intentionally visible layout:
 

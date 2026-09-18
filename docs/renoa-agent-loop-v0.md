@@ -333,8 +333,9 @@ failures with the adapter's concise message. An incomplete stream, cancellation
 after dispatch, or provider error whose inference outcome is `unknown` never
 becomes a false terminal failure: the kernel replays the live unknown report
 once through the same persisted request when the effect is safe to replay and
-the report came from that effect's first durable dispatch. Any other unknown
-report makes the uncertainty durable and blocks the
+the report came from that effect's first durable dispatch, unless a cancellation
+is already recorded for the operation, which closes it as cancelled instead. Any
+other unknown report makes the uncertainty durable and blocks the
 operation. If assistant
 output has started, the inference outcome is `unknown` even when the failure
 category remains classified. Provider wire formats,

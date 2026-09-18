@@ -241,12 +241,13 @@ atomically stores the outcome and returns the operation to `NeedDecision` with
 that exact result available to the loop.
 
 If a live adapter cannot prove a definite result, the kernel replays the effect
-once when the binding is safe to replay and this was that effect's first durable
-dispatch; otherwise it atomically marks both the effect and operation
-`OutcomeUnknown`. It never launders uncertainty
-into an ordinary failure. If the driving caller disappears, the adapter first
-finishes cancellation cleanup, then the next drive applies the same persisted
-recovery rules used after process loss.
+once when the binding is safe to replay, this was that effect's first durable
+dispatch, and no cancellation is recorded for the operation; a recorded
+cancellation closes the operation as `Cancelled` instead. Otherwise the kernel
+atomically marks both the effect and operation `OutcomeUnknown`. It never
+launders uncertainty into an ordinary failure. If the driving caller disappears,
+the adapter first finishes cancellation cleanup, then the next drive applies the
+same persisted recovery rules used after process loss.
 
 After restart:
 
@@ -334,7 +335,7 @@ No loop plugin or effect adapter runs inside a SQLite transaction.
 | Commit semantic decision | checkpoint, events, cursor, `NeedDecision` | events and next loop position agree | call loop again |
 | Commit effect intent | checkpoint, exact effect, `EffectIntent` | adapter definitely not started | mark dispatch started |
 | Mark dispatch | effect dispatch count, `EffectDispatched` | adapter may have started | invoke now, or recover by class |
-| Replay live uncertainty | effect dispatch count, `EffectDispatched` | a live unknown report from a safe-to-replay effect's first durable dispatch is not yet durable | invoke the same persisted effect once more |
+| Replay live uncertainty | nothing; the effect stays `DispatchStarted` and the operation stays `EffectDispatched` | a live unknown report from a safe-to-replay effect's first durable dispatch, with no recorded cancellation | invoke the same persisted effect once more |
 | Settle effect | exact outcome, effect `Settled`, operation `NeedDecision` | result is available exactly once | call loop; never repeat settled effect |
 | Mark uncertainty | effect and operation `OutcomeUnknown` | recovery or the live adapter cannot prove the result | block without dispatch |
 | Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer | the operation is closed while the effect remains unknown | return the same outcome on retry or activate queued work |
