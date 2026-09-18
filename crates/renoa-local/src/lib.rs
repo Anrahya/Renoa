@@ -1,13 +1,16 @@
 //! First local Host for composable Renoa agent runtimes.
 
+mod agent_definition;
 mod agent_session;
 mod agent_trace;
 mod alpha;
 mod arcee;
 mod atomic_file;
 mod bash;
+mod capabilities;
 mod credential_file;
 mod deadline;
+mod documents;
 mod file_lock;
 mod file_tools;
 mod git_repository;
@@ -24,6 +27,7 @@ mod package_tree;
 mod plugins;
 mod process;
 mod profile;
+mod presets;
 mod ripgrep;
 mod runtime;
 mod search;
@@ -41,6 +45,11 @@ pub use git_repository::{GitChange, GitSide};
 #[cfg(test)]
 mod model_adapter_process_tests;
 
+pub use agent_definition::{
+    AgentBehavior, AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDefinitionError,
+    AgentDocuments, AgentOperationalDefinition, AgentPresetId, AgentToolSelection,
+    AutomaticCompaction, TurnTiming, WorkspaceInstructions,
+};
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use alpha::{ALPHA_PROFILE_ID, alpha_profile};
 pub use arcee::{ARCEE_PROFILE_ID, arcee_profile};

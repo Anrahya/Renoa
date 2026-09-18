@@ -118,6 +118,12 @@ impl AgentToolBinding {
             recovery,
         }
     }
+
+    /// Returns the model-visible name of the bound tool.
+    #[must_use]
+    pub fn tool_name(&self) -> &str {
+        self.tool.spec().name.as_str()
+    }
 }
 
 /// Builds the concrete runtime offered to `renoa-kernel`.
