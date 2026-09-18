@@ -14,6 +14,10 @@ use tempfile::tempdir;
 
 const ABANDONED_REASON: &str = "effect outcome is unknown; operation was abandoned";
 
+/// The sentence a build before this change persisted for the same abandonment.
+const LEGACY_ABANDONED_REASON: &str =
+    "effect outcome is unknown; operation was abandoned without replay";
+
 #[tokio::test]
 async fn abandonment_is_atomic_idempotent_and_unblocks_queued_work() {
     let directory = tempdir().expect("temporary directory");
@@ -156,6 +160,111 @@ async fn corrupted_history_prevents_abandonment_before_the_loop_runs() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(snapshot.operations[0].outcome, None);
+}
+
+#[tokio::test]
+async fn abandonment_retry_returns_the_outcome_an_earlier_build_persisted() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let legacy = OperationOutcome::Failed {
+        reason: LEGACY_ABANDONED_REASON.to_owned(),
+    };
+    let (session_id, operation_id, runtime, abandon_calls) =
+        abandoned_with_persisted_outcome(&database, &legacy).await;
+
+    let kernel = Kernel::open(&database).expect("reopen kernel");
+    assert_eq!(
+        kernel
+            .abandon_unknown_effect(session_id, operation_id, &runtime)
+            .expect("retry the abandonment an earlier build committed"),
+        legacy,
+        "the retry must return the stored outcome unchanged"
+    );
+    assert_eq!(
+        abandon_calls.load(Ordering::SeqCst),
+        1,
+        "a committed abandonment must not run the loop again"
+    );
+    assert_eq!(
+        kernel
+            .events_after(session_id, EventCursor::START)
+            .expect("read abandonment events")
+            .events
+            .len(),
+        2,
+        "the retry must not append duplicate events"
+    );
+}
+
+#[tokio::test]
+async fn abandonment_retry_rejects_a_persisted_outcome_that_is_not_a_failure() {
+    for outcome in [
+        OperationOutcome::Completed,
+        OperationOutcome::Cancelled,
+        OperationOutcome::WaitingForInput,
+    ] {
+        let directory = tempdir().expect("temporary directory");
+        let database = directory.path().join("kernel.sqlite3");
+        let (session_id, operation_id, runtime, _) =
+            abandoned_with_persisted_outcome(&database, &outcome).await;
+
+        let kernel = Kernel::open(&database).expect("reopen kernel");
+        assert!(
+            matches!(
+                kernel.abandon_unknown_effect(session_id, operation_id, &runtime),
+                Err(KernelError::Corrupt(_))
+            ),
+            "a definite {outcome:?} outcome must not be readable as an abandonment"
+        );
+    }
+}
+
+/// Abandons one durable unknown effect, then replaces the persisted terminal
+/// outcome with the one an earlier build would have written.
+async fn abandoned_with_persisted_outcome(
+    database: &std::path::Path,
+    outcome: &OperationOutcome,
+) -> (
+    SessionId,
+    renoa_kernel::OperationId,
+    Runtime,
+    Arc<AtomicUsize>,
+) {
+    let kernel = Kernel::open(database).expect("open kernel");
+    let session_id = create_session(&kernel);
+    let blocked = kernel
+        .submit(
+            session_id,
+            Command::new(CommandId::new(), serde_json::json!({"effect": true})),
+        )
+        .expect("submit command");
+    let abandon_calls = Arc::new(AtomicUsize::new(0));
+    let runtime = runtime(
+        "config-v1",
+        Arc::clone(&abandon_calls),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    assert!(matches!(
+        kernel.drive(session_id, &runtime).await,
+        Ok(DriveResult::Blocked { .. })
+    ));
+    kernel
+        .abandon_unknown_effect(session_id, blocked.operation_id, &runtime)
+        .expect("abandon unknown effect");
+    drop(kernel);
+
+    let connection = rusqlite::Connection::open(database).expect("open raw database");
+    connection
+        .execute(
+            "UPDATE operations SET outcome_json = ?2 WHERE operation_id = ?1",
+            rusqlite::params![
+                blocked.operation_id.to_string(),
+                serde_json::to_string(outcome).expect("encode persisted outcome"),
+            ],
+        )
+        .expect("seed the persisted outcome");
+    drop(connection);
+    (session_id, blocked.operation_id, runtime, abandon_calls)
 }
 
 fn create_session(kernel: &Kernel) -> SessionId {
