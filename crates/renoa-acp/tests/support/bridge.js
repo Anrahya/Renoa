@@ -286,6 +286,32 @@ if (prompt === "Hello") {
   stop_reason = "tool_use";
 } else if (prompt === "Tool" && toolResults.length === 1) {
   content = [{ type: "text", text: "Read it." }];
+} else if (prompt === "Truncate") {
+  const attemptsPath = process.env.RENOA_TEST_MODEL_ATTEMPTS;
+  const attempts = existsSync(attemptsPath)
+    ? Number.parseInt(readFileSync(attemptsPath, "utf8"), 10)
+    : 0;
+  writeFileSync(attemptsPath, String(attempts + 1));
+  if (attempts === 0) {
+    process.stdout.write(JSON.stringify({
+      event: "content_delta",
+      content_index: 0,
+      delta: { type: "text", text: "stale partial " }
+    }) + "\n");
+    process.stdout.write(JSON.stringify({
+      event: "error",
+      error: "the provider stream ended after partial output without a completed response",
+      error_kind: "stream_interrupted",
+      inference_outcome: "unknown"
+    }) + "\n");
+    process.exit(0);
+  }
+  process.stdout.write(JSON.stringify({
+    event: "content_delta",
+    content_index: 0,
+    delta: { type: "text", text: "fresh complete" }
+  }) + "\n");
+  content = [{ type: "text", text: "fresh complete" }];
 } else {
   process.exit(2);
 }

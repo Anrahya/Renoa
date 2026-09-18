@@ -75,6 +75,105 @@ fn conflicting_frontend_turn_ids_are_rejected_before_admission() {
 }
 
 #[test]
+fn a_discarded_attempt_is_closed_before_the_replayed_response() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(&bridge, BRIDGE).expect("write model bridge");
+    let mut process = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    process.initialize();
+    let created = process.create_session(&workspace);
+    let session_id = created["result"]["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+
+    process.send_prompt(
+        &session_id,
+        "Truncate",
+        "1b0d5f4e-6a2c-4a8f-9d3e-7c5b1a2f8e40",
+    );
+    let messages = process.read_until_response(3);
+    let response = messages.last().expect("prompt response");
+    assert_eq!(
+        response["result"]["stopReason"], "end_turn",
+        "a live unknown outcome must replay and complete the turn: {messages:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(data.join("model-attempts")).expect("model attempts"),
+        "2",
+        "the unknown outcome must be replayed exactly once"
+    );
+
+    let chunks = messages
+        .iter()
+        .filter(|message| message["params"]["update"]["sessionUpdate"] == "agent_message_chunk")
+        .collect::<Vec<_>>();
+
+    // Protocol version 1 cannot retract the discarded fragment, so the surface
+    // closes its message with a discard notice instead of leaving text that
+    // reads as a second answer.
+    let notice = chunks
+        .iter()
+        .position(|chunk| {
+            chunk["params"]["update"]["_meta"]["renoa.discardedAttempt"] == json!(true)
+        })
+        .expect("the discarded attempt must be closed with a notice");
+    let discarded_id = chunks[notice]["params"]["update"]["messageId"]
+        .as_str()
+        .expect("discarded message id");
+    assert_eq!(
+        chunks
+            .iter()
+            .filter(|chunk| chunk["params"]["update"]["messageId"].as_str() == Some(discarded_id))
+            .map(|chunk| {
+                chunk["params"]["update"]["content"]["text"]
+                    .as_str()
+                    .expect("discarded text")
+            })
+            .collect::<String>(),
+        "stale partial \n\n[Renoa discarded this partial response and retried the request.]",
+        "the notice must close the message that carried the discarded fragment: {messages:?}"
+    );
+
+    let answer = chunks.iter().skip(notice + 1).collect::<Vec<_>>();
+    let answer_ids = answer
+        .iter()
+        .map(|chunk| {
+            chunk["params"]["update"]["messageId"]
+                .as_str()
+                .expect("answer message id")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        answer_ids.len(),
+        1,
+        "the replay must arrive as one assistant response after the notice: {messages:?}"
+    );
+    assert!(
+        !answer_ids.contains(discarded_id),
+        "the replayed response must not continue the discarded message: {messages:?}"
+    );
+    assert_eq!(
+        answer
+            .iter()
+            .map(|chunk| {
+                chunk["params"]["update"]["content"]["text"]
+                    .as_str()
+                    .expect("answer text")
+            })
+            .collect::<String>(),
+        "fresh complete",
+        "the frontend must receive the replayed response alone: {messages:?}"
+    );
+    process.finish();
+}
+
+#[test]
 fn a_tool_turn_streams_execution_before_the_final_answer() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");

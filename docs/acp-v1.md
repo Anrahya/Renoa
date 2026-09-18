@@ -225,6 +225,16 @@ replayed user chunk carries its originating command UUID in `_meta.requestId`.
 That lets a surface reconcile an optimistic user entry without treating a
 client correlation value as the agent-owned message identity.
 
+A live unknown outcome that the kernel replays cannot retract what the first
+attempt already streamed: protocol version 1 has no way to replace message
+content, and deltas reach the frontend before the model completes. Renoa closes
+the discarded message with a notice chunk carrying
+`_meta["renoa.discardedAttempt"] = true` before the replayed response starts its
+own message. Durable history still contains only the settled response, and a
+frontend can use the marker to render the fragment as discarded rather than as
+an answer. Protocol version 2 `agent_message` updates would replace the content
+outright.
+
 If a process stopped after admitting a turn but before settling it, a different
 new turn is rejected before admission or model execution. Retrying the original
 turn identity and exact content resumes that durable operation.
