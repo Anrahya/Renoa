@@ -100,6 +100,7 @@ impl AcpEventSink {
             return Ok(None);
         }
         state.current_text.push_str(text);
+        state.published = true;
         Ok(Some(text_chunk(text.to_owned(), &state.message_id)))
     }
 

@@ -347,8 +347,8 @@ fn a_cancelled_fragment_stays_open_without_a_discard_notice() {
         .find(|message| message["id"] == 3)
         .expect("prompt response");
     assert_eq!(response["result"]["stopReason"], "cancelled");
-    // Only a replay closes a published fragment. A cancelled turn reports that
-    // the attempt did not complete, so its fragment is left as it is.
+    // The sink closes a fragment only when another assistant message starts,
+    // which a replayed attempt does and a cancelled turn does not.
     assert!(
         messages.iter().all(|message| {
             message["params"]["update"]["_meta"]["renoa.discardedAttempt"] != json!(true)

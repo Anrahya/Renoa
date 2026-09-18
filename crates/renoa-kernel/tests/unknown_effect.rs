@@ -216,11 +216,24 @@ async fn abandonment_retry_rejects_a_persisted_outcome_that_is_not_a_failure() {
             ),
             "a definite {outcome:?} outcome must not be readable as an abandonment"
         );
+        let snapshot = kernel
+            .inspect(session_id)
+            .expect("inspect rejected abandonment");
+        assert_eq!(snapshot.operations[0].status, OperationStatus::Failed);
+        assert_eq!(
+            kernel
+                .events_after(session_id, EventCursor::START)
+                .expect("read events after a rejected abandonment")
+                .events
+                .len(),
+            2,
+            "a rejected abandonment must not change durable state"
+        );
     }
 }
 
-/// Abandons one durable unknown effect, then replaces the persisted terminal
-/// outcome with the one an earlier build would have written.
+/// Abandons one durable unknown effect and then replaces the persisted terminal
+/// outcome, so a test can present a row this build did not write.
 async fn abandoned_with_persisted_outcome(
     database: &std::path::Path,
     outcome: &OperationOutcome,
