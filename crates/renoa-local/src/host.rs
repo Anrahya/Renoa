@@ -9,6 +9,7 @@ use thiserror::Error;
 pub(crate) mod agents;
 pub(crate) mod bots;
 pub(crate) mod catalog;
+pub(crate) mod definition;
 mod extensions;
 pub(crate) mod history;
 mod lease;
@@ -206,6 +207,10 @@ pub enum LocalHostError {
     BotCreationCancelled,
     #[error("bot rename cancelled before commit")]
     BotRenameCancelled,
+    #[error("agent mutation cancelled before commit")]
+    AgentCancelled,
+    #[error(transparent)]
+    Definition(#[from] crate::AgentDefinitionError),
     #[error(transparent)]
     Routine(#[from] routines::RoutineError),
     #[error(transparent)]

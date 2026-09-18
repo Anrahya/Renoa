@@ -308,6 +308,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.execute_batch(SCHEMA)?;
             agents::initialize(&transaction)?;
             initialize_bots(&transaction)?;
+            super::definition::schema::initialize(&transaction)?;
             super::routines::initialize(&transaction)?;
             super::bots::names::initialize(&transaction)?;
             super::reviews::initialize(&transaction)?;
@@ -360,6 +361,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                     agents::initialize(&transaction)?;
                 }
                 initialize_bots(&transaction)?;
+                super::definition::schema::initialize(&transaction)?;
                 super::routines::initialize(&transaction)?;
                 super::bots::names::initialize(&transaction)?;
                 super::reviews::initialize(&transaction)?;

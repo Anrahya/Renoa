@@ -12,7 +12,7 @@ mod runner;
 pub use control::{HostRoutineControl, RoutineEnablement};
 pub use results::RoutineResultSummary;
 mod schedule;
-mod store;
+pub(super) mod store;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tool;

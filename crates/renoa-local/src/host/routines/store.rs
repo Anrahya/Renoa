@@ -187,6 +187,28 @@ pub(super) fn authorize(
     }
 }
 
+/// Inserts a routine inside a caller's existing transaction.
+///
+/// Agent creation uses this so the agent, its capability rows, its receipt, and
+/// its first routine commit together or not at all. Authorization is inherent:
+/// the caller is creating the agent the routine belongs to.
+pub(in crate::host) fn insert_first_routine(
+    transaction: &Transaction<'_>,
+    id: Uuid,
+    spec: RoutineSpec,
+    now_ms: i64,
+) -> Result<RoutineRecord, RoutineError> {
+    spec.validate(now_ms)?;
+    let record = RoutineRecord {
+        id,
+        revision: 1,
+        next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
+        spec,
+    };
+    save(transaction, &record, true)?;
+    Ok(record)
+}
+
 fn save(tx: &Transaction<'_>, r: &RoutineRecord, create: bool) -> Result<(), RoutineError> {
     let sql = if create {
         "INSERT INTO host_routines(id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)"

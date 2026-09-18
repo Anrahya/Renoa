@@ -8,13 +8,6 @@ pub(super) fn initialize(transaction: &Transaction<'_>) -> Result<(), HostCatalo
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             host_id TEXT NOT NULL UNIQUE CHECK (length(host_id) = 36)
         ) STRICT;
-        CREATE TABLE host_agents (
-            agent_id TEXT PRIMARY KEY CHECK (length(agent_id) = 36),
-            profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
-            name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
-            created_by TEXT REFERENCES host_agents(agent_id),
-            CHECK (created_by IS NULL OR created_by != agent_id)
-        ) STRICT;
         UPDATE host_metadata SET schema_version = 14 WHERE singleton = 1;",
     )?;
     transaction.execute(

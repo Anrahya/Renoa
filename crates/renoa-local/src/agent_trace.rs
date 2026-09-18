@@ -90,6 +90,8 @@ const fn host_error_code(error: &LocalHostError) -> &'static str {
         LocalHostError::HostCatalog(_) => "host_catalog",
         LocalHostError::Background(_) => "background",
         LocalHostError::BotRenameCancelled => "bot_rename_cancelled",
+        LocalHostError::AgentCancelled => "agent_cancelled",
+        LocalHostError::Definition(_) => "agent_definition",
         LocalHostError::Routine(_) => "routine",
         LocalHostError::GitHubReview(_) => "github_review",
         LocalHostError::BotCreationCancelled => "bot_creation_cancelled",
