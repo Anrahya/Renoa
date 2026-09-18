@@ -15,7 +15,7 @@ use crate::{
     schema::{json_error, sqlite_error},
 };
 
-const ABANDONED_REASON: &str = "effect outcome is unknown; operation was abandoned without replay";
+const ABANDONED_REASON: &str = "effect outcome is unknown; operation was abandoned";
 
 struct PendingAbandonment {
     input: UnknownEffectInput,
@@ -381,7 +381,10 @@ fn load_prior_abandonment(
     let outcome = stored
         .outcome
         .ok_or_else(|| KernelError::Corrupt("abandoned operation has no outcome".to_owned()))?;
-    if outcome != abandoned_outcome() {
+    // The stored reason is display prose rather than durable identity: a retry
+    // validates the abandonment's shape and returns the stored outcome
+    // unchanged, so a row written before a wording change stays idempotent.
+    if !matches!(outcome, OperationOutcome::Failed { .. }) {
         return Err(KernelError::Corrupt(
             "unknown effect was released without the abandonment outcome".to_owned(),
         ));

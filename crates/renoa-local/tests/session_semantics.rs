@@ -134,6 +134,7 @@ async fn an_unknown_model_outcome_is_closed_honestly_and_the_session_remains_usa
     let runtime = runtime(Arc::new(SequenceModel::new(
         [
             Err(ModelError::new("provider reply was lost")),
+            Err(ModelError::new("provider reply was lost again")),
             Ok(text_response("The next turn ran.")),
         ],
         Arc::clone(&calls),
@@ -157,8 +158,13 @@ async fn an_unknown_model_outcome_is_closed_honestly_and_the_session_remains_usa
     assert_eq!(
         first,
         LocalTurnOutcome::Failed {
-            reason: "effect outcome is unknown; operation was abandoned without replay".to_owned(),
+            reason: "effect outcome is unknown; operation was abandoned".to_owned(),
         }
+    );
+    assert_eq!(
+        *calls.lock().expect("model call counter"),
+        2,
+        "one live unknown attempt replays once before the outcome is durably unknown"
     );
 
     let second = session
@@ -177,7 +183,7 @@ async fn an_unknown_model_outcome_is_closed_honestly_and_the_session_remains_usa
             stop_reason: StopReason::Stop,
         }
     );
-    assert_eq!(*calls.lock().expect("model call counter"), 2);
+    assert_eq!(*calls.lock().expect("model call counter"), 3);
 }
 
 #[tokio::test]

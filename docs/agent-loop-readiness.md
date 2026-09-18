@@ -25,7 +25,7 @@ no contract should be added until a real consumer needs it.
 | Steering and follow-ups | Deferred | Ordering against active work and admitted commands needs a real surface consumer |
 | Approvals and permissions | Deferred | These remain host/product policy; a durable decision contract needs a concrete host flow |
 | Parallel tool batches | Deferred | The durable loop intentionally executes source order sequentially; add scheduling metadata only with a real consumer and crash-recovery proof |
-| Partial-stream recovery | Deferred | No durable prefix or partial tool-call contract exists; incomplete model streams remain uncertain |
+| Partial-stream recovery | Deferred | No durable prefix or partial tool-call contract exists; an incomplete model stream is replayed once and otherwise stays uncertain |
 | Cross-session context and branches | Deferred | Session-tree direction is recorded in the kernel architecture, but provenance and snapshot contracts need the first branch consumer |
 | Remote continuity (RCP) | Separate | RCP remains a harness-independent connection system and is not part of loop readiness |
 

@@ -1,9 +1,9 @@
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use crate::{
-    AgentId, Checkpoint, Command, DriveResult, EffectCompletion, EffectId, EventCursor, Kernel,
-    KernelError, LoopDecision, LoopInput, OperationId, Runtime, RuntimeManifest, SemanticEvent,
-    SessionId,
+    AgentId, Checkpoint, Command, DriveResult, EffectCompletion, EffectId, EffectRecovery,
+    EventCursor, Kernel, KernelError, LoopDecision, LoopInput, OperationId, Runtime,
+    RuntimeManifest, SemanticEvent, SessionId,
     admission::{parse_agent_id, parse_operation_id},
     decision_store::CommittedDecision,
     effect_store::{EffectIntentCommit, EffectStart, NewEffectIntent},
@@ -12,6 +12,20 @@ use crate::{
     operation_store::load_operation,
     schema::{json_error, sqlite_error},
 };
+
+/// Dispatch count at which a live adapter-reported unknown outcome becomes
+/// durable instead of being replayed once.
+///
+/// An adapter-reported unknown is immediately replayed only when it came from
+/// the first durable dispatch. Process-loss recovery remains unchanged, so this
+/// bound describes live adapter reports only: a process that dies after a second
+/// live attempt reports unknown but before that unknown is committed can still
+/// dispatch again after restart.
+///
+/// The compared value is the effect row's total dispatch count, so a replay
+/// after process loss has already consumed this budget: an effect that replayed
+/// after a crash records its next unknown outcome without another live replay.
+const MAX_LIVE_DISPATCHES_BEFORE_UNKNOWN: u64 = 2;
 
 struct ActiveOperation {
     agent_id: AgentId,
@@ -186,6 +200,8 @@ impl Kernel {
         let executor =
             tokio::runtime::Handle::try_current().map_err(|_| KernelError::RuntimeUnavailable)?;
         let effect_id = pending.effect_id;
+        let recovery = pending.recovery;
+        let dispatch_count = pending.dispatch_count;
         let expected_transition = pending.transition_version;
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectDispatchCommitted);
@@ -195,6 +211,16 @@ impl Kernel {
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectCompletedBeforeSettlement);
         let EffectCompletion::Settled(outcome) = completion else {
+            if recovery == EffectRecovery::SafeToReplay
+                && dispatch_count < MAX_LIVE_DISPATCHES_BEFORE_UNKNOWN
+            {
+                // An adapter-reported unknown is immediately replayed only when
+                // it came from the first durable dispatch. Process-loss recovery
+                // remains unchanged. Leaving the effect dispatched and the
+                // operation in `effect_dispatched` lets the next drive iteration
+                // reuse the persisted intent, request, and recovery class.
+                return Ok(());
+            }
             self.record_outcome_unknown(active.operation_id, effect_id, expected_transition)?;
             return Ok(());
         };

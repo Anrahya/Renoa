@@ -18,6 +18,18 @@ use renoa_local::LocalHistoryEntry;
 use serde_json::json;
 use uuid::Uuid;
 
+/// Closes the message of an attempt the kernel discarded and replayed.
+///
+/// Protocol version 1 cannot retract or replace content already sent to the
+/// client, and this surface publishes deltas before the model completes, so a
+/// discarded attempt leaves its fragment in the client's transcript. Renoa
+/// closes that message with this notice instead of leaving a fragment that
+/// reads as a second answer, and marks the chunk with `renoa.discardedAttempt`
+/// so a frontend can render it as a notice rather than as assistant text.
+/// Protocol version 2 `agent_message` updates would replace the content.
+const DISCARDED_ATTEMPT_NOTICE: &str =
+    "\n\n[Renoa discarded this partial response and retried the request.]";
+
 pub(crate) struct AcpEventSink {
     connection: ConnectionTo<Client>,
     session_id: SessionId,
@@ -28,6 +40,10 @@ pub(crate) struct AcpEventSink {
 struct EventState {
     current_text: String,
     message_id: String,
+    /// Whether anything was already published for `message_id`.
+    published: bool,
+    /// Message whose published chunks were aborted and still need closing.
+    discarded: Option<String>,
     send_error: Option<String>,
     last_model_failure: Option<LastModelFailure>,
 }
@@ -51,6 +67,8 @@ impl AcpEventSink {
             state: Mutex::new(EventState {
                 current_text: String::new(),
                 message_id: Uuid::new_v4().to_string(),
+                published: false,
+                discarded: None,
                 send_error: None,
                 last_model_failure: None,
             }),
@@ -82,6 +100,7 @@ impl AcpEventSink {
             return Ok(None);
         }
         state.current_text.push_str(text);
+        state.published = true;
         Ok(Some(text_chunk(text.to_owned(), &state.message_id)))
     }
 
@@ -125,7 +144,7 @@ impl AcpEventSink {
             AgentEvent::MessageStart {
                 role: MessageRole::Assistant,
             } => self.start_assistant_message(),
-            AgentEvent::MessageAbort => self.clear_text(),
+            AgentEvent::MessageAbort => self.abort_message(),
             AgentEvent::MessageUpdate { delta, .. } => self.send_delta(delta),
             AgentEvent::ModelRequestEnd { response, .. } => {
                 if let Some(usage) = response.usage {
@@ -180,10 +199,34 @@ impl AcpEventSink {
         }
     }
 
-    fn clear_text(&self) {
+    /// Abandons the attempt's message. Its text cannot be retracted on protocol
+    /// version 1, so a published fragment is closed by the next assistant
+    /// message instead of disappearing from the transcript. A turn that ends
+    /// here instead leaves the fragment: its terminal outcome already reports
+    /// that the attempt did not complete.
+    fn abort_message(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.current_text.clear();
+            if state.published {
+                state.discarded = Some(state.message_id.clone());
+            }
+            state.published = false;
         }
+    }
+
+    /// Closes a discarded message before a new assistant message starts.
+    fn close_discarded_message(&self) {
+        let discarded = match self.state.lock() {
+            Ok(mut state) => state.discarded.take(),
+            Err(_) => None,
+        };
+        let Some(message_id) = discarded else {
+            return;
+        };
+        self.send(SessionUpdate::AgentMessageChunk(
+            text_chunk(DISCARDED_ATTEMPT_NOTICE.to_owned(), &message_id)
+                .meta(discarded_attempt_meta()),
+        ));
     }
 
     fn clear_last_model_failure(&self) {
@@ -208,8 +251,10 @@ impl AcpEventSink {
     }
 
     fn start_assistant_message(&self) {
+        self.close_discarded_message();
         if let Ok(mut state) = self.state.lock() {
             state.current_text.clear();
+            state.published = false;
             state.message_id = Uuid::new_v4().to_string();
         }
     }
@@ -219,6 +264,7 @@ impl AcpEventSink {
             AssistantDelta::Text { text } => {
                 let message_id = if let Ok(mut state) = self.state.lock() {
                     state.current_text.push_str(&text);
+                    state.published = true;
                     state.message_id.clone()
                 } else {
                     return;
@@ -229,7 +275,8 @@ impl AcpEventSink {
                 )));
             }
             AssistantDelta::Reasoning { text } => {
-                let message_id = if let Ok(state) = self.state.lock() {
+                let message_id = if let Ok(mut state) = self.state.lock() {
+                    state.published = true;
                     state.message_id.clone()
                 } else {
                     return;
@@ -247,6 +294,12 @@ impl AcpEventSink {
 fn text_chunk(text: String, message_id: &str) -> ContentChunk {
     ContentChunk::new(AcpContentBlock::Text(TextContent::new(text)))
         .message_id(MessageId::from(message_id.to_owned()))
+}
+
+fn discarded_attempt_meta() -> Meta {
+    let mut meta = Meta::new();
+    meta.insert("renoa.discardedAttempt".to_owned(), json!(true));
+    meta
 }
 
 pub(crate) fn replay_history(
@@ -424,40 +477,4 @@ fn tool_title(call: &ToolCall) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{context_tokens, tool_kind};
-    use agent_client_protocol::schema::v1::ToolKind;
-    use renoa_agent::TokenUsage;
-
-    #[test]
-    fn coding_search_tools_use_the_standard_search_kind() {
-        assert_eq!(tool_kind("grep"), ToolKind::Search);
-        assert_eq!(tool_kind("find"), ToolKind::Search);
-    }
-
-    #[test]
-    fn context_usage_counts_every_normalized_token_lane() {
-        assert_eq!(
-            context_tokens(TokenUsage {
-                input: 11,
-                output: 7,
-                cache_read: 5,
-                cache_write: 3,
-            }),
-            Some(26)
-        );
-    }
-
-    #[test]
-    fn context_usage_rejects_overflow_instead_of_wrapping() {
-        assert_eq!(
-            context_tokens(TokenUsage {
-                input: u64::MAX,
-                output: 1,
-                cache_read: 0,
-                cache_write: 0,
-            }),
-            None
-        );
-    }
-}
+mod tests;

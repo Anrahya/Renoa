@@ -192,6 +192,7 @@ async fn unknown_summary_outcome_blocks_without_activating_or_inventing_a_summar
         [
             Script::response(text_response("First answer.")),
             Script::OutcomeUnknown,
+            Script::OutcomeUnknown,
         ],
         Arc::clone(&requests),
     ));
@@ -212,6 +213,10 @@ async fn unknown_summary_outcome_blocks_without_activating_or_inventing_a_summar
     assert_eq!(
         blocked.operations[1].effects[0].status,
         EffectStatus::OutcomeUnknown
+    );
+    assert_eq!(
+        blocked.operations[1].effects[0].dispatch_count, 2,
+        "one live unknown summary attempt replays once before staying unknown"
     );
     assert_eq!(checkpoint_count(&kernel, session_id), 0);
 

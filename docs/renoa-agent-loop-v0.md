@@ -330,8 +330,13 @@ typed authentication rejection proven to precede inference settles as a clear
 operation failure and is likewise absent from model-visible history. Other
 pre-inference provider failures (`known_not_started`) also settle as definite
 failures with the adapter's concise message. An incomplete stream, cancellation
-after dispatch, or provider error whose inference outcome is `unknown` blocks
-the durable operation instead of becoming a false terminal failure. If assistant
+after dispatch, or provider error whose inference outcome is `unknown` never
+becomes a false terminal failure: the kernel replays the live unknown report
+once through the same persisted request when the effect is safe to replay and
+the report came from that effect's first durable dispatch, unless a cancellation
+is already recorded for the operation, which closes it as cancelled instead. Any
+other unknown report makes the uncertainty durable and blocks the
+operation. If assistant
 output has started, the inference outcome is `unknown` even when the failure
 category remains classified. Provider wire formats,
 authentication, and provider-internal transport behavior remain inside the
@@ -347,11 +352,15 @@ owns before resolving. Workspace policy and side-effect authorization remain in
 the host tool.
 
 The host selects `SafeToReplay` or `NeverReplay` per binding. The kernel, not
-the adapter or loop, applies that declaration after process loss. Tests prove
-that an interrupted safe model invocation reuses the same effect identity and
-request, while an interrupted never-replay tool becomes `OutcomeUnknown` and
-is not called again. A dropped drive also holds session ownership until its
-in-flight adapter has completed cancellation cleanup.
+the adapter or loop, applies that declaration after process loss and to a live
+unknown outcome reported by an adapter. Tests prove that an interrupted safe
+model invocation reuses the same effect identity and request, that a live
+unknown report from a safe effect's first durable dispatch replays once with
+the same persisted
+request before uncertainty becomes durable, while an interrupted never-replay
+tool becomes `OutcomeUnknown` and is not called again. A dropped drive also
+holds session ownership until its in-flight adapter has completed cancellation
+cleanup.
 
 The host may explicitly abandon an `OutcomeUnknown` operation. For an unknown
 model effect, the loop records no invented assistant response. For an unknown

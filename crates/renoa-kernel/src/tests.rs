@@ -251,7 +251,7 @@ async fn abandonment_commit_survives_a_lost_reply_without_duplicate_events() {
     assert!(matches!(
         outcome,
         OperationOutcome::Failed { ref reason }
-            if reason == "effect outcome is unknown; operation was abandoned without replay"
+            if reason == "effect outcome is unknown; operation was abandoned"
     ));
     assert_eq!(
         kernel

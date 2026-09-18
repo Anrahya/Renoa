@@ -1,22 +1,23 @@
 use std::{
     fs,
-    io::{Read as _, Write as _},
-    net::{Shutdown, TcpListener, TcpStream},
+    io::Write as _,
+    net::TcpListener,
     num::NonZeroU32,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
     thread,
-    time::{Duration, Instant},
 };
 
-use renoa_agent::{AssistantContent, ContentBlock, ModelRequest, StopReason, sample_model};
+use renoa_agent::{
+    AssistantContent, ContentBlock, Message, ModelRequest, StopReason, sample_model,
+};
 use renoa_agent_loop::{
-    AgentCommand, AgentLoopConfig, ContextBinding, ModelBinding, build_runtime,
+    AgentCommand, AgentLoopConfig, ContextBinding, MESSAGE_EVENT_KIND, ModelBinding, build_runtime,
 };
 use renoa_kernel::{
     AgentId, Command as KernelCommand, CommandId, DriveResult, EffectRecovery, EffectStatus,
-    Kernel, OperationStatus, SessionId,
+    EventCursor, Kernel, OperationOutcome, OperationStatus, SessionId,
 };
 use rusqlite::Connection;
 use serde_json::{Value, json};
@@ -25,16 +26,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::model_bridge::BridgeModel;
 
-const SSE: &str = concat!(
-    "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,",
-    "\"model\":\"grok-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",",
-    "\"content\":\"from-compiled-adapter\"},\"finish_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,",
-    "\"model\":\"grok-4.6\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],",
-    "\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"total_tokens\":16,",
-    "\"prompt_tokens_details\":{\"cached_tokens\":2,\"cache_write_tokens\":1}}}\n\n",
-    "data: [DONE]\n\n",
-);
+mod fake_provider;
+
+use fake_provider::{
+    assert_complete_chat_requests, serve_one_chat_completion, serve_reset_after_complete_request,
+    serve_truncated_then_complete,
+};
 
 #[tokio::test]
 async fn rust_launches_the_compiled_adapter_and_consumes_its_protocol() {
@@ -92,25 +89,22 @@ async fn rust_launches_the_compiled_adapter_and_consumes_its_protocol() {
     assert_eq!(sampled.response.metadata.model.as_deref(), Some("grok-4.6"));
 }
 
-#[tokio::test]
-async fn post_dispatch_socket_reset_never_settles_a_definite_kernel_failure() {
+/// Builds a loopback runner over the compiled adapter and a fresh session with
+/// one admitted text command, ready for a single `drive`.
+async fn loopback_turn(
+    directory: &Path,
+    address: std::net::SocketAddr,
+    system_prompt: &str,
+) -> (Kernel, SessionId, renoa_kernel::Runtime) {
     let workspace = workspace_root();
     let adapter = compiled_adapter(&workspace);
     let catalog = workspace.join("adapters/model-provider-node/src/upstream/catalogs/xai.json");
-    let directory = tempdir().expect("temporary directory");
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
-    let address = listener.local_addr().expect("fake provider address");
-    let received = Arc::new(Mutex::new(Vec::new()));
-    let server_received = Arc::clone(&received);
-    let server =
-        thread::spawn(move || serve_reset_after_complete_request(&listener, &server_received));
-
     let mut model = load_catalog_model(&catalog, "grok-4.6");
     model["baseUrl"] = json!(format!("http://127.0.0.1:{}/v1", address.port()));
     let spec = serde_json::to_string(&model).expect("encode loopback model spec");
-    let auth_store = directory.path().join("pi-auth.sqlite");
+    let auth_store = directory.join("pi-auth.sqlite");
     write_oauth_store(&auth_store);
-    let trampoline = write_loopback_trampoline(directory.path(), &adapter);
+    let trampoline = write_loopback_trampoline(directory, &adapter);
     let model = Arc::new(
         BridgeModel::load_with_spec(
             &trampoline,
@@ -131,7 +125,7 @@ async fn post_dispatch_socket_reset_never_settles_a_definite_kernel_failure() {
     );
     let runtime = build_runtime(
         AgentLoopConfig::new(
-            "Classify this model result honestly.",
+            system_prompt,
             NonZeroU32::new(4).expect("non-zero model limit"),
             NonZeroU32::new(4).expect("non-zero tool limit"),
         ),
@@ -141,7 +135,7 @@ async fn post_dispatch_socket_reset_never_settles_a_definite_kernel_failure() {
     )
     .expect("build runtime");
 
-    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let kernel = Kernel::open(directory.join("kernel.sqlite3")).expect("open kernel");
     let agent_id = AgentId::new();
     let session_id = SessionId::new();
     kernel.create_agent(agent_id).expect("create agent");
@@ -153,7 +147,25 @@ async fn post_dispatch_socket_reset_never_settles_a_definite_kernel_failure() {
     kernel
         .submit(session_id, KernelCommand::new(CommandId::new(), content))
         .expect("submit command");
+    (kernel, session_id, runtime)
+}
 
+#[tokio::test]
+async fn post_dispatch_socket_reset_never_settles_a_definite_kernel_failure() {
+    let directory = tempdir().expect("temporary directory");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+    let address = listener.local_addr().expect("fake provider address");
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let server_received = Arc::clone(&received);
+    let server =
+        thread::spawn(move || serve_reset_after_complete_request(&listener, &server_received));
+
+    let (kernel, session_id, runtime) = loopback_turn(
+        directory.path(),
+        address,
+        "Classify this model result honestly.",
+    )
+    .await;
     let result = kernel
         .drive(session_id, &runtime)
         .await
@@ -175,7 +187,95 @@ async fn post_dispatch_socket_reset_never_settles_a_definite_kernel_failure() {
         EffectStatus::OutcomeUnknown
     );
     assert_eq!(snapshot.operations[0].effects[0].outcome, None);
+    assert_eq!(
+        snapshot.operations[0].effects[0].dispatch_count, 2,
+        "the live unknown outcome must replay once through the same effect"
+    );
+    // Each dispatch may spend its own transport retry budget, so the total
+    // request count is adapter transport policy rather than a kernel fact. This
+    // fixture accepts only the first dispatch's attempts, so these requests
+    // prove the provider was reached before the unknown became durable; the
+    // replay itself is proven by the dispatch count above.
+    assert!(
+        received.lock().expect("request lock").len() >= 2,
+        "the provider must be reached before the effect becomes durably unknown"
+    );
     assert_complete_chat_requests(&received.lock().expect("request lock"));
+}
+
+#[tokio::test]
+async fn a_truncated_provider_stream_replays_the_model_effect_and_completes_the_turn() {
+    let directory = tempdir().expect("temporary directory");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake provider");
+    let address = listener.local_addr().expect("fake provider address");
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let server_received = Arc::clone(&received);
+    let server = thread::spawn(move || serve_truncated_then_complete(&listener, &server_received));
+
+    let (kernel, session_id, runtime) = loopback_turn(
+        directory.path(),
+        address,
+        "Replay one truncated provider stream.",
+    )
+    .await;
+    let result = kernel
+        .drive(session_id, &runtime)
+        .await
+        .expect("drive truncated stream");
+    let _ = std::net::TcpStream::connect(address);
+    server.join().expect("fake provider thread");
+
+    assert!(
+        matches!(
+            result,
+            DriveResult::Finished {
+                outcome: OperationOutcome::Completed,
+                ..
+            }
+        ),
+        "a stream truncated after output must replay instead of failing the turn: {result:?}"
+    );
+    let snapshot = kernel
+        .inspect(session_id)
+        .expect("inspect replayed truncated stream");
+    assert_eq!(snapshot.operations[0].effects.len(), 1);
+    assert_eq!(
+        snapshot.operations[0].effects[0].status,
+        EffectStatus::Settled
+    );
+    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 2);
+
+    let received = received.lock().expect("request lock");
+    assert_eq!(
+        received.len(),
+        2,
+        "a stream truncated after exposed output is not transport-retryable, so each dispatch makes one request"
+    );
+    assert_complete_chat_requests(&received);
+    drop(received);
+
+    let messages: Vec<Message> = kernel
+        .events_after(session_id, EventCursor::START)
+        .expect("read durable history")
+        .events
+        .into_iter()
+        .filter(|event| event.kind == MESSAGE_EVENT_KIND)
+        .map(|event| serde_json::from_value(event.payload).expect("decode durable message"))
+        .collect();
+    assert_eq!(
+        messages.len(),
+        2,
+        "one user message and one settled assistant message: {messages:?}"
+    );
+    let Message::Assistant { content, .. } = &messages[1] else {
+        panic!("expected one assistant message, found {:?}", messages[1]);
+    };
+    assert_eq!(content, &[AssistantContent::text("from-compiled-adapter")]);
+    let durable = serde_json::to_string(&messages).expect("encode durable history");
+    assert!(
+        !durable.contains("discarded-partial-answer"),
+        "the truncated attempt must leave no durable output: {durable}"
+    );
 }
 
 #[test]
@@ -314,120 +414,4 @@ fn load_catalog_model(path: &Path, model_id: &str) -> Value {
         .and_then(|models| models.get(model_id).cloned())
         .filter(Value::is_object)
         .expect("pinned grok-4.6 catalog entry")
-}
-
-fn assert_complete_chat_requests(requests: &[Vec<u8>]) {
-    assert_eq!(requests.len(), 3);
-    for request in requests {
-        let text = String::from_utf8_lossy(request);
-        assert!(text.starts_with("POST "), "method: {text}");
-        assert!(
-            text.contains("/chat/completions"),
-            "chat completions route: {text}"
-        );
-        assert!(
-            text.to_ascii_lowercase().contains("authorization: bearer "),
-            "auth header: {text}"
-        );
-        let body = request
-            .windows(4)
-            .position(|window| window == b"\r\n\r\n")
-            .map(|header_end| &request[header_end + 4..])
-            .expect("HTTP body");
-        let parsed: Value = serde_json::from_slice(body).expect("JSON body");
-        assert_eq!(parsed["model"], "grok-4.6");
-        assert!(parsed.get("messages").is_some());
-    }
-}
-
-fn serve_reset_after_complete_request(listener: &TcpListener, received: &Mutex<Vec<Vec<u8>>>) {
-    for _ in 0..3 {
-        let (mut stream, _) = accept_with_timeout(listener, Duration::from_secs(5));
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .expect("fake provider read timeout");
-        let request = read_complete_http_request(&mut stream).expect("read complete request");
-        received.lock().expect("request lock").push(request);
-        let _ = stream.shutdown(Shutdown::Both);
-    }
-}
-
-fn serve_one_chat_completion(listener: &TcpListener) {
-    let (mut stream, _) = accept_with_timeout(listener, Duration::from_secs(5));
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("fake provider read timeout");
-    let _ = read_complete_http_request(&mut stream).expect("read provider request");
-    let response = format!(
-        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{SSE}",
-        SSE.len()
-    );
-    stream
-        .write_all(response.as_bytes())
-        .expect("write provider SSE");
-}
-
-fn read_complete_http_request(stream: &mut std::net::TcpStream) -> std::io::Result<Vec<u8>> {
-    let mut data = Vec::new();
-    let mut buffer = [0_u8; 1024];
-    loop {
-        let read = stream.read(&mut buffer)?;
-        if read == 0 {
-            return Ok(data);
-        }
-        data.extend_from_slice(&buffer[..read]);
-        let Some(header_end) = data.windows(4).position(|window| window == b"\r\n\r\n") else {
-            continue;
-        };
-        let content_length = std::str::from_utf8(&data[..header_end])
-            .ok()
-            .and_then(content_length)
-            .unwrap_or(0);
-        while data.len() < header_end + 4 + content_length {
-            let read = stream.read(&mut buffer)?;
-            if read == 0 {
-                return Ok(data);
-            }
-            data.extend_from_slice(&buffer[..read]);
-        }
-        return Ok(data);
-    }
-}
-
-fn accept_with_timeout(
-    listener: &TcpListener,
-    timeout: Duration,
-) -> (TcpStream, std::net::SocketAddr) {
-    listener
-        .set_nonblocking(true)
-        .expect("fake provider accept nonblocking");
-    let started = Instant::now();
-    loop {
-        match listener.accept() {
-            Ok(accepted) => {
-                accepted
-                    .0
-                    .set_nonblocking(false)
-                    .expect("fake provider stream blocking");
-                return accepted;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                assert!(
-                    started.elapsed() < timeout,
-                    "fake provider accept timed out after {timeout:?}"
-                );
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(error) => panic!("fake provider accept failed: {error}"),
-        }
-    }
-}
-
-fn content_length(headers: &str) -> Option<usize> {
-    headers.lines().find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        (name.eq_ignore_ascii_case("content-length"))
-            .then(|| value.trim().parse().ok())
-            .flatten()
-    })
 }

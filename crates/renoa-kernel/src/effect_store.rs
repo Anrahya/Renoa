@@ -16,6 +16,9 @@ pub(crate) struct PendingEffect {
     pub(crate) binding: String,
     pub(crate) binding_revision: String,
     pub(crate) request: Value,
+    pub(crate) recovery: EffectRecovery,
+    /// Persisted dispatch count after the dispatch this value describes.
+    pub(crate) dispatch_count: u64,
     pub(crate) transition_version: i64,
 }
 
@@ -160,33 +163,17 @@ impl Kernel {
         let current_effect_id = current_effect_id
             .ok_or_else(|| KernelError::Corrupt("effect phase has no current effect".to_owned()))?;
         let effect_id = parse_effect_id(&current_effect_id)?;
-        let (binding, revision, recovery, request, status) = transaction
-            .query_row(
-                "SELECT binding, binding_revision, recovery, request_json, status
-                 FROM effects WHERE effect_id = ?1 AND operation_id = ?2",
-                params![effect_id.to_string(), operation_id.to_string()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(sqlite_error)?
-            .ok_or_else(|| KernelError::Corrupt("current effect is missing".to_owned()))?;
-        let recovery = parse_recovery(&recovery)?;
+        let stored = load_prepared_effect(&transaction, effect_id, operation_id)?;
         let expected_status = phase.active_effect_status()?;
-        if status != expected_status {
+        if stored.status != expected_status {
             return Err(KernelError::Corrupt(
                 "effect status does not match operation phase".to_owned(),
             ));
         }
-        let request = serde_json::from_str(&request).map_err(json_error)?;
-        if phase == OperationPhase::EffectDispatched && recovery == EffectRecovery::NeverReplay {
+        let request = serde_json::from_str(&stored.request_json).map_err(json_error)?;
+        if phase == OperationPhase::EffectDispatched
+            && stored.recovery == EffectRecovery::NeverReplay
+        {
             mark_outcome_unknown(&transaction, operation_id, effect_id, expected_transition)?;
             transaction.commit().map_err(sqlite_error)?;
             return Ok(EffectStart::Blocked);
@@ -224,9 +211,11 @@ impl Kernel {
         transaction.commit().map_err(sqlite_error)?;
         Ok(EffectStart::Invoke(PendingEffect {
             effect_id,
-            binding,
-            binding_revision: revision,
+            binding: stored.binding,
+            binding_revision: stored.binding_revision,
             request,
+            recovery: stored.recovery,
+            dispatch_count: stored.dispatch_count,
             transition_version: next_transition,
         }))
     }
@@ -419,6 +408,53 @@ pub(crate) fn parse_effect_id(value: &str) -> Result<EffectId, KernelError> {
     uuid::Uuid::parse_str(value)
         .map(EffectId::from_uuid)
         .map_err(|error| KernelError::Corrupt(format!("invalid effect id: {error}")))
+}
+
+/// One persisted effect row prepared for dispatch, with the dispatch count the
+/// row will hold once this dispatch is committed.
+struct PreparedEffect {
+    binding: String,
+    binding_revision: String,
+    recovery: EffectRecovery,
+    request_json: String,
+    status: String,
+    dispatch_count: u64,
+}
+
+fn load_prepared_effect(
+    transaction: &rusqlite::Transaction<'_>,
+    effect_id: EffectId,
+    operation_id: OperationId,
+) -> Result<PreparedEffect, KernelError> {
+    let (binding, binding_revision, recovery, request_json, status, dispatch_count) = transaction
+        .query_row(
+            "SELECT binding, binding_revision, recovery, request_json, status, dispatch_count
+             FROM effects WHERE effect_id = ?1 AND operation_id = ?2",
+            params![effect_id.to_string(), operation_id.to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(sqlite_error)?
+        .ok_or_else(|| KernelError::Corrupt("current effect is missing".to_owned()))?;
+    Ok(PreparedEffect {
+        binding,
+        binding_revision,
+        recovery: parse_recovery(&recovery)?,
+        request_json,
+        status,
+        dispatch_count: from_sql_integer(dispatch_count, "effect dispatch count")?
+            .checked_add(1)
+            .ok_or_else(|| KernelError::Corrupt("effect dispatch count overflowed".to_owned()))?,
+    })
 }
 
 fn parse_recovery(value: &str) -> Result<EffectRecovery, KernelError> {

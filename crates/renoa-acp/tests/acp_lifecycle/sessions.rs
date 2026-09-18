@@ -303,6 +303,61 @@ fn session_cancel_stops_the_active_model_process() {
     );
 }
 
+#[test]
+fn a_cancelled_fragment_stays_open_without_a_discard_notice() {
+    let directory = tempdir().expect("temporary directory");
+    let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
+    let bridge = directory.path().join("bridge.mjs");
+    let auth_store = directory.path().join("auth.sqlite");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&auth_store, "").expect("create auth placeholder");
+    fs::write(&bridge, BRIDGE).expect("write model bridge");
+    let mut process = AcpProcess::spawn(&workspace, &data, &bridge, &auth_store);
+    process.initialize();
+    let created = process.create_session(&workspace);
+    let session_id = created["result"]["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+
+    process.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/prompt",
+        "params": {
+            "sessionId": session_id,
+            "prompt": [{ "type": "text", "text": "Stream" }],
+            "_meta": {
+                "requestId": "0f6d1c2b-8a34-4f5e-9b71-2d8c4e6a0f19",
+                "promptId": "0f6d1c2b-8a34-4f5e-9b71-2d8c4e6a0f19"
+            }
+        }
+    }));
+    let published = process.read();
+    assert_eq!(published["params"]["update"]["content"]["text"], "Hello ");
+    process.send(&json!({
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": { "sessionId": session_id }
+    }));
+    let messages = process.read_until_response(3);
+    let response = messages
+        .iter()
+        .find(|message| message["id"] == 3)
+        .expect("prompt response");
+    assert_eq!(response["result"]["stopReason"], "cancelled");
+    // The sink closes a fragment only when another assistant message starts,
+    // which a replayed attempt does and a cancelled turn does not.
+    assert!(
+        messages.iter().all(|message| {
+            message["params"]["update"]["_meta"]["renoa.discardedAttempt"] != json!(true)
+        }),
+        "a cancelled turn must not claim its fragment was retried: {messages:?}"
+    );
+    process.finish();
+}
+
 fn wait_for_path(path: &std::path::Path) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while !path.exists() {
