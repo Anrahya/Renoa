@@ -133,7 +133,7 @@ fn an_interrupted_bash_call_is_closed_honestly_without_reexecution() {
     assert_eq!(response["error"]["code"], -32603);
     assert_eq!(
         response["error"]["data"],
-        "Renoa operation failed: effect outcome is unknown; operation was abandoned without replay"
+        "Renoa operation failed: effect outcome is unknown; operation was abandoned"
     );
     assert_eq!(
         fs::read_to_string(data.join("unsafe-started"))
@@ -164,7 +164,7 @@ fn an_interrupted_bash_call_is_closed_honestly_without_reexecution() {
     assert_eq!(unknown["params"]["update"]["status"], "failed");
     assert_eq!(
         unknown["params"]["update"]["content"][0]["content"]["text"],
-        "This tool may have finished, but Renoa could not recover its result. It was not run again."
+        "This tool may have finished, but Renoa could not recover a definite result."
     );
     observer.finish();
 }

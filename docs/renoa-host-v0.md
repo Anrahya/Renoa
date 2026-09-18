@@ -855,9 +855,12 @@ The local Host currently has no reconciliation UI for an effect whose outcome
 cannot be proven. For a live MCP call that returns no terminal response, the
 Host records an honest model-visible tool result saying that the call may or
 may not have succeeded, does not replay it, and lets the same agent turn keep
-reasoning. If the process dies before that result is persisted, the kernel's
+reasoning. Its effect binding is never-replay, so the kernel cannot repeat it
+either. If the process dies before that result is persisted, the kernel's
 conservative `OutcomeUnknown` recovery boundary still applies; the kernel
-never invents or replays an uncertain external result.
+never invents an uncertain result, and a safe-to-replay effect's live unknown
+report from its first durable dispatch is replayed once before that outcome
+becomes durable.
 
 Local Host state has one intentionally visible layout:
 

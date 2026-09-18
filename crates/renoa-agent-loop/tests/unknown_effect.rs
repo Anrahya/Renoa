@@ -22,7 +22,7 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
 const UNKNOWN_RESULT: &str =
-    "This tool may have finished, but Renoa could not recover its result. It was not run again.";
+    "This tool may have finished, but Renoa could not recover a definite result.";
 const SKIPPED_RESULT: &str = "Tool call was not run because an earlier tool outcome is unknown.";
 
 #[tokio::test]
@@ -82,7 +82,7 @@ async fn a_mutating_tool_crash_is_abandoned_honestly_without_replay() {
     assert!(matches!(
         outcome,
         OperationOutcome::Failed { ref reason }
-            if reason == "effect outcome is unknown; operation was abandoned without replay"
+            if reason == "effect outcome is unknown; operation was abandoned"
     ));
     assert_eq!(
         kernel
@@ -146,6 +146,71 @@ async fn abandoning_an_unknown_model_does_not_fabricate_an_assistant_message() {
         messages(&kernel, session_id),
         vec![Message::user_text("Ask the model once.")]
     );
+}
+
+#[tokio::test]
+async fn a_live_unknown_model_effect_replays_once_and_settles_one_assistant_message() {
+    let directory = tempdir().expect("temporary directory");
+    let kernel = Kernel::open(directory.path().join("kernel.sqlite3")).expect("open kernel");
+    let session_id = create_session(&kernel);
+    let operation_id = submit_text(&kernel, session_id, "Ask the model twice.");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let runtime = runtime(
+        Arc::new(UncertainThenSettlingModel::new(
+            text_response("Recovered after one replay."),
+            Arc::clone(&requests),
+        )),
+        Arc::new(NeverCalledTool),
+    );
+
+    assert_eq!(
+        kernel
+            .drive(session_id, &runtime)
+            .await
+            .expect("drive replayed model effect"),
+        DriveResult::Finished {
+            operation_id,
+            outcome: OperationOutcome::Completed,
+        }
+    );
+
+    let requests = requests.lock().expect("request lock");
+    assert_eq!(requests.len(), 2, "one live unknown attempt and one replay");
+    assert_eq!(requests[0].messages, requests[1].messages);
+    assert_eq!(requests[0].system_prompt, requests[1].system_prompt);
+    assert_eq!(requests[0].tools.len(), requests[1].tools.len());
+    drop(requests);
+
+    let snapshot = kernel
+        .inspect(session_id)
+        .expect("inspect replayed model effect");
+    assert_eq!(snapshot.operations[0].effects.len(), 1);
+    assert_eq!(
+        snapshot.operations[0].effects[0].status,
+        EffectStatus::Settled
+    );
+    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 2);
+
+    let recovered = messages(&kernel, session_id);
+    assert_eq!(
+        recovered.len(),
+        2,
+        "one user message and exactly one assistant message: {recovered:?}"
+    );
+    assert_eq!(recovered[0], Message::user_text("Ask the model twice."));
+    let Message::Assistant {
+        content,
+        stop_reason,
+        ..
+    } = &recovered[1]
+    else {
+        panic!("expected one assistant message, found {:?}", recovered[1]);
+    };
+    assert_eq!(
+        content,
+        &[AssistantContent::text("Recovered after one replay.")]
+    );
+    assert_eq!(*stop_reason, StopReason::Stop);
 }
 
 fn create_session(kernel: &Kernel) -> SessionId {
@@ -307,6 +372,48 @@ impl Model for UncertainModel {
         _cancellation: CancellationToken,
     ) -> ModelEventStream<'_> {
         stream::once(async { Err(ModelError::new("provider reply was lost")) }).boxed()
+    }
+}
+
+/// Reports one unknown provider outcome, then settles with the scripted
+/// response while recording every request for identity comparison.
+struct UncertainThenSettlingModel {
+    unknown_attempts: Mutex<u32>,
+    response: ModelResponse,
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+}
+
+impl UncertainThenSettlingModel {
+    fn new(response: ModelResponse, requests: Arc<Mutex<Vec<ModelRequest>>>) -> Self {
+        Self {
+            unknown_attempts: Mutex::new(1),
+            response,
+            requests,
+        }
+    }
+}
+
+impl Model for UncertainThenSettlingModel {
+    fn stream(
+        &self,
+        request: ModelRequest,
+        _cancellation: CancellationToken,
+    ) -> ModelEventStream<'_> {
+        self.requests.lock().expect("request lock").push(request);
+        let unknown = {
+            let mut remaining = self.unknown_attempts.lock().expect("unknown attempt lock");
+            if *remaining == 0 {
+                false
+            } else {
+                *remaining -= 1;
+                true
+            }
+        };
+        if unknown {
+            return stream::once(async { Err(ModelError::new("provider reply was lost")) }).boxed();
+        }
+        let response = self.response.clone();
+        stream::once(async move { Ok(ModelEvent::Completed { response }) }).boxed()
     }
 }
 

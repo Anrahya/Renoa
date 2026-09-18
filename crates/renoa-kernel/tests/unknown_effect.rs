@@ -12,7 +12,7 @@ use renoa_kernel::{
 };
 use tempfile::tempdir;
 
-const ABANDONED_REASON: &str = "effect outcome is unknown; operation was abandoned without replay";
+const ABANDONED_REASON: &str = "effect outcome is unknown; operation was abandoned";
 
 #[tokio::test]
 async fn abandonment_is_atomic_idempotent_and_unblocks_queued_work() {

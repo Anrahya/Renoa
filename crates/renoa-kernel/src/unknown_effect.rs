@@ -15,7 +15,7 @@ use crate::{
     schema::{json_error, sqlite_error},
 };
 
-const ABANDONED_REASON: &str = "effect outcome is unknown; operation was abandoned without replay";
+const ABANDONED_REASON: &str = "effect outcome is unknown; operation was abandoned";
 
 struct PendingAbandonment {
     input: UnknownEffectInput,

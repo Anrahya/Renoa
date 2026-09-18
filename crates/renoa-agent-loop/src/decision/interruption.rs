@@ -144,7 +144,7 @@ impl AgentLoop {
         results.push(Message::Tool {
             result: unavailable_result(
                 call,
-                "This tool may have finished, but Renoa could not recover its result. It was not run again.",
+                "This tool may have finished, but Renoa could not recover a definite result.",
             ),
         });
         results.extend(calls[index + 1..].iter().map(|call| Message::Tool {

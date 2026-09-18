@@ -55,7 +55,8 @@ impl NewEvent {
     }
 }
 
-/// Whether a possibly dispatched effect may run again after process loss.
+/// Whether a possibly dispatched effect may run again after process loss or a
+/// live adapter-reported unknown outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

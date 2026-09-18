@@ -201,8 +201,8 @@ snapshot or the live buffer, never in neither.
   xAI provider selection also stays local; the current xAI OAuth store is a
   `0600` plaintext database rather than operating-system credential storage.
 - A Rust Host node restart redrives the exact admitted command and session.
-  The kernel replays safe interrupted effects and refuses to repeat effects
-  whose outcome is unknown. The Pi node still closes an interrupted execution
+  The kernel replays safe interrupted effects and refuses to repeat an effect
+  already recorded as unknown. The Pi node still closes an interrupted execution
   rather than inventing recovery it cannot prove.
 - Task discovery is an unpaginated snapshot with task identity and target only;
   it has no title, presence, execution status, or live directory updates.

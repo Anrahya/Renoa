@@ -240,8 +240,10 @@ IntentCommitted -> DispatchStarted -> Settled
 atomically stores the outcome and returns the operation to `NeedDecision` with
 that exact result available to the loop.
 
-If a live adapter cannot prove a definite result, the kernel atomically marks
-both the effect and operation `OutcomeUnknown`; it never launders uncertainty
+If a live adapter cannot prove a definite result, the kernel replays the effect
+once when the binding is safe to replay and this was that effect's first durable
+dispatch; otherwise it atomically marks both the effect and operation
+`OutcomeUnknown`. It never launders uncertainty
 into an ordinary failure. If the driving caller disappears, the adapter first
 finishes cancellation cleanup, then the next drive applies the same persisted
 recovery rules used after process loss.
@@ -332,6 +334,7 @@ No loop plugin or effect adapter runs inside a SQLite transaction.
 | Commit semantic decision | checkpoint, events, cursor, `NeedDecision` | events and next loop position agree | call loop again |
 | Commit effect intent | checkpoint, exact effect, `EffectIntent` | adapter definitely not started | mark dispatch started |
 | Mark dispatch | effect dispatch count, `EffectDispatched` | adapter may have started | invoke now, or recover by class |
+| Replay live uncertainty | effect dispatch count, `EffectDispatched` | a live unknown report from a safe-to-replay effect's first durable dispatch is not yet durable | invoke the same persisted effect once more |
 | Settle effect | exact outcome, effect `Settled`, operation `NeedDecision` | result is available exactly once | call loop; never repeat settled effect |
 | Mark uncertainty | effect and operation `OutcomeUnknown` | recovery or the live adapter cannot prove the result | block without dispatch |
 | Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer | the operation is closed while the effect remains unknown | return the same outcome on retry or activate queued work |
@@ -361,7 +364,10 @@ The first complete slice must prove through the public seams:
 11. checkpoint schema mismatches fail before state advances;
 12. semantic event replay is gapless and rejects an ahead cursor;
 13. newer database or stored-state versions fail closed;
-14. a live adapter can report uncertainty without creating a false failure;
+14. a live adapter can report uncertainty without creating a false failure,
+    and a live unknown report from the first durable dispatch of a
+    safe-to-replay effect replays once through the same persisted effect before
+    uncertainty becomes durable;
 15. dropping a drive cancels its adapter but retains session and database
     ownership until cleanup finishes; and
 16. explicit unknown-effect abandonment validates the frozen runtime and
@@ -436,7 +442,9 @@ fork or movement path plus idempotence, isolation, recovery, and fencing tests.
 7. Every external action has an exact durable intent and an explicit dispatch
    boundary.
 8. Unsafe possibly dispatched effects become unknown and never replay
-   automatically.
+   automatically. A safe-to-replay effect replays once after a live adapter
+   reports an unknown outcome for its first durable dispatch, and is never
+   repeated automatically once that outcome is recorded.
 9. Effect settlement and the next durable program-counter state are atomic.
 10. Semantic events and operational recovery state are separate journals.
 11. SQLite is the only v0 store and one process owns it exclusively.
