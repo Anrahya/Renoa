@@ -296,7 +296,7 @@ async fn one_agent_owns_multiple_isolated_sessions_across_restart_and_session_de
             .is_err()
     );
     restarted
-        .delete_session(first_id)
+        .delete_session(agent.id, first_id)
         .await
         .expect("delete one conversation");
     assert_eq!(
@@ -345,6 +345,82 @@ async fn session_bindings_carry_only_the_canonical_agent_identity() {
 }
 
 #[tokio::test]
+async fn loading_a_live_foreign_session_is_refused_before_its_kernel_opens() {
+    let fixture = Fixture::new();
+    let host = fixture.host();
+    let owner = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
+    let intruder = provision_specialist(&host, Uuid::new_v4(), "Intruder", "Answer briefly.").await;
+    let session_id = Uuid::new_v4();
+    let live = host
+        .ensure_agent_session(owner.id, &fixture.workspace, session_id)
+        .await
+        .expect("owner session");
+
+    let load = host
+        .load_session_for_agent(intruder.id, session_id, &fixture.workspace)
+        .await
+        .err()
+        .expect("a foreign live session must be refused");
+    assert!(
+        matches!(&load, LocalHostError::InvalidRequest(message) if message == "session belongs to a different agent"),
+        "unexpected load error: {load:?}"
+    );
+
+    let inspect = host
+        .inspect_session(intruder.id, session_id, &fixture.workspace)
+        .await
+        .err()
+        .expect("foreign history must be refused");
+    assert!(
+        matches!(&inspect, LocalHostError::InvalidRequest(message) if message == "session belongs to a different agent"),
+        "unexpected inspect error: {inspect:?}"
+    );
+    drop(live);
+}
+
+#[tokio::test]
+async fn deleting_a_foreign_agents_session_is_refused_and_retains_it() {
+    let fixture = Fixture::new();
+    let host = fixture.host();
+    let owner = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
+    let intruder = provision_specialist(&host, Uuid::new_v4(), "Intruder", "Answer briefly.").await;
+    let session_id = Uuid::new_v4();
+    let session = host
+        .ensure_agent_session(owner.id, &fixture.workspace, session_id)
+        .await
+        .expect("owner session");
+    drop(session);
+
+    let refused = host
+        .delete_session(intruder.id, session_id)
+        .await
+        .expect_err("a foreign session must be refused");
+    assert!(
+        matches!(&refused, LocalHostError::InvalidRequest(message) if message == "session belongs to a different agent"),
+        "unexpected delete error: {refused:?}"
+    );
+    assert!(
+        fixture
+            .directory
+            .path()
+            .join("data/sessions")
+            .join(session_id.to_string())
+            .is_dir(),
+        "a refused delete removed the foreign session"
+    );
+
+    host.delete_session(intruder.id, Uuid::new_v4())
+        .await
+        .expect("an absent session stays idempotently deletable");
+    host.delete_session(owner.id, session_id)
+        .await
+        .expect("the owner deletes the retained session");
+    host.delete_session(owner.id, session_id)
+        .await
+        .expect("retried deletion stays idempotent");
+}
+
+#[tokio::test]
 async fn deleting_a_session_retains_its_agent_before_removing_the_manifest() {
     let fixture = Fixture::new();
     let host = fixture.host();
@@ -356,10 +432,10 @@ async fn deleting_a_session_retains_its_agent_before_removing_the_manifest() {
         .expect("session");
     drop(session);
     fs::remove_file(&fixture.bridge).expect("disable model execution");
-    host.delete_session(session_id)
+    host.delete_session(agent.id, session_id)
         .await
         .expect("delete session");
-    host.delete_session(session_id)
+    host.delete_session(agent.id, session_id)
         .await
         .expect("retry deletion");
     assert!(

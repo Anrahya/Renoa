@@ -993,8 +993,12 @@ deletes broad filesystem state.
    table is what keeps the delete list complete.
    Host identity, MCP catalogs, connections, authorizations and credentials,
    installed plugins, skill revisions, shared registry state, and provider
-   credentials are preserved. Applying the reset twice is safe, and a failed
-   reset leaves its database transaction uncommitted.
+   credentials are preserved. Applying the reset twice is safe. A reset that is
+   refused before it deletes anything — a managed root that is a symbolic link
+   or another file in place of a directory, or a catalog failure — leaves the
+   database untouched; a failure while removing directory contents can leave
+   the agent-owned rows deleted and the managed roots partly cleared, and
+   re-running the reset converges because both removals are idempotent.
 4. Provision the configured bootstrap agent. `renoa-host <config.json> provision
    <provision.json>` performs the one canonical creation operation with a
    trusted `System`/`Provisioning` actor, so an empty Host gets its first agent
@@ -1014,8 +1018,11 @@ reset is one idempotent step over `host.sqlite3` and the Host session
 directories. The node store is a separate idempotent step over
 `host_node_metadata`, `host_node_tasks`, `host_node_executions`, and
 `host_node_events`; this release renames the task's agent column and refuses an
-earlier ledger by name, so delete the node state file before starting the node
-daemon. Each surface store is its own step: the Slack store owns
+earlier ledger by name. Stop the node service, take the backup, delete the
+ledger `<state-directory>/node.sqlite` and the private Host root
+`<state-directory>/host`, and keep `<state-directory>/model-auth.sqlite` — the
+node needs it to start. Re-provision the private Host, then start the daemon
+again. Each surface store is its own step: the Slack store owns
 `identity`, `sessions`, `conversations`, `requests`, `messages`, `receipts`,
 `deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
 `routine_deliveries`, `routine_delivery_cursor`, and `routine_context_receipts`;

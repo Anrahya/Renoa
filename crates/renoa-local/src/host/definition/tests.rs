@@ -306,6 +306,79 @@ async fn a_selection_cannot_name_a_capability_the_definition_cannot_consume() {
         "the document capability belongs to the stored selection"
     );
 }
+/// A stored selection naming a capability the definition cannot use must fail
+/// closed at the read boundary instead of being dropped at runtime.
+#[tokio::test]
+async fn a_stored_selection_the_definition_cannot_use_is_refused() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let definition = host
+        .create_agent(
+            creator,
+            origin,
+            specialist(Uuid::new_v4(), "Tampered selection"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create");
+    let database = crate::host::catalog::open_verified(&directory.path().join("data/host.sqlite3"))
+        .expect("open the Host catalog");
+    for tools in [r#"["agent_documents"]"#, r#"["renoa.bot.manage"]"#] {
+        database
+            .execute(
+                "UPDATE host_agent_tool_selections SET tools_json = ?2 WHERE agent_id = ?1",
+                [definition.id.to_string(), tools.to_owned()],
+            )
+            .expect("tamper with the stored selection");
+        let error = host
+            .agent_definition(definition.id)
+            .await
+            .expect_err("an unusable stored capability must fail closed");
+        assert!(
+            error.to_string().contains("unusable capability"),
+            "unexpected error for {tools}: {error}"
+        );
+    }
+}
+
+/// A creation receipt that describes a different agent must fail closed rather
+/// than replay a definition this operation never created.
+#[tokio::test]
+async fn a_creation_receipt_that_describes_another_agent_is_refused() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let operation = Uuid::new_v4();
+    let request = specialist(operation, "Receipt");
+    host.create_agent(
+        creator.clone(),
+        origin,
+        request.clone(),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("create");
+    {
+        let database =
+            crate::host::catalog::open_verified(&directory.path().join("data/host.sqlite3"))
+                .expect("open the Host catalog");
+        database
+            .execute(
+                "UPDATE host_agent_creations SET result_json = json_set(result_json, '$.id', ?1)
+                 WHERE operation_id = ?2",
+                [Uuid::new_v4().to_string(), operation.to_string()],
+            )
+            .expect("tamper with the stored creation result");
+    }
+    let error = host
+        .create_agent(creator, origin, request, CancellationToken::new())
+        .await
+        .expect_err("a receipt describing another agent must fail closed");
+    assert!(
+        error.to_string().contains("describes agent"),
+        "unexpected error: {error}"
+    );
+}
+
 /// A stored definition that fails validation must be refused at the read
 /// boundary instead of reaching the runtime.
 #[tokio::test]

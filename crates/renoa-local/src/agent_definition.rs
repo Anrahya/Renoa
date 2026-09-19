@@ -330,6 +330,14 @@ pub enum AgentDefinitionError {
         #[source]
         source: io::Error,
     },
+    #[error(
+        "agent document publication failed: {failure}; removing the partial publication at `{path}` also failed: {cleanup}"
+    )]
+    PublicationCleanup {
+        path: PathBuf,
+        failure: String,
+        cleanup: String,
+    },
     #[error("cannot inspect project instructions for `{agent}` at `{path}`: {source}")]
     Inspect {
         agent: AgentId,

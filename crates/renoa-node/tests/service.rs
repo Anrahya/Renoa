@@ -91,7 +91,7 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
         write_private(
             &config,
             &serde_json::to_vec(&json!({
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "endpoint": system.url,
                 "model": {
                     "bridge": model_bridge,

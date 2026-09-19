@@ -282,6 +282,21 @@ impl AcpProcess {
         let status = self.child.wait().expect("reap killed ACP process");
         assert!(!status.success(), "killed ACP process exited successfully");
     }
+
+    /// Waits for an ACP process that must refuse startup and returns its standard error.
+    #[allow(
+        dead_code,
+        reason = "shared integration-test support is compiled by tests that expect a successful startup"
+    )]
+    pub(crate) fn expect_startup_failure(mut self) -> String {
+        drop(self.stdin.take());
+        let output = self.child.wait_with_output().expect("wait for ACP process");
+        assert!(
+            !output.status.success(),
+            "ACP process served stdio with an unsupported configuration"
+        );
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    }
 }
 
 pub(crate) const BRIDGE: &str = include_str!("bridge.js");

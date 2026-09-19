@@ -16,17 +16,22 @@ use crate::{
 const RETAINED_INTEGRATION: &str = "retained.integration";
 const REQUEST_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-/// A managed root that is a symbolic link must be refused rather than followed.
-#[test]
-fn a_symlinked_managed_root_is_refused() {
-    let directory = tempdir().expect("fixture");
+/// A managed root that is a symbolic link must be refused rather than followed,
+/// and the refusal must come before any durable agent state is deleted.
+#[tokio::test]
+async fn a_symlinked_managed_root_is_refused() {
+    let (directory, host) = fixture();
+    let root = directory.path();
+    let agent = seed_agent(&host).await;
+    drop(host);
     let elsewhere = tempdir().expect("escape target");
-    let data = directory.path().join("data");
-    fs::create_dir_all(&data).expect("data root");
     fs::write(elsewhere.path().join("kept.txt"), "keep\n").expect("external file");
-    std::os::unix::fs::symlink(elsewhere.path(), data.join("sessions")).expect("link sessions");
+    let sessions = root.join("data/sessions");
+    fs::remove_dir(&sessions).expect("replace the session root");
+    std::os::unix::fs::symlink(elsewhere.path(), &sessions).expect("link sessions");
 
-    let error = reset_host_data_root(&data).expect_err("a symlinked managed root must be refused");
+    let error = reset_host_data_root(&root.join("data"))
+        .expect_err("a symlinked managed root must be refused");
     assert!(
         error.to_string().contains("symbolic link"),
         "unexpected error: {error}"
@@ -35,6 +40,63 @@ fn a_symlinked_managed_root_is_refused() {
         fs::read_to_string(elsewhere.path().join("kept.txt")).expect("external file survives"),
         "keep\n"
     );
+    assert_eq!(
+        count(&database(root), "host_agents"),
+        1,
+        "a refused reset must not delete rows"
+    );
+    assert!(
+        root.join("data/agents").join(agent.to_string()).exists(),
+        "a refused reset must not delete the agent's documents"
+    );
+}
+
+/// A managed root that exists as a file is refused before the reset deletes
+/// anything, instead of being silently skipped.
+#[tokio::test]
+async fn a_managed_root_that_is_not_a_directory_is_refused() {
+    let (directory, host) = fixture();
+    let root = directory.path();
+    let agent = seed_agent(&host).await;
+    drop(host);
+    let sessions = root.join("data/sessions");
+    fs::remove_dir(&sessions).expect("replace the session root");
+    fs::write(&sessions, "not a directory\n").expect("file at the managed root");
+
+    let error = reset_host_data_root(&root.join("data"))
+        .expect_err("a managed root that is not a directory must be refused");
+    assert!(
+        error.to_string().contains("managed root"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        count(&database(root), "host_agents"),
+        1,
+        "a refused reset must not delete rows"
+    );
+    assert!(
+        root.join("data/agents").join(agent.to_string()).exists(),
+        "a refused reset must not delete the agent's documents"
+    );
+}
+
+/// Creates one durable agent, whose rows and documents a refused reset must keep.
+async fn seed_agent(host: &LocalHost) -> crate::AgentId {
+    host.create_agent(
+        AgentCreator::System {
+            component: "reset-refusal-test".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
+            "Operator",
+        ),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent")
+    .id
 }
 
 fn open_host(root: &Path) -> LocalHost {

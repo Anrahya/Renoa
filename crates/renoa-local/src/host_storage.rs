@@ -71,8 +71,13 @@ pub(crate) async fn read_manifest(path: PathBuf) -> Result<SessionManifest, Loca
     tokio::task::spawn_blocking(move || read_manifest_file(&path)).await?
 }
 
+/// Removes one session directory when its manifest binds it to `agent_id`.
+///
+/// A missing directory or published tombstone succeeds for any agent, because
+/// no manifest survives to compare.
 pub(crate) fn delete_session_storage(
     sessions: &Path,
+    agent_id: AgentId,
     session_id: SessionId,
 ) -> Result<(), LocalHostError> {
     let directory = sessions.join(session_id.to_string());
@@ -95,6 +100,11 @@ pub(crate) fn delete_session_storage(
 
     require_directory(&directory)?;
     let manifest = read_manifest_file(&directory.join(MANIFEST_FILE))?;
+    if manifest.agent_id != agent_id {
+        return Err(LocalHostError::InvalidRequest(
+            "session belongs to a different agent".to_owned(),
+        ));
+    }
     if manifest.session_id != session_id {
         return Err(LocalHostError::InvalidRequest(
             "session metadata does not match the requested deletion".to_owned(),
@@ -387,7 +397,7 @@ mod tests {
         let owner = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)
             .expect("own kernel session");
 
-        let active_delete = delete_session_storage(sessions.path(), session_id);
+        let active_delete = delete_session_storage(sessions.path(), agent_id, session_id);
         assert!(matches!(
             active_delete,
             Err(LocalHostError::Session(LocalSessionError::Kernel(
@@ -397,7 +407,16 @@ mod tests {
         assert!(directory.is_dir());
 
         drop(owner);
-        delete_session_storage(sessions.path(), session_id).expect("delete session storage");
+        let foreign_delete = delete_session_storage(sessions.path(), AgentId::new(), session_id);
+        assert!(matches!(
+            foreign_delete,
+            Err(LocalHostError::InvalidRequest(message))
+                if message == "session belongs to a different agent"
+        ));
+        assert!(directory.is_dir());
+
+        delete_session_storage(sessions.path(), agent_id, session_id)
+            .expect("delete session storage");
         assert!(!directory.exists());
         assert!(
             !sessions
@@ -406,8 +425,10 @@ mod tests {
                 .exists()
         );
 
-        delete_session_storage(sessions.path(), session_id)
+        delete_session_storage(sessions.path(), agent_id, session_id)
             .expect("repeat session deletion idempotently");
+        delete_session_storage(sessions.path(), AgentId::new(), SessionId::new())
+            .expect("an absent session stays deletable for any agent");
     }
 
     #[test]
@@ -464,7 +485,8 @@ mod tests {
         std::fs::write(directory.join("data"), "durable").expect("write session data");
         std::fs::rename(&directory, &tombstone).expect("publish deletion tombstone");
 
-        delete_session_storage(sessions.path(), session_id).expect("resume session deletion");
+        delete_session_storage(sessions.path(), AgentId::new(), session_id)
+            .expect("resume session deletion");
 
         assert!(!directory.exists());
         assert!(!tombstone.exists());

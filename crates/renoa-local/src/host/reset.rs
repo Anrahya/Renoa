@@ -45,6 +45,12 @@ const AGENT_OWNED_TABLES: &[&str] = &[
     "session_skills",
 ];
 
+// Managed roots a reset clears, grouped by the report field that counts them.
+// Every root named here is preflighted before the catalog is touched.
+const SESSION_ROOTS: [&str; 2] = ["sessions", "review-sessions"];
+const REVIEW_ROOTS: [&str; 2] = ["review-workspaces", "github-executions"];
+const DOCUMENT_ROOTS: [&str; 2] = ["agents", "profiles"];
+
 /// What one reset removed. Rows, session directories, review inspection
 /// directories and document roots are counted separately because they are
 /// separate stores; this never claims cross-store atomicity.
@@ -80,9 +86,15 @@ impl HostResetReport {
 /// deleted, and every store outside the Host catalog is a separate step.
 ///
 /// # Errors
-/// Returns catalog storage or filesystem failures. A failed reset leaves the
-/// database transaction uncommitted.
+/// Returns catalog storage or filesystem failures. A reset that is refused —
+/// an unusable managed root, or a catalog failure — leaves the database
+/// untouched. A failure while removing directory contents can leave the
+/// agent-owned rows deleted and the managed roots partly cleared; both removals
+/// are idempotent, so re-running the reset converges.
 pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, LocalHostError> {
+    // Every managed root is inspected before the catalog is touched, so a
+    // refusal here leaves the rows and the state they describe in place.
+    require_managed_roots(data_directory)?;
     let database = data_directory.join(catalog::HOST_DATABASE);
     if database.exists() {
         catalog::cutover(&database)?;
@@ -91,12 +103,9 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
         catalog::initialize(&database)?;
     }
     let removed_rows = clear_agent_rows(&database)?;
-    let removed_sessions = clear_directory(&data_directory.join("sessions"))?
-        + clear_directory(&data_directory.join("review-sessions"))?;
-    let removed_review_directories = clear_directory(&data_directory.join("review-workspaces"))?
-        + clear_directory(&data_directory.join("github-executions"))?;
-    let removed_document_roots = clear_directory(&data_directory.join("agents"))?
-        + clear_directory(&data_directory.join("profiles"))?;
+    let removed_sessions = clear_roots(data_directory, &SESSION_ROOTS)?;
+    let removed_review_directories = clear_roots(data_directory, &REVIEW_ROOTS)?;
+    let removed_document_roots = clear_roots(data_directory, &DOCUMENT_ROOTS)?;
     Ok(HostResetReport {
         removed_rows,
         removed_sessions,
@@ -130,23 +139,50 @@ fn clear_agent_rows(database: &Path) -> Result<BTreeMap<String, u64>, LocalHostE
     Ok(removed)
 }
 
-/// Removes each entry inside one directory, keeping the directory itself.
-///
-/// A managed root that is a symbolic link is refused instead of followed, so a
-/// reset can never delete through a link out of the data root.
-fn clear_directory(path: &Path) -> Result<u64, LocalHostError> {
+/// Refuses every unusable managed root before any catalog work, so a refused
+/// reset leaves the database untouched.
+fn require_managed_roots(data_directory: &Path) -> Result<(), LocalHostError> {
+    for roots in [SESSION_ROOTS, REVIEW_ROOTS, DOCUMENT_ROOTS] {
+        for name in roots {
+            require_managed_directory(&data_directory.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+/// Classifies one managed root without following a link: `true` when it is a
+/// plain directory, `false` when it does not exist, and an error for a symbolic
+/// link or any other file, which a reset refuses instead of following or
+/// silently skipping. A reset can therefore never delete through a link out of
+/// the data root.
+fn require_managed_directory(path: &Path) -> Result<bool, LocalHostError> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(source) => return Err(source.into()),
     };
-    if metadata.file_type().is_symlink() {
-        return Err(LocalHostError::InvalidRequest(format!(
-            "refusing to clear `{}`: a managed root must not be a symbolic link",
-            path.display()
-        )));
+    if metadata.is_dir() {
+        return Ok(true);
     }
-    if !metadata.is_dir() {
+    Err(LocalHostError::InvalidRequest(format!(
+        "refusing to clear `{}`: a managed root must be a plain directory, never a symbolic link or another file",
+        path.display()
+    )))
+}
+
+/// Removes each entry inside one group of managed roots, keeping the
+/// directories themselves.
+fn clear_roots(data_directory: &Path, roots: &[&str]) -> Result<u64, LocalHostError> {
+    let mut removed = 0;
+    for name in roots {
+        removed += clear_directory(&data_directory.join(name))?;
+    }
+    Ok(removed)
+}
+
+/// Removes each entry inside one directory, keeping the directory itself.
+fn clear_directory(path: &Path) -> Result<u64, LocalHostError> {
+    if !require_managed_directory(path)? {
         return Ok(0);
     }
     let mut removed = 0;

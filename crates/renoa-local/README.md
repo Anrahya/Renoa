@@ -17,11 +17,12 @@ runtimes from:
 
 Provider credentials and tool implementations stay outside the kernel.
 The host is intentionally all-allowed. Attaching a connection makes its tools
-searchable, but no external schema is advertised automatically. Alpha uses
-`tool_search`, `tool_load`, and `tool_execute`; those bindings read committed
-Host state on each call, so Waku and Alpha do not restart after a catalog
-change. Paths are confined to the configured workspace, but `bash` is
-unrestricted and this is not a sandbox for untrusted work.
+searchable, but no external schema is advertised automatically. The configured
+agent uses `tool_search`, `tool_load`, and `tool_execute`; those bindings read
+committed Host state on each call, so neither a connected surface nor the agent
+restarts after a catalog change. Paths are confined to the configured
+workspace, but `bash` is unrestricted and this is not a sandbox for untrusted
+work.
 
 Model-visible output is bounded: file reads are paginated, `grep` returns at
 most 100 matches, `find` returns at most 1,000 paths, and process output keeps
@@ -40,7 +41,7 @@ replacement; edits reject a concurrent content change.
 
 The architecture and deliberately open permission decisions are recorded in
 [`docs/renoa-host-v0.md`](../../docs/renoa-host-v0.md). `LocalHost` and
-`AlphaSession` are the complete boundary used by ACP; `LocalSession` is the
+`AgentSession` are the complete boundary used by ACP; `LocalSession` is the
 lower kernel command boundary also used by the headless diagnostic runner.
 Live ACP updates come from a presentation-only event observer in the model and
 tool adapters; the kernel remains the sole durable execution owner.
@@ -110,16 +111,16 @@ The command prints the stable session ID. Pass that ID instead of `new` to add
 the next turn to the same durable conversation. `Ctrl-C` requests ordered
 kernel cancellation and waits for active model or process work to stop.
 
-The normal runner always uses Renoa Alpha. Change `RENOA_MODEL` or
-`RENOA_MODEL_REASONING` before the next command to change that operation's model
-behavior without replacing the session or its history. An active operation
-keeps the exact runtime already frozen by the kernel.
+The runner always uses the agent named by `RENOA_AGENT_ID`. Change
+`RENOA_MODEL` or `RENOA_MODEL_REASONING` before the next command to change that
+operation's model behavior without replacing the session or its history. An
+active operation keeps the exact runtime already frozen by the kernel.
 
-Alpha loads `AGENTS.md` from the canonical workspace root before every new
-turn. The file must be
-UTF-8, remain inside the workspace after symlink resolution, and fit within 32
-KiB. Oversized rules fail clearly instead of entering the context partially.
-The Alpha preset contract and research record are in
+When the agent's stored behavior loads project instructions, the Host reads
+`AGENTS.md` from the canonical workspace root before every new turn. The file
+must be UTF-8, remain inside the workspace after symlink resolution, and fit
+within 32 KiB. Oversized rules fail clearly instead of entering the context
+partially. The Alpha preset's contract and research record are in
 [`docs/renoa-alpha-v1.md`](../../docs/renoa-alpha-v1.md).
 
 Before each newly admitted turn the Host resolves the selected model's context,

@@ -24,6 +24,7 @@ mod execution;
 ///
 /// Returns configuration, Telegram transport, Host, durable state, or supervision failures.
 pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
+    preflight_agent(&config.host, AgentId::from_uuid(config.agent_id)).await?;
     let api = Arc::new(TelegramApi::new(
         &config.bot_token,
         config.telegram_ipv4_only,
@@ -118,6 +119,15 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
         )),
         Some(Err(error)) => Err(error),
     }
+}
+
+async fn preflight_agent(host: &LocalHost, agent_id: AgentId) -> Result<(), TelegramServiceError> {
+    if host.agent_definition(agent_id).await?.is_none() {
+        return Err(TelegramServiceError::Configuration(format!(
+            "configured agent {agent_id} is not provisioned on this Host; provision it with `renoa-host <config.json> provision <provision.json>` before starting the Telegram surface"
+        )));
+    }
+    Ok(())
 }
 
 struct Poller {

@@ -181,13 +181,31 @@ pub(super) fn read(
     // Stored state must satisfy the rules every writer applies: a row written by
     // an older runtime or edited outside the Host fails closed here instead of
     // reaching the runtime.
+    require_stored_definition(&definition)?;
+    Ok(Some(definition))
+}
+
+/// Rejects stored state no writer can produce: a definition that fails the
+/// writer-side validation, or a selection naming a capability the definition
+/// cannot exercise.
+fn require_stored_definition(definition: &AgentDefinition) -> Result<(), HostCatalogError> {
     definition.validate().map_err(|error| {
         HostCatalogError::Invalid(format!(
             "stored agent definition for `{}` is invalid: {error}",
             definition.id
         ))
     })?;
-    Ok(Some(definition))
+    for name in &definition.tool_selection.tools {
+        if !crate::capabilities::is_selectable(name)
+            || !crate::capabilities::is_consumable(name, definition.operational.documents)
+        {
+            return Err(HostCatalogError::Invalid(format!(
+                "stored agent definition for `{}` names an unusable capability: {name}",
+                definition.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn list(

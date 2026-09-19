@@ -5,6 +5,7 @@ use renoa_kernel::AgentId;
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
+use super::files::fault;
 use super::{AgentDocumentStore, Document, DocumentDefaults};
 
 const DEFAULTS: DocumentDefaults = DocumentDefaults {
@@ -87,6 +88,58 @@ fn a_conflicting_second_document_publishes_nothing() {
             .map(|entry| entry.expect("entry").file_name())
             .collect::<Vec<_>>(),
         vec![std::ffi::OsString::from("USER.md")]
+    );
+}
+
+#[test]
+fn a_post_persist_failure_removes_the_document_it_installed() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fault::arm("SOUL.md", fault::Injection::PostPersistFailure);
+
+    let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("an injected post-persist failure must fail the publication");
+    fault::disarm();
+    assert!(
+        error.to_string().contains("sync agent document"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !root.join("SOUL.md").exists(),
+        "the document this attempt installed must be removed again"
+    );
+    assert!(
+        !root.exists(),
+        "an empty document root must not survive a failed publication"
+    );
+}
+
+#[test]
+fn an_adopted_identical_winner_survives_a_failing_sibling() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fault::arm("SOUL.md", fault::Injection::IdenticalWinner);
+    fault::arm("USER.md", fault::Injection::ConflictingWinner);
+
+    let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("a conflicting second document must fail the whole set");
+    fault::disarm();
+    assert!(
+        error
+            .to_string()
+            .contains("already exists with different content"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("SOUL.md")).expect("the adopted winner survives"),
+        DEFAULTS.soul,
+        "a document this attempt adopted must not be removed as its own"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("USER.md")).expect("the conflicting winner survives"),
+        "injected winner\n"
     );
 }
 

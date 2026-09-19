@@ -179,7 +179,7 @@ impl Server {
         }
         self.config
             .host()
-            .delete_session_for_agent(self.config.agent_id(), session_id)
+            .delete_session(self.config.agent_id(), session_id)
             .await?;
         Ok(DeleteSessionResponse::new())
     }

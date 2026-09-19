@@ -123,15 +123,22 @@ storage themselves. The node daemon owns two separate derived stores: its
 ledger, which this release renamed the task column to `agent_id` and refuses an
 earlier one by name, and the private Host data root, where a `host.sqlite3`
 written by an earlier runtime is refused at startup first. Stop
-`renoa-node.service`, take the backup, delete the whole node state directory
-(`/var/lib/renoa-node`; the ledger and the private Host are both derived from
-configuration and provisioning), re-provision the private Host as shown in the
-node section, then start the daemon again. The node's device credential and the
-coordinator's task binding live outside that directory and survive. Each
-surface store is its own step, as listed in `docs/renoa-host-v0.md`. Keep the
-previous binaries and matching database snapshot in the single previous-release
-backup described above. Browser login storage is separate and does not need to
-be reset for this Host cutover.
+`renoa-node.service`, take the backup, then delete the ledger
+`<state-directory>/node.sqlite` and the private Host root
+`<state-directory>/host` (`/var/lib/renoa-node/node.sqlite` and
+`/var/lib/renoa-node/host` for the supplied unit); both are derived from
+configuration and provisioning. Preserve the model credential store
+`<state-directory>/model-auth.sqlite` (`/var/lib/renoa-node/model-auth.sqlite`),
+which `node.json` names and node startup requires. Re-provision the private Host
+as shown in the node section, then start the daemon again. This step needs the
+release binaries installed first: `renoa-node` from the node section and
+`renoa-host` from the shared Host build in
+[the Soundwave section](#soundwave-github-review-service). The node's device
+credential and the coordinator's task binding live outside that directory and
+survive. Each surface store is its own step, as listed in
+`docs/renoa-host-v0.md`. Keep the previous binaries and matching database
+snapshot in the single previous-release backup described above. Browser login
+storage is separate and does not need to be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
 the new coordinator binary. It upgrades the identity database to schema 11 and
@@ -204,7 +211,7 @@ Host configuration, not RCP wire data:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "endpoint": "wss://renoa.live/connect",
   "model": {
     "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",

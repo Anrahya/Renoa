@@ -194,6 +194,13 @@ fn replay(
     }
     let stored: AgentDefinition = serde_json::from_str(&receipt.result_json)?;
     stored.validate()?;
+    if stored.id != receipt.agent_id || stored.id != commit.definition.id {
+        return Err(catalog::HostCatalogError::Invalid(format!(
+            "creation receipt for operation `{}` describes agent {}, not `{}`",
+            commit.operation_id, stored.id, receipt.agent_id
+        ))
+        .into());
+    }
     if receipts_conflict(commit, &receipt, &stored) {
         return Err(LocalHostError::AgentConflict(receipt.agent_id));
     }

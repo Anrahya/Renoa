@@ -18,7 +18,11 @@ use crate::{
     private_file::{read_config, read_secret, require_absolute},
 };
 
-const CONFIG_SCHEMA_VERSION: u32 = 1;
+/// The config document shape this runtime reads.
+///
+/// Version 2 renamed each target's required `profile` to `agentId`, so an
+/// earlier document is refused by name instead of failing as an unknown field.
+const CONFIG_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) struct LoadedConfig {
     pub(crate) endpoint: String,
@@ -37,6 +41,15 @@ struct ConfigDocument {
     #[serde(default)]
     adapters: AdapterDocument,
     targets: Vec<TargetDocument>,
+}
+
+/// The schema a config document declares, read without this runtime's target
+/// shape so a document from another schema is refused by version instead of as
+/// a field that changed with it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionDocument {
+    schema_version: u32,
 }
 
 #[derive(Deserialize)]
@@ -117,14 +130,23 @@ pub(crate) fn load(
 
 fn decode_config(path: &Path) -> Result<ConfigDocument, ServiceError> {
     let bytes = read_config(path)?;
-    let config: ConfigDocument =
-        serde_json::from_slice(&bytes).map_err(|source| ServiceError::Json {
-            path: path.to_path_buf(),
-            source,
-        })?;
+    let config: ConfigDocument = match serde_json::from_slice(&bytes) {
+        Ok(config) => config,
+        Err(source) => {
+            if let Some(version) = declared_schema_version(&bytes)
+                && version != CONFIG_SCHEMA_VERSION
+            {
+                return Err(ServiceError::Configuration(unsupported_schema(version)));
+            }
+            return Err(ServiceError::Json {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
     if config.schema_version != CONFIG_SCHEMA_VERSION {
-        return Err(ServiceError::Configuration(format!(
-            "node config schemaVersion must be {CONFIG_SCHEMA_VERSION}"
+        return Err(ServiceError::Configuration(unsupported_schema(
+            config.schema_version,
         )));
     }
     if config.endpoint.is_empty() {
@@ -133,6 +155,21 @@ fn decode_config(path: &Path) -> Result<ConfigDocument, ServiceError> {
         ));
     }
     Ok(config)
+}
+
+fn declared_schema_version(bytes: &[u8]) -> Option<u32> {
+    let document: VersionDocument = serde_json::from_slice(bytes).ok()?;
+    Some(document.schema_version)
+}
+
+fn unsupported_schema(version: u32) -> String {
+    let cutover = if version == 1 {
+        "; version 1 selected each target with `profile`, and the current schema selects it with \
+         `agentId`"
+    } else {
+        ""
+    };
+    format!("unsupported node config schema {version}; expected {CONFIG_SCHEMA_VERSION}{cutover}")
 }
 
 fn decode_credentials(path: &Path) -> Result<DeviceCredentials, ServiceError> {
@@ -273,7 +310,7 @@ mod tests {
         std::fs::create_dir(&workspace).expect("create workspace");
         let agent_id = Uuid::new_v4();
         let base = json!({
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "endpoint": "ws://127.0.0.1:9/connect",
             "model": {
                 "bridge": bridge,
@@ -315,14 +352,55 @@ mod tests {
             .expect("write unknown config");
         assert!(decode_config(&path).is_err());
 
-        let mut wrong_version = base;
-        wrong_version["schemaVersion"] = json!(2);
+        let mut earlier_version = base;
+        earlier_version["schemaVersion"] = json!(1);
         std::fs::write(
             &path,
-            serde_json::to_vec(&wrong_version).expect("encode config"),
+            serde_json::to_vec(&earlier_version).expect("encode config"),
         )
-        .expect("write wrong version config");
+        .expect("write earlier version config");
         assert!(decode_config(&path).is_err());
+    }
+
+    #[test]
+    fn an_earlier_config_document_is_refused_by_version_not_by_a_malformed_field() {
+        let files = tempfile::tempdir().expect("temporary directory");
+        let path = files.path().join("node.json");
+        let legacy = json!({
+            "schemaVersion": 1,
+            "endpoint": "ws://127.0.0.1:9/connect",
+            "model": {
+                "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+                "credentialStore": "/var/lib/renoa-node/model-auth.sqlite",
+                "providers": ["opencode-go"],
+                "defaultProvider": "opencode-go",
+                "defaultModel": "fixture-model"
+            },
+            "targets": [{
+                "target": "workspace:example",
+                "profile": "renoa.coding.alpha.v1",
+                "sessionId": Uuid::new_v4(),
+                "workspace": "/srv/renoa/node-workspaces/example"
+            }]
+        });
+        std::fs::write(&path, serde_json::to_vec(&legacy).expect("encode config"))
+            .expect("write legacy config");
+        #[cfg(unix)]
+        private(&path);
+
+        let error = decode_config(&path)
+            .err()
+            .expect("an earlier document is refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("unsupported node config schema 1"),
+            "{message}"
+        );
+        assert!(message.contains("expected 2"), "{message}");
+        assert!(
+            message.contains("profile") && message.contains("agentId"),
+            "{message}"
+        );
     }
 
     #[test]

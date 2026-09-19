@@ -142,9 +142,21 @@ pub(super) fn publication_state(
     }
 }
 
-pub(super) fn publish_document(path: &Path, content: &str) -> Result<(), AgentDefinitionError> {
+/// What one publication did with its target path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Published {
+    /// This attempt installed the file.
+    Created,
+    /// The path already held exactly this content.
+    Adopted,
+}
+
+pub(super) fn publish_document(
+    path: &Path,
+    content: &str,
+) -> Result<Published, AgentDefinitionError> {
     match publication_state(path, content)? {
-        Publication::Identical => return Ok(()),
+        Publication::Identical => return Ok(Published::Adopted),
         Publication::Conflicting => {
             return Err(AgentDefinitionError::DocumentConflict {
                 path: path.to_path_buf(),
@@ -165,13 +177,18 @@ pub(super) fn publish_document(path: &Path, content: &str) -> Result<(), AgentDe
         .write_all(content.as_bytes())
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|source| document_io("write agent document staging file", path, source))?;
+    #[cfg(test)]
+    fault::before_persist(path, content)?;
     match temporary.persist_noclobber(path) {
         Ok(file) => {
-            file.sync_all()
-                .map_err(|source| document_io("sync agent document", path, source))?;
-            File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|source| document_io("sync agent document directory", parent, source))?;
+            let failure = sync_publication(&file, parent, path).err();
+            #[cfg(test)]
+            let failure = failure.or_else(|| injected_post_persist_failure(path));
+            if let Some(error) = failure {
+                // The path now holds this attempt's own publication, so the
+                // failure removes it again and leaves nothing partial behind.
+                return Err(discard_publication(path, error));
+            }
         }
         // A writer outside the Host can take the path between the classification
         // above and this persist, so the winner is adopted only when it holds
@@ -182,12 +199,50 @@ pub(super) fn publish_document(path: &Path, content: &str) -> Result<(), AgentDe
                     path: path.to_path_buf(),
                 });
             }
+            return Ok(Published::Adopted);
         }
         Err(error) => {
             return Err(document_io("publish agent document", path, error.error));
         }
     }
-    require_regular_file(path)
+    if let Err(error) = require_regular_file(path) {
+        return Err(discard_publication(path, error));
+    }
+    Ok(Published::Created)
+}
+
+fn sync_publication(file: &File, parent: &Path, path: &Path) -> Result<(), AgentDefinitionError> {
+    file.sync_all()
+        .map_err(|source| document_io("sync agent document", path, source))?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|source| document_io("sync agent document directory", parent, source))
+}
+
+/// A test-injected failure between a successful persist and its sync.
+#[cfg(test)]
+fn injected_post_persist_failure(path: &Path) -> Option<AgentDefinitionError> {
+    fault::after_persist(path).then(|| {
+        document_io(
+            "sync agent document",
+            path,
+            std::io::Error::other("injected post-persist failure"),
+        )
+    })
+}
+
+/// Removes one document this attempt installed and returns the failure that
+/// followed it, or an error naming both problems when the removal fails too.
+fn discard_publication(path: &Path, failure: AgentDefinitionError) -> AgentDefinitionError {
+    match fs::remove_file(path) {
+        Ok(()) => failure,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => failure,
+        Err(error) => AgentDefinitionError::PublicationCleanup {
+            path: path.to_path_buf(),
+            failure: failure.to_string(),
+            cleanup: error.to_string(),
+        },
+    }
 }
 
 pub(super) fn require_regular_file(path: &Path) -> Result<(), AgentDefinitionError> {
@@ -260,4 +315,65 @@ pub(super) fn is_revision(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+/// Test-only injection for the publication windows a real filesystem cannot
+/// reach deterministically: a writer winning the race to the path, and a
+/// failure between a successful persist and its sync.
+#[cfg(test)]
+pub(super) mod fault {
+    use std::{cell::RefCell, fs, path::Path};
+
+    use super::{AgentDefinitionError, document_io};
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(in crate::documents) enum Injection {
+        /// An identical file appears at the path just before the persist.
+        IdenticalWinner,
+        /// A conflicting file appears at the path just before the persist.
+        ConflictingWinner,
+        /// The persist succeeds and the sync that follows it fails.
+        PostPersistFailure,
+    }
+
+    thread_local! {
+        static ARMED: RefCell<Vec<(&'static str, Injection)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(in crate::documents) fn arm(document: &'static str, injection: Injection) {
+        ARMED.with(|armed| {
+            let mut armed = armed.borrow_mut();
+            armed.retain(|(name, _)| *name != document);
+            armed.push((document, injection));
+        });
+    }
+
+    pub(in crate::documents) fn disarm() {
+        ARMED.with(|armed| armed.borrow_mut().clear());
+    }
+
+    fn armed_for(path: &Path) -> Option<Injection> {
+        let name = path.file_name().and_then(|name| name.to_str());
+        ARMED.with(|armed| {
+            armed
+                .borrow()
+                .iter()
+                .find(|(document, _)| Some(*document) == name)
+                .map(|(_, injection)| *injection)
+        })
+    }
+
+    pub(super) fn before_persist(path: &Path, content: &str) -> Result<(), AgentDefinitionError> {
+        match armed_for(path) {
+            Some(Injection::IdenticalWinner) => fs::write(path, content)
+                .map_err(|source| document_io("inject an identical winner", path, source)),
+            Some(Injection::ConflictingWinner) => fs::write(path, "injected winner\n")
+                .map_err(|source| document_io("inject a conflicting winner", path, source)),
+            _ => Ok(()),
+        }
+    }
+
+    pub(super) fn after_persist(path: &Path) -> bool {
+        armed_for(path) == Some(Injection::PostPersistFailure)
+    }
 }

@@ -140,8 +140,10 @@ impl LocalHost {
 
     /// Reloads one exact Agent session only when the requesting agent owns it.
     ///
-    /// A session bound to a different agent is refused without being assembled
-    /// or replayed, so every by-id read path can inherit the ownership check.
+    /// A session bound to a different agent is refused from its manifest before
+    /// its kernel is opened, its definition resolved, its trace recovered, its
+    /// models discovered, or its workspace opened, so every by-id read path can
+    /// inherit the ownership check.
     ///
     /// # Errors
     ///
@@ -153,13 +155,10 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
-        let session = self.load_session(session_uuid, cwd).await?;
-        if session.agent_id() != agent_id {
-            return Err(LocalHostError::InvalidRequest(
-                "session belongs to a different agent".to_owned(),
-            ));
-        }
-        Ok(session)
+        let stored = self
+            .load_session_storage(Some(agent_id), session_uuid, cwd)
+            .await?;
+        self.assemble_session(session_uuid, stored).await
     }
 
     /// Reloads one exact Agent session and its durable agent/workspace binding.
@@ -175,11 +174,20 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
+        let stored = self.load_session_storage(None, session_uuid, cwd).await?;
+        self.assemble_session(session_uuid, stored).await
+    }
+
+    async fn assemble_session(
+        &self,
+        session_uuid: Uuid,
+        stored: StoredSession,
+    ) -> Result<Arc<AgentSession>, LocalHostError> {
         let StoredSession {
             directory,
             manifest,
             kernel,
-        } = self.load_session_storage(session_uuid, cwd).await?;
+        } = stored;
         let session_id = manifest.session_id;
         let agent_id = manifest.agent_id;
         let definition = resolve_definition(&self.config, agent_id).await?;
@@ -250,13 +258,9 @@ impl LocalHost {
         {
             return Ok(Some(crate::LocalTurnOutcome::Cancelled));
         }
-        let stored = self.load_session_storage(session_uuid, cwd).await?;
-        if stored.manifest.agent_id != agent_id {
-            return Err(LocalHostError::InvalidRequest(format!(
-                "session {session_uuid} belongs to agent {}, not requested agent {agent_id}",
-                stored.manifest.agent_id
-            )));
-        }
+        let stored = self
+            .load_session_storage(Some(agent_id), session_uuid, cwd)
+            .await?;
         Ok(stored.kernel.cancel_before_execution(
             renoa_kernel::CommandId::from_uuid(request_id),
             content,
@@ -264,8 +268,20 @@ impl LocalHost {
         )?)
     }
 
+    /// Loads one stored session, asserting its owning agent when requested.
+    ///
+    /// `expected_agent` is compared with the manifest immediately after it is
+    /// read, so a refused foreign session never reaches its kernel, definition,
+    /// trace, models, or workspace. `None` is only for the unscoped
+    /// `load_session`, which makes no ownership claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns a foreign-agent rejection, or identity, workspace binding,
+    /// ownership, or storage failures.
     pub(super) async fn load_session_storage(
         &self,
+        expected_agent: Option<AgentId>,
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<StoredSession, LocalHostError> {
@@ -273,6 +289,11 @@ impl LocalHost {
         let session_id = SessionId::from_uuid(session_uuid);
         let directory = self.config.sessions.join(session_id.to_string());
         let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
+        if expected_agent.is_some_and(|expected| manifest.agent_id != expected) {
+            return Err(LocalHostError::InvalidRequest(
+                "session belongs to a different agent".to_owned(),
+            ));
+        }
         if manifest.session_id != session_id {
             return Err(LocalHostError::InvalidRequest(
                 "session metadata does not match the requested Agent session".to_owned(),
@@ -299,51 +320,26 @@ impl LocalHost {
 
     /// Permanently removes one closed Agent session owned by `agent_id`.
     ///
-    /// A session bound to a different agent is refused before any storage is
-    /// touched. Deleting a missing session succeeds so a retried ACP request
-    /// is safe.
+    /// A session bound to a different agent is refused from the manifest its
+    /// deletion already reads, before any storage is removed. Deleting a
+    /// missing session succeeds so a retried ACP request is safe.
     ///
     /// # Errors
     ///
     /// Returns a foreign-agent rejection, or an ownership, identity, metadata,
     /// or storage failure. A session still owned by any process cannot be
     /// deleted.
-    pub async fn delete_session_for_agent(
+    pub async fn delete_session(
         &self,
         agent_id: AgentId,
         session_uuid: Uuid,
     ) -> Result<(), LocalHostError> {
-        let session_id = SessionId::from_uuid(session_uuid);
-        let directory = self.config.sessions.join(session_id.to_string());
-        if !directory.try_exists()? {
-            return self.delete_session(session_uuid).await;
-        }
-        let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
-        if manifest.agent_id != agent_id {
-            return Err(LocalHostError::InvalidRequest(
-                "session belongs to a different agent".to_owned(),
-            ));
-        }
-        self.delete_session(session_uuid).await
-    }
-
-    /// Permanently removes one closed Agent session from durable Host storage.
-    ///
-    /// Deleting a missing session succeeds so a retried ACP request is safe.
-    ///
-    /// Deleting a missing session succeeds so a retried ACP request is safe. The
-    /// owning agent is not compared with a caller, so a surface deletes a
-    /// session through `delete_session_for_agent`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an ownership, identity, metadata, or storage failure. A session
-    /// still owned by any process cannot be deleted.
-    pub async fn delete_session(&self, session_uuid: Uuid) -> Result<(), LocalHostError> {
         let sessions = self.config.sessions.clone();
         let session_id = SessionId::from_uuid(session_uuid);
-        tokio::task::spawn_blocking(move || delete_session_storage(&sessions, session_id))
-            .await??;
+        tokio::task::spawn_blocking(move || {
+            delete_session_storage(&sessions, agent_id, session_id)
+        })
+        .await??;
         let skills = self.config.skill_store.clone();
         tokio::task::spawn_blocking(move || skills.remove_session(session_id)).await??;
         Ok(())

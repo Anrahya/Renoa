@@ -45,7 +45,8 @@ impl LocalHost {
     /// Opens existing history without discovering models or resolving a runtime.
     ///
     /// Only a session owned by `agent_id` is inspected; a session bound to a
-    /// different agent is refused without its history being read. The exact
+    /// different agent is refused from its manifest before its kernel is opened
+    /// or its history read. The exact
     /// session identity, workspace binding, and exclusive kernel ownership are
     /// checked just as for executable loading. Diagnostic failures are reported
     /// by the handle and do not hide history. Drop the handle before loading
@@ -66,12 +67,9 @@ impl LocalHost {
             directory,
             manifest,
             kernel,
-        } = self.load_session_storage(session_uuid, cwd).await?;
-        if manifest.agent_id != agent_id {
-            return Err(LocalHostError::InvalidRequest(
-                "session belongs to a different agent".to_owned(),
-            ));
-        }
+        } = self
+            .load_session_storage(Some(agent_id), session_uuid, cwd)
+            .await?;
         kernel.history()?;
         let diagnostic_error = TraceStore::open(
             directory.join(TRACE_DATABASE),

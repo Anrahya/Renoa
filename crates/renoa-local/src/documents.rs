@@ -23,9 +23,9 @@ use tokio_util::sync::CancellationToken;
 
 mod files;
 use files::{
-    Document, DocumentSnapshot, Publication, append_document, document_io, document_root,
-    is_revision, publication_state, publish_document, require_regular_file, revision,
-    revision_from_hash,
+    Document, DocumentSnapshot, Publication, Published, append_document, document_io,
+    document_root, is_revision, publication_state, publish_document, require_regular_file,
+    revision, revision_from_hash,
 };
 
 use crate::{
@@ -53,8 +53,8 @@ pub(crate) struct AgentDocumentStore {
 impl AgentDocumentStore {
     /// Adopts or publishes the exact default files for a new agent.
     ///
-    /// The whole set is validated before the first write and a failure during
-    /// publication removes, best effort, exactly what this attempt created, so a
+    /// The whole set is validated before the first write, and a failure during
+    /// publication removes exactly the files this attempt installed, so a
     /// rejected creation leaves no publication behind. A matching existing
     /// publication is adopted, so a retry after a crash between file publication
     /// and database commit succeeds. Conflicting pre-existing content fails
@@ -80,27 +80,17 @@ impl AgentDocumentStore {
                 )
             })
             .collect();
-        let mut absent = Vec::new();
         for (path, content) in &publications {
-            match publication_state(path, content)? {
-                Publication::Absent => absent.push(path.clone()),
-                Publication::Identical => {}
-                Publication::Conflicting => {
-                    return Err(AgentDefinitionError::DocumentConflict { path: path.clone() });
-                }
+            if publication_state(path, content)? == Publication::Conflicting {
+                return Err(AgentDefinitionError::DocumentConflict { path: path.clone() });
             }
         }
         let mut created: Vec<PathBuf> = Vec::new();
         for (path, content) in &publications {
-            if let Err(error) = publish_document(path, content) {
-                for path in &created {
-                    let _ = fs::remove_file(path);
-                }
-                let _ = fs::remove_dir(&root);
-                return Err(error);
-            }
-            if absent.contains(path) {
-                created.push(path.clone());
+            match publish_document(path, content) {
+                Ok(Published::Created) => created.push(path.clone()),
+                Ok(Published::Adopted) => {}
+                Err(error) => return Err(remove_created(&root, &created, error)),
             }
         }
         Ok(())
@@ -373,6 +363,30 @@ fn default_content(document: Document, defaults: DocumentDefaults) -> &'static s
         Document::Soul => defaults.soul,
         Document::User => defaults.user,
     }
+}
+
+/// Removes the documents this attempt installed and returns the failure that
+/// stopped the publication, naming the removal too when it fails.
+fn remove_created(
+    root: &Path,
+    created: &[PathBuf],
+    failure: AgentDefinitionError,
+) -> AgentDefinitionError {
+    for path in created {
+        if let Err(error) = fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return AgentDefinitionError::PublicationCleanup {
+                path: path.clone(),
+                failure: failure.to_string(),
+                cleanup: error.to_string(),
+            };
+        }
+    }
+    // Only an empty root disappears here, so a document another publication
+    // owns keeps the directory.
+    let _ = fs::remove_dir(root);
+    failure
 }
 
 fn document_tool_io(operation: &str, error: &std::io::Error) -> ToolError {
