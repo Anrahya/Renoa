@@ -55,6 +55,9 @@ pub use alpha::{ALPHA_PROFILE_ID, alpha_profile};
 pub use arcee::{ARCEE_PROFILE_ID, arcee_profile};
 pub use credential_file::credential_file_is_private;
 pub use host::agents::AgentRecord;
+pub use host::definition::{
+    AgentCreateRequest, AgentRoutine, AgentToolsUpdate, RenameAgent, derived_agent_id,
+};
 pub use host::catalog::HostCatalogError;
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
