@@ -6,9 +6,9 @@ const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")
 const example: HostSnapshot = {
   host_id: id(1),
   agents: [
-    { id: id(2), name: "Arcee", profile: "operator", created_by: null },
-    { id: id(3), name: "X Desk", profile: "research", created_by: id(2) },
-    { id: id(4), name: "Soundwave", profile: "review", created_by: id(2) },
+    { id: id(2), name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v1" },
+    { id: id(3), name: "X Desk", created_by: id(2), preset_id: "renoa.coding.alpha.v1" },
+    { id: id(4), name: "Soundwave", created_by: id(2), preset_id: "renoa.specialist.v1" },
   ],
   sessions: [],
   routines: [
@@ -18,9 +18,9 @@ const example: HostSnapshot = {
       enabled: true, revision: 1, next_due_ms: Date.parse("2026-09-10T14:00:00+05:30"), pending_runs: 0, completed_runs: 0 },
   ],
   connections: [
-    { id: "x-api", catalog_available: true, tool_count: 12, selected_by_profiles: ["operator", "research"] },
-    { id: "web-search", catalog_available: true, tool_count: 2, selected_by_profiles: ["research"] },
-    { id: "github", catalog_available: true, tool_count: 8, selected_by_profiles: ["review"] },
+    { id: "x-api", catalog_available: true, tool_count: 12, selected_by_agents: [id(2), id(3)] },
+    { id: "web-search", catalog_available: true, tool_count: 2, selected_by_agents: [id(3)] },
+    { id: "github", catalog_available: true, tool_count: 8, selected_by_agents: [id(4)] },
   ],
   plugins: [{ digest: "example-package-revision", name: "Research tools", version: "1.0" }],
   skills: [],

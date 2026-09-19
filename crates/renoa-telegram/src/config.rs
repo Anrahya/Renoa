@@ -1,9 +1,9 @@
 use std::{collections::HashSet, env, path::PathBuf};
 
 use renoa_local::{
-    ARCEE_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters, LocalModelConfiguration,
-    ModelProvider, ReasoningLevel, arcee_profile,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
 };
+use uuid::Uuid;
 
 use crate::TelegramServiceError;
 
@@ -11,7 +11,7 @@ const TOKEN_LIMIT: u64 = 4096;
 
 pub struct Config {
     pub(crate) host: LocalHost,
-    pub(crate) profile_id: AgentProfileId,
+    pub(crate) agent_id: Uuid,
     pub(crate) data_directory: PathBuf,
     pub(crate) workspace: PathBuf,
     pub(crate) bot_token: String,
@@ -29,7 +29,7 @@ struct ProviderSettings {
 }
 
 impl Config {
-    /// Builds Arcee and its Telegram surface from explicit service configuration.
+    /// Builds the configured agent's Telegram surface from explicit service configuration.
     ///
     /// # Errors
     ///
@@ -37,6 +37,7 @@ impl Config {
     pub async fn from_environment() -> Result<Self, TelegramServiceError> {
         let data_directory = canonical_directory("RENOA_DATA_DIR", true)?;
         let workspace = canonical_directory("RENOA_TELEGRAM_WORKSPACE", false)?;
+        let agent_id = required_agent_id("RENOA_TELEGRAM_AGENT_ID")?;
         let allowed_user_id = required("RENOA_TELEGRAM_ALLOWED_USER_ID")?
             .parse::<i64>()
             .map_err(|_| configuration("RENOA_TELEGRAM_ALLOWED_USER_ID must be an integer"))?;
@@ -55,9 +56,6 @@ impl Config {
         )?;
         let mcp_adapter = optional_path("RENOA_MCP_ADAPTER");
         let mcp_registry_adapter = optional_path("RENOA_MCP_REGISTRY_ADAPTER");
-        let profile = arcee_profile(&data_directory).map_err(renoa_local::LocalHostError::from)?;
-        let profile_id = profile.id().clone();
-        debug_assert_eq!(profile_id.as_str(), ARCEE_PROFILE_ID);
         let mut adapters = LocalHostAdapters::new(mcp_adapter.as_deref())
             .with_mcp_registry(mcp_registry_adapter.as_deref())
             .with_shared_plugin_registry(shared_plugin_registry.as_deref());
@@ -74,15 +72,10 @@ impl Config {
         if let Some(reasoning) = settings.initial_reasoning {
             model_configuration = model_configuration.with_initial_reasoning(reasoning);
         }
-        let host = LocalHost::new(
-            &data_directory,
-            model_configuration,
-            vec![profile],
-            adapters,
-        )?;
+        let host = LocalHost::new(&data_directory, model_configuration, adapters)?;
         Ok(Self {
             host,
-            profile_id,
+            agent_id,
             data_directory,
             workspace,
             bot_token,
@@ -250,6 +243,11 @@ fn required_path(name: &str) -> Result<PathBuf, TelegramServiceError> {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .ok_or_else(|| configuration(format!("{name} must be set")))
+}
+
+fn required_agent_id(name: &str) -> Result<Uuid, TelegramServiceError> {
+    let value = required(name)?;
+    Uuid::parse_str(&value).map_err(|_| configuration(format!("{name} must be a UUID")))
 }
 
 fn optional_path(name: &str) -> Option<PathBuf> {

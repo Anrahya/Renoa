@@ -5,9 +5,7 @@ use std::{
 };
 
 use renoa_control::{BrowserSessions, Coordinator};
-use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, alpha_profile,
-};
+use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
 use renoa_management::ManagementApi;
 use renoa_protocol::PrincipalId;
 use reqwest::{Client, StatusCode};
@@ -33,7 +31,6 @@ fn host(root: &Path) -> LocalHost {
             "absent-model",
             root.join("absent-credentials"),
         ),
-        vec![alpha_profile()],
         LocalHostAdapters::default(),
     )
     .expect("Host initialized without provider access")

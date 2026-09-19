@@ -1,6 +1,5 @@
 use super::*;
-use renoa_kernel::AgentId;
-use renoa_local::AgentRecord;
+use renoa_local::derived_agent_id;
 
 struct Fixture {
     directory: tempfile::TempDir,
@@ -31,17 +30,7 @@ impl Fixture {
             &self.directory.path().join("data"),
             &self.bridge,
             &self.auth,
-            true,
         )
-    }
-
-    fn record(name: &str, created_by: Option<AgentId>) -> AgentRecord {
-        AgentRecord {
-            id: AgentId::new(),
-            profile: AgentProfileId::new(RELAY_PROFILE_ID).expect("profile"),
-            name: name.to_owned(),
-            created_by,
-        }
     }
 }
 
@@ -50,31 +39,57 @@ async fn durable_roster_and_creator_relationship_survive_restart_without_model_d
     let fixture = Fixture::new();
     let host = fixture.host();
     let host_id = host.host_id().await.expect("Host identity");
-    let parent = host
-        .ensure_agent(Fixture::record("Operator", None))
-        .await
-        .expect("parent");
+    let parent = provision_specialist(&host, Uuid::new_v4(), "Operator", "Run the desk.").await;
+    let child_creator = AgentCreator::Agent {
+        agent_id: parent.id,
+    };
+    let child_operation = Uuid::new_v4();
+    let child_request = AgentCreateRequest::new(
+        child_operation,
+        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        "News",
+    )
+    .with_instructions("Report the news.");
     let child = host
-        .ensure_agent(Fixture::record("News", Some(parent.id)))
+        .create_agent(
+            child_creator.clone(),
+            AgentCreationOrigin::AgentTool,
+            child_request.clone(),
+            CancellationToken::new(),
+        )
         .await
         .expect("child");
+    assert_eq!(child.id, derived_agent_id(child_operation));
+    assert_eq!(child.creator, child_creator);
     assert_eq!(
-        host.ensure_agent(child.clone())
-            .await
-            .expect("retry creation"),
+        host.create_agent(
+            child_creator.clone(),
+            AgentCreationOrigin::AgentTool,
+            child_request.clone(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("retry creation"),
         child
     );
-    let mut changed = child.clone();
-    changed.name = "Other".to_owned();
+    let changed = AgentCreateRequest::new(
+        child_operation,
+        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        "Other",
+    )
+    .with_instructions("Report the news.");
     assert!(
-        matches!(host.ensure_agent(changed).await, Err(LocalHostError::AgentConflict(id)) if id == child.id)
+        matches!(host.create_agent(child_creator.clone(), AgentCreationOrigin::AgentTool, changed, CancellationToken::new()).await, Err(LocalHostError::AgentConflict(id)) if id == child.id)
     );
     drop(host);
     fs::remove_file(&fixture.bridge).expect("disable model dependency");
     let restarted = fixture.host();
     assert_eq!(restarted.host_id().await.expect("same host"), host_id);
     assert_eq!(
-        restarted.agent(child.id).await.expect("inspect child"),
+        restarted
+            .agent_definition(child.id)
+            .await
+            .expect("inspect child"),
         Some(child.clone())
     );
     let agents = restarted.list_agents().await.expect("roster without model");
@@ -82,7 +97,12 @@ async fn durable_roster_and_creator_relationship_survive_restart_without_model_d
     assert!(agents.contains(&parent) && agents.contains(&child));
     assert_eq!(
         restarted
-            .ensure_agent(child.clone())
+            .create_agent(
+                child_creator,
+                AgentCreationOrigin::AgentTool,
+                child_request,
+                CancellationToken::new(),
+            )
             .await
             .expect("retry after restart"),
         child
@@ -103,10 +123,36 @@ async fn competing_hosts_admit_only_one_creation_for_an_agent_identity() {
     let fixture = Fixture::new();
     let first = fixture.host();
     let second = fixture.host();
-    let one = Fixture::record("First", None);
-    let mut two = one.clone();
-    two.name = "Second".to_owned();
-    let (left, right) = tokio::join!(first.ensure_agent(one), second.ensure_agent(two));
+    let operation = Uuid::new_v4();
+    let creator = AgentCreator::System {
+        component: "competing-hosts".to_owned(),
+    };
+    let one = AgentCreateRequest::new(
+        operation,
+        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        "First",
+    )
+    .with_instructions("Do the work.");
+    let two = AgentCreateRequest::new(
+        operation,
+        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        "Second",
+    )
+    .with_instructions("Do the work.");
+    let (left, right) = tokio::join!(
+        first.create_agent(
+            creator.clone(),
+            AgentCreationOrigin::Provisioning,
+            one,
+            CancellationToken::new()
+        ),
+        second.create_agent(
+            creator,
+            AgentCreationOrigin::Provisioning,
+            two,
+            CancellationToken::new()
+        )
+    );
     assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
     let loser = left.err().or_else(|| right.err()).expect("one conflict");
     assert!(matches!(loser, LocalHostError::AgentConflict(_)));
@@ -114,24 +160,86 @@ async fn competing_hosts_admit_only_one_creation_for_an_agent_identity() {
 }
 
 #[tokio::test]
-async fn creation_rejects_missing_or_self_creators_and_unknown_profiles() {
+async fn creation_rejects_untrusted_pairs_and_unknown_presets() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let parent = AgentId::new();
-    assert!(
-        matches!(host.ensure_agent(Fixture::record("News", Some(parent))).await, Err(LocalHostError::AgentNotFound(id)) if id == parent)
-    );
-    let mut record = Fixture::record("Self", None);
-    record.created_by = Some(record.id);
-    assert!(host.ensure_agent(record).await.is_err());
-    let mut record = Fixture::record("Unknown", None);
-    record.profile = AgentProfileId::new("unknown").expect("id");
-    assert!(host.ensure_agent(record).await.is_err());
-    assert!(
-        host.ensure_agent(Fixture::record("  ", None))
-            .await
-            .is_err()
-    );
+    let creator = AgentCreator::System {
+        component: "validation".to_owned(),
+    };
+    assert!(matches!(
+        host.create_agent(
+            creator.clone(),
+            AgentCreationOrigin::AgentTool,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                "Untrusted"
+            )
+            .with_instructions("Do the work."),
+            CancellationToken::new()
+        )
+        .await,
+        Err(LocalHostError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        host.create_agent(
+            creator.clone(),
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::nil(),
+                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                "Nil"
+            )
+            .with_instructions("Do the work."),
+            CancellationToken::new()
+        )
+        .await,
+        Err(LocalHostError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        host.create_agent(
+            creator.clone(),
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new("renoa.unknown.v1").expect("preset id"),
+                "Unknown"
+            )
+            .with_instructions("Do the work."),
+            CancellationToken::new()
+        )
+        .await,
+        Err(LocalHostError::Definition(_))
+    ));
+    assert!(matches!(
+        host.create_agent(
+            creator.clone(),
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                "Without instructions"
+            ),
+            CancellationToken::new()
+        )
+        .await,
+        Err(LocalHostError::Definition(_))
+    ));
+    assert!(matches!(
+        host.create_agent(
+            creator.clone(),
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                "  "
+            )
+            .with_instructions("Do the work."),
+            CancellationToken::new()
+        )
+        .await,
+        Err(LocalHostError::Definition(_))
+    ));
     assert!(host.list_agents().await.expect("empty roster").is_empty());
 }
 
@@ -139,10 +247,7 @@ async fn creation_rejects_missing_or_self_creators_and_unknown_profiles() {
 async fn one_agent_owns_multiple_isolated_sessions_across_restart_and_session_deletion() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let agent = host
-        .ensure_agent(Fixture::record("Relay", None))
-        .await
-        .expect("agent");
+    let agent = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
     let first_id = Uuid::new_v4();
     let second_id = Uuid::new_v4();
     let first = host
@@ -176,10 +281,8 @@ async fn one_agent_owns_multiple_isolated_sessions_across_restart_and_session_de
     assert_eq!(restored.agent_id(), agent.id);
     assert_eq!(restored.history().expect("restored history"), expected);
     drop(restored);
-    let other = restarted
-        .ensure_agent(Fixture::record("Other", None))
-        .await
-        .expect("other agent");
+    let other =
+        provision_specialist(&restarted, Uuid::new_v4(), "Other", "Do something else.").await;
     assert!(
         restarted
             .ensure_agent_session(other.id, &fixture.workspace, first_id)
@@ -193,77 +296,146 @@ async fn one_agent_owns_multiple_isolated_sessions_across_restart_and_session_de
             .is_err()
     );
     restarted
-        .delete_session(first_id)
+        .delete_session(agent.id, first_id)
         .await
         .expect("delete one conversation");
     assert_eq!(
-        restarted.agent(agent.id).await.expect("agent survives"),
-        Some(agent)
+        restarted
+            .agent_definition(agent.id)
+            .await
+            .expect("agent survives"),
+        Some(agent.clone())
     );
     let second = restarted
-        .load_session(second_id, &fixture.workspace)
+        .load_session_for_agent(agent.id, second_id, &fixture.workspace)
         .await
         .expect("other conversation survives");
     assert!(second.history().expect("still isolated").is_empty());
 }
 
 #[tokio::test]
-async fn legacy_session_bindings_are_imported_without_opening_execution_or_replacing_names() {
+async fn session_bindings_carry_only_the_canonical_agent_identity() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let profile = AgentProfileId::new(RELAY_PROFILE_ID).expect("profile");
+    let agent = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
+    let session_id = Uuid::new_v4();
     let session = host
-        .create_session(&profile, &fixture.workspace)
+        .ensure_agent_session(agent.id, &fixture.workspace, session_id)
         .await
-        .expect("legacy creation API");
-    let agent_id = session.agent_id();
-    // Represent a published pre-catalog session (or a crash before catalog retention).
-    let database = fixture.directory.path().join("data/host.sqlite3");
-    Connection::open(database)
-        .expect("catalog")
-        .execute("DELETE FROM host_agents", [])
-        .expect("remove catalog record");
-    let conflicting = AgentRecord {
-        id: agent_id,
-        profile: AgentProfileId::new(renoa_local::ALPHA_PROFILE_ID).expect("other profile"),
-        name: "Cannot take over existing identity".to_owned(),
-        created_by: None,
-    };
-    assert!(
-        matches!(host.ensure_agent(conflicting).await, Err(LocalHostError::AgentConflict(id)) if id == agent_id)
-    );
-    fs::remove_file(&fixture.bridge).expect("no model required");
-    let roster = host
-        .list_agents()
-        .await
-        .expect("import while kernel is owned");
-    assert_eq!(roster.len(), 1);
-    assert_eq!(roster[0].id, agent_id);
-    assert_eq!(host.list_agents().await.expect("idempotent import"), roster);
+        .expect("session");
+    assert_eq!(session.agent_id(), agent.id);
     drop(session);
+    let manifest_path = fixture
+        .directory
+        .path()
+        .join("data/sessions")
+        .join(session_id.to_string())
+        .join("session.json");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("manifest"))
+            .expect("manifest JSON");
+    assert_eq!(manifest["version"], 4);
+    assert_eq!(manifest["agent_id"], agent.id.to_string());
+    assert_eq!(manifest["session_id"], session_id.to_string());
+    assert!(manifest.get("profile_id").is_none());
+    fs::remove_file(&fixture.bridge).expect("no model required");
+    let roster = host.list_agents().await.expect("roster without model");
+    assert_eq!(roster, vec![agent]);
+    assert_eq!(host.list_agents().await.expect("idempotent read"), roster);
 }
 
 #[tokio::test]
-async fn deleting_a_legacy_session_retains_its_agent_before_removing_the_manifest() {
+async fn loading_a_live_foreign_session_is_refused_before_its_kernel_opens() {
     let fixture = Fixture::new();
     let host = fixture.host();
-    let profile = AgentProfileId::new(RELAY_PROFILE_ID).expect("profile");
+    let owner = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
+    let intruder = provision_specialist(&host, Uuid::new_v4(), "Intruder", "Answer briefly.").await;
+    let session_id = Uuid::new_v4();
+    let live = host
+        .ensure_agent_session(owner.id, &fixture.workspace, session_id)
+        .await
+        .expect("owner session");
+
+    let load = host
+        .load_session_for_agent(intruder.id, session_id, &fixture.workspace)
+        .await
+        .err()
+        .expect("a foreign live session must be refused");
+    assert!(
+        matches!(&load, LocalHostError::InvalidRequest(message) if message == "session belongs to a different agent"),
+        "unexpected load error: {load:?}"
+    );
+
+    let inspect = host
+        .inspect_session(intruder.id, session_id, &fixture.workspace)
+        .await
+        .err()
+        .expect("foreign history must be refused");
+    assert!(
+        matches!(&inspect, LocalHostError::InvalidRequest(message) if message == "session belongs to a different agent"),
+        "unexpected inspect error: {inspect:?}"
+    );
+    drop(live);
+}
+
+#[tokio::test]
+async fn deleting_a_foreign_agents_session_is_refused_and_retains_it() {
+    let fixture = Fixture::new();
+    let host = fixture.host();
+    let owner = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
+    let intruder = provision_specialist(&host, Uuid::new_v4(), "Intruder", "Answer briefly.").await;
+    let session_id = Uuid::new_v4();
     let session = host
-        .create_session(&profile, &fixture.workspace)
+        .ensure_agent_session(owner.id, &fixture.workspace, session_id)
         .await
-        .expect("legacy session");
-    let session_id = session.id();
-    let agent_id = session.agent_id();
+        .expect("owner session");
     drop(session);
-    Connection::open(fixture.directory.path().join("data/host.sqlite3"))
-        .expect("catalog")
-        .execute("DELETE FROM host_agents", [])
-        .expect("simulate pre-catalog publication");
-    fs::remove_file(&fixture.bridge).expect("disable model execution");
-    host.delete_session(session_id)
+
+    let refused = host
+        .delete_session(intruder.id, session_id)
         .await
-        .expect("delete before import");
-    host.delete_session(session_id)
+        .expect_err("a foreign session must be refused");
+    assert!(
+        matches!(&refused, LocalHostError::InvalidRequest(message) if message == "session belongs to a different agent"),
+        "unexpected delete error: {refused:?}"
+    );
+    assert!(
+        fixture
+            .directory
+            .path()
+            .join("data/sessions")
+            .join(session_id.to_string())
+            .is_dir(),
+        "a refused delete removed the foreign session"
+    );
+
+    host.delete_session(intruder.id, Uuid::new_v4())
+        .await
+        .expect("an absent session stays idempotently deletable");
+    host.delete_session(owner.id, session_id)
+        .await
+        .expect("the owner deletes the retained session");
+    host.delete_session(owner.id, session_id)
+        .await
+        .expect("retried deletion stays idempotent");
+}
+
+#[tokio::test]
+async fn deleting_a_session_retains_its_agent_before_removing_the_manifest() {
+    let fixture = Fixture::new();
+    let host = fixture.host();
+    let agent = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
+    let session_id = Uuid::new_v4();
+    let session = host
+        .ensure_agent_session(agent.id, &fixture.workspace, session_id)
+        .await
+        .expect("session");
+    drop(session);
+    fs::remove_file(&fixture.bridge).expect("disable model execution");
+    host.delete_session(agent.id, session_id)
+        .await
+        .expect("delete session");
+    host.delete_session(agent.id, session_id)
         .await
         .expect("retry deletion");
     assert!(
@@ -277,11 +449,11 @@ async fn deleting_a_legacy_session_retains_its_agent_before_removing_the_manifes
     drop(host);
     let restarted = fixture.host();
     let retained = restarted
-        .agent(agent_id)
+        .agent_definition(agent.id)
         .await
         .expect("lookup")
         .expect("retained identity");
-    assert_eq!(retained.profile, profile);
+    assert_eq!(retained, agent);
     assert_eq!(
         restarted.list_agents().await.expect("roster"),
         vec![retained]

@@ -177,14 +177,50 @@ pub(super) fn authorize(
     actor: AgentId,
     target: AgentId,
 ) -> Result<(), RoutineError> {
-    let allowed: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM host_agents a JOIN host_bots b ON b.agent_id=?2 WHERE a.agent_id=?1 AND (a.agent_id=b.agent_id OR a.profile_id=?3))",params![actor.to_string(),target.to_string(),crate::ARCEE_PROFILE_ID],|row| row.get(0))?;
-    if allowed {
+    if actor == target {
+        return Ok(());
+    }
+    let manages_agents: bool = db.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM host_agent_tool_selections AS selection
+            JOIN json_each(selection.tools_json) AS capability
+              ON capability.value = ?2
+            WHERE selection.agent_id = ?1
+        )",
+        params![actor.to_string(), crate::capabilities::AGENT_MANAGE],
+        |row| row.get(0),
+    )?;
+    if manages_agents {
         Ok(())
     } else {
-        Err(RoutineError::Invalid(
-            "only Arcee or the specialist itself can manage its routines".to_owned(),
-        ))
+        Err(RoutineError::Invalid(format!(
+            "an agent needs the `{}` capability to manage another agent's routines",
+            crate::capabilities::AGENT_MANAGE
+        )))
     }
+}
+
+/// Inserts a routine inside a caller's existing transaction.
+///
+/// Agent creation uses this so the agent, its capability rows, its receipt, and
+/// its first routine commit together or not at all. Authorization is inherent:
+/// the caller is creating the agent the routine belongs to.
+pub(in crate::host) fn insert_first_routine(
+    transaction: &Transaction<'_>,
+    id: Uuid,
+    spec: RoutineSpec,
+    now_ms: i64,
+) -> Result<RoutineRecord, RoutineError> {
+    spec.validate(now_ms)?;
+    let record = RoutineRecord {
+        id,
+        revision: 1,
+        next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
+        spec,
+    };
+    save(transaction, &record, true)?;
+    Ok(record)
 }
 
 fn save(tx: &Transaction<'_>, r: &RoutineRecord, create: bool) -> Result<(), RoutineError> {
@@ -242,11 +278,10 @@ pub(super) fn get(db: &Connection, id: Uuid) -> Result<RoutineRecord, RoutineErr
     db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id)",[id.to_string()],record).optional()?.ok_or(RoutineError::NotFound)
 }
 pub(super) fn list(
-    path: &Path,
+    db: &Connection,
     agent: AgentId,
     after: Option<Uuid>,
 ) -> Result<Vec<RoutineRecord>, RoutineError> {
-    let db = catalog::open_verified(path)?;
     let mut query=db.prepare("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE agent_id=?1 AND id>?2 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY id LIMIT 20")?;
     Ok(query
         .query_map(
@@ -265,13 +300,6 @@ fn pending_for(db: &Connection, id: Uuid) -> Result<bool, RoutineError> {
         |row| row.get(0),
     )?)
 }
-pub(super) fn stable_id(value: &str) -> Uuid {
-    use sha2::{Digest as _, Sha256};
-    let hash = Sha256::digest(value.as_bytes());
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash[..16]);
-    Uuid::from_bytes(bytes)
-}
 fn insert_run(
     tx: &Transaction<'_>,
     r: &RoutineRecord,
@@ -279,7 +307,7 @@ fn insert_run(
     due: i64,
     admitted_at: i64,
 ) -> Result<(), RoutineError> {
-    let session = stable_id(&format!("renoa.routine.session.v1:{}", r.id));
+    let session = crate::stable_id::stable_id(&format!("renoa.routine.session.v1:{}", r.id));
     tx.execute("INSERT INTO host_routine_runs(id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),session.to_string(),due,admitted_at,r.spec.prompt])?;
     Ok(())
 }
@@ -308,7 +336,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<RoutineRun>, Routi
     }
     let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY next_due_ms,id LIMIT 1",[now_ms],record).optional()?;
     let Some(mut r) = due else { return Ok(None) };
-    let id = stable_id(&format!(
+    let id = crate::stable_id::stable_id(&format!(
         "renoa.routine.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
     ));

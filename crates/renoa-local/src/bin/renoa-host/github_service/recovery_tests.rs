@@ -5,9 +5,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
-use renoa_local::{
-    GitHubReviewWebhook, LocalHostAdapters, LocalModelConfiguration, ModelProvider, arcee_profile,
-};
+use renoa_local::{GitHubReviewWebhook, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
 use ring::hmac;
 use std::{
     collections::HashMap,
@@ -24,7 +22,6 @@ fn host(root: &Path) -> LocalHost {
             "fixture",
             root.join("auth.sqlite"),
         ),
-        vec![arcee_profile(root).expect("profile")],
         LocalHostAdapters::new(None),
     )
     .expect("host")

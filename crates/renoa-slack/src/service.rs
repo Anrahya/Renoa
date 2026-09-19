@@ -4,7 +4,6 @@ use std::{
 };
 
 use renoa_kernel::AgentId;
-use renoa_local::AgentRecord;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -51,8 +50,11 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
     config.preflight().await?;
     let host_id = host.host_id().await?;
     let agent_id = AgentId::from_uuid(config.agent_id);
-    let profile = renoa_local::AgentProfileId::new(renoa_local::ARCEE_PROFILE_ID)
-        .map_err(renoa_local::LocalHostError::from)?;
+    if host.agent_definition(agent_id).await?.is_none() {
+        return Err(SlackError::Invalid(format!(
+            "configured agent {agent_id} is not provisioned on this Host; provision it before starting the Slack surface"
+        )));
+    }
     let store = Store::open(
         &config.data_directory,
         &Binding {
@@ -64,13 +66,6 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
             workspace: &config.workspace,
         },
     )?;
-    host.ensure_agent(AgentRecord {
-        id: agent_id,
-        profile,
-        name: "Arcee".to_owned(),
-        created_by: None,
-    })
-    .await?;
     let active = Arc::new(Active::default());
     let wake = Arc::new(Notify::new());
     let channel_wake = Arc::new(Notify::new());

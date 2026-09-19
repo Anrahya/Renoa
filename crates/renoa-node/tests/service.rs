@@ -82,16 +82,16 @@ async fn enrollment_command_writes_a_private_usable_device_credential() {
 async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
     timeout(Duration::from_secs(15), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
+        let fixture = HostFixture::install(&system).await;
         let config = system.files.path().join("node.json");
         let credentials = system.files.path().join("device.json");
-        let state = system.files.path().join("node-state");
+        let state = system.files.path().to_path_buf();
         let model_bridge = system.files.path().join("model-bridge.mjs");
         let model_credentials = system.files.path().join("credentials.sqlite3");
         write_private(
             &config,
             &serde_json::to_vec(&json!({
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "endpoint": system.url,
                 "model": {
                     "bridge": model_bridge,
@@ -102,7 +102,7 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
                 },
                 "targets": [{
                     "target": system.target.as_str(),
-                    "profile": renoa_local::ALPHA_PROFILE_ID,
+                    "agentId": fixture.agent_id.to_string(),
                     "sessionId": fixture.session_id,
                     "workspace": fixture.workspace
                 }]

@@ -64,7 +64,7 @@ async fn never_started_work_expires_with_its_dispatch_failure_recorded() {
 #[tokio::test]
 async fn schema_22_jobs_migrate_without_resetting_their_deadlines() {
     let (directory, first, id, api) = prepared("").await;
-    let deadline = first.begin_github_review(id, 1_000).await.expect("begin");
+    first.begin_github_review(id, 1_000).await.expect("begin");
     let db = catalog::open_verified(&first.config.database).expect("db");
     db.execute_batch(
         "ALTER TABLE host_review_jobs DROP COLUMN started_at_ms;
@@ -75,8 +75,45 @@ async fn schema_22_jobs_migrate_without_resetting_their_deadlines() {
     .expect("old schema");
     drop(db);
     drop(first);
+    let refused = try_host(directory.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&directory.path().join("data")).expect("cutover reset");
     let reopened = host(directory.path());
-    let work = reopened.github_review_work().await.expect("migrated work");
+    assert!(
+        reopened
+            .github_review_work()
+            .await
+            .expect("discarded work")
+            .is_empty(),
+        "the cutover discards the admitted review job"
+    );
+    let policy = reviewer_policy(&reopened).await;
+    set(&reopened, policy, None).await;
+    let fresh = Uuid::new_v4();
+    reopened
+        .manage_github_review(
+            GitHubReviewCommand::Request {
+                operation_id: fresh,
+                repository_id: 42,
+                pull_number: 14,
+                reported_base_sha: "a".repeat(40),
+                reported_head_sha: "d".repeat(40),
+            },
+            100,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("fresh admission");
+    let deadline = reopened
+        .begin_github_review(fresh, 1_000)
+        .await
+        .expect("fresh begin");
+    assert_eq!(deadline, 1_000 + REVIEW_LIFETIME_MS);
+    let work = reopened.github_review_work().await.expect("fresh work");
     assert_eq!(work[0].deadline_at_ms, Some(deadline));
     assert_eq!(work[0].started_at_ms, None);
     assert_eq!(work[0].retry_after_ms, 0);

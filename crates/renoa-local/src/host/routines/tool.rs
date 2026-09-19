@@ -26,7 +26,7 @@ pub(crate) fn binding(
         ]}},"required":["agent_id","name","prompt","schedule","enabled"],"additionalProperties":false});
     AgentToolBinding::new("renoa-routine-manage-v3",Arc::new(Manage{host:LocalHost{config:host},session,command,spec:ToolSpec{
         name:"routine_manage".to_owned(),
-        description:"Manage Host-owned scheduled tasks for persistent specialists. List first for compact routine summaries and current_agent. Use get to read the full standing task before editing. Arcee can manage any specialist; specialists can manage only their own routines. Create only when the user requests scheduled work. Update the existing routine using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from routine listings and prevents future scheduling or manual runs; past results remain available through routine_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces to one catch-up. Results are durable in the agent's Host inbox; connected surfaces deliver them. Scheduled runs have their own persistent session, separate from interactive chat. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
+        description:"Manage Host-owned scheduled tasks. List first for compact routine summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own routines; managing another agent's routines needs the agent_manage capability. Create only when the user requests scheduled work. Update the existing routine using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from routine listings and prevents future scheduling or manual runs; past results remain available through routine_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces to one catch-up. Results are durable in the agent's Host inbox; connected surfaces deliver them. Scheduled runs have their own persistent session, separate from interactive chat. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
         input_schema:json!({"type":"object","properties":{"action":{"enum":["list","get","create","update","run_now","delete"]},"agent_id":{"type":"string","format":"uuid"},"cursor":{"type":"string","format":"uuid"},"id":{"type":"string","format":"uuid"},"expected_revision":{"type":"integer","minimum":1},"spec":spec},"required":["action"],"additionalProperties":false,"oneOf":[
             {"properties":{"action":{"const":"list"},"id":false,"expected_revision":false,"spec":false}},
             {"properties":{"action":{"const":"create"},"agent_id":false,"cursor":false,"id":false,"expected_revision":false},"required":["spec"]},
@@ -100,7 +100,7 @@ impl Tool for Manage {
             let result = if let Input::List { agent_id, cursor } = input {
                 let records = self
                     .host
-                    .list_routines(agent_id.unwrap_or(actor), cursor)
+                    .list_routines(actor, agent_id.unwrap_or(actor), cursor)
                     .await
                     .map_err(|e| ToolError::invalid_input(e.to_string()))?;
                 let cursor = if records.len() == 20 {
@@ -111,7 +111,7 @@ impl Tool for Manage {
                 let summaries:Vec<_>=records.iter().map(|r|json!({"id":r.id,"agent_id":r.spec.agent_id,"revision":r.revision,"name":r.spec.name,"schedule":r.spec.schedule,"enabled":r.spec.enabled,"next_due_ms":r.next_due_ms})).collect();
                 json!({"current_agent":actor,"routines":summaries,"next_cursor":cursor})
             } else if let Input::Get { id } = input {
-                json!({"routine":self.host.routine(id).await.map_err(|e|ToolError::invalid_input(e.to_string()))?})
+                json!({"routine":self.host.routine(actor,id).await.map_err(|e|ToolError::invalid_input(e.to_string()))?})
             } else {
                 let mutation = match input {
                     Input::Create { spec } => RoutineMutation::Create { spec },
@@ -141,7 +141,7 @@ impl Tool for Manage {
                     crate::mcp::oauth_operation_id(self.session, self.command, &call.id);
                 // Reuse the Host's stable operation identity, independent of model/surface.
                 let operation =
-                    super::store::stable_id(&format!("renoa.routine.manage.v1:{operation}"));
+                    crate::stable_id::stable_id(&format!("renoa.routine.manage.v1:{operation}"));
                 let now = crate::TurnObservation::now()
                     .map_err(|e| ToolError::invalid_input(e.to_string()))?
                     .unix_milliseconds();

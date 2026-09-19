@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome, TurnObservation};
+use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome, MAX_AGENT_PAGE, TurnObservation};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -84,12 +84,12 @@ impl Worker {
             Command::Notice(text) => return Ok(text.clone()),
             Command::Agent(Some(_)) => return Ok("Started a fresh conversation with the selected agent. Send its task here. Use !agent arcee to return to Arcee.".to_owned()),
             Command::Agent(None) => {
-                let page=self.host.list_bots(None).await?;
-                let mut lines = vec!["Each specialist gets a private channel. Type there normally; !new resets its conversation. Channel setup status:".to_owned()];
-                for bot in page.bots {
-                    lines.push(format!("{} — {} — {}", bot.name, bot.id, self.store.channel_description(bot.id.to_string()).await?));
+                let page=self.host.list_agent_definitions(None, MAX_AGENT_PAGE).await?;
+                let mut lines = vec!["Each agent except the operator gets a private channel. Type there normally; !new resets its conversation. Channel setup status:".to_owned()];
+                for agent in page.agents {
+                    lines.push(format!("{} — {} — {}", agent.name, agent.id, self.store.channel_description(agent.id.to_string()).await?));
                 }
-                if page.next_cursor.is_some() { lines.push("More bots exist; ask Arcee to page through bot_manage.".to_owned()); }
+                if page.next_cursor.is_some() { lines.push("More agents exist; ask Arcee to page through agent_manage.".to_owned()); }
                 return Ok(lines.join("\n"));
             }
             Command::Cancel => return Ok(if work.cancel_target.is_some() {"Stop requested."} else {"There is no pending turn to stop in this conversation."}.to_owned()),
@@ -188,7 +188,7 @@ impl Worker {
         let workspace = if agent_id == self.agent_id {
             self.workspace.clone()
         } else {
-            self.host.bot_workspace(agent_id).await?
+            self.host.agent_workspace(agent_id).await?
         };
         let session = self
             .host
@@ -206,19 +206,14 @@ impl Worker {
             session.cancel_before_execution(work.request_id, content.as_deref())?
         } else {
             let agent_id = AgentId::from_uuid(self.store.session_agent(work.session_id).await?);
-            let agent = self
-                .host
-                .agent(agent_id)
-                .await?
-                .ok_or(renoa_local::LocalHostError::AgentNotFound(agent_id))?;
             let workspace = if agent_id == self.agent_id {
                 self.workspace.clone()
             } else {
-                self.host.bot_workspace(agent_id).await?
+                self.host.agent_workspace(agent_id).await?
             };
             self.host
                 .cancel_before_execution(
-                    &agent.profile,
+                    agent_id,
                     &workspace,
                     work.session_id,
                     work.request_id,

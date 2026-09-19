@@ -1,14 +1,52 @@
 use std::{fs, path::Path, process::Command};
 
 use renoa_kernel::{EffectStatus, Kernel, OperationStatus, SessionId};
+use renoa_local::{
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentId, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+};
 use tempfile::tempdir;
 use uuid::Uuid;
+
+fn provision_alpha(data: &Path, bridge: &Path, auth: &Path) -> AgentId {
+    let host = LocalHost::new(
+        data,
+        LocalModelConfiguration::new(
+            bridge,
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "unused-model",
+            auth,
+        ),
+        LocalHostAdapters::new(None),
+    )
+    .expect("Host");
+    tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(async {
+            host.create_agent(
+                AgentCreator::System {
+                    component: "local-cli-test".to_owned(),
+                },
+                AgentCreationOrigin::Provisioning,
+                AgentCreateRequest::new(
+                    Uuid::new_v4(),
+                    AgentPresetId::new("renoa.coding.alpha.v1").expect("preset id"),
+                    "Alpha",
+                ),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .expect("agent")
+            .id
+        })
+}
 
 #[test]
 fn the_headless_runner_completes_a_durable_coding_turn() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
-    let database = directory.path().join("kernel.sqlite3");
+    let data = directory.path().join("data");
     let bridge = directory.path().join("bridge.mjs");
     let auth_store = directory.path().join("auth.sqlite");
     fs::create_dir(&workspace).expect("create workspace");
@@ -20,14 +58,16 @@ fn the_headless_runner_completes_a_durable_coding_turn() {
     .expect("write project instructions");
     fs::write(&auth_store, "").expect("create auth placeholder");
     fs::write(&bridge, BRIDGE).expect("write model bridge");
+    let agent = provision_alpha(&data, &bridge, &auth_store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_renoa-local"))
         .args([
-            database.as_os_str(),
+            data.as_os_str(),
             workspace.as_os_str(),
             "new".as_ref(),
             "Change value.txt from old to new and verify it.".as_ref(),
         ])
+        .env("RENOA_AGENT_ID", agent.to_string())
         .env("RENOA_MODEL_BRIDGE", &bridge)
         .env("RENOA_MODEL_PROVIDER", "xai")
         .env("RENOA_MODEL", "grok-test-a")
@@ -51,15 +91,17 @@ fn the_headless_runner_completes_a_durable_coding_turn() {
         fs::read_to_string(workspace.join("value.txt")).expect("read edited file"),
         "new\n"
     );
-    assert!(database.exists());
+    let kernel = data.join("sessions").join(session).join("kernel.sqlite3");
+    assert!(kernel.is_file());
 
     let continuation = Command::new(env!("CARGO_BIN_EXE_renoa-local"))
         .args([
-            database.as_os_str(),
+            data.as_os_str(),
             workspace.as_os_str(),
             session.as_ref(),
             "Continue with the existing context.".as_ref(),
         ])
+        .env("RENOA_AGENT_ID", agent.to_string())
         .env("RENOA_MODEL_BRIDGE", &bridge)
         .env("RENOA_MODEL_PROVIDER", "xai")
         .env("RENOA_MODEL", "grok-test-b")
@@ -78,13 +120,14 @@ fn the_headless_runner_completes_a_durable_coding_turn() {
             .contains("Continued with the prior model history.")
     );
 
-    assert_frozen_runtime_selections(&database, session);
+    assert_frozen_runtime_selections(&kernel, session);
 }
 
 #[test]
-fn invalid_reasoning_fails_before_the_provider_process_starts() {
+fn invalid_reasoning_fails_before_inference_is_dispatched() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
     let bridge = directory.path().join("bridge.mjs");
     let marker = directory.path().join("provider-started");
     let auth_store = directory.path().join("auth.sqlite");
@@ -93,19 +136,46 @@ fn invalid_reasoning_fails_before_the_provider_process_starts() {
     fs::write(
         &bridge,
         format!(
-            "import {{ writeFileSync }} from 'node:fs';\nwriteFileSync({}, 'started');\n",
+            r#"import {{ writeFileSync }} from 'node:fs';
+const action = process.env.RENOA_MODEL_ACTION;
+if (action === "catalog") {{
+  process.stdout.write(JSON.stringify({{ ok: true, response: {{ models: [{{
+    id: "grok-test",
+    name: "Fixture Model",
+    reasoning_levels: ["high"],
+    context_window_tokens: 500000,
+    model_spec: {{ id: "grok-test" }}
+  }}] }} }}));
+  process.exit(0);
+}}
+if (action === "describe") {{
+  process.stdout.write(JSON.stringify({{ ok: true, response: {{
+    context_window_tokens: 500000,
+    max_output_tokens: 500000,
+    model_spec: "{{}}",
+    model_binding_id: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    reasoning_level: "high"
+  }} }}));
+  process.exit(0);
+}}
+if (action === "stream") {{
+  writeFileSync({}, 'started');
+}}
+"#,
             serde_json::to_string(&marker).expect("encode marker path")
         ),
     )
     .expect("write marker bridge");
+    let agent = provision_alpha(&data, &bridge, &auth_store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_renoa-local"))
         .args([
-            directory.path().join("kernel.sqlite").as_os_str(),
+            data.as_os_str(),
             workspace.as_os_str(),
             "new".as_ref(),
             "Do not dispatch.".as_ref(),
         ])
+        .env("RENOA_AGENT_ID", agent.to_string())
         .env("RENOA_MODEL_BRIDGE", &bridge)
         .env("RENOA_MODEL_PROVIDER", "xai")
         .env("RENOA_MODEL", "grok-test")
@@ -122,7 +192,7 @@ fn invalid_reasoning_fails_before_the_provider_process_starts() {
     );
     assert!(
         !marker.exists(),
-        "invalid configuration must fail before provider startup"
+        "invalid configuration must fail before any provider stream"
     );
 }
 
@@ -130,20 +200,22 @@ fn invalid_reasoning_fails_before_the_provider_process_starts() {
 fn authentication_failure_is_clear_and_does_not_block_the_session() {
     let directory = tempdir().expect("temporary directory");
     let workspace = directory.path().join("workspace");
+    let data = directory.path().join("data");
     let bridge = directory.path().join("bridge.mjs");
-    let database = directory.path().join("kernel.sqlite");
     let auth_store = directory.path().join("auth.sqlite");
     fs::create_dir(&workspace).expect("create workspace");
     fs::write(&auth_store, "").expect("create auth placeholder");
     fs::write(&bridge, AUTHENTICATION_FAILURE_BRIDGE).expect("write authentication bridge");
+    let agent = provision_alpha(&data, &bridge, &auth_store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_renoa-local"))
         .args([
-            database.as_os_str(),
+            data.as_os_str(),
             workspace.as_os_str(),
             "new".as_ref(),
             "Attempt one model request.".as_ref(),
         ])
+        .env("RENOA_AGENT_ID", agent.to_string())
         .env("RENOA_MODEL_BRIDGE", &bridge)
         .env("RENOA_MODEL_PROVIDER", "xai")
         .env("RENOA_MODEL", "grok-test")
@@ -160,6 +232,7 @@ fn authentication_failure_is_clear_and_does_not_block_the_session() {
         .lines()
         .find_map(|line| line.strip_prefix("session_id="))
         .expect("runner reported session ID");
+    let database = data.join("sessions").join(session).join("kernel.sqlite3");
     let kernel = Kernel::open(&database).expect("reopen kernel");
     let session_id = SessionId::from_uuid(Uuid::parse_str(session).expect("valid session UUID"));
     let snapshot = kernel.inspect(session_id).expect("inspect failed session");
@@ -198,18 +271,29 @@ fn assert_frozen_runtime_selections(database: &Path, session: &str) {
             .get("renoa.agent.model")
             .map(String::as_str),
         Some(
-            "renoa-model-provider-node/v1/xai/grok-test-b/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-high"
-        )
+            "renoa-model-provider-node/v1/xai/grok-test-a/44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a/reasoning-high"
+        ),
+        "a resumed session keeps its durable model and applies the new reasoning level"
     );
     assert_eq!(
         first.config_digest, second.config_digest,
-        "changing the model selection must not change Alpha's profile configuration"
+        "changing the model selection must not change Alpha's agent configuration"
     );
 }
 
 const BRIDGE: &str = r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
+if (process.env.RENOA_MODEL_ACTION === "catalog") {
+  process.stdout.write(JSON.stringify({ ok: true, response: { models: [{
+    id: "grok-test-a",
+    name: "Fixture Model",
+    reasoning_levels: ["low", "high"],
+    context_window_tokens: 500000,
+    model_spec: { id: "grok-test-a" }
+  }] } }));
+  process.exit(0);
+}
 if (process.env.RENOA_MODEL_ACTION === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -235,14 +319,19 @@ if (request.system_prompt.includes("read_file") || request.system_prompt.include
 }
 const toolNames = request.tools.map((tool) => tool.name);
 if (JSON.stringify(toolNames) !== JSON.stringify([
-  "read_file", "edit_file", "write_file", "bash", "grep", "find", "git_changes", "git_diff", "git_show"
+  "read_file", "edit_file", "write_file", "bash", "grep", "find",
+  "git_changes", "git_diff", "git_show",
+  "tool_search", "tool_load", "tool_execute", "extension_manage", "skill_search", "skill_load"
 ])) {
   throw new Error(`unexpected Alpha tools: ${JSON.stringify(toolNames)}`);
 }
-if (process.env.RENOA_MODEL === "grok-test-b") {
-  const prior = request.messages.find(
-    (message) => message.role === "assistant" && message.metadata?.model === "grok-test-a"
-  );
+const prior = request.messages.find(
+  (message) => message.role === "assistant" && message.metadata?.model === "grok-test-a"
+);
+const continuing = request.messages.some(
+  (message) => message.role === "user" && JSON.stringify(message.content).includes("Continue with the existing context.")
+);
+if (continuing) {
   if (!prior) throw new Error("the prior model's history was not preserved");
   process.stdout.write(JSON.stringify({
     ok: true,
@@ -250,7 +339,7 @@ if (process.env.RENOA_MODEL === "grok-test-b") {
       content: [{ type: "text", text: "Continued with the prior model history." }],
       stop_reason: "stop",
       usage: { input: 1, output: 1, cache_read: 0, cache_write: 0 },
-      metadata: { api: "test", provider: "xai", model: "grok-test-b" }
+      metadata: { api: "test", provider: "xai", model: "grok-test-a" }
     }
   }));
   process.exit(0);
@@ -304,7 +393,18 @@ process.stdout.write(JSON.stringify({
 const AUTHENTICATION_FAILURE_BRIDGE: &str = r#"
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-if (process.env.RENOA_MODEL_ACTION === "describe") {
+const action = process.env.RENOA_MODEL_ACTION;
+if (action === "catalog") {
+  process.stdout.write(JSON.stringify({ ok: true, response: { models: [{
+    id: "grok-test",
+    name: "Fixture Model",
+    reasoning_levels: ["high"],
+    context_window_tokens: 500000,
+    model_spec: { id: "grok-test" }
+  }] } }));
+  process.exit(0);
+}
+if (action === "describe") {
   process.stdout.write(JSON.stringify({
     ok: true,
     response: {

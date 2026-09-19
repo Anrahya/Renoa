@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use renoa_local::{AgentProfileId, AgentSession, LocalHost, LocalTurnOutcome};
+use renoa_kernel::AgentId;
+use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome};
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -23,6 +24,7 @@ mod execution;
 ///
 /// Returns configuration, Telegram transport, Host, durable state, or supervision failures.
 pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
+    preflight_agent(&config.host, AgentId::from_uuid(config.agent_id)).await?;
     let api = Arc::new(TelegramApi::new(
         &config.bot_token,
         config.telegram_ipv4_only,
@@ -36,7 +38,12 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
     api.require_long_polling().await?;
     let store = SurfaceStore::open(&config.data_directory)?;
     store
-        .bind_identity(bot.id, config.allowed_user_id, &config.workspace)
+        .bind_identity(
+            config.agent_id,
+            bot.id,
+            config.allowed_user_id,
+            &config.workspace,
+        )
         .await?;
     let recovery = store.recover().await?;
     api.set_commands().await?;
@@ -45,7 +52,7 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
         "surface_started",
         &serde_json::json!({
             "bot_id": bot.id,
-            "profile_id": config.profile_id.as_str(),
+            "agent_id": config.agent_id,
             "requeued": recovery.requeued,
             "delivery_unknown": recovery.delivery_unknown,
             "action_delivery_unknown": recovery.action_delivery_unknown,
@@ -69,7 +76,7 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
         api,
         store,
         host: Arc::new(config.host),
-        profile_id: config.profile_id,
+        agent_id: AgentId::from_uuid(config.agent_id),
         workspace: config.workspace,
         sessions: HashMap::new(),
         active: Arc::clone(&active),
@@ -112,6 +119,15 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
         )),
         Some(Err(error)) => Err(error),
     }
+}
+
+async fn preflight_agent(host: &LocalHost, agent_id: AgentId) -> Result<(), TelegramServiceError> {
+    if host.agent_definition(agent_id).await?.is_none() {
+        return Err(TelegramServiceError::Configuration(format!(
+            "configured agent {agent_id} is not provisioned on this Host; provision it with `renoa-host <config.json> provision <provision.json>` before starting the Telegram surface"
+        )));
+    }
+    Ok(())
 }
 
 struct Poller {
@@ -195,7 +211,7 @@ struct Worker {
     api: Arc<TelegramApi>,
     store: SurfaceStore,
     host: Arc<LocalHost>,
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
     workspace: std::path::PathBuf,
     sessions: HashMap<Uuid, Arc<AgentSession>>,
     active: Arc<ActiveTurn>,

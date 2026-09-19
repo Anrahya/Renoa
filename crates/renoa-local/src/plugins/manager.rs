@@ -18,8 +18,9 @@ use super::{
 };
 #[cfg(test)]
 use crate::mcp::McpCredentialResolver;
+use renoa_kernel::AgentId;
+
 use crate::{
-    AgentProfileId,
     mcp::{McpAuthorizationResolver, McpCatalogSnapshot, McpCatalogStore},
     shared_registry::SharedPluginRegistry,
     skills::{SkillComponentReport, SkillStore},
@@ -124,7 +125,7 @@ impl PluginManager {
 
     pub(crate) async fn add_to_profile(
         &self,
-        profile_id: &AgentProfileId,
+        agent_id: &AgentId,
         request: ExtensionAddRequest,
         operation_id: &str,
         updates: Option<&ToolUpdates>,
@@ -176,13 +177,13 @@ impl PluginManager {
                 }
             }
         };
-        let skills = self.sync_skills(profile_id, &prepared.installed).await?;
+        let skills = self.sync_skills(agent_id, &prepared.installed).await?;
         self.connect_prepared(
             prepared,
             skills,
             connection_request,
             AddOperationContext {
-                profile_id,
+                agent_id,
                 operation_id,
                 updates,
             },
@@ -193,18 +194,18 @@ impl PluginManager {
 
     async fn sync_skills(
         &self,
-        profile_id: &AgentProfileId,
+        agent_id: &AgentId,
         installed: &InstalledPlugin,
     ) -> Result<SkillComponentReport, PluginError> {
         let store = self.store.clone();
         let package_digest = installed.digest().to_owned();
         let plugin_name = installed.metadata().name().to_owned();
-        let profile_id = profile_id.clone();
+        let agent_id = *agent_id;
         let skills = self.skills.clone();
         tokio::task::spawn_blocking(move || {
             let package_root = store.package_root(&package_digest)?;
             skills
-                .sync_plugin(profile_id.as_str(), &plugin_name, &package_root)
+                .sync_plugin(&agent_id.to_string(), &plugin_name, &package_root)
                 .map_err(PluginError::from)
         })
         .await?
@@ -260,7 +261,7 @@ impl PluginManager {
         let outcome = match self
             .connect_profile_operation(
                 ProfileConnectionRequest {
-                    profile_id: context.profile_id,
+                    agent_id: context.agent_id,
                     package_digest: prepared.installed.digest(),
                     server_id: &server,
                     connection_id: &connection,
@@ -296,7 +297,7 @@ impl PluginManager {
 }
 
 struct AddOperationContext<'a> {
-    profile_id: &'a AgentProfileId,
+    agent_id: &'a AgentId,
     operation_id: &'a str,
     updates: Option<&'a ToolUpdates>,
 }

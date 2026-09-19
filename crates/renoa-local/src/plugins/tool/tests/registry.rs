@@ -9,7 +9,10 @@ use super::{super::BINDING_REVISION, call};
 use crate::{
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
-    plugins::{PluginManager, tests::test_skill_store},
+    plugins::{
+        PluginManager,
+        tests::{test_agent_id, test_skill_store},
+    },
 };
 
 #[test]
@@ -23,7 +26,11 @@ async fn search_and_exact_lookup_cross_the_real_adapter_boundary_without_install
     let adapter = directory.path().join("registry.mjs");
     write_registry_adapter(&adapter);
     let manager = manager(directory.path(), Some(adapter));
-    let tool = super::super::ManageTool::new(manager.clone(), directory.path().to_path_buf());
+    let tool = super::super::ManageTool::new(
+        test_agent_id(1),
+        manager.clone(),
+        directory.path().to_path_buf(),
+    );
 
     let search = call(
         &tool,
@@ -81,7 +88,8 @@ async fn registry_http_status_and_safe_message_reach_the_model() {
     let adapter = directory.path().join("registry-error.mjs");
     write_registry_error_adapter(&adapter);
     let manager = manager(directory.path(), Some(adapter));
-    let tool = super::super::ManageTool::new(manager, directory.path().to_path_buf());
+    let tool =
+        super::super::ManageTool::new(test_agent_id(1), manager, directory.path().to_path_buf());
 
     let output = invoke_tool(
         Some(&tool),
@@ -122,7 +130,8 @@ async fn registry_http_status_and_safe_message_reach_the_model() {
 async fn missing_registry_adapter_is_a_model_visible_configuration_failure() {
     let directory = tempdir().expect("temporary missing Registry fixture");
     let manager = manager(directory.path(), None);
-    let tool = super::super::ManageTool::new(manager, directory.path().to_path_buf());
+    let tool =
+        super::super::ManageTool::new(test_agent_id(1), manager, directory.path().to_path_buf());
 
     let output = invoke_tool(
         Some(&tool),

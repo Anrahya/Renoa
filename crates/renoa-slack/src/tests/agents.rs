@@ -1,12 +1,12 @@
 use super::*;
-use renoa_local::{BotRecipe, BotRecord};
+use renoa_local::AgentDefinition;
 
 #[tokio::test]
 async fn switching_agents_preserves_admitted_targets_and_isolates_bot_history_and_workspace() {
     let mut fixture = Fixture::new().await;
-    let bot = news_bot(&fixture).await;
+    let news = news_agent(&fixture).await;
     fixture.admit("Ev1", "1.000001", "queued for Arcee").await;
-    let select = format!("!agent {}", bot.id);
+    let select = format!("!agent {}", news.id);
     fixture.admit("Ev2", "2.000001", &select).await;
     fixture.admit("Ev2", "2.000001", &select).await;
     fixture.admit("Ev3", "3.000001", "queued for News").await;
@@ -16,10 +16,10 @@ async fn switching_agents_preserves_admitted_targets_and_isolates_bot_history_an
     fixture.admit("Ev7", "7.000001", "back to Arcee").await;
     let expected = [
         fixture.worker.agent_id,
-        bot.id,
-        bot.id,
-        bot.id,
-        bot.id,
+        news.id,
+        news.id,
+        news.id,
+        news.id,
         fixture.worker.agent_id,
         fixture.worker.agent_id,
     ];
@@ -65,13 +65,13 @@ async fn switching_agents_preserves_admitted_targets_and_isolates_bot_history_an
             .expect("queue")
             .is_none()
     );
-    let bot_workspace = fixture
+    let news_workspace = fixture
         .worker
         .host
-        .bot_workspace(bot.id)
+        .agent_workspace(news.id)
         .await
         .expect("workspace");
-    assert_ne!(bot_workspace, fixture.worker.workspace);
+    assert_ne!(news_workspace, fixture.worker.workspace);
     let replies = fixture
         .worker
         .store
@@ -99,9 +99,9 @@ async fn switching_agents_preserves_admitted_targets_and_isolates_bot_history_an
 #[tokio::test]
 async fn unknown_agent_selection_keeps_the_current_conversation() {
     let fixture = Fixture::new().await;
-    let bot = news_bot(&fixture).await;
+    let news = news_agent(&fixture).await;
     fixture
-        .admit("Ev1", "1.000001", &format!("!agent {}", bot.id))
+        .admit("Ev1", "1.000001", &format!("!agent {}", news.id))
         .await;
     fixture
         .admit("Ev2", "2.000001", &format!("!agent {}", Uuid::new_v4()))
@@ -122,20 +122,24 @@ async fn unknown_agent_selection_keeps_the_current_conversation() {
     fixture.stop().await;
 }
 
-pub(super) async fn news_bot(fixture: &Fixture) -> BotRecord {
+pub(super) async fn news_agent(fixture: &Fixture) -> AgentDefinition {
     fixture
         .worker
         .host
-        .ensure_bot(BotRecord {
-            id: AgentId::new(),
-            created_by: fixture.worker.agent_id,
-            recipe: BotRecipe {
-                name: "News".to_owned(),
-                instructions: "News specialist.".to_owned(),
-                tools: ["read_file".to_owned()].into(),
-                connections: std::collections::BTreeSet::new(),
+        .create_agent(
+            renoa_local::AgentCreator::Agent {
+                agent_id: fixture.worker.agent_id,
             },
-        })
+            renoa_local::AgentCreationOrigin::AgentTool,
+            renoa_local::AgentCreateRequest::new(
+                Uuid::new_v4(),
+                renoa_local::AgentPresetId::new("renoa.specialist.v1").expect("specialist preset"),
+                "News",
+            )
+            .with_instructions("News specialist.")
+            .with_tools(["read_file".to_owned()]),
+            CancellationToken::new(),
+        )
         .await
-        .expect("create bot")
+        .expect("create agent")
 }

@@ -172,10 +172,10 @@ impl McpCatalogStore {
 
     pub(crate) fn publish_and_enable_connection(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         snapshot: &McpCatalogSnapshot,
     ) -> Result<(), McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (configured_endpoint, configured_headers) =
@@ -190,9 +190,9 @@ impl McpCatalogStore {
         }
         store_catalog(&transaction, snapshot)?;
         transaction.execute(
-            "INSERT OR IGNORE INTO profile_mcp_connections(profile_id, connection_id)
+            "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)
              VALUES (?1, ?2)",
-            params![profile_id, snapshot.connection_id()],
+            params![agent_id, snapshot.connection_id()],
         )?;
         transaction.commit()?;
         Ok(())

@@ -26,7 +26,6 @@ use self::{
     record::{TraceState, now_unix_ms},
     writer::{TraceCommand, TraceEntry, TraceFinish, TraceStart, TraceWriter},
 };
-use crate::AgentProfileId;
 
 pub(crate) const TRACE_DATABASE: &str = "trace.sqlite3";
 
@@ -59,7 +58,6 @@ pub(crate) struct TraceStore {
     path: PathBuf,
     session_id: SessionId,
     agent_id: AgentId,
-    profile_id: AgentProfileId,
 }
 
 impl TraceStore {
@@ -67,14 +65,12 @@ impl TraceStore {
         path: PathBuf,
         session_id: SessionId,
         agent_id: AgentId,
-        profile_id: &AgentProfileId,
     ) -> Result<Self, TraceError> {
-        schema::create(&path, session_id, agent_id, profile_id)?;
+        schema::create(&path, session_id, agent_id)?;
         Ok(Self {
             path,
             session_id,
             agent_id,
-            profile_id: profile_id.clone(),
         })
     }
 
@@ -82,15 +78,13 @@ impl TraceStore {
         path: PathBuf,
         session_id: SessionId,
         agent_id: AgentId,
-        profile_id: &AgentProfileId,
     ) -> Result<Self, TraceError> {
-        let connection = schema::open(&path, session_id, agent_id, profile_id)?;
+        let connection = schema::open(&path, session_id, agent_id)?;
         schema::recover_running(&connection)?;
         Ok(Self {
             path,
             session_id,
             agent_id,
-            profile_id: profile_id.clone(),
         })
     }
 
@@ -105,7 +99,6 @@ impl TraceStore {
         let path = self.path.clone();
         let session_id = self.session_id;
         let agent_id = self.agent_id;
-        let profile_id = self.profile_id.clone();
         let run_id = Uuid::new_v4();
         let input = serde_json::to_string(content)?;
         let provider = provider.to_owned();
@@ -117,7 +110,6 @@ impl TraceStore {
                 path,
                 session_id,
                 agent_id,
-                profile_id,
                 run_id,
                 command_id,
                 started_at_ms,

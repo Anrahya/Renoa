@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    AgentProfile, AgentProfileId, AgentRecord, BotRecipe, BotRecord, ModelProvider,
-    host::HostInitialization,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, HostCatalogError,
+    ModelProvider, host::HostInitialization,
 };
 use ring::hmac;
 use std::{fs, path::Path};
@@ -13,7 +13,7 @@ pub(super) mod source_tool;
 
 const SECRET: &[u8] = b"deterministic webhook boundary secret";
 
-fn host(root: &Path) -> LocalHost {
+fn try_host(root: &Path) -> Result<LocalHost, LocalHostError> {
     LocalHost::assemble(HostInitialization {
         data_directory: root.join("data"),
         bridge: root.join("model.mjs"),
@@ -27,52 +27,43 @@ fn host(root: &Path) -> LocalHost {
         shared_plugin_registry: None,
         global_skill_source: Some(root.join("skills")),
         oauth_relay: None,
-        profiles: vec![AgentProfile::new(crate::ARCEE_PROFILE_ID, "Operator").expect("profile")],
     })
-    .expect("Host")
 }
 
-async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
-    let directory = tempfile::tempdir().expect("directory");
-    fs::write(
-        directory.path().join("model.mjs"),
-        "throw new Error('admission must not call a model');",
-    )
-    .expect("model boundary");
-    fs::write(directory.path().join("auth.sqlite"), "").expect("auth boundary");
-    let host = host(directory.path());
-    let operator = AgentId::new();
-    host.ensure_agent(AgentRecord {
-        id: operator,
-        profile: AgentProfileId::new(crate::ARCEE_PROFILE_ID).expect("profile"),
-        name: "Arcee".to_owned(),
-        created_by: None,
-    })
-    .await
-    .expect("operator");
-    let reviewer = AgentId::new();
-    host.ensure_bot(BotRecord {
-        id: reviewer,
-        created_by: operator,
-        recipe: BotRecipe {
-            name: "Review Desk".to_owned(),
-            instructions: "Investigate code defects".to_owned(),
-            tools: [
-                "read_file",
-                "grep",
-                "find",
-                "git_changes",
-                "git_diff",
-                "git_show",
-            ]
-            .map(str::to_owned)
-            .into(),
-            connections: BTreeSet::new(),
-        },
-    })
-    .await
-    .expect("specialist");
-    let policy = GitHubReviewPolicy {
+fn host(root: &Path) -> LocalHost {
+    try_host(root).expect("Host")
+}
+
+async fn reviewer_policy(host: &LocalHost) -> GitHubReviewPolicy {
+    let reviewer = host
+        .create_agent(
+            AgentCreator::System {
+                component: "review-fixture".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                "Review Desk",
+            )
+            .with_instructions("Investigate code defects")
+            .with_tools(
+                [
+                    "read_file",
+                    "grep",
+                    "find",
+                    "git_changes",
+                    "git_diff",
+                    "git_show",
+                ]
+                .map(str::to_owned),
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("specialist")
+        .id;
+    GitHubReviewPolicy {
         repository_id: 42,
         installation_id: 7,
         full_name: "owner/repository".to_owned(),
@@ -85,7 +76,19 @@ async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
         ]
         .into(),
         skip_drafts: true,
-    };
+    }
+}
+
+async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
+    let directory = tempfile::tempdir().expect("directory");
+    fs::write(
+        directory.path().join("model.mjs"),
+        "throw new Error('admission must not call a model');",
+    )
+    .expect("model boundary");
+    fs::write(directory.path().join("auth.sqlite"), "").expect("auth boundary");
+    let host = host(directory.path());
+    let policy = reviewer_policy(&host).await;
     set(&host, policy.clone(), None).await;
     (directory, host, policy)
 }
@@ -366,17 +369,25 @@ async fn schema_nineteen_migrates_without_changing_existing_host_or_specialist()
     db.execute_batch("DROP TABLE host_review_deliveries; DROP TABLE host_review_requests; DROP TABLE host_review_operations; DROP TABLE host_review_repositories; UPDATE host_metadata SET schema_version=19; PRAGMA user_version=19;").expect("schema 19");
     drop(db);
     drop(host);
+    let refused = try_host(directory.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&directory.path().join("data")).expect("cutover reset");
     let reopened = self::host(directory.path());
     assert_eq!(reopened.host_id().await.expect("identity"), identity);
     assert!(
         reopened
-            .bot(policy.agent_id)
+            .agent_definition(policy.agent_id)
             .await
-            .expect("specialist")
-            .is_some()
+            .expect("discarded specialist")
+            .is_none()
     );
+    let policy = reviewer_policy(&reopened).await;
     set(&reopened, policy, None).await;
     deliver(&reopened, Uuid::new_v4(), &payload('b'))
         .await
-        .expect("admission after migration");
+        .expect("admission after the cutover");
 }

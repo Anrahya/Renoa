@@ -1,13 +1,14 @@
 //! First local Host for composable Renoa agent runtimes.
 
+mod agent_definition;
 mod agent_session;
 mod agent_trace;
-mod alpha;
-mod arcee;
 mod atomic_file;
 mod bash;
+mod capabilities;
 mod credential_file;
 mod deadline;
+mod documents;
 mod file_lock;
 mod file_tools;
 mod git_repository;
@@ -22,8 +23,8 @@ mod model_stream;
 mod output;
 mod package_tree;
 mod plugins;
+mod presets;
 mod process;
-mod profile;
 mod ripgrep;
 mod runtime;
 mod search;
@@ -31,6 +32,7 @@ mod selection;
 mod session;
 mod shared_registry;
 mod skills;
+mod stable_id;
 mod tool_error;
 mod tool_input;
 mod trace;
@@ -40,13 +42,21 @@ pub use git_repository::{GitChange, GitSide};
 
 #[cfg(test)]
 mod model_adapter_process_tests;
+#[cfg(test)]
+mod test_agents;
 
+pub use agent_definition::{
+    AgentBehavior, AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDefinitionError,
+    AgentDocuments, AgentOperationalDefinition, AgentPresetId, AgentToolSelection,
+    AutomaticCompaction, TurnTiming, WorkspaceInstructions,
+};
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
-pub use alpha::{ALPHA_PROFILE_ID, alpha_profile};
-pub use arcee::{ARCEE_PROFILE_ID, arcee_profile};
 pub use credential_file::credential_file_is_private;
-pub use host::agents::AgentRecord;
 pub use host::catalog::HostCatalogError;
+pub use host::definition::{
+    AgentCreateRequest, AgentDefinitionPage, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE,
+    RenameAgent, ResolvedAgentDefinition, derived_agent_id,
+};
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
     HostObservation, HostObserver, ObservedAgent, ObservedConnection, ObservedOperation,
@@ -55,7 +65,10 @@ pub use host::observation::{
     ObservedRoutine, ObservedSession, ObservedSessionState, ObservedSkill,
 };
 pub use host::reviews::{HostReviewControl, ReviewPolicyUpdate};
-pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
+pub use host::{
+    HostResetReport, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
+    reset_host_data_root,
+};
 pub use isolated_workspace::InspectionSandboxConfig;
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError, McpFailureKind,
@@ -67,7 +80,7 @@ pub use plugins::{
     InstalledPlugin, PluginCredential, PluginError, PluginInspection, PluginMcpServer,
     PluginMetadata, PluginNotice, PluginOAuthRegistration,
 };
-pub use profile::{AgentProfile, AgentProfileError, AgentProfileId};
+pub use renoa_kernel::AgentId;
 pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
 };
@@ -77,15 +90,10 @@ pub use skills::SkillError;
 pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 
-pub use host::bots::{BotPage, BotRecipe, BotRecord, BotSummary};
-
 pub use host::routines::{
     HostRoutineControl, RoutineEnablement, RoutineError, RoutineMutation, RoutineRecord,
     RoutineResultSummary, RoutineRun, RoutineSchedule, RoutineSpec,
 };
-
-pub use host::bots::names::RenameBot;
-pub use host::bots::selection::{BotToolSelection, BotToolsUpdate};
 
 pub use host::reviews::{
     GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewEvidence,

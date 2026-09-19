@@ -59,7 +59,7 @@ pub(super) async fn runtime(
     let context = crate::runtime::context_binding(
         &model,
         None,
-        Some(crate::profile::AutomaticCompactionPolicy {
+        Some(crate::AutomaticCompaction {
             trigger_input_tokens: NonZeroU64::new(258_400).expect("nonzero compaction trigger"),
             target_input_tokens: NonZeroU64::new(155_040).expect("nonzero compaction target"),
         }),

@@ -11,7 +11,7 @@ const review = (id: string, fields: Partial<Review> = {}): Review => ({
   retry_after_ms: null, state: "incomplete", ...fields,
 });
 const host: HostSnapshot = {
-  host_id: "host", agents: [{ id: "reviewer", name: "Reviewer", profile: "review", created_by: null }],
+  host_id: "host", agents: [{ id: "reviewer", name: "Reviewer", created_by: null, preset_id: null }],
   sessions: [], routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [],
 };
 afterEach(() => vi.unstubAllGlobals());
@@ -41,7 +41,7 @@ describe("Host observation presentation", () => {
   });
   it("maps only unambiguous generated connection IDs to their package names", () => {
     const prefix = "a".repeat(24);
-    const connection = { id: `plugin.${prefix}.${"b".repeat(24)}.default`, catalog_available: true, tool_count: 8, selected_by_profiles: [] };
+    const connection = { id: `plugin.${prefix}.${"b".repeat(24)}.default`, catalog_available: true, tool_count: 8, selected_by_agents: [] };
     const plugin = { name: "drive", digest: prefix + "c".repeat(40), version: null };
     expect(connectionName({ ...host, plugins: [plugin] }, connection)).toBe("drive");
     expect(connectionName({ ...host, plugins: [plugin, { ...plugin, digest: prefix + "d".repeat(40) }] }, connection)).toBe(connection.id);
@@ -132,8 +132,8 @@ describe("Host navigation and rendered controls", () => {
   });
   it("keeps unselected Host connections in the agent library without inventing skill assignments", () => {
     const snapshot = { ...host, connections: [
-      { id: "selected-mail", catalog_available: true, tool_count: 8, selected_by_profiles: ["review"] },
-      { id: "other-drive", catalog_available: true, tool_count: 3, selected_by_profiles: ["other"] },
+      { id: "selected-mail", catalog_available: true, tool_count: 8, selected_by_agents: ["reviewer"] },
+      { id: "other-drive", catalog_available: true, tool_count: 3, selected_by_agents: ["other"] },
     ], skills: [{ digest: "abc", name: "private-host-skill" }] };
     const html = render("#agent/reviewer/configure", snapshot);
     expect(html).toContain('aria-label="selected-mail: selected"');
@@ -181,7 +181,7 @@ describe("Host navigation and rendered controls", () => {
     expect(render("#agent/reviewer/configure", host, true)).not.toContain("Save preview");
   });
   it("keeps stored catalogs distinct from connection health", () => {
-    const html = render("#library", { ...host, connections: [{ id: "mail", catalog_available: true, tool_count: 8, selected_by_profiles: ["review"] }] });
+    const html = render("#library", { ...host, connections: [{ id: "mail", catalog_available: true, tool_count: 8, selected_by_agents: ["reviewer"] }] });
     expect(html).toContain("Connection health has not been checked");
     expect(html).toContain('href="#agent/reviewer/connections"');
     expect(html).toContain("Read-only preview");

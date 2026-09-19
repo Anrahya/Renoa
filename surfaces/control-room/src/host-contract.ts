@@ -1,4 +1,4 @@
-export interface Agent { id: string; profile: string; name: string; created_by: string | null }
+export interface Agent { id: string; name: string; created_by: string | null; preset_id: string | null }
 export type Schedule = { kind: "once"; at: string } | { kind: "interval"; hours: number } |
   { kind: "daily"; hour: number; minute: number; timezone: string };
 export interface Routine { id: string; agent_id: string; name: string; schedule: Schedule; enabled: boolean;
@@ -8,7 +8,7 @@ export interface Operation { id: string; command_id: string; position: number;
 export type Session = { id: string; agent_id: string | null } & (
   { observation: "unavailable"; reason: string } |
   { observation: "available"; event_count: number; queued_operations: number; active_operation: Operation | null; latest_operation: Operation | null });
-export interface Connection { id: string; catalog_available: boolean; tool_count: number; selected_by_profiles: string[] }
+export interface Connection { id: string; catalog_available: boolean; tool_count: number; selected_by_agents: string[] }
 export interface Plugin { digest: string; name: string; version: string | null }
 export interface Skill { digest: string; name: string }
 export interface Review { request_id: string; agent_id: string; repository: string; pull_number: number;
@@ -50,13 +50,13 @@ function schedule(v: unknown): boolean {
 }
 export function parseHost(value: unknown): HostSnapshot {
   if (!record(value) || !id(value.host_id) ||
-    !array(value.agents, v => record(v) && id(v.id) && text(v.name) && text(v.profile) && nullable(v.created_by, id)) ||
+    !array(value.agents, v => record(v) && id(v.id) && text(v.name) && nullable(v.created_by, id) && nullable(v.preset_id, text)) ||
     !array(value.sessions, v => record(v) && id(v.id) && nullable(v.agent_id, id) && (
       v.observation === "unavailable" ? text(v.reason) : v.observation === "available" && count(v.event_count) &&
       count(v.queued_operations) && operation(v.active_operation) && operation(v.latest_operation))) ||
     !array(value.routines, v => record(v) && id(v.id) && id(v.agent_id) && text(v.name) && schedule(v.schedule) &&
       typeof v.enabled === "boolean" && count(v.revision) && count(v.next_due_ms) && count(v.pending_runs) && count(v.completed_runs)) ||
-    !array(value.connections, v => record(v) && text(v.id) && typeof v.catalog_available === "boolean" && count(v.tool_count) && array(v.selected_by_profiles, text)) ||
+    !array(value.connections, v => record(v) && text(v.id) && typeof v.catalog_available === "boolean" && count(v.tool_count) && array(v.selected_by_agents, text)) ||
     !array(value.plugins, v => record(v) && text(v.digest) && text(v.name) && nullable(v.version, text)) ||
     !array(value.skills, v => record(v) && text(v.digest) && text(v.name)) ||
     !array(value.review_repositories, reviewRepository) ||

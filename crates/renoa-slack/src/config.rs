@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use renoa_local::{
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
-    arcee_profile,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -134,14 +133,7 @@ impl Config {
         if let Some(relay) = &self.oauth_relay {
             adapters = adapters.with_oauth_relay(&relay.origin, &relay.device_credential_file);
         }
-        let profile =
-            arcee_profile(&self.data_directory).map_err(renoa_local::LocalHostError::from)?;
-        Ok(LocalHost::new(
-            &self.data_directory,
-            models,
-            vec![profile],
-            adapters,
-        )?)
+        Ok(LocalHost::new(&self.data_directory, models, adapters)?)
     }
 }
 

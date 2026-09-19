@@ -3,7 +3,7 @@ import { automations, executions } from "./example-data";
 
 export type AgentExample = { automations: Automation[]; executions: Execution[] };
 // View fixtures, never agent roles or runtime policy. Sharing this selection
-// keeps directory summaries and the profile they open on the same records.
+// keeps directory summaries and the records they open on the same agent.
 export function agentExample(agentId: string): AgentExample {
   if (agentId === "42357f5e-ae1f-0802-5218-d7f65a043086") return {
     automations: automations.filter(item => item.id === "event" || item.id === "cleanup").map(item => ({ ...item, enabled: false })),

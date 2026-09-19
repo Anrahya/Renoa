@@ -57,7 +57,7 @@ impl LocalHost {
     }
 
     pub(super) async fn execute_routine_run(&self, run: RoutineRun) -> Result<(), LocalHostError> {
-        let workspace = self.bot_workspace(run.agent_id).await?;
+        let workspace = self.agent_workspace(run.agent_id).await?;
         let session = self
             .ensure_agent_session(run.agent_id, &workspace, run.session_id)
             .await?;

@@ -49,7 +49,7 @@ fn pre_kernel_session_storage_is_rejected_explicitly() {
     assert_eq!(rejected["error"]["code"], -32602);
     assert_eq!(
         rejected["error"]["data"],
-        "session storage version 1 is unsupported; expected 3"
+        "session storage version 1 is unsupported; expected 4"
     );
     process.finish();
 }

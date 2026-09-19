@@ -79,5 +79,5 @@ describe("Host continuity in a remembered browser", () => {
 it("validates nested metadata before the panel consumes it", () => {
   expect(parseHost(snapshot)).toEqual(snapshot);
   expect(() => parseHost({ ...snapshot, sessions: [{ id: snapshot.host_id, agent_id: null, observation: "available" }] })).toThrow();
-  expect(() => parseHost({ ...snapshot, connections: [{ id: "x-api", catalog_available: true, tool_count: 4, selected_by_profiles: null }] })).toThrow();
+  expect(() => parseHost({ ...snapshot, connections: [{ id: "x-api", catalog_available: true, tool_count: 4, selected_by_agents: null }] })).toThrow();
 });

@@ -7,11 +7,11 @@ use super::{
     EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, SEARCH_RESULT_LIMIT, SEARCH_TOOL,
     SearchTool, parse_references,
 };
+use crate::AgentId;
 use crate::mcp::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
     McpCatalogStore, McpCatalogTool,
 };
-use crate::{ALPHA_PROFILE_ID, AgentProfileId};
 
 #[test]
 fn registry_tool_names_are_small_and_stable() {
@@ -40,7 +40,7 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
     let directory = tempdir().expect("temporary Host catalog");
     let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("initialize Host catalog");
-    let search_tool = SearchTool::new(alpha_id(), store.clone());
+    let search_tool = SearchTool::new(agent(1), store.clone());
     let before = run_search(&search_tool, "tool").await;
     assert_eq!(before["total_matches"], 0);
 
@@ -76,8 +76,9 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
     store
         .publish_catalog(&snapshot)
         .expect("publish large catalog");
+    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
     store
-        .enable_profile_connection(ALPHA_PROFILE_ID, "primary")
+        .enable_agent_connection(&agent(1).to_string(), "primary")
         .expect("enable connection");
 
     let after = run_search(&search_tool, "tool").await;
@@ -99,13 +100,13 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
 }
 
 #[tokio::test]
-async fn live_registry_tools_read_only_their_profile_attachments() {
+async fn live_registry_tools_read_only_their_agent_attachments() {
     let directory = tempdir().expect("temporary Host catalog");
     let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("initialize Host catalog");
-    let second = AgentProfileId::new("renoa.test.second.v1").expect("valid second profile id");
-    let alpha_search = SearchTool::new(alpha_id(), store.clone());
-    let second_search = SearchTool::new(second.clone(), store.clone());
+    let second = agent(2);
+    let first_search = SearchTool::new(agent(1), store.clone());
+    let second_search = SearchTool::new(second, store.clone());
     store
         .register_direct_connection("fixture", "primary", "http://127.0.0.1:43127/mcp")
         .expect("register connection");
@@ -127,16 +128,18 @@ async fn live_registry_tools_read_only_their_profile_attachments() {
     )
     .expect("build catalog");
     store.publish_catalog(&snapshot).expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
     store
-        .enable_profile_connection(ALPHA_PROFILE_ID, "primary")
-        .expect("attach catalog to Alpha");
+        .enable_agent_connection(&agent(1).to_string(), "primary")
+        .expect("attach catalog to the first agent");
 
-    assert_eq!(run_search(&alpha_search, "echo").await["total_matches"], 1);
+    assert_eq!(run_search(&first_search, "echo").await["total_matches"], 1);
     assert_eq!(run_search(&second_search, "echo").await["total_matches"], 0);
 
+    crate::test_agents::insert_agent(store.path(), &second.to_string());
     store
-        .enable_profile_connection(second.as_str(), "primary")
-        .expect("share catalog with second profile");
+        .enable_agent_connection(&second.to_string(), "primary")
+        .expect("share catalog with the second agent");
     assert_eq!(run_search(&second_search, "echo").await["total_matches"], 1);
 }
 
@@ -168,10 +171,11 @@ async fn schema_loading_fails_instead_of_truncating_an_exact_large_schema() {
     .expect("build catalog");
     let reference = format!("mcp:primary:{}:large", snapshot.digest());
     store.publish_catalog(&snapshot).expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
     store
-        .enable_profile_connection(ALPHA_PROFILE_ID, "primary")
+        .enable_agent_connection(&agent(1).to_string(), "primary")
         .expect("enable connection");
-    let load = LoadTool::new(alpha_id(), store);
+    let load = LoadTool::new(agent(1), store);
 
     let result = invoke_tool(
         Some(&load),
@@ -195,8 +199,8 @@ async fn schema_loading_fails_instead_of_truncating_an_exact_large_schema() {
     assert!(text.contains("65536"));
 }
 
-fn alpha_id() -> AgentProfileId {
-    AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id")
+fn agent(seed: u128) -> AgentId {
+    crate::derived_agent_id(uuid::Uuid::from_u128(seed))
 }
 
 async fn run_search(tool: &SearchTool, query: &str) -> Value {

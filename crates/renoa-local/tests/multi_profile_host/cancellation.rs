@@ -14,21 +14,18 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
         fs::create_dir(&workspace).expect("workspace");
         fs::write(&bridge, MODEL_BRIDGE).expect("model fixture");
         fs::write(&auth, "").expect("credential fixture");
-        let host = local_host(&data, &bridge, &auth, true);
-        let profile = AgentProfileId::new(RELAY_PROFILE_ID).expect("profile");
+        let host = local_host(&data, &bridge, &auth);
+        let agent = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
         let session = host
-            .create_session(&profile, &workspace)
+            .ensure_agent_session(agent.id, &workspace, Uuid::new_v4())
             .await
             .expect("session");
         let id = session.id();
         drop(session);
-        let database = data
-            .join("sessions")
-            .join(id.to_string())
-            .join("kernel.sqlite3");
+        let db = session_database(&data, id);
         let request_id = Uuid::new_v4();
         let content = vec![ContentBlock::text("Original")];
-        let kernel = Kernel::open(&database).expect("admission owner");
+        let kernel = Kernel::open(&db).expect("admission owner");
         kernel
             .submit(
                 SessionId::from_uuid(id),
@@ -41,7 +38,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
         drop(kernel);
         let session = if cached {
             Some(
-                host.load_session(id, &workspace)
+                host.load_session_for_agent(agent.id, id, &workspace)
                     .await
                     .expect("cache executable session"),
             )
@@ -53,7 +50,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
         let conflict = cancel(
             &host,
             session.as_deref(),
-            &profile,
+            agent.id,
             &workspace,
             id,
             request_id,
@@ -66,7 +63,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
             cancel(
                 &host,
                 session.as_deref(),
-                &profile,
+                agent.id,
                 &workspace,
                 id,
                 request_id,
@@ -78,7 +75,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
         );
         if let Some(session) = &session {
             assert!(
-                Kernel::open(&database).is_err(),
+                Kernel::open(&db).is_err(),
                 "cached session retains ownership"
             );
             let token = CancellationToken::new();
@@ -97,20 +94,27 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
                 "an unfinished operation needs its real runtime to settle"
             );
         } else {
-            assert!(host.load_session(id, &workspace).await.is_err());
+            assert!(
+                host.load_session_for_agent(agent.id, id, &workspace)
+                    .await
+                    .is_err()
+            );
         }
         drop(session);
-        assert_durable_recovery(
-            &host, &database, &bridge, &workspace, id, request_id, content,
-        )
-        .await;
+        assert_durable_recovery(&host, &db, &bridge, &workspace, id, request_id, content).await;
     }
+}
+
+fn session_database(data: &Path, id: Uuid) -> std::path::PathBuf {
+    data.join("sessions")
+        .join(id.to_string())
+        .join("kernel.sqlite3")
 }
 
 async fn cancel(
     host: &LocalHost,
     session: Option<&renoa_local::AgentSession>,
-    profile: &AgentProfileId,
+    agent: AgentId,
     workspace: &Path,
     id: Uuid,
     request_id: Uuid,
@@ -119,7 +123,7 @@ async fn cancel(
     if let Some(session) = session {
         session.cancel_before_execution(request_id, Some(content))
     } else {
-        host.cancel_before_execution(profile, workspace, id, request_id, Some(content))
+        host.cancel_before_execution(agent, workspace, id, request_id, Some(content))
             .await
     }
 }
@@ -135,6 +139,7 @@ async fn assert_durable_recovery(
 ) {
     let kernel = Kernel::open(database).expect("inspect interruption");
     let snapshot = kernel.inspect(SessionId::from_uuid(id)).expect("snapshot");
+    let agent = snapshot.agent_id;
     assert_eq!(snapshot.operations[0].status, OperationStatus::Queued);
     assert_eq!(snapshot.operations[0].outcome, None);
     assert!(snapshot.operations[0].effects.is_empty());
@@ -152,7 +157,7 @@ async fn assert_durable_recovery(
     drop(connection);
     fs::write(bridge, MODEL_BRIDGE).expect("restore actual runtime");
     let session = host
-        .load_session(id, workspace)
+        .load_session_for_agent(agent, id, workspace)
         .await
         .expect("recover session");
     assert_eq!(

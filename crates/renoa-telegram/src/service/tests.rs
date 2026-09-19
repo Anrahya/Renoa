@@ -1,15 +1,18 @@
-use std::{collections::HashMap, fs, sync::Arc};
+use std::{collections::HashMap, fs, sync::Arc, time::Duration};
 
 use renoa_agent::Message;
 use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use tempfile::{TempDir, tempdir};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
-use super::{ActiveTurn, Worker, retry_delay};
+use super::{ActiveTurn, Worker, retry_delay, run};
 use crate::{
+    Config,
     api::{ApiError, TelegramApi},
     ingress::{InboundKind, ParsedUpdate, Topic},
     store::{DeliveryItem, PendingAction, SurfaceStore, WorkItem},
@@ -124,6 +127,79 @@ async fn telegram_model_commands_use_the_surface_neutral_session_configuration()
     fixture.shutdown().await;
 }
 
+#[tokio::test]
+async fn an_unprovisioned_configured_agent_refuses_startup_before_any_effect() {
+    let directory = tempdir().expect("temporary service root");
+    let data = directory.path().join("data");
+    let workspace = directory.path().join("workspace");
+    let bridge = directory.path().join("model-bridge.mjs");
+    let credentials = directory.path().join("credentials.sqlite3");
+    fs::create_dir(&workspace).expect("create workspace");
+    fs::write(&bridge, MODEL_BRIDGE).expect("write deterministic bridge");
+    fs::write(&credentials, "").expect("write credential placeholder");
+    let host = LocalHost::new(
+        &data,
+        LocalModelConfiguration::new(
+            &bridge,
+            vec![ModelProvider::OpenCodeGo],
+            ModelProvider::OpenCodeGo,
+            "fixture-model",
+            &credentials,
+        ),
+        LocalHostAdapters::default(),
+    )
+    .expect("assemble Arcee Host");
+    let control = host.clone();
+    let agent_id = Uuid::new_v4();
+
+    let refused = tokio::time::timeout(
+        Duration::from_secs(5),
+        run(Config {
+            host,
+            agent_id,
+            data_directory: data.clone(),
+            workspace,
+            bot_token: "9:test".to_owned(),
+            allowed_user_id: 42,
+            telegram_ipv4_only: false,
+        }),
+    )
+    .await
+    .expect("an unprovisioned agent must refuse startup without reaching the Telegram API")
+    .expect_err("an unprovisioned agent must refuse startup");
+
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "invalid Telegram surface configuration: configured agent {agent_id} is not provisioned on this Host; provision it with `renoa-host <config.json> provision <provision.json>` before starting the Telegram surface"
+        )
+    );
+    assert!(
+        !data.join("surfaces").exists(),
+        "refused startup opened the Telegram surface store"
+    );
+
+    let provisioned = control
+        .create_agent(
+            AgentCreator::System {
+                component: "telegram-preflight-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new("renoa.personal.arcee.v1").expect("Arcee preset id"),
+                "Arcee",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("provision Arcee")
+        .id;
+    super::preflight_agent(&control, provisioned)
+        .await
+        .expect("a provisioned agent passes the same preflight");
+}
+
 struct ServiceFixture {
     directory: TempDir,
     store: SurfaceStore,
@@ -148,8 +224,6 @@ async fn service_fixture() -> ServiceFixture {
     fs::create_dir(&workspace).expect("create workspace");
     fs::write(&bridge, MODEL_BRIDGE).expect("write deterministic bridge");
     fs::write(&credentials, "").expect("write credential placeholder");
-    let profile = arcee_profile(&data).expect("create Arcee profile");
-    let profile_id = profile.id().clone();
     let host = LocalHost::new(
         &data,
         LocalModelConfiguration::new(
@@ -159,13 +233,33 @@ async fn service_fixture() -> ServiceFixture {
             "fixture-model",
             &credentials,
         ),
-        vec![profile],
         LocalHostAdapters::default(),
     )
     .expect("assemble Arcee Host");
+    let agent_id = host
+        .create_agent(
+            AgentCreator::System {
+                component: "telegram-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new("renoa.personal.arcee.v1").expect("Arcee preset id"),
+                "Arcee",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("provision Arcee")
+        .id;
     let store = SurfaceStore::open(&data).expect("open Telegram store");
     store
-        .bind_identity(9, 42, &workspace)
+        .bind_identity(
+            Uuid::parse_str(&agent_id.to_string()).expect("agent id"),
+            9,
+            42,
+            &workspace,
+        )
         .await
         .expect("bind Telegram identity");
     let (origin, server_shutdown, server) = draft_server().await;
@@ -173,7 +267,7 @@ async fn service_fixture() -> ServiceFixture {
         api: Arc::new(TelegramApi::for_test(&origin, "9:test").expect("test API")),
         store: store.clone(),
         host: Arc::new(host),
-        profile_id,
+        agent_id,
         workspace,
         sessions: HashMap::new(),
         active: Arc::new(ActiveTurn::default()),
@@ -307,11 +401,11 @@ if (action !== "stream") process.exit(2);
 writeFileSync(new URL("./stream-called", import.meta.url), "called");
 const request = JSON.parse(input);
 if (!request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) {
-  process.stderr.write("Telegram surface selected the wrong profile");
+  process.stderr.write("Telegram surface selected the wrong agent definition");
   process.exit(3);
 }
-if (!request.tools.some((tool) => tool.name === "profile_update")) {
-  process.stderr.write("Arcee profile update tool was not assembled");
+if (!request.tools.some((tool) => tool.name === "agent_documents")) {
+  process.stderr.write("Arcee agent-document tool was not assembled");
   process.exit(4);
 }
 if (request.system_prompt.includes("current_time:")) {

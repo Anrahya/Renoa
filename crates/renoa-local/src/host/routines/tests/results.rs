@@ -21,7 +21,7 @@ async fn another_session_reads_the_exact_completed_result_through_model_tools() 
         .expect("automation");
     drop(h);
     let h = host(d.path());
-    let workspace = h.bot_workspace(child).await.expect("workspace");
+    let workspace = h.agent_workspace(child).await.expect("workspace");
     let session = h
         .ensure_agent_session(child, &workspace, Uuid::new_v4())
         .await
@@ -42,12 +42,9 @@ async fn another_session_reads_the_exact_completed_result_through_model_tools() 
         .await
         .expect("operator can inspect");
     assert_eq!(exact.prompt, "scheduled digest");
-    assert!(h.routine_result(AgentId::new(), run.id).await.is_err());
-    assert!(
-        h.routine_results(AgentId::new(), child, None)
-            .await
-            .is_err()
-    );
+    let denied = outsider(&h).await;
+    assert!(h.routine_result(denied, run.id).await.is_err());
+    assert!(h.routine_results(denied, child, None).await.is_err());
     let page = h.routine_results(child, child, None).await.expect("list");
     assert_eq!(page.len(), 1);
     assert!(

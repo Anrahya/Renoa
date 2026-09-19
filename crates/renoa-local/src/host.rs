@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -7,15 +7,15 @@ use std::{
 use thiserror::Error;
 
 pub(crate) mod agents;
-pub(crate) mod bots;
 pub(crate) mod catalog;
+pub(crate) mod definition;
 mod extensions;
 pub(crate) mod history;
 mod lease;
 mod mcp;
 mod models;
 pub(crate) mod observation;
-mod profiles;
+mod reset;
 pub(crate) mod reviews;
 pub(crate) mod routines;
 mod runtime;
@@ -26,8 +26,8 @@ mod shared_capabilities_tests;
 mod skill_tests;
 
 use crate::{
-    AgentProfile, AgentProfileError, AgentProfileId, LocalRuntimeError, LocalSessionError,
-    LocalWorkspaceError, ModelBridgeError, ModelProvider, ReasoningLevel,
+    LocalRuntimeError, LocalSessionError, LocalWorkspaceError, ModelBridgeError, ModelProvider,
+    ReasoningLevel,
     mcp::{
         McpAuthorizationResolver, McpCatalogStore, McpCredentialResolver, McpHostError,
         resolve_adapter,
@@ -38,9 +38,9 @@ use crate::{
 };
 
 pub(crate) use models::{
-    discover_profile_models, initial_reasoning, require_model, selected_model_by_selection_id,
+    discover_models_for, initial_reasoning, require_model, selected_model_by_selection_id,
 };
-use profiles::collect_profiles;
+pub use reset::{HostResetReport, reset_host_data_root};
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 
 /// Process-local configuration used to assemble Renoa Agent sessions.
@@ -48,6 +48,9 @@ pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 pub struct LocalHost {
     config: Arc<HostConfig>,
 }
+
+/// The one directory under the data root that holds Host session state.
+const SESSIONS_DIRECTORY: &str = "sessions";
 
 /// Optional replaceable process adapters used by the local Host.
 #[derive(Clone, Copy, Default)]
@@ -106,7 +109,6 @@ pub(crate) struct HostConfig {
     pub(crate) mcp_authorizations: McpAuthorizationResolver,
     pub(crate) skill_store: SkillStore,
     pub(crate) plugins: PluginManager,
-    pub(crate) profiles: BTreeMap<AgentProfileId, AgentProfile>,
 }
 
 struct HostInitialization {
@@ -122,10 +124,9 @@ struct HostInitialization {
     shared_plugin_registry: Option<String>,
     global_skill_source: Option<PathBuf>,
     oauth_relay: Option<(String, PathBuf)>,
-    profiles: Vec<AgentProfile>,
 }
 
-/// Model-provider settings shared by every profile assembled by one Host.
+/// Model-provider settings shared by every agent assembled by one Host.
 pub struct LocalModelConfiguration {
     bridge: PathBuf,
     providers: Vec<ModelProvider>,
@@ -181,8 +182,6 @@ pub enum LocalHostError {
     #[error(transparent)]
     Model(#[from] ModelBridgeError),
     #[error(transparent)]
-    Profile(#[from] AgentProfileError),
-    #[error(transparent)]
     Session(#[from] LocalSessionError),
     #[error(transparent)]
     TurnObservation(#[from] crate::TurnObservationError),
@@ -202,10 +201,10 @@ pub enum LocalHostError {
     AgentConflict(renoa_kernel::AgentId),
     #[error("agent {0} is not registered with this Host")]
     AgentNotFound(renoa_kernel::AgentId),
-    #[error("bot creation cancelled before commit")]
-    BotCreationCancelled,
-    #[error("bot rename cancelled before commit")]
-    BotRenameCancelled,
+    #[error("agent mutation cancelled before commit")]
+    AgentCancelled,
+    #[error(transparent)]
+    Definition(#[from] crate::AgentDefinitionError),
     #[error(transparent)]
     Routine(#[from] routines::RoutineError),
     #[error(transparent)]
@@ -236,7 +235,6 @@ impl LocalHost {
     pub fn new(
         data_directory: impl Into<PathBuf>,
         models: LocalModelConfiguration,
-        profiles: Vec<AgentProfile>,
         adapters: LocalHostAdapters<'_>,
     ) -> Result<Self, LocalHostError> {
         let mcp_adapter = adapters
@@ -264,7 +262,6 @@ impl LocalHost {
             oauth_relay: adapters
                 .oauth_relay
                 .map(|(origin, credentials)| (origin.to_owned(), credentials.to_path_buf())),
-            profiles,
         })
     }
 
@@ -282,7 +279,6 @@ impl LocalHost {
             shared_plugin_registry,
             global_skill_source,
             oauth_relay,
-            profiles,
         } = initialization;
         if providers.is_empty() {
             return Err(LocalHostError::Configuration(
@@ -299,12 +295,9 @@ impl LocalHost {
                 "default {initial_provider} provider is not enabled"
             )));
         }
-        let profiles = collect_profiles(profiles)?;
         std::fs::create_dir_all(&data_directory)?;
         let data_directory = std::fs::canonicalize(data_directory)?;
-        let sessions = data_directory.join("sessions");
-        std::fs::create_dir_all(&sessions)?;
-        let sessions = std::fs::canonicalize(sessions)?;
+        let sessions = session_root(&data_directory)?;
         let host_database = data_directory.join(catalog::HOST_DATABASE);
         catalog::initialize(&host_database)?;
         let mcp_catalog = McpCatalogStore::open(host_database.clone())?;
@@ -361,42 +354,125 @@ impl LocalHost {
                 mcp_authorizations,
                 skill_store,
                 plugins,
-                profiles,
             }),
         })
     }
+}
 
-    /// Returns built-in and persisted profiles available to new agents.
-    ///
-    /// # Errors
-    /// Returns catalog storage or invalid profile identity errors.
-    pub async fn profile_ids(&self) -> Result<Vec<AgentProfileId>, LocalHostError> {
-        let database = self.config.database.clone();
-        let mut ids = self
-            .config
-            .profiles
-            .keys()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>();
-        tokio::task::spawn_blocking(move || {
-            let connection = catalog::open_verified(&database)?;
-            let mut statement = connection
-                .prepare("SELECT profile_id FROM host_bots")
-                .map_err(catalog::HostCatalogError::from)?;
-            let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(catalog::HostCatalogError::from)?;
-            for id in rows {
-                ids.insert(AgentProfileId::new(
-                    id.map_err(catalog::HostCatalogError::from)?,
-                )?);
-            }
-            Ok(ids.into_iter().collect())
-        })
-        .await?
+/// Creates or adopts `<data root>/sessions` and returns its canonical path.
+///
+/// The configured session root decides where agent documents and sessions are
+/// stored, so it must be that exact child of the canonical data root. The path
+/// is inspected without following a link before anything is created, and the
+/// canonical result is compared with the path again, so a symbolic link or any
+/// other file in its place is refused instead of adopted.
+fn session_root(data_directory: &Path) -> Result<PathBuf, LocalHostError> {
+    let sessions = data_directory.join(SESSIONS_DIRECTORY);
+    match std::fs::symlink_metadata(&sessions) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err(unusable_session_root(&sessions)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir(&sessions)?;
+        }
+        Err(source) => return Err(source.into()),
+    }
+    let resolved = std::fs::canonicalize(&sessions)?;
+    if resolved != sessions {
+        return Err(unusable_session_root(&resolved));
+    }
+    Ok(resolved)
+}
+
+fn unusable_session_root(path: &Path) -> LocalHostError {
+    LocalHostError::Configuration(format!(
+        "Host {SESSIONS_DIRECTORY} root `{}` must be the plain `{SESSIONS_DIRECTORY}` directory under the canonical data root, never a symbolic link or another file",
+        path.display()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path};
+
+    use super::{HostInitialization, LocalHost, LocalHostError};
+    use crate::ModelProvider;
+
+    /// One Host data root whose `sessions` root is a symbolic link to a
+    /// directory in a separate tree, which is the escape this module must
+    /// refuse.
+    fn a_symlinked_sessions_root() -> (tempfile::TempDir, tempfile::TempDir) {
+        let directory = tempfile::tempdir().expect("fixture");
+        let elsewhere = tempfile::tempdir().expect("escape target");
+        let root = directory.path();
+        fs::write(root.join("model.mjs"), "// fixture\n").expect("model");
+        fs::write(root.join("auth.sqlite"), "").expect("auth boundary");
+        fs::create_dir(root.join("data")).expect("data root");
+        let link_target = elsewhere.path().join("linked-sessions");
+        fs::create_dir(&link_target).expect("link target");
+        std::os::unix::fs::symlink(&link_target, root.join("data/sessions"))
+            .expect("link sessions");
+        (directory, elsewhere)
     }
 
-    async fn profile(&self, profile_id: &AgentProfileId) -> Result<AgentProfile, LocalHostError> {
-        bots::resolve_profile(&self.config, profile_id).await
+    fn assemble(root: &Path) -> Result<LocalHost, LocalHostError> {
+        LocalHost::assemble(HostInitialization {
+            data_directory: root.join("data"),
+            bridge: root.join("model.mjs"),
+            providers: vec![ModelProvider::Xai],
+            initial_provider: ModelProvider::Xai,
+            initial_model: "fixture".to_owned(),
+            initial_reasoning: None,
+            credential_store: root.join("auth.sqlite"),
+            mcp_adapter: None,
+            mcp_registry_adapter: None,
+            shared_plugin_registry: None,
+            global_skill_source: None,
+            oauth_relay: None,
+        })
+    }
+
+    /// A `sessions` root that is a symbolic link would make the configured
+    /// session root the link target, so assembly refuses it and creates nothing
+    /// through the link.
+    #[test]
+    fn a_symlinked_sessions_root_is_refused() {
+        let (directory, elsewhere) = a_symlinked_sessions_root();
+        let Err(error) = assemble(directory.path()) else {
+            panic!("a symlinked sessions root is refused");
+        };
+        assert!(
+            matches!(&error, LocalHostError::Configuration(message) if message.contains("sessions root")),
+            "unexpected error: {error}"
+        );
+        assert!(
+            fs::read_dir(elsewhere.path().join("linked-sessions"))
+                .expect("link target")
+                .next()
+                .is_none(),
+            "assembly must not write through the link"
+        );
+        assert!(
+            !directory.path().join("data/host.sqlite3").exists(),
+            "a refused assembly must leave no catalog behind"
+        );
+    }
+
+    /// The document root of every created agent is the sessions root's parent,
+    /// so a `sessions` link that assembly accepted would publish documents
+    /// under the link target instead of refusing the Host.
+    #[tokio::test]
+    async fn a_symlinked_sessions_root_publishes_no_agent_documents_outside_the_data_root() {
+        let (directory, elsewhere) = a_symlinked_sessions_root();
+        let Err(error) = assemble(directory.path()) else {
+            panic!("a symlinked sessions root is refused before it can host an agent");
+        };
+        assert!(
+            error.to_string().contains("sessions root"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            !elsewhere.path().join("agents").exists(),
+            "no agent document root may exist outside the Host data root"
+        );
     }
 }

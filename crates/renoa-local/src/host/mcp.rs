@@ -1,7 +1,4 @@
-use crate::{
-    AgentProfileId,
-    mcp::{McpCatalogSnapshot, discover},
-};
+use crate::mcp::{McpCatalogSnapshot, discover};
 use tokio_util::sync::CancellationToken;
 
 use super::{LocalHost, LocalHostError};
@@ -115,45 +112,6 @@ impl LocalHost {
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || store.publish_catalog(&stored_snapshot)).await??;
         Ok(snapshot)
-    }
-
-    /// Enables one discovered MCP connection for an exact registered profile.
-    ///
-    /// # Errors
-    ///
-    /// Returns when the connection or tool is missing or storage cannot commit.
-    pub async fn enable_profile_mcp_connection(
-        &self,
-        profile_id: &AgentProfileId,
-        connection_id: &str,
-    ) -> Result<(), LocalHostError> {
-        self.profile(profile_id).await?;
-        let store = self.config.mcp_catalog.clone();
-        let profile_id = profile_id.clone();
-        let connection_id = connection_id.to_owned();
-        tokio::task::spawn_blocking(move || {
-            store.enable_profile_connection(profile_id.as_str(), &connection_id)
-        })
-        .await??;
-        Ok(())
-    }
-
-    /// Lists the MCP connections currently enabled for an exact registered profile.
-    ///
-    /// # Errors
-    ///
-    /// Returns invalid storage or background-task failures.
-    pub async fn profile_mcp_connection_ids(
-        &self,
-        profile_id: &AgentProfileId,
-    ) -> Result<Vec<String>, LocalHostError> {
-        self.profile(profile_id).await?;
-        let store = self.config.mcp_catalog.clone();
-        let profile_id = profile_id.clone();
-        Ok(
-            tokio::task::spawn_blocking(move || store.profile_connection_ids(profile_id.as_str()))
-                .await??,
-        )
     }
 
     /// Loads one connection's latest complete MCP catalog.

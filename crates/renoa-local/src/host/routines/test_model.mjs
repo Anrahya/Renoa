@@ -13,7 +13,7 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   const prompt=request.messages[index].content[0].text;
   const results=request.messages.slice(index+1).filter(message=>message.role==="tool");
   const invoke=(id,name,args)=>complete([{type:"tool_call",id,name,arguments:args}],"tool_use");
-  for(const result of results) if(result.result.is_error) throw Error(JSON.stringify(result.result));
+  for(const result of results) if(result.result.is_error && !prompt.startsWith("foreign routine ")) throw Error(JSON.stringify(result.result));
   if(prompt.startsWith("create routine ") || prompt.startsWith("create once ")) {
     if(results.length) complete(text("Routine created"));
     else invoke("create-routine","routine_manage",{action:"create",spec:{agent_id:prompt.split(" ")[2],name:"Digest",prompt:"scheduled digest",schedule:prompt.startsWith("create once ")?{kind:"once",at:prompt.split(" ")[3]}:{kind:"interval",hours:12},enabled:true}});
@@ -45,5 +45,17 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   } else if(prompt==="scheduled digest") {
     if(results.length) complete(text("Digest saved: digest.md"));
     else invoke("write-digest","write_file",{path:"digest.md",content:"# Digest\nSaved by the specialist."});
+  } else if(prompt.startsWith("foreign routine ")) {
+    const [,,action,id]=prompt.split(" ");
+    if(!results.length) {
+      if(action==="list") invoke("foreign-list","routine_manage",{action:"list",agent_id:id});
+      else invoke("foreign-get","routine_manage",{action:"get",id});
+    } else complete(text(results[0].result.content[0].text));
+  } else if(prompt.startsWith("own routine ")) {
+    const [,,action,id]=prompt.split(" ");
+    if(!results.length) {
+      if(action==="list") invoke("own-list","routine_manage",{action:"list"});
+      else invoke("own-get","routine_manage",{action:"get",id});
+    } else complete(text(results[0].result.content[0].text));
   } else throw Error("unexpected prompt");
 }

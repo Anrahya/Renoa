@@ -3,7 +3,18 @@ use std::{
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
 };
 
+use renoa_local::{
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+};
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+/// One stable provisioning operation per ACP test data root makes every spawn
+/// resolve to the same durable agent.
+const TEST_AGENT_OPERATION_ID: &str = "0f1e2d3c-4b5a-4978-8897-a6b5c4d3e2f1";
+const TEST_AGENT_PRESET_ID: &str = "renoa.coding.alpha.v1";
 
 pub(crate) struct AcpProcess {
     child: Child,
@@ -38,10 +49,51 @@ impl AcpProcess {
         default_provider: &str,
         default_model: &str,
     ) -> Self {
+        let agent_id = provision_agent(data, bridge, auth_store, default_provider, default_model);
+        Self::spawn_configured(
+            workspace,
+            data,
+            bridge,
+            auth_store,
+            (providers, default_provider, default_model),
+            &agent_id,
+        )
+    }
+
+    #[allow(
+        dead_code,
+        reason = "shared integration-test support is compiled by tests that do not exercise a second agent identity"
+    )]
+    pub(crate) fn spawn_for_agent(
+        workspace: &std::path::Path,
+        data: &std::path::Path,
+        bridge: &std::path::Path,
+        auth_store: &std::path::Path,
+        agent_id: &str,
+    ) -> Self {
+        Self::spawn_configured(
+            workspace,
+            data,
+            bridge,
+            auth_store,
+            ("xai", "xai", "grok-test"),
+            agent_id,
+        )
+    }
+
+    fn spawn_configured(
+        workspace: &std::path::Path,
+        data: &std::path::Path,
+        bridge: &std::path::Path,
+        auth_store: &std::path::Path,
+        (providers, default_provider, default_model): (&str, &str, &str),
+        agent_id: &str,
+    ) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
             .arg("acp")
             .current_dir(workspace)
             .env("RENOA_DATA_DIR", data)
+            .env("RENOA_AGENT_ID", agent_id)
             .env("RENOA_MODEL_BRIDGE", bridge)
             .env("RENOA_MODEL_PROVIDERS", providers)
             .env("RENOA_MODEL_PROVIDER", default_provider)
@@ -230,6 +282,69 @@ impl AcpProcess {
         let status = self.child.wait().expect("reap killed ACP process");
         assert!(!status.success(), "killed ACP process exited successfully");
     }
+
+    /// Waits for an ACP process that must refuse startup and returns its standard error.
+    #[allow(
+        dead_code,
+        reason = "shared integration-test support is compiled by tests that expect a successful startup"
+    )]
+    pub(crate) fn expect_startup_failure(mut self) -> String {
+        drop(self.stdin.take());
+        let output = self.child.wait_with_output().expect("wait for ACP process");
+        assert!(
+            !output.status.success(),
+            "ACP process served stdio with an unsupported configuration"
+        );
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    }
 }
 
 pub(crate) const BRIDGE: &str = include_str!("bridge.js");
+
+/// Provisions the canonical Alpha agent every ACP fixture session runs.
+///
+/// The ACP surface never creates agents, so the fixture must own the durable
+/// definition the configured `RENOA_AGENT_ID` names.
+fn provision_agent(
+    data: &std::path::Path,
+    bridge: &std::path::Path,
+    auth_store: &std::path::Path,
+    default_provider: &str,
+    default_model: &str,
+) -> String {
+    let provider = ModelProvider::from_id(default_provider).expect("test provider");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("provisioning runtime");
+    let agent_id = runtime.block_on(async {
+        let host = LocalHost::new(
+            data,
+            LocalModelConfiguration::new(
+                bridge,
+                vec![provider],
+                provider,
+                default_model,
+                auth_store,
+            ),
+            LocalHostAdapters::default(),
+        )
+        .expect("provisioning Host");
+        host.create_agent(
+            AgentCreator::System {
+                component: "acp-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::parse_str(TEST_AGENT_OPERATION_ID).expect("static test operation id"),
+                AgentPresetId::new(TEST_AGENT_PRESET_ID).expect("alpha preset id"),
+                "Alpha",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("provision the ACP test agent")
+        .id
+    });
+    agent_id.to_string()
+}

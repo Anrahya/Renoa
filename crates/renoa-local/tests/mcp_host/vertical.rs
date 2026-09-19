@@ -10,15 +10,14 @@ use std::{
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock, Message};
 use renoa_kernel::{EffectRecovery, Kernel, SessionId};
-use renoa_local::{
-    ALPHA_PROFILE_ID, AgentProfileId, LocalHost, LocalModelConfiguration, LocalTurnOutcome,
-    ModelProvider, alpha_profile,
-};
+use renoa_local::{AgentId, LocalHost, LocalModelConfiguration, LocalTurnOutcome, ModelProvider};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 use uuid::Uuid;
 
-use super::{compiled_adapter, read_http_request, workspace_root};
+use super::{
+    ALPHA_PRESET_ID, compiled_adapter, provision_agent, read_http_request, workspace_root,
+};
 
 #[path = "vertical/model.rs"]
 mod model;
@@ -44,10 +43,11 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     let endpoint = format!("http://127.0.0.1:{}/mcp", address.port());
     let server = thread::spawn(move || serve_vertical_mcp(&listener));
     let host = new_vertical_host(&data, &bridge, &credentials, &adapter);
-    configure_echo_mcp(&host, &endpoint).await;
+    let alpha = provision_agent(&host, ALPHA_PRESET_ID, "Alpha", None).await;
+    configure_echo_mcp(&host, &endpoint, alpha).await;
 
     let session = host
-        .create_session(&alpha_id(), &workspace)
+        .ensure_agent_session(alpha, &workspace, Uuid::new_v4())
         .await
         .expect("create composed Alpha session");
     let session_id = session.id();
@@ -115,7 +115,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     assert_frozen_mcp_binding(&data, session_id);
     let reopened = new_vertical_host(&data, &bridge, &credentials, &adapter);
     let restored = reopened
-        .load_session(session_id, &workspace)
+        .load_session_for_agent(alpha, session_id, &workspace)
         .await
         .expect("restore exact Alpha session");
     let replayed = restored
@@ -128,7 +128,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     assert_durable_tool_result(&restored.history().expect("reload durable history"));
 }
 
-async fn configure_echo_mcp(host: &LocalHost, endpoint: &str) {
+async fn configure_echo_mcp(host: &LocalHost, endpoint: &str, agent: AgentId) {
     host.register_direct_mcp_connection("fixture", "primary", endpoint)
         .await
         .expect("register MCP integration");
@@ -144,7 +144,7 @@ async fn configure_echo_mcp(host: &LocalHost, endpoint: &str) {
             .collect::<Vec<_>>(),
         ["echo", "unused"]
     );
-    host.enable_profile_mcp_connection(&alpha_id(), "primary")
+    host.enable_agent_connection(agent, "primary")
         .await
         .expect("enable fixture connection for Alpha");
 }
@@ -174,14 +174,9 @@ fn new_vertical_host(data: &Path, bridge: &Path, credentials: &Path, adapter: &P
             "fixture-model",
             credentials,
         ),
-        vec![alpha_profile()],
         renoa_local::LocalHostAdapters::new(Some(adapter)),
     )
     .expect("create local Host")
-}
-
-fn alpha_id() -> AgentProfileId {
-    AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id")
 }
 
 fn assert_model_context(path: &Path, configured_endpoint: &str) {

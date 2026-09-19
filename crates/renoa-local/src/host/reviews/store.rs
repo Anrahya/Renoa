@@ -189,13 +189,13 @@ pub(super) fn set_repository(
         ));
     }
     let known: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM host_bots WHERE agent_id=?1)",
+        "SELECT EXISTS(SELECT 1 FROM host_agents WHERE agent_id=?1)",
         [policy.agent_id.to_string()],
         |row| row.get(0),
     )?;
     if !known {
         return Err(GitHubReviewError::Invalid(
-            "reviewer must be a specialist owned by this Host".to_owned(),
+            "reviewer must be an agent on this Host".to_owned(),
         ));
     }
     let previous = repository(tx, policy.repository_id)?;

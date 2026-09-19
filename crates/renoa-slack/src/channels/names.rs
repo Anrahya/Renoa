@@ -4,7 +4,7 @@ use crate::{
     api::{ApiError, SlackApi},
     store::Store,
 };
-use renoa_local::BotSummary;
+use renoa_local::AgentDefinition;
 use rusqlite::{OptionalExtension as _, params};
 
 pub(super) struct Label {
@@ -29,7 +29,7 @@ fn slug(name: &str) -> String {
 impl Store {
     pub(super) async fn label_plan(
         &self,
-        bot: &BotSummary,
+        bot: &AgentDefinition,
         advance: bool,
     ) -> Result<Option<Label>, SlackError> {
         let agent = bot.id.to_string();
@@ -106,7 +106,7 @@ impl SlackApi {
     }
 }
 impl Channels {
-    pub(super) async fn label(&self, bot: &BotSummary) -> Result<(), SlackError> {
+    pub(super) async fn label(&self, bot: &AgentDefinition) -> Result<(), SlackError> {
         let Some(label) = self.store.label_plan(bot, false).await? else {
             return Ok(());
         };

@@ -1,5 +1,5 @@
 use super::*;
-use renoa_local::{LocalHostAdapters, LocalModelConfiguration, ModelProvider, arcee_profile};
+use renoa_local::{LocalHostAdapters, LocalModelConfiguration, ModelProvider};
 use ring::hmac;
 
 #[tokio::test]
@@ -14,7 +14,6 @@ async fn real_http_receiver_authenticates_raw_bytes_and_replays_durable_receipts
             "fixture",
             root.path().join("auth.sqlite"),
         ),
-        vec![arcee_profile(root.path()).expect("profile")],
         LocalHostAdapters::new(None),
     )
     .expect("Host");

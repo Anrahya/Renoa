@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::{ENDPOINT, PROFILE, store, tool};
+use super::{ENDPOINT, agent_id, store, tool};
 use crate::mcp::{
     AdapterCatalog, MCP_PROTOCOL_VERSION, McpCatalogSnapshot, McpRequestHeaders, McpToolReference,
     hex_sha256,
@@ -18,6 +18,8 @@ struct HistoricalDigest<'a> {
 #[test]
 fn every_released_catalog_revision_remains_resolvable_after_upgrade() {
     let (_directory, store) = store();
+    let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     for revision in [
         "mcp-client-node-v0.1.0",
         "mcp-client-node-v0.2.0",
@@ -45,13 +47,13 @@ fn every_released_catalog_revision_remains_resolvable_after_upgrade() {
         )
         .expect("validate released historical catalog");
         store
-            .publish_and_enable_connection(PROFILE, &snapshot)
+            .publish_and_enable_connection(&agent, &snapshot)
             .expect("store historical catalog");
         let reference = McpToolReference::new(&connection, snapshot.digest(), "search")
             .expect("historical tool reference");
 
         let resolved = store
-            .resolve_profile_tools(PROFILE, &[reference])
+            .resolve_agent_tools(&agent, &[reference])
             .expect("resolve historical catalog with the current runtime");
         assert_eq!(resolved[0].adapter_revision(), revision);
     }

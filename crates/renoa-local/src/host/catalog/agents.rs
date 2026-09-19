@@ -8,13 +8,6 @@ pub(super) fn initialize(transaction: &Transaction<'_>) -> Result<(), HostCatalo
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             host_id TEXT NOT NULL UNIQUE CHECK (length(host_id) = 36)
         ) STRICT;
-        CREATE TABLE host_agents (
-            agent_id TEXT PRIMARY KEY CHECK (length(agent_id) = 36),
-            profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
-            name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
-            created_by TEXT REFERENCES host_agents(agent_id),
-            CHECK (created_by IS NULL OR created_by != agent_id)
-        ) STRICT;
         UPDATE host_metadata SET schema_version = 14 WHERE singleton = 1;",
     )?;
     transaction.execute(
@@ -28,7 +21,7 @@ pub(super) fn initialize(transaction: &Transaction<'_>) -> Result<(), HostCatalo
 mod tests {
     use std::{sync::Barrier, thread};
 
-    use super::super::{initialize, open_verified};
+    use super::super::{HostCatalogError, cutover, initialize, open_verified};
 
     #[test]
     fn concurrent_schema_thirteen_upgrade_preserves_catalog_and_publishes_one_host_identity() {
@@ -46,24 +39,36 @@ mod tests {
                  PRAGMA user_version = 13;",
             ).expect("schema thirteen fixture");
         }
+        let refused = initialize(&database);
+        assert!(
+            matches!(&refused, Err(HostCatalogError::Invalid(message)) if message.contains("reset")),
+            "an earlier data root must be refused until it is reset: {refused:?}"
+        );
         let barrier = Barrier::new(2);
         thread::scope(|scope| {
             let first = scope.spawn(|| {
                 barrier.wait();
-                initialize(&database).expect("first upgrade");
+                cutover(&database).expect("first cutover");
             });
             let second = scope.spawn(|| {
                 barrier.wait();
-                initialize(&database).expect("second upgrade");
+                cutover(&database).expect("second cutover");
             });
             first.join().expect("first initializer");
             second.join().expect("second initializer");
         });
-        let connection = open_verified(&database).expect("upgraded catalog");
+        let connection = open_verified(&database).expect("cut-over catalog");
         let host_id: String = connection
             .query_row("SELECT host_id FROM host_identity", [], |row| row.get(0))
             .expect("identity");
         uuid::Uuid::parse_str(&host_id).expect("valid Host identity");
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM host_identity", [], |row| row
+                    .get::<_, u32>(0))
+                .expect("one Host identity"),
+            1
+        );
         assert_eq!(
             connection
                 .query_row(

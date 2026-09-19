@@ -95,17 +95,15 @@ impl LocalHost {
             .join(snapshot.request.id.to_string())
             .join(crate::trace::TRACE_DATABASE);
         let agent_id = snapshot.request.repository.policy.agent_id;
-        let profile = self
-            .agent(agent_id)
+        self.agent_definition(agent_id)
             .await?
-            .ok_or(LocalHostError::AgentNotFound(agent_id))?
-            .profile;
+            .ok_or(LocalHostError::AgentNotFound(agent_id))?;
         let session_id = SessionId::from_uuid(snapshot.request.id);
         let store = tokio::task::spawn_blocking(move || {
             if path.try_exists()? {
-                Ok::<_, LocalHostError>(TraceStore::open(path, session_id, agent_id, &profile)?)
+                Ok::<_, LocalHostError>(TraceStore::open(path, session_id, agent_id)?)
             } else {
-                Ok(TraceStore::create(path, session_id, agent_id, &profile)?)
+                Ok(TraceStore::create(path, session_id, agent_id)?)
             }
         })
         .await??;

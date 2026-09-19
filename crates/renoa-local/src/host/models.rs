@@ -1,26 +1,29 @@
 use super::{HostConfig, LocalHostError};
 use crate::selection::RuntimeSelection;
-use crate::{AgentProfile, ModelChoice, ModelProvider, ReasoningLevel, discover_models};
+use crate::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
 
-pub(crate) async fn discover_profile_models(
+/// Discovers the models one agent may use.
+///
+/// The stored provider restriction, when present, narrows discovery to that
+/// provider and fails closed when the Host does not enable it.
+pub(crate) async fn discover_models_for(
     host: &HostConfig,
-    profile: &AgentProfile,
+    restriction: Option<ModelProvider>,
 ) -> Result<Vec<ModelChoice>, LocalHostError> {
-    if let Some(provider) = profile.model_provider()
+    if let Some(provider) = restriction
         && !host.providers.contains(&provider)
     {
         return Err(LocalHostError::Configuration(format!(
-            "profile `{}` requires the {} provider, but it is not enabled",
-            profile.id(),
+            "this agent requires the {} provider, but it is not enabled",
             provider.name()
         )));
     }
     let mut models = Vec::new();
-    for provider in host.providers.iter().filter(|provider| {
-        profile
-            .model_provider()
-            .is_none_or(|required| required == **provider)
-    }) {
+    for provider in host
+        .providers
+        .iter()
+        .filter(|provider| restriction.is_none_or(|required| required == **provider))
+    {
         models.extend(
             discover_models(
                 host.bridge.clone(),

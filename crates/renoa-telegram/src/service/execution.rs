@@ -107,7 +107,7 @@ impl Worker {
         } else {
             self.host
                 .cancel_before_execution(
-                    &self.profile_id,
+                    self.agent_id,
                     &self.workspace,
                     item.session_id,
                     item.request_id,
@@ -130,7 +130,7 @@ impl Worker {
         }
         let session = self
             .host
-            .ensure_session(&self.profile_id, &self.workspace, session_id)
+            .ensure_agent_session(self.agent_id, &self.workspace, session_id)
             .await?;
         self.sessions.insert(session_id, Arc::clone(&session));
         Ok(session)

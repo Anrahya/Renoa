@@ -83,12 +83,12 @@ impl McpCatalogStore {
 
     pub(crate) fn commit_connection(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         candidate: &McpConnectionCandidate,
         snapshot: &McpCatalogSnapshot,
         replace: bool,
     ) -> Result<(), McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         if snapshot.connection_id() != candidate.connection_id
             || snapshot.endpoint() != candidate.endpoint
             || snapshot.request_headers() != candidate.request_headers.values()
@@ -120,9 +120,9 @@ impl McpCatalogStore {
         }
         store_catalog(&transaction, snapshot)?;
         transaction.execute(
-            "INSERT OR IGNORE INTO profile_mcp_connections(profile_id, connection_id)
+            "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)
              VALUES (?1, ?2)",
-            params![profile_id, candidate.connection_id],
+            params![agent_id, candidate.connection_id],
         )?;
         transaction.commit()?;
         Ok(())
