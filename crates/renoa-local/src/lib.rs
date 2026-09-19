@@ -25,9 +25,9 @@ mod model_stream;
 mod output;
 mod package_tree;
 mod plugins;
+mod presets;
 mod process;
 mod profile;
-mod presets;
 mod ripgrep;
 mod runtime;
 mod search;
@@ -35,6 +35,7 @@ mod selection;
 mod session;
 mod shared_registry;
 mod skills;
+mod stable_id;
 mod tool_error;
 mod tool_input;
 mod trace;
@@ -55,10 +56,10 @@ pub use alpha::{ALPHA_PROFILE_ID, alpha_profile};
 pub use arcee::{ARCEE_PROFILE_ID, arcee_profile};
 pub use credential_file::credential_file_is_private;
 pub use host::agents::AgentRecord;
+pub use host::catalog::HostCatalogError;
 pub use host::definition::{
     AgentCreateRequest, AgentRoutine, AgentToolsUpdate, RenameAgent, derived_agent_id,
 };
-pub use host::catalog::HostCatalogError;
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
     HostObservation, HostObserver, ObservedAgent, ObservedConnection, ObservedOperation,

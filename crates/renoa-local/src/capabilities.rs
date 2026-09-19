@@ -67,16 +67,6 @@ pub(crate) const SPECIALIST_EXTENSIONS: &[&str] = &[
     SKILL_LOAD,
 ];
 
-/// Every name a caller may select at creation.
-#[must_use]
-pub(crate) fn inventory() -> BTreeSet<String> {
-    WORKSPACE_TOOL_NAMES
-        .iter()
-        .chain(extension_names().iter())
-        .map(|name| (*name).to_owned())
-        .collect()
-}
-
 /// Whether one name is a Host capability.
 #[must_use]
 pub(crate) fn is_selectable(name: &str) -> bool {
@@ -137,8 +127,7 @@ pub(crate) fn baseline_selection(
 #[cfg(test)]
 mod tests {
     use super::{
-        AGENT_MANAGE, ARCEE_EXTENSIONS, ROUTINE_MANAGE, WORKSPACE_TOOL_NAMES, inventory,
-        is_selectable,
+        AGENT_MANAGE, ARCEE_EXTENSIONS, ROUTINE_MANAGE, WORKSPACE_TOOL_NAMES, is_selectable,
     };
 
     #[test]
@@ -165,11 +154,10 @@ mod tests {
 
     #[test]
     fn the_inventory_is_exact_and_closed() {
-        let names = inventory();
-        assert!(names.contains(AGENT_MANAGE));
-        assert!(names.contains(ROUTINE_MANAGE));
-        assert!(!names.contains("renoa.bot.manage"));
+        assert!(is_selectable(AGENT_MANAGE));
+        assert!(is_selectable(ROUTINE_MANAGE));
         assert!(is_selectable("bash"));
+        assert!(!is_selectable("renoa.bot.manage"));
         assert!(!is_selectable("all"));
         for extension in ARCEE_EXTENSIONS {
             assert!(is_selectable(extension), "preset names must be selectable");

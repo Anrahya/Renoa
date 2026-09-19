@@ -4,7 +4,7 @@
 //! agent's own operational definition, and runtime resolution never consults a
 //! preset again. Changing preset content requires a new preset id.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use crate::{
@@ -96,11 +96,11 @@ impl AgentPreset {
                 }),
                 None => Ok(text.to_owned()),
             },
-            PresetInstructions::CallerSupplied => supplied
-                .map(str::to_owned)
-                .ok_or_else(|| AgentDefinitionError::InstructionsRequired {
+            PresetInstructions::CallerSupplied => supplied.map(str::to_owned).ok_or_else(|| {
+                AgentDefinitionError::InstructionsRequired {
                     preset: self.id.as_str().to_owned(),
-                }),
+                }
+            }),
         }
     }
 }
@@ -177,11 +177,6 @@ pub(crate) fn preset(id: &AgentPresetId) -> Result<&'static AgentPreset, AgentDe
         })
 }
 
-#[must_use]
-pub(crate) fn preset_ids() -> BTreeSet<AgentPresetId> {
-    PRESETS.keys().cloned().collect()
-}
-
 fn non_zero(value: u64) -> std::num::NonZeroU64 {
     std::num::NonZeroU64::new(value).expect("preset compaction bounds are non-zero")
 }
@@ -192,7 +187,7 @@ fn preset_id(value: &str) -> AgentPresetId {
 
 #[cfg(test)]
 mod tests {
-    use super::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, SPECIALIST_PRESET_ID, preset, preset_ids};
+    use super::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, SPECIALIST_PRESET_ID, preset};
     use crate::{AgentDefinitionError, AgentPresetId};
 
     #[test]
@@ -202,7 +197,11 @@ mod tests {
             let preset = preset(&id).expect("registered preset");
             assert_eq!(preset.id(), &id);
         }
-        assert_eq!(preset_ids().len(), 3);
+        let unregistered = AgentPresetId::new("renoa.unregistered.v1").expect("portable preset id");
+        assert!(matches!(
+            preset(&unregistered),
+            Err(AgentDefinitionError::UnknownPreset { .. })
+        ));
     }
 
     #[test]
@@ -218,7 +217,9 @@ mod tests {
         let specialist = AgentPresetId::new(SPECIALIST_PRESET_ID).expect("portable preset id");
         let specialist = preset(&specialist).expect("registered preset");
         assert_eq!(
-            specialist.instructions(Some("Do the job.")).expect("caller text"),
+            specialist
+                .instructions(Some("Do the job."))
+                .expect("caller text"),
             "Do the job."
         );
         assert!(matches!(
@@ -235,7 +236,10 @@ mod tests {
         assert!(behavior.uses_turn_timing());
         assert!(behavior.loads_project_instructions());
         assert!(behavior.automatic_compaction.is_some());
-        assert_eq!(preset.provider_restriction(), Some(crate::ModelProvider::OpenCodeGo));
+        assert_eq!(
+            preset.provider_restriction(),
+            Some(crate::ModelProvider::OpenCodeGo)
+        );
         let documents = preset.documents().expect("documents");
         assert!(documents.soul && documents.user);
         assert!(preset.document_defaults().is_some());

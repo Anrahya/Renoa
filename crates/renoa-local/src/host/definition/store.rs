@@ -8,17 +8,18 @@ use uuid::Uuid;
 
 use super::super::catalog::HostCatalogError;
 use crate::{
-    AgentCreationOrigin, AgentCreator, AgentDefinition, AgentOperationalDefinition,
-    AgentPresetId, AgentToolSelection,
+    AgentCreationOrigin, AgentCreator, AgentDefinition, AgentOperationalDefinition, AgentPresetId,
+    AgentToolSelection,
 };
 
 /// One persisted creation receipt.
+///
+/// The receipt proves which operation created which agent and what request it
+/// carried. Creator, origin, and the resulting agent live on the root row,
+/// which is the single durable owner of that state.
 pub(super) struct CreationReceipt {
     pub(super) agent_id: AgentId,
-    pub(super) created_via: AgentCreationOrigin,
-    pub(super) creator: AgentCreator,
     pub(super) request_json: String,
-    pub(super) result_json: String,
 }
 
 /// One persisted tool-selection receipt.
@@ -44,8 +45,7 @@ pub(super) fn insert(
             definition.created_at_ms,
             definition.created_via.as_str(),
             definition.preset_id.as_ref().map(AgentPresetId::as_str),
-            serde_json::to_string(&definition.operational)
-                .map_err(invalid_json)?,
+            serde_json::to_string(&definition.operational).map_err(invalid_json)?,
             kind,
             agent_id,
             host_id,
@@ -61,27 +61,13 @@ pub(super) fn insert(
 pub(super) fn insert_creation_receipt(
     transaction: &Transaction<'_>,
     operation: Uuid,
-    receipt: &CreationReceipt,
+    agent: AgentId,
+    request_json: &str,
 ) -> Result<(), HostCatalogError> {
-    let (kind, agent_id, host_id, principal_id, component) = encode_creator(&receipt.creator);
     transaction.execute(
-        "INSERT INTO host_agent_creations(
-            operation_id, agent_id, created_via, creator_kind, creator_agent_id,
-            creator_host_id, creator_principal_id, creator_component, request_json,
-            result_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![
-            operation.to_string(),
-            receipt.agent_id.to_string(),
-            receipt.created_via.as_str(),
-            kind,
-            agent_id,
-            host_id,
-            principal_id,
-            component,
-            receipt.request_json,
-            receipt.result_json,
-        ],
+        "INSERT INTO host_agent_creations(operation_id, agent_id, request_json)
+         VALUES (?1, ?2, ?3)",
+        params![operation.to_string(), agent.to_string(), request_json],
     )?;
     Ok(())
 }
@@ -90,54 +76,19 @@ pub(super) fn creation_receipt(
     connection: &Connection,
     operation: Uuid,
 ) -> Result<Option<CreationReceipt>, HostCatalogError> {
-    let row: Option<(String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, String, String)> =
-        connection
-            .query_row(
-                "SELECT agent_id, created_via, creator_kind, creator_agent_id, creator_host_id,
-                        creator_principal_id, creator_component, request_json, result_json
-                 FROM host_agent_creations WHERE operation_id = ?1",
-                [operation.to_string()],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                        row.get(8)?,
-                    ))
-                },
-            )
-            .optional()?;
-    let Some((
-        agent_id,
-        created_via,
-        kind,
-        creator_agent_id,
-        creator_host_id,
-        creator_principal_id,
-        creator_component,
-        request_json,
-        result_json,
-    )) = row
-    else {
+    let row: Option<(String, String)> = connection
+        .query_row(
+            "SELECT agent_id, request_json FROM host_agent_creations WHERE operation_id = ?1",
+            [operation.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((agent_id, request_json)) = row else {
         return Ok(None);
     };
     Ok(Some(CreationReceipt {
         agent_id: parse_agent(&agent_id)?,
-        created_via: parse_origin(&created_via)?,
-        creator: decode_creator(
-            &kind,
-            creator_agent_id.as_deref(),
-            creator_host_id.as_deref(),
-            creator_principal_id.as_deref(),
-            creator_component.as_deref(),
-        )?,
         request_json,
-        result_json,
     }))
 }
 
@@ -145,31 +96,42 @@ pub(super) fn read(
     connection: &Connection,
     agent: AgentId,
 ) -> Result<Option<AgentDefinition>, HostCatalogError> {
-    let row: Option<(String, String, i64, String, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>)> =
-        connection
-            .query_row(
-                "SELECT agent_id, name, created_at_ms, created_via, preset_id, operational_json,
+    let row: Option<(
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = connection
+        .query_row(
+            "SELECT agent_id, name, created_at_ms, created_via, preset_id, operational_json,
                         creator_kind, creator_agent_id, creator_host_id, creator_principal_id,
                         creator_component
                  FROM host_agents WHERE agent_id = ?1",
-                [agent.to_string()],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                        row.get(8)?,
-                        row.get(9)?,
-                        row.get(10)?,
-                    ))
-                },
-            )
-            .optional()?;
+            [agent.to_string()],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                    row.get(10)?,
+                ))
+            },
+        )
+        .optional()?;
     let Some((
         agent_id,
         name,
@@ -241,10 +203,7 @@ pub(super) fn list(
     Ok(definitions)
 }
 
-pub(super) fn exists(
-    connection: &Connection,
-    agent: AgentId,
-) -> Result<bool, HostCatalogError> {
+pub(super) fn exists(connection: &Connection, agent: AgentId) -> Result<bool, HostCatalogError> {
     let found: Option<i64> = connection
         .query_row(
             "SELECT 1 FROM host_agents WHERE agent_id = ?1",
@@ -291,8 +250,7 @@ pub(super) fn write_selection(
         params![
             agent.to_string(),
             selection.revision,
-            serde_json::to_string(&selection.tools)
-                .map_err(invalid_json)?
+            serde_json::to_string(&selection.tools).map_err(invalid_json)?
         ],
     )?;
     Ok(())
@@ -422,13 +380,7 @@ fn encode_creator(
     Option<String>,
 ) {
     match creator {
-        AgentCreator::Agent { agent_id } => (
-            "agent",
-            Some(agent_id.to_string()),
-            None,
-            None,
-            None,
-        ),
+        AgentCreator::Agent { agent_id } => ("agent", Some(agent_id.to_string()), None, None, None),
         AgentCreator::Principal {
             host_id,
             principal_id,
@@ -439,13 +391,7 @@ fn encode_creator(
             Some(principal_id.clone()),
             None,
         ),
-        AgentCreator::System { component } => (
-            "system",
-            None,
-            None,
-            None,
-            Some(component.clone()),
-        ),
+        AgentCreator::System { component } => ("system", None, None, None, Some(component.clone())),
     }
 }
 

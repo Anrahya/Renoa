@@ -141,7 +141,7 @@ impl Tool for Manage {
                     crate::mcp::oauth_operation_id(self.session, self.command, &call.id);
                 // Reuse the Host's stable operation identity, independent of model/surface.
                 let operation =
-                    super::store::stable_id(&format!("renoa.routine.manage.v1:{operation}"));
+                    crate::stable_id::stable_id(&format!("renoa.routine.manage.v1:{operation}"));
                 let now = crate::TurnObservation::now()
                     .map_err(|e| ToolError::invalid_input(e.to_string()))?
                     .unix_milliseconds();

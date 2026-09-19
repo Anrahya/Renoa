@@ -1,11 +1,4 @@
-use std::{
-    collections::BTreeSet,
-    fmt,
-    io,
-    num::NonZeroU64,
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{collections::BTreeSet, fmt, io, num::NonZeroU64, path::PathBuf, str::FromStr};
 
 use renoa_kernel::AgentId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -101,15 +94,6 @@ impl AgentCreator {
             Self::Agent { .. } => Ok(()),
             Self::Principal { principal_id, .. } => require_actor_id(principal_id),
             Self::System { component } => require_actor_id(component),
-        }
-    }
-
-    /// Returns the creating agent when an agent made the call.
-    #[must_use]
-    pub const fn agent_id(&self) -> Option<AgentId> {
-        match self {
-            Self::Agent { agent_id } => Some(*agent_id),
-            Self::Principal { .. } | Self::System { .. } => None,
         }
     }
 }
@@ -345,23 +329,5 @@ pub enum AgentDefinitionError {
         path: PathBuf,
         #[source]
         source: io::Error,
-    },
-    #[error("cannot inspect project instructions at `{path}`: {source}")]
-    Inspect {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("project instructions at `{path}` resolve outside the workspace")]
-    OutsideWorkspace { path: PathBuf },
-    #[error("project instructions must be a regular file: {path}")]
-    NotFile { path: PathBuf },
-    #[error("project instructions exceed {MAX_INSTRUCTIONS_BYTES} bytes: {path}")]
-    TooLarge { path: PathBuf },
-    #[error("project instructions at `{path}` are not UTF-8: {source}")]
-    InvalidUtf8 {
-        path: PathBuf,
-        #[source]
-        source: std::string::FromUtf8Error,
     },
 }

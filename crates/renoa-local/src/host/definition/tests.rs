@@ -1,6 +1,5 @@
 use std::{fs, path::Path};
 
-use renoa_kernel::AgentId;
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -10,8 +9,8 @@ use super::{
     derived_agent_id,
 };
 use crate::{
-    AgentCreationOrigin, AgentCreator, AgentDefinition, AgentPresetId, ARCEE_PROFILE_ID,
-    AgentProfile, LocalHost, LocalHostError, ModelProvider,
+    ARCEE_PROFILE_ID, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentProfile, LocalHost,
+    LocalHostError, ModelProvider,
     host::HostInitialization,
     host::routines::RoutineSchedule,
     presets::{ARCEE_PRESET_ID, SPECIALIST_PRESET_ID},
@@ -573,9 +572,7 @@ async fn selection_edits_are_revision_checked_and_the_operational_document_stays
         .expect("first edit");
     assert_eq!(selection.revision, 2);
     assert_eq!(
-        host.set_agent_tools(update.clone())
-            .await
-            .expect("replay"),
+        host.set_agent_tools(update.clone()).await.expect("replay"),
         selection
     );
     // A fresh attempt with a stale revision conflicts.
@@ -601,6 +598,4 @@ async fn selection_edits_are_revision_checked_and_the_operational_document_stays
     assert!(!operational_json.contains("bash"));
     assert!(!operational_json.contains("read_file"));
     assert!(!operational_json.contains("SOUL.md"));
-    let _: AgentDefinition = stored;
-    let _ = AgentId::new();
 }

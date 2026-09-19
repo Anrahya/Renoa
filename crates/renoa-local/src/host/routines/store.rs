@@ -287,13 +287,6 @@ fn pending_for(db: &Connection, id: Uuid) -> Result<bool, RoutineError> {
         |row| row.get(0),
     )?)
 }
-pub(super) fn stable_id(value: &str) -> Uuid {
-    use sha2::{Digest as _, Sha256};
-    let hash = Sha256::digest(value.as_bytes());
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash[..16]);
-    Uuid::from_bytes(bytes)
-}
 fn insert_run(
     tx: &Transaction<'_>,
     r: &RoutineRecord,
@@ -301,7 +294,7 @@ fn insert_run(
     due: i64,
     admitted_at: i64,
 ) -> Result<(), RoutineError> {
-    let session = stable_id(&format!("renoa.routine.session.v1:{}", r.id));
+    let session = crate::stable_id::stable_id(&format!("renoa.routine.session.v1:{}", r.id));
     tx.execute("INSERT INTO host_routine_runs(id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),session.to_string(),due,admitted_at,r.spec.prompt])?;
     Ok(())
 }
@@ -330,7 +323,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<RoutineRun>, Routi
     }
     let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY next_due_ms,id LIMIT 1",[now_ms],record).optional()?;
     let Some(mut r) = due else { return Ok(None) };
-    let id = stable_id(&format!(
+    let id = crate::stable_id::stable_id(&format!(
         "renoa.routine.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
     ));

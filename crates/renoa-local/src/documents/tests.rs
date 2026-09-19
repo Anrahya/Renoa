@@ -48,7 +48,9 @@ fn conflicting_pre_existing_content_fails_closed() {
     let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
         .expect_err("conflicting content must fail");
     assert!(
-        min(&error).contains("already exists with different content"),
+        error
+            .to_string()
+            .contains("already exists with different content"),
         "unexpected error: {error}"
     );
     assert_eq!(
@@ -75,7 +77,10 @@ fn render_includes_only_enabled_documents_and_open_requires_them() {
 
     let missing = AgentDocumentStore::open(directory.path(), agent, both())
         .expect_err("an enabled missing document must fail closed");
-    assert!(min(&missing).contains("regular file"), "unexpected: {missing}");
+    assert!(
+        missing.to_string().contains("regular file"),
+        "unexpected: {missing}"
+    );
 }
 
 #[test]
@@ -86,16 +91,13 @@ fn open_rejects_a_document_root_outside_the_data_directory() {
     fs::create_dir_all(directory.path().join("agents")).expect("create agents directory");
     std::os::unix::fs::symlink(
         elsewhere.path(),
-        directory
-            .path()
-            .join("agents")
-            .join(agent.to_string()),
+        directory.path().join("agents").join(agent.to_string()),
     )
     .expect("link escape");
 
     let error = AgentDocumentStore::open(directory.path(), agent, both())
         .expect_err("an escaping document root must fail closed");
-    assert!(min(&error).contains("outside"), "unexpected: {error}");
+    assert!(error.to_string().contains("outside"), "unexpected: {error}");
 }
 
 #[tokio::test]
@@ -137,8 +139,4 @@ async fn content_hash_cas_rejects_a_stale_revision_and_accepts_the_current_one()
     let rendered = store.render().expect("render");
     assert!(rendered.contains("new soul"));
     assert!(rendered.contains("Asia/Kolkata."));
-}
-
-fn min(error: &crate::AgentDefinitionError) -> String {
-    error.to_string()
 }
