@@ -4,7 +4,8 @@ use crate::{
     service::pause,
     store::Store,
 };
-use renoa_local::{BotSummary, LocalHost};
+use renoa_kernel::AgentId;
+use renoa_local::{AgentDefinition, LocalHost, MAX_AGENT_PAGE};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -26,15 +27,24 @@ pub(crate) struct Channels {
 
 impl Channels {
     pub(crate) async fn run(self) -> Result<(), SlackError> {
+        // The operator keeps its direct conversation; every other agent on this
+        // Host gets its own channel.
+        let operator = AgentId::from_uuid(self.store.operator_agent().await?);
         loop {
             let mut cursor = None;
             loop {
-                let page = self.host.list_bots(cursor).await?;
-                for bot in page.bots {
+                let page = self
+                    .host
+                    .list_agent_definitions(cursor, MAX_AGENT_PAGE)
+                    .await?;
+                for agent in page.agents {
+                    if agent.id == operator {
+                        continue;
+                    }
                     if self.shutdown.is_cancelled() {
                         return Ok(());
                     }
-                    self.provision(&bot).await?;
+                    self.provision(&agent).await?;
                 }
                 cursor = page.next_cursor;
                 if cursor.is_none() {
@@ -49,7 +59,7 @@ impl Channels {
         }
     }
 
-    pub(crate) async fn provision(&self, bot: &BotSummary) -> Result<(), SlackError> {
+    pub(crate) async fn provision(&self, bot: &AgentDefinition) -> Result<(), SlackError> {
         let provision = self.store.channel_provision(bot).await?;
         let channel = match &provision.state {
             State::Ready => return self.label(bot).await,

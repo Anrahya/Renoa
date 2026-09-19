@@ -54,7 +54,7 @@ pub enum ObservedOperationState {
 
 pub(super) fn read(
     root: &Path,
-    agents: &mut Vec<ObservedAgent>,
+    agents: &[ObservedAgent],
 ) -> Result<Vec<ObservedSession>, LocalHostError> {
     let mut items = Vec::new();
     for entry in std::fs::read_dir(root)? {
@@ -86,23 +86,12 @@ pub(super) fn read(
                 ));
             }
             let agent_id = parse_id(&manifest.agent_id.to_string())?;
-            if let Some(agent) = agents.iter().find(|a| a.id == agent_id) {
-                if agent.profile != manifest.profile.as_str() {
-                    return Err(LocalHostError::InvalidRequest(
-                        "session profile and agent catalog differ".to_owned(),
-                    ));
-                }
-            } else {
-                // Older sessions predate the agent catalog. Project their identity
-                // without the importing writes performed by LocalHost::list_agents.
-                agents.push(ObservedAgent {
-                    id: agent_id,
-                    profile: manifest.profile.to_string(),
-                    name: manifest.profile.to_string(),
-                    created_by: None,
-                });
-            }
             item.agent_id = Some(agent_id);
+            if !agents.iter().any(|agent| agent.id == agent_id) {
+                return Err(LocalHostError::InvalidRequest(
+                    "session agent is not registered with this Host".to_owned(),
+                ));
+            }
             let snapshot = renoa_kernel::observe_session(
                 &entry.path().join(KERNEL_DATABASE),
                 manifest.session_id,

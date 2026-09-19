@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use renoa_kernel::AgentId;
-use renoa_local::{AgentRecord, LocalHostError};
+use renoa_local::{LocalHostError, MAX_AGENT_PAGE};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -15,32 +15,43 @@ pub async fn manage_agents(arguments: &[String]) -> Result<Value, ServerError> {
     let config = Config::from_environment()?;
     let host = config.host();
     match arguments {
-        [action] if action == "list" => Ok(json!({
-            "host_id": host.host_id().await?,
-            "agents": host.list_agents().await?,
-        })),
+        [action] if action == "list" => {
+            let mut agents = Vec::new();
+            let mut cursor = None;
+            loop {
+                let page = host.list_agent_definitions(cursor, MAX_AGENT_PAGE).await?;
+                cursor = page.next_cursor;
+                agents.extend(page.agents);
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            Ok(json!({
+                "host_id": host.host_id().await?,
+                "agents": agents,
+            }))
+        }
         [action, id] if action == "show" => {
             let id = AgentId::from_uuid(parse_id(id)?);
-            let agent = host.agent(id).await?.ok_or(LocalHostError::AgentNotFound(id))?;
+            let agent = host
+                .agent_definition(id)
+                .await?
+                .ok_or(LocalHostError::AgentNotFound(id))?;
             Ok(json!(agent))
         }
-        [action, id, name, parent @ ..] if action == "ensure" && parent.len() <= 1 => {
-            let record = AgentRecord {
-                id: AgentId::from_uuid(parse_id(id)?),
-                profile: config.profile_id().clone(),
-                name: name.clone(),
-                created_by: parent.first().map(|id| parse_id(id).map(AgentId::from_uuid)).transpose()?,
-            };
-            Ok(json!(host.ensure_agent(record).await?))
-        }
         [action, agent, session, workspace] if action == "session" => {
-            let session = host.ensure_agent_session(
-                AgentId::from_uuid(parse_id(agent)?), Path::new(workspace), parse_id(session)?,
-            ).await?;
+            let session = host
+                .ensure_agent_session(
+                    AgentId::from_uuid(parse_id(agent)?),
+                    Path::new(workspace),
+                    parse_id(session)?,
+                )
+                .await?;
             Ok(json!({ "session_id": session.id(), "agent_id": session.agent_id() }))
         }
         _ => Err(ServerError::InvalidRequest(
-            "usage: renoa-agent agents <list|show ID|ensure ID NAME [CREATOR_ID]|session AGENT_ID SESSION_ID WORKSPACE>".to_owned(),
+            "usage: renoa-agent agents <list|show ID|session AGENT_ID SESSION_ID WORKSPACE>"
+                .to_owned(),
         )),
     }
 }

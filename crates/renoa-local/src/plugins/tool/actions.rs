@@ -59,7 +59,7 @@ pub(super) async fn connect(
         .manager
         .connect_profile_operation(
             ProfileConnectionRequest {
-                profile_id: &tool.profile_id,
+                agent_id: &tool.agent_id,
                 package_digest: &request.package_digest,
                 server_id: &request.server,
                 connection_id: &request.connection,
@@ -132,7 +132,7 @@ async fn authorize_snapshot(
     tool.manager
         .authorize_profile(
             ProfileAuthorizationRequest {
-                profile_id: &tool.profile_id,
+                agent_id: &tool.agent_id,
                 connection_id: connection,
                 operation_id: invocation.operation_id,
                 restart,
@@ -152,7 +152,7 @@ pub(super) async fn add(
     let added = match tool
         .manager
         .add_to_profile(
-            &tool.profile_id,
+            &tool.agent_id,
             request,
             invocation.operation_id,
             Some(invocation.updates),

@@ -87,6 +87,64 @@ impl SkillComponentRejection {
 }
 
 impl SkillStore {
+    /// Creates the agent-keyed skill tables on one Host catalog.
+    ///
+    /// The fresh-catalog path, the schema migration tail, and the bounded reset
+    /// all call this, so there is exactly one definition of these tables.
+    pub(crate) fn initialize_tables(
+        transaction: &rusqlite::Transaction<'_>,
+    ) -> Result<(), rusqlite::Error> {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_skill_bindings (
+                agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
+                scope_kind TEXT NOT NULL CHECK (
+                    scope_kind IN ('global', 'workspace', 'plugin')
+                ),
+                workspace TEXT,
+                source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+                skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+                skill_digest TEXT NOT NULL,
+                FOREIGN KEY (skill_digest, skill_name)
+                    REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+                CHECK (
+                    (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
+                    OR
+                    (scope_kind = 'workspace' AND length(workspace) > 0)
+                ),
+                PRIMARY KEY (agent_id, source_id, skill_name)
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS agent_skill_source_rejections (
+                agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
+                scope_kind TEXT NOT NULL CHECK (
+                    scope_kind IN ('global', 'workspace', 'plugin')
+                ),
+                workspace TEXT,
+                source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+                entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
+                reason TEXT NOT NULL CHECK (length(reason) > 0),
+                CHECK (
+                    (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
+                    OR
+                    (scope_kind = 'workspace' AND length(workspace) > 0)
+                ),
+                PRIMARY KEY (agent_id, source_id, entry_name)
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS session_skills (
+                activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL CHECK (length(session_id) > 0),
+                activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
+                skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+                skill_digest TEXT NOT NULL,
+                FOREIGN KEY (skill_digest, skill_name)
+                    REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+                UNIQUE (session_id, skill_name),
+                UNIQUE (session_id, skill_digest)
+            ) STRICT;",
+        )
+    }
+
     pub(crate) fn initialize(
         database: PathBuf,
         packages: PathBuf,
@@ -101,7 +159,7 @@ impl SkillStore {
         })
     }
 
-    pub(super) fn sync(&self, profile_id: &str, workspace: &Path) -> Result<(), SkillError> {
+    pub(super) fn sync(&self, agent_id: &str, workspace: &Path) -> Result<(), SkillError> {
         let workspace = path_text(workspace, "workspace")?;
         let mut specs = Vec::new();
         if let Some(root) = &self.global_source {
@@ -131,7 +189,7 @@ impl SkillStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for source in &prepared {
-            replace_source(&transaction, profile_id, source)?;
+            replace_source(&transaction, agent_id, source)?;
         }
         transaction.commit()?;
         Ok(())
@@ -139,7 +197,7 @@ impl SkillStore {
 
     pub(crate) fn sync_plugin(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         plugin_name: &str,
         plugin_root: &Path,
     ) -> Result<SkillComponentReport, SkillError> {
@@ -169,24 +227,24 @@ impl SkillStore {
         };
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let report = replace_source(&transaction, profile_id, &prepared)?;
+        let report = replace_source(&transaction, agent_id, &prepared)?;
         transaction.commit()?;
         Ok(report)
     }
 
     pub(crate) fn summaries(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         workspace: &Path,
     ) -> Result<Vec<SkillSummary>, SkillError> {
         let workspace = path_text(workspace, "workspace")?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT binding.scope_kind, revision.name, revision.description
-             FROM profile_skill_bindings AS binding
+             FROM agent_skill_bindings AS binding
              JOIN skill_revisions AS revision
                ON revision.skill_digest = binding.skill_digest
-             WHERE binding.profile_id = ?1
+             WHERE binding.agent_id = ?1
                AND (
                     (binding.scope_kind = 'plugin' AND binding.workspace IS NULL)
                     OR (binding.scope_kind = 'global' AND binding.workspace IS NULL)
@@ -201,7 +259,7 @@ impl SkillStore {
                       END,
                       revision.skill_digest",
         )?;
-        let rows = statement.query_map(params![profile_id, workspace], |row| {
+        let rows = statement.query_map(params![agent_id, workspace], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -223,20 +281,20 @@ impl SkillStore {
     #[cfg(test)]
     pub(super) fn rejection_count(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         workspace: &Path,
     ) -> Result<usize, SkillError> {
         let workspace = path_text(workspace, "workspace")?;
         let count = self.connection()?.query_row(
             "SELECT count(*)
-             FROM skill_source_rejections
-             WHERE profile_id = ?1
+             FROM agent_skill_source_rejections
+             WHERE agent_id = ?1
                AND (
                     (scope_kind = 'global' AND workspace IS NULL)
                     OR
                     (scope_kind = 'workspace' AND workspace = ?2)
                )",
-            params![profile_id, workspace],
+            params![agent_id, workspace],
             |row| row.get::<_, i64>(0),
         )?;
         usize::try_from(count).map_err(|error| {
@@ -246,7 +304,7 @@ impl SkillStore {
 
     pub(super) fn activate(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         workspace: &Path,
         session_id: SessionId,
         command_id: CommandId,
@@ -257,7 +315,7 @@ impl SkillStore {
         let session_id = session_id.to_string();
         let candidate = active_or_selected_digest(
             &self.connection()?,
-            profile_id,
+            agent_id,
             &workspace,
             &session_id,
             name,
@@ -277,7 +335,7 @@ impl SkillStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let resolved =
-            active_or_selected_digest(&transaction, profile_id, &workspace, &session_id, name)?
+            active_or_selected_digest(&transaction, agent_id, &workspace, &session_id, name)?
                 .ok_or_else(|| {
                     SkillError::NotFound(format!(
                         "skill `{name}` is not available for this workspace"
@@ -348,7 +406,7 @@ impl SkillStore {
 
 fn active_or_selected_digest(
     connection: &Connection,
-    profile_id: &str,
+    agent_id: &str,
     workspace: &str,
     session_id: &str,
     name: &str,
@@ -366,8 +424,8 @@ fn active_or_selected_digest(
     }
     connection
         .query_row(
-            "SELECT skill_digest FROM profile_skill_bindings
-             WHERE profile_id = ?1
+            "SELECT skill_digest FROM agent_skill_bindings
+             WHERE agent_id = ?1
                AND skill_name = ?2
                AND (
                     (scope_kind = 'plugin' AND workspace IS NULL)
@@ -382,7 +440,7 @@ fn active_or_selected_digest(
                       END,
                       skill_digest
              LIMIT 1",
-            params![profile_id, name, workspace],
+            params![agent_id, name, workspace],
             |row| row.get::<_, String>(0),
         )
         .optional()

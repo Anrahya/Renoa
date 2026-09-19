@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn installed_reuse_rejects_connection_fields_before_any_profile_mutation() {
+async fn installed_reuse_rejects_connection_fields_before_any_agent_mutation() {
     let fixture = LocalPackageFixture::new();
     crate::plugins::tests::write_exa_plugin(
         &fixture.directory.path().join("source"),
@@ -13,7 +13,7 @@ async fn installed_reuse_rejects_connection_fields_before_any_profile_mutation()
         json!({"action":"install","source_path":"source","expected_digest":digest}),
     )
     .await;
-    let profile = crate::AgentProfileId::new(crate::ALPHA_PROFILE_ID).expect("profile");
+    let agent_id = fixture.agent_id;
     for (key, value) in [
         ("server", json!("exa")),
         ("connection", json!("new")),
@@ -43,7 +43,7 @@ async fn installed_reuse_rejects_connection_fields_before_any_profile_mutation()
     assert!(
         fixture
             .skills
-            .summaries(profile.as_str(), fixture.directory.path())
+            .summaries(&agent_id.to_string(), fixture.directory.path())
             .expect("no skill attachment")
             .is_empty()
     );
@@ -51,7 +51,7 @@ async fn installed_reuse_rejects_connection_fields_before_any_profile_mutation()
         fixture
             .tool
             .manager
-            .connection_statuses(&profile)
+            .connection_statuses(&agent_id)
             .await
             .expect("no connections")
             .is_empty()

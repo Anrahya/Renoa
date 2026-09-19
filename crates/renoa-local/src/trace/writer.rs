@@ -6,7 +6,6 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::{TraceError, record::now_unix_ms, schema};
-use crate::AgentProfileId;
 
 const TRACE_CHANNEL_CAPACITY: usize = 256;
 
@@ -19,7 +18,6 @@ pub(super) struct TraceStart {
     pub(super) path: PathBuf,
     pub(super) session_id: SessionId,
     pub(super) agent_id: AgentId,
-    pub(super) profile_id: AgentProfileId,
     pub(super) run_id: Uuid,
     pub(super) command_id: CommandId,
     pub(super) started_at_ms: i64,
@@ -131,7 +129,6 @@ impl TraceWriter {
             path,
             session_id,
             agent_id,
-            profile_id,
             run_id,
             command_id,
             started_at_ms,
@@ -140,7 +137,7 @@ impl TraceWriter {
             model,
             reasoning,
         } = start;
-        let connection = schema::open(&path, session_id, agent_id, &profile_id)?;
+        let connection = schema::open(&path, session_id, agent_id)?;
         schema::recover_running(&connection)?;
         connection.execute(
             "INSERT INTO runs(
@@ -171,7 +168,7 @@ impl TraceWriter {
                 .run()
             })
             .map_err(|error| {
-                if let Ok(connection) = schema::open(&path, session_id, agent_id, &profile_id) {
+                if let Ok(connection) = schema::open(&path, session_id, agent_id) {
                     let interrupted = TraceFinish {
                         finished_at_ms: now_unix_ms(),
                         elapsed_us: 0,

@@ -2,18 +2,19 @@ use std::{fs, path::Path, sync::Arc};
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock, Message};
 use tempfile::tempdir;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{HostInitialization, LocalHost};
 use crate::{
-    ALPHA_PROFILE_ID, AgentProfile, AgentProfileId, LocalTurnOutcome, ModelProvider, alpha_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalTurnOutcome,
+    ModelProvider,
 };
 
 const PROJECT_SKILL: &str = "renoa-test-project-workflow";
 const HOT_SKILL: &str = "renoa-test-hot-workflow";
 const PROJECT_MARKER: &str = "PROJECT_SKILL_EXACT_INSTRUCTIONS";
 const HOT_MARKER: &str = "HOT_SKILL_EXACT_INSTRUCTIONS";
-const SECOND_PROFILE_ID: &str = "renoa.test.second.v1";
 
 #[tokio::test]
 async fn skills_hot_load_and_survive_compaction_and_host_restart() {
@@ -34,8 +35,24 @@ async fn skills_hot_load_and_survive_compaction_and_host_restart() {
         PROJECT_MARKER,
     );
     let host = local_host(&data, &bridge, &credentials, &global);
+    let agent = host
+        .create_agent(
+            AgentCreator::System {
+                component: "skill-fixture".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::ALPHA_PRESET_ID).expect("preset"),
+                "Alpha",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("Alpha agent")
+        .id;
     let session = host
-        .create_session(&alpha_id(), &workspace)
+        .ensure_agent_session(agent, &workspace, Uuid::new_v4())
         .await
         .expect("create Alpha session");
     let session_id = session.id();
@@ -107,7 +124,7 @@ async fn skills_hot_load_and_survive_compaction_and_host_restart() {
 }
 
 #[tokio::test]
-async fn a_non_alpha_profile_uses_its_own_skill_registry_binding() {
+async fn a_non_alpha_agent_uses_its_own_skill_registry_binding() {
     let directory = tempdir().expect("temporary Host directory");
     let data = directory.path().join("data");
     let workspace = directory.path().join("workspace");
@@ -125,10 +142,42 @@ async fn a_non_alpha_profile_uses_its_own_skill_registry_binding() {
         PROJECT_MARKER,
     );
     let host = local_host(&data, &bridge, &credentials, &global);
-    let session = host
-        .create_session(&second_id(), &workspace)
+    let agent = host
+        .create_agent(
+            AgentCreator::System {
+                component: "skill-fixture".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                "Second",
+            )
+            .with_instructions("You are a test agent.")
+            .with_tools(
+                [
+                    "read_file",
+                    "edit_file",
+                    "write_file",
+                    "bash",
+                    "grep",
+                    "find",
+                    "git_changes",
+                    "git_diff",
+                    "git_show",
+                    "extension_manage",
+                ]
+                .map(str::to_owned),
+            ),
+            CancellationToken::new(),
+        )
         .await
-        .expect("create second-profile session");
+        .expect("second agent")
+        .id;
+    let session = host
+        .ensure_agent_session(agent, &workspace, Uuid::new_v4())
+        .await
+        .expect("create second-agent session");
 
     assert_eq!(
         session
@@ -138,13 +187,13 @@ async fn a_non_alpha_profile_uses_its_own_skill_registry_binding() {
                 Arc::new(NoopEvents),
             )
             .await
-            .expect("activate a skill through the second profile"),
+            .expect("activate a skill through the second agent"),
         LocalTurnOutcome::Completed {
             output: "Project skill activated.".to_owned(),
             stop_reason: renoa_agent::StopReason::Stop,
         }
     );
-    assert_eq!(session.profile_id(), &second_id());
+    assert_eq!(session.agent_id(), agent);
 }
 
 fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> LocalHost {
@@ -161,21 +210,8 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         shared_plugin_registry: None,
         global_skill_source: Some(global.to_path_buf()),
         oauth_relay: None,
-        profiles: vec![
-            alpha_profile(),
-            AgentProfile::new(SECOND_PROFILE_ID, "You are a test agent.")
-                .expect("valid second profile"),
-        ],
     })
     .expect("assemble local Host with isolated skill sources")
-}
-
-fn alpha_id() -> AgentProfileId {
-    AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id")
-}
-
-fn second_id() -> AgentProfileId {
-    AgentProfileId::new(SECOND_PROFILE_ID).expect("valid second profile id")
 }
 
 fn write_skill(workspace: &Path, name: &str, description: &str, body: &str) {
@@ -274,12 +310,14 @@ Two skills are active.
 Confirm restoration.` }]);
   process.exit(0);
 }
-const expectedTools = [
+const workspaceTools = [
   "read_file", "edit_file", "write_file", "bash", "grep", "find",
   "git_changes", "git_diff", "git_show",
-  "tool_search", "tool_load", "tool_execute", "extension_manage",
-  "skill_search", "skill_load"
+  "tool_search", "tool_load", "tool_execute", "extension_manage"
 ];
+const expectedTools = request.system_prompt.startsWith("You are a test agent.")
+  ? [...workspaceTools, "routine_results", "routine_manage", "skill_search", "skill_load"]
+  : [...workspaceTools, "skill_search", "skill_load"];
 if (request.tools.map(tool => tool.name).join(",") !== expectedTools.join(",")) {
   fail("unexpected model-visible tool set");
 }

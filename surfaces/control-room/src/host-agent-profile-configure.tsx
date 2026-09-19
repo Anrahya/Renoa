@@ -13,24 +13,24 @@ export function ProfileConfigure({ host, agent }: { host: HostSnapshot; agent: A
   const [query, setQuery] = useState("");
   const searchId = useId();
   const creator = host.agents.find(item => item.id === agent.created_by);
-  const selected = host.connections.filter(connection => connection.selected_by_profiles.includes(agent.profile));
-  const connections = [...host.connections].sort((a, b) => Number(b.selected_by_profiles.includes(agent.profile)) - Number(a.selected_by_profiles.includes(agent.profile)))
+  const selected = host.connections.filter(connection => connection.selected_by_agents.includes(agent.id));
+  const connections = [...host.connections].sort((a, b) => Number(b.selected_by_agents.includes(agent.id)) - Number(a.selected_by_agents.includes(agent.id)))
     .filter(connection => `${connectionName(host, connection)} ${connection.id}`.toLowerCase().includes(query.trim().toLowerCase()));
   return <div className="flex max-w-4xl flex-col gap-8">
-    <div className="flex flex-col gap-2"><h2 className="text-xl font-medium">Configure</h2><p className="text-muted-foreground">The profile and capabilities this agent uses.</p></div>
-    <section className="profile-settings-section" aria-labelledby="profile-foundation"><div><h3 id="profile-foundation" className="font-medium">Profile</h3><p className="mt-1 text-muted-foreground">Identity and core setup</p></div><div className="flex min-w-0 flex-col gap-5">
-      <dl className="grid grid-cols-2 gap-5"><div><dt className="text-xs text-muted-foreground">Name</dt><dd className="mt-1 break-words">{displayName(agent.name)}</dd></div><div><dt className="text-xs text-muted-foreground">Assigned profile</dt><dd className="mt-1 break-words">{agent.profile}</dd></div></dl>
-      <div className="flex flex-col gap-2"><h4 className="text-sm font-medium">Model & instructions</h4><p className="text-sm text-muted-foreground">The Host does not report this agent’s model, instructions, or preset. These settings cannot be edited here yet.</p></div>
+    <div className="flex flex-col gap-2"><h2 className="text-xl font-medium">Configure</h2><p className="text-muted-foreground">The creation preset and capabilities this agent uses.</p></div>
+    <section className="profile-settings-section" aria-labelledby="profile-foundation"><div><h3 id="profile-foundation" className="font-medium">Identity</h3><p className="mt-1 text-muted-foreground">Identity and core setup</p></div><div className="flex min-w-0 flex-col gap-5">
+      <dl className="grid grid-cols-2 gap-5"><div><dt className="text-xs text-muted-foreground">Name</dt><dd className="mt-1 break-words">{displayName(agent.name)}</dd></div><div><dt className="text-xs text-muted-foreground">Creation preset</dt><dd className="mt-1 break-words">{agent.preset_id ?? "None"}</dd></div></dl>
+      <div className="flex flex-col gap-2"><h4 className="text-sm font-medium">Model & instructions</h4><p className="text-sm text-muted-foreground">The Host does not report this agent’s model or instructions. These settings cannot be edited here yet.</p></div>
     </div></section>
     <Separator />
     <section className="profile-settings-section" aria-labelledby="profile-connections"><div><h3 id="profile-connections" tabIndex={-1} className="scroll-mt-20 font-medium">Tools & connections</h3><p className="mt-1 text-muted-foreground">Selected from the shared library</p><Badge variant="secondary" className="mt-3">{selected.length} selected</Badge></div><div className="flex min-w-0 flex-col gap-4">
-      <p className="text-sm text-muted-foreground">Selections belong to the <strong className="font-medium text-foreground">{agent.profile}</strong> profile. Selection editing is not available yet; existing work may use an earlier configuration.</p>
+      <p className="text-sm text-muted-foreground">Selections belong to this agent. Selection editing is not available yet; existing work may use an earlier configuration.</p>
       {host.connections.length > 0 && <FieldGroup><Field><FieldLabel htmlFor={searchId} className="sr-only">Find a connection</FieldLabel><Input id={searchId} type="search" placeholder="Find a connection…" value={query} onChange={event => setQuery(event.target.value)} /></Field></FieldGroup>}
       <div className="flex flex-col">
         {connections.map(connection => {
           const name = connectionName(host, connection);
-          const checked = connection.selected_by_profiles.includes(agent.profile);
-          const peers = host.agents.filter(item => item.id !== agent.id && !isEarlier(item) && connection.selected_by_profiles.includes(item.profile));
+          const checked = connection.selected_by_agents.includes(agent.id);
+          const peers = host.agents.filter(item => item.id !== agent.id && !isEarlier(item) && connection.selected_by_agents.includes(item.id));
           return <div key={connection.id} className="flex items-start gap-3 border-b py-4 first:pt-0 last:border-0">
             <Checkbox className="mt-1" checked={checked} disabled aria-label={`${name}: ${checked ? "selected" : "not selected"}`} />
             <details className="min-w-0 flex-1"><summary className="text-sm font-medium"><span className="break-all">{name}</span><span className="ml-2 text-xs font-normal text-muted-foreground">{connection.catalog_available ? `${connection.tool_count} tools` : "Catalog unavailable"}</span></summary>

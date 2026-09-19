@@ -23,39 +23,39 @@ pub(super) struct PreparedSource {
 
 pub(super) fn replace_source(
     transaction: &Transaction<'_>,
-    profile_id: &str,
+    agent_id: &str,
     source: &PreparedSource,
 ) -> Result<SkillComponentReport, SkillError> {
     transaction.execute(
-        "DELETE FROM profile_skill_bindings WHERE profile_id = ?1 AND source_id = ?2",
-        params![profile_id, source.spec.id],
+        "DELETE FROM agent_skill_bindings WHERE agent_id = ?1 AND source_id = ?2",
+        params![agent_id, source.spec.id],
     )?;
     transaction.execute(
-        "DELETE FROM skill_source_rejections WHERE profile_id = ?1 AND source_id = ?2",
-        params![profile_id, source.spec.id],
+        "DELETE FROM agent_skill_source_rejections WHERE agent_id = ?1 AND source_id = ?2",
+        params![agent_id, source.spec.id],
     )?;
 
     let mut accepted = Vec::new();
     let mut rejected = Vec::new();
     for skill in &source.snapshot.skills {
-        if let Some(owner) = conflicting_plugin_source(transaction, profile_id, source, skill)? {
+        if let Some(owner) = conflicting_plugin_source(transaction, agent_id, source, skill)? {
             let rejection = SkillComponentRejection::new(
                 skill.metadata.name.clone(),
                 format!(
                     "skill name is already provided by {owner}; Renoa does not choose silently between plugins"
                 ),
             );
-            record_rejection(transaction, profile_id, source, &rejection)?;
+            record_rejection(transaction, agent_id, source, &rejection)?;
             rejected.push(rejection);
             continue;
         }
         ensure_revision(transaction, skill)?;
         transaction.execute(
-            "INSERT INTO profile_skill_bindings(
-                profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
+            "INSERT INTO agent_skill_bindings(
+                agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                profile_id,
+                agent_id,
                 source.spec.scope.as_str(),
                 source.spec.workspace.as_deref(),
                 source.spec.id,
@@ -70,7 +70,7 @@ pub(super) fn replace_source(
             source_rejection.entry_name.clone(),
             bounded_reason(&source_rejection.reason),
         );
-        record_rejection(transaction, profile_id, source, &rejection)?;
+        record_rejection(transaction, agent_id, source, &rejection)?;
         rejected.push(rejection);
     }
     rejected
@@ -80,7 +80,7 @@ pub(super) fn replace_source(
 
 fn conflicting_plugin_source(
     transaction: &Transaction<'_>,
-    profile_id: &str,
+    agent_id: &str,
     source: &PreparedSource,
     skill: &CapturedSkill,
 ) -> Result<Option<String>, SkillError> {
@@ -89,14 +89,14 @@ fn conflicting_plugin_source(
     }
     transaction
         .query_row(
-            "SELECT source_id FROM profile_skill_bindings
-             WHERE profile_id = ?1
+            "SELECT source_id FROM agent_skill_bindings
+             WHERE agent_id = ?1
                AND scope_kind = 'plugin'
                AND skill_name = ?2
                AND source_id != ?3
              ORDER BY source_id
              LIMIT 1",
-            params![profile_id, skill.metadata.name, source.spec.id],
+            params![agent_id, skill.metadata.name, source.spec.id],
             |row| row.get::<_, String>(0),
         )
         .optional()
@@ -105,16 +105,16 @@ fn conflicting_plugin_source(
 
 fn record_rejection(
     transaction: &Transaction<'_>,
-    profile_id: &str,
+    agent_id: &str,
     source: &PreparedSource,
     rejection: &SkillComponentRejection,
 ) -> Result<(), SkillError> {
     transaction.execute(
-        "INSERT INTO skill_source_rejections(
-            profile_id, scope_kind, workspace, source_id, entry_name, reason
+        "INSERT INTO agent_skill_source_rejections(
+            agent_id, scope_kind, workspace, source_id, entry_name, reason
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
-            profile_id,
+            agent_id,
             source.spec.scope.as_str(),
             source.spec.workspace.as_deref(),
             source.spec.id,

@@ -20,8 +20,8 @@ use super::{
     call::{CALL_BOUNDARY_REVISION, call_tool},
     oauth_operation_id, rank_tools,
 };
-use crate::AgentProfileId;
 use execute::{authorization_failure, definite_boundary_error, execution_details, map_failure};
+use renoa_kernel::AgentId;
 
 pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 
@@ -32,8 +32,8 @@ const SEARCH_REVISION: &str = "renoa-mcp-registry-v3/search";
 const LOAD_REVISION: &str = "renoa-mcp-registry-v1/load";
 const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
 
-pub(crate) fn profile_registry_bindings(
-    profile_id: AgentProfileId,
+pub(crate) fn agent_registry_bindings(
+    agent_id: AgentId,
     store: McpCatalogStore,
     adapter: Option<PathBuf>,
     authorizations: McpAuthorizationResolver,
@@ -43,18 +43,18 @@ pub(crate) fn profile_registry_bindings(
     vec![
         AgentToolBinding::new(
             SEARCH_REVISION,
-            Arc::new(SearchTool::new(profile_id.clone(), store.clone())),
+            Arc::new(SearchTool::new(agent_id, store.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
             LOAD_REVISION,
-            Arc::new(LoadTool::new(profile_id.clone(), store.clone())),
+            Arc::new(LoadTool::new(agent_id, store.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
             format!("{EXECUTE_REVISION}/{CALL_BOUNDARY_REVISION}"),
             Arc::new(ExecuteTool::new(
-                profile_id,
+                agent_id,
                 store,
                 adapter,
                 authorizations,
@@ -67,20 +67,20 @@ pub(crate) fn profile_registry_bindings(
 }
 
 struct SearchTool {
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
     store: McpCatalogStore,
     spec: ToolSpec,
 }
 
 impl SearchTool {
-    fn new(profile_id: AgentProfileId, store: McpCatalogStore) -> Self {
+    fn new(agent_id: AgentId, store: McpCatalogStore) -> Self {
         Self {
-            profile_id,
+            agent_id,
             store,
             spec: ToolSpec {
                 name: SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find tools enabled for this agent profile without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before tool_execute. Use query `*` to browse."
+                    "Find tools enabled for this agent without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before tool_execute. Use query `*` to browse."
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -113,9 +113,9 @@ impl Tool for SearchTool {
             let input: SearchInput = decode_call(&call, SEARCH_TOOL)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
-            let profile_id = self.profile_id.clone();
+            let agent_id = self.agent_id;
             let tools = tokio::task::spawn_blocking(move || {
-                store.profile_tool_summaries(profile_id.as_str())
+                store.agent_tool_summaries(&agent_id.to_string())
             })
             .await
             .map_err(|error| background_error(&error))?
@@ -143,15 +143,15 @@ impl Tool for SearchTool {
 }
 
 struct LoadTool {
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
     store: McpCatalogStore,
     spec: ToolSpec,
 }
 
 impl LoadTool {
-    fn new(profile_id: AgentProfileId, store: McpCatalogStore) -> Self {
+    fn new(agent_id: AgentId, store: McpCatalogStore) -> Self {
         Self {
-            profile_id,
+            agent_id,
             store,
             spec: ToolSpec {
                 name: LOAD_TOOL.to_owned(),
@@ -192,10 +192,10 @@ impl Tool for LoadTool {
             let references = parse_references(input.references)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
-            let profile_id = self.profile_id.clone();
+            let agent_id = self.agent_id;
             let lookup = references.clone();
             let resolved = tokio::task::spawn_blocking(move || {
-                store.resolve_profile_tools(profile_id.as_str(), &lookup)
+                store.resolve_agent_tools(&agent_id.to_string(), &lookup)
             })
             .await
             .map_err(|error| background_error(&error))?
@@ -234,7 +234,7 @@ impl Tool for LoadTool {
 }
 
 struct ExecuteTool {
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
     store: McpCatalogStore,
     adapter: Option<PathBuf>,
     authorizations: McpAuthorizationResolver,
@@ -245,7 +245,7 @@ struct ExecuteTool {
 
 impl ExecuteTool {
     fn new(
-        profile_id: AgentProfileId,
+        agent_id: AgentId,
         store: McpCatalogStore,
         adapter: Option<PathBuf>,
         authorizations: McpAuthorizationResolver,
@@ -253,7 +253,7 @@ impl ExecuteTool {
         command_id: Option<CommandId>,
     ) -> Self {
         Self {
-            profile_id,
+            agent_id,
             store,
             adapter,
             authorizations,
@@ -297,10 +297,10 @@ impl Tool for ExecuteTool {
             let reference = McpToolReference::from_str(&input.reference).map_err(host_error)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
-            let profile_id = self.profile_id.clone();
+            let agent_id = self.agent_id;
             let stored_reference = reference.clone();
             let mut resolved = tokio::task::spawn_blocking(move || {
-                store.resolve_profile_tools(profile_id.as_str(), &[stored_reference])
+                store.resolve_agent_tools(&agent_id.to_string(), &[stored_reference])
             })
             .await
             .map_err(|error| background_error(&error))?

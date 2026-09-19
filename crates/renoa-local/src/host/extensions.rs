@@ -3,7 +3,7 @@ use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentProfileId, InstalledPlugin, McpCatalogSnapshot, PluginCredential, PluginInspection,
+    AgentId, InstalledPlugin, McpCatalogSnapshot, PluginCredential, PluginInspection,
     shared_registry::SharedPluginSyncReport,
 };
 
@@ -12,7 +12,7 @@ use super::{LocalHost, LocalHostError};
 impl LocalHost {
     /// Reconciles this Host's immutable Agent Plugin library with its configured shared registry.
     ///
-    /// Existing MCP credentials, profile attachments, and sessions remain local.
+    /// Existing MCP credentials, agent connection bindings, and sessions remain local.
     ///
     /// # Errors
     ///
@@ -56,25 +56,25 @@ impl LocalHost {
         Ok(self.config.plugins.list().await?)
     }
 
-    /// Connects one installed package MCP server for an exact registered profile.
+    /// Connects one installed package MCP server for one exact agent.
     ///
     /// # Errors
     ///
     /// Returns package, credential, adapter, discovery, or durable storage failures.
     pub async fn connect_profile_plugin_mcp(
         &self,
-        profile_id: &AgentProfileId,
+        agent_id: &AgentId,
         package_digest: &str,
         server_id: &str,
         connection_id: &str,
         credential: PluginCredential,
     ) -> Result<McpCatalogSnapshot, LocalHostError> {
-        self.profile(profile_id).await?;
+        self.require_agent(*agent_id).await?;
         Ok(self
             .config
             .plugins
             .connect_profile(
-                profile_id,
+                agent_id,
                 package_digest,
                 server_id,
                 connection_id,

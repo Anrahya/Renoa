@@ -1,14 +1,12 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use renoa_control::{DeviceCredential, DeviceCredentials, DeviceId};
-use renoa_local::{
-    ALPHA_PROFILE_ID, ARCEE_PROFILE_ID, AgentProfile, AgentProfileId, LocalHost, LocalHostAdapters,
-    LocalModelConfiguration, ModelProvider, alpha_profile, arcee_profile,
-};
+use renoa_kernel::AgentId;
+use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
 use renoa_node::HostTarget;
 use renoa_protocol::TargetRef;
 use serde::Deserialize;
@@ -20,7 +18,11 @@ use crate::{
     private_file::{read_config, read_secret, require_absolute},
 };
 
-const CONFIG_SCHEMA_VERSION: u32 = 1;
+/// The config document shape this runtime reads.
+///
+/// Version 2 renamed each target's required `profile` to `agentId`, so an
+/// earlier document is refused by name instead of failing as an unknown field.
+const CONFIG_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) struct LoadedConfig {
     pub(crate) endpoint: String,
@@ -39,6 +41,15 @@ struct ConfigDocument {
     #[serde(default)]
     adapters: AdapterDocument,
     targets: Vec<TargetDocument>,
+}
+
+/// The schema a config document declares, read without this runtime's target
+/// shape so a document from another schema is refused by version instead of as
+/// a field that changed with it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionDocument {
+    schema_version: u32,
 }
 
 #[derive(Deserialize)]
@@ -63,7 +74,7 @@ struct AdapterDocument {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TargetDocument {
     target: String,
-    profile: AgentProfileId,
+    agent_id: Uuid,
     session_id: Uuid,
     workspace: PathBuf,
 }
@@ -91,11 +102,9 @@ pub(crate) fn load(
         .map_err(|error| {
             ServiceError::Configuration(format!("invalid coordinator endpoint: {error}"))
         })?;
-    let profile_ids = profile_ids_for(&config.targets)?;
     validate_target_uniqueness(&config.targets)?;
     let targets = build_targets(config.targets)?;
     let state_directory = prepare_state_directory(state_directory)?;
-    let profiles = build_profiles(profile_ids, &state_directory)?;
 
     let host = Arc::new(LocalHost::new(
         state_directory.join("host"),
@@ -106,7 +115,6 @@ pub(crate) fn load(
             config.model.default_model,
             &config.model.credential_store,
         ),
-        profiles,
         LocalHostAdapters::new(config.adapters.mcp.as_deref())
             .with_mcp_registry(config.adapters.mcp_registry.as_deref())
             .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref()),
@@ -122,14 +130,23 @@ pub(crate) fn load(
 
 fn decode_config(path: &Path) -> Result<ConfigDocument, ServiceError> {
     let bytes = read_config(path)?;
-    let config: ConfigDocument =
-        serde_json::from_slice(&bytes).map_err(|source| ServiceError::Json {
-            path: path.to_path_buf(),
-            source,
-        })?;
+    let config: ConfigDocument = match serde_json::from_slice(&bytes) {
+        Ok(config) => config,
+        Err(source) => {
+            if let Some(version) = declared_schema_version(&bytes)
+                && version != CONFIG_SCHEMA_VERSION
+            {
+                return Err(ServiceError::Configuration(unsupported_schema(version)));
+            }
+            return Err(ServiceError::Json {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
     if config.schema_version != CONFIG_SCHEMA_VERSION {
-        return Err(ServiceError::Configuration(format!(
-            "node config schemaVersion must be {CONFIG_SCHEMA_VERSION}"
+        return Err(ServiceError::Configuration(unsupported_schema(
+            config.schema_version,
         )));
     }
     if config.endpoint.is_empty() {
@@ -138,6 +155,21 @@ fn decode_config(path: &Path) -> Result<ConfigDocument, ServiceError> {
         ));
     }
     Ok(config)
+}
+
+fn declared_schema_version(bytes: &[u8]) -> Option<u32> {
+    let document: VersionDocument = serde_json::from_slice(bytes).ok()?;
+    Some(document.schema_version)
+}
+
+fn unsupported_schema(version: u32) -> String {
+    let cutover = if version == 1 {
+        "; version 1 selected each target with `profile`, and the current schema selects it with \
+         `agentId`"
+    } else {
+        ""
+    };
+    format!("unsupported node config schema {version}; expected {CONFIG_SCHEMA_VERSION}{cutover}")
 }
 
 fn decode_credentials(path: &Path) -> Result<DeviceCredentials, ServiceError> {
@@ -179,47 +211,12 @@ fn prepare_state_directory(path: &Path) -> Result<PathBuf, ServiceError> {
     Ok(path)
 }
 
-fn profile_ids_for(targets: &[TargetDocument]) -> Result<Vec<AgentProfileId>, ServiceError> {
+fn validate_target_uniqueness(targets: &[TargetDocument]) -> Result<(), ServiceError> {
     if targets.is_empty() {
         return Err(ServiceError::Configuration(
             "at least one Host target must be configured".to_owned(),
         ));
     }
-    let profile_ids = targets
-        .iter()
-        .map(|target| target.profile.clone())
-        .collect::<BTreeSet<_>>();
-    for profile_id in &profile_ids {
-        if !matches!(profile_id.as_str(), ALPHA_PROFILE_ID | ARCEE_PROFILE_ID) {
-            return Err(ServiceError::Configuration(format!(
-                "node target references unsupported built-in profile `{profile_id}`"
-            )));
-        }
-    }
-    Ok(profile_ids.into_iter().collect())
-}
-
-fn build_profiles(
-    profile_ids: Vec<AgentProfileId>,
-    state_directory: &Path,
-) -> Result<Vec<AgentProfile>, ServiceError> {
-    let mut profiles = Vec::with_capacity(profile_ids.len());
-    for profile_id in profile_ids {
-        match profile_id.as_str() {
-            ALPHA_PROFILE_ID => profiles.push(alpha_profile()),
-            ARCEE_PROFILE_ID => profiles
-                .push(arcee_profile(state_directory).map_err(renoa_local::LocalHostError::from)?),
-            _ => {
-                return Err(ServiceError::Configuration(format!(
-                    "node target references unsupported built-in profile `{profile_id}`"
-                )));
-            }
-        }
-    }
-    Ok(profiles)
-}
-
-fn validate_target_uniqueness(targets: &[TargetDocument]) -> Result<(), ServiceError> {
     let mut target_names = HashSet::new();
     let mut sessions = HashSet::new();
     for target in targets {
@@ -245,7 +242,7 @@ fn build_targets(targets: Vec<TargetDocument>) -> Result<Vec<HostTarget>, Servic
         .map(|target| {
             HostTarget::new(
                 &TargetRef::new(target.target),
-                target.profile,
+                AgentId::from_uuid(target.agent_id),
                 target.session_id,
                 target.workspace,
             )
@@ -303,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn config_is_versioned_strict_and_references_known_profiles() {
+    fn config_is_versioned_strict_and_targets_one_configured_agent() {
         let files = tempfile::tempdir().expect("temporary directory");
         let bridge = files.path().join("bridge.mjs");
         let credential_store = files.path().join("model.sqlite");
@@ -311,8 +308,9 @@ mod tests {
         std::fs::write(&bridge, "").expect("write bridge");
         std::fs::write(&credential_store, "").expect("write model store");
         std::fs::create_dir(&workspace).expect("create workspace");
+        let agent_id = Uuid::new_v4();
         let base = json!({
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "endpoint": "ws://127.0.0.1:9/connect",
             "model": {
                 "bridge": bridge,
@@ -323,7 +321,7 @@ mod tests {
             },
             "targets": [{
                 "target": "workspace:test",
-                "profile": ALPHA_PROFILE_ID,
+                "agentId": agent_id,
                 "sessionId": Uuid::new_v4(),
                 "workspace": workspace
             }]
@@ -334,17 +332,19 @@ mod tests {
         #[cfg(unix)]
         private(&path);
         let decoded = decode_config(&path).expect("decode strict config");
-        assert_eq!(decoded.targets[0].profile.as_str(), ALPHA_PROFILE_ID);
+        assert_eq!(decoded.targets[0].agent_id, agent_id);
 
-        let mut unsupported_profile = base.clone();
-        unsupported_profile["targets"][0]["profile"] = json!("renoa.unknown.v1");
+        let mut missing_agent = base.clone();
+        missing_agent["targets"][0]
+            .as_object_mut()
+            .expect("target document")
+            .remove("agentId");
         std::fs::write(
             &path,
-            serde_json::to_vec(&unsupported_profile).expect("encode config"),
+            serde_json::to_vec(&missing_agent).expect("encode config"),
         )
-        .expect("write unsupported profile config");
-        let unsupported_profile = decode_config(&path).expect("decode profile ID");
-        assert!(profile_ids_for(&unsupported_profile.targets).is_err());
+        .expect("write target without agent id");
+        assert!(decode_config(&path).is_err());
 
         let mut unknown = base.clone();
         unknown["unexpected"] = json!(true);
@@ -352,14 +352,55 @@ mod tests {
             .expect("write unknown config");
         assert!(decode_config(&path).is_err());
 
-        let mut wrong_version = base;
-        wrong_version["schemaVersion"] = json!(2);
+        let mut earlier_version = base;
+        earlier_version["schemaVersion"] = json!(1);
         std::fs::write(
             &path,
-            serde_json::to_vec(&wrong_version).expect("encode config"),
+            serde_json::to_vec(&earlier_version).expect("encode config"),
         )
-        .expect("write wrong version config");
+        .expect("write earlier version config");
         assert!(decode_config(&path).is_err());
+    }
+
+    #[test]
+    fn an_earlier_config_document_is_refused_by_version_not_by_a_malformed_field() {
+        let files = tempfile::tempdir().expect("temporary directory");
+        let path = files.path().join("node.json");
+        let legacy = json!({
+            "schemaVersion": 1,
+            "endpoint": "ws://127.0.0.1:9/connect",
+            "model": {
+                "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+                "credentialStore": "/var/lib/renoa-node/model-auth.sqlite",
+                "providers": ["opencode-go"],
+                "defaultProvider": "opencode-go",
+                "defaultModel": "fixture-model"
+            },
+            "targets": [{
+                "target": "workspace:example",
+                "profile": "renoa.coding.alpha.v1",
+                "sessionId": Uuid::new_v4(),
+                "workspace": "/srv/renoa/node-workspaces/example"
+            }]
+        });
+        std::fs::write(&path, serde_json::to_vec(&legacy).expect("encode config"))
+            .expect("write legacy config");
+        #[cfg(unix)]
+        private(&path);
+
+        let error = decode_config(&path)
+            .err()
+            .expect("an earlier document is refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("unsupported node config schema 1"),
+            "{message}"
+        );
+        assert!(message.contains("expected 2"), "{message}");
+        assert!(
+            message.contains("profile") && message.contains("agentId"),
+            "{message}"
+        );
     }
 
     #[test]

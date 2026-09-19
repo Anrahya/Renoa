@@ -42,7 +42,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .await
         .expect("model schedules once");
     let record = h
-        .list_routines(child, None)
+        .list_routines(parent, child, None)
         .await
         .expect("routines")
         .remove(0);
@@ -59,7 +59,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
     let run = store::next(&h.config.database, expected + 60_000)
         .expect("late catchup")
         .expect("run");
-    let disarmed = h.routine(record.id).await.expect("disarmed");
+    let disarmed = h.routine(parent, record.id).await.expect("disarmed");
     assert!(!disarmed.spec.enabled);
     assert_eq!(disarmed.revision, record.revision + 1);
     assert!(
@@ -80,9 +80,9 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .await
         .expect("real execution");
     let artifact = h
-        .bot_workspace(child)
+        .agent_workspace(child)
         .await
-        .expect("bot workspace")
+        .expect("agent workspace")
         .join("digest.md");
     assert_eq!(
         fs::read_to_string(&artifact).expect("artifact"),
@@ -250,11 +250,27 @@ async fn schema_seventeen_upgrade_retains_existing_routines_and_receipts() {
         .expect("old schema");
     drop(db);
     drop(h);
-    let restored = host(d.path());
-    assert_eq!(
-        restored.routine(record.id).await.expect("preserved"),
-        record
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
     );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
+    let restored = host(d.path());
+    assert!(
+        restored.routine(parent, record.id).await.is_err(),
+        "the cutover discards the legacy routine and its receipts"
+    );
+    let (parent, child) = provisioned(&restored).await;
+    let record = change(
+        &restored,
+        parent,
+        RoutineMutation::Create { spec: spec(child) },
+        0,
+    )
+    .await
+    .expect("interval after the cutover");
     let replay = restored
         .manage_routine(
             parent,
@@ -264,6 +280,6 @@ async fn schema_seventeen_upgrade_retains_existing_routines_and_receipts() {
             CancellationToken::new(),
         )
         .await
-        .expect("receipt preserved");
+        .expect("receipt after the cutover");
     assert_eq!(replay.next_due_ms, record.next_due_ms);
 }

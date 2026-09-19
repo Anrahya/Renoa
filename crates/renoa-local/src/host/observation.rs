@@ -124,7 +124,7 @@ impl HostObserver {
             review_repositories: review_activity::repositories(&tx)?,
         };
         tx.commit().map_err(HostCatalogError::from)?;
-        result.sessions = sessions::read(&self.root.join("sessions"), &mut result.agents)?;
+        result.sessions = sessions::read(&self.root.join("sessions"), &result.agents)?;
         result.agents.sort_by_key(|agent| agent.id);
         Ok(result)
     }

@@ -2,8 +2,9 @@
 
 `renoa-telegram` is the first hosted surface for Arcee, Renoa's personal operator.
 It is a thin Telegram Bot API adapter around the ordinary `renoa-local` Host:
-the Host assembles Arcee from the profile, model, loop, skills, and tools, while
-the kernel remains the only owner of Agent history and execution state.
+the Host assembles Arcee from her stored agent definition, model, loop, skills,
+and tools, while the kernel remains the only owner of Agent history and
+execution state.
 
 Each private Telegram topic has one current Renoa session. `/new` moves only
 that topic to a fresh session; earlier admitted work retains its original
@@ -35,6 +36,7 @@ Build the model and optional MCP adapters as described in
 ```sh
 export RENOA_DATA_DIR='/absolute/path/to/private/renoa-data'
 export RENOA_TELEGRAM_WORKSPACE='/absolute/path/to/arcee-workspace'
+export RENOA_TELEGRAM_AGENT_ID='<agent uuid provisioned on this Host>'
 export RENOA_TELEGRAM_ALLOWED_USER_ID='123456789'
 export RENOA_TELEGRAM_BOT_TOKEN_FILE='/absolute/path/to/owner-only/token-file'
 export RENOA_TELEGRAM_IPV4_ONLY='1' # Only when this Host has a broken IPv6 route.
@@ -54,10 +56,11 @@ export RENOA_OAUTH_RELAY_ORIGIN='https://renoa.live'
 export RENOA_OAUTH_RELAY_DEVICE_CREDENTIAL_FILE='/absolute/path/to/owner-only/node-device.json'
 ```
 
-Arcee's Host profile permits only OpenCode Go. The model adapter remains a
-replaceable Host component shared with other profiles; Telegram contains no
-provider-specific request code. A future Discord surface can call the same
-session configuration methods without moving model state into Discord.
+Arcee's stored agent definition supplies her behavior and capabilities; the
+provider and model come from the launch settings above. The model adapter
+remains a replaceable Host component shared with other agents; Telegram
+contains no provider-specific request code. A future Discord surface can call
+the same session configuration methods without moving model state into Discord.
 
 The two OAuth relay settings are atomic: set both or neither. With them, Arcee
 shows a provider authorization link in Telegram instead of trying to open a
@@ -78,6 +81,10 @@ chat topics in BotFather if independent topic sessions are wanted.
 Address-family selection defaults to normal dual-stack networking. Setting
 `RENOA_TELEGRAM_IPV4_ONLY=1` binds only Telegram API connections to IPv4; this
 does not restrict Agent tools or MCP connections.
+
+The Telegram surface store binds the configured agent in `surface_identity`, and
+a store written by an earlier schema is refused by name at startup: delete the
+Telegram surface store after the Host cutover and re-pair.
 
 Run locally with:
 

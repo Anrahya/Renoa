@@ -3,14 +3,15 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::{HostCatalogError, parse_id};
-use crate::{AgentProfileId, RoutineSchedule};
+use crate::RoutineSchedule;
 
 #[derive(Debug, Serialize)]
 pub struct ObservedAgent {
     pub id: Uuid,
-    pub profile: String,
     pub name: String,
+    /// The creator agent id when an agent created this agent, otherwise null.
     pub created_by: Option<Uuid>,
+    pub preset_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,7 +33,7 @@ pub struct ObservedConnection {
     /// A stored catalog is not evidence of a currently healthy remote connection.
     pub catalog_available: bool,
     pub tool_count: u64,
-    pub selected_by_profiles: Vec<String>,
+    pub selected_by_agents: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,17 +51,17 @@ pub struct ObservedSkill {
 }
 
 pub(super) fn agents(db: &Connection) -> Result<Vec<ObservedAgent>, HostCatalogError> {
-    let mut q = db
-        .prepare("SELECT agent_id,profile_id,name,created_by FROM host_agents ORDER BY agent_id")?;
+    let mut q = db.prepare(
+        "SELECT agent_id,name,preset_id,creator_agent_id
+         FROM host_agents ORDER BY agent_id",
+    )?;
     let mut rows = q.query([])?;
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
-        let profile: String = row.get(1)?;
-        AgentProfileId::new(&profile).map_err(|e| HostCatalogError::Invalid(e.to_string()))?;
         items.push(ObservedAgent {
             id: parse_id(&row.get::<_, String>(0)?)?,
-            profile,
-            name: row.get(2)?,
+            name: row.get(1)?,
+            preset_id: row.get(2)?,
             created_by: row
                 .get::<_, Option<String>>(3)?
                 .as_deref()
@@ -101,21 +102,21 @@ pub(super) fn connections(db: &Connection) -> Result<Vec<ObservedConnection>, Ho
     let mut q = db.prepare("SELECT c.connection_id, EXISTS(SELECT 1 FROM mcp_catalogs m WHERE m.connection_id=c.connection_id),
         (SELECT count(*) FROM mcp_tools t WHERE t.connection_id=c.connection_id)
         FROM mcp_connections c ORDER BY c.connection_id")?;
-    let mut profiles = db.prepare(
-        "SELECT profile_id FROM profile_mcp_connections WHERE connection_id=?1 ORDER BY profile_id",
+    let mut agents = db.prepare(
+        "SELECT agent_id FROM host_agent_mcp_connections WHERE connection_id=?1 ORDER BY agent_id",
     )?;
     let mut rows = q.query([])?;
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
-        let selected_by_profiles = profiles
+        let selected_by_agents = agents
             .query_map([&id], |r| r.get(0))?
             .collect::<Result<_, _>>()?;
         items.push(ObservedConnection {
             id,
             catalog_available: row.get(1)?,
             tool_count: count(row, 2)?,
-            selected_by_profiles,
+            selected_by_agents,
         });
     }
     Ok(items)

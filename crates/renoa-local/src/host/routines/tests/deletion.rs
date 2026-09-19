@@ -21,7 +21,7 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     h.execute_routine_run(run.clone())
         .await
         .expect("automation");
-    let workspace = h.bot_workspace(child).await.expect("workspace");
+    let workspace = h.agent_workspace(child).await.expect("workspace");
     let chat = h
         .ensure_agent_session(child, &workspace, Uuid::new_v4())
         .await
@@ -38,12 +38,12 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
         matches!(output,LocalTurnOutcome::Completed {output,..} if output=="Automation deleted")
     );
     assert!(
-        h.list_routines(child, None)
+        h.list_routines(parent, child, None)
             .await
             .expect("inventory")
             .is_empty()
     );
-    assert!(h.routine(record.id).await.is_err());
+    assert!(h.routine(parent, record.id).await.is_err());
     assert!(
         store::next(&h.config.database, record.next_due_ms + 100_000_000)
             .expect("no future occurrence")
@@ -116,7 +116,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         .await
         .expect("original creation replay");
     assert!(
-        h.list_routines(child, None)
+        h.list_routines(parent, child, None)
             .await
             .expect("still deleted")
             .is_empty()
@@ -170,8 +170,22 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
     db.execute_batch("DROP TABLE host_routine_deletions; UPDATE host_metadata SET schema_version=18; PRAGMA user_version=18;").expect("old schema");
     drop(db);
     drop(h);
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let h = host(d.path());
-    assert_eq!(h.routine(record.id).await.expect("preserved"), record);
+    assert!(
+        h.routine(parent, record.id).await.is_err(),
+        "the cutover discards the legacy schedule"
+    );
+    let (parent, child) = provisioned(&h).await;
+    let record = change(&h, parent, RoutineMutation::Create { spec: spec(child) })
+        .await
+        .expect("create after the cutover");
     change(
         &h,
         child,
@@ -181,9 +195,9 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
         },
     )
     .await
-    .expect("delete after migration");
+    .expect("delete after the cutover");
     assert!(
-        h.list_routines(child, None)
+        h.list_routines(parent, child, None)
             .await
             .expect("deleted")
             .is_empty()
@@ -200,7 +214,11 @@ async fn rejected_or_cancelled_deletions_leave_the_automation_unchanged() {
         id: record.id,
         expected_revision: record.revision,
     };
-    assert!(change(&h, AgentId::new(), deletion.clone()).await.is_err());
+    assert!(
+        change(&h, outsider(&h).await, deletion.clone())
+            .await
+            .is_err()
+    );
     assert!(
         change(
             &h,
@@ -220,5 +238,8 @@ async fn rejected_or_cancelled_deletions_leave_the_automation_unchanged() {
             .await
             .is_err()
     );
-    assert_eq!(h.routine(record.id).await.expect("retained"), record);
+    assert_eq!(
+        h.routine(parent, record.id).await.expect("retained"),
+        record
+    );
 }

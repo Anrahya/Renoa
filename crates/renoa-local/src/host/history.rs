@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use renoa_kernel::AgentId;
 use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError, sessions::StoredSession};
@@ -43,17 +44,22 @@ impl AgentSessionHistory {
 impl LocalHost {
     /// Opens existing history without discovering models or resolving a runtime.
     ///
-    /// The registered profile, exact session/agent identity, workspace binding,
-    /// and exclusive kernel ownership are checked just as for executable loading.
-    /// Diagnostic failures are reported by the handle and do not hide history.
-    /// Drop the handle before loading the session for execution.
+    /// Only a session owned by `agent_id` is inspected; a session bound to a
+    /// different agent is refused from its manifest before its kernel is opened
+    /// or its history read. The exact
+    /// session identity, workspace binding, and exclusive kernel ownership are
+    /// checked just as for executable loading. Diagnostic failures are reported
+    /// by the handle and do not hide history. Drop the handle before loading
+    /// the session for execution.
     ///
     /// # Errors
     ///
-    /// Returns identity, workspace binding, ownership, or authoritative storage
-    /// failures. Corrupt kernel history never becomes a successful inspection.
+    /// Returns a foreign-agent rejection, or identity, workspace binding,
+    /// ownership, or authoritative storage failures. Corrupt kernel history
+    /// never becomes a successful inspection.
     pub async fn inspect_session(
         &self,
+        agent_id: AgentId,
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<AgentSessionHistory, LocalHostError> {
@@ -61,13 +67,14 @@ impl LocalHost {
             directory,
             manifest,
             kernel,
-        } = self.load_session_storage(session_uuid, cwd).await?;
+        } = self
+            .load_session_storage(Some(agent_id), session_uuid, cwd)
+            .await?;
         kernel.history()?;
         let diagnostic_error = TraceStore::open(
             directory.join(TRACE_DATABASE),
             manifest.session_id,
             manifest.agent_id,
-            &manifest.profile,
         )
         .err()
         .map(|error| error.to_string());

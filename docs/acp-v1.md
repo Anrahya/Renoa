@@ -51,9 +51,9 @@ renoa-agent mcp github install --account ACCOUNT
 ```
 
 This resolves the exact account through `gh`, refreshes the complete remote
-catalog, and attaches that connection to Alpha's searchable registry. It stores
-the hostname/account reference, not the token. No GitHub schema is advertised
-until Alpha loads an exact search result.
+catalog, and attaches that connection to the configured agent's searchable
+registry. It stores the hostname/account reference, not the token. No GitHub
+schema is advertised until that agent loads an exact search result.
 
 When a private shared plugin registry is configured, the same Host process can
 reconcile its immutable package library explicitly:
@@ -74,6 +74,9 @@ The process reads:
 - `RENOA_MODEL_PROVIDER`
 - `RENOA_MODEL`
 - `RENOA_MODEL_AUTH_STORE`
+- `RENOA_AGENT_ID`, the id of an agent provisioned on this Host. `renoa-agent
+  acp`, `renoa-agent mcp github install`, and `renoa-agent plugins sync` build
+  the full configuration and require it; `renoa-agent models --json` does not.
 - optional `RENOA_DATA_DIR`
 - optional `RENOA_MCP_ADAPTER`
 - optional `RENOA_MCP_REGISTRY_ADAPTER`
@@ -81,9 +84,10 @@ The process reads:
 
 Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
-enables Host catalog refresh and invocation. A tool reaches Alpha only after a
-Host profile attachment such as the GitHub command above. A committed change is
-visible on the next registry call without restarting ACP or the surface.
+enables Host catalog refresh and invocation. A tool reaches the configured agent
+only after a per-agent attachment such as the GitHub command above. A committed
+change is visible on the next registry call without restarting ACP or the
+surface.
 `RENOA_MCP_REGISTRY_ADAPTER` is the absolute path to the built read-only
 official MCP Registry adapter. It enables the `extension_manage` `search` and
 exact `lookup` actions. Registry metadata remains publisher-supplied research
@@ -91,15 +95,15 @@ input and never installs or connects an extension by itself.
 `RENOA_SHARED_PLUGIN_REGISTRY` is an HTTP or HTTPS origin with no path,
 credentials, query, or fragment. It points at Renoa's private package service.
 The service replicates only verified immutable Agent Plugin directories;
-credentials, MCP connections, catalogs, profile attachments, skills activated
+credentials, MCP connections, catalogs, per-agent attachments, skills activated
 by a session, and session history stay local. The first deployment exposes the
 loopback-only service through the private tailnet, but Tailscale is not part of
 the Host or registry wire contract.
 OAuth MCP connections additionally require the desktop `secret-tool` command
-and `xdg-open`. Alpha invokes the same `extension_manage` tool over ACP; the
-Host opens the browser, streams an authorization-required tool update, waits
-for its exact loopback callback, and publishes the catalog only after
-authenticated discovery succeeds. ACP and Waku never store or replay OAuth
+and `xdg-open`. The configured agent invokes the same `extension_manage` tool
+over ACP; the Host opens the browser, streams an authorization-required tool
+update, waits for its exact loopback callback, and publishes the catalog only
+after authenticated discovery succeeds. ACP and Waku never store or replay OAuth
 state.
 `RENOA_MODEL_PROVIDERS` is a comma-separated enabled set; when absent, it
 defaults to the single `RENOA_MODEL_PROVIDER`. `RENOA_MODEL_PROVIDER` and
@@ -109,15 +113,20 @@ the standard ACP model selector. Renoa durably stores provider and model as
 separate fields, so `session/load` restores the exact adapter rather than the
 current process default. Authentication remains local to the provider adapter,
 and every explicitly enabled provider must have a usable credential.
-The adapter always resolves Renoa Alpha v1, including its curated base prompt
-and bounded workspace `AGENTS.md` instructions. An environment variable cannot
-replace Alpha's instructions. The Host reads `AGENTS.md` again before each new
-turn and freezes the result only when the kernel admits that operation.
+The adapter resolves the agent named by `RENOA_AGENT_ID` and uses its stored
+definition, instructions included. An agent created from the
+`renoa.coding.alpha.v1` preset carries Alpha's curated base prompt; another
+preset carries the instructions it was created with. The process environment
+selects the model and the agent identity, not the agent's instructions. When
+the agent's stored behavior loads project instructions, the Host reads the
+bounded workspace `AGENTS.md` again before each new turn and freezes the result
+only when the kernel admits that operation.
 
 ## Implemented ACP behavior
 
 - `initialize` negotiates stable protocol version 1.
-- `session/new` creates a durable Alpha Agent and kernel Session.
+- `session/new` creates a durable Agent and kernel Session for the agent named
+  by `RENOA_AGENT_ID`.
 - `session/load` reopens that session after the ACP process exits.
 - `session/load` replays the complete kernel-backed transcript before its
   response, using durable kernel event UUIDs as ACP message IDs.
@@ -168,7 +177,7 @@ catalog. OpenCode Go availability is refreshed from its official endpoint;
 validated last-known-good and bundled catalogs keep discovery usable offline.
 A surface can refresh `renoa-agent models --json` while a session remains open.
 When it sends a newly discovered choice through standard ACP session config,
-Alpha refreshes and validates the authoritative catalog before accepting it.
+the Host refreshes and validates the authoritative catalog before accepting it.
 The exact selected model specification is then frozen for each admitted
 operation, so a remote catalog cannot change a running turn.
 Reasoning choices come from that model's declared capability map. A model
@@ -188,7 +197,7 @@ Each session is stored at:
 <data-directory>/sessions/<session-uuid>/trace.sqlite3
 ```
 
-The versioned manifest binds the Alpha profile, Agent identity, Session
+The versioned manifest binds the Agent identity, Session
 identity, and canonical workspace. The Host builds the manifest, initial
 runtime selection, and kernel database in one hidden staging directory, syncs
 them, then atomically publishes the directory under the session UUID before
@@ -268,8 +277,9 @@ cache with the replayed durable event identities instead of treating a second
 transcript as execution truth.
 
 When executable loading fails, `session/load` uses the Host's supported
-`inspect_session` path. It validates the same profile, session/Agent identity,
-workspace binding, exclusive ownership, and authoritative history, then replays
+`inspect_session` path. It validates the same
+session/Agent identity, workspace binding, exclusive ownership, and
+authoritative history, then replays
 the transcript without requiring model discovery or usable diagnostic storage.
 The load response reports `_meta["renoa.executionUnavailable"]` and, separately,
 `_meta["renoa.traceUnavailable"]` when diagnostic storage cannot open. This mode
@@ -286,9 +296,10 @@ an interrupted runtime under a different configuration.
 - All locally configured tools run without approval prompts. Permission policy
   remains a future Host/product feature, not an ACP rule.
 - No surface-supplied MCP servers, mode switching, account methods, or extra
-  workspace roots are advertised. MCP catalogs stay Host-owned; Alpha receives
-  only the fixed search/load/execute registry tools. SuperGrok login is still
-  performed before launch rather than through ACP account methods.
+  workspace roots are advertised. MCP catalogs stay Host-owned; the configured
+  agent receives only the fixed search/load/execute registry tools. SuperGrok
+  login is still performed before launch rather than through ACP account
+  methods.
 - An active turn's live deltas are transient. Reload reconstructs settled local
   history; cross-device delivery continuity still belongs to RCP.
 - Earlier pre-release session manifests used storage versions 1 and 2. This

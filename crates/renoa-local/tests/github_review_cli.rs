@@ -1,12 +1,14 @@
-use std::{collections::BTreeSet, fmt::Write as _, fs, path::Path, process::Command};
+use std::{fmt::Write as _, fs, path::Path, process::Command};
 
 use renoa_kernel::AgentId;
 use renoa_local::{
-    AgentProfileId, AgentRecord, BotRecipe, BotRecord, GitHubReviewAdmission, GitHubReviewCommand,
-    GitHubReviewPolicy, GitHubReviewReply, GitHubReviewTrigger, LocalHost, LocalHostAdapters,
-    LocalModelConfiguration, ModelProvider, arcee_profile,
+    AgentCreator, AgentDefinition, GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewPolicy,
+    GitHubReviewReply, GitHubReviewTrigger,
 };
+use serde_json::json;
 use uuid::Uuid;
+
+const SPECIALIST_INSTRUCTIONS: &str = "Read repository evidence";
 
 fn invoke(root: &Path, mode: &str, request: &impl serde::Serialize) -> std::process::Output {
     let file = root.join("request.json");
@@ -28,6 +30,16 @@ fn reply(output: &std::process::Output) -> GitHubReviewReply {
     serde_json::from_slice(&output.stdout).expect("typed management reply")
 }
 
+fn provision(root: &Path, document: &serde_json::Value) -> std::process::Output {
+    let output = invoke(root, "provision", document);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
 fn fixture(root: &Path) -> AgentId {
     let data = root.join("data");
     let bridge = root.join("model.mjs");
@@ -38,73 +50,59 @@ fn fixture(root: &Path) -> AgentId {
     )
     .expect("model");
     fs::write(&auth, "").expect("auth boundary");
-    let model = LocalModelConfiguration::new(
-        &bridge,
-        vec![ModelProvider::Xai],
-        ModelProvider::Xai,
-        "fixture",
-        &auth,
-    );
-    let host = LocalHost::new(
-        &data,
-        model,
-        vec![arcee_profile(&data).expect("profile")],
-        LocalHostAdapters::default(),
-    )
-    .expect("Host");
-    let operator = AgentId::new();
-    let specialist = AgentId::new();
-    tokio::runtime::Runtime::new()
-        .expect("runtime")
-        .block_on(async {
-            host.ensure_agent(AgentRecord {
-                id: operator,
-                profile: AgentProfileId::new(renoa_local::ARCEE_PROFILE_ID).expect("profile ID"),
-                name: "Arcee".to_owned(),
-                created_by: None,
-            })
-            .await
-            .expect("operator");
-        });
-    drop(host);
     fs::write(
         root.join("host.json"),
-        serde_json::to_vec(&serde_json::json!({
+        serde_json::to_vec(&json!({
             "data_directory":data,"model_bridge":bridge,"providers":["xai"],"provider":"xai",
             "model":"fixture","model_auth_store":auth
         }))
         .expect("config"),
     )
     .expect("config file");
-    let mut bot = BotRecord {
-        id: specialist,
-        created_by: operator,
-        recipe: BotRecipe {
-            name: "Soundwave".to_owned(),
-            instructions: "Read repository evidence".to_owned(),
-            tools: BTreeSet::new(),
-            connections: BTreeSet::new(),
-        },
-    };
-    let first = invoke(root, "ensure-bot", &bot);
-    assert!(
-        first.status.success(),
-        "{}",
-        String::from_utf8_lossy(&first.stderr)
+    let operator_operation = Uuid::new_v4();
+    let operator = provision(
+        root,
+        &json!({
+            "operationId": operator_operation,
+            "presetId": "renoa.personal.arcee.v1",
+            "name": "Arcee"
+        }),
+    );
+    let operator: AgentDefinition =
+        serde_json::from_slice(&operator.stdout).expect("operator reply");
+    assert_eq!(
+        operator.id,
+        renoa_local::derived_agent_id(operator_operation)
+    );
+    let specialist_operation = Uuid::new_v4();
+    let mut document = json!({
+        "operationId": specialist_operation,
+        "presetId": "renoa.specialist.v1",
+        "name": "Soundwave",
+        "instructions": SPECIALIST_INSTRUCTIONS
+    });
+    let first = provision(root, &document);
+    let definition: AgentDefinition =
+        serde_json::from_slice(&first.stdout).expect("specialist reply");
+    assert_eq!(
+        definition.id,
+        renoa_local::derived_agent_id(specialist_operation)
     );
     assert_eq!(
-        serde_json::from_slice::<BotRecord>(&first.stdout).expect("bot reply"),
-        bot
+        definition.creator,
+        AgentCreator::System {
+            component: "provisioning".to_owned()
+        }
     );
-    let replay = invoke(root, "ensure-bot", &bot);
-    assert!(replay.status.success());
+    assert_eq!(definition.operational.instructions, SPECIALIST_INSTRUCTIONS);
+    let replay = provision(root, &document);
     assert_eq!(first.stdout, replay.stdout);
-    "Conflicting name".clone_into(&mut bot.recipe.name);
-    assert!(!invoke(root, "ensure-bot", &bot).status.success());
-    bot.id = AgentId::new();
-    bot.created_by = AgentId::new();
-    assert!(!invoke(root, "ensure-bot", &bot).status.success());
-    specialist
+    document["name"] = "Conflicting name".into();
+    assert!(!invoke(root, "provision", &document).status.success());
+    document["name"] = "Soundwave".into();
+    document["presetId"] = "renoa.unknown.v1".into();
+    assert!(!invoke(root, "provision", &document).status.success());
+    definition.id
 }
 
 #[test]

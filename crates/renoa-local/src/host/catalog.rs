@@ -4,15 +4,12 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
 use thiserror::Error;
 
 mod agents;
+mod cutover;
 mod migrations;
 
-use migrations::{
-    MIGRATE_V1_TO_V2, MIGRATE_V2_TO_V3, MIGRATE_V3_TO_V4, MIGRATE_V4_TO_V5, MIGRATE_V5_TO_V6,
-    MIGRATE_V6_TO_V7, MIGRATE_V7_TO_V8, MIGRATE_V8_TO_V9, MIGRATE_V9_TO_V10, MIGRATE_V10_TO_V11,
-    MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
-};
+pub(crate) use cutover::cutover;
 
-const SCHEMA_VERSION: u32 = 25;
+const SCHEMA_VERSION: u32 = 28;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -128,13 +125,6 @@ const SCHEMA: &str = "
         PRIMARY KEY (connection_id, source_index)
     ) STRICT;
 
-    CREATE TABLE profile_mcp_connections (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        connection_id TEXT NOT NULL
-            REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
-        PRIMARY KEY (profile_id, connection_id)
-    ) STRICT;
-
     CREATE TABLE mcp_oauth_flows (
         connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
         operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 512),
@@ -179,54 +169,6 @@ const SCHEMA: &str = "
         license TEXT,
         compatibility TEXT,
         UNIQUE (skill_digest, name)
-    ) STRICT;
-
-    CREATE TABLE profile_skill_bindings (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (
-            scope_kind IN ('global', 'workspace', 'plugin')
-        ),
-        workspace TEXT,
-        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
-        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-        skill_digest TEXT NOT NULL,
-        FOREIGN KEY (skill_digest, skill_name)
-            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-        CHECK (
-            (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
-            OR
-            (scope_kind = 'workspace' AND length(workspace) > 0)
-        ),
-        PRIMARY KEY (profile_id, source_id, skill_name)
-    ) STRICT;
-
-    CREATE TABLE skill_source_rejections (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (
-            scope_kind IN ('global', 'workspace', 'plugin')
-        ),
-        workspace TEXT,
-        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
-        entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
-        reason TEXT NOT NULL CHECK (length(reason) > 0),
-        CHECK (
-            (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
-            OR
-            (scope_kind = 'workspace' AND length(workspace) > 0)
-        ),
-        PRIMARY KEY (profile_id, source_id, entry_name)
-    ) STRICT;
-
-    CREATE TABLE session_skills (
-        activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
-        activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
-        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-        skill_digest TEXT NOT NULL,
-        FOREIGN KEY (skill_digest, skill_name)
-            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-        UNIQUE (session_id, skill_name),
-        UNIQUE (session_id, skill_digest)
     ) STRICT;
 
     CREATE TABLE installed_plugins (
@@ -294,7 +236,9 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
     if (1..SCHEMA_VERSION).contains(&observed) {
-        return migrate(connection);
+        return Err(HostCatalogError::Invalid(format!(
+            "this data root holds schema {observed}; the canonical agent cutover discards agent-owned state, so start it with `renoa-host <config.json> reset <backup-directory>`"
+        )));
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version =
@@ -307,11 +251,10 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
         0 => {
             transaction.execute_batch(SCHEMA)?;
             agents::initialize(&transaction)?;
-            initialize_bots(&transaction)?;
+            crate::skills::SkillStore::initialize_tables(&transaction)?;
+            super::definition::schema::initialize(&transaction)?;
             super::routines::initialize(&transaction)?;
-            super::bots::names::initialize(&transaction)?;
             super::reviews::initialize(&transaction)?;
-            super::bots::selection::initialize(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -324,86 +267,6 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             "schema {found} is unsupported; expected {SCHEMA_VERSION}"
         ))),
     }
-}
-
-fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
-    connection.pragma_update(None, "foreign_keys", false)?;
-    let migration = (|| {
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let version =
-            transaction.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-        match version {
-            SCHEMA_VERSION => transaction.commit().map_err(HostCatalogError::from),
-            version if (1..SCHEMA_VERSION).contains(&version) => {
-                if version <= 2 {
-                    require_complete_selected_catalogs(&transaction)?;
-                }
-                for (source_version, migration) in [
-                    (1, MIGRATE_V1_TO_V2),
-                    (2, MIGRATE_V2_TO_V3),
-                    (3, MIGRATE_V3_TO_V4),
-                    (4, MIGRATE_V4_TO_V5),
-                    (5, MIGRATE_V5_TO_V6),
-                    (6, MIGRATE_V6_TO_V7),
-                    (7, MIGRATE_V7_TO_V8),
-                    (8, MIGRATE_V8_TO_V9),
-                    (9, MIGRATE_V9_TO_V10),
-                    (10, MIGRATE_V10_TO_V11),
-                    (11, MIGRATE_V11_TO_V12),
-                    (12, MIGRATE_V12_TO_V13),
-                ] {
-                    if source_version >= version {
-                        transaction.execute_batch(migration)?;
-                    }
-                }
-                if version < 14 {
-                    agents::initialize(&transaction)?;
-                }
-                initialize_bots(&transaction)?;
-                super::routines::initialize(&transaction)?;
-                super::bots::names::initialize(&transaction)?;
-                super::reviews::initialize(&transaction)?;
-                super::bots::selection::initialize(&transaction)?;
-                transaction.execute(
-                    "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
-                    [SCHEMA_VERSION],
-                )?;
-                transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                transaction.commit()?;
-                Ok(())
-            }
-            found => Err(HostCatalogError::Invalid(format!(
-                "schema {found} is unsupported; expected {SCHEMA_VERSION}"
-            ))),
-        }
-    })();
-    let foreign_keys = connection
-        .pragma_update(None, "foreign_keys", true)
-        .map_err(HostCatalogError::from);
-    migration?;
-    foreign_keys?;
-    verify(connection)
-}
-
-fn require_complete_selected_catalogs(connection: &Connection) -> Result<(), HostCatalogError> {
-    let missing = connection
-        .query_row(
-            "SELECT binding.connection_id
-             FROM profile_mcp_tools AS binding
-             LEFT JOIN mcp_catalogs AS catalog
-               ON catalog.connection_id = binding.connection_id
-             WHERE catalog.connection_id IS NULL
-             LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    if let Some(connection_id) = missing {
-        return Err(HostCatalogError::Invalid(format!(
-            "selected connection '{connection_id}' has no complete catalog"
-        )));
-    }
-    Ok(())
 }
 
 fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
@@ -422,12 +285,14 @@ fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
         ));
     }
     let violation = connection
-        .query_row("PRAGMA foreign_key_check", [], |_| Ok(()))
+        .query_row("PRAGMA foreign_key_check", [], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(2)?))
+        })
         .optional()?;
-    if violation.is_some() {
-        return Err(HostCatalogError::Invalid(
-            "foreign-key validation failed".to_owned(),
-        ));
+    if let Some((table, parent)) = violation {
+        return Err(HostCatalogError::Invalid(format!(
+            "foreign-key validation failed: {table} references {parent}"
+        )));
     }
     Ok(())
 }
@@ -445,21 +310,9 @@ fn restrict_database_permissions(_path: &Path) -> Result<(), HostCatalogError> {
     Ok(())
 }
 
-fn initialize_bots(transaction: &rusqlite::Transaction<'_>) -> Result<(), HostCatalogError> {
-    transaction.execute_batch(
-        "CREATE TABLE IF NOT EXISTS host_bots (
-        agent_id TEXT PRIMARY KEY REFERENCES host_agents(agent_id),
-        profile_id TEXT NOT NULL UNIQUE,
-        record_json TEXT NOT NULL CHECK(json_valid(record_json))
-    ) STRICT;
-    UPDATE host_metadata SET schema_version = 15 WHERE singleton = 1;",
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{initialize, open_verified};
+    use super::{HostCatalogError, cutover, initialize, open_verified};
 
     #[test]
     fn schema_ten_adds_an_unbound_shared_registry_cursor() {
@@ -470,7 +323,12 @@ mod tests {
             let connection = open_verified(&database).expect("open current catalog");
             connection
                 .execute_batch(
-                    "DROP TABLE host_agents;
+                    "INSERT INTO mcp_integrations(
+                        integration_id, kind, endpoint, request_headers_json
+                     ) VALUES (
+                        'retained', 'direct_streamable_http', 'https://example.com/mcp', '{}'
+                     );
+                     DROP TABLE host_agents;
                      DROP TABLE host_identity;
                      DROP TABLE shared_plugin_registry_state;
                      UPDATE host_metadata SET schema_version = 10 WHERE singleton = 1;
@@ -478,8 +336,14 @@ mod tests {
                 )
                 .expect("construct schema-ten fixture");
         }
-        initialize(&database).expect("migrate schema ten");
-        let connection = open_verified(&database).expect("open migrated catalog");
+        let refused = initialize(&database);
+        assert!(
+            matches!(&refused, Err(HostCatalogError::Invalid(message)) if message.contains("reset")),
+            "an earlier data root must be refused until it is reset: {refused:?}"
+        );
+        cutover(&database).expect("cut over schema ten");
+        initialize(&database).expect("open after the cutover");
+        let connection = open_verified(&database).expect("open cut-over catalog");
         let rows = connection
             .query_row(
                 "SELECT COUNT(*) FROM shared_plugin_registry_state",
@@ -488,5 +352,57 @@ mod tests {
             )
             .expect("read shared registry state");
         assert_eq!(rows, 0);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM mcp_integrations WHERE integration_id = 'retained'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .expect("retained integration"),
+            1
+        );
+    }
+
+    #[test]
+    fn a_creation_receipt_without_a_result_is_refused_and_repaired() {
+        let directory = tempfile::tempdir().expect("temporary Host catalog");
+        let database = directory.path().join("host.sqlite3");
+        initialize(&database).expect("initialize current catalog");
+        {
+            let connection = open_verified(&database).expect("open current catalog");
+            connection
+                .execute_batch(
+                    "DROP TABLE host_agent_creations;
+                     CREATE TABLE host_agent_creations (
+                        operation_id TEXT PRIMARY KEY,
+                        agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
+                        request_json TEXT NOT NULL CHECK (json_valid(request_json))
+                     ) STRICT;
+                     UPDATE host_metadata SET schema_version = 27 WHERE singleton = 1;
+                     PRAGMA user_version = 27;",
+                )
+                .expect("construct schema-twenty-seven fixture");
+        }
+        let refused = initialize(&database);
+        assert!(
+            matches!(&refused, Err(HostCatalogError::Invalid(message)) if message.contains("reset")),
+            "a receipt without a stored result must be refused until it is reset: {refused:?}"
+        );
+        cutover(&database).expect("cut over schema twenty-seven");
+        initialize(&database).expect("open after the cutover");
+        let connection = open_verified(&database).expect("open cut-over catalog");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('host_agent_creations')
+                     WHERE name = 'result_json'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .expect("read creation receipt columns"),
+            1,
+            "the cutover must restore the canonical receipt shape"
+        );
     }
 }

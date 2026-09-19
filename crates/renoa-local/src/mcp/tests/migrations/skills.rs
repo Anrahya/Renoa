@@ -2,8 +2,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use super::super::{PROFILE, store};
-use crate::mcp::McpCatalogStore;
+use super::{LEGACY_PROFILE_ID, count, cut_over, retired, store};
 
 #[test]
 fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings() {
@@ -22,9 +21,9 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
              INSERT INTO skill_revisions(
                 skill_digest, name, description, license, compatibility
              ) VALUES ('{digest}', 'review', 'Review code.', NULL, NULL);
-             INSERT INTO profile_skill_bindings(
-                profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
-             ) VALUES ('{PROFILE}', 'global', NULL, '/skills', 'review', '{digest}');
+             INSERT INTO agent_skill_bindings(
+                agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
+             ) VALUES ('{LEGACY_PROFILE_ID}', 'global', NULL, '/skills', 'review', '{digest}');
              CREATE TABLE profile_skill_bindings_v6 (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
                 scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
@@ -42,9 +41,9 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
                 PRIMARY KEY (profile_id, source_root, skill_name)
              ) STRICT;
              INSERT INTO profile_skill_bindings_v6
-             SELECT profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
-             FROM profile_skill_bindings;
-             DROP TABLE profile_skill_bindings;
+             SELECT agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
+             FROM agent_skill_bindings;
+             DROP TABLE agent_skill_bindings;
              ALTER TABLE profile_skill_bindings_v6 RENAME TO profile_skill_bindings;
              CREATE TABLE skill_source_rejections_v6 (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
@@ -61,9 +60,9 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
                 PRIMARY KEY (profile_id, source_root, entry_name)
              ) STRICT;
              INSERT INTO skill_source_rejections_v6
-             SELECT profile_id, scope_kind, workspace, source_id, entry_name, reason
-             FROM skill_source_rejections;
-             DROP TABLE skill_source_rejections;
+             SELECT agent_id, scope_kind, workspace, source_id, entry_name, reason
+             FROM agent_skill_source_rejections;
+             DROP TABLE agent_skill_source_rejections;
              ALTER TABLE skill_source_rejections_v6 RENAME TO skill_source_rejections;
              DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 6 WHERE singleton = 1;
@@ -72,46 +71,47 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
         .expect("downgrade fixture to schema v6");
     drop(connection);
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v6 to current");
-    let connection = Connection::open(migrated.path()).expect("open migrated catalog");
+    let migrated = cut_over(directory.path());
+    let connection = Connection::open(migrated.path()).expect("open cut-over catalog");
+    assert!(
+        retired(&connection, "profile_skill_bindings"),
+        "the retired profile binding table must not survive the cutover"
+    );
     assert_eq!(
         connection
             .query_row(
-                "SELECT scope_kind, source_id, skill_digest
-                 FROM profile_skill_bindings WHERE skill_name = 'review'",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                },
+                "SELECT name FROM skill_revisions WHERE skill_digest = ?1",
+                [digest],
+                |row| row.get::<_, String>(0),
             )
-            .expect("read migrated skill binding"),
-        ("global".to_owned(), "/skills".to_owned(), digest.to_owned())
+            .expect("retained skill revision"),
+        "review"
+    );
+    assert_eq!(
+        count(&connection, "agent_skill_bindings"),
+        0,
+        "the cutover must not fabricate an agent binding"
     );
     connection
         .execute(
-            "INSERT INTO profile_skill_bindings(
-                profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
-             ) VALUES (?1, 'plugin', NULL, 'agent-plugin:fixture', 'review', ?2)",
-            [PROFILE, digest],
+            "INSERT INTO agent_skill_bindings(
+                agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
+             ) VALUES ('agent-after-cutover', 'plugin', NULL, 'agent-plugin:fixture', 'review', ?1)",
+            [digest],
         )
-        .expect("new schema accepts plugin skill scope");
+        .expect("canonical schema accepts plugin skill scope");
 }
 
 #[test]
 fn version_four_catalog_removes_instruction_policy_without_losing_activations() {
-    let (_directory, store) = store();
+    let (directory, store) = store();
     let path = store.path().to_owned();
     drop(store);
 
     downgrade_to_v4_with_large_skill(&path);
 
-    let migrated = McpCatalogStore::initialize(path).expect("migrate schema v4 to current");
-    let connection = Connection::open(migrated.path()).expect("open migrated catalog");
+    let migrated = cut_over(directory.path());
+    let connection = Connection::open(migrated.path()).expect("open cut-over catalog");
     let columns = connection
         .prepare("PRAGMA table_info(session_skills)")
         .expect("prepare session skill columns")
@@ -123,28 +123,18 @@ fn version_four_catalog_removes_instruction_policy_without_losing_activations() 
     assert_eq!(
         connection
             .query_row(
-                "SELECT activation_order, session_id, activation_command_id, skill_name,
-                        skill_digest
-                 FROM session_skills",
+                "SELECT name FROM skill_revisions
+                 WHERE skill_digest = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
                 [],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ))
-                },
+                |row| row.get::<_, String>(0),
             )
-            .expect("read migrated activation"),
-        (
-            7,
-            "session".to_owned(),
-            "command".to_owned(),
-            "large".to_owned(),
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-        )
+            .expect("retained skill revision"),
+        "large"
+    );
+    assert_eq!(
+        count(&connection, "session_skills"),
+        0,
+        "the cutover discards session activations"
     );
     connection
         .execute_batch(
@@ -161,7 +151,7 @@ fn version_four_catalog_removes_instruction_policy_without_losing_activations() 
                 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
              );",
         )
-        .expect("insert activation after migration");
+        .expect("insert activation after the cutover");
     assert_eq!(
         connection
             .query_row(
@@ -170,7 +160,7 @@ fn version_four_catalog_removes_instruction_policy_without_losing_activations() 
                 |row| row.get::<_, i64>(0),
             )
             .expect("read next activation order"),
-        8
+        1
     );
 }
 
@@ -242,9 +232,9 @@ pub(super) fn downgrade_skill_sources_to_v6_shape(connection: &Connection) {
                 PRIMARY KEY (profile_id, source_root, skill_name)
              ) STRICT;
              INSERT INTO profile_skill_bindings_v6
-             SELECT profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
-             FROM profile_skill_bindings;
-             DROP TABLE profile_skill_bindings;
+             SELECT agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
+             FROM agent_skill_bindings;
+             DROP TABLE agent_skill_bindings;
              ALTER TABLE profile_skill_bindings_v6 RENAME TO profile_skill_bindings;
              CREATE TABLE skill_source_rejections_v6 (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
@@ -261,9 +251,9 @@ pub(super) fn downgrade_skill_sources_to_v6_shape(connection: &Connection) {
                 PRIMARY KEY (profile_id, source_root, entry_name)
              ) STRICT;
              INSERT INTO skill_source_rejections_v6
-             SELECT profile_id, scope_kind, workspace, source_id, entry_name, reason
-             FROM skill_source_rejections;
-             DROP TABLE skill_source_rejections;
+             SELECT agent_id, scope_kind, workspace, source_id, entry_name, reason
+             FROM agent_skill_source_rejections;
+             DROP TABLE agent_skill_source_rejections;
              ALTER TABLE skill_source_rejections_v6 RENAME TO skill_source_rejections;",
         )
         .expect("downgrade skill source tables to schema v6 shape");

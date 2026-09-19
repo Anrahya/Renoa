@@ -18,13 +18,17 @@ impl Receiver {
         } else if let Ok(id) = Uuid::parse_str(&value) {
             id
         } else {
-            return Ok(AgentSelection::Rejected("Use !agent to list bots, !agent <id> to start a bot conversation, or !agent arcee.".to_owned()));
+            return Ok(AgentSelection::Rejected("Use !agent to list agents, !agent <id> to start an agent conversation, or !agent arcee.".to_owned()));
         };
         if id != self.store.operator_agent().await?
-            && self.host.bot(AgentId::from_uuid(id)).await?.is_none()
+            && self
+                .host
+                .agent_definition(AgentId::from_uuid(id))
+                .await?
+                .is_none()
         {
             return Ok(AgentSelection::Rejected(
-                "That agent is not in this Host. Use !agent to list available bots.".to_owned(),
+                "That agent is not in this Host. Use !agent to list available agents.".to_owned(),
             ));
         }
         Ok(AgentSelection::Selected(id))

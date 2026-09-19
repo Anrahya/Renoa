@@ -13,6 +13,7 @@ doc = false
 [dependencies]
 futures-util.workspace = true
 renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
+renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
 renoa-local = { path = "../renoa-local", version = "0.1.0" }
 reqwest.workspace = true
 rusqlite.workspace = true

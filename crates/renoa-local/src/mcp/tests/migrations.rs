@@ -7,11 +7,12 @@ use std::{
 use rusqlite::Connection;
 use tempfile::tempdir;
 
-use super::{ENDPOINT, PROFILE, snapshot, store};
+use super::{ENDPOINT, agent_id, snapshot, store};
 use crate::{
     host::catalog::HostCatalogError,
     mcp::{
-        McpCatalogStore, McpConnectionAuth, McpHostError, McpOAuthRegistration, McpRequestHeaders,
+        McpCatalogStore, McpCatalogTool, McpConnectionAuth, McpHostError, McpOAuthRegistration,
+        McpRequestHeaders,
     },
 };
 
@@ -19,6 +20,64 @@ mod registration;
 mod skills;
 
 use skills::downgrade_skill_sources_to_v6_shape;
+
+const LEGACY_PROFILE_ID: &str = "renoa.coding.alpha.v1";
+
+fn cut_over(directory: &Path) -> McpCatalogStore {
+    let refused = McpCatalogStore::initialize(directory.join("host.sqlite3"));
+    assert!(
+        matches!(&refused, Err(McpHostError::HostCatalog(HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(directory).expect("cutover reset");
+    McpCatalogStore::initialize(directory.join("host.sqlite3")).expect("open after the cutover")
+}
+
+/// Reads one migrated agent's connection bindings from the canonical table.
+fn migrated_connections(path: &Path, agent: &str) -> Vec<String> {
+    let connection = Connection::open(path).expect("open migrated catalog");
+    let mut statement = connection
+        .prepare(
+            "SELECT connection_id FROM host_agent_mcp_connections
+             WHERE agent_id = ?1 ORDER BY connection_id",
+        )
+        .expect("prepare connection read");
+    statement
+        .query_map([agent], |row| row.get(0))
+        .expect("query connections")
+        .collect::<Result<Vec<String>, _>>()
+        .expect("read connections")
+}
+
+fn count(connection: &Connection, table: &str) -> u32 {
+    connection
+        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .expect("count rows")
+}
+
+fn count_where(connection: &Connection, table: &str, column: &str, value: &str) -> u32 {
+    connection
+        .query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
+            [value],
+            |row| row.get(0),
+        )
+        .expect("count matching rows")
+}
+
+fn retired(connection: &Connection, table: &str) -> bool {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get::<_, u32>(0),
+        )
+        .expect("retired table lookup")
+        == 0
+}
 
 #[test]
 fn a_newer_host_catalog_schema_is_rejected() {
@@ -43,21 +102,23 @@ fn a_newer_host_catalog_schema_is_rejected() {
 #[test]
 fn version_one_catalog_migrates_without_losing_no_auth_state() {
     let (directory, store) = store();
+    let agent = agent_id(1).to_string();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
-        .enable_profile_connection(PROFILE, "primary")
+        .enable_agent_connection(&agent, "primary")
         .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
 
     let connection = Connection::open(&path).expect("open migration fixture");
     connection
-        .execute_batch(
+        .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
@@ -74,11 +135,11 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
                 PRIMARY KEY (profile_id, connection_id, tool_name)
              ) STRICT;
              INSERT INTO profile_mcp_tools(profile_id, connection_id, tool_name)
-             VALUES ('renoa.coding.alpha.v1', 'primary', 'echo');
-             DROP TABLE profile_mcp_connections;
+             VALUES ('{LEGACY_PROFILE_ID}', 'primary', 'echo');
+             DROP TABLE host_agent_mcp_connections;
              DROP TABLE session_skills;
-             DROP TABLE skill_source_rejections;
-             DROP TABLE profile_skill_bindings;
+             DROP TABLE agent_skill_source_rejections;
+             DROP TABLE agent_skill_bindings;
              DROP TABLE skill_revisions;
              CREATE TABLE mcp_connections_v1 (
                 connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
@@ -90,13 +151,12 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
              DROP TABLE mcp_connections;
              ALTER TABLE mcp_connections_v1 RENAME TO mcp_connections;
              DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 1 WHERE singleton = 1;
-             PRAGMA user_version = 1;",
-        )
+             PRAGMA user_version = 1;"
+        ))
         .expect("downgrade fixture to schema v1");
     drop(connection);
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v1 to v4");
+    let migrated = cut_over(directory.path());
     assert_eq!(
         migrated
             .connection_config("primary")
@@ -106,16 +166,20 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     );
     assert_eq!(
         migrated
-            .profile_connection_ids(PROFILE)
-            .expect("load migrated Alpha connections"),
-        ["primary"]
-    );
-    assert_eq!(
-        migrated
-            .profile_tool_summaries(PROFILE)
-            .expect("load migrated Alpha tools")[0]
-            .name,
+            .load_catalog("primary")
+            .expect("load migrated catalog")
+            .tools()[0]
+            .name(),
         "echo"
+    );
+    assert!(
+        migrated_connections(migrated.path(), &agent).is_empty(),
+        "the cutover must not fabricate an agent attachment"
+    );
+    let connection = Connection::open(migrated.path()).expect("open cut-over catalog");
+    assert!(
+        retired(&connection, "profile_mcp_connections"),
+        "the retired profile attachment table must not survive the cutover"
     );
 }
 
@@ -133,7 +197,7 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
 
     Connection::open(&path)
         .expect("open migration fixture")
-        .execute_batch(
+        .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
@@ -150,47 +214,53 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
                 PRIMARY KEY (profile_id, connection_id, tool_name)
              ) STRICT;
              INSERT INTO profile_mcp_tools(profile_id, connection_id, tool_name)
-             VALUES ('renoa.coding.alpha.v1', 'primary', 'echo');
-             DROP TABLE profile_mcp_connections;
+             VALUES ('{LEGACY_PROFILE_ID}', 'primary', 'echo');
+             DROP TABLE host_agent_mcp_connections;
              DROP TABLE session_skills;
-             DROP TABLE skill_source_rejections;
-             DROP TABLE profile_skill_bindings;
+             DROP TABLE agent_skill_source_rejections;
+             DROP TABLE agent_skill_bindings;
              DROP TABLE skill_revisions;
              DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 2 WHERE singleton = 1;
-             PRAGMA user_version = 2;",
-        )
+             PRAGMA user_version = 2;"
+        ))
         .expect("downgrade fixture to schema v2");
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v2 to v4");
+    let migrated = cut_over(directory.path());
     assert_eq!(
         migrated
-            .profile_connection_ids(PROFILE)
-            .expect("load migrated Alpha connections"),
-        ["primary"]
-    );
-    assert_eq!(
-        migrated
-            .profile_tool_summaries(PROFILE)
-            .expect("load the full attached catalog")
+            .load_catalog("primary")
+            .expect("load the full retained catalog")
+            .tools()
             .iter()
-            .map(|tool| tool.name.as_str())
+            .map(McpCatalogTool::name)
             .collect::<Vec<_>>(),
         ["echo", "unused"]
+    );
+    let connection = Connection::open(migrated.path()).expect("open cut-over catalog");
+    assert_eq!(
+        count(&connection, "host_agent_mcp_connections"),
+        0,
+        "the cutover must not fabricate an agent attachment"
+    );
+    assert!(
+        retired(&connection, "profile_mcp_tools"),
+        "the retired tool selection table must not survive the cutover"
     );
 }
 
 #[test]
 fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
     let (directory, store) = store();
+    let agent = agent_id(1).to_string();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
-        .enable_profile_connection(PROFILE, "primary")
+        .enable_agent_connection(&agent, "primary")
         .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
@@ -207,31 +277,36 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
              ALTER TABLE mcp_catalogs DROP COLUMN request_headers_json;
              ALTER TABLE mcp_integrations DROP COLUMN request_headers_json;
              DROP TABLE session_skills;
-             DROP TABLE skill_source_rejections;
-             DROP TABLE profile_skill_bindings;
+             DROP TABLE agent_skill_source_rejections;
+             DROP TABLE agent_skill_bindings;
              DROP TABLE skill_revisions;
              DROP TABLE host_agents; DROP TABLE host_identity; UPDATE host_metadata SET schema_version = 3 WHERE singleton = 1;
              PRAGMA user_version = 3;",
         )
         .expect("downgrade fixture to schema v3");
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v3 to current");
+    let migrated = cut_over(directory.path());
     assert_eq!(
         migrated
-            .profile_connection_ids(PROFILE)
-            .expect("load migrated Alpha connections"),
-        ["primary"]
+            .connection_config("primary")
+            .expect("load retained connection")
+            .auth,
+        McpConnectionAuth::None
     );
     assert_eq!(
         migrated
-            .profile_tool_summaries(PROFILE)
-            .expect("load migrated Alpha tools")[0]
-            .name,
+            .load_catalog("primary")
+            .expect("load retained catalog")
+            .tools()[0]
+            .name(),
         "echo"
     );
+    assert!(
+        migrated_connections(migrated.path(), &agent).is_empty(),
+        "the cutover must not fabricate an agent attachment"
+    );
     Connection::open(migrated.path())
-        .expect("open migrated catalog")
+        .expect("open cut-over catalog")
         .prepare("SELECT activation_command_id FROM session_skills")
         .expect("current session skills include command ownership");
 }
@@ -239,14 +314,16 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
 #[test]
 fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
     let (directory, store) = store();
+    let agent = agent_id(1).to_string();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
-        .enable_profile_connection(PROFILE, "primary")
+        .enable_agent_connection(&agent, "primary")
         .expect("enable connection");
     let path = store.path().to_owned();
     drop(store);
@@ -289,26 +366,23 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
         )
         .expect("downgrade fixture to schema v5");
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v5 to current");
-    assert_eq!(
-        migrated
-            .profile_connection_ids(PROFILE)
-            .expect("load migrated Alpha connections"),
-        ["primary"]
+    let migrated = cut_over(directory.path());
+    assert!(
+        migrated_connections(migrated.path(), &agent).is_empty(),
+        "the cutover must not fabricate an agent attachment"
     );
     assert_eq!(
         migrated
             .load_catalog("primary")
-            .expect("load migrated catalog")
+            .expect("load retained catalog")
             .tools()[0]
             .name(),
         "echo"
     );
-    let connection = Connection::open(migrated.path()).expect("open migrated catalog");
+    let connection = Connection::open(migrated.path()).expect("open cut-over catalog");
     connection
         .prepare("SELECT plugin_digest FROM installed_plugins")
-        .expect("package tables exist after migration");
+        .expect("package tables exist after the cutover");
     assert!(
         connection
             .prepare("SELECT auth_credential_id FROM mcp_connections")
@@ -323,8 +397,9 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register existing connection");
     let existing = snapshot("primary", ENDPOINT, &["search"]);
+    crate::test_agents::insert_agent(store.path(), &agent_id(1).to_string());
     store
-        .publish_and_enable_connection(PROFILE, &existing)
+        .publish_and_enable_connection(&agent_id(1).to_string(), &existing)
         .expect("publish and attach existing catalog");
     let path = store.path().to_owned();
     drop(store);
@@ -374,8 +449,7 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
         )
         .expect("downgrade fixture to schema v7");
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate schema v7 to current");
+    let migrated = cut_over(directory.path());
     assert_eq!(
         migrated
             .connection_config("primary")
@@ -386,16 +460,13 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
     assert_eq!(
         migrated
             .load_catalog("primary")
-            .expect("load existing catalog after migration")
+            .expect("load existing catalog after cutover")
             .digest(),
         existing.digest()
     );
-    assert_eq!(
-        migrated
-            .profile_tool_summaries(PROFILE)
-            .expect("load existing attachment after migration")
-            .len(),
-        1
+    assert!(
+        migrated_connections(migrated.path(), &agent_id(1).to_string()).is_empty(),
+        "the cutover must not fabricate an agent attachment"
     );
     let oauth = McpConnectionAuth::oauth(
         "oauth",

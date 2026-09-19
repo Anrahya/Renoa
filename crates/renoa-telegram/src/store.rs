@@ -5,6 +5,7 @@ use std::{
 
 use crate::ingress::{ParsedUpdate, Topic};
 use rusqlite::{Connection, OptionalExtension as _, params};
+use uuid::Uuid;
 
 mod actions;
 mod admission;
@@ -43,37 +44,51 @@ impl SurfaceStore {
 
     pub(crate) async fn bind_identity(
         &self,
+        agent_id: Uuid,
         bot_id: i64,
         allowed_user_id: i64,
         workspace: &Path,
     ) -> Result<(), StoreError> {
+        let agent_id = agent_id.to_string();
         let workspace = encoded_path(workspace);
         self.access(move |connection| {
             let existing = connection
                 .query_row(
-                    "SELECT bot_id, allowed_user_id, workspace FROM surface_identity WHERE singleton = 1",
+                    "SELECT agent_id, bot_id, allowed_user_id, workspace
+                     FROM surface_identity WHERE singleton = 1",
                     [],
                     |row| {
                         Ok((
-                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(0)?,
                             row.get::<_, i64>(1)?,
-                            row.get::<_, Vec<u8>>(2)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, Vec<u8>>(3)?,
                         ))
                     },
                 )
                 .optional()?;
             match existing {
-                Some(existing) if existing == (bot_id, allowed_user_id, workspace.clone()) => Ok(()),
+                Some(existing)
+                    if existing
+                        == (
+                            agent_id.clone(),
+                            bot_id,
+                            allowed_user_id,
+                            workspace.clone(),
+                        ) =>
+                {
+                    Ok(())
+                }
                 Some(_) => Err(StoreError::Invalid(
-                    "stored Telegram bot, owner, or workspace differs from this process configuration"
+                    "stored Telegram agent, bot, owner, or workspace differs from this process configuration"
                         .to_owned(),
                 )),
                 None => {
                     connection.execute(
                         "INSERT INTO surface_identity(
-                            singleton, bot_id, allowed_user_id, workspace, next_update_id
-                         ) VALUES (1, ?1, ?2, ?3, 0)",
-                        params![bot_id, allowed_user_id, workspace],
+                            singleton, agent_id, bot_id, allowed_user_id, workspace, next_update_id
+                         ) VALUES (1, ?1, ?2, ?3, ?4, 0)",
+                        params![agent_id, bot_id, allowed_user_id, workspace],
                     )?;
                     Ok(())
                 }

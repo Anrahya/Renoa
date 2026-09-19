@@ -1,22 +1,22 @@
-use std::{fs, os::unix::fs::PermissionsExt as _, path::Path, sync::Arc};
+use std::{collections::BTreeSet, fs, os::unix::fs::PermissionsExt as _, path::Path, sync::Arc};
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
 use serde_json::json;
 use tempfile::tempdir;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{HostInitialization, LocalHost};
 use crate::{
-    AgentProfile, AgentProfileId, LocalTurnOutcome, ModelProvider,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalTurnOutcome,
+    ModelProvider,
     mcp::{McpAuthorizationResolver, McpCredentialResolver},
 };
 
-const FIRST: &str = "shared.first";
-const SECOND: &str = "shared.second";
 const TOKEN: &str = "fixture-shared-host-secret";
 
 #[tokio::test]
-async fn live_host_clients_reuse_credentials_packages_and_skills_across_profiles_and_restart() {
+async fn live_host_clients_reuse_credentials_packages_and_skills_across_agents_and_restart() {
     let directory = tempdir().expect("fixture");
     let root = directory.path();
     prepare_fixture(root);
@@ -26,14 +26,15 @@ async fn live_host_clients_reuse_credentials_packages_and_skills_across_profiles
         first.host_id().await.expect("first identity"),
         second.host_id().await.expect("second identity")
     );
-    let profile = AgentProfileId::new(SECOND).expect("profile");
+    let first_agent = create_agent(&first, "First").await;
+    let second_agent = create_agent(&first, "Second").await;
     let session = second
-        .create_session(&profile, &root.join("workspace"))
+        .ensure_agent_session(second_agent, &root.join("workspace"), Uuid::new_v4())
         .await
         .expect("live second session");
     let session_id = session.id();
 
-    let digest = publish_capabilities(&first, root).await;
+    let digest = publish_capabilities(&first, root, first_agent).await;
     let expected = LocalTurnOutcome::Completed {
         output: "Shared capabilities ready.".to_owned(),
         stop_reason: renoa_agent::StopReason::Stop,
@@ -51,10 +52,12 @@ async fn live_host_clients_reuse_credentials_packages_and_skills_across_profiles
     );
     assert_eq!(
         second
-            .profile_mcp_connection_ids(&profile)
+            .agent_definition(second_agent)
             .await
-            .expect("second profile connections"),
-        ["shared-x"]
+            .expect("second agent definition")
+            .expect("second agent")
+            .connections,
+        BTreeSet::from(["shared-x".to_owned()])
     );
     drop(session);
     drop(second);
@@ -119,10 +122,6 @@ fn host(root: &Path) -> LocalHost {
         shared_plugin_registry: None,
         global_skill_source: Some(root.join("global")),
         oauth_relay: None,
-        profiles: [FIRST, SECOND]
-            .into_iter()
-            .map(|id| AgentProfile::new(id, "Test shared Host capabilities.").expect("profile"))
-            .collect(),
     })
     .expect("Host client");
     let config = Arc::get_mut(&mut host.config).expect("exclusive new configuration");
@@ -132,6 +131,24 @@ fn host(root: &Path) -> LocalHost {
         McpCredentialResolver::with_gh_executable(root.join("gh")),
     );
     host
+}
+
+async fn create_agent(host: &LocalHost, name: &str) -> crate::AgentId {
+    host.create_agent(
+        AgentCreator::System {
+            component: "shared-capabilities".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new(crate::presets::ALPHA_PRESET_ID).expect("preset"),
+            name,
+        ),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent")
+    .id
 }
 
 struct Noop;
@@ -164,7 +181,7 @@ fn prepare_fixture(root: &Path) {
         .expect("credential executable");
 }
 
-async fn publish_capabilities(first: &LocalHost, root: &Path) -> String {
+async fn publish_capabilities(first: &LocalHost, root: &Path, agent: crate::AgentId) -> String {
     let source = root.join("package");
     fs::create_dir_all(source.join("skills/shared-workflow")).expect("package skill");
     fs::write(
@@ -200,11 +217,8 @@ async fn publish_capabilities(first: &LocalHost, root: &Path) -> String {
         .await
         .expect("discover once");
     first
-        .enable_profile_mcp_connection(
-            &AgentProfileId::new(FIRST).expect("first profile"),
-            "shared-x",
-        )
+        .enable_agent_connection(agent, "shared-x")
         .await
-        .expect("enable first profile");
+        .expect("enable first agent");
     inspected.digest().to_owned()
 }

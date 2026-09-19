@@ -14,8 +14,8 @@ use renoa_kernel::{EffectRecovery, Runtime};
 use thiserror::Error;
 
 use crate::{
-    AgentProfile, AgentProfileError, BridgeModel, LocalWorkspace, ModelBridgeError, ModelChoice,
-    ReasoningLevel, profile::AutomaticCompactionPolicy, skills::SkillRuntimeContext,
+    AgentDefinitionError, AutomaticCompaction, BridgeModel, LocalWorkspace, ModelBridgeError,
+    ModelChoice, ReasoningLevel, skills::SkillRuntimeContext,
 };
 
 const MODEL_ROUND_LIMIT: NonZeroU32 = NonZeroU32::new(100).unwrap();
@@ -35,60 +35,39 @@ pub struct LocalRuntimeConfig {
     model_spec: Option<String>,
     reasoning: Option<ReasoningLevel>,
     skill_context: Option<SkillRuntimeContext>,
-    automatic_compaction: Option<AutomaticCompactionPolicy>,
+    automatic_compaction: Option<crate::AutomaticCompaction>,
     selected_tools: Option<std::collections::BTreeSet<String>>,
     session_id: Option<renoa_kernel::SessionId>,
 }
 
 impl LocalRuntimeConfig {
-    /// Selects one profile's versioned behavior and captures its workspace rules.
+    /// Selects one agent definition's behavior and captures its workspace rules.
     ///
     /// # Errors
     ///
-    /// Returns an error when the workspace's project instructions are invalid.
-    pub fn for_profile(
+    /// Returns an error when an enabled document or the workspace project
+    /// instructions are invalid.
+    pub fn for_definition(
         bridge: impl Into<PathBuf>,
         provider: impl Into<String>,
         model: impl Into<String>,
         credential_store: impl Into<PathBuf>,
-        profile: &AgentProfile,
+        definition: &crate::host::definition::ResolvedAgentDefinition,
         workspace: &LocalWorkspace,
-    ) -> Result<Self, AgentProfileError> {
+    ) -> Result<Self, AgentDefinitionError> {
         Ok(Self {
             bridge: bridge.into(),
             provider: provider.into(),
             model: model.into(),
             credential_store: credential_store.into(),
-            instructions: profile.system_prompt(workspace.root())?,
+            instructions: definition.system_prompt(workspace.root())?,
             model_spec: None,
             reasoning: None,
             skill_context: None,
-            automatic_compaction: profile.automatic_compaction(),
-            selected_tools: profile.selected_tools.clone(),
+            automatic_compaction: definition.automatic_compaction(),
+            selected_tools: Some(definition.selected_tools().tools.clone()),
             session_id: None,
         })
-    }
-
-    /// Selects Renoa Alpha's built-in coding behavior.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when Alpha's workspace instructions are invalid.
-    pub fn for_alpha(
-        bridge: impl Into<PathBuf>,
-        provider: impl Into<String>,
-        model: impl Into<String>,
-        credential_store: impl Into<PathBuf>,
-        workspace: &LocalWorkspace,
-    ) -> Result<Self, AgentProfileError> {
-        Self::for_profile(
-            bridge,
-            provider,
-            model,
-            credential_store,
-            &crate::alpha::alpha_profile(),
-            workspace,
-        )
     }
 
     #[must_use]
@@ -222,7 +201,7 @@ struct ResolvedModel {
     instructions: String,
     model: Arc<BridgeModel>,
     skill_context: Option<SkillRuntimeContext>,
-    automatic_compaction: Option<AutomaticCompactionPolicy>,
+    automatic_compaction: Option<crate::AutomaticCompaction>,
     selected_tools: Option<std::collections::BTreeSet<String>>,
 }
 
@@ -259,7 +238,7 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
 pub(crate) fn context_binding(
     model: &Arc<BridgeModel>,
     skill_context: Option<&SkillRuntimeContext>,
-    automatic_compaction: Option<AutomaticCompactionPolicy>,
+    automatic_compaction: Option<crate::AutomaticCompaction>,
     working_input_limit: Option<NonZeroU64>,
 ) -> Result<ContextBinding, LocalRuntimeError> {
     let settings = compaction_settings(model.as_ref(), automatic_compaction, working_input_limit)?;
@@ -305,7 +284,7 @@ struct CompactionSettings {
 
 fn compaction_settings(
     model: &BridgeModel,
-    automatic_compaction: Option<AutomaticCompactionPolicy>,
+    automatic_compaction: Option<crate::AutomaticCompaction>,
     working_input_limit: Option<NonZeroU64>,
 ) -> Result<CompactionSettings, LocalRuntimeError> {
     let provider_context = model.context_window_tokens();
@@ -334,7 +313,7 @@ fn compaction_settings(
                 .checked_mul(3)
                 .and_then(|value| NonZeroU64::new(value / 5))
                 .ok_or(LocalRuntimeError::ZeroCompactionTarget)?;
-            Some(AutomaticCompactionPolicy {
+            Some(AutomaticCompaction {
                 trigger_input_tokens: trigger,
                 target_input_tokens: policy.target_input_tokens.min(target),
             })

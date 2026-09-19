@@ -302,18 +302,45 @@ async fn schema_twenty_upgrade_preserves_pending_review_admission() {
     let (directory, first, id, api) = prepared("").await;
     let host_id = first.host_id().await.expect("host id");
     let db = catalog::open_verified(&first.config.database).expect("db");
-    let request = store::get_request(&db, id).expect("request");
     db.execute_batch("DROP TABLE host_review_runs; UPDATE host_metadata SET schema_version=20; PRAGMA user_version=20;").expect("schema 20");
     drop(db);
     drop(first);
+    let refused = try_host(directory.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&directory.path().join("data")).expect("cutover reset");
     let reopened = host(directory.path());
     assert_eq!(reopened.host_id().await.expect("host id"), host_id);
     let db = catalog::open_verified(&reopened.config.database).expect("db");
-    assert_eq!(store::get_request(&db, id).expect("request"), request);
+    assert!(
+        store::get_request(&db, id).is_err(),
+        "the cutover discards the admitted review request"
+    );
+    drop(db);
+    let policy = reviewer_policy(&reopened).await;
+    set(&reopened, policy, None).await;
+    let fresh = Uuid::new_v4();
+    reopened
+        .manage_github_review(
+            GitHubReviewCommand::Request {
+                operation_id: fresh,
+                repository_id: 42,
+                pull_number: 14,
+                reported_base_sha: "a".repeat(40),
+                reported_head_sha: "d".repeat(40),
+            },
+            100,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("admission after the cutover");
     assert!(matches!(
-        execute(&reopened, id, &api)
+        execute(&reopened, fresh, &api)
             .await
-            .expect("execute migrated request"),
+            .expect("execute fresh request"),
         GitHubReviewRun::Finished {
             outcome: GitHubReviewOutcome::Reviewed { .. },
             ..

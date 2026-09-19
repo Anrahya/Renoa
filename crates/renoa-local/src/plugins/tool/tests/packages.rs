@@ -16,9 +16,13 @@ use super::{
     call,
 };
 use crate::{
+    AgentId,
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
-    plugins::{PluginManager, tests::test_skill_store},
+    plugins::{
+        PluginManager,
+        tests::{test_agent_id, test_skill_store},
+    },
     skills::SkillStore,
 };
 
@@ -236,7 +240,7 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
         .expect("encode manifest"),
     )
     .expect("write manifest");
-    let tool = ManageTool::new(manager, directory.path().to_path_buf());
+    let tool = ManageTool::new(test_agent_id(1), manager, directory.path().to_path_buf());
 
     let inspected = call(&tool, json!({"action": "inspect", "source_path": "source"})).await;
     let digest = inspected["digest"]
@@ -305,7 +309,7 @@ async fn local_package_add_is_content_bound_and_replay_ignores_source_changes() 
     assert_eq!(
         fixture
             .skills
-            .summaries(crate::ALPHA_PROFILE_ID, fixture.directory.path())
+            .summaries(&fixture.agent_id.to_string(), fixture.directory.path())
             .expect("read replayed plugin skill")[0]
             .description,
         "Review this code."
@@ -341,7 +345,7 @@ async fn package_add_reports_loaded_and_rejected_components_after_installation()
     assert_eq!(
         fixture
             .skills
-            .summaries(crate::ALPHA_PROFILE_ID, fixture.directory.path())
+            .summaries(&fixture.agent_id.to_string(), fixture.directory.path())
             .expect("read hot-loaded plugin skill")[0]
             .name,
         "review"
@@ -387,6 +391,7 @@ struct LocalPackageFixture {
     skill: PathBuf,
     skills: SkillStore,
     tool: ManageTool,
+    agent_id: AgentId,
 }
 
 impl LocalPackageFixture {
@@ -410,12 +415,14 @@ impl LocalPackageFixture {
         fs::create_dir(&source).expect("create plugin source");
         write_local_manifest(&source);
         let skill = write_local_components(&source);
-        let tool = ManageTool::new(manager, directory.path().to_path_buf());
+        let agent_id = test_agent_id(1);
+        let tool = ManageTool::new(agent_id, manager, directory.path().to_path_buf());
         Self {
             directory,
             skill,
             skills,
             tool,
+            agent_id,
         }
     }
 

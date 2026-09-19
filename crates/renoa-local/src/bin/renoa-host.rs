@@ -1,9 +1,10 @@
 use renoa_local::{
-    BotRecord, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
-    ReasoningLevel, arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentRoutine,
+    AgentToolsUpdate, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+    ReasoningLevel, RenameAgent,
 };
 use serde::Deserialize;
-use std::{error::Error, path::PathBuf};
+use std::{collections::BTreeSet, error::Error, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 #[path = "renoa-host/github_review.rs"]
@@ -33,6 +34,35 @@ struct Relay {
     device_credential_file: PathBuf,
 }
 
+/// One trusted provisioning request: the canonical creation operation as JSON.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProvisionDocument {
+    operation_id: uuid::Uuid,
+    preset_id: AgentPresetId,
+    name: String,
+    instructions: Option<String>,
+    #[serde(default)]
+    tools: BTreeSet<String>,
+    #[serde(default)]
+    connections: BTreeSet<String>,
+    routine: Option<AgentRoutine>,
+}
+
+impl ProvisionDocument {
+    fn into_request(self) -> AgentCreateRequest {
+        AgentCreateRequest {
+            operation_id: self.operation_id,
+            preset_id: self.preset_id,
+            name: self.name,
+            instructions: self.instructions,
+            tools: self.tools,
+            connections: self.connections,
+            routine: self.routine,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -51,17 +81,18 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if !(args.len() == 1
-        || (args.len() == 6 && args[1] == "rename-bot")
+        || (args.len() == 6 && args[1] == "rename-agent")
         || (args.len() == 3
-            && (args[1] == "github-review"
+            && (args[1] == "provision"
+                || args[1] == "agent-tools"
+                || args[1] == "reset"
+                || args[1] == "github-review"
                 || args[1] == "github-webhook"
                 || args[1] == "github-execute"
                 || args[1] == "github-service"
-                || args[1] == "github-cleanup"
-                || args[1] == "ensure-bot"
-                || args[1] == "bot-tools")))
+                || args[1] == "github-cleanup")))
     {
-        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [ensure-bot <bot.json> | bot-tools <edit.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -73,6 +104,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
         if !path.is_absolute() {
             return Err(std::io::Error::other("Host launch paths must be absolute").into());
         }
+    }
+    // A reset owns its own cutover, so it must run before the Host opens: an
+    // earlier data root fails closed until an operator has backed it up.
+    if args.len() == 3 && args[1] == "reset" {
+        backup_data_root(&c.data_directory, std::path::Path::new(&args[2]))?;
+        let report = renoa_local::reset_host_data_root(&c.data_directory)?;
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
     }
     let mut models = LocalModelConfiguration::new(
         &c.model_bridge,
@@ -90,12 +129,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if let Some(relay) = &c.oauth_relay {
         adapters = adapters.with_oauth_relay(&relay.origin, &relay.device_credential_file);
     }
-    let host = LocalHost::new(
-        &c.data_directory,
-        models,
-        vec![arcee_profile(&c.data_directory)?],
-        adapters,
-    )?;
+    let host = LocalHost::new(&c.data_directory, models, adapters)?;
     if args.len() == 3 {
         return run_command(
             &host,
@@ -113,10 +147,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
         };
         let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
         let result = host
-            .rename_bot(
+            .rename_agent(
                 id,
                 uuid::Uuid::parse_str(text(5)?)?,
-                renoa_local::RenameBot {
+                RenameAgent {
                     id,
                     expected_name: text(3)?.to_owned(),
                     name: text(4)?.to_owned(),
@@ -160,11 +194,26 @@ async fn run_command(
     command: &std::ffi::OsStr,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
-    if command == "bot-tools" {
-        let edit = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    if command == "provision" {
+        let document: ProvisionDocument = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        let definition = host
+            .create_agent(
+                AgentCreator::System {
+                    component: "provisioning".to_owned(),
+                },
+                AgentCreationOrigin::Provisioning,
+                document.into_request(),
+                CancellationToken::new(),
+            )
+            .await?;
+        println!("{}", serde_json::to_string(&definition)?);
+        return Ok(());
+    }
+    if command == "agent-tools" {
+        let edit: AgentToolsUpdate = serde_json::from_slice(&tokio::fs::read(path).await?)?;
         println!(
             "{}",
-            serde_json::to_string(&host.configure_bot_tools(edit).await?)?
+            serde_json::to_string(&host.set_agent_tools(edit).await?)?
         );
         return Ok(());
     }
@@ -177,13 +226,87 @@ async fn run_command(
             .await?;
         return Ok(());
     }
-    if command == "ensure-bot" {
-        let record: BotRecord = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-        println!(
-            "{}",
-            serde_json::to_string(&host.ensure_bot(record).await?)?
-        );
-        return Ok(());
-    }
     github_review::run(host, command, path).await
+}
+
+/// Copies the whole Host data root to a fresh, empty backup directory.
+///
+/// The copy is the recovery boundary for the reset. It refuses to overwrite an
+/// existing backup and refuses a destination inside the data root, so it can
+/// never copy the data root into itself.
+fn backup_data_root(
+    data_directory: &std::path::Path,
+    backup: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    let data_directory = std::fs::canonicalize(data_directory)?;
+    let backup = resolve_destination(backup)?;
+    if backup.starts_with(&data_directory) {
+        return Err(std::io::Error::other(
+            "the backup directory must not be inside the Host data directory",
+        )
+        .into());
+    }
+    if backup.exists() && std::fs::read_dir(&backup)?.next().is_some() {
+        return Err(std::io::Error::other(format!(
+            "backup directory {} is not empty; delete the previous backup first",
+            backup.display()
+        ))
+        .into());
+    }
+    copy_tree(&data_directory, &backup)?;
+    eprintln!(
+        "Backed up {} to {}",
+        data_directory.display(),
+        backup.display()
+    );
+    Ok(())
+}
+
+/// Resolves one destination for the containment guard.
+///
+/// The result is absolute and every existing ancestor is canonicalized, so a
+/// relative path and a path reaching the data root through a symlink are both
+/// compared as the filesystem would resolve them.
+fn resolve_destination(path: &std::path::Path) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let absolute = std::path::absolute(path)?;
+    let mut ancestor = absolute.as_path();
+    let mut missing = Vec::new();
+    while !ancestor.exists() {
+        let name = ancestor.file_name().ok_or_else(|| {
+            std::io::Error::other("the backup directory has no existing ancestor")
+        })?;
+        missing.push(name.to_os_string());
+        ancestor = ancestor.parent().ok_or_else(|| {
+            std::io::Error::other("the backup directory has no existing ancestor")
+        })?;
+    }
+    let mut resolved = std::fs::canonicalize(ancestor)?;
+    for name in missing.iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolved)
+}
+
+fn copy_tree(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), Box<dyn Error>> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            std::fs::copy(entry.path(), &target)?;
+        } else {
+            return Err(std::io::Error::other(format!(
+                "refusing to reset: {} is not a regular file or directory",
+                entry.path().display()
+            ))
+            .into());
+        }
+    }
+    Ok(())
 }

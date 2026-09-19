@@ -2,16 +2,18 @@
 
 ## Purpose
 
-Alpha is Renoa's first local coding-agent profile. Its stable Host identity is
+Alpha is Renoa's first local coding agent. Its stable creation preset identity is
 `renoa.coding.alpha.v1`.
 
-Alpha is not a loop, model, session store, or surface. It is the Host-owned
-recipe that supplies coding behavior and project instructions while the Host
-selects the exact model, reasoning level, context strategy, workspace, and
-tools. The kernel freezes the resolved behavior for each operation. `LocalHost`
-registers Alpha through the same `AgentProfile` path used by any future
-GitHub-review, messaging, or daily-assistant profile; only the ACP adapter
-currently selects Alpha by policy.
+Alpha is not a loop, model, session store, or surface. It is the code-owned
+creation preset whose stored definition supplies coding behavior and project
+instructions while the Host selects the exact model, reasoning level, context
+strategy, workspace, and tools. The kernel freezes the resolved behavior for each
+operation. An Alpha agent is created by trusted provisioning
+(`renoa-host <config.json> provision <provision.json>`); creation snapshots the
+preset into that agent's own durable definition, and runtime resolution never
+consults the preset again. Only the ACP adapter currently selects its agent by
+`RENOA_AGENT_ID`.
 
 ## Market study
 
@@ -47,8 +49,9 @@ surface requirements, not Alpha's internal design.
    prompt, context, and tool revisions remain frozen by the kernel. The fixed
    Host registry tools may read newly committed catalog state, but an exact
    catalog reference can never change underneath an invocation.
-6. The first profile has all six local tools, `tool_search`, `tool_load`,
-   `tool_execute`, `extension_manage`, `skill_search`, and `skill_load`.
+6. The first coding agent's stored selection has all nine local workspace
+   tools, `tool_search`, `tool_load`, `tool_execute`, `extension_manage`,
+   `skill_search`, and `skill_load`.
    External schemas, installed-package metadata, and skill bodies are loaded
    into history only when Alpha requests them; their quantity never expands the
    model API tool list. Existing workspace boundaries and unrestricted Bash
@@ -56,9 +59,9 @@ surface requirements, not Alpha's internal design.
 7. Alpha has no plan mode. A question, review, plan, or implementation request
    is handled according to the user's intent by the same agent.
 8. Installed packages, MCP catalogs, and skill revisions belong to the Host.
-   Alpha sees only the connections and plugin-skill sources attached to Alpha's
-   exact profile identity. The Host can bind the same immutable catalog or skill
-   revision to another profile without duplicating its stored content.
+   Alpha sees only the connections and plugin-skill sources selected by its
+   stored definition. The Host can select the same immutable catalog or skill
+   revision for another agent without duplicating its stored content.
 
 ## Project instructions
 
@@ -148,19 +151,19 @@ A normal Alpha request contains only:
 1. the Alpha base prompt and applicable project instructions;
 2. the exact Host-pinned active skill instructions;
 3. the durable, context-projected conversation; and
-4. the six local tool definitions, three fixed MCP-registry definitions, one
-   fixed extension-manager definition, and two fixed skill-registry definitions
-   in the model API's tool field.
+4. the nine local workspace tool definitions, three fixed MCP-registry
+   definitions, one fixed extension-manager definition, and two fixed
+   skill-registry definitions in the model API's tool field.
 
 Kernel command IDs, effect identities, recovery declarations, runtime
 manifests, and configuration digests are not prompt content.
 
 ## Deliberate omissions
 
-Alpha's profile contract does not define durable profile-definition storage,
-permission vocabulary, subagents, MCP transport/catalog behavior, background
-jobs, repository maps, automatic test policy, surface protocol behavior, or a
-generic profile trait. The Host may resolve MCP-derived tools into Alpha
+Alpha's definition adds no permission vocabulary, subagents, MCP
+transport/catalog behavior, background jobs, repository maps, automatic test
+policy, surface protocol behavior, or a generic component trait. The Host may
+resolve MCP-derived tools into Alpha
 without making MCP part of Alpha. ACP can expose Alpha without becoming part of
 Alpha. A later subagent capability may ask the Host to resolve another agent
 with its own session, delegated authority, tools, model, and instructions; it
@@ -172,7 +175,7 @@ The real headless product path must prove that:
 
 1. Alpha's base prompt and root project instructions reach the model;
 2. tool schemas and kernel bookkeeping are not duplicated in that prompt;
-3. one durable session continues after changing model and reasoning level;
+3. one durable agent session continues after changing model and reasoning level;
 4. each operation freezes the exact selected model and reasoning revision;
 5. the Alpha configuration digest remains stable across that selection change;
 6. a 1,000-tool external catalog adds no model API schema, search returns only

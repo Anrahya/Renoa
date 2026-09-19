@@ -16,7 +16,8 @@ pub struct RoutineResultSummary {
 
 impl LocalHost {
     /// Lists up to 20 completed results, newest first. Pass the last sequence
-    /// as `before` for older results. Arcee may inspect any specialist.
+    /// as `before` for older results. Another agent's results need the
+    /// `agent_manage` capability.
     /// # Errors
     /// Rejects unauthorized targets and invalid stored data.
     pub async fn routine_results(

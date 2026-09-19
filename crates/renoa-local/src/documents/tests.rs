@@ -1,0 +1,277 @@
+use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
+
+use renoa_kernel::AgentId;
+use tempfile::tempdir;
+use tokio_util::sync::CancellationToken;
+
+use super::files::fault;
+use super::{AgentDocumentStore, Document, DocumentDefaults};
+
+const DEFAULTS: DocumentDefaults = DocumentDefaults {
+    soul: "Be careful.\n",
+    user: "Asia/Kolkata.\n",
+};
+
+fn both() -> crate::AgentDocuments {
+    crate::AgentDocuments {
+        soul: true,
+        user: true,
+    }
+}
+
+#[test]
+fn publication_creates_private_regular_files_and_is_adoptable() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect("publish documents");
+
+    let root = directory.path().join("agents").join(agent.to_string());
+    for file in ["SOUL.md", "USER.md"] {
+        let metadata = fs::symlink_metadata(root.join(file)).expect("published document");
+        assert!(metadata.file_type().is_file());
+        assert!(!metadata.file_type().is_symlink());
+    }
+
+    // A retry adopts the same publication instead of failing.
+    AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect("adopt matching publication");
+}
+
+#[test]
+fn conflicting_pre_existing_content_fails_closed() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fs::create_dir_all(&root).expect("create document root");
+    fs::write(root.join("SOUL.md"), "operator-written\n").expect("write conflicting document");
+
+    let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("conflicting content must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("already exists with different content"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("SOUL.md")).expect("read document"),
+        "operator-written\n"
+    );
+    assert!(!root.join("USER.md").exists());
+}
+
+#[test]
+fn a_conflicting_second_document_publishes_nothing() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fs::create_dir_all(&root).expect("create document root");
+    fs::write(root.join("USER.md"), "operator-written\n").expect("write conflicting document");
+
+    let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("a conflicting second document must fail the whole set");
+    assert!(
+        error
+            .to_string()
+            .contains("already exists with different content"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !root.join("SOUL.md").exists(),
+        "a rejected publication must not leave the first document behind"
+    );
+    assert_eq!(
+        fs::read_dir(&root)
+            .expect("read document root")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect::<Vec<_>>(),
+        vec![std::ffi::OsString::from("USER.md")]
+    );
+}
+
+#[test]
+fn a_post_persist_failure_removes_the_document_it_installed() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fault::arm("SOUL.md", fault::Injection::PostPersistFailure);
+
+    let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("an injected post-persist failure must fail the publication");
+    fault::disarm();
+    assert!(
+        error.to_string().contains("sync agent document"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !root.join("SOUL.md").exists(),
+        "the document this attempt installed must be removed again"
+    );
+    assert!(
+        !root.exists(),
+        "an empty document root must not survive a failed publication"
+    );
+}
+
+#[test]
+fn an_adopted_identical_winner_survives_a_failing_sibling() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fault::arm("SOUL.md", fault::Injection::IdenticalWinner);
+    fault::arm("USER.md", fault::Injection::ConflictingWinner);
+
+    let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("a conflicting second document must fail the whole set");
+    fault::disarm();
+    assert!(
+        error
+            .to_string()
+            .contains("already exists with different content"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("SOUL.md")).expect("the adopted winner survives"),
+        DEFAULTS.soul,
+        "a document this attempt adopted must not be removed as its own"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("USER.md")).expect("the conflicting winner survives"),
+        "injected winner\n"
+    );
+}
+
+#[test]
+fn render_includes_only_enabled_documents_and_open_requires_them() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let enabled = crate::AgentDocuments {
+        soul: true,
+        user: false,
+    };
+    AgentDocumentStore::publish(directory.path(), agent, enabled, DEFAULTS).expect("publish");
+
+    let store = AgentDocumentStore::open(directory.path(), agent, enabled).expect("open documents");
+    let rendered = store.render().expect("render documents");
+    assert!(rendered.contains("source=\"SOUL.md\""));
+    assert!(!rendered.contains("USER.md"));
+
+    let missing = AgentDocumentStore::open(directory.path(), agent, both())
+        .expect_err("an enabled missing document must fail closed");
+    assert!(
+        missing.to_string().contains("regular file"),
+        "unexpected: {missing}"
+    );
+}
+
+#[test]
+fn open_rejects_a_document_root_outside_the_data_directory() {
+    let directory = tempdir().expect("temporary data directory");
+    let elsewhere = tempdir().expect("temporary escape target");
+    let agent = AgentId::new();
+    fs::set_permissions(elsewhere.path(), fs::Permissions::from_mode(0o755))
+        .expect("set escape target permissions");
+    fs::create_dir_all(directory.path().join("agents")).expect("create agents directory");
+    std::os::unix::fs::symlink(
+        elsewhere.path(),
+        directory.path().join("agents").join(agent.to_string()),
+    )
+    .expect("link escape");
+
+    let error = AgentDocumentStore::open(directory.path(), agent, both())
+        .expect_err("an escaping document root must fail closed");
+    assert!(error.to_string().contains("outside"), "unexpected: {error}");
+
+    let escape = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("publishing through an escaping document root must fail closed");
+    assert!(
+        escape.to_string().contains("outside"),
+        "unexpected: {escape}"
+    );
+    assert!(
+        fs::read_dir(elsewhere.path())
+            .expect("read escape target")
+            .next()
+            .is_none(),
+        "the escape target must not receive any publication"
+    );
+    assert_eq!(
+        fs::metadata(elsewhere.path())
+            .expect("escape target metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "the escape target's permissions must not be changed before the rejection"
+    );
+}
+
+#[test]
+fn an_in_tree_document_root_alias_is_refused() {
+    let directory = tempdir().expect("temporary data directory");
+    let owner = AgentId::new();
+    let alias = AgentId::new();
+    AgentDocumentStore::publish(directory.path(), owner, both(), DEFAULTS).expect("publish owner");
+    let agents = directory.path().join("agents");
+    std::os::unix::fs::symlink(
+        agents.join(owner.to_string()),
+        agents.join(alias.to_string()),
+    )
+    .expect("link alias");
+
+    let error = AgentDocumentStore::publish(directory.path(), alias, both(), DEFAULTS)
+        .expect_err("an aliased document root must fail closed");
+    assert!(error.to_string().contains("outside"), "unexpected: {error}");
+    assert_eq!(
+        fs::read_to_string(agents.join(owner.to_string()).join("SOUL.md"))
+            .expect("read owner document"),
+        DEFAULTS.soul
+    );
+    assert!(
+        fs::symlink_metadata(agents.join(alias.to_string()))
+            .expect("alias metadata")
+            .file_type()
+            .is_symlink(),
+        "the alias must not be replaced by a directory"
+    );
+}
+
+#[tokio::test]
+async fn content_hash_cas_rejects_a_stale_revision_and_accepts_the_current_one() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS).expect("publish");
+    let store = AgentDocumentStore::open(directory.path(), agent, both()).expect("open documents");
+
+    let soul = Document::Soul;
+    let stale = store
+        .update(
+            soul,
+            "0".repeat(64).as_str(),
+            "new\n",
+            &CancellationToken::new(),
+        )
+        .await
+        .expect_err("a stale revision must conflict");
+    assert!(
+        stale.to_string().contains("changed after this turn began"),
+        "unexpected conflict: {stale}"
+    );
+
+    let current = store
+        .update(
+            soul,
+            &super::files::revision(DEFAULTS.soul.as_bytes()),
+            "new soul\n",
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("update with the current revision");
+    assert_eq!(current.len(), 64);
+
+    let rendered = store.render().expect("render");
+    assert!(rendered.contains("new soul"));
+    assert!(rendered.contains("Asia/Kolkata."));
+}

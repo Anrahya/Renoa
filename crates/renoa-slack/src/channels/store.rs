@@ -1,5 +1,5 @@
 use crate::{SlackError, store::Store};
-use renoa_local::BotSummary;
+use renoa_local::AgentDefinition;
 use rusqlite::{OptionalExtension as _, params};
 use uuid::Uuid;
 
@@ -18,7 +18,7 @@ pub(super) enum State {
 impl Store {
     pub(super) async fn channel_provision(
         &self,
-        bot: &BotSummary,
+        bot: &AgentDefinition,
     ) -> Result<Provision, SlackError> {
         let agent = bot.id.to_string();
         let slug: String = bot

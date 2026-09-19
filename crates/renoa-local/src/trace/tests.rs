@@ -10,13 +10,12 @@ use serde_json::json;
 use tempfile::tempdir;
 
 use super::{TRACE_DATABASE, TraceStore};
-use crate::{ALPHA_PROFILE_ID, AgentProfileId};
 
 #[tokio::test]
 async fn trace_omits_credential_setup_and_oauth_authorization_urls() {
     let directory = tempdir().expect("temporary trace directory");
     let path = directory.path().join(TRACE_DATABASE);
-    let store = TraceStore::create(path.clone(), SessionId::new(), AgentId::new(), &alpha_id())
+    let store = TraceStore::create(path.clone(), SessionId::new(), AgentId::new())
         .expect("create trace store");
     let trace = store
         .start_run(
@@ -95,9 +94,7 @@ async fn trace_records_exact_model_flow_and_normalized_usage() {
     let path = directory.path().join(TRACE_DATABASE);
     let session_id = SessionId::new();
     let agent_id = AgentId::new();
-    let profile_id = alpha_id();
-    let store = TraceStore::create(path.clone(), session_id, agent_id, &profile_id)
-        .expect("create trace store");
+    let store = TraceStore::create(path.clone(), session_id, agent_id).expect("create trace store");
     let request = ModelRequest {
         system_prompt: "Be exact.".to_owned(),
         messages: vec![renoa_agent::Message::user_text("Inspect this project")],
@@ -176,7 +173,7 @@ async fn trace_records_exact_model_flow_and_normalized_usage() {
         .expect("finish trace");
     drop(trace);
 
-    assert_trace_identity(&path, session_id, agent_id, &profile_id);
+    assert_trace_identity(&path, session_id, agent_id);
     assert_run_metadata(&path);
     assert_model_diagnostics(&path);
 }
@@ -210,36 +207,22 @@ fn assert_run_metadata(path: &std::path::Path) {
     );
 }
 
-fn assert_trace_identity(
-    path: &std::path::Path,
-    session_id: SessionId,
-    agent_id: AgentId,
-    profile_id: &AgentProfileId,
-) {
+fn assert_trace_identity(path: &std::path::Path, session_id: SessionId, agent_id: AgentId) {
     let connection = Connection::open(path).expect("open trace database");
     let stored = connection
         .query_row(
-            "SELECT schema_version, session_id, agent_id, profile_id FROM trace_metadata",
+            "SELECT schema_version, session_id, agent_id FROM trace_metadata",
             [],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
                 ))
             },
         )
         .expect("read trace identity");
-    assert_eq!(
-        stored,
-        (
-            2,
-            session_id.to_string(),
-            agent_id.to_string(),
-            profile_id.to_string()
-        )
-    );
+    assert_eq!(stored, (3, session_id.to_string(), agent_id.to_string()));
 }
 
 fn assert_model_diagnostics(path: &std::path::Path) {
@@ -309,9 +292,7 @@ async fn dropping_an_unfinished_trace_marks_it_interrupted() {
     let path = directory.path().join(TRACE_DATABASE);
     let session_id = SessionId::new();
     let agent_id = AgentId::new();
-    let profile_id = alpha_id();
-    let store = TraceStore::create(path.clone(), session_id, agent_id, &profile_id)
-        .expect("create trace store");
+    let store = TraceStore::create(path.clone(), session_id, agent_id).expect("create trace store");
     let trace = store
         .start_run(
             CommandId::new(),
@@ -340,9 +321,7 @@ fn opening_a_trace_repairs_a_run_left_running_by_process_loss() {
     let path = directory.path().join(TRACE_DATABASE);
     let session_id = SessionId::new();
     let agent_id = AgentId::new();
-    let profile_id = alpha_id();
-    TraceStore::create(path.clone(), session_id, agent_id, &profile_id)
-        .expect("create trace store");
+    TraceStore::create(path.clone(), session_id, agent_id).expect("create trace store");
     let connection = Connection::open(&path).expect("open trace database");
     connection
         .execute(
@@ -359,7 +338,7 @@ fn opening_a_trace_repairs_a_run_left_running_by_process_loss() {
         .expect("insert interrupted run");
     drop(connection);
 
-    TraceStore::open(path.clone(), session_id, agent_id, &profile_id).expect("recover trace store");
+    TraceStore::open(path.clone(), session_id, agent_id).expect("recover trace store");
 
     let connection = Connection::open(path).expect("reopen trace database");
     let run = connection
@@ -383,58 +362,38 @@ fn opening_a_trace_repairs_a_run_left_running_by_process_loss() {
 }
 
 #[test]
-fn opening_a_v1_trace_adds_agent_and_profile_identity() {
+fn opening_a_trace_from_an_older_runtime_is_rejected() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join(TRACE_DATABASE);
     let session_id = SessionId::new();
     let agent_id = AgentId::new();
-    let profile_id = alpha_id();
-    TraceStore::create(path.clone(), session_id, agent_id, &profile_id)
-        .expect("create current trace store");
+    TraceStore::create(path.clone(), session_id, agent_id).expect("create current trace store");
     let connection = Connection::open(&path).expect("open trace database");
     connection
-        .execute_batch(
-            "ALTER TABLE trace_metadata RENAME TO trace_metadata_v2;
-             CREATE TABLE trace_metadata (
-                 schema_version INTEGER PRIMARY KEY,
-                 session_id TEXT NOT NULL
-             ) STRICT;
-             INSERT INTO trace_metadata(schema_version, session_id)
-                 SELECT 1, session_id FROM trace_metadata_v2;
-             DROP TABLE trace_metadata_v2;",
-        )
-        .expect("downgrade metadata fixture to v1");
+        .execute("UPDATE trace_metadata SET schema_version = 2", [])
+        .expect("construct older schema fixture");
     drop(connection);
 
-    TraceStore::open(path.clone(), session_id, agent_id, &profile_id)
-        .expect("migrate v1 trace identity");
-
-    assert_trace_identity(&path, session_id, agent_id, &profile_id);
+    assert!(matches!(
+        TraceStore::open(path, session_id, agent_id),
+        Err(super::TraceError::Incompatible(_))
+    ));
 }
 
 #[test]
-fn trace_open_rejects_the_wrong_agent_or_profile_identity() {
+fn trace_open_rejects_the_wrong_session_or_agent_identity() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join(TRACE_DATABASE);
     let session_id = SessionId::new();
     let agent_id = AgentId::new();
-    let profile_id = alpha_id();
-    drop(
-        TraceStore::create(path.clone(), session_id, agent_id, &profile_id)
-            .expect("create trace store"),
-    );
+    drop(TraceStore::create(path.clone(), session_id, agent_id).expect("create trace store"));
 
     assert!(matches!(
-        TraceStore::open(path.clone(), session_id, AgentId::new(), &profile_id),
+        TraceStore::open(path.clone(), SessionId::new(), agent_id),
         Err(super::TraceError::Incompatible(_))
     ));
-    let other_profile = AgentProfileId::new("renoa.other.v1").expect("valid other profile id");
     assert!(matches!(
-        TraceStore::open(path, session_id, agent_id, &other_profile),
+        TraceStore::open(path, session_id, AgentId::new()),
         Err(super::TraceError::Incompatible(_))
     ));
-}
-
-fn alpha_id() -> AgentProfileId {
-    AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id")
 }

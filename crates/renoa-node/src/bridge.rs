@@ -7,7 +7,8 @@ use std::{
 
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
-use renoa_local::{AgentProfileId, AgentSession, LocalHost, LocalHostError};
+use renoa_kernel::AgentId;
+use renoa_local::{AgentSession, LocalHost, LocalHostError};
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use thiserror::Error;
 use tokio::{
@@ -53,11 +54,11 @@ impl From<NodeStoreError> for NodeError {
     }
 }
 
-/// One coordinator target resolved to an exact Host profile, session, and workspace.
+/// One coordinator target resolved to an exact Host agent, session, and workspace.
 #[derive(Clone, Debug)]
 pub struct HostTarget {
     binding: TargetBinding,
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
 }
 
 impl HostTarget {
@@ -69,7 +70,7 @@ impl HostTarget {
     /// existing absolute directory.
     pub fn new(
         target: &TargetRef,
-        profile_id: AgentProfileId,
+        agent_id: AgentId,
         session_id: Uuid,
         workspace: impl AsRef<Path>,
     ) -> Result<Self, NodeError> {
@@ -94,13 +95,17 @@ impl HostTarget {
         Ok(Self {
             binding: TargetBinding {
                 target: target.as_str().to_owned(),
-                profile_id: profile_id.as_str().to_owned(),
+                agent_id: agent_uuid(agent_id),
                 session_id,
                 workspace,
             },
-            profile_id,
+            agent_id,
         })
     }
+}
+
+fn agent_uuid(agent_id: AgentId) -> Uuid {
+    Uuid::parse_str(&agent_id.to_string()).expect("a kernel AgentId always formats as a UUID")
 }
 
 /// A durable RCP execution node backed by Renoa's real local Host.
@@ -111,13 +116,17 @@ pub struct RenoaNode {
 }
 
 impl RenoaNode {
-    /// Opens the node ledger and validates every configured Host target.
+    /// Opens the node ledger and validates every configured Host target,
+    /// including that each target's agent is provisioned in the Host.
+    ///
+    /// The agent check runs before the ledger opens, so a refused startup
+    /// creates no node ledger.
     ///
     /// # Errors
     ///
-    /// Returns an error for an invalid endpoint, target configuration, or
-    /// durable binding mismatch.
-    pub fn open(
+    /// Returns an error for an invalid endpoint, target configuration, an
+    /// unprovisioned target agent, or a durable binding mismatch.
+    pub async fn open(
         endpoint: impl Into<String>,
         credentials: DeviceCredentials,
         ledger_path: impl AsRef<Path>,
@@ -130,6 +139,7 @@ impl RenoaNode {
             .into_client_request()
             .map_err(NodeError::Endpoint)?;
         let targets = validate_targets(targets)?;
+        preflight_agents(&host, &targets).await?;
         let state = NodeStore::open(ledger_path)?;
         let durable_targets = targets
             .values()
@@ -268,8 +278,8 @@ impl NodeRuntime {
         let target = self.target_for(&record.binding)?.clone();
         let session = match self
             .host
-            .ensure_session(
-                &target.profile_id,
+            .ensure_agent_session(
+                target.agent_id,
                 &target.binding.workspace,
                 target.binding.session_id,
             )
@@ -413,6 +423,29 @@ async fn wait_to_reconnect(
             }
         }
     }
+}
+
+async fn preflight_agents(
+    host: &LocalHost,
+    targets: &BTreeMap<String, HostTarget>,
+) -> Result<(), NodeError> {
+    for (name, target) in targets {
+        let provisioned = host
+            .agent_definition(target.agent_id)
+            .await
+            .map_err(|error| NodeError::Store(error.to_string()))?;
+        if provisioned.is_some() {
+            continue;
+        }
+        return Err(NodeError::Configuration(format!(
+            "Host target `{name}` names agent {}, which is not provisioned in this node's \
+             private Host data root; provision it with \
+             `renoa-host <node-host-config.json> provision <provision-document.json>` \
+             before starting the node",
+            target.agent_id
+        )));
+    }
+    Ok(())
 }
 
 fn validate_targets(targets: Vec<HostTarget>) -> Result<BTreeMap<String, HostTarget>, NodeError> {

@@ -1,11 +1,32 @@
 use std::fs;
 
 use renoa_local::{
-    ALPHA_PROFILE_ID, ARCEE_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters,
-    LocalHostError, LocalModelConfiguration, ModelProvider, ReasoningLevel, alpha_profile,
-    arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalHostError, LocalModelConfiguration, ModelProvider, ReasoningLevel,
 };
 use tempfile::tempdir;
+use uuid::Uuid;
+
+const ALPHA_PRESET: &str = "renoa.coding.alpha.v1";
+const ARCEE_PRESET: &str = "renoa.personal.arcee.v1";
+
+async fn provision_agent(host: &LocalHost, preset: &str, name: &str) -> renoa_kernel::AgentId {
+    host.create_agent(
+        AgentCreator::System {
+            component: "model-catalog-test".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new(preset).expect("preset id"),
+            name,
+        ),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("agent")
+    .id
+}
 
 #[tokio::test]
 async fn an_open_agent_session_can_select_a_newly_discovered_model() {
@@ -31,16 +52,13 @@ async fn an_open_agent_session_can_select_a_newly_discovered_model() {
             "model-a",
             &credentials,
         ),
-        vec![alpha_profile()],
         LocalHostAdapters::default(),
     )
     .expect("assemble Host");
+    let agent = provision_agent(&host, ALPHA_PRESET, "Alpha").await;
 
     let session = host
-        .create_session(
-            &AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
-            &workspace,
-        )
+        .ensure_agent_session(agent, &workspace, Uuid::new_v4())
         .await
         .expect("create Alpha session from first catalog");
     let initial = session.configuration().expect("initial configuration");
@@ -108,7 +126,6 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
         bridge_source(catalog_calls.to_string_lossy().as_ref()),
     )
     .expect("write model bridge");
-    let profile = arcee_profile(&data).expect("create Arcee profile");
     let host = LocalHost::new(
         &data,
         LocalModelConfiguration::new(
@@ -119,16 +136,13 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
             &credentials,
         )
         .with_initial_reasoning(ReasoningLevel::Xhigh),
-        vec![profile],
         LocalHostAdapters::default(),
     )
     .expect("assemble Host");
+    let agent = provision_agent(&host, ARCEE_PRESET, "Arcee").await;
 
     let session = host
-        .create_session(
-            &AgentProfileId::new(ARCEE_PROFILE_ID).expect("Arcee profile id"),
-            &workspace,
-        )
+        .ensure_agent_session(agent, &workspace, Uuid::new_v4())
         .await
         .expect("create Arcee session");
     let configuration = session.configuration().expect("Arcee configuration");
@@ -143,7 +157,7 @@ async fn arcee_exposes_only_opencode_go_even_when_the_host_has_other_providers()
     let error = session
         .set_model("xai/model-a")
         .await
-        .expect_err("Arcee must not switch to a provider outside its profile");
+        .expect_err("Arcee must not switch to a provider outside its restriction");
     assert!(matches!(error, LocalHostError::InvalidRequest(_)));
 }
 
@@ -172,16 +186,13 @@ async fn configured_initial_reasoning_must_be_supported_by_the_model() {
             &credentials,
         )
         .with_initial_reasoning(ReasoningLevel::Max),
-        vec![alpha_profile()],
         LocalHostAdapters::default(),
     )
     .expect("assemble Host");
+    let agent = provision_agent(&host, ALPHA_PRESET, "Alpha").await;
 
     let error = host
-        .create_session(
-            &AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
-            &workspace,
-        )
+        .ensure_agent_session(agent, &workspace, Uuid::new_v4())
         .await
         .err()
         .expect("reject unsupported initial reasoning");

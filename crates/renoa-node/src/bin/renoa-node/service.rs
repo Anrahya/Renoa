@@ -19,7 +19,8 @@ pub(crate) async fn serve(
         config.state_directory.join("node.sqlite"),
         config.host,
         config.targets,
-    )?;
+    )
+    .await?;
     let shutdown = CancellationToken::new();
     let signal = wait_for_shutdown();
     tokio::pin!(signal);

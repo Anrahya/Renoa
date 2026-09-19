@@ -48,7 +48,7 @@ struct TracedTurn<'a> {
 }
 
 impl AgentSession {
-    /// Runs one caller-identified prompt through fresh profile composition.
+    /// Runs one caller-identified prompt through fresh definition composition.
     ///
     /// Workspace instructions are read for every newly admitted operation.
     /// The resolved behavior then freezes in that operation's kernel manifest.
@@ -311,11 +311,11 @@ impl AgentSession {
         }
         let resolved = async {
             let workspace = LocalWorkspace::open(&self.workspace)?;
-            let profile = self.profile().await?;
+            let definition = self.definition().await?;
             resolve_runtime(
                 &self.host,
                 RuntimeRequest {
-                    profile: &profile,
+                    definition: &definition,
                     session_id: renoa_kernel::SessionId::from_uuid(self.id),
                     command_id: Some(command_id),
                     model: &model,
@@ -338,12 +338,12 @@ impl AgentSession {
                 return Err(error);
             }
         };
-        let profile = self.profile().await?;
+        let definition = self.definition().await?;
         match command {
             SessionCommand::Prompt {
                 content,
                 observation,
-            } if profile.uses_turn_timing() => Ok(self
+            } if definition.behavior().uses_turn_timing() => Ok(self
                 .kernel
                 .execute_observed_turn(command_id, content, observation, &runtime, cancellation)
                 .await?),

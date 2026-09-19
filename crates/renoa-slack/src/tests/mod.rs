@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 use axum::{Json, Router, extract::State, routing::post};
 use renoa_kernel::AgentId;
 use renoa_local::{
-    AgentRecord, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
-    arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, Notify};
@@ -43,8 +43,6 @@ impl Fixture {
     async fn new() -> Self {
         let directory = tempfile::tempdir().expect("fixture");
         let (workspace, bridge, auth) = write_model_fixture(directory.path());
-        let profile = arcee_profile(directory.path()).expect("Arcee profile");
-        let profile_id = profile.id().clone();
         let host = LocalHost::new(
             directory.path(),
             LocalModelConfiguration::new(
@@ -54,20 +52,11 @@ impl Fixture {
                 "fixture",
                 auth,
             ),
-            vec![profile],
             LocalHostAdapters::default(),
         )
         .expect("host");
-        let agent_uuid = Uuid::new_v4();
-        let agent_id = AgentId::from_uuid(agent_uuid);
-        host.ensure_agent(AgentRecord {
-            id: agent_id,
-            profile: profile_id,
-            name: "Arcee".to_owned(),
-            created_by: None,
-        })
-        .await
-        .expect("agent");
+        let agent_id = provision_operator(&host).await;
+        let agent_uuid = Uuid::parse_str(&agent_id.to_string()).expect("agent identity is a UUID");
         let store = Store::open(
             directory.path(),
             &Binding {
@@ -153,6 +142,25 @@ impl Fixture {
         self.api_stop.cancel();
         self.api_task.await.expect("API task").expect("API stopped");
     }
+}
+
+/// Provisions the operator agent through the canonical Host creation path.
+async fn provision_operator(host: &LocalHost) -> AgentId {
+    host.create_agent(
+        AgentCreator::System {
+            component: "slack-test".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new("renoa.personal.arcee.v1").expect("Arcee preset id"),
+            "Arcee",
+        ),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent")
+    .id
 }
 
 async fn send(State(sent): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>) -> Json<Value> {

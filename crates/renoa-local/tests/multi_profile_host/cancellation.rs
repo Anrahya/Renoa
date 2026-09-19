@@ -14,10 +14,10 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
         fs::create_dir(&workspace).expect("workspace");
         fs::write(&bridge, MODEL_BRIDGE).expect("model fixture");
         fs::write(&auth, "").expect("credential fixture");
-        let host = local_host(&data, &bridge, &auth, true);
-        let profile = AgentProfileId::new(RELAY_PROFILE_ID).expect("profile");
+        let host = local_host(&data, &bridge, &auth);
+        let agent = provision_specialist(&host, Uuid::new_v4(), "Relay", RELAY_PROMPT).await;
         let session = host
-            .create_session(&profile, &workspace)
+            .ensure_agent_session(agent.id, &workspace, Uuid::new_v4())
             .await
             .expect("session");
         let id = session.id();
@@ -53,7 +53,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
         let conflict = cancel(
             &host,
             session.as_deref(),
-            &profile,
+            agent.id,
             &workspace,
             id,
             request_id,
@@ -66,7 +66,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
             cancel(
                 &host,
                 session.as_deref(),
-                &profile,
+                agent.id,
                 &workspace,
                 id,
                 request_id,
@@ -110,7 +110,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
 async fn cancel(
     host: &LocalHost,
     session: Option<&renoa_local::AgentSession>,
-    profile: &AgentProfileId,
+    agent: AgentId,
     workspace: &Path,
     id: Uuid,
     request_id: Uuid,
@@ -119,7 +119,7 @@ async fn cancel(
     if let Some(session) = session {
         session.cancel_before_execution(request_id, Some(content))
     } else {
-        host.cancel_before_execution(profile, workspace, id, request_id, Some(content))
+        host.cancel_before_execution(agent, workspace, id, request_id, Some(content))
             .await
     }
 }

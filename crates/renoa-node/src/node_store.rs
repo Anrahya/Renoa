@@ -37,7 +37,7 @@ pub(crate) enum NodeStoreError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TargetBinding {
     pub(crate) target: String,
-    pub(crate) profile_id: String,
+    pub(crate) agent_id: Uuid,
     pub(crate) session_id: Uuid,
     pub(crate) workspace: PathBuf,
 }
@@ -74,7 +74,7 @@ impl NodeStore {
     ) -> Result<(), NodeStoreError> {
         let connection = open_connection(&self.path)?;
         let mut statement = connection.prepare(
-            "SELECT target, profile_id, session_id, workspace
+            "SELECT target, agent_id, session_id, workspace
              FROM host_node_tasks ORDER BY task_id",
         )?;
         let rows = statement.query_map([], |row| {
@@ -86,10 +86,10 @@ impl NodeStore {
             ))
         })?;
         for row in rows {
-            let (target, profile_id, session_id, workspace) = row?;
+            let (target, agent_id, session_id, workspace) = row?;
             let stored = TargetBinding {
                 target: target.clone(),
-                profile_id,
+                agent_id: parse_uuid(&agent_id, "agent")?,
                 session_id: parse_uuid(&session_id, "session")?,
                 workspace: PathBuf::from(workspace),
             };
@@ -181,7 +181,7 @@ impl NodeStore {
             let connection = open_connection(&path)?;
             let mut statement = connection.prepare(
                 "SELECT e.admission_sequence, e.task_id, e.command_json, e.execution_id,
-                        t.target, t.profile_id, t.session_id, t.workspace,
+                        t.target, t.agent_id, t.session_id, t.workspace,
                         e.admission_acked, e.terminal, e.published_through
                  FROM host_node_executions e
                  JOIN host_node_tasks t USING(task_id)
@@ -202,7 +202,7 @@ impl NodeStore {
             let connection = open_connection(&path)?;
             let mut statement = connection.prepare(
                 "SELECT e.admission_sequence, e.task_id, e.command_json, e.execution_id,
-                        t.target, t.profile_id, t.session_id, t.workspace,
+                        t.target, t.agent_id, t.session_id, t.workspace,
                         e.admission_acked, e.terminal, e.published_through
                  FROM host_node_executions e
                  JOIN host_node_tasks t USING(task_id)

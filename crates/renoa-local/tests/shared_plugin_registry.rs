@@ -3,9 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, alpha_profile,
-};
+use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
 use renoa_registry::Registry;
 use renoa_registry_protocol::RegistryStatus;
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -120,7 +118,6 @@ fn local_host(data: PathBuf, registry: &str) -> LocalHost {
             "fixture-model",
             "/unused/credentials",
         ),
-        vec![alpha_profile()],
         LocalHostAdapters::default().with_shared_plugin_registry(Some(registry)),
     )
     .expect("assemble local Host")

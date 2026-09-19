@@ -28,6 +28,7 @@ mod sessions;
 use sessions::{ActiveSession, config_options};
 
 pub(crate) async fn serve_stdio(config: Config) -> Result<(), ServerError> {
+    preflight_agent(&config).await?;
     let server = Arc::new(Server::new(config));
     Agent
         .builder()
@@ -126,6 +127,16 @@ pub(crate) async fn serve_stdio(config: Config) -> Result<(), ServerError> {
         .map_err(ServerError::Transport)
 }
 
+async fn preflight_agent(config: &Config) -> Result<(), ServerError> {
+    let agent_id = config.agent_id();
+    if config.host().agent_definition(agent_id).await?.is_none() {
+        return Err(ServerError::Configuration(format!(
+            "configured agent {agent_id} is not provisioned on this Host; provision it with `renoa-host <config.json> provision <provision.json>` before starting the ACP surface"
+        )));
+    }
+    Ok(())
+}
+
 struct Server {
     config: Config,
     active: Mutex<Option<ActiveSession>>,
@@ -220,7 +231,7 @@ impl Server {
                 None => Err(ServerError::Operation(reason)),
             },
             LocalTurnOutcome::WaitingForInput => Err(ServerError::Operation(
-                "the Alpha coding turn is waiting for unsupported external input".to_owned(),
+                "the agent turn is waiting for unsupported external input".to_owned(),
             )),
             LocalTurnOutcome::Compacted { .. } => Err(ServerError::Operation(
                 "a normal prompt returned a compaction result".to_owned(),

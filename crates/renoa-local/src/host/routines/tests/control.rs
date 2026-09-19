@@ -150,7 +150,7 @@ async fn owner_and_agent_authority_are_distinct_and_old_revisions_do_not_overwri
         Err(LocalHostError::Routine(RoutineError::Conflict))
     ));
     assert_eq!(
-        h.routine(routine.id)
+        h.routine(parent, routine.id)
             .await
             .expect("same authoritative state"),
         paused
@@ -187,7 +187,13 @@ async fn concurrent_owner_retries_commit_once_and_competing_edits_conflict() {
         )
         .expect("receipts");
     assert_eq!(receipts, 2);
-    assert_eq!(h.routine(routine.id).await.expect("revision").revision, 3);
+    assert_eq!(
+        h.routine(parent, routine.id)
+            .await
+            .expect("revision")
+            .revision,
+        3
+    );
 }
 
 #[tokio::test]
@@ -203,13 +209,20 @@ async fn owner_receipt_failure_rolls_back_change_and_migration_keeps_agent_recei
     db.execute_batch("DROP TABLE host_routine_owner_mutations; UPDATE host_metadata SET schema_version=23; PRAGMA user_version=23;").expect("schema 23");
     drop(db);
     drop(h);
-    let h = host(d.path());
-    assert_eq!(
-        h.manage_routine(parent, op, creation, 100, CancellationToken::new())
-            .await
-            .expect("old receipt after migration"),
-        routine
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
     );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
+    let h = host(d.path());
+    assert!(
+        h.routine(parent, routine.id).await.is_err(),
+        "the cutover discards the legacy routine and its receipts"
+    );
+    let (parent, child) = provisioned(&h).await;
+    let routine = create(&h, parent, spec(child)).await;
     let (control, owner) = controls(&h).await;
     let pause = command(1, false);
     let db = catalog::open_verified(&h.config.database).expect("catalog");
@@ -220,7 +233,10 @@ async fn owner_receipt_failure_rolls_back_change_and_migration_keeps_agent_recei
             .await
             .is_err()
     );
-    assert_eq!(h.routine(routine.id).await.expect("rolled back"), routine);
+    assert_eq!(
+        h.routine(parent, routine.id).await.expect("rolled back"),
+        routine
+    );
     db.execute_batch("DROP TRIGGER reject_owner_receipt")
         .expect("restore storage");
     assert_eq!(
@@ -280,7 +296,7 @@ async fn expired_once_deleted_routines_and_replaced_hosts_cannot_be_resumed() {
             .revision,
         2
     );
-    assert!(h.routine(routine.id).await.is_err());
+    assert!(h.routine(parent, routine.id).await.is_err());
     let db = catalog::open_verified(&h.config.database).expect("catalog");
     db.execute(
         "UPDATE host_identity SET host_id=?1",
@@ -330,7 +346,9 @@ async fn a_fresh_owner_operation_checks_host_identity_before_receipt_lookup_or_m
         "{error}"
     );
     assert_eq!(
-        h.routine(routine.id).await.expect("unchanged routine"),
+        h.routine(parent, routine.id)
+            .await
+            .expect("unchanged routine"),
         routine
     );
     assert_eq!(
