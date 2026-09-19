@@ -7,7 +7,9 @@ mod agents;
 mod cutover;
 mod migrations;
 
-pub(crate) use cutover::cutover;
+pub(crate) use cutover::cutover_and_clear;
+#[cfg(test)]
+pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 
 const SCHEMA_VERSION: u32 = 28;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";

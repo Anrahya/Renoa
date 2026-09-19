@@ -115,7 +115,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     assert_frozen_mcp_binding(&data, session_id);
     let reopened = new_vertical_host(&data, &bridge, &credentials, &adapter);
     let restored = reopened
-        .load_session(session_id, &workspace)
+        .load_session_for_agent(alpha, session_id, &workspace)
         .await
         .expect("restore exact Alpha session");
     let replayed = restored

@@ -21,23 +21,94 @@ pub(super) const SOUL_FILE: &str = "SOUL.md";
 pub(super) const USER_FILE: &str = "USER.md";
 const DOCUMENT_DIRECTORY: &str = "agents";
 
-pub(super) fn document_root(
+pub(super) struct PublicationRoot {
+    pub(super) path: PathBuf,
+    parent: PathBuf,
+    root_created: bool,
+    parent_created: bool,
+}
+
+impl PublicationRoot {
+    pub(super) const fn was_created(&self) -> bool {
+        self.root_created
+    }
+
+    pub(super) fn cleanup_empty(&self) {
+        if self.root_created {
+            let _ = fs::remove_dir(&self.path);
+        }
+        if self.parent_created {
+            let _ = fs::remove_dir(&self.parent);
+        }
+    }
+}
+
+pub(super) fn publication_root(
     data_directory: &Path,
     agent: AgentId,
+    enabled: AgentDocuments,
+) -> Result<PublicationRoot, AgentDefinitionError> {
+    let data_directory = document_data_directory(data_directory, enabled)?;
+    let directory = data_directory.join(DOCUMENT_DIRECTORY);
+    let root = directory.join(agent.to_string());
+    let parent_created = create_plain_directory(&directory, agent)?;
+    let root_created = match create_plain_directory(&root, agent) {
+        Ok(created) => created,
+        Err(error) => {
+            if parent_created {
+                let _ = fs::remove_dir(&directory);
+            }
+            return Err(error);
+        }
+    };
+    let prepared = PublicationRoot {
+        path: root.clone(),
+        parent: directory,
+        root_created,
+        parent_created,
+    };
+    let result = (|| {
+        if root_created {
+            restrict_directory(&root)?;
+        }
+        resolve_exact_root(&root, agent)
+    })();
+    match result {
+        Ok(path) => Ok(PublicationRoot { path, ..prepared }),
+        Err(error) => {
+            prepared.cleanup_empty();
+            Err(error)
+        }
+    }
+}
+
+pub(super) fn existing_document_root(
+    data_directory: &Path,
+    agent: AgentId,
+    enabled: AgentDocuments,
+) -> Result<PathBuf, AgentDefinitionError> {
+    let data_directory = document_data_directory(data_directory, enabled)?;
+    let directory = data_directory.join(DOCUMENT_DIRECTORY);
+    require_plain_directory(&directory, agent)?;
+    let root = directory.join(agent.to_string());
+    require_plain_directory(&root, agent)?;
+    resolve_exact_root(&root, agent)
+}
+
+fn document_data_directory(
+    data_directory: &Path,
     enabled: AgentDocuments,
 ) -> Result<PathBuf, AgentDefinitionError> {
     if !enabled.any() {
         return Err(AgentDefinitionError::EmptyDocumentSet);
     }
-    let data_directory = fs::canonicalize(data_directory)
-        .map_err(|source| document_io("resolve Host data directory", data_directory, source))?;
-    let directory = data_directory.join(DOCUMENT_DIRECTORY);
-    let root = directory.join(agent.to_string());
-    create_plain_directory(&directory, agent)?;
-    create_plain_directory(&root, agent)?;
-    restrict_directory(&root)?;
-    let resolved = fs::canonicalize(&root)
-        .map_err(|source| document_io("resolve agent document directory", &root, source))?;
+    fs::canonicalize(data_directory)
+        .map_err(|source| document_io("resolve Host data directory", data_directory, source))
+}
+
+fn resolve_exact_root(root: &Path, agent: AgentId) -> Result<PathBuf, AgentDefinitionError> {
+    let resolved = fs::canonicalize(root)
+        .map_err(|source| document_io("resolve agent document directory", root, source))?;
     // Every component was created without following a link, so the root is the
     // agent's own directory only when it resolves to exactly this path.
     if resolved != root {
@@ -49,18 +120,33 @@ pub(super) fn document_root(
     Ok(resolved)
 }
 
-/// Creates one document directory component unless it already exists, refusing
-/// a symlink or any other file in its place before anything is written through
-/// it.
-fn create_plain_directory(path: &Path, agent: AgentId) -> Result<(), AgentDefinitionError> {
+/// Creates one document directory component unless it already exists and
+/// reports whether this attempt created it.
+fn create_plain_directory(path: &Path, agent: AgentId) -> Result<bool, AgentDefinitionError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(false),
+        Ok(_) => Err(AgentDefinitionError::DocumentsOutsideDataDirectory {
+            agent,
+            path: path.to_path_buf(),
+        }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => fs::create_dir(path)
+            .map(|()| true)
+            .map_err(|source| document_io("create agent document directory", path, source)),
+        Err(source) => Err(document_io(
+            "inspect agent document directory",
+            path,
+            source,
+        )),
+    }
+}
+
+fn require_plain_directory(path: &Path, agent: AgentId) -> Result<(), AgentDefinitionError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
         Ok(_) => Err(AgentDefinitionError::DocumentsOutsideDataDirectory {
             agent,
             path: path.to_path_buf(),
         }),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => fs::create_dir(path)
-            .map_err(|source| document_io("create agent document directory", path, source)),
         Err(source) => Err(document_io(
             "inspect agent document directory",
             path,
@@ -143,12 +229,74 @@ pub(super) fn publication_state(
 }
 
 /// What one publication did with its target path.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) enum Published {
     /// This attempt installed the file.
-    Created,
+    Created(PublishedFile),
     /// The path already held exactly this content.
     Adopted,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct PublishedFile {
+    identity: FileIdentity,
+}
+
+#[cfg(unix)]
+#[derive(Clone, PartialEq, Eq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(not(unix))]
+#[derive(Clone, PartialEq, Eq)]
+struct FileIdentity {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl FileIdentity {
+    fn read(file: &File, path: &Path) -> Result<Self, AgentDefinitionError> {
+        let metadata = file
+            .metadata()
+            .map_err(|source| document_io("inspect published agent document", path, source))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            Ok(Self {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(Self {
+                length: metadata.len(),
+                modified: metadata.modified().ok(),
+            })
+        }
+    }
+
+    fn matches_path(&self, path: &Path) -> Result<bool, std::io::Error> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Ok(false);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            Ok(metadata.dev() == self.device && metadata.ino() == self.inode)
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(metadata.len() == self.length && metadata.modified().ok() == self.modified)
+        }
+    }
 }
 
 pub(super) fn publish_document(
@@ -177,18 +325,34 @@ pub(super) fn publish_document(
         .write_all(content.as_bytes())
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|source| document_io("write agent document staging file", path, source))?;
+    let identity = FileIdentity::read(temporary.as_file(), path)?;
     #[cfg(test)]
     fault::before_persist(path, content)?;
     match temporary.persist_noclobber(path) {
         Ok(file) => {
+            let published = PublishedFile { identity };
             let failure = sync_publication(&file, parent, path).err();
             #[cfg(test)]
             let failure = failure.or_else(|| injected_post_persist_failure(path));
             if let Some(error) = failure {
-                // The path now holds this attempt's own publication, so the
-                // failure removes it again and leaves nothing partial behind.
-                return Err(discard_publication(path, error));
+                return Err(discard_publication(path, &published, error));
             }
+            match published.identity.matches_path(path) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(AgentDefinitionError::DocumentPublicationReplaced {
+                        path: path.to_path_buf(),
+                    });
+                }
+                Err(source) => {
+                    let error = document_io("verify published agent document", path, source);
+                    return Err(discard_publication(path, &published, error));
+                }
+            }
+            if let Err(error) = require_regular_file(path) {
+                return Err(discard_publication(path, &published, error));
+            }
+            Ok(Published::Created(published))
         }
         // A writer outside the Host can take the path between the classification
         // above and this persist, so the winner is adopted only when it holds
@@ -199,16 +363,10 @@ pub(super) fn publish_document(
                     path: path.to_path_buf(),
                 });
             }
-            return Ok(Published::Adopted);
+            Ok(Published::Adopted)
         }
-        Err(error) => {
-            return Err(document_io("publish agent document", path, error.error));
-        }
+        Err(error) => Err(document_io("publish agent document", path, error.error)),
     }
-    if let Err(error) = require_regular_file(path) {
-        return Err(discard_publication(path, error));
-    }
-    Ok(Published::Created)
 }
 
 fn sync_publication(file: &File, parent: &Path, path: &Path) -> Result<(), AgentDefinitionError> {
@@ -233,8 +391,12 @@ fn injected_post_persist_failure(path: &Path) -> Option<AgentDefinitionError> {
 
 /// Removes one document this attempt installed and returns the failure that
 /// followed it, or an error naming both problems when the removal fails too.
-fn discard_publication(path: &Path, failure: AgentDefinitionError) -> AgentDefinitionError {
-    match fs::remove_file(path) {
+fn discard_publication(
+    path: &Path,
+    published: &PublishedFile,
+    failure: AgentDefinitionError,
+) -> AgentDefinitionError {
+    match remove_published(path, published) {
         Ok(()) => failure,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => failure,
         Err(error) => AgentDefinitionError::PublicationCleanup {
@@ -243,6 +405,23 @@ fn discard_publication(path: &Path, failure: AgentDefinitionError) -> AgentDefin
             cleanup: error.to_string(),
         },
     }
+}
+
+pub(super) fn remove_published(
+    path: &Path,
+    published: &PublishedFile,
+) -> Result<(), std::io::Error> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
+    if !published.identity.matches_path(path)? {
+        return Err(std::io::Error::other(
+            "the path no longer names the file installed by this publication",
+        ));
+    }
+    fs::remove_file(path)
 }
 
 pub(super) fn require_regular_file(path: &Path) -> Result<(), AgentDefinitionError> {
@@ -310,70 +489,8 @@ pub(super) fn revision_from_hash(hash: [u8; 32]) -> String {
     encoded
 }
 
-pub(super) fn is_revision(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-}
-
 /// Test-only injection for the publication windows a real filesystem cannot
 /// reach deterministically: a writer winning the race to the path, and a
 /// failure between a successful persist and its sync.
 #[cfg(test)]
-pub(super) mod fault {
-    use std::{cell::RefCell, fs, path::Path};
-
-    use super::{AgentDefinitionError, document_io};
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(in crate::documents) enum Injection {
-        /// An identical file appears at the path just before the persist.
-        IdenticalWinner,
-        /// A conflicting file appears at the path just before the persist.
-        ConflictingWinner,
-        /// The persist succeeds and the sync that follows it fails.
-        PostPersistFailure,
-    }
-
-    thread_local! {
-        static ARMED: RefCell<Vec<(&'static str, Injection)>> = const { RefCell::new(Vec::new()) };
-    }
-
-    pub(in crate::documents) fn arm(document: &'static str, injection: Injection) {
-        ARMED.with(|armed| {
-            let mut armed = armed.borrow_mut();
-            armed.retain(|(name, _)| *name != document);
-            armed.push((document, injection));
-        });
-    }
-
-    pub(in crate::documents) fn disarm() {
-        ARMED.with(|armed| armed.borrow_mut().clear());
-    }
-
-    fn armed_for(path: &Path) -> Option<Injection> {
-        let name = path.file_name().and_then(|name| name.to_str());
-        ARMED.with(|armed| {
-            armed
-                .borrow()
-                .iter()
-                .find(|(document, _)| Some(*document) == name)
-                .map(|(_, injection)| *injection)
-        })
-    }
-
-    pub(super) fn before_persist(path: &Path, content: &str) -> Result<(), AgentDefinitionError> {
-        match armed_for(path) {
-            Some(Injection::IdenticalWinner) => fs::write(path, content)
-                .map_err(|source| document_io("inject an identical winner", path, source)),
-            Some(Injection::ConflictingWinner) => fs::write(path, "injected winner\n")
-                .map_err(|source| document_io("inject a conflicting winner", path, source)),
-            _ => Ok(()),
-        }
-    }
-
-    pub(super) fn after_persist(path: &Path) -> bool {
-        armed_for(path) == Some(Injection::PostPersistFailure)
-    }
-}
+pub(super) mod fault;

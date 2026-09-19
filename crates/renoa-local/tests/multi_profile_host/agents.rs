@@ -307,7 +307,7 @@ async fn one_agent_owns_multiple_isolated_sessions_across_restart_and_session_de
         Some(agent.clone())
     );
     let second = restarted
-        .load_session(second_id, &fixture.workspace)
+        .load_session_for_agent(agent.id, second_id, &fixture.workspace)
         .await
         .expect("other conversation survives");
     assert!(second.history().expect("still isolated").is_empty());

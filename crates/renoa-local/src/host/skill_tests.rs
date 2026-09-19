@@ -103,7 +103,7 @@ async fn skills_hot_load_and_survive_compaction_and_host_restart() {
     drop(host);
     let reopened = local_host(&data, &bridge, &credentials, &global);
     let restored = reopened
-        .load_session(session_id, &workspace)
+        .load_session_for_agent(agent, session_id, &workspace)
         .await
         .expect("restore exact Alpha session");
     assert_eq!(

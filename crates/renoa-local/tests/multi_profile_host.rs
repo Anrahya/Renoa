@@ -77,7 +77,7 @@ async fn host_assembles_and_restores_an_exact_non_alpha_agent() {
 
     let reopened = local_host(&data, &bridge, &credentials);
     let restored = reopened
-        .load_session(session_id, &workspace)
+        .load_session_for_agent(agent_id, session_id, &workspace)
         .await
         .expect("restore Relay session with its agent registered");
     assert_eq!(restored.id(), session_id);
@@ -102,7 +102,10 @@ async fn host_assembles_and_restores_an_exact_non_alpha_agent() {
             [agent_id.to_string()],
         )
         .expect("remove the agent row");
-    let Err(error) = reopened.load_session(session_id, &workspace).await else {
+    let Err(error) = reopened
+        .load_session_for_agent(agent_id, session_id, &workspace)
+        .await
+    else {
         panic!("an unregistered agent must fail closed");
     };
     assert!(

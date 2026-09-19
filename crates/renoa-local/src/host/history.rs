@@ -3,9 +3,10 @@ use std::path::Path;
 use renoa_kernel::AgentId;
 use uuid::Uuid;
 
-use super::{LocalHost, LocalHostError, sessions::StoredSession};
+use super::{LocalHost, LocalHostError};
 use crate::{
     LocalHistoryEntry, LocalSession,
+    host_storage::OpenedSessionStorage,
     trace::{TRACE_DATABASE, TraceStore},
 };
 
@@ -63,12 +64,12 @@ impl LocalHost {
         session_uuid: Uuid,
         cwd: &Path,
     ) -> Result<AgentSessionHistory, LocalHostError> {
-        let StoredSession {
+        let OpenedSessionStorage {
             directory,
             manifest,
             kernel,
         } = self
-            .load_session_storage(Some(agent_id), session_uuid, cwd)
+            .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
         kernel.history()?;
         let diagnostic_error = TraceStore::open(

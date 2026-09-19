@@ -86,9 +86,10 @@ impl HostResetReport {
 /// deleted, and every store outside the Host catalog is a separate step.
 ///
 /// # Errors
-/// Returns catalog storage or filesystem failures. A reset that is refused —
-/// an unusable managed root, or a catalog failure — leaves the database
-/// untouched. A failure while removing directory contents can leave the
+/// Returns catalog storage or filesystem failures. An unusable managed root is
+/// refused before the catalog is opened. Schema cutover and row clearing share
+/// one transaction, so a catalog failure leaves the database untouched. A
+/// failure while removing directory contents can leave the
 /// agent-owned rows deleted and the managed roots partly cleared; both removals
 /// are idempotent, so re-running the reset converges.
 pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, LocalHostError> {
@@ -96,13 +97,16 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
     // refusal here leaves the rows and the state they describe in place.
     require_managed_roots(data_directory)?;
     let database = data_directory.join(catalog::HOST_DATABASE);
-    if database.exists() {
-        catalog::cutover(&database)?;
+    let removed_rows = if database.exists() {
+        catalog::cutover_and_clear(&database, AGENT_OWNED_TABLES)?
     } else {
         std::fs::create_dir_all(data_directory)?;
         catalog::initialize(&database)?;
-    }
-    let removed_rows = clear_agent_rows(&database)?;
+        AGENT_OWNED_TABLES
+            .iter()
+            .map(|table| ((*table).to_owned(), 0))
+            .collect()
+    };
     let removed_sessions = clear_roots(data_directory, &SESSION_ROOTS)?;
     let removed_review_directories = clear_roots(data_directory, &REVIEW_ROOTS)?;
     let removed_document_roots = clear_roots(data_directory, &DOCUMENT_ROOTS)?;
@@ -113,30 +117,6 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
         removed_document_roots,
         preserved_workspaces: preserved_workspaces(data_directory),
     })
-}
-
-/// Removes every agent-owned row in one transaction.
-fn clear_agent_rows(database: &Path) -> Result<BTreeMap<String, u64>, LocalHostError> {
-    let mut connection = catalog::open_verified(database)?;
-    let transaction = connection
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(super::definition::catalog_error)?;
-    // Deferring foreign keys makes the delete set one unit: a child row left
-    // behind after its parent is deleted fails the commit.
-    transaction
-        .execute_batch("PRAGMA defer_foreign_keys = ON;")
-        .map_err(super::definition::catalog_error)?;
-    let mut removed = BTreeMap::new();
-    for table in AGENT_OWNED_TABLES {
-        let deleted = transaction
-            .execute(&format!("DELETE FROM {table}"), [])
-            .map_err(super::definition::catalog_error)?;
-        removed.insert((*table).to_owned(), deleted as u64);
-    }
-    transaction
-        .commit()
-        .map_err(super::definition::catalog_error)?;
-    Ok(removed)
 }
 
 /// Refuses every unusable managed root before any catalog work, so a refused

@@ -63,6 +63,30 @@ fn conflicting_pre_existing_content_fails_closed() {
 }
 
 #[test]
+fn conflicting_content_does_not_change_existing_root_permissions() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fs::create_dir_all(&root).expect("create document root");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755))
+        .expect("set operator permissions");
+    fs::write(root.join("SOUL.md"), "operator-written\n").expect("write conflict");
+
+    AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("conflicting content must fail");
+
+    assert_eq!(
+        fs::metadata(&root)
+            .expect("document root metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "a rejected publication must not change existing directory metadata"
+    );
+}
+
+#[test]
 fn a_conflicting_second_document_publishes_nothing() {
     let directory = tempdir().expect("temporary data directory");
     let agent = AgentId::new();
@@ -140,6 +164,25 @@ fn an_adopted_identical_winner_survives_a_failing_sibling() {
     assert_eq!(
         fs::read_to_string(root.join("USER.md")).expect("the conflicting winner survives"),
         "injected winner\n"
+    );
+}
+
+#[test]
+fn a_replacement_after_creation_survives_a_failing_sibling() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fault::arm("SOUL.md", fault::Injection::ReplacementAfterCreation);
+    fault::arm("USER.md", fault::Injection::ConflictingWinner);
+
+    AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("the conflicting sibling must fail the publication");
+    fault::disarm();
+
+    assert_eq!(
+        fs::read_to_string(root.join("SOUL.md")).expect("replacement survives"),
+        "replacement writer\n",
+        "rollback must not unlink a file that replaced this attempt's publication"
     );
 }
 

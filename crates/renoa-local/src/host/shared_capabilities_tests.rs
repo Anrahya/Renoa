@@ -63,7 +63,7 @@ async fn live_host_clients_reuse_credentials_packages_and_skills_across_agents_a
     drop(second);
     let reopened = host(root);
     let restored = reopened
-        .load_session(session_id, &root.join("workspace"))
+        .load_session_for_agent(second_agent, session_id, &root.join("workspace"))
         .await
         .expect("restore exact second session");
     assert_eq!(

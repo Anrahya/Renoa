@@ -17,13 +17,24 @@ use crate::{
 pub(crate) const KERNEL_DATABASE: &str = "kernel.sqlite3";
 pub(crate) const MANIFEST_FILE: &str = "session.json";
 const MANIFEST_VERSION: u32 = 4;
-const CREATION_LOCK_FILE: &str = ".session-creation.lock";
+const LIFECYCLE_LOCK_FILE: &str = ".session-creation.lock";
 const OWNERSHIP_HANDOFF_TIMEOUT: Duration = Duration::from_millis(100);
 const OWNERSHIP_HANDOFF_POLL: Duration = Duration::from_millis(1);
 
 pub(crate) enum SessionPublication {
+    Created(OpenedSessionStorage),
+    Existing(OpenedSessionStorage),
+}
+
+enum DirectoryPublication {
     Created(PathBuf),
     Existing,
+}
+
+pub(crate) struct OpenedSessionStorage {
+    pub(crate) directory: PathBuf,
+    pub(crate) manifest: SessionManifest,
+    pub(crate) kernel: LocalSession,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,13 +58,25 @@ pub(crate) fn create_session_storage(
     workspace: PathBuf,
     selection: &RuntimeSelection,
 ) -> Result<SessionPublication, LocalHostError> {
+    create_session_storage_with_hook(sessions, agent_id, session_id, workspace, selection, || {})
+}
+
+fn create_session_storage_with_hook(
+    sessions: &Path,
+    agent_id: AgentId,
+    session_id: SessionId,
+    workspace: PathBuf,
+    selection: &RuntimeSelection,
+    after_publish: impl FnOnce(),
+) -> Result<SessionPublication, LocalHostError> {
     let manifest = SessionManifest {
         version: MANIFEST_VERSION,
         agent_id,
         session_id,
         workspace,
     };
-    publish_session(sessions, session_id, |staging| {
+    let _lifecycle = session_lifecycle_lock(sessions)?;
+    let publication = publish_session_locked(sessions, session_id, |staging| {
         write_manifest(staging, &manifest)?;
         create_selection_log(staging, selection)?;
         let session = LocalSession::create(staging.join(KERNEL_DATABASE), agent_id, session_id)?;
@@ -64,11 +87,92 @@ pub(crate) fn create_session_storage(
             agent_id,
         )?);
         Ok(())
-    })
+    })?;
+    match publication {
+        DirectoryPublication::Created(directory) => {
+            after_publish();
+            let kernel = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)?;
+            Ok(SessionPublication::Created(OpenedSessionStorage {
+                directory,
+                manifest,
+                kernel,
+            }))
+        }
+        DirectoryPublication::Existing => {
+            open_session_storage_locked(sessions, agent_id, session_id, &manifest.workspace, || {})
+                .map(SessionPublication::Existing)
+        }
+    }
+}
+
+pub(crate) fn open_session_storage(
+    sessions: &Path,
+    expected_agent: AgentId,
+    session_id: SessionId,
+    workspace: &Path,
+) -> Result<OpenedSessionStorage, LocalHostError> {
+    open_session_storage_with_hook(sessions, expected_agent, session_id, workspace, || {})
 }
 
 pub(crate) async fn read_manifest(path: PathBuf) -> Result<SessionManifest, LocalHostError> {
     tokio::task::spawn_blocking(move || read_manifest_file(&path)).await?
+}
+
+fn open_session_storage_with_hook(
+    sessions: &Path,
+    expected_agent: AgentId,
+    session_id: SessionId,
+    workspace: &Path,
+    after_manifest: impl FnOnce(),
+) -> Result<OpenedSessionStorage, LocalHostError> {
+    let _lifecycle = session_lifecycle_lock(sessions)?;
+    open_session_storage_locked(
+        sessions,
+        expected_agent,
+        session_id,
+        workspace,
+        after_manifest,
+    )
+}
+
+fn open_session_storage_locked(
+    sessions: &Path,
+    expected_agent: AgentId,
+    session_id: SessionId,
+    workspace: &Path,
+    after_manifest: impl FnOnce(),
+) -> Result<OpenedSessionStorage, LocalHostError> {
+    let directory = sessions.join(session_id.to_string());
+    require_directory(&directory)?;
+    let manifest = read_manifest_file(&directory.join(MANIFEST_FILE))?;
+    after_manifest();
+    if manifest.agent_id != expected_agent {
+        return Err(LocalHostError::InvalidRequest(
+            "session belongs to a different agent".to_owned(),
+        ));
+    }
+    if manifest.session_id != session_id {
+        return Err(LocalHostError::InvalidRequest(
+            "session metadata does not match the requested Agent session".to_owned(),
+        ));
+    }
+    let requested_workspace = std::fs::canonicalize(workspace)?;
+    if manifest.workspace != requested_workspace {
+        return Err(LocalHostError::InvalidRequest(
+            "session workspace differs from its durable binding".to_owned(),
+        ));
+    }
+    let kernel = LocalSession::load(directory.join(KERNEL_DATABASE), session_id)?;
+    if kernel.agent_id() != manifest.agent_id {
+        return Err(LocalHostError::InvalidRequest(
+            "session metadata differs from its kernel agent binding".to_owned(),
+        ));
+    }
+    Ok(OpenedSessionStorage {
+        directory,
+        manifest,
+        kernel,
+    })
 }
 
 /// Removes one session directory when its manifest binds it to `agent_id`.
@@ -80,6 +184,16 @@ pub(crate) fn delete_session_storage(
     agent_id: AgentId,
     session_id: SessionId,
 ) -> Result<(), LocalHostError> {
+    delete_session_storage_with_hook(sessions, agent_id, session_id, || {})
+}
+
+fn delete_session_storage_with_hook(
+    sessions: &Path,
+    agent_id: AgentId,
+    session_id: SessionId,
+    after_manifest: impl FnOnce(),
+) -> Result<(), LocalHostError> {
+    let _lifecycle = session_lifecycle_lock(sessions)?;
     let directory = sessions.join(session_id.to_string());
     let tombstone = sessions.join(format!(".deleting-{session_id}"));
     let directory_exists = directory.try_exists()?;
@@ -100,6 +214,7 @@ pub(crate) fn delete_session_storage(
 
     require_directory(&directory)?;
     let manifest = read_manifest_file(&directory.join(MANIFEST_FILE))?;
+    after_manifest();
     if manifest.agent_id != agent_id {
         return Err(LocalHostError::InvalidRequest(
             "session belongs to a different agent".to_owned(),
@@ -147,22 +262,25 @@ pub(crate) fn load_session_after_handoff(
     }
 }
 
+#[cfg(test)]
 fn publish_session(
     sessions: &Path,
     session_id: SessionId,
     initialize: impl FnOnce(&Path) -> Result<(), LocalHostError>,
-) -> Result<SessionPublication, LocalHostError> {
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(sessions.join(CREATION_LOCK_FILE))?;
-    lock.lock()?;
+) -> Result<DirectoryPublication, LocalHostError> {
+    let _lifecycle = session_lifecycle_lock(sessions)?;
+    publish_session_locked(sessions, session_id, initialize)
+}
+
+fn publish_session_locked(
+    sessions: &Path,
+    session_id: SessionId,
+    initialize: impl FnOnce(&Path) -> Result<(), LocalHostError>,
+) -> Result<DirectoryPublication, LocalHostError> {
     let final_directory = sessions.join(session_id.to_string());
     if final_directory.try_exists()? {
         require_directory(&final_directory)?;
-        return Ok(SessionPublication::Existing);
+        return Ok(DirectoryPublication::Existing);
     }
     let staging = sessions.join(format!(".creating-{session_id}"));
     remove_stale_staging(&staging)?;
@@ -174,7 +292,7 @@ fn publish_session(
         std::fs::rename(&staging, &final_directory)?;
         published = true;
         File::open(sessions)?.sync_all()?;
-        Ok(SessionPublication::Created(final_directory.clone()))
+        Ok(DirectoryPublication::Created(final_directory.clone()))
     });
     match result {
         Ok(directory) => Ok(directory),
@@ -187,6 +305,17 @@ fn publish_session(
             }),
         },
     }
+}
+
+fn session_lifecycle_lock(sessions: &Path) -> Result<File, LocalHostError> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(sessions.join(LIFECYCLE_LOCK_FILE))?;
+    lock.lock()?;
+    Ok(lock)
 }
 
 fn remove_stale_staging(staging: &Path) -> Result<(), LocalHostError> {
@@ -273,222 +402,4 @@ fn require_file(path: &Path) -> Result<(), LocalHostError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        cell::Cell,
-        io,
-        sync::mpsc::{self, RecvTimeoutError},
-        thread,
-        time::Duration,
-    };
-
-    use renoa_kernel::{AgentId, KernelError, SessionId};
-    use tempfile::tempdir;
-
-    use super::{
-        KERNEL_DATABASE, SessionPublication, create_session_storage, delete_session_storage,
-        load_session_after_handoff, publish_session,
-    };
-    use crate::{
-        LocalHostError, LocalSessionError, ModelProvider, ReasoningLevel,
-        selection::RuntimeSelection,
-    };
-
-    #[test]
-    fn failed_initialization_never_publishes_a_partial_session() {
-        let directory = tempdir().expect("temporary directory");
-        let session_id = renoa_kernel::SessionId::new();
-
-        let result = publish_session(directory.path(), session_id, |staging| {
-            std::fs::write(staging.join("partial"), "not a session")?;
-            Err(LocalHostError::Io(io::Error::other(
-                "injected creation failure",
-            )))
-        });
-
-        assert!(matches!(result, Err(LocalHostError::Io(_))));
-        assert!(!directory.path().join(session_id.to_string()).exists());
-        assert!(
-            !directory
-                .path()
-                .join(format!(".creating-{session_id}"))
-                .exists()
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn published_session_directory_is_owner_only() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let directory = tempdir().expect("temporary directory");
-        let session_id = renoa_kernel::SessionId::new();
-
-        let SessionPublication::Created(published) =
-            publish_session(directory.path(), session_id, |_| Ok(()))
-                .expect("publish session directory")
-        else {
-            panic!("new session unexpectedly existed");
-        };
-
-        assert_eq!(
-            std::fs::metadata(published)
-                .expect("session metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-    }
-
-    #[test]
-    fn publication_recovers_a_stale_creation_and_reuses_the_published_session() {
-        let sessions = tempdir().expect("temporary directory");
-        let session_id = SessionId::new();
-        let staging = sessions.path().join(format!(".creating-{session_id}"));
-        std::fs::create_dir(&staging).expect("create stale staging directory");
-        std::fs::write(staging.join("partial"), "incomplete").expect("write stale data");
-
-        let SessionPublication::Created(published) =
-            publish_session(sessions.path(), session_id, |directory| {
-                assert!(!directory.join("partial").exists());
-                std::fs::write(directory.join("complete"), "ready")?;
-                Ok(())
-            })
-            .expect("recover session publication")
-        else {
-            panic!("stale creation unexpectedly resolved as published");
-        };
-        assert_eq!(
-            std::fs::read_to_string(published.join("complete")).expect("read published data"),
-            "ready"
-        );
-
-        let initialized = Cell::new(false);
-        let publication = publish_session(sessions.path(), session_id, |_| {
-            initialized.set(true);
-            Ok(())
-        })
-        .expect("reuse published session");
-        assert!(matches!(publication, SessionPublication::Existing));
-        assert!(!initialized.get());
-    }
-
-    #[test]
-    fn deletion_requires_exclusive_ownership_and_is_idempotent() {
-        let sessions = tempdir().expect("temporary directory");
-        let workspace = tempdir().expect("workspace directory");
-        let agent_id = AgentId::new();
-        let session_id = SessionId::new();
-        let SessionPublication::Created(directory) = create_session_storage(
-            sessions.path(),
-            agent_id,
-            session_id,
-            workspace.path().to_owned(),
-            &RuntimeSelection {
-                provider: ModelProvider::Xai,
-                model: "test".to_owned(),
-                reasoning: ReasoningLevel::High,
-            },
-        )
-        .expect("create session storage") else {
-            panic!("new session unexpectedly existed");
-        };
-        let owner = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)
-            .expect("own kernel session");
-
-        let active_delete = delete_session_storage(sessions.path(), agent_id, session_id);
-        assert!(matches!(
-            active_delete,
-            Err(LocalHostError::Session(LocalSessionError::Kernel(
-                KernelError::AlreadyRunning { .. }
-            )))
-        ));
-        assert!(directory.is_dir());
-
-        drop(owner);
-        let foreign_delete = delete_session_storage(sessions.path(), AgentId::new(), session_id);
-        assert!(matches!(
-            foreign_delete,
-            Err(LocalHostError::InvalidRequest(message))
-                if message == "session belongs to a different agent"
-        ));
-        assert!(directory.is_dir());
-
-        delete_session_storage(sessions.path(), agent_id, session_id)
-            .expect("delete session storage");
-        assert!(!directory.exists());
-        assert!(
-            !sessions
-                .path()
-                .join(format!(".deleting-{session_id}"))
-                .exists()
-        );
-
-        delete_session_storage(sessions.path(), agent_id, session_id)
-            .expect("repeat session deletion idempotently");
-        delete_session_storage(sessions.path(), AgentId::new(), SessionId::new())
-            .expect("an absent session stays deletable for any agent");
-    }
-
-    #[test]
-    fn ownership_handoff_waits_briefly_for_a_released_local_owner() {
-        let sessions = tempdir().expect("temporary directory");
-        let workspace = tempdir().expect("workspace directory");
-        let agent_id = AgentId::new();
-        let session_id = SessionId::new();
-        let SessionPublication::Created(directory) = create_session_storage(
-            sessions.path(),
-            agent_id,
-            session_id,
-            workspace.path().to_owned(),
-            &RuntimeSelection {
-                provider: ModelProvider::Xai,
-                model: "test".to_owned(),
-                reasoning: ReasoningLevel::High,
-            },
-        )
-        .expect("create session storage") else {
-            panic!("new session unexpectedly existed");
-        };
-        let kernel_path = directory.join(KERNEL_DATABASE);
-        let owner =
-            load_session_after_handoff(&kernel_path, session_id).expect("own published session");
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let waiter = thread::spawn(move || {
-            sender
-                .send(load_session_after_handoff(&kernel_path, session_id))
-                .expect("send handoff result");
-        });
-
-        assert!(matches!(
-            receiver.recv_timeout(Duration::from_millis(20)),
-            Err(RecvTimeoutError::Timeout)
-        ));
-        drop(owner);
-        let reopened = receiver
-            .recv_timeout(Duration::from_secs(1))
-            .expect("handoff completed")
-            .expect("reopen after ownership release");
-        assert_eq!(reopened.agent_id(), agent_id);
-        drop(reopened);
-        waiter.join().expect("handoff thread completed");
-    }
-
-    #[test]
-    fn deletion_retry_cleans_a_published_tombstone() {
-        let sessions = tempdir().expect("temporary directory");
-        let session_id = SessionId::new();
-        let directory = sessions.path().join(session_id.to_string());
-        let tombstone = sessions.path().join(format!(".deleting-{session_id}"));
-        std::fs::create_dir(&directory).expect("create session directory");
-        std::fs::write(directory.join("data"), "durable").expect("write session data");
-        std::fs::rename(&directory, &tombstone).expect("publish deletion tombstone");
-
-        delete_session_storage(sessions.path(), AgentId::new(), session_id)
-            .expect("resume session deletion");
-
-        assert!(!directory.exists());
-        assert!(!tombstone.exists());
-    }
-}
+mod tests;

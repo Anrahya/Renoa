@@ -317,6 +317,8 @@ pub enum AgentDefinitionError {
     DocumentPath { path: PathBuf },
     #[error("agent document must be a regular file: {path}")]
     DocumentNotFile { path: PathBuf },
+    #[error("agent document publication at `{path}` was replaced before it settled")]
+    DocumentPublicationReplaced { path: PathBuf },
     #[error("agent document at `{path}` is not UTF-8: {source}")]
     DocumentInvalidUtf8 {
         path: PathBuf,

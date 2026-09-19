@@ -6,7 +6,7 @@
 //! always has both readable files.
 
 use std::{
-    fs::{self, File},
+    fs::File,
     io::Read as _,
     path::{Path, PathBuf},
     sync::Arc,
@@ -23,9 +23,10 @@ use tokio_util::sync::CancellationToken;
 
 mod files;
 use files::{
-    Document, DocumentSnapshot, Publication, Published, append_document, document_io,
-    document_root, is_revision, publication_state, publish_document, require_regular_file,
-    revision, revision_from_hash,
+    Document, DocumentSnapshot, Publication, PublicationRoot, Published, PublishedFile,
+    append_document, document_io, existing_document_root, publication_root, publication_state,
+    publish_document, remove_published, require_regular_file, restrict_directory, revision,
+    revision_from_hash,
 };
 
 use crate::{
@@ -70,28 +71,48 @@ impl AgentDocumentStore {
         enabled: AgentDocuments,
         defaults: DocumentDefaults,
     ) -> Result<(), AgentDefinitionError> {
-        let root = document_root(data_directory, agent, enabled)?;
+        let root = publication_root(data_directory, agent, enabled)?;
         let publications: Vec<(PathBuf, &'static str)> = enabled_documents(enabled)
             .into_iter()
             .map(|document| {
                 (
-                    root.join(document.file_name()),
+                    root.path.join(document.file_name()),
                     default_content(document, defaults),
                 )
             })
             .collect();
         for (path, content) in &publications {
-            if publication_state(path, content)? == Publication::Conflicting {
-                return Err(AgentDefinitionError::DocumentConflict { path: path.clone() });
+            let state = match publication_state(path, content) {
+                Ok(state) => state,
+                Err(error) => {
+                    root.cleanup_empty();
+                    return Err(error);
+                }
+            };
+            if state == Publication::Conflicting {
+                let error = AgentDefinitionError::DocumentConflict { path: path.clone() };
+                root.cleanup_empty();
+                return Err(error);
             }
         }
-        let mut created: Vec<PathBuf> = Vec::new();
+        let mut created: Vec<(PathBuf, PublishedFile)> = Vec::new();
         for (path, content) in &publications {
             match publish_document(path, content) {
-                Ok(Published::Created) => created.push(path.clone()),
+                Ok(Published::Created(published)) => {
+                    created.push((path.clone(), published));
+                    #[cfg(test)]
+                    if let Err(error) = files::fault::after_created(path) {
+                        return Err(remove_created(&root, &created, error));
+                    }
+                }
                 Ok(Published::Adopted) => {}
                 Err(error) => return Err(remove_created(&root, &created, error)),
             }
+        }
+        if !root.was_created()
+            && let Err(error) = restrict_directory(&root.path)
+        {
+            return Err(remove_created(&root, &created, error));
         }
         Ok(())
     }
@@ -107,7 +128,7 @@ impl AgentDocumentStore {
         agent: AgentId,
         enabled: AgentDocuments,
     ) -> Result<Self, AgentDefinitionError> {
-        let root = document_root(data_directory, agent, enabled)?;
+        let root = existing_document_root(data_directory, agent, enabled)?;
         let documents = Self {
             agent,
             root,
@@ -198,7 +219,11 @@ impl AgentDocumentStore {
                 "this agent does not keep that document",
             ));
         }
-        if !is_revision(expected_revision) {
+        if expected_revision.len() != 64
+            || !expected_revision
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
             return Err(ToolError::invalid_input(
                 "expected_revision must be a 64-character lowercase SHA-256 digest",
             ));
@@ -368,25 +393,28 @@ fn default_content(document: Document, defaults: DocumentDefaults) -> &'static s
 /// Removes the documents this attempt installed and returns the failure that
 /// stopped the publication, naming the removal too when it fails.
 fn remove_created(
-    root: &Path,
-    created: &[PathBuf],
+    root: &PublicationRoot,
+    created: &[(PathBuf, PublishedFile)],
     failure: AgentDefinitionError,
 ) -> AgentDefinitionError {
-    for path in created {
-        if let Err(error) = fs::remove_file(path)
+    let mut cleanup_failure = None;
+    for (path, published) in created {
+        if let Err(error) = remove_published(path, published)
             && error.kind() != std::io::ErrorKind::NotFound
+            && cleanup_failure.is_none()
         {
-            return AgentDefinitionError::PublicationCleanup {
-                path: path.clone(),
-                failure: failure.to_string(),
-                cleanup: error.to_string(),
-            };
+            cleanup_failure = Some((path.clone(), error));
         }
     }
-    // Only an empty root disappears here, so a document another publication
-    // owns keeps the directory.
-    let _ = fs::remove_dir(root);
-    failure
+    root.cleanup_empty();
+    match cleanup_failure {
+        Some((path, error)) => AgentDefinitionError::PublicationCleanup {
+            path,
+            failure: failure.to_string(),
+            cleanup: error.to_string(),
+        },
+        None => failure,
+    }
 }
 
 fn document_tool_io(operation: &str, error: &std::io::Error) -> ToolError {

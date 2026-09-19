@@ -80,6 +80,57 @@ async fn a_managed_root_that_is_not_a_directory_is_refused() {
     );
 }
 
+#[tokio::test]
+async fn a_catalog_failure_rolls_back_cutover_and_agent_row_clearing() {
+    let (directory, host) = fixture();
+    let root = directory.path();
+    let agent = seed_agent(&host).await;
+    drop(host);
+    Connection::open(database(root))
+        .expect("open Host catalog")
+        .execute_batch(
+            "DROP TABLE host_agent_creations;
+             CREATE TABLE host_agent_creations (
+                operation_id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
+                request_json TEXT NOT NULL CHECK (json_valid(request_json))
+             ) STRICT;
+             UPDATE host_metadata SET schema_version = 27 WHERE singleton = 1;
+             PRAGMA user_version = 27;",
+        )
+        .expect("construct schema-twenty-seven fixture");
+    super::super::catalog::fail_next_clear_before_commit();
+
+    let error = reset_host_data_root(&root.join("data"))
+        .expect_err("the injected catalog failure must abort the reset");
+
+    assert!(error.to_string().contains("injected catalog failure"));
+    assert_eq!(count(&database(root), "host_agents"), 1);
+    let catalog = Connection::open(database(root)).expect("open rolled-back catalog");
+    assert_eq!(
+        catalog
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .expect("read rolled-back schema version"),
+        27
+    );
+    assert_eq!(
+        catalog
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('host_agent_creations')
+                 WHERE name = 'result_json'",
+                [],
+                |row| row.get::<_, u32>(0),
+            )
+            .expect("read rolled-back creation receipt columns"),
+        0,
+        "the failed reset must roll the schema cutover back too"
+    );
+    assert!(
+        root.join("data/agents").join(agent.to_string()).exists(),
+        "a rolled-back catalog reset must not reach filesystem clearing"
+    );
+}
+
 /// Creates one durable agent, whose rows and documents a refused reset must keep.
 async fn seed_agent(host: &LocalHost) -> crate::AgentId {
     host.create_agent(

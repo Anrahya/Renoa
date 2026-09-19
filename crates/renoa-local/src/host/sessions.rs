@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use renoa_kernel::{AgentId, SessionId};
 use uuid::Uuid;
@@ -12,22 +9,16 @@ use super::{
     discover_models_for, initial_reasoning, require_model, resolve_runtime,
 };
 use crate::{
-    AgentSession, LocalSession, LocalWorkspace,
+    AgentSession, LocalWorkspace,
     agent_session::AgentSessionStorage,
     host::models::validate_selection,
     host_storage::{
-        KERNEL_DATABASE, MANIFEST_FILE, SessionManifest, SessionPublication,
-        create_session_storage, delete_session_storage, load_session_after_handoff, read_manifest,
+        OpenedSessionStorage, SessionPublication, create_session_storage, delete_session_storage,
+        open_session_storage,
     },
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
     trace::{TRACE_DATABASE, TraceStore},
 };
-
-pub(super) struct StoredSession {
-    pub(super) directory: PathBuf,
-    pub(super) manifest: SessionManifest,
-    pub(super) kernel: LocalSession,
-}
 
 impl LocalHost {
     /// Creates or reloads a caller-identified conversation for an existing agent.
@@ -113,15 +104,15 @@ impl LocalHost {
             )
         })
         .await??;
-        let directory = match publication {
-            SessionPublication::Created(directory) => directory,
-            SessionPublication::Existing => {
-                return self
-                    .load_session_for_agent(agent_id, session_uuid, cwd)
-                    .await;
+        let stored = match publication {
+            SessionPublication::Created(stored) => stored,
+            SessionPublication::Existing(stored) => {
+                return self.assemble_session(session_uuid, stored).await;
             }
         };
-        let kernel = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)?;
+        let OpenedSessionStorage {
+            directory, kernel, ..
+        } = stored;
         let trace = TraceStore::open(directory.join(TRACE_DATABASE), session_id, agent_id)?;
         Ok(Arc::new(AgentSession::new(
             session_uuid,
@@ -156,34 +147,17 @@ impl LocalHost {
         cwd: &Path,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
         let stored = self
-            .load_session_storage(Some(agent_id), session_uuid, cwd)
+            .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
-        self.assemble_session(session_uuid, stored).await
-    }
-
-    /// Reloads one exact Agent session and its durable agent/workspace binding.
-    ///
-    /// The owning agent is not compared with a caller, so a surface reads a
-    /// session through `load_session_for_agent`.
-    ///
-    /// # Errors
-    ///
-    /// Returns identity, workspace, provider, runtime, or storage incompatibility.
-    pub async fn load_session(
-        &self,
-        session_uuid: Uuid,
-        cwd: &Path,
-    ) -> Result<Arc<AgentSession>, LocalHostError> {
-        let stored = self.load_session_storage(None, session_uuid, cwd).await?;
         self.assemble_session(session_uuid, stored).await
     }
 
     async fn assemble_session(
         &self,
         session_uuid: Uuid,
-        stored: StoredSession,
+        stored: OpenedSessionStorage,
     ) -> Result<Arc<AgentSession>, LocalHostError> {
-        let StoredSession {
+        let OpenedSessionStorage {
             directory,
             manifest,
             kernel,
@@ -259,7 +233,7 @@ impl LocalHost {
             return Ok(Some(crate::LocalTurnOutcome::Cancelled));
         }
         let stored = self
-            .load_session_storage(Some(agent_id), session_uuid, cwd)
+            .load_session_storage(agent_id, session_uuid, cwd)
             .await?;
         Ok(stored.kernel.cancel_before_execution(
             renoa_kernel::CommandId::from_uuid(request_id),
@@ -268,12 +242,11 @@ impl LocalHost {
         )?)
     }
 
-    /// Loads one stored session, asserting its owning agent when requested.
+    /// Loads one stored session, asserting its owning agent.
     ///
     /// `expected_agent` is compared with the manifest immediately after it is
     /// read, so a refused foreign session never reaches its kernel, definition,
-    /// trace, models, or workspace. `None` is only for the unscoped
-    /// `load_session`, which makes no ownership claim.
+    /// trace, models, or workspace.
     ///
     /// # Errors
     ///
@@ -281,41 +254,18 @@ impl LocalHost {
     /// ownership, or storage failures.
     pub(super) async fn load_session_storage(
         &self,
-        expected_agent: Option<AgentId>,
+        expected_agent: AgentId,
         session_uuid: Uuid,
         cwd: &Path,
-    ) -> Result<StoredSession, LocalHostError> {
+    ) -> Result<OpenedSessionStorage, LocalHostError> {
         require_absolute(cwd)?;
         let session_id = SessionId::from_uuid(session_uuid);
-        let directory = self.config.sessions.join(session_id.to_string());
-        let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
-        if expected_agent.is_some_and(|expected| manifest.agent_id != expected) {
-            return Err(LocalHostError::InvalidRequest(
-                "session belongs to a different agent".to_owned(),
-            ));
-        }
-        if manifest.session_id != session_id {
-            return Err(LocalHostError::InvalidRequest(
-                "session metadata does not match the requested Agent session".to_owned(),
-            ));
-        }
-        let requested_workspace = std::fs::canonicalize(cwd)?;
-        if manifest.workspace != requested_workspace {
-            return Err(LocalHostError::InvalidRequest(
-                "session workspace differs from its durable binding".to_owned(),
-            ));
-        }
-        let kernel = LocalSession::load(directory.join(KERNEL_DATABASE), session_id)?;
-        if kernel.agent_id() != manifest.agent_id {
-            return Err(LocalHostError::InvalidRequest(
-                "session metadata differs from its kernel agent binding".to_owned(),
-            ));
-        }
-        Ok(StoredSession {
-            directory,
-            manifest,
-            kernel,
+        let sessions = self.config.sessions.clone();
+        let workspace = cwd.to_owned();
+        tokio::task::spawn_blocking(move || {
+            open_session_storage(&sessions, expected_agent, session_id, &workspace)
         })
+        .await?
     }
 
     /// Permanently removes one closed Agent session owned by `agent_id`.

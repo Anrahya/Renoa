@@ -975,7 +975,7 @@ deletes broad filesystem state.
    directory, and refuses a backup inside the data root. The copy completes
    before the cutover touches the root.
 3. Apply the bounded reset, which performs the schema cutover. An earlier data
-   root (any catalog version below 27) is refused at startup until this runs, so
+   root (any catalog version below 28) is refused at startup until this runs, so
    the reset is the only path that changes those tables. It drops the retired
    agent-owned tables (`host_agents` in its old shape, `host_bots*`,
    `profile_mcp_connections`, `profile_mcp_tools`, `profile_skill_bindings`,
@@ -993,7 +993,9 @@ deletes broad filesystem state.
    table is what keeps the delete list complete.
    Host identity, MCP catalogs, connections, authorizations and credentials,
    installed plugins, skill revisions, shared registry state, and provider
-   credentials are preserved. Applying the reset twice is safe. A reset that is
+   credentials are preserved. Schema cutover and canonical agent-row clearing
+   share one transaction, so a catalog failure leaves the database unchanged.
+   Applying the reset twice is safe. A reset that is
    refused before it deletes anything — a managed root that is a symbolic link
    or another file in place of a directory, or a catalog failure — leaves the
    database untouched; a failure while removing directory contents can leave
@@ -1015,14 +1017,16 @@ deletes broad filesystem state.
 
 The stores are separate databases with no cross-store transaction. The Host
 reset is one idempotent step over `host.sqlite3` and the Host session
-directories. The node store is a separate idempotent step over
+directories. The node ledger is a separate idempotent step over
 `host_node_metadata`, `host_node_tasks`, `host_node_executions`, and
 `host_node_events`; this release renames the task's agent column and refuses an
-earlier ledger by name. Stop the node service, take the backup, delete the
-ledger `<state-directory>/node.sqlite` and the private Host root
-`<state-directory>/host`, and keep `<state-directory>/model-auth.sqlite` — the
-node needs it to start. Re-provision the private Host, then start the daemon
-again. Each surface store is its own step: the Slack store owns
+earlier ledger by name. Stop the node service, take the consolidated backup,
+delete only `<state-directory>/node.sqlite`, and apply the canonical Host reset
+to `<state-directory>/host`, using a fresh subdirectory inside that consolidated
+backup. The private Host's plugins, MCP state, skills and shared registry are
+mutable shared state, not derivable node configuration. Keep
+`<state-directory>/model-auth.sqlite`, re-provision the bootstrap agent, then
+start the daemon again. Each surface store is its own step: the Slack store owns
 `identity`, `sessions`, `conversations`, `requests`, `messages`, `receipts`,
 `deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
 `routine_deliveries`, `routine_delivery_cursor`, and `routine_context_receipts`;
@@ -1344,6 +1348,9 @@ connections, authorizations and credentials, installed plugins, skill revisions,
 shared registry state, and provider credentials are preserved. The bounded reset
 that clears agent rows and session directories, and the deployment procedure that
 surrounds it, are described in the clean-break section above.
+Schema 28 adds the immutable `result_json` snapshot to
+`host_agent_creations`, so retrying a creation operation returns its exact
+original result even after later edits to the live definition.
 
 The GitHub service verifies at startup that its worker configuration resolves to
 the same canonical Host database as the supervisor. Separate model configuration

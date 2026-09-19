@@ -119,19 +119,25 @@ renoa-host /etc/renoa/host.json provision /etc/renoa/bootstrap-agent.json
 ```
 
 Observation and owner-control modules deliberately do not migrate or reset
-storage themselves. The node daemon owns two separate derived stores: its
-ledger, which this release renamed the task column to `agent_id` and refuses an
-earlier one by name, and the private Host data root, where a `host.sqlite3`
-written by an earlier runtime is refused at startup first. Stop
-`renoa-node.service`, take the backup, then delete the ledger
-`<state-directory>/node.sqlite` and the private Host root
-`<state-directory>/host` (`/var/lib/renoa-node/node.sqlite` and
-`/var/lib/renoa-node/host` for the supplied unit); both are derived from
-configuration and provisioning. Preserve the model credential store
-`<state-directory>/model-auth.sqlite` (`/var/lib/renoa-node/model-auth.sqlite`),
-which `node.json` names and node startup requires. Re-provision the private Host
-as shown in the node section, then start the daemon again. This step needs the
-release binaries installed first: `renoa-node` from the node section and
+storage themselves. The node daemon owns a derived ledger and a complete private
+Host. Its ledger renamed the task column to `agent_id` and refuses an earlier
+shape by name; delete `<state-directory>/node.sqlite`
+(`/var/lib/renoa-node/node.sqlite` for the supplied unit). The private Host can
+hold agent-installed plugins, MCP connections and catalogs, skill revisions and
+shared-registry state, so never delete `<state-directory>/host`. Apply the same
+bounded Host reset used above, placing its fresh backup directory inside the one
+consolidated previous-release backup:
+
+```sh
+renoa-host /etc/renoa/node-host.json reset \
+  /var/backups/renoa-previous-release/node-host
+```
+
+Preserve `<state-directory>/model-auth.sqlite`
+(`/var/lib/renoa-node/model-auth.sqlite`), which `node.json` names and node
+startup requires. Re-provision the private Host as shown in the node section,
+then start the daemon again. Stop `renoa-node.service` before these steps and
+install both release binaries first: `renoa-node` from the node section and
 `renoa-host` from the shared Host build in
 [the Soundwave section](#soundwave-github-review-service). The node's device
 credential and the coordinator's task binding live outside that directory and
