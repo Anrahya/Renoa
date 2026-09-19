@@ -324,6 +324,36 @@ async fn a_rejected_first_routine_leaves_no_agent_state() {
     );
 }
 
+/// A creation rejected for an unusable connection must not publish the preset's
+/// documents either: publication is the last step before the commit.
+#[tokio::test]
+async fn a_creation_that_fails_validation_publishes_no_documents() {
+    let (directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let operation = Uuid::new_v4();
+    let request = AgentCreateRequest::new(
+        operation,
+        AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
+        "Unusable connection",
+    )
+    .with_connections(vec!["unknown.integration".to_owned()]);
+    let result = host
+        .create_agent(creator, origin, request, CancellationToken::new())
+        .await;
+    assert!(
+        matches!(result, Err(LocalHostError::Mcp(_))),
+        "a creation naming an unusable connection must fail: {result:?}"
+    );
+    let documents = directory
+        .path()
+        .join("data/agents")
+        .join(derived_agent_id(operation).to_string());
+    assert!(
+        !documents.exists(),
+        "a rejected creation must not publish documents: {documents:?}"
+    );
+}
+
 #[tokio::test]
 async fn concurrent_identical_creates_converge_on_one_agent() {
     let directory = tempdir().expect("fixture");

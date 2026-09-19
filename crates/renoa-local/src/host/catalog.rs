@@ -9,7 +9,7 @@ mod migrations;
 
 pub(crate) use cutover::cutover;
 
-const SCHEMA_VERSION: u32 = 26;
+const SCHEMA_VERSION: u32 = 27;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]

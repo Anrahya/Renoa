@@ -93,7 +93,7 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 26 and cuts agent-owned storage over to the
+This release requires Host schema 27 and cuts agent-owned storage over to the
 canonical agent definition. The cutover is not a migration: it discards the
 previous agent rows, routines, review records and sessions, and it runs only
 through the explicit reset described in
@@ -111,8 +111,8 @@ non-empty backup, or one inside the data root), then applies the cutover. Host
 identity, MCP integrations, connections, catalogs, authorizations and
 credentials, installed plugins, immutable skill revisions and sources, the
 shared registry, and every workspace file are preserved; agent-owned rows, the
-session directories and the agent document roots are not. Provision the
-configured agent again after the reset:
+session and review-inspection directories, and the agent document roots are not.
+Provision the configured agent again after the reset:
 
 ```sh
 renoa-host /etc/renoa/host.json provision /etc/renoa/bootstrap-agent.json
@@ -215,7 +215,7 @@ Host configuration, not RCP wire data:
   "targets": [
     {
       "target": "workspace:example",
-      "profile": "renoa.coding.alpha.v1",
+      "agentId": "<provisioned-agent-uuid>",
       "sessionId": "<stable-session-uuid>",
       "workspace": "/srv/renoa/node-workspaces/example"
     }
@@ -224,9 +224,8 @@ Host configuration, not RCP wire data:
 ```
 
 Every configured adapter and model store must already exist at its absolute
-path. Omit any optional adapter field that this Host does not use. The service
-currently accepts the built-in Alpha and Arcee profile IDs. Each target binds
-one coordinator target to one stable Host session and canonical workspace;
+path. Omit any optional adapter field that this Host does not use. Each target
+binds one provisioned agent to one stable Host session and canonical workspace;
 changing a durable binding fails closed.
 
 On the coordinator host, create the node identity and capture its five-minute
@@ -592,7 +591,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-data root before the reset that brings it to schema 26. Install the new binaries
+data root before the reset that brings it to schema 27. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the cut-over database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must
@@ -658,8 +657,8 @@ call; silence alone is allowed within the call deadline.
 ## Shared Agent Plugin registry
 
 The registry is not a remote Host or an Agent runtime. It stores only immutable
-package archives and their ordered revisions. Credentials, MCP connections,
-profile attachments, workspaces, and sessions remain on each Host.
+package archives and their ordered revisions. Credentials, MCP connections and
+their agent bindings, workspaces, and sessions remain on each Host.
 
 Build its Linux binary from the locked workspace:
 

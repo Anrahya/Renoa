@@ -544,7 +544,7 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v26 keeps Host identity, the canonical agent definition
+`host.sqlite3` schema v27 keeps Host identity, the canonical agent definition
 tables (`host_agents`, `host_agent_tool_selections`, `host_agent_mcp_connections`,
 `host_agent_creations`, `host_agent_tool_selection_operations`,
 `host_agent_renames`), installed package metadata, supported package MCP entries,
@@ -975,7 +975,7 @@ deletes broad filesystem state.
    directory, and refuses a backup inside the data root. The copy completes
    before the cutover touches the root.
 3. Apply the bounded reset, which performs the schema cutover. An earlier data
-   root (any catalog version below 26) is refused at startup until this runs, so
+   root (any catalog version below 27) is refused at startup until this runs, so
    the reset is the only path that changes those tables. It drops the retired
    agent-owned tables (`host_agents` in its old shape, `host_bots*`,
    `profile_mcp_connections`, `profile_mcp_tools`, `profile_skill_bindings`,
@@ -984,11 +984,13 @@ deletes broad filesystem state.
    root and its normalized children in their current shape, running the earlier
    migration ladder first for the shared domains it still owns.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
-   agent-owned rows, the `sessions/` and `review-sessions/` directories, and
-   the `agents/<agent-id>/` document roots, and it never deletes workspace files
-   or the Host's shared state. One transaction deletes the whole row set with
-   foreign keys deferred, so the delete list is what must be complete, not the
-   order it is written in.
+   agent-owned rows, the session, review-session and review-inspection
+   directories, and the document roots of both layouts — the canonical
+   `agents/<agent-id>/` and the predecessor `profiles/<preset-id>/` — and it
+   never deletes workspace files or the Host's shared state. One transaction
+   deletes the whole row set with foreign keys deferred, so the order it is
+   written in cannot break a reset, and a test that classifies every catalog
+   table is what keeps the delete list complete.
    Host identity, MCP catalogs, connections, authorizations and credentials,
    installed plugins, skill revisions, shared registry state, and provider
    credentials are preserved. Applying the reset twice is safe, and a failed
@@ -1321,7 +1323,7 @@ publication backoff) and `host_review_publications` (intent and remote outcome).
 Schema 23 adds worker-entry evidence, execution retry timing and the last job failure.
 Schema 24 adds `host_routine_owner_mutations` for authenticated owner receipts,
 preserving existing agent receipts and their foreign-key restrictions.
-Schema 26 is the clean break: it drops the retired agent-owned tables
+Schema 27 is the clean break: it drops the retired agent-owned tables
 (`host_agents` in its old shape, `host_bots`, `host_bot_tool_selections`,
 `host_bot_tool_operations`, `host_bot_renames`, `profile_mcp_connections`,
 `profile_mcp_tools`, `profile_skill_bindings`, `skill_source_rejections`, and

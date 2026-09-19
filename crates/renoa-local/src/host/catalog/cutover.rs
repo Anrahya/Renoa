@@ -67,7 +67,7 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 if version < 14 {
                     agents::initialize(&transaction)?;
                 }
-                if version < 26 {
+                if version < SCHEMA_VERSION {
                     retire_agent_owners(&transaction)?;
                 }
                 crate::host::definition::schema::initialize(&transaction)?;

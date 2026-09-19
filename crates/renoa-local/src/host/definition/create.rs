@@ -120,15 +120,6 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         return Ok(existing);
     }
     check_cancellation(cancellation)?;
-    if let Some((enabled, defaults)) = document_defaults {
-        crate::documents::AgentDocumentStore::publish(
-            data_directory,
-            definition.id,
-            *enabled,
-            *defaults,
-        )?;
-    }
-    check_cancellation(cancellation)?;
     let transaction = connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(catalog_error)?;
@@ -153,6 +144,18 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
     }
     store::insert_creation_receipt(&transaction, *operation_id, definition.id, request_json)?;
     check_cancellation(cancellation)?;
+    // Publication is the last step before the commit so that every rejection
+    // above has no filesystem effect, while the row still cannot become visible
+    // before its documents exist. A crash between the two publishes again on the
+    // retry, and the identical files are adopted.
+    if let Some((enabled, defaults)) = document_defaults {
+        crate::documents::AgentDocumentStore::publish(
+            data_directory,
+            definition.id,
+            *enabled,
+            *defaults,
+        )?;
+    }
     transaction.commit().map_err(catalog_error)?;
     Ok(definition.clone())
 }

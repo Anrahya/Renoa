@@ -14,6 +14,7 @@ use crate::{
 };
 
 const RETAINED_INTEGRATION: &str = "retained.integration";
+const REQUEST_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 fn open_host(root: &Path) -> LocalHost {
     LocalHost::assemble(HostInitialization {
@@ -76,9 +77,9 @@ fn seed_review_records(path: &Path, agent: crate::AgentId) {
              VALUES (7, '{agent}', '{{}}');
              INSERT INTO host_review_requests(id, repository_id, repository_json, pull_number,
                 base_sha, head_sha, admitted_at_ms)
-             VALUES ('00000000-0000-0000-0000-000000000001', 7, '{{}}', 1, 'a', 'b', 0);
+             VALUES ('{REQUEST_ID}', 7, '{{}}', 1, 'a', 'b', 0);
              INSERT INTO host_review_runs(request_id, terminal, record_json)
-             VALUES ('00000000-0000-0000-0000-000000000001', 0, '{{}}');"
+             VALUES ('{REQUEST_ID}', 0, '{{}}');"
         ))
         .expect("review binding fixture");
 }
@@ -121,6 +122,12 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     .await
     .expect("routine");
     seed_review_records(&database(root), agent.id);
+    let review_workspace = root.join("data/review-workspaces").join(REQUEST_ID);
+    fs::create_dir_all(&review_workspace).expect("review workspace");
+    fs::write(review_workspace.join("checkout.txt"), "discarded\n").expect("checkout file");
+    let execution = root.join("data/github-executions").join(REQUEST_ID);
+    fs::create_dir_all(&execution).expect("execution directory");
+    fs::write(execution.join("app.jwt"), "discarded\n").expect("execution file");
     let workspace = host.agent_workspace(agent.id).await.expect("workspace");
     fs::write(workspace.join("notes.md"), "kept\n").expect("workspace file");
     let sessions = root.join("data/sessions");
@@ -131,9 +138,12 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
 
     assert!(report.total_rows() >= 6, "{report:?}");
     assert_eq!(report.removed_sessions, 1);
+    assert_eq!(report.removed_review_directories, 2);
     assert_eq!(report.removed_document_roots, 1);
     assert_eq!(report.preserved_workspaces, ["agent-workspaces"]);
     assert!(!root.join("data/agents").join(agent.id.to_string()).exists());
+    assert!(!review_workspace.exists());
+    assert!(!execution.exists());
     let path = database(root);
     assert_eq!(count(&path, "host_agents"), 0);
     assert_eq!(count(&path, "host_agent_tool_selections"), 0);
@@ -149,6 +159,7 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     let second = reset_host_data_root(&root.join("data")).expect("repeat reset");
     assert_eq!(second.total_rows(), 0);
     assert_eq!(second.removed_sessions, 0);
+    assert_eq!(second.removed_review_directories, 0);
     assert_eq!(second.removed_document_roots, 0);
     assert_eq!(count(&path, "mcp_integrations"), 1);
 }
@@ -197,8 +208,18 @@ async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables(
         "an earlier data root must be refused until it is reset: {refused:?}"
     );
 
+    let predecessor_documents = root.join("data/profiles").join(ARCEE_PRESET_ID);
+    fs::create_dir_all(&predecessor_documents).expect("predecessor document root");
+    fs::write(predecessor_documents.join("SOUL.md"), "predecessor\n")
+        .expect("predecessor document");
+
     let report = reset_host_data_root(&root.join("data")).expect("cutover reset");
     assert_eq!(report.total_rows(), 0, "{report:?}");
+    assert_eq!(report.removed_document_roots, 1, "{report:?}");
+    assert!(
+        !predecessor_documents.exists(),
+        "the predecessor document root must not survive the cutover"
+    );
     let migrated = open_host(root);
     migrated
         .agent_definition(crate::AgentId::from_uuid(Uuid::new_v4()))
@@ -245,4 +266,49 @@ async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables(
         migrated.agent_definition(agent.id).await.expect("read"),
         Some(agent)
     );
+}
+
+/// Every table in the canonical catalog is either agent-owned or shared Host
+/// state. Deferred foreign keys only fail a reset when an omitted table leaves a
+/// row referencing a deleted parent, so this classification — not the commit —
+/// is what keeps the delete set complete: a new table fails here until it is
+/// placed on one side.
+#[test]
+fn every_catalog_table_is_classified_agent_owned_or_shared() {
+    // Shared Host state, which a reset must keep.
+    const SHARED: &[&str] = &[
+        "host_identity",
+        "host_metadata",
+        "installed_plugins",
+        "mcp_catalogs",
+        "mcp_connections",
+        "mcp_integrations",
+        "mcp_oauth_flows",
+        "mcp_oauth_receipts",
+        "mcp_rejected_tools",
+        "mcp_tools",
+        "plugin_mcp_servers",
+        "shared_plugin_registry_state",
+        "skill_revisions",
+    ];
+    let (directory, _host) = fixture();
+    let connection = Connection::open(database(directory.path())).expect("open Host catalog");
+    let mut statement = connection
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .expect("prepare catalog query");
+    let tables: Vec<String> = statement
+        .query_map([], |row| row.get(0))
+        .expect("query catalog tables")
+        .collect::<Result<_, _>>()
+        .expect("read catalog tables");
+    assert!(
+        tables.len() > super::AGENT_OWNED_TABLES.len(),
+        "the catalog must expose both classified sets: {tables:?}"
+    );
+    for table in &tables {
+        assert!(
+            super::AGENT_OWNED_TABLES.contains(&table.as_str()) || SHARED.contains(&table.as_str()),
+            "`{table}` is unclassified: add it to AGENT_OWNED_TABLES in reset.rs or to SHARED here"
+        );
+    }
 }

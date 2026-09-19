@@ -17,8 +17,10 @@ use super::{LocalHostError, catalog};
 /// Agent-owned tables, ordered so children precede their parents.
 ///
 /// The order is for readers: the delete set is one transaction with deferred
-/// foreign keys, so a table added here in the wrong place cannot break a reset,
-/// while a table left out entirely still fails the commit.
+/// foreign keys, so a table added here in the wrong place cannot break a reset.
+/// Deferral only catches an omission that leaves a row referencing a deleted
+/// parent, so completeness is enforced by
+/// `every_catalog_table_is_classified_agent_owned_or_shared`, not by the commit.
 const AGENT_OWNED_TABLES: &[&str] = &[
     "host_review_deliveries",
     "host_review_jobs",
@@ -43,16 +45,21 @@ const AGENT_OWNED_TABLES: &[&str] = &[
     "session_skills",
 ];
 
-/// What one reset removed. Rows, session directories and document roots are
-/// counted separately because they are separate stores; this never claims
-/// cross-store atomicity.
+/// What one reset removed. Rows, session directories, review inspection
+/// directories and document roots are counted separately because they are
+/// separate stores; this never claims cross-store atomicity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostResetReport {
     /// Rows removed per table.
     pub removed_rows: BTreeMap<String, u64>,
     /// Session directories removed from the Host session root.
     pub removed_sessions: u64,
-    /// Agent document directories removed from the Host data root.
+    /// Review inspection directories removed: the frozen checkouts and GitHub
+    /// execution records keyed by the request ids the reset deletes, which
+    /// nothing else can reap afterwards.
+    pub removed_review_directories: u64,
+    /// Agent document directories removed, under the canonical `agents/` root
+    /// and the predecessor `profiles/` root alike.
     pub removed_document_roots: u64,
     /// Workspace directories left untouched, by name.
     pub preserved_workspaces: Vec<String>,
@@ -86,10 +93,14 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
     let removed_rows = clear_agent_rows(&database)?;
     let removed_sessions = clear_directory(&data_directory.join("sessions"))?
         + clear_directory(&data_directory.join("review-sessions"))?;
-    let removed_document_roots = clear_directory(&data_directory.join("agents"))?;
+    let removed_review_directories = clear_directory(&data_directory.join("review-workspaces"))?
+        + clear_directory(&data_directory.join("github-executions"))?;
+    let removed_document_roots = clear_directory(&data_directory.join("agents"))?
+        + clear_directory(&data_directory.join("profiles"))?;
     Ok(HostResetReport {
         removed_rows,
         removed_sessions,
+        removed_review_directories,
         removed_document_roots,
         preserved_workspaces: preserved_workspaces(data_directory),
     })
@@ -101,8 +112,8 @@ fn clear_agent_rows(database: &Path) -> Result<BTreeMap<String, u64>, LocalHostE
     let transaction = connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(super::definition::catalog_error)?;
-    // Deferring foreign keys makes the delete set one unit: the commit fails if
-    // any agent-owned table is missing from the list above.
+    // Deferring foreign keys makes the delete set one unit: a child row left
+    // behind after its parent is deleted fails the commit.
     transaction
         .execute_batch("PRAGMA defer_foreign_keys = ON;")
         .map_err(super::definition::catalog_error)?;
