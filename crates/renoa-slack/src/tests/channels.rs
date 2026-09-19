@@ -110,7 +110,7 @@ async fn call(State(remote): State<Arc<Remote>>, request: Request) -> axum::resp
 #[tokio::test]
 async fn private_channel_recovery_binds_plain_messages_to_one_durable_specialist_conversation() {
     let mut fixture = Fixture::new().await;
-    let bot = super::agents::news_bot(&fixture).await;
+    let bot = super::agents::news_agent(&fixture).await;
     let remote = TestApi::new().await;
     let ignored = || {
         let mut input = envelope("E0", "0.000001", "before binding");
@@ -125,7 +125,7 @@ async fn private_channel_recovery_binds_plain_messages_to_one_durable_specialist
         .expect("ignored receipt");
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("provision");
     fixture
@@ -135,7 +135,7 @@ async fn private_channel_recovery_binds_plain_messages_to_one_durable_specialist
         .expect("ignored retry stays ignored after channel binding");
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("idempotent restart");
     assert_eq!(
@@ -208,7 +208,7 @@ async fn private_channel_recovery_binds_plain_messages_to_one_durable_specialist
 #[tokio::test]
 async fn ambiguous_creation_is_looked_up_across_pages_without_another_create() {
     let fixture = Fixture::new().await;
-    let bot = super::agents::news_bot(&fixture).await;
+    let bot = super::agents::news_agent(&fixture).await;
     let remote = TestApi::new().await;
     remote
         .remote
@@ -218,7 +218,7 @@ async fn ambiguous_creation_is_looked_up_across_pages_without_another_create() {
         .push_back((StatusCode::INTERNAL_SERVER_ERROR, json!({})));
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("retain unknown");
     remote.remote.responses.lock().await.push_back((
@@ -227,7 +227,7 @@ async fn ambiguous_creation_is_looked_up_across_pages_without_another_create() {
     ));
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("absence does not recreate");
     remote.remote.responses.lock().await.push_back((
@@ -236,7 +236,7 @@ async fn ambiguous_creation_is_looked_up_across_pages_without_another_create() {
     ));
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("recover and invite");
     let requests = remote.remote.requests.lock().await;
@@ -266,7 +266,7 @@ async fn ambiguous_creation_is_looked_up_across_pages_without_another_create() {
 #[tokio::test]
 async fn missing_scope_is_visible_and_a_lost_invite_can_resume_without_rebinding() {
     let fixture = Fixture::new().await;
-    let bot = super::agents::news_bot(&fixture).await;
+    let bot = super::agents::news_agent(&fixture).await;
     let remote = TestApi::new().await;
     remote
         .remote
@@ -276,7 +276,7 @@ async fn missing_scope_is_visible_and_a_lost_invite_can_resume_without_rebinding
         .push_back((StatusCode::OK, json!({"ok":false,"error":"missing_scope"})));
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("scope failure retained");
     assert!(
@@ -303,7 +303,7 @@ async fn missing_scope_is_visible_and_a_lost_invite_can_resume_without_rebinding
     ]);
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("invite unknown");
     remote.remote.responses.lock().await.push_back((
@@ -312,7 +312,7 @@ async fn missing_scope_is_visible_and_a_lost_invite_can_resume_without_rebinding
     ));
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("invitation replay");
     assert!(
@@ -339,18 +339,10 @@ async fn missing_scope_is_visible_and_a_lost_invite_can_resume_without_rebinding
     fixture.stop().await;
 }
 
-fn summary(bot: &renoa_local::BotRecord) -> renoa_local::BotSummary {
-    renoa_local::BotSummary {
-        id: bot.id,
-        name: bot.recipe.name.clone(),
-        created_by: bot.created_by,
-    }
-}
-
 #[tokio::test]
 async fn dedication_committed_after_selection_lookup_cannot_switch_the_channel_agent() {
     let fixture = Fixture::new().await;
-    let bot = super::agents::news_bot(&fixture).await;
+    let bot = super::agents::news_agent(&fixture).await;
     let stale = fixture
         .receiver
         .select_agent("!agent arcee")
@@ -359,7 +351,7 @@ async fn dedication_committed_after_selection_lookup_cannot_switch_the_channel_a
     let remote = TestApi::new().await;
     remote
         .worker(&fixture)
-        .provision(&summary(&bot))
+        .provision(&bot)
         .await
         .expect("dedicate between lookup and admission");
     fixture
@@ -406,13 +398,10 @@ async fn dedication_committed_after_selection_lookup_cannot_switch_the_channel_a
 #[tokio::test]
 async fn readable_names_handle_collisions_and_lost_rename_responses_on_the_same_channel() {
     let fixture = Fixture::new().await;
-    let bot = super::agents::news_bot(&fixture).await;
+    let bot = super::agents::news_agent(&fixture).await;
     let remote = TestApi::new().await;
     let worker = remote.worker(&fixture);
-    worker
-        .provision(&summary(&bot))
-        .await
-        .expect("initial readable name");
+    worker.provision(&bot).await.expect("initial readable name");
     assert_eq!(remote.remote.channel.lock().await["name"], "news");
     let before: Vec<(String, String)> = fixture
         .worker
@@ -425,8 +414,21 @@ async fn readable_names_handle_collisions_and_lost_rename_responses_on_the_same_
         })
         .await
         .expect("binding");
-    let mut renamed = summary(&bot);
-    renamed.name = "Daily News".to_owned();
+    let renamed = fixture
+        .worker
+        .host
+        .rename_agent(
+            fixture.worker.agent_id,
+            Uuid::new_v4(),
+            renoa_local::RenameAgent {
+                id: bot.id,
+                expected_name: bot.name.clone(),
+                name: "Daily News".to_owned(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("rename agent");
     let current = remote.remote.channel.lock().await.clone();
     remote.remote.responses.lock().await.extend([
         (StatusCode::OK, json!({"ok":true,"channel":current})),

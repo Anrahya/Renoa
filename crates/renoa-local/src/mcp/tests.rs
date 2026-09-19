@@ -1,6 +1,8 @@
+use renoa_kernel::AgentId;
 use rusqlite::Connection;
 use serde_json::json;
 use tempfile::tempdir;
+use uuid::Uuid;
 
 use super::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
@@ -8,7 +10,6 @@ use super::{
     McpRejectedTool, McpToolReference, hex_sha256,
 };
 
-const PROFILE: &str = "renoa.coding.alpha.v1";
 const ENDPOINT: &str = "http://127.0.0.1:43127/mcp";
 
 mod catalog_compatibility;
@@ -16,11 +17,31 @@ mod integrity;
 mod migrations;
 mod replacement;
 
+pub(super) fn agent_id(seed: u128) -> AgentId {
+    crate::derived_agent_id(Uuid::from_u128(seed))
+}
+
 fn store() -> (tempfile::TempDir, McpCatalogStore) {
     let directory = tempdir().expect("temporary Host data directory");
     let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("initialize Host catalog");
     (directory, store)
+}
+
+/// Reads one agent's connection bindings from the canonical table.
+fn connections(path: &std::path::Path, agent: &str) -> Vec<String> {
+    let connection = Connection::open(path).expect("open Host catalog");
+    let mut statement = connection
+        .prepare(
+            "SELECT connection_id FROM host_agent_mcp_connections
+             WHERE agent_id = ?1 ORDER BY connection_id",
+        )
+        .expect("prepare connection read");
+    statement
+        .query_map([agent], |row| row.get(0))
+        .expect("query connections")
+        .collect::<Result<Vec<String>, _>>()
+        .expect("read connections")
 }
 
 fn tool(name: &str) -> McpCatalogTool {
@@ -177,6 +198,7 @@ fn gh_connection_persists_only_its_exact_credential_reference() {
 #[test]
 fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
     let (_directory, store) = store();
+    let agent = agent_id(1).to_string();
     let auth = McpConnectionAuth::oauth("oauth", ENDPOINT, McpOAuthRegistration::dynamic())
         .expect("OAuth reference");
     store
@@ -190,7 +212,7 @@ fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
         .expect("register OAuth connection");
     let catalog = snapshot("oauth", ENDPOINT, &["search"]);
     store
-        .publish_and_enable_connection(PROFILE, &catalog)
+        .publish_and_enable_connection(&agent, &catalog)
         .expect("publish OAuth catalog");
     let reference = McpToolReference::new("oauth", catalog.digest(), "search")
         .expect("exact OAuth tool reference");
@@ -212,7 +234,7 @@ fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
         .expect("mutate stored OAuth reference");
 
     assert!(matches!(
-        store.resolve_agent_tools(PROFILE, &[reference]),
+        store.resolve_agent_tools(&agent, &[reference]),
         Err(McpHostError::Invalid(_))
     ));
 }
@@ -252,6 +274,7 @@ fn catalog_publication_is_atomic_when_a_late_tool_insert_fails() {
 #[test]
 fn registered_plugin_catalog_publication_rolls_back_catalog_and_attachment() {
     let (_directory, store) = store();
+    let agent = agent_id(1).to_string();
     store
         .register_connection(
             "plugin.integration",
@@ -276,16 +299,18 @@ fn registered_plugin_catalog_publication_rolls_back_catalog_and_attachment() {
 
     assert!(
         store
-            .publish_and_enable_connection(PROFILE, &snapshot)
+            .publish_and_enable_connection(&agent, &snapshot)
             .is_err()
     );
     assert!(store.connection_config("plugin").is_ok());
-    assert!(
-        store
-            .profile_connection_ids(PROFILE)
-            .expect("load Alpha attachments")
-            .is_empty()
-    );
+    let attachments: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM host_agent_mcp_connections WHERE agent_id = ?1",
+            [&agent],
+            |row| row.get(0),
+        )
+        .expect("count agent attachments");
+    assert_eq!(attachments, 0);
     let persisted_integrations: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM mcp_integrations WHERE integration_id = 'plugin.integration'",
@@ -319,8 +344,9 @@ fn a_catalog_cannot_be_published_under_a_different_registered_endpoint() {
 }
 
 #[test]
-fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() {
+fn agent_connection_survives_a_store_restart_and_exposes_its_complete_catalog() {
     let (directory, store) = store();
+    let agent = agent_id(1).to_string();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
@@ -328,25 +354,20 @@ fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() 
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo", "unused"]))
         .expect("publish catalog");
     store
-        .enable_profile_connection(PROFILE, "primary")
+        .enable_agent_connection(&agent, "primary")
         .expect("enable connection");
     store
-        .enable_profile_connection(PROFILE, "primary")
+        .enable_agent_connection(&agent, "primary")
         .expect("repeat exact enable");
     drop(store);
 
     let reopened = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("reopen Host catalog");
     let tools = reopened
-        .agent_tool_summaries(PROFILE)
+        .agent_tool_summaries(&agent)
         .expect("load searchable tools");
 
-    assert_eq!(
-        reopened
-            .profile_connection_ids(PROFILE)
-            .expect("load enabled Alpha connections"),
-        ["primary"]
-    );
+    assert_eq!(connections(reopened.path(), &agent), ["primary"]);
     assert_eq!(tools.len(), 2);
     assert_eq!(tools[0].integration_id, "example");
     assert_eq!(tools[0].connection_id, "primary");
@@ -355,14 +376,15 @@ fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() 
 }
 
 #[test]
-fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
+fn connection_status_and_disconnect_keep_catalogs_but_remove_agent_access() {
     let (_directory, store) = store();
+    let agent = agent_id(1).to_string();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register direct connection");
     let catalog = snapshot("primary", ENDPOINT, &["echo"]);
     store
-        .publish_and_enable_connection(PROFILE, &catalog)
+        .publish_and_enable_connection(&agent, &catalog)
         .expect("publish and enable direct catalog");
     let reference = McpToolReference::new("primary", catalog.digest(), "echo")
         .expect("exact enabled reference");
@@ -380,7 +402,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
 
     let before = serde_json::to_value(
         store
-            .profile_connection_statuses(PROFILE)
+            .agent_connection_statuses(&agent)
             .expect("list connection states"),
     )
     .expect("encode connection states");
@@ -392,7 +414,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
     assert_eq!(primary["auth"], "none");
     assert_eq!(primary["registered"], true);
     assert_eq!(primary["catalog_loaded"], true);
-    assert_eq!(primary["enabled_for_profile"], true);
+    assert_eq!(primary["enabled_for_agent"], true);
     assert_eq!(primary["tools"], 1);
     let oauth = connections
         .iter()
@@ -401,7 +423,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
     assert_eq!(oauth["auth"], "oauth");
     assert_eq!(oauth["registered"], true);
     assert_eq!(oauth["catalog_loaded"], false);
-    assert_eq!(oauth["enabled_for_profile"], false);
+    assert_eq!(oauth["enabled_for_agent"], false);
     assert_eq!(oauth["tools"], 0);
     assert!(!before.to_string().contains("credential_id"));
     assert!(before[0].get("endpoint").is_none());
@@ -409,22 +431,22 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
 
     assert!(
         store
-            .disable_profile_connection(PROFILE, "primary")
-            .expect("disconnect Alpha while retaining the catalog")
+            .disable_agent_connection(&agent, "primary")
+            .expect("disconnect the agent while retaining the catalog")
     );
     assert!(
         store
-            .disable_profile_connection(PROFILE, "primary")
+            .disable_agent_connection(&agent, "primary")
             .expect("repeating disconnect is idempotent")
     );
     assert!(
         store
-            .agent_tool_summaries(PROFILE)
+            .agent_tool_summaries(&agent)
             .expect("read tools after disconnect")
             .is_empty()
     );
     assert!(matches!(
-        store.resolve_agent_tools(PROFILE, &[reference]),
+        store.resolve_agent_tools(&agent, &[reference]),
         Err(McpHostError::NotFound(_))
     ));
     assert_eq!(
@@ -435,7 +457,7 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
     );
     let after = serde_json::to_value(
         store
-            .profile_connection_statuses(PROFILE)
+            .agent_connection_statuses(&agent)
             .expect("list states after disconnect"),
     )
     .expect("encode states after disconnect");
@@ -446,25 +468,21 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
         .find(|connection| connection["connection"] == "primary")
         .expect("disconnected direct connection state");
     assert_eq!(primary["catalog_loaded"], true);
-    assert_eq!(primary["enabled_for_profile"], false);
+    assert_eq!(primary["enabled_for_agent"], false);
 }
 
 #[test]
 fn enabling_a_connection_requires_a_complete_catalog() {
     let (_directory, store) = store();
+    let agent = agent_id(1).to_string();
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
 
     let error = store
-        .enable_profile_connection(PROFILE, "primary")
+        .enable_agent_connection(&agent, "primary")
         .expect_err("missing catalog rejects enable");
 
     assert!(matches!(error, McpHostError::NotFound(_)));
-    assert!(
-        store
-            .profile_connection_ids(PROFILE)
-            .expect("load empty profile")
-            .is_empty()
-    );
+    assert!(connections(store.path(), &agent).is_empty());
 }

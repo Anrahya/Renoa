@@ -1,11 +1,12 @@
 use rusqlite::Connection;
 
-use super::super::{PROFILE, snapshot, store};
+use super::super::{agent_id, snapshot, store};
 use crate::mcp::{McpCatalogStore, McpConnectionAuth, McpOAuthRegistration, McpRequestHeaders};
 
 #[test]
 fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     let (directory, store) = store();
+    let agent = agent_id(1).to_string();
     let path = store.path().to_owned();
     let oauth = McpConnectionAuth::oauth(
         "oauth",
@@ -24,7 +25,7 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
         .expect("register current OAuth connection");
     store
         .publish_and_enable_connection(
-            PROFILE,
+            &agent,
             &snapshot("oauth", "https://example.com/oauth-mcp", &["search"]),
         )
         .expect("publish current OAuth catalog");
@@ -88,7 +89,7 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     );
     assert_eq!(
         migrated
-            .profile_tool_summaries(PROFILE)
+            .agent_tool_summaries(&agent)
             .expect("load migrated attachment")
             .len(),
         1

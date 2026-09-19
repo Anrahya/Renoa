@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use super::super::{PROFILE, store};
+use super::{LEGACY_PROFILE_ID, store};
 use crate::mcp::McpCatalogStore;
 
 #[test]
@@ -22,9 +22,9 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
              INSERT INTO skill_revisions(
                 skill_digest, name, description, license, compatibility
              ) VALUES ('{digest}', 'review', 'Review code.', NULL, NULL);
-             INSERT INTO profile_skill_bindings(
-                profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
-             ) VALUES ('{PROFILE}', 'global', NULL, '/skills', 'review', '{digest}');
+             INSERT INTO agent_skill_bindings(
+                agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
+             ) VALUES ('{LEGACY_PROFILE_ID}', 'global', NULL, '/skills', 'review', '{digest}');
              CREATE TABLE profile_skill_bindings_v6 (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
                 scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),
@@ -42,9 +42,9 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
                 PRIMARY KEY (profile_id, source_root, skill_name)
              ) STRICT;
              INSERT INTO profile_skill_bindings_v6
-             SELECT profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
-             FROM profile_skill_bindings;
-             DROP TABLE profile_skill_bindings;
+             SELECT agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
+             FROM agent_skill_bindings;
+             DROP TABLE agent_skill_bindings;
              ALTER TABLE profile_skill_bindings_v6 RENAME TO profile_skill_bindings;
              CREATE TABLE skill_source_rejections_v6 (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
@@ -61,9 +61,9 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
                 PRIMARY KEY (profile_id, source_root, entry_name)
              ) STRICT;
              INSERT INTO skill_source_rejections_v6
-             SELECT profile_id, scope_kind, workspace, source_id, entry_name, reason
-             FROM skill_source_rejections;
-             DROP TABLE skill_source_rejections;
+             SELECT agent_id, scope_kind, workspace, source_id, entry_name, reason
+             FROM agent_skill_source_rejections;
+             DROP TABLE agent_skill_source_rejections;
              ALTER TABLE skill_source_rejections_v6 RENAME TO skill_source_rejections;
              DROP TABLE host_agents; DROP TABLE host_identity;
              UPDATE host_metadata SET schema_version = 6 WHERE singleton = 1;
@@ -97,7 +97,7 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
             "INSERT INTO profile_skill_bindings(
                 profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
              ) VALUES (?1, 'plugin', NULL, 'agent-plugin:fixture', 'review', ?2)",
-            [PROFILE, digest],
+            [LEGACY_PROFILE_ID, digest],
         )
         .expect("new schema accepts plugin skill scope");
 }
@@ -242,9 +242,9 @@ pub(super) fn downgrade_skill_sources_to_v6_shape(connection: &Connection) {
                 PRIMARY KEY (profile_id, source_root, skill_name)
              ) STRICT;
              INSERT INTO profile_skill_bindings_v6
-             SELECT profile_id, scope_kind, workspace, source_id, skill_name, skill_digest
-             FROM profile_skill_bindings;
-             DROP TABLE profile_skill_bindings;
+             SELECT agent_id, scope_kind, workspace, source_id, skill_name, skill_digest
+             FROM agent_skill_bindings;
+             DROP TABLE agent_skill_bindings;
              ALTER TABLE profile_skill_bindings_v6 RENAME TO profile_skill_bindings;
              CREATE TABLE skill_source_rejections_v6 (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
@@ -261,9 +261,9 @@ pub(super) fn downgrade_skill_sources_to_v6_shape(connection: &Connection) {
                 PRIMARY KEY (profile_id, source_root, entry_name)
              ) STRICT;
              INSERT INTO skill_source_rejections_v6
-             SELECT profile_id, scope_kind, workspace, source_id, entry_name, reason
-             FROM skill_source_rejections;
-             DROP TABLE skill_source_rejections;
+             SELECT agent_id, scope_kind, workspace, source_id, entry_name, reason
+             FROM agent_skill_source_rejections;
+             DROP TABLE agent_skill_source_rejections;
              ALTER TABLE skill_source_rejections_v6 RENAME TO skill_source_rejections;",
         )
         .expect("downgrade skill source tables to schema v6 shape");

@@ -200,7 +200,7 @@ impl PluginManager {
         let store = self.store.clone();
         let package_digest = installed.digest().to_owned();
         let plugin_name = installed.metadata().name().to_owned();
-        let agent_id = agent_id.clone();
+        let agent_id = *agent_id;
         let skills = self.skills.clone();
         tokio::task::spawn_blocking(move || {
             let package_root = store.package_root(&package_digest)?;

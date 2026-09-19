@@ -15,11 +15,15 @@ use tokio_util::sync::CancellationToken;
 
 use super::{PluginCredential, PluginError, manager::PluginManager};
 use crate::{
-    ALPHA_PROFILE_ID, AgentId,
+    AgentId,
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
     skills::SkillStore,
 };
+
+pub(super) fn test_agent_id(seed: u128) -> AgentId {
+    crate::derived_agent_id(uuid::Uuid::from_u128(seed))
+}
 
 pub(super) fn test_skill_store(database: &Path, root: &Path) -> SkillStore {
     SkillStore::initialize(database.to_path_buf(), root.join("skills"), None)
@@ -154,6 +158,7 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
     let database = directory.path().join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
+    let agent_id = test_agent_id(1);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind MCP fixture");
     let address = listener.local_addr().expect("MCP fixture address");
@@ -182,7 +187,7 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
     )
     .expect("initialize plugin manager");
     assert!(
-        mcp.agent_tool_summaries(ALPHA_PROFILE_ID)
+        mcp.agent_tool_summaries(&agent_id.to_string())
             .expect("read empty registry")
             .is_empty()
     );
@@ -194,7 +199,7 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
 
     let snapshot = manager
         .connect_profile(
-            &AgentId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id"),
+            &agent_id,
             inspection.digest(),
             "exa",
             "exa.default",
@@ -216,7 +221,7 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
         "lookup\napplication\nrenoa\ncredential\nexa.default"
     );
     let hot_loaded = mcp
-        .agent_tool_summaries(ALPHA_PROFILE_ID)
+        .agent_tool_summaries(&agent_id.to_string())
         .expect("same registry object sees new connection");
     assert_eq!(hot_loaded.len(), 1);
     assert_eq!(snapshot.tools()[0].name(), "web_search_exa");

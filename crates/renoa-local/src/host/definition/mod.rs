@@ -16,6 +16,7 @@ use crate::{
 };
 
 mod create;
+mod manage;
 mod resolve;
 pub(in crate::host) mod schema;
 mod store;
@@ -23,11 +24,12 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use manage::binding as agent_manage_binding;
 pub use resolve::ResolvedAgentDefinition;
 pub(crate) use resolve::resolve_definition;
 
 /// The largest page a caller may request when listing agents.
-pub(in crate::host) const MAX_AGENT_PAGE: usize = 20;
+pub const MAX_AGENT_PAGE: usize = 20;
 
 const AGENT_ID_DOMAIN: &str = "renoa.agent.create.v1";
 
@@ -86,6 +88,13 @@ impl AgentCreateRequest {
         self
     }
 
+    /// Adds exact existing Host connection ids to the request.
+    #[must_use]
+    pub fn with_connections(mut self, connections: impl IntoIterator<Item = String>) -> Self {
+        self.connections.extend(connections);
+        self
+    }
+
     /// Attaches an optional first routine.
     #[must_use]
     pub fn with_routine(mut self, routine: AgentRoutine) -> Self {
@@ -111,6 +120,16 @@ pub struct RenameAgent {
     pub id: AgentId,
     pub expected_name: String,
     pub name: String,
+}
+
+/// One cursor page of agent definitions.
+///
+/// The cursor is present only when a further page exists, so reading a roster
+/// never needs a trailing empty call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentDefinitionPage {
+    pub agents: Vec<AgentDefinition>,
+    pub next_cursor: Option<AgentId>,
 }
 
 /// Derives the stable agent identity of one creation operation.
@@ -158,7 +177,7 @@ impl LocalHost {
         &self,
         after: Option<AgentId>,
         limit: usize,
-    ) -> Result<Vec<AgentDefinition>, LocalHostError> {
+    ) -> Result<AgentDefinitionPage, LocalHostError> {
         if limit == 0 || limit > MAX_AGENT_PAGE {
             return Err(LocalHostError::InvalidRequest(format!(
                 "agent page size must be 1-{MAX_AGENT_PAGE}"
@@ -167,7 +186,19 @@ impl LocalHost {
         let database = self.config.database.clone();
         tokio::task::spawn_blocking(move || {
             let connection = catalog::open_verified(&database)?;
-            Ok(store::list(&connection, after, limit)?)
+            // One probe row beyond the page reports whether a further page
+            // exists without a second query or a trailing empty page.
+            let mut agents = store::list(&connection, after, limit + 1)?;
+            let next_cursor = if agents.len() > limit {
+                agents.truncate(limit);
+                agents.last().map(|agent| agent.id)
+            } else {
+                None
+            };
+            Ok(AgentDefinitionPage {
+                agents,
+                next_cursor,
+            })
         })
         .await?
     }
@@ -244,7 +275,8 @@ impl LocalHost {
     /// Adds one existing Host connection to an agent.
     ///
     /// # Errors
-    /// Rejects unknown agents or connections and storage failures.
+    /// Rejects unknown agents or connections, a connection whose catalog is not
+    /// complete, and storage failures.
     pub async fn enable_agent_connection(
         &self,
         id: AgentId,
@@ -265,6 +297,7 @@ impl LocalHost {
             if !store::exists(&transaction, id)? {
                 return Err(LocalHostError::AgentNotFound(id));
             }
+            crate::mcp::McpCatalogStore::require_complete_catalog(&transaction, &connection_id)?;
             let mut selected = store::read_connections(&transaction, id)?;
             selected.insert(connection_id);
             store::set_connections(&transaction, id, &selected)?;

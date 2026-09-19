@@ -81,7 +81,6 @@ impl Config {
                     settings.model,
                     settings.credential_store,
                 ),
-                Vec::new(),
                 LocalHostAdapters::new(optional_path("RENOA_MCP_ADAPTER").as_deref())
                     .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref())
                     .with_shared_plugin_registry(shared_plugin_registry.as_deref()),

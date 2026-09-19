@@ -133,12 +133,7 @@ impl Config {
         if let Some(relay) = &self.oauth_relay {
             adapters = adapters.with_oauth_relay(&relay.origin, &relay.device_credential_file);
         }
-        Ok(LocalHost::new(
-            &self.data_directory,
-            models,
-            Vec::new(),
-            adapters,
-        )?)
+        Ok(LocalHost::new(&self.data_directory, models, adapters)?)
     }
 }
 

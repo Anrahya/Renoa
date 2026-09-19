@@ -158,6 +158,7 @@ async fn separate_threads_share_the_agent_but_keep_distinct_histories() {
             .list_agent_definitions(None, 20)
             .await
             .expect("roster")
+            .agents
             .len(),
         1
     );

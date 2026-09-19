@@ -11,7 +11,37 @@ use crate::mcp::{
 };
 
 impl McpCatalogStore {
-    pub(crate) fn enable_profile_connection(
+    /// Fails unless one connection's latest complete catalog is stored.
+    ///
+    /// Every path that enables a connection for an agent shares this predicate,
+    /// so an enabled connection is always one a runtime can actually bind.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NotFound` when the connection has no complete catalog.
+    pub(crate) fn require_complete_catalog(
+        transaction: &rusqlite::Transaction<'_>,
+        connection_id: &str,
+    ) -> Result<(), McpHostError> {
+        validate_identity("connection", connection_id)?;
+        let catalog_exists = transaction
+            .query_row(
+                "SELECT 1 FROM mcp_catalogs WHERE connection_id = ?1",
+                [connection_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if catalog_exists {
+            Ok(())
+        } else {
+            Err(McpHostError::NotFound(format!(
+                "connection '{connection_id}' has no complete catalog"
+            )))
+        }
+    }
+
+    pub(crate) fn enable_agent_connection(
         &self,
         agent_id: &str,
         connection_id: &str,
@@ -21,19 +51,7 @@ impl McpCatalogStore {
         let mut connection = self.connection()?;
         let transaction =
             connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let catalog_exists = transaction
-            .query_row(
-                "SELECT 1 FROM mcp_catalogs WHERE connection_id = ?1",
-                [connection_id],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
-        if !catalog_exists {
-            return Err(McpHostError::NotFound(format!(
-                "connection '{connection_id}' has no complete catalog"
-            )));
-        }
+        Self::require_complete_catalog(&transaction, connection_id)?;
         transaction.execute(
             "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)
              VALUES (?1, ?2)",
@@ -43,23 +61,7 @@ impl McpCatalogStore {
         Ok(())
     }
 
-    pub(crate) fn profile_connection_ids(
-        &self,
-        agent_id: &str,
-    ) -> Result<Vec<String>, McpHostError> {
-        validate_identity("agent", agent_id)?;
-        let connection = self.connection()?;
-        let mut statement = connection.prepare(
-            "SELECT connection_id FROM host_agent_mcp_connections
-             WHERE agent_id = ?1 ORDER BY connection_id",
-        )?;
-        let identifiers = statement
-            .query_map([agent_id], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(identifiers)
-    }
-
-    pub(crate) fn profile_connection_statuses(
+    pub(crate) fn agent_connection_statuses(
         &self,
         agent_id: &str,
     ) -> Result<Vec<McpConnectionStatus>, McpHostError> {
@@ -114,7 +116,7 @@ impl McpCatalogStore {
                         auth,
                         registered: true,
                         catalog_loaded,
-                        enabled_for_profile: enabled,
+                        enabled_for_agent: enabled,
                         tools: usize::try_from(tools).map_err(|error| {
                             McpHostError::Invalid(format!(
                                 "stored MCP tool count is invalid: {error}"
@@ -131,7 +133,7 @@ impl McpCatalogStore {
             .collect()
     }
 
-    pub(crate) fn disable_profile_connection(
+    pub(crate) fn disable_agent_connection(
         &self,
         agent_id: &str,
         connection_id: &str,
@@ -305,7 +307,7 @@ pub(crate) struct McpConnectionStatus {
     auth: McpConnectionAuthKind,
     registered: bool,
     catalog_loaded: bool,
-    enabled_for_profile: bool,
+    enabled_for_agent: bool,
     tools: usize,
     rejected_tools: usize,
 }

@@ -43,12 +43,12 @@ pub(crate) fn agent_registry_bindings(
     vec![
         AgentToolBinding::new(
             SEARCH_REVISION,
-            Arc::new(SearchTool::new(agent_id.clone(), store.clone())),
+            Arc::new(SearchTool::new(agent_id, store.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
             LOAD_REVISION,
-            Arc::new(LoadTool::new(agent_id.clone(), store.clone())),
+            Arc::new(LoadTool::new(agent_id, store.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
@@ -113,7 +113,7 @@ impl Tool for SearchTool {
             let input: SearchInput = decode_call(&call, SEARCH_TOOL)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
-            let agent_id = self.agent_id.clone();
+            let agent_id = self.agent_id;
             let tools = tokio::task::spawn_blocking(move || {
                 store.agent_tool_summaries(&agent_id.to_string())
             })
@@ -192,7 +192,7 @@ impl Tool for LoadTool {
             let references = parse_references(input.references)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
-            let agent_id = self.agent_id.clone();
+            let agent_id = self.agent_id;
             let lookup = references.clone();
             let resolved = tokio::task::spawn_blocking(move || {
                 store.resolve_agent_tools(&agent_id.to_string(), &lookup)
@@ -297,7 +297,7 @@ impl Tool for ExecuteTool {
             let reference = McpToolReference::from_str(&input.reference).map_err(host_error)?;
             require_active(&cancellation)?;
             let store = self.store.clone();
-            let agent_id = self.agent_id.clone();
+            let agent_id = self.agent_id;
             let stored_reference = reference.clone();
             let mut resolved = tokio::task::spawn_blocking(move || {
                 store.resolve_agent_tools(&agent_id.to_string(), &[stored_reference])

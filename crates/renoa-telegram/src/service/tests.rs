@@ -159,7 +159,6 @@ async fn service_fixture() -> ServiceFixture {
             "fixture-model",
             &credentials,
         ),
-        Vec::new(),
         LocalHostAdapters::default(),
     )
     .expect("assemble Arcee Host");

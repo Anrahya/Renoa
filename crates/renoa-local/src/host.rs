@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -7,7 +7,6 @@ use std::{
 use thiserror::Error;
 
 pub(crate) mod agents;
-pub(crate) mod bots;
 pub(crate) mod catalog;
 pub(crate) mod definition;
 mod extensions;
@@ -16,7 +15,6 @@ mod lease;
 mod mcp;
 mod models;
 pub(crate) mod observation;
-mod profiles;
 pub(crate) mod reviews;
 pub(crate) mod routines;
 mod runtime;
@@ -27,8 +25,8 @@ mod shared_capabilities_tests;
 mod skill_tests;
 
 use crate::{
-    AgentProfile, AgentProfileError, AgentProfileId, LocalRuntimeError, LocalSessionError,
-    LocalWorkspaceError, ModelBridgeError, ModelProvider, ReasoningLevel,
+    LocalRuntimeError, LocalSessionError, LocalWorkspaceError, ModelBridgeError, ModelProvider,
+    ReasoningLevel,
     mcp::{
         McpAuthorizationResolver, McpCatalogStore, McpCredentialResolver, McpHostError,
         resolve_adapter,
@@ -41,7 +39,6 @@ use crate::{
 pub(crate) use models::{
     discover_models_for, initial_reasoning, require_model, selected_model_by_selection_id,
 };
-use profiles::collect_profiles;
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 
 /// Process-local configuration used to assemble Renoa Agent sessions.
@@ -107,7 +104,6 @@ pub(crate) struct HostConfig {
     pub(crate) mcp_authorizations: McpAuthorizationResolver,
     pub(crate) skill_store: SkillStore,
     pub(crate) plugins: PluginManager,
-    pub(crate) profiles: BTreeMap<AgentProfileId, AgentProfile>,
 }
 
 struct HostInitialization {
@@ -123,10 +119,9 @@ struct HostInitialization {
     shared_plugin_registry: Option<String>,
     global_skill_source: Option<PathBuf>,
     oauth_relay: Option<(String, PathBuf)>,
-    profiles: Vec<AgentProfile>,
 }
 
-/// Model-provider settings shared by every profile assembled by one Host.
+/// Model-provider settings shared by every agent assembled by one Host.
 pub struct LocalModelConfiguration {
     bridge: PathBuf,
     providers: Vec<ModelProvider>,
@@ -182,8 +177,6 @@ pub enum LocalHostError {
     #[error(transparent)]
     Model(#[from] ModelBridgeError),
     #[error(transparent)]
-    Profile(#[from] AgentProfileError),
-    #[error(transparent)]
     Session(#[from] LocalSessionError),
     #[error(transparent)]
     TurnObservation(#[from] crate::TurnObservationError),
@@ -203,10 +196,6 @@ pub enum LocalHostError {
     AgentConflict(renoa_kernel::AgentId),
     #[error("agent {0} is not registered with this Host")]
     AgentNotFound(renoa_kernel::AgentId),
-    #[error("bot creation cancelled before commit")]
-    BotCreationCancelled,
-    #[error("bot rename cancelled before commit")]
-    BotRenameCancelled,
     #[error("agent mutation cancelled before commit")]
     AgentCancelled,
     #[error(transparent)]
@@ -241,7 +230,6 @@ impl LocalHost {
     pub fn new(
         data_directory: impl Into<PathBuf>,
         models: LocalModelConfiguration,
-        profiles: Vec<AgentProfile>,
         adapters: LocalHostAdapters<'_>,
     ) -> Result<Self, LocalHostError> {
         let mcp_adapter = adapters
@@ -269,7 +257,6 @@ impl LocalHost {
             oauth_relay: adapters
                 .oauth_relay
                 .map(|(origin, credentials)| (origin.to_owned(), credentials.to_path_buf())),
-            profiles,
         })
     }
 
@@ -287,7 +274,6 @@ impl LocalHost {
             shared_plugin_registry,
             global_skill_source,
             oauth_relay,
-            profiles,
         } = initialization;
         if providers.is_empty() {
             return Err(LocalHostError::Configuration(
@@ -304,7 +290,6 @@ impl LocalHost {
                 "default {initial_provider} provider is not enabled"
             )));
         }
-        let profiles = collect_profiles(profiles)?;
         std::fs::create_dir_all(&data_directory)?;
         let data_directory = std::fs::canonicalize(data_directory)?;
         let sessions = data_directory.join("sessions");
@@ -366,42 +351,7 @@ impl LocalHost {
                 mcp_authorizations,
                 skill_store,
                 plugins,
-                profiles,
             }),
         })
-    }
-
-    /// Returns built-in and persisted profiles available to new agents.
-    ///
-    /// # Errors
-    /// Returns catalog storage or invalid profile identity errors.
-    pub async fn profile_ids(&self) -> Result<Vec<AgentProfileId>, LocalHostError> {
-        let database = self.config.database.clone();
-        let mut ids = self
-            .config
-            .profiles
-            .keys()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>();
-        tokio::task::spawn_blocking(move || {
-            let connection = catalog::open_verified(&database)?;
-            let mut statement = connection
-                .prepare("SELECT profile_id FROM host_bots")
-                .map_err(catalog::HostCatalogError::from)?;
-            let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(catalog::HostCatalogError::from)?;
-            for id in rows {
-                ids.insert(AgentProfileId::new(
-                    id.map_err(catalog::HostCatalogError::from)?,
-                )?);
-            }
-            Ok(ids.into_iter().collect())
-        })
-        .await?
-    }
-
-    async fn profile(&self, profile_id: &AgentProfileId) -> Result<AgentProfile, LocalHostError> {
-        bots::resolve_profile(&self.config, profile_id).await
     }
 }

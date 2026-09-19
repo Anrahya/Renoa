@@ -1,7 +1,7 @@
 use renoa_local::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentRoutine, BotRecord,
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
-    arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentRoutine,
+    AgentToolsUpdate, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+    ReasoningLevel, RenameAgent,
 };
 use serde::Deserialize;
 use std::{collections::BTreeSet, error::Error, path::PathBuf};
@@ -81,18 +81,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if !(args.len() == 1
-        || (args.len() == 6 && args[1] == "rename-bot")
+        || (args.len() == 6 && args[1] == "rename-agent")
         || (args.len() == 3
             && (args[1] == "provision"
+                || args[1] == "agent-tools"
                 || args[1] == "github-review"
                 || args[1] == "github-webhook"
                 || args[1] == "github-execute"
                 || args[1] == "github-service"
-                || args[1] == "github-cleanup"
-                || args[1] == "ensure-bot"
-                || args[1] == "bot-tools")))
+                || args[1] == "github-cleanup")))
     {
-        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | ensure-bot <bot.json> | bot-tools <edit.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | agent-tools <edit.json> | rename-agent <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -121,12 +120,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if let Some(relay) = &c.oauth_relay {
         adapters = adapters.with_oauth_relay(&relay.origin, &relay.device_credential_file);
     }
-    let host = LocalHost::new(
-        &c.data_directory,
-        models,
-        vec![arcee_profile(&c.data_directory)?],
-        adapters,
-    )?;
+    let host = LocalHost::new(&c.data_directory, models, adapters)?;
     if args.len() == 3 {
         return run_command(
             &host,
@@ -144,10 +138,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
         };
         let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
         let result = host
-            .rename_bot(
+            .rename_agent(
                 id,
                 uuid::Uuid::parse_str(text(5)?)?,
-                renoa_local::RenameBot {
+                RenameAgent {
                     id,
                     expected_name: text(3)?.to_owned(),
                     name: text(4)?.to_owned(),
@@ -206,11 +200,11 @@ async fn run_command(
         println!("{}", serde_json::to_string(&definition)?);
         return Ok(());
     }
-    if command == "bot-tools" {
-        let edit = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    if command == "agent-tools" {
+        let edit: AgentToolsUpdate = serde_json::from_slice(&tokio::fs::read(path).await?)?;
         println!(
             "{}",
-            serde_json::to_string(&host.configure_bot_tools(edit).await?)?
+            serde_json::to_string(&host.set_agent_tools(edit).await?)?
         );
         return Ok(());
     }
@@ -221,14 +215,6 @@ async fn run_command(
         let id = uuid::Uuid::parse_str(path.to_str().ok_or("request ID must be UTF-8")?)?;
         host.reap_github_review(id, renoa_local::TurnObservation::now()?.unix_milliseconds())
             .await?;
-        return Ok(());
-    }
-    if command == "ensure-bot" {
-        let record: BotRecord = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-        println!(
-            "{}",
-            serde_json::to_string(&host.ensure_bot(record).await?)?
-        );
         return Ok(());
     }
     github_review::run(host, command, path).await

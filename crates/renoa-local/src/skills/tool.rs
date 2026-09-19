@@ -32,11 +32,7 @@ pub(crate) fn agent_skill_bindings(
     vec![
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/search"),
-            Arc::new(SearchTool::new(
-                agent_id.clone(),
-                store.clone(),
-                workspace.clone(),
-            )),
+            Arc::new(SearchTool::new(agent_id, store.clone(), workspace.clone())),
             EffectRecovery::SafeToReplay,
         ),
         AgentToolBinding::new(
@@ -98,7 +94,7 @@ impl Tool for SearchTool {
             let input: SearchInput = decode(&call, SKILL_SEARCH_TOOL)?;
             require_active(&cancellation, false)?;
             let store = self.store.clone();
-            let agent_id = self.agent_id.clone();
+            let agent_id = self.agent_id;
             let workspace = self.workspace.clone();
             let query = input.query;
             let result = tokio::task::spawn_blocking(move || {
@@ -179,7 +175,7 @@ impl Tool for LoadTool {
             })?;
             require_active(&cancellation, false)?;
             let store = self.store.clone();
-            let agent_id = self.agent_id.clone();
+            let agent_id = self.agent_id;
             let workspace = self.workspace.clone();
             let session_id = self.session_id;
             let selected = input.name;

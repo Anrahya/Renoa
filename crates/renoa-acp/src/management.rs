@@ -1,14 +1,11 @@
 use std::path::Path;
 
 use renoa_kernel::AgentId;
-use renoa_local::LocalHostError;
+use renoa_local::{LocalHostError, MAX_AGENT_PAGE};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{Config, ServerError};
-
-/// The largest page [`renoa_local::LocalHost::list_agent_definitions`] accepts.
-const AGENT_PAGE: usize = 20;
 
 /// Runs local agent management through the same Host operations used by surfaces.
 ///
@@ -20,15 +17,12 @@ pub async fn manage_agents(arguments: &[String]) -> Result<Value, ServerError> {
     match arguments {
         [action] if action == "list" => {
             let mut agents = Vec::new();
-            let mut after = None;
+            let mut cursor = None;
             loop {
-                let page = host.list_agent_definitions(after, AGENT_PAGE).await?;
-                let complete = page.len() < AGENT_PAGE;
-                if let Some(last) = page.last() {
-                    after = Some(last.id);
-                }
-                agents.extend(page);
-                if complete {
+                let page = host.list_agent_definitions(cursor, MAX_AGENT_PAGE).await?;
+                cursor = page.next_cursor;
+                agents.extend(page.agents);
+                if cursor.is_none() {
                     break;
                 }
             }

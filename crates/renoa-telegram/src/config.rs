@@ -72,7 +72,7 @@ impl Config {
         if let Some(reasoning) = settings.initial_reasoning {
             model_configuration = model_configuration.with_initial_reasoning(reasoning);
         }
-        let host = LocalHost::new(&data_directory, model_configuration, Vec::new(), adapters)?;
+        let host = LocalHost::new(&data_directory, model_configuration, adapters)?;
         Ok(Self {
             host,
             agent_id,

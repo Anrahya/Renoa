@@ -177,13 +177,27 @@ pub(super) fn authorize(
     actor: AgentId,
     target: AgentId,
 ) -> Result<(), RoutineError> {
-    let allowed: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM host_agents a JOIN host_bots b ON b.agent_id=?2 WHERE a.agent_id=?1 AND (a.agent_id=b.agent_id OR a.profile_id=?3))",params![actor.to_string(),target.to_string(),crate::ARCEE_PROFILE_ID],|row| row.get(0))?;
-    if allowed {
+    if actor == target {
+        return Ok(());
+    }
+    let manages_agents: bool = db.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM host_agent_tool_selections AS selection
+            JOIN json_each(selection.tools_json) AS capability
+              ON capability.value = ?2
+            WHERE selection.agent_id = ?1
+        )",
+        params![actor.to_string(), crate::capabilities::AGENT_MANAGE],
+        |row| row.get(0),
+    )?;
+    if manages_agents {
         Ok(())
     } else {
-        Err(RoutineError::Invalid(
-            "only Arcee or the specialist itself can manage its routines".to_owned(),
-        ))
+        Err(RoutineError::Invalid(format!(
+            "an agent needs the `{}` capability to manage another agent's routines",
+            crate::capabilities::AGENT_MANAGE
+        )))
     }
 }
 

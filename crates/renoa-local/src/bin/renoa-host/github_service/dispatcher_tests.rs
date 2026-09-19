@@ -1,14 +1,42 @@
 use super::*;
 use renoa_kernel::AgentId;
 use renoa_local::{
-    AgentRecord, BotRecipe, BotRecord, GitHubReviewCommand, GitHubReviewPolicy, LocalHostAdapters,
-    LocalModelConfiguration, ModelProvider, arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, GitHubReviewCommand,
+    GitHubReviewPolicy, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use std::collections::BTreeSet;
 
+const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v1";
+const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v1";
+
+async fn provision(
+    host: &LocalHost,
+    preset: &str,
+    name: &str,
+    instructions: Option<&str>,
+) -> AgentId {
+    let mut request = AgentCreateRequest::new(
+        Uuid::new_v4(),
+        AgentPresetId::new(preset).expect("preset id"),
+        name,
+    );
+    if let Some(instructions) = instructions {
+        request = request.with_instructions(instructions);
+    }
+    host.create_agent(
+        AgentCreator::System {
+            component: "github-service-test".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        request,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("agent")
+    .id
+}
+
 async fn host(root: &Path) -> LocalHost {
-    let profile = arcee_profile(root).expect("profile");
-    let operator = AgentId::new();
     let host = LocalHost::new(
         root,
         LocalModelConfiguration::new(
@@ -18,31 +46,25 @@ async fn host(root: &Path) -> LocalHost {
             "fixture",
             root.join("auth.sqlite"),
         ),
-        vec![profile.clone()],
         LocalHostAdapters::new(None),
     )
     .expect("host");
-    host.ensure_agent(AgentRecord {
-        id: operator,
-        profile: profile.id().clone(),
-        name: "Operator".to_owned(),
-        created_by: None,
-    })
-    .await
-    .expect("operator");
-    let reviewer = AgentId::new();
-    host.ensure_bot(BotRecord {
-        id: reviewer,
-        created_by: operator,
-        recipe: BotRecipe {
-            name: "Reviewer".to_owned(),
-            instructions: "Review".to_owned(),
-            tools: BTreeSet::new(),
-            connections: BTreeSet::new(),
-        },
-    })
-    .await
-    .expect("bot");
+    let operator = provision(&host, ARCEE_PRESET_ID, "Operator", None).await;
+    let reviewer = host
+        .create_agent(
+            AgentCreator::Agent { agent_id: operator },
+            AgentCreationOrigin::AgentTool,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                "Reviewer",
+            )
+            .with_instructions("Review"),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("reviewer")
+        .id;
     host.manage_github_review(
         GitHubReviewCommand::SetRepository {
             operation_id: Uuid::new_v4(),

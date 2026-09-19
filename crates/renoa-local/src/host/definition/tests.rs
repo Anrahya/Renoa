@@ -4,13 +4,9 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::{
-    AgentCreateRequest, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE, RenameAgent,
-    derived_agent_id,
-};
+use super::{AgentCreateRequest, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE, derived_agent_id};
 use crate::{
-    ARCEE_PROFILE_ID, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentProfile, LocalHost,
-    LocalHostError, ModelProvider,
+    AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, LocalHostError, ModelProvider,
     host::HostInitialization,
     host::routines::RoutineSchedule,
     presets::{ARCEE_PRESET_ID, SPECIALIST_PRESET_ID},
@@ -32,7 +28,6 @@ fn host(root: &Path) -> LocalHost {
         shared_plugin_registry: None,
         global_skill_source: None,
         oauth_relay: None,
-        profiles: vec![AgentProfile::new(ARCEE_PROFILE_ID, "Operator.").expect("profile")],
     })
     .expect("Host")
 }
@@ -106,12 +101,12 @@ async fn creation_writes_one_canonical_definition_and_exact_selection() {
         .expect("read definition")
         .expect("definition exists");
     assert_eq!(stored, definition);
-    assert_eq!(
-        host.list_agent_definitions(None, MAX_AGENT_PAGE)
-            .await
-            .expect("list agents"),
-        vec![definition.clone()]
-    );
+    let page = host
+        .list_agent_definitions(None, MAX_AGENT_PAGE)
+        .await
+        .expect("list agents");
+    assert_eq!(page.agents, vec![definition.clone()]);
+    assert_eq!(page.next_cursor, None);
 }
 
 #[tokio::test]
@@ -200,12 +195,12 @@ async fn creation_replays_exactly_and_conflicts_on_any_changed_field() {
         Err(LocalHostError::AgentConflict(_))
     ));
 
-    assert_eq!(
-        host.list_agent_definitions(None, MAX_AGENT_PAGE)
-            .await
-            .expect("list"),
-        vec![first]
-    );
+    let page = host
+        .list_agent_definitions(None, MAX_AGENT_PAGE)
+        .await
+        .expect("list");
+    assert_eq!(page.agents, vec![first]);
+    assert_eq!(page.next_cursor, None);
 }
 
 #[tokio::test]
@@ -291,6 +286,7 @@ async fn validation_rejects_untrusted_pairs_unknown_names_and_preset_mismatches(
         host.list_agent_definitions(None, MAX_AGENT_PAGE)
             .await
             .expect("list")
+            .agents
             .is_empty(),
         "no rejected request may leave an agent"
     );
@@ -322,6 +318,7 @@ async fn a_rejected_first_routine_leaves_no_agent_state() {
         host.list_agent_definitions(None, MAX_AGENT_PAGE)
             .await
             .expect("list")
+            .agents
             .is_empty(),
         "a failed creation must not leave an agent"
     );
@@ -352,13 +349,12 @@ async fn concurrent_identical_creates_converge_on_one_agent() {
     let first = first.expect("first create");
     let second = second.expect("second create");
     assert_eq!(first, second, "both callers observe one result");
-    assert_eq!(
-        second_host
-            .list_agent_definitions(None, MAX_AGENT_PAGE)
-            .await
-            .expect("list"),
-        vec![first]
-    );
+    let page = second_host
+        .list_agent_definitions(None, MAX_AGENT_PAGE)
+        .await
+        .expect("list");
+    assert_eq!(page.agents, vec![first]);
+    assert_eq!(page.next_cursor, None);
 }
 
 #[tokio::test]
@@ -404,260 +400,5 @@ async fn agents_from_one_preset_own_independent_selections() {
     assert_eq!(untouched.tool_selection, second.tool_selection);
 }
 
-#[tokio::test]
-async fn a_document_preset_publishes_files_and_records_provenance() {
-    let (directory, host) = fixture();
-    let (creator, origin) = system("test");
-    let request = AgentCreateRequest::new(
-        Uuid::new_v4(),
-        AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
-        "Operator",
-    );
-    let definition = host
-        .create_agent(creator, origin, request, CancellationToken::new())
-        .await
-        .expect("create the operator agent");
-
-    assert!(definition.operational.documents.is_some());
-    assert_eq!(
-        definition.operational.provider_restriction,
-        Some(ModelProvider::OpenCodeGo)
-    );
-    let root = directory
-        .path()
-        .join("data")
-        .join("agents")
-        .join(definition.id.to_string());
-    for file in ["SOUL.md", "USER.md"] {
-        let metadata = fs::symlink_metadata(root.join(file)).expect("published document");
-        assert!(metadata.file_type().is_file());
-    }
-
-    // Provenance is record data and never enters the instructions.
-    assert!(
-        !definition
-            .operational
-            .instructions
-            .contains(&definition.id.to_string())
-    );
-    assert!(
-        !definition
-            .operational
-            .instructions
-            .contains(ARCEE_PRESET_ID),
-        "the preset id is not prompt text"
-    );
-}
-
-#[tokio::test]
-async fn rename_requires_the_management_capability_and_replays() {
-    let (_directory, host) = fixture();
-    let (creator, origin) = system("test");
-    let capable = host
-        .create_agent(
-            creator.clone(),
-            origin,
-            specialist(Uuid::new_v4(), "Capable")
-                .with_tools([crate::capabilities::AGENT_MANAGE.to_owned()]),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("capable agent");
-    let plain = host
-        .create_agent(
-            creator.clone(),
-            origin,
-            specialist(Uuid::new_v4(), "Plain"),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("plain agent");
-    let target = host
-        .create_agent(
-            creator,
-            origin,
-            specialist(Uuid::new_v4(), "Target"),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("target agent");
-
-    let operation = Uuid::new_v4();
-    let edit = RenameAgent {
-        id: target.id,
-        expected_name: "Target".to_owned(),
-        name: "Renamed".to_owned(),
-    };
-    assert!(
-        matches!(
-            host.rename_agent(plain.id, operation, edit.clone(), CancellationToken::new())
-                .await,
-            Err(LocalHostError::InvalidRequest(_))
-        ),
-        "an agent without the management capability cannot rename another agent"
-    );
-
-    let renamed = host
-        .rename_agent(
-            capable.id,
-            operation,
-            edit.clone(),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("capable rename");
-    assert_eq!(renamed.name, "Renamed");
-    assert_eq!(
-        host.rename_agent(capable.id, operation, edit, CancellationToken::new())
-            .await
-            .expect("replay"),
-        renamed
-    );
-    assert!(matches!(
-        host.rename_agent(
-            capable.id,
-            Uuid::new_v4(),
-            RenameAgent {
-                id: target.id,
-                expected_name: "Target".to_owned(),
-                name: "Stale".to_owned(),
-            },
-            CancellationToken::new()
-        )
-        .await,
-        Err(LocalHostError::AgentConflict(_))
-    ));
-
-    // An agent may always rename itself.
-    let self_renamed = host
-        .rename_agent(
-            plain.id,
-            Uuid::new_v4(),
-            RenameAgent {
-                id: plain.id,
-                expected_name: "Plain".to_owned(),
-                name: "Plain Renamed".to_owned(),
-            },
-            CancellationToken::new(),
-        )
-        .await
-        .expect("self rename");
-    assert_eq!(self_renamed.name, "Plain Renamed");
-}
-
-#[tokio::test]
-async fn selection_edits_are_revision_checked_and_the_operational_document_stays_clean() {
-    let (_directory, host) = fixture();
-    let (creator, origin) = system("test");
-    let definition = host
-        .create_agent(
-            creator,
-            origin,
-            specialist(Uuid::new_v4(), "Clean"),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("create");
-
-    let operation = Uuid::new_v4();
-    let update = AgentToolsUpdate {
-        operation_id: operation,
-        id: definition.id,
-        expected_revision: 1,
-        tools: ["bash".to_owned()].into_iter().collect(),
-    };
-    let selection = host
-        .set_agent_tools(update.clone())
-        .await
-        .expect("first edit");
-    assert_eq!(selection.revision, 2);
-    assert_eq!(
-        host.set_agent_tools(update.clone()).await.expect("replay"),
-        selection
-    );
-    // A fresh attempt with a stale revision conflicts.
-    assert!(matches!(
-        host.set_agent_tools(AgentToolsUpdate {
-            operation_id: Uuid::new_v4(),
-            expected_revision: 1,
-            id: definition.id,
-            tools: ["bash".to_owned()].into_iter().collect(),
-        })
-        .await,
-        Err(LocalHostError::AgentConflict(_))
-    ));
-
-    // Selection state lives in its own tables, never inside the operational JSON.
-    let stored = host
-        .agent_definition(definition.id)
-        .await
-        .expect("read")
-        .expect("exists");
-    assert_eq!(stored.tool_selection, selection);
-    let operational_json = serde_json::to_string(&stored.operational).expect("encode");
-    assert!(!operational_json.contains("bash"));
-    assert!(!operational_json.contains("read_file"));
-    assert!(!operational_json.contains("SOUL.md"));
-}
-
-#[tokio::test]
-async fn resolution_composes_the_stored_definition_with_workspace_rules() {
-    let (directory, host) = fixture();
-    let (creator, origin) = system("test");
-    let operation = Uuid::new_v4();
-    let specialist = host
-        .create_agent(
-            creator.clone(),
-            origin,
-            specialist(operation, "Resolved").with_tools(["read_file".to_owned()]),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("create a caller-instruction agent");
-
-    let workspace = directory.path().join("workspace");
-    let resolved = super::resolve_definition(&host.config, specialist.id)
-        .await
-        .expect("resolve the stored definition");
-    assert_eq!(resolved.agent_id(), specialist.id);
-    assert!(resolved.behavior().uses_turn_timing());
-    assert_eq!(resolved.provider_restriction(), None);
-    assert!(resolved.documents().is_none());
-    assert!(resolved.document_binding().is_none());
-    assert_eq!(
-        resolved.system_prompt(&workspace).expect("compose prompt"),
-        "Do the assigned job.",
-        "resolution uses the stored instructions and never a preset"
-    );
-
-    // A document-backed preset composes documents and workspace rules.
-    let operator = host
-        .create_agent(
-            system("test").0,
-            system("test").1,
-            AgentCreateRequest::new(
-                Uuid::new_v4(),
-                AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
-                "Operator",
-            ),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("create the operator agent");
-    fs::write(workspace.join("AGENTS.md"), "Keep the public API small.\n")
-        .expect("write project instructions");
-    let resolved = super::resolve_definition(&host.config, operator.id)
-        .await
-        .expect("resolve the operator definition");
-    assert_eq!(
-        resolved.provider_restriction(),
-        Some(ModelProvider::OpenCodeGo)
-    );
-    assert!(resolved.automatic_compaction().is_some());
-    assert!(resolved.document_binding().is_some());
-    let prompt = resolved.system_prompt(&workspace).expect("compose prompt");
-    assert!(prompt.contains("source=\"SOUL.md\""));
-    assert!(prompt.contains("source=\"USER.md\""));
-    assert!(prompt.contains("<project_instructions source=\"AGENTS.md\">"));
-    assert!(prompt.contains("Keep the public API small."));
-}
+mod management;
+mod resolution;

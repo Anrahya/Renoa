@@ -44,12 +44,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         required_environment("RENOA_MODEL")?,
         required_environment("RENOA_MODEL_AUTH_STORE")?,
     );
-    let host = LocalHost::new(
-        data_directory,
-        models,
-        Vec::new(),
-        LocalHostAdapters::new(None),
-    )?;
+    let host = LocalHost::new(data_directory, models, LocalHostAdapters::new(None))?;
     let agent = AgentId::from_uuid(Uuid::parse_str(&required_environment("RENOA_AGENT_ID")?)?);
     if host.agent_definition(agent).await?.is_none() {
         return Err(io::Error::other(format!(

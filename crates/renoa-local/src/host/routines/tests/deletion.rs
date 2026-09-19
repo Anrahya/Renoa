@@ -21,7 +21,7 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     h.execute_routine_run(run.clone())
         .await
         .expect("automation");
-    let workspace = h.bot_workspace(child).await.expect("workspace");
+    let workspace = h.agent_workspace(child).await.expect("workspace");
     let chat = h
         .ensure_agent_session(child, &workspace, Uuid::new_v4())
         .await
@@ -200,7 +200,11 @@ async fn rejected_or_cancelled_deletions_leave_the_automation_unchanged() {
         id: record.id,
         expected_revision: record.revision,
     };
-    assert!(change(&h, AgentId::new(), deletion.clone()).await.is_err());
+    assert!(
+        change(&h, outsider(&h).await, deletion.clone())
+            .await
+            .is_err()
+    );
     assert!(
         change(
             &h,

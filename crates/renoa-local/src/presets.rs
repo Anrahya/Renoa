@@ -41,6 +41,7 @@ pub(crate) enum PresetInstructions {
 /// One immutable creation seed.
 pub(crate) struct AgentPreset {
     id: AgentPresetId,
+    description: &'static str,
     instructions: PresetInstructions,
     behavior: AgentBehavior,
     documents: Option<AgentDocuments>,
@@ -53,6 +54,12 @@ impl AgentPreset {
     #[must_use]
     pub(crate) fn id(&self) -> &AgentPresetId {
         &self.id
+    }
+
+    /// The model-facing description callers choose this preset by.
+    #[must_use]
+    pub(crate) const fn description(&self) -> &'static str {
+        self.description
     }
 
     #[must_use]
@@ -111,6 +118,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             // Static preset ids are constants in this file, so construction
             // cannot fail at runtime.
             id: preset_id(ALPHA_PRESET_ID),
+            description: "Renoa's coding agent for this workspace: curated coding instructions, project instructions, and the Host workspace tools.",
             instructions: PresetInstructions::Fixed(ALPHA_INSTRUCTIONS),
             behavior: AgentBehavior {
                 turn_timing: TurnTiming::Off,
@@ -124,6 +132,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
         },
         AgentPreset {
             id: preset_id(ARCEE_PRESET_ID),
+            description: "Renoa's personal operator: curation-owned instructions with SOUL and USER documents, Host turn timing, automatic compaction, and the OpenCode Go provider.",
             instructions: PresetInstructions::Fixed(ARCEE_INSTRUCTIONS),
             behavior: AgentBehavior {
                 turn_timing: TurnTiming::HostClock,
@@ -146,6 +155,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
         },
         AgentPreset {
             id: preset_id(SPECIALIST_PRESET_ID),
+            description: "A caller-defined specialist: you supply its instructions, and it starts with only the capabilities you select.",
             instructions: PresetInstructions::CallerSupplied,
             behavior: AgentBehavior {
                 turn_timing: TurnTiming::HostClock,
@@ -163,6 +173,11 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
         .map(|preset| (preset.id.clone(), preset))
         .collect()
 });
+
+/// Every registered creation preset, in identity order.
+pub(crate) fn catalog() -> impl Iterator<Item = &'static AgentPreset> {
+    PRESETS.values()
+}
 
 /// Returns one registered creation preset.
 ///

@@ -145,7 +145,7 @@ impl PluginManager {
         )
         .await?;
         let catalog = self.mcp_catalog.clone();
-        let agent_id = request.agent_id.clone();
+        let agent_id = *request.agent_id;
         let committed = candidate.clone();
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || {
@@ -268,7 +268,7 @@ impl PluginManager {
         )
         .await?;
         let catalog = self.mcp_catalog.clone();
-        let agent_id = request.agent_id.clone();
+        let agent_id = *request.agent_id;
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || {
             catalog.publish_and_enable_connection(&agent_id.to_string(), &stored_snapshot)

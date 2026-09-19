@@ -4,7 +4,7 @@ use renoa_agent::AgentEventSink;
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{CommandId, SessionId};
 
-use super::definition::ResolvedAgentDefinition;
+use super::definition::{ResolvedAgentDefinition, agent_manage_binding};
 use super::{HostConfig, LocalHostError};
 use crate::{
     LocalRuntimeConfig, LocalWorkspace, ModelChoice, ReasoningLevel,
@@ -61,8 +61,9 @@ pub(crate) async fn resolve_runtime(
         session_id,
         command_id,
     ));
-    offered.push(super::bots::tool::binding(
+    offered.push(agent_manage_binding(
         Arc::clone(host),
+        agent,
         session_id,
         command_id,
     ));

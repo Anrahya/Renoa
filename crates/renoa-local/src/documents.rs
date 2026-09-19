@@ -180,11 +180,7 @@ impl AgentDocumentStore {
         content: &str,
         cancellation: &CancellationToken,
     ) -> Result<String, ToolError> {
-        if !self
-            .enabled_documents()
-            .iter()
-            .any(|enabled| *enabled == document)
-        {
+        if !self.enabled_documents().contains(&document) {
             return Err(ToolError::invalid_input(
                 "this agent does not keep that document",
             ));

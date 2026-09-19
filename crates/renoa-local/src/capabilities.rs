@@ -73,6 +73,14 @@ pub(crate) fn is_selectable(name: &str) -> bool {
     WORKSPACE_TOOL_NAMES.contains(&name) || extension_names().contains(&name)
 }
 
+/// Every selectable capability name, for callers that enumerate the vocabulary.
+#[must_use]
+pub(crate) fn selectable_names() -> Vec<&'static str> {
+    let mut names = WORKSPACE_TOOL_NAMES.to_vec();
+    names.extend_from_slice(extension_names());
+    names
+}
+
 #[must_use]
 pub(crate) fn workspace_tool_names() -> BTreeSet<String> {
     WORKSPACE_TOOL_NAMES

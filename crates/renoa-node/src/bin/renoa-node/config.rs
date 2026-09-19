@@ -102,7 +102,6 @@ pub(crate) fn load(
             config.model.default_model,
             &config.model.credential_store,
         ),
-        Vec::new(),
         LocalHostAdapters::new(config.adapters.mcp.as_deref())
             .with_mcp_registry(config.adapters.mcp_registry.as_deref())
             .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref()),

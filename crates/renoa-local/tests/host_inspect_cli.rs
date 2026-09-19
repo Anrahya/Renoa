@@ -1,8 +1,6 @@
 use std::process::Command;
 
-use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, alpha_profile,
-};
+use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
 
 #[tokio::test]
 async fn inspection_binary_reads_an_existing_host_without_a_launch_config_or_models() {
@@ -16,7 +14,6 @@ async fn inspection_binary_reads_an_existing_host_without_a_launch_config_or_mod
             "absent-model",
             root.path().join("absent-credentials"),
         ),
-        vec![alpha_profile()],
         LocalHostAdapters::default(),
     )
     .expect("Host");

@@ -4,9 +4,8 @@ use std::{
 };
 
 use renoa_control::{BrowserSessions, Coordinator};
-use renoa_kernel::AgentId;
 use renoa_local::{
-    ARCEE_PROFILE_ID, AgentProfile, AgentProfileId, AgentRecord, BotRecipe, BotRecord, LocalHost,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
     LocalHostAdapters, LocalModelConfiguration, ModelProvider, RoutineMutation, RoutineRecord,
     RoutineSchedule, RoutineSpec,
 };
@@ -38,6 +37,62 @@ struct Fixture {
     client: Client,
 }
 
+/// Provisions the operator and one specialist, then gives the specialist a
+/// standing routine the management API can toggle.
+async fn seed(host: &LocalHost) -> RoutineRecord {
+    let parent = host
+        .create_agent(
+            AgentCreator::System {
+                component: "management-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new("renoa.personal.arcee.v1").expect("Arcee preset id"),
+                "Arcee",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("agent")
+        .id;
+    let child = host
+        .create_agent(
+            AgentCreator::System {
+                component: "management-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new("renoa.specialist.v1").expect("specialist preset id"),
+                "News",
+            )
+            .with_instructions("Read news")
+            .with_tools(["write_file".to_owned()]),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("specialist")
+        .id;
+    host.manage_routine(
+        parent,
+        Uuid::new_v4(),
+        RoutineMutation::Create {
+            spec: RoutineSpec {
+                agent_id: child,
+                name: "Brief".into(),
+                prompt: "Do not expose this standing prompt in the mutation receipt".into(),
+                schedule: RoutineSchedule::Interval { hours: 12 },
+                enabled: true,
+            },
+        },
+        0,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("routine")
+}
+
 impl Fixture {
     async fn new() -> Self {
         let files = tempfile::tempdir().expect("files");
@@ -51,50 +106,10 @@ impl Fixture {
                 "unused",
                 root.join("absent-credentials"),
             ),
-            vec![AgentProfile::new(ARCEE_PROFILE_ID, "Operator").expect("profile")],
             LocalHostAdapters::default(),
         )
         .expect("Host");
-        let parent = AgentId::new();
-        host.ensure_agent(AgentRecord {
-            id: parent,
-            profile: AgentProfileId::new(ARCEE_PROFILE_ID).expect("profile"),
-            name: "Arcee".into(),
-            created_by: None,
-        })
-        .await
-        .expect("agent");
-        let child = AgentId::new();
-        host.ensure_bot(BotRecord {
-            id: child,
-            created_by: parent,
-            recipe: BotRecipe {
-                name: "News".into(),
-                instructions: "Read news".into(),
-                tools: ["write_file".to_owned()].into(),
-                connections: std::collections::BTreeSet::new(),
-            },
-        })
-        .await
-        .expect("bot");
-        let routine = host
-            .manage_routine(
-                parent,
-                Uuid::new_v4(),
-                RoutineMutation::Create {
-                    spec: RoutineSpec {
-                        agent_id: child,
-                        name: "Brief".into(),
-                        prompt: "Do not expose this standing prompt in the mutation receipt".into(),
-                        schedule: RoutineSchedule::Interval { hours: 12 },
-                        enabled: true,
-                    },
-                },
-                0,
-                CancellationToken::new(),
-            )
-            .await
-            .expect("routine");
+        let routine = seed(&host).await;
         let database = files.path().join("identity.sqlite");
         let control =
             Coordinator::open_with_passkeys(&database, "localhost", ORIGIN).expect("identity");

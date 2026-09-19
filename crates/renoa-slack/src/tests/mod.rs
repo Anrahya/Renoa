@@ -52,7 +52,6 @@ impl Fixture {
                 "fixture",
                 auth,
             ),
-            Vec::new(),
             LocalHostAdapters::default(),
         )
         .expect("host");

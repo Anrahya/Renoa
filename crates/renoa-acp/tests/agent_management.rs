@@ -55,7 +55,6 @@ fn provision(data: &Path, name: &str) -> String {
                 "grok-test",
                 data.join("auth.sqlite"),
             ),
-            Vec::new(),
             LocalHostAdapters::default(),
         )
         .expect("provisioning Host");

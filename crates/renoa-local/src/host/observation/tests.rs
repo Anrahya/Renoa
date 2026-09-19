@@ -5,10 +5,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, BotRecipe, BotRecord,
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
-    RoutineMutation, RoutineSchedule, RoutineSpec, alpha_profile,
-    host_storage::create_session_storage, selection::RuntimeSelection,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel, RoutineMutation,
+    RoutineSchedule, RoutineSpec, host_storage::create_session_storage,
+    selection::RuntimeSelection,
 };
 
 fn host(root: &Path) -> LocalHost {
@@ -21,7 +21,6 @@ fn host(root: &Path) -> LocalHost {
             "unavailable-model",
             root.join("credentials-do-not-exist"),
         ),
-        vec![alpha_profile()],
         LocalHostAdapters::default(),
     )
     .expect("Host without model startup")
@@ -130,16 +129,19 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
         INSERT INTO mcp_catalogs(connection_id,endpoint,request_headers_json,protocol_version,adapter_revision,catalog_digest)
         VALUES('x-api','https://example.com/mcp','{}','2025-03-26','fixture',printf('%064d',0));").expect("record connection without network");
     let bot = host
-        .ensure_bot(BotRecord {
-            id: AgentId::new(),
-            created_by: creator,
-            recipe: BotRecipe {
-                name: "X Desk".to_owned(),
-                instructions: "PRIVATE INSTRUCTIONS".to_owned(),
-                tools: BTreeSet::from(["read_file".to_owned()]),
-                connections: BTreeSet::from(["x-api".to_owned()]),
-            },
-        })
+        .create_agent(
+            AgentCreator::Agent { agent_id: creator },
+            AgentCreationOrigin::AgentTool,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                "X Desk",
+            )
+            .with_instructions("PRIVATE INSTRUCTIONS")
+            .with_tools(["read_file".to_owned()])
+            .with_connections(["x-api".to_owned()]),
+            CancellationToken::new(),
+        )
         .await
         .expect("specialist");
     let id = Uuid::new_v4();
@@ -275,16 +277,17 @@ async fn review_inventory_distinguishes_queued_and_incomplete_without_hydrating_
     let host = host(root.path());
     let agent = agent(&host).await;
     let reviewer = host
-        .ensure_bot(BotRecord {
-            id: AgentId::new(),
-            created_by: agent,
-            recipe: BotRecipe {
-                name: "Soundwave".to_owned(),
-                instructions: "Review code".to_owned(),
-                tools: BTreeSet::new(),
-                connections: BTreeSet::new(),
-            },
-        })
+        .create_agent(
+            AgentCreator::Agent { agent_id: agent },
+            AgentCreationOrigin::AgentTool,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                "Soundwave",
+            )
+            .with_instructions("Review code"),
+            CancellationToken::new(),
+        )
         .await
         .expect("reviewer");
     host.manage_github_review(

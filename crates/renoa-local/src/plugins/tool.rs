@@ -68,9 +68,9 @@ impl ManageTool {
     }
 
     #[cfg(test)]
-    fn new(manager: PluginManager, workspace: PathBuf) -> Self {
+    fn new(agent_id: AgentId, manager: PluginManager, workspace: PathBuf) -> Self {
         Self::for_session(
-            AgentId::new(crate::ALPHA_PROFILE_ID).expect("valid Alpha profile id"),
+            agent_id,
             manager,
             workspace,
             SessionId::new(),
@@ -281,27 +281,27 @@ impl ManageTool {
     async fn disconnect(&self, connection: String) -> Result<ToolOutput, ToolError> {
         let catalog_retained = self
             .manager
-            .disconnect_profile(&self.agent_id, connection.clone())
+            .disconnect_agent(&self.agent_id, connection.clone())
             .await
             .map_err(|error| plugin_error(error, true))?;
         json_output(&DisconnectedOutput {
             status: "disconnected",
             connection,
             catalog_retained,
-            enabled_for_profile: false,
+            enabled_for_agent: false,
         })
     }
 
     async fn enable(&self, connection: String) -> Result<ToolOutput, ToolError> {
         self.manager
-            .enable_profile(&self.agent_id, connection.clone())
+            .enable_agent(&self.agent_id, connection.clone())
             .await
             .map_err(|error| plugin_error(error, true))?;
         json_output(&EnabledOutput {
             status: "enabled",
             connection,
             catalog_retained: true,
-            enabled_for_profile: true,
+            enabled_for_agent: true,
         })
     }
 
@@ -376,7 +376,7 @@ struct DisconnectedOutput {
     status: &'static str,
     connection: String,
     catalog_retained: bool,
-    enabled_for_profile: bool,
+    enabled_for_agent: bool,
 }
 
 #[derive(Serialize)]
@@ -384,7 +384,7 @@ struct EnabledOutput {
     status: &'static str,
     connection: String,
     catalog_retained: bool,
-    enabled_for_profile: bool,
+    enabled_for_agent: bool,
 }
 
 #[derive(Serialize)]

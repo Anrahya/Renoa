@@ -12,7 +12,7 @@ mod support;
 mod transactional;
 
 use super::{ManageTool, TOOL_NAME};
-use crate::plugins::tests::test_skill_store;
+use crate::plugins::tests::{test_agent_id, test_skill_store};
 use crate::{
     AgentId,
     host::catalog,
@@ -52,7 +52,7 @@ async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
     assert_eq!(
         fixture
             .mcp
-            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .agent_tool_summaries(&fixture.agent_id.to_string())
             .expect("read hot-loaded researched tools")
             .len(),
         1
@@ -89,7 +89,7 @@ async fn extension_inventory_is_bounded_and_complete() {
     assert_eq!(connection["connection"], fixture.connection);
     assert_eq!(connection["registered"], true);
     assert_eq!(connection["catalog_loaded"], true);
-    assert_eq!(connection["enabled_for_profile"], true);
+    assert_eq!(connection["enabled_for_agent"], true);
 }
 
 #[tokio::test]
@@ -108,7 +108,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     .await;
     assert_eq!(disconnected["status"], "disconnected");
     assert_eq!(disconnected["catalog_retained"], true);
-    assert_eq!(disconnected["enabled_for_profile"], false);
+    assert_eq!(disconnected["enabled_for_agent"], false);
     let repeated = call(
         &fixture.tool,
         json!({"action": "disconnect", "connection": fixture.connection}),
@@ -124,7 +124,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     assert!(
         fixture
             .mcp
-            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .agent_tool_summaries(&fixture.agent_id.to_string())
             .expect("read tools after disconnect")
             .is_empty()
     );
@@ -133,7 +133,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     let listed = call(&fixture.tool, json!({"action": "list"})).await;
     let connection = inventory_item(&listed, "connection");
     assert_eq!(connection["catalog_loaded"], true);
-    assert_eq!(connection["enabled_for_profile"], false);
+    assert_eq!(connection["enabled_for_agent"], false);
     let enabled = call(
         &fixture.tool,
         json!({"action": "enable", "connection": fixture.connection}),
@@ -141,11 +141,11 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     .await;
     assert_eq!(enabled["status"], "enabled");
     assert_eq!(enabled["catalog_retained"], true);
-    assert_eq!(enabled["enabled_for_profile"], true);
+    assert_eq!(enabled["enabled_for_agent"], true);
     assert_eq!(
         fixture
             .mcp
-            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .agent_tool_summaries(&fixture.agent_id.to_string())
             .expect("read tools after re-enable")
             .len(),
         1
@@ -153,11 +153,11 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
 }
 
 #[tokio::test]
-async fn extension_management_changes_only_its_bound_profile() {
+async fn extension_management_changes_only_its_bound_agent() {
     let fixture = ResearchedMcpFixture::new().await;
-    let second_profile = AgentId::new("renoa.test.second.v1").expect("valid second profile id");
+    let second_agent = test_agent_id(2);
     let second_tool = ManageTool::for_session(
-        second_profile.clone(),
+        second_agent,
         fixture.manager.clone(),
         fixture.directory.path().to_path_buf(),
         SessionId::new(),
@@ -166,7 +166,7 @@ async fn extension_management_changes_only_its_bound_profile() {
 
     let before = call(&second_tool, json!({"action": "list"})).await;
     assert_eq!(
-        inventory_item(&before, "connection")["enabled_for_profile"],
+        inventory_item(&before, "connection")["enabled_for_agent"],
         false
     );
     call(
@@ -177,8 +177,8 @@ async fn extension_management_changes_only_its_bound_profile() {
     assert_eq!(
         fixture
             .mcp
-            .agent_tool_summaries(second_profile.as_str())
-            .expect("read second profile registry")
+            .agent_tool_summaries(&second_agent.to_string())
+            .expect("read second agent registry")
             .len(),
         1
     );
@@ -190,15 +190,15 @@ async fn extension_management_changes_only_its_bound_profile() {
     assert!(
         fixture
             .mcp
-            .agent_tool_summaries(second_profile.as_str())
-            .expect("read second profile after disconnect")
+            .agent_tool_summaries(&second_agent.to_string())
+            .expect("read second agent registry after disconnect")
             .is_empty()
     );
     assert_eq!(
         fixture
             .mcp
-            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
-            .expect("Alpha attachment remains unchanged")
+            .agent_tool_summaries(&fixture.agent_id.to_string())
+            .expect("first agent attachment remains unchanged")
             .len(),
         1
     );
@@ -209,6 +209,7 @@ struct ResearchedMcpFixture {
     mcp: McpCatalogStore,
     manager: PluginManager,
     tool: ManageTool,
+    agent_id: AgentId,
     connection: String,
 }
 
@@ -231,7 +232,8 @@ impl ResearchedMcpFixture {
             skills,
         )
         .expect("initialize extension manager");
-        let tool = ManageTool::new(manager.clone(), directory.path().to_path_buf());
+        let agent_id = test_agent_id(1);
+        let tool = ManageTool::new(agent_id, manager.clone(), directory.path().to_path_buf());
 
         let added = call(
             &tool,
@@ -261,6 +263,7 @@ impl ResearchedMcpFixture {
             mcp,
             manager,
             tool,
+            agent_id,
             connection,
         }
     }
@@ -283,7 +286,11 @@ async fn researched_mcp_public_headers_cannot_smuggle_a_credential_into_a_packag
         skills,
     )
     .expect("initialize extension manager");
-    let tool = ManageTool::new(manager.clone(), directory.path().to_path_buf());
+    let tool = ManageTool::new(
+        test_agent_id(1),
+        manager.clone(),
+        directory.path().to_path_buf(),
+    );
 
     let result = invoke_tool(
         Some(&tool),

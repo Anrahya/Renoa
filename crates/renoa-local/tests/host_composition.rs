@@ -1,11 +1,33 @@
 use std::fs;
 
+use renoa_kernel::RuntimeManifest;
 use renoa_local::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
     LocalHostAdapters, LocalModelConfiguration, LocalRuntimeConfig, LocalWorkspace, ModelProvider,
     build_local_runtime,
 };
 use tempfile::tempdir;
+
+fn assert_workspace_bindings(manifest: &RuntimeManifest) {
+    for tool in [
+        "read_file",
+        "edit_file",
+        "write_file",
+        "bash",
+        "grep",
+        "find",
+        "git_changes",
+        "git_diff",
+        "git_show",
+    ] {
+        assert!(
+            manifest
+                .effect_bindings
+                .contains_key(&format!("renoa.agent.tool/{tool}")),
+            "missing selected tool binding `{tool}`"
+        );
+    }
+}
 
 /// The runtime a Host composes comes from the agent's durable definition, and a
 /// workspace-rule change is visible to the next composition.
@@ -33,7 +55,6 @@ async fn the_host_composes_the_coding_runtime_from_the_stored_definition() {
             "grok-test",
             credentials.clone(),
         ),
-        Vec::new(),
         LocalHostAdapters::new(None),
     )
     .expect("assemble Host");
@@ -80,24 +101,7 @@ async fn the_host_composes_the_coding_runtime_from_the_stored_definition() {
     assert_eq!(manifest.loop_binding, "renoa.agent.model-tool-loop");
     assert_eq!(manifest.checkpoint_schema_version, 3);
     assert!(manifest.effect_bindings.contains_key("renoa.agent.model"));
-    for tool in [
-        "read_file",
-        "edit_file",
-        "write_file",
-        "bash",
-        "grep",
-        "find",
-        "git_changes",
-        "git_diff",
-        "git_show",
-    ] {
-        assert!(
-            manifest
-                .effect_bindings
-                .contains_key(&format!("renoa.agent.tool/{tool}")),
-            "missing selected tool binding `{tool}`"
-        );
-    }
+    assert_workspace_bindings(manifest);
 
     let recomposed = host
         .resolve_definition(agent.id)

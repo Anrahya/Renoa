@@ -218,7 +218,6 @@ impl HostFixture {
                     "fixture-model",
                     &self.credentials,
                 ),
-                Vec::new(),
                 LocalHostAdapters::default(),
             )
             .expect("assemble local Host"),
@@ -283,8 +282,8 @@ impl HostFixture {
 
 /// Provisions the canonical Alpha agent a node fixture executes.
 ///
-/// Node targets never register built-in profiles, so the durable definition
-/// must already exist in the Host data root the node opens.
+/// Node targets never create agents, so the durable definition must already
+/// exist in the Host data root the node opens.
 async fn provision_alpha(
     data: &std::path::Path,
     bridge: &std::path::Path,
@@ -299,7 +298,6 @@ async fn provision_alpha(
             "fixture-model",
             credentials,
         ),
-        Vec::new(),
         LocalHostAdapters::default(),
     )
     .expect("provisioning Host");

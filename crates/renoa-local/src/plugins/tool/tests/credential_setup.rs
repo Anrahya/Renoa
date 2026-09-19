@@ -23,10 +23,12 @@ use super::super::{ManageTool, TOOL_NAME};
 
 mod recovery;
 use crate::{
-    ALPHA_PROFILE_ID, AgentProfileId,
     host::catalog,
     mcp::{McpAuthorizationResolver, McpCatalogStore, McpCredentialResolver, McpHostError},
-    plugins::{PluginManager, tests::test_skill_store},
+    plugins::{
+        PluginManager,
+        tests::{test_agent_id, test_skill_store},
+    },
 };
 use recovery::recover_pending;
 
@@ -103,7 +105,7 @@ async fn run_credential_setup(
     )
     .expect("initialize extension manager");
     let tool = ManageTool::for_session(
-        AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile"),
+        test_agent_id(1),
         manager,
         directory.path().to_path_buf(),
         SessionId::new(),

@@ -141,6 +141,11 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
     if let Some(existing) = replay(&transaction, commit)? {
         return Ok(existing);
     }
+    // A declared connection is only usable when its catalog is complete, so a
+    // creation naming an unusable connection commits nothing.
+    for connection_id in &definition.connections {
+        crate::mcp::McpCatalogStore::require_complete_catalog(&transaction, connection_id)?;
+    }
     store::insert(&transaction, definition)?;
     if let Some((routine_id, spec)) = routine {
         routines::store::insert_first_routine(

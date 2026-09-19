@@ -273,7 +273,6 @@ fn provision_agent(
                 default_model,
                 auth_store,
             ),
-            Vec::new(),
             LocalHostAdapters::default(),
         )
         .expect("provisioning Host");

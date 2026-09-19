@@ -1,5 +1,3 @@
-use renoa_kernel::AgentId;
-
 use crate::mcp::{McpCatalogSnapshot, discover};
 use tokio_util::sync::CancellationToken;
 
@@ -114,47 +112,6 @@ impl LocalHost {
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || store.publish_catalog(&stored_snapshot)).await??;
         Ok(snapshot)
-    }
-
-    /// Enables one discovered MCP connection for an exact registered profile.
-    ///
-    /// # Errors
-    ///
-    /// Returns when the connection or tool is missing or storage cannot commit.
-    pub async fn enable_agent_mcp_connection(
-        &self,
-        agent_id: &AgentId,
-        connection_id: &str,
-    ) -> Result<(), LocalHostError> {
-        self.require_agent(*agent_id).await?;
-        let store = self.config.mcp_catalog.clone();
-        let agent_id = agent_id.clone();
-        let connection_id = connection_id.to_owned();
-        tokio::task::spawn_blocking(move || {
-            store.enable_profile_connection(&agent_id.to_string(), &connection_id)
-        })
-        .await??;
-        Ok(())
-    }
-
-    /// Lists the MCP connections currently enabled for an exact registered profile.
-    ///
-    /// # Errors
-    ///
-    /// Returns invalid storage or background-task failures.
-    pub async fn agent_mcp_connection_ids(
-        &self,
-        agent_id: &AgentId,
-    ) -> Result<Vec<String>, LocalHostError> {
-        self.require_agent(*agent_id).await?;
-        let store = self.config.mcp_catalog.clone();
-        let agent_id = agent_id.clone();
-        Ok(
-            tokio::task::spawn_blocking(move || {
-                store.profile_connection_ids(&agent_id.to_string())
-            })
-            .await??,
-        )
     }
 
     /// Loads one connection's latest complete MCP catalog.

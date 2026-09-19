@@ -70,10 +70,6 @@ impl LocalHost {
             .unwrap_or(self.config.initial_provider);
         let model = require_model(&models, provider, &self.config.initial_model, "review")?;
         let reasoning = initial_reasoning(model, self.config.initial_reasoning)?;
-        let recipe = self
-            .bot(definition.id)
-            .await?
-            .ok_or(LocalHostError::AgentNotFound(definition.id))?;
         let skills = self.config.skill_store.clone();
         let workspace = self.config.database.with_file_name("review-sessions");
         let skill_agent = definition.id.to_string();
@@ -108,8 +104,8 @@ impl LocalHost {
                 "{}\n\nBatch at most {} tool calls in one response. Retrieve source and diffs through the available tools; every page has continuation information.\n\nHost-owned reviewer identity: {}\nHost-owned reviewer instructions:\n{}\n\n{}",
                 reviewer::INSTRUCTIONS,
                 reviewer::SOURCE_CALLS_PER_RESPONSE,
-                recipe.recipe.name,
-                recipe.recipe.instructions,
+                definition.name,
+                definition.operational.instructions,
                 skill
             ),
             context,

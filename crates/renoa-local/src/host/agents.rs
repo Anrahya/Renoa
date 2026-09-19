@@ -1,18 +1,10 @@
+use std::path::PathBuf;
+
 use renoa_kernel::AgentId;
-use serde::Serialize;
 use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError, catalog, definition::MAX_AGENT_PAGE};
-use crate::{AgentDefinition, AgentProfileId};
-
-/// A durable agent, independent of its sessions and the process running them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct AgentRecord {
-    pub id: AgentId,
-    pub profile: AgentProfileId,
-    pub name: String,
-    pub created_by: Option<AgentId>,
-}
+use crate::AgentDefinition;
 
 impl LocalHost {
     /// Returns the durable identity of this Host data root.
@@ -53,20 +45,40 @@ impl LocalHost {
     /// Returns definition identity, corruption, or catalog storage errors.
     pub async fn list_agents(&self) -> Result<Vec<AgentDefinition>, LocalHostError> {
         let mut agents = Vec::new();
-        let mut after = None;
+        let mut cursor = None;
         loop {
-            let page = self.list_agent_definitions(after, MAX_AGENT_PAGE).await?;
-            let Some(last) = page.last().map(|agent| agent.id) else {
-                break;
-            };
-            let complete = page.len() < MAX_AGENT_PAGE;
-            agents.extend(page);
-            if complete {
+            let page = self.list_agent_definitions(cursor, MAX_AGENT_PAGE).await?;
+            cursor = page.next_cursor;
+            agents.extend(page.agents);
+            if cursor.is_none() {
                 break;
             }
-            after = Some(last);
         }
         Ok(agents)
+    }
+
+    /// Opens one agent's Host-owned workspace, separate from a surface's own
+    /// workspace. Scheduled runs and headless surfaces use it so one agent's
+    /// files never mix with another's.
+    ///
+    /// # Errors
+    /// Returns an unknown agent or filesystem error.
+    pub async fn agent_workspace(&self, id: AgentId) -> Result<PathBuf, LocalHostError> {
+        self.require_agent(id).await?;
+        let root = self
+            .config
+            .sessions
+            .parent()
+            .ok_or_else(|| {
+                LocalHostError::InvalidRequest("Host sessions have no data root".to_owned())
+            })?
+            .join("agent-workspaces");
+        tokio::task::spawn_blocking(move || {
+            let path = root.join(id.to_string());
+            std::fs::create_dir_all(&path)?;
+            Ok(std::fs::canonicalize(path)?)
+        })
+        .await?
     }
 }
 

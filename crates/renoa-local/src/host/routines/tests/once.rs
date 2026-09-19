@@ -80,9 +80,9 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .await
         .expect("real execution");
     let artifact = h
-        .bot_workspace(child)
+        .agent_workspace(child)
         .await
-        .expect("bot workspace")
+        .expect("agent workspace")
         .join("digest.md");
     assert_eq!(
         fs::read_to_string(&artifact).expect("artifact"),

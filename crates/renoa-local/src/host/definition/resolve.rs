@@ -11,8 +11,8 @@ use renoa_kernel::AgentId;
 
 use super::store;
 use crate::{
-    AgentBehavior, AgentDefinition, AgentDefinitionError, AgentDocuments, AgentToolSelection,
-    AutomaticCompaction, ModelProvider,
+    AgentBehavior, AgentDefinition, AgentDefinitionError, AgentToolSelection, AutomaticCompaction,
+    ModelProvider,
     documents::AgentDocumentStore,
     host::{HostConfig, LocalHostError, catalog},
 };
@@ -41,16 +41,6 @@ impl ResolvedAgentDefinition {
     #[must_use]
     pub(crate) fn selected_tools(&self) -> &AgentToolSelection {
         &self.definition.tool_selection
-    }
-
-    #[must_use]
-    pub(crate) fn connections(&self) -> &std::collections::BTreeSet<String> {
-        &self.definition.connections
-    }
-
-    #[must_use]
-    pub(crate) fn documents(&self) -> Option<AgentDocuments> {
-        self.definition.operational.documents
     }
 
     #[must_use]

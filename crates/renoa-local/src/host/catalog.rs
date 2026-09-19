@@ -307,12 +307,9 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
         0 => {
             transaction.execute_batch(SCHEMA)?;
             agents::initialize(&transaction)?;
-            initialize_bots(&transaction)?;
             super::definition::schema::initialize(&transaction)?;
             super::routines::initialize(&transaction)?;
-            super::bots::names::initialize(&transaction)?;
             super::reviews::initialize(&transaction)?;
-            super::bots::selection::initialize(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -360,12 +357,9 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 if version < 14 {
                     agents::initialize(&transaction)?;
                 }
-                initialize_bots(&transaction)?;
                 super::definition::schema::initialize(&transaction)?;
                 super::routines::initialize(&transaction)?;
-                super::bots::names::initialize(&transaction)?;
                 super::reviews::initialize(&transaction)?;
-                super::bots::selection::initialize(&transaction)?;
                 transaction.execute(
                     "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                     [SCHEMA_VERSION],
@@ -444,18 +438,6 @@ fn restrict_database_permissions(path: &Path) -> Result<(), HostCatalogError> {
 
 #[cfg(not(unix))]
 fn restrict_database_permissions(_path: &Path) -> Result<(), HostCatalogError> {
-    Ok(())
-}
-
-fn initialize_bots(transaction: &rusqlite::Transaction<'_>) -> Result<(), HostCatalogError> {
-    transaction.execute_batch(
-        "CREATE TABLE IF NOT EXISTS host_bots (
-        agent_id TEXT PRIMARY KEY REFERENCES host_agents(agent_id),
-        agent_id TEXT NOT NULL UNIQUE,
-        record_json TEXT NOT NULL CHECK(json_valid(record_json))
-    ) STRICT;
-    UPDATE host_metadata SET schema_version = 15 WHERE singleton = 1;",
-    )?;
     Ok(())
 }
 

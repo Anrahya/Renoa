@@ -3,8 +3,6 @@
 mod agent_definition;
 mod agent_session;
 mod agent_trace;
-mod alpha;
-mod arcee;
 mod atomic_file;
 mod bash;
 mod capabilities;
@@ -27,7 +25,6 @@ mod package_tree;
 mod plugins;
 mod presets;
 mod process;
-mod profile;
 mod ripgrep;
 mod runtime;
 mod search;
@@ -52,14 +49,11 @@ pub use agent_definition::{
     AutomaticCompaction, TurnTiming, WorkspaceInstructions,
 };
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
-pub use alpha::{ALPHA_PROFILE_ID, alpha_profile};
-pub use arcee::{ARCEE_PROFILE_ID, arcee_profile};
 pub use credential_file::credential_file_is_private;
-pub use host::agents::AgentRecord;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
-    AgentCreateRequest, AgentRoutine, AgentToolsUpdate, RenameAgent, ResolvedAgentDefinition,
-    derived_agent_id,
+    AgentCreateRequest, AgentDefinitionPage, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE,
+    RenameAgent, ResolvedAgentDefinition, derived_agent_id,
 };
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
@@ -81,7 +75,6 @@ pub use plugins::{
     InstalledPlugin, PluginCredential, PluginError, PluginInspection, PluginMcpServer,
     PluginMetadata, PluginNotice, PluginOAuthRegistration,
 };
-pub use profile::{AgentProfile, AgentProfileError, AgentProfileId};
 pub use renoa_kernel::AgentId;
 pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
@@ -92,15 +85,10 @@ pub use skills::SkillError;
 pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 
-pub use host::bots::{BotPage, BotRecipe, BotRecord, BotSummary};
-
 pub use host::routines::{
     HostRoutineControl, RoutineEnablement, RoutineError, RoutineMutation, RoutineRecord,
     RoutineResultSummary, RoutineRun, RoutineSchedule, RoutineSpec,
 };
-
-pub use host::bots::names::RenameBot;
-pub use host::bots::selection::{BotToolSelection, BotToolsUpdate};
 
 pub use host::reviews::{
     GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewEvidence,

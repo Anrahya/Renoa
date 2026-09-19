@@ -7,10 +7,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::super::{ManageTool, TOOL_NAME};
 use crate::{
-    ALPHA_PROFILE_ID, AgentProfileId,
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver, McpHostError},
-    plugins::{PluginCredential, PluginManager, tests::test_skill_store},
+    plugins::{
+        PluginCredential, PluginManager,
+        tests::{test_agent_id, test_skill_store},
+    },
 };
 
 const ORIGINAL_ENDPOINT: &str = "https://original.example/mcp";
@@ -33,7 +35,7 @@ async fn failed_oauth_preflight_returns_the_reason_and_publishes_no_connection()
         .install(&source, inspection.digest())
         .await
         .expect("install package");
-    let tool = ManageTool::new(manager, directory.path().to_path_buf());
+    let tool = ManageTool::new(test_agent_id(1), manager, directory.path().to_path_buf());
 
     let result = connect_oauth(&tool, inspection.digest()).await;
 
@@ -70,7 +72,8 @@ async fn failed_discovery_leaves_no_active_connection_configuration() {
         .install(&source, inspection.digest())
         .await
         .expect("install package");
-    let tool = ManageTool::new(manager, directory.path().to_path_buf());
+    let agent = test_agent_id(1);
+    let tool = ManageTool::new(agent, manager, directory.path().to_path_buf());
 
     let result = connect(&tool, inspection.digest(), false).await;
 
@@ -80,8 +83,8 @@ async fn failed_discovery_leaves_no_active_connection_configuration() {
         Err(McpHostError::NotFound(_))
     ));
     assert!(
-        mcp.profile_tool_summaries(ALPHA_PROFILE_ID)
-            .expect("read Alpha registry")
+        mcp.agent_tool_summaries(&agent.to_string())
+            .expect("read the agent registry")
             .is_empty()
     );
 }
@@ -106,9 +109,10 @@ async fn failed_replacement_preserves_the_previous_connection_atomically() {
         .install(&original_source, original_inspection.digest())
         .await
         .expect("install original package");
+    let agent = test_agent_id(1);
     let original = original_manager
         .connect_profile(
-            &AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile"),
+            &agent,
             original_inspection.digest(),
             "exa",
             "exa",
@@ -132,7 +136,7 @@ async fn failed_replacement_preserves_the_previous_connection_atomically() {
         .install(&replacement_source, replacement_inspection.digest())
         .await
         .expect("install replacement package");
-    let tool = ManageTool::new(replacement_manager, directory.path().to_path_buf());
+    let tool = ManageTool::new(agent, replacement_manager, directory.path().to_path_buf());
 
     let result = connect(&tool, replacement_inspection.digest(), true).await;
 
@@ -150,8 +154,8 @@ async fn failed_replacement_preserves_the_previous_connection_atomically() {
         original.digest()
     );
     assert_eq!(
-        mcp.profile_tool_summaries(ALPHA_PROFILE_ID)
-            .expect("original profile attachment survives")
+        mcp.agent_tool_summaries(&agent.to_string())
+            .expect("original agent attachment survives")
             .len(),
         1
     );

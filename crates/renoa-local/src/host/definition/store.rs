@@ -45,7 +45,7 @@ pub(super) fn insert(
             definition.created_at_ms,
             definition.created_via.as_str(),
             definition.preset_id.as_ref().map(AgentPresetId::as_str),
-            serde_json::to_string(&definition.operational).map_err(invalid_json)?,
+            serde_json::to_string(&definition.operational).map_err(|error| invalid_json(&error))?,
             kind,
             agent_id,
             host_id,
@@ -92,78 +92,74 @@ pub(super) fn creation_receipt(
     }))
 }
 
+/// One `host_agents` row, named so the eleven decoded columns cannot be
+/// transposed positionally.
+struct StoredRow {
+    agent_id: String,
+    name: String,
+    created_at_ms: i64,
+    created_via: String,
+    preset_id: Option<String>,
+    operational_json: String,
+    creator_kind: String,
+    creator_agent_id: Option<String>,
+    creator_host_id: Option<String>,
+    creator_principal_id: Option<String>,
+    creator_component: Option<String>,
+}
+
+impl StoredRow {
+    fn read(row: &rusqlite::Row<'_>) -> Result<Self, rusqlite::Error> {
+        Ok(Self {
+            agent_id: row.get(0)?,
+            name: row.get(1)?,
+            created_at_ms: row.get(2)?,
+            created_via: row.get(3)?,
+            preset_id: row.get(4)?,
+            operational_json: row.get(5)?,
+            creator_kind: row.get(6)?,
+            creator_agent_id: row.get(7)?,
+            creator_host_id: row.get(8)?,
+            creator_principal_id: row.get(9)?,
+            creator_component: row.get(10)?,
+        })
+    }
+}
+
 pub(super) fn read(
     connection: &Connection,
     agent: AgentId,
 ) -> Result<Option<AgentDefinition>, HostCatalogError> {
-    let row: Option<(
-        String,
-        String,
-        i64,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> = connection
+    let row = connection
         .query_row(
             "SELECT agent_id, name, created_at_ms, created_via, preset_id, operational_json,
                         creator_kind, creator_agent_id, creator_host_id, creator_principal_id,
                         creator_component
                  FROM host_agents WHERE agent_id = ?1",
             [agent.to_string()],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                    row.get(8)?,
-                    row.get(9)?,
-                    row.get(10)?,
-                ))
-            },
+            StoredRow::read,
         )
         .optional()?;
-    let Some((
-        agent_id,
-        name,
-        created_at_ms,
-        created_via,
-        preset_id,
-        operational_json,
-        kind,
-        creator_agent_id,
-        creator_host_id,
-        creator_principal_id,
-        creator_component,
-    )) = row
-    else {
+    let Some(row) = row else {
         return Ok(None);
     };
-    let id = parse_agent(&agent_id)?;
+    let id = parse_agent(&row.agent_id)?;
     let operational: AgentOperationalDefinition =
-        serde_json::from_str(&operational_json).map_err(invalid_json)?;
+        serde_json::from_str(&row.operational_json).map_err(|error| invalid_json(&error))?;
     let definition = AgentDefinition {
         id,
-        name,
-        created_at_ms,
+        name: row.name,
+        created_at_ms: row.created_at_ms,
         creator: decode_creator(
-            &kind,
-            creator_agent_id.as_deref(),
-            creator_host_id.as_deref(),
-            creator_principal_id.as_deref(),
-            creator_component.as_deref(),
+            &row.creator_kind,
+            row.creator_agent_id.as_deref(),
+            row.creator_host_id.as_deref(),
+            row.creator_principal_id.as_deref(),
+            row.creator_component.as_deref(),
         )?,
-        created_via: parse_origin(&created_via)?,
-        preset_id: preset_id
+        created_via: parse_origin(&row.created_via)?,
+        preset_id: row
+            .preset_id
             .map(|id| {
                 AgentPresetId::new(id).map_err(|error| HostCatalogError::Invalid(error.to_string()))
             })
@@ -232,7 +228,7 @@ pub(super) fn read_selection(
     };
     Ok(AgentToolSelection {
         revision,
-        tools: serde_json::from_str(&tools).map_err(invalid_json)?,
+        tools: serde_json::from_str(&tools).map_err(|error| invalid_json(&error))?,
     })
 }
 
@@ -250,7 +246,7 @@ pub(super) fn write_selection(
         params![
             agent.to_string(),
             selection.revision,
-            serde_json::to_string(&selection.tools).map_err(invalid_json)?
+            serde_json::to_string(&selection.tools).map_err(|error| invalid_json(&error))?
         ],
     )?;
     Ok(())
@@ -442,6 +438,6 @@ fn parse_agent(value: &str) -> Result<AgentId, HostCatalogError> {
         })
 }
 
-fn invalid_json(error: serde_json::Error) -> HostCatalogError {
+fn invalid_json(error: &serde_json::Error) -> HostCatalogError {
     HostCatalogError::Invalid(format!("invalid stored agent definition: {error}"))
 }

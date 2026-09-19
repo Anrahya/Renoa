@@ -125,10 +125,7 @@ async fn content_hash_cas_rejects_a_stale_revision_and_accepts_the_current_one()
     let current = store
         .update(
             soul,
-            &crate::atomic_file::content_hash(DEFAULTS.soul.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>(),
+            &super::files::revision(DEFAULTS.soul.as_bytes()),
             "new soul\n",
             &CancellationToken::new(),
         )

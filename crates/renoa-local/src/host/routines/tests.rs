@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    AgentProfile, AgentProfileId, AgentRecord, BotRecipe, BotRecord, LocalTurnOutcome,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalTurnOutcome,
     ModelProvider, host::HostInitialization,
 };
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
@@ -29,9 +29,6 @@ fn host(root: &Path) -> LocalHost {
         shared_plugin_registry: None,
         global_skill_source: None,
         oauth_relay: None,
-        profiles: vec![
-            AgentProfile::new(crate::ARCEE_PROFILE_ID, "Manage routines.").expect("profile"),
-        ],
     })
     .expect("host")
 }
@@ -40,29 +37,60 @@ async fn fixture() -> (tempfile::TempDir, LocalHost, AgentId, AgentId) {
     fs::write(d.path().join("model.mjs"), include_str!("test_model.mjs")).expect("model");
     fs::write(d.path().join("auth.sqlite"), "").expect("auth boundary");
     let h = host(d.path());
-    let parent = AgentId::new();
-    h.ensure_agent(AgentRecord {
-        id: parent,
-        profile: AgentProfileId::new(crate::ARCEE_PROFILE_ID).expect("profile"),
-        name: "Arcee".to_owned(),
-        created_by: None,
-    })
-    .await
-    .expect("parent");
-    let child = AgentId::new();
-    h.ensure_bot(BotRecord {
-        id: child,
-        created_by: parent,
-        recipe: BotRecipe {
-            name: "Digest".to_owned(),
-            instructions: "Write a digest.".to_owned(),
-            tools: ["write_file".to_owned()].into(),
-            connections: std::collections::BTreeSet::new(),
-        },
-    })
-    .await
-    .expect("bot");
+    let creator = AgentCreator::System {
+        component: "routine-fixture".to_owned(),
+    };
+    let parent = h
+        .create_agent(
+            creator.clone(),
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                "Operator",
+            )
+            .with_instructions("Manage routines.")
+            .with_tools([crate::capabilities::AGENT_MANAGE.to_owned()]),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("operator")
+        .id;
+    let child = h
+        .create_agent(
+            creator,
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                "Digest",
+            )
+            .with_instructions("Write a digest.")
+            .with_tools(["write_file".to_owned()]),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("specialist")
+        .id;
     (d, h, parent, child)
+}
+async fn outsider(h: &LocalHost) -> AgentId {
+    h.create_agent(
+        AgentCreator::System {
+            component: "routine-fixture".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+            "Outsider",
+        )
+        .with_instructions("Do unrelated work."),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("outsider")
+    .id
 }
 fn spec(agent_id: AgentId) -> RoutineSpec {
     RoutineSpec {
@@ -167,7 +195,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
     );
     assert!(
         h.manage_routine(
-            AgentId::new(),
+            outsider(&h).await,
             Uuid::new_v4(),
             RoutineMutation::Create { spec: spec(child) },
             0,
@@ -232,7 +260,7 @@ fn daily_schedules_respect_local_time_and_daylight_saving() {
 }
 
 #[tokio::test]
-async fn real_model_tool_schedules_a_bot_and_restarted_host_replays_execution_without_rewriting_artifact()
+async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execution_without_rewriting_artifact()
  {
     let (d, h, parent, child) = fixture().await;
     let workspace = d.path().join("workspace");
@@ -258,7 +286,7 @@ async fn real_model_tool_schedules_a_bot_and_restarted_host_replays_execution_wi
         .expect("due");
     // Execute the real kernel, then simulate losing only the Host output receipt.
     h.execute_routine_run(run.clone()).await.expect("run");
-    let child_workspace = h.bot_workspace(child).await.expect("workspace");
+    let child_workspace = h.agent_workspace(child).await.expect("workspace");
     assert_eq!(
         fs::read_to_string(child_workspace.join("digest.md")).expect("artifact"),
         "# Digest\nSaved by the specialist."
@@ -299,18 +327,18 @@ async fn real_model_tool_schedules_a_bot_and_restarted_host_replays_execution_wi
             .expect("output")
             .contains("digest.md")
     );
-    let bot_session = restarted
+    let specialist_session = restarted
         .ensure_agent_session(child, &child_workspace, Uuid::new_v4())
         .await
-        .expect("interactive bot");
-    bot_session
+        .expect("interactive specialist");
+    specialist_session
         .execute_turn(
             Uuid::new_v4(),
             vec![ContentBlock::text(format!("reschedule {}", records[0].id))],
             Arc::new(Quiet),
         )
         .await
-        .expect("bot changes own schedule");
+        .expect("specialist changes own schedule");
     let changed = restarted
         .list_routines(child, None)
         .await
@@ -323,7 +351,7 @@ async fn real_model_tool_schedules_a_bot_and_restarted_host_replays_execution_wi
 }
 
 #[tokio::test]
-async fn schema_fifteen_upgrade_preserves_bot_identity_and_runner_has_exclusive_ownership() {
+async fn schema_fifteen_upgrade_preserves_agent_identity_and_runner_has_exclusive_ownership() {
     let (d, h, _parent, child) = fixture().await;
     let identity = h.host_id().await.expect("identity");
     let db = crate::host::catalog::open_verified(&h.config.database).expect("database");
@@ -332,7 +360,13 @@ async fn schema_fifteen_upgrade_preserves_bot_identity_and_runner_has_exclusive_
     drop(h);
     let restored = host(d.path());
     assert_eq!(restored.host_id().await.expect("retained Host"), identity);
-    assert!(restored.bot(child).await.expect("bot retained").is_some());
+    assert!(
+        restored
+            .agent_definition(child)
+            .await
+            .expect("agent retained")
+            .is_some()
+    );
     let lock = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
