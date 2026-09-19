@@ -330,4 +330,26 @@ pub enum AgentDefinitionError {
         #[source]
         source: io::Error,
     },
+    #[error("cannot inspect project instructions for `{agent}` at `{path}`: {source}")]
+    Inspect {
+        agent: AgentId,
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("project instructions for `{agent}` resolve outside the workspace: {path}")]
+    OutsideWorkspace { agent: AgentId, path: PathBuf },
+    #[error("project instructions for `{agent}` must be a regular file: {path}")]
+    NotFile { agent: AgentId, path: PathBuf },
+    #[error(
+        "project instructions for `{agent}` at `{path}` exceed the {MAX_INSTRUCTIONS_BYTES}-byte limit"
+    )]
+    TooLarge { agent: AgentId, path: PathBuf },
+    #[error("project instructions for `{agent}` at `{path}` are not UTF-8: {source}")]
+    InvalidUtf8 {
+        agent: AgentId,
+        path: PathBuf,
+        #[source]
+        source: std::string::FromUtf8Error,
+    },
 }

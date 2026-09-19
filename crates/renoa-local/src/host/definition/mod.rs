@@ -16,11 +16,14 @@ use crate::{
 };
 
 mod create;
+mod resolve;
 pub(in crate::host) mod schema;
 mod store;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use resolve::{ResolvedAgentDefinition, resolve_definition};
 
 /// The largest page a caller may request when listing agents.
 pub(in crate::host) const MAX_AGENT_PAGE: usize = 20;
