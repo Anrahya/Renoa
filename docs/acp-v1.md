@@ -74,6 +74,9 @@ The process reads:
 - `RENOA_MODEL_PROVIDER`
 - `RENOA_MODEL`
 - `RENOA_MODEL_AUTH_STORE`
+- `RENOA_AGENT_ID`, the id of an agent provisioned on this Host. `renoa-agent
+  acp`, `renoa-agent mcp github install`, and `renoa-agent plugins sync` build
+  the full configuration and require it; `renoa-agent models --json` does not.
 - optional `RENOA_DATA_DIR`
 - optional `RENOA_MCP_ADAPTER`
 - optional `RENOA_MCP_REGISTRY_ADAPTER`
@@ -82,7 +85,7 @@ The process reads:
 Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
 enables Host catalog refresh and invocation. A tool reaches Alpha only after a
-Host profile attachment such as the GitHub command above. A committed change is
+per-agent attachment such as the GitHub command above. A committed change is
 visible on the next registry call without restarting ACP or the surface.
 `RENOA_MCP_REGISTRY_ADAPTER` is the absolute path to the built read-only
 official MCP Registry adapter. It enables the `extension_manage` `search` and
@@ -91,7 +94,7 @@ input and never installs or connects an extension by itself.
 `RENOA_SHARED_PLUGIN_REGISTRY` is an HTTP or HTTPS origin with no path,
 credentials, query, or fragment. It points at Renoa's private package service.
 The service replicates only verified immutable Agent Plugin directories;
-credentials, MCP connections, catalogs, profile attachments, skills activated
+credentials, MCP connections, catalogs, per-agent attachments, skills activated
 by a session, and session history stay local. The first deployment exposes the
 loopback-only service through the private tailnet, but Tailscale is not part of
 the Host or registry wire contract.
@@ -188,7 +191,7 @@ Each session is stored at:
 <data-directory>/sessions/<session-uuid>/trace.sqlite3
 ```
 
-The versioned manifest binds the Alpha profile, Agent identity, Session
+The versioned manifest binds the Agent identity, Session
 identity, and canonical workspace. The Host builds the manifest, initial
 runtime selection, and kernel database in one hidden staging directory, syncs
 them, then atomically publishes the directory under the session UUID before
@@ -268,8 +271,9 @@ cache with the replayed durable event identities instead of treating a second
 transcript as execution truth.
 
 When executable loading fails, `session/load` uses the Host's supported
-`inspect_session` path. It validates the same profile, session/Agent identity,
-workspace binding, exclusive ownership, and authoritative history, then replays
+`inspect_session` path. It validates the same
+session/Agent identity, workspace binding, exclusive ownership, and
+authoritative history, then replays
 the transcript without requiring model discovery or usable diagnostic storage.
 The load response reports `_meta["renoa.executionUnavailable"]` and, separately,
 `_meta["renoa.traceUnavailable"]` when diagnostic storage cannot open. This mode

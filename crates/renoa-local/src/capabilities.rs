@@ -73,6 +73,16 @@ pub(crate) fn is_selectable(name: &str) -> bool {
     WORKSPACE_TOOL_NAMES.contains(&name) || extension_names().contains(&name)
 }
 
+/// Whether one definition can exercise a selectable capability.
+///
+/// The document capability edits the agent's own prompt files, so a definition
+/// without documents cannot consume it: the runtime would drop the binding
+/// without a trace while the stored selection still named it.
+#[must_use]
+pub(crate) fn is_consumable(name: &str, documents: Option<crate::AgentDocuments>) -> bool {
+    name != AGENT_DOCUMENTS || documents.is_some()
+}
+
 /// Every selectable capability name, for callers that enumerate the vocabulary.
 #[must_use]
 pub(crate) fn selectable_names() -> Vec<&'static str> {

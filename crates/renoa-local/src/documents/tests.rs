@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 
 use renoa_kernel::AgentId;
 use tempfile::tempdir;
@@ -61,6 +62,35 @@ fn conflicting_pre_existing_content_fails_closed() {
 }
 
 #[test]
+fn a_conflicting_second_document_publishes_nothing() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let root = directory.path().join("agents").join(agent.to_string());
+    fs::create_dir_all(&root).expect("create document root");
+    fs::write(root.join("USER.md"), "operator-written\n").expect("write conflicting document");
+
+    let error = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("a conflicting second document must fail the whole set");
+    assert!(
+        error
+            .to_string()
+            .contains("already exists with different content"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !root.join("SOUL.md").exists(),
+        "a rejected publication must not leave the first document behind"
+    );
+    assert_eq!(
+        fs::read_dir(&root)
+            .expect("read document root")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect::<Vec<_>>(),
+        vec![std::ffi::OsString::from("USER.md")]
+    );
+}
+
+#[test]
 fn render_includes_only_enabled_documents_and_open_requires_them() {
     let directory = tempdir().expect("temporary data directory");
     let agent = AgentId::new();
@@ -88,6 +118,8 @@ fn open_rejects_a_document_root_outside_the_data_directory() {
     let directory = tempdir().expect("temporary data directory");
     let elsewhere = tempdir().expect("temporary escape target");
     let agent = AgentId::new();
+    fs::set_permissions(elsewhere.path(), fs::Permissions::from_mode(0o755))
+        .expect("set escape target permissions");
     fs::create_dir_all(directory.path().join("agents")).expect("create agents directory");
     std::os::unix::fs::symlink(
         elsewhere.path(),
@@ -98,6 +130,59 @@ fn open_rejects_a_document_root_outside_the_data_directory() {
     let error = AgentDocumentStore::open(directory.path(), agent, both())
         .expect_err("an escaping document root must fail closed");
     assert!(error.to_string().contains("outside"), "unexpected: {error}");
+
+    let escape = AgentDocumentStore::publish(directory.path(), agent, both(), DEFAULTS)
+        .expect_err("publishing through an escaping document root must fail closed");
+    assert!(
+        escape.to_string().contains("outside"),
+        "unexpected: {escape}"
+    );
+    assert!(
+        fs::read_dir(elsewhere.path())
+            .expect("read escape target")
+            .next()
+            .is_none(),
+        "the escape target must not receive any publication"
+    );
+    assert_eq!(
+        fs::metadata(elsewhere.path())
+            .expect("escape target metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755,
+        "the escape target's permissions must not be changed before the rejection"
+    );
+}
+
+#[test]
+fn an_in_tree_document_root_alias_is_refused() {
+    let directory = tempdir().expect("temporary data directory");
+    let owner = AgentId::new();
+    let alias = AgentId::new();
+    AgentDocumentStore::publish(directory.path(), owner, both(), DEFAULTS).expect("publish owner");
+    let agents = directory.path().join("agents");
+    std::os::unix::fs::symlink(
+        agents.join(owner.to_string()),
+        agents.join(alias.to_string()),
+    )
+    .expect("link alias");
+
+    let error = AgentDocumentStore::publish(directory.path(), alias, both(), DEFAULTS)
+        .expect_err("an aliased document root must fail closed");
+    assert!(error.to_string().contains("outside"), "unexpected: {error}");
+    assert_eq!(
+        fs::read_to_string(agents.join(owner.to_string()).join("SOUL.md"))
+            .expect("read owner document"),
+        DEFAULTS.soul
+    );
+    assert!(
+        fs::symlink_metadata(agents.join(alias.to_string()))
+            .expect("alias metadata")
+            .file_type()
+            .is_symlink(),
+        "the alias must not be replaced by a directory"
+    );
 }
 
 #[tokio::test]

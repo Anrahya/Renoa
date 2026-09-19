@@ -131,8 +131,22 @@ fn clear_agent_rows(database: &Path) -> Result<BTreeMap<String, u64>, LocalHostE
 }
 
 /// Removes each entry inside one directory, keeping the directory itself.
+///
+/// A managed root that is a symbolic link is refused instead of followed, so a
+/// reset can never delete through a link out of the data root.
 fn clear_directory(path: &Path) -> Result<u64, LocalHostError> {
-    if !path.is_dir() {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => return Err(source.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(LocalHostError::InvalidRequest(format!(
+            "refusing to clear `{}`: a managed root must not be a symbolic link",
+            path.display()
+        )));
+    }
+    if !metadata.is_dir() {
         return Ok(0);
     }
     let mut removed = 0;

@@ -308,7 +308,10 @@ async fn writes_require_the_paired_owner_exact_origin_and_a_strict_bounded_reque
         StatusCode::PAYLOAD_TOO_LARGE
     );
     assert_eq!(
-        f.host.routine(f.routine.id).await.expect("unchanged"),
+        f.host
+            .routine(f.routine.spec.agent_id, f.routine.id)
+            .await
+            .expect("unchanged"),
         f.routine
     );
     BrowserSessions::open(f.files.path().join("identity.sqlite"))
@@ -333,7 +336,7 @@ async fn http_receipt_survives_restart_and_stale_edits_leave_the_shared_record_i
     assert!(receipt.get("spec").is_none());
     assert_eq!(
         f.host
-            .routine(f.routine.id)
+            .routine(f.routine.spec.agent_id, f.routine.id)
             .await
             .expect("same Host record")
             .revision,

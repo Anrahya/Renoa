@@ -6,7 +6,7 @@
 //! always has both readable files.
 
 use std::{
-    fs::File,
+    fs::{self, File},
     io::Read as _,
     path::{Path, PathBuf},
     sync::Arc,
@@ -23,8 +23,9 @@ use tokio_util::sync::CancellationToken;
 
 mod files;
 use files::{
-    Document, DocumentSnapshot, SOUL_FILE, USER_FILE, append_document, document_io, document_root,
-    is_revision, publish_document, require_regular_file, revision, revision_from_hash,
+    Document, DocumentSnapshot, Publication, append_document, document_io, document_root,
+    is_revision, publication_state, publish_document, require_regular_file, revision,
+    revision_from_hash,
 };
 
 use crate::{
@@ -52,9 +53,12 @@ pub(crate) struct AgentDocumentStore {
 impl AgentDocumentStore {
     /// Adopts or publishes the exact default files for a new agent.
     ///
-    /// A matching existing publication is adopted, so a retry after a crash
-    /// between file publication and database commit succeeds. Conflicting
-    /// pre-existing content fails closed.
+    /// The whole set is validated before the first write and a failure during
+    /// publication removes, best effort, exactly what this attempt created, so a
+    /// rejected creation leaves no publication behind. A matching existing
+    /// publication is adopted, so a retry after a crash between file publication
+    /// and database commit succeeds. Conflicting pre-existing content fails
+    /// closed.
     ///
     /// # Errors
     ///
@@ -67,11 +71,37 @@ impl AgentDocumentStore {
         defaults: DocumentDefaults,
     ) -> Result<(), AgentDefinitionError> {
         let root = document_root(data_directory, agent, enabled)?;
-        if enabled.soul {
-            publish_document(&root.join(SOUL_FILE), defaults.soul)?;
+        let publications: Vec<(PathBuf, &'static str)> = enabled_documents(enabled)
+            .into_iter()
+            .map(|document| {
+                (
+                    root.join(document.file_name()),
+                    default_content(document, defaults),
+                )
+            })
+            .collect();
+        let mut absent = Vec::new();
+        for (path, content) in &publications {
+            match publication_state(path, content)? {
+                Publication::Absent => absent.push(path.clone()),
+                Publication::Identical => {}
+                Publication::Conflicting => {
+                    return Err(AgentDefinitionError::DocumentConflict { path: path.clone() });
+                }
+            }
         }
-        if enabled.user {
-            publish_document(&root.join(USER_FILE), defaults.user)?;
+        let mut created: Vec<PathBuf> = Vec::new();
+        for (path, content) in &publications {
+            if let Err(error) = publish_document(path, content) {
+                for path in &created {
+                    let _ = fs::remove_file(path);
+                }
+                let _ = fs::remove_dir(&root);
+                return Err(error);
+            }
+            if absent.contains(path) {
+                created.push(path.clone());
+            }
         }
         Ok(())
     }
@@ -138,14 +168,7 @@ impl AgentDocumentStore {
     }
 
     fn enabled_documents(&self) -> Vec<Document> {
-        let mut documents = Vec::new();
-        if self.enabled.soul {
-            documents.push(Document::Soul);
-        }
-        if self.enabled.user {
-            documents.push(Document::User);
-        }
-        documents
+        enabled_documents(self.enabled)
     }
 
     fn read(&self, document: Document) -> Result<DocumentSnapshot, AgentDefinitionError> {
@@ -332,6 +355,24 @@ struct UpdateOutput<'a> {
     document: &'a str,
     revision: &'a str,
     applies: &'static str,
+}
+
+fn enabled_documents(enabled: AgentDocuments) -> Vec<Document> {
+    let mut documents = Vec::new();
+    if enabled.soul {
+        documents.push(Document::Soul);
+    }
+    if enabled.user {
+        documents.push(Document::User);
+    }
+    documents
+}
+
+fn default_content(document: Document, defaults: DocumentDefaults) -> &'static str {
+    match document {
+        Document::Soul => defaults.soul,
+        Document::User => defaults.user,
+    }
 }
 
 fn document_tool_io(operation: &str, error: &std::io::Error) -> ToolError {

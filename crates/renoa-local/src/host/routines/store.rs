@@ -278,11 +278,10 @@ pub(super) fn get(db: &Connection, id: Uuid) -> Result<RoutineRecord, RoutineErr
     db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id)",[id.to_string()],record).optional()?.ok_or(RoutineError::NotFound)
 }
 pub(super) fn list(
-    path: &Path,
+    db: &Connection,
     agent: AgentId,
     after: Option<Uuid>,
 ) -> Result<Vec<RoutineRecord>, RoutineError> {
-    let db = catalog::open_verified(path)?;
     let mut query=db.prepare("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE agent_id=?1 AND id>?2 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY id LIMIT 20")?;
     Ok(query
         .query_map(

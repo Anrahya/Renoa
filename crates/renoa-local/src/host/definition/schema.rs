@@ -67,7 +67,8 @@ pub(in crate::host) fn initialize(transaction: &Transaction<'_>) -> Result<(), H
         CREATE TABLE IF NOT EXISTS host_agent_creations (
             operation_id TEXT PRIMARY KEY,
             agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-            request_json TEXT NOT NULL CHECK (json_valid(request_json))
+            request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+            result_json TEXT NOT NULL CHECK (json_valid(result_json))
         ) STRICT;
 
         CREATE TABLE IF NOT EXISTS host_agent_tool_selection_operations (

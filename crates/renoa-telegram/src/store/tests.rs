@@ -1,11 +1,16 @@
 use std::path::Path;
 
 use tempfile::tempdir;
+use uuid::Uuid;
 
-use super::{PendingAction, SurfaceStore, actions::SCRUBBED_ACTION_URL};
+use super::{
+    PendingAction, StoreError, SurfaceStore, actions::SCRUBBED_ACTION_URL, schema::DATABASE_FILE,
+};
 use crate::actions::ActionLink;
 use crate::ingress::{InboundKind, ParsedUpdate, Topic};
 
+const AGENT: Uuid = Uuid::from_u128(1);
+const OTHER_AGENT: Uuid = Uuid::from_u128(2);
 const OWNER: i64 = 42;
 
 fn update(update_id: i64, kind: InboundKind) -> ParsedUpdate {
@@ -24,7 +29,7 @@ fn update(update_id: i64, kind: InboundKind) -> ParsedUpdate {
 async fn store(root: &Path, workspace: &Path) -> SurfaceStore {
     let store = SurfaceStore::open(root).expect("open surface store");
     store
-        .bind_identity(9, OWNER, workspace)
+        .bind_identity(AGENT, 9, OWNER, workspace)
         .await
         .expect("bind surface identity");
     store
@@ -312,16 +317,68 @@ async fn a_settled_turn_scrubs_its_authorization_url_and_recovery_repairs_old_ro
 }
 
 #[tokio::test]
-async fn identity_binding_rejects_a_different_bot_owner_or_workspace() {
+async fn identity_binding_rejects_a_different_bot_owner_workspace_or_agent() {
     let directory = tempdir().expect("temporary data root");
     let workspace = directory.path().join("workspace");
     let other = directory.path().join("other");
     std::fs::create_dir(&workspace).expect("create workspace");
     std::fs::create_dir(&other).expect("create other workspace");
     let store = store(directory.path(), &workspace).await;
-    assert!(store.bind_identity(10, OWNER, &workspace).await.is_err());
-    assert!(store.bind_identity(9, OWNER + 1, &workspace).await.is_err());
-    assert!(store.bind_identity(9, OWNER, &other).await.is_err());
+    assert!(
+        store
+            .bind_identity(AGENT, 10, OWNER, &workspace)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .bind_identity(AGENT, 9, OWNER + 1, &workspace)
+            .await
+            .is_err()
+    );
+    assert!(store.bind_identity(AGENT, 9, OWNER, &other).await.is_err());
+    assert!(
+        store
+            .bind_identity(OTHER_AGENT, 9, OWNER, &workspace)
+            .await
+            .is_err()
+    );
+    store
+        .bind_identity(AGENT, 9, OWNER, &workspace)
+        .await
+        .expect("rebind the same identity");
+
+    let stale = tempdir().expect("temporary stale store root");
+    let surface = stale.path().join("surfaces").join("telegram");
+    std::fs::create_dir_all(&surface).expect("create stale surface directory");
+    let connection =
+        rusqlite::Connection::open(surface.join(DATABASE_FILE)).expect("open stale store fixture");
+    connection
+        .execute_batch(
+            "CREATE TABLE surface_identity (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                bot_id INTEGER NOT NULL CHECK (bot_id > 0),
+                allowed_user_id INTEGER NOT NULL CHECK (allowed_user_id > 0),
+                workspace BLOB NOT NULL CHECK (length(workspace) > 0),
+                next_update_id INTEGER NOT NULL CHECK (next_update_id >= 0)
+             ) STRICT;
+             PRAGMA user_version = 3;",
+        )
+        .expect("write the previous schema version");
+    drop(connection);
+    let message = match SurfaceStore::open(stale.path()) {
+        Ok(_) => panic!("the previous schema version must be refused"),
+        Err(StoreError::Invalid(message)) => message,
+        Err(error) => panic!("unexpected store error: {error}"),
+    };
+    assert!(
+        message.contains("Telegram surface database schema 3"),
+        "{message}"
+    );
+    assert!(
+        message.contains("delete the Telegram surface store after the Host cutover and re-pair"),
+        "{message}"
+    );
 }
 
 async fn execute(store: &SurfaceStore) -> super::WorkItem {

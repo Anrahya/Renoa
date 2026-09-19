@@ -229,17 +229,24 @@ impl LocalHost {
                 }
                 return Ok(serde_json::from_str(&receipt.result_json)?);
             }
-            let current = store::read_selection(&transaction, update.id)
-                .map_err(|_| LocalHostError::AgentNotFound(update.id))?;
-            if current.revision != update.expected_revision {
+            let definition = store::read(&transaction, update.id)?
+                .ok_or(LocalHostError::AgentNotFound(update.id))?;
+            for name in &update.tools {
+                require_consumable(name, definition.operational.documents)?;
+            }
+            if definition.tool_selection.revision != update.expected_revision {
                 return Err(LocalHostError::AgentConflict(update.id));
             }
             let selection = AgentToolSelection {
-                revision: current.revision.checked_add(1).ok_or_else(|| {
-                    LocalHostError::InvalidRequest(
-                        "agent tool selection revision exhausted".to_owned(),
-                    )
-                })?,
+                revision: definition
+                    .tool_selection
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        LocalHostError::InvalidRequest(
+                            "agent tool selection revision exhausted".to_owned(),
+                        )
+                    })?,
                 tools: update.tools,
             };
             store::write_selection(&transaction, update.id, &selection)?;
@@ -405,6 +412,21 @@ pub(in crate::host) fn require_selectable(name: &str) -> Result<(), LocalHostErr
     } else {
         Err(LocalHostError::InvalidRequest(format!(
             "`{name}` is not a Host capability"
+        )))
+    }
+}
+
+/// Rejects a capability the definition cannot exercise, so a stored selection
+/// never names something the runtime silently drops.
+pub(in crate::host) fn require_consumable(
+    name: &str,
+    documents: Option<crate::AgentDocuments>,
+) -> Result<(), LocalHostError> {
+    if capabilities::is_consumable(name, documents) {
+        Ok(())
+    } else {
+        Err(LocalHostError::InvalidRequest(format!(
+            "capability `{name}` requires an agent definition that keeps documents"
         )))
     }
 }

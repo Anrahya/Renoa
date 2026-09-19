@@ -138,7 +138,16 @@ impl LocalHost {
         )))
     }
 
-    async fn load_session_for_agent(
+    /// Reloads one exact Agent session only when the requesting agent owns it.
+    ///
+    /// A session bound to a different agent is refused without being assembled
+    /// or replayed, so every by-id read path can inherit the ownership check.
+    ///
+    /// # Errors
+    ///
+    /// Returns a foreign-agent rejection, or identity, workspace, provider,
+    /// runtime, or storage incompatibility.
+    pub async fn load_session_for_agent(
         &self,
         agent_id: AgentId,
         session_uuid: Uuid,
@@ -154,6 +163,9 @@ impl LocalHost {
     }
 
     /// Reloads one exact Agent session and its durable agent/workspace binding.
+    ///
+    /// The owning agent is not compared with a caller, so a surface reads a
+    /// session through `load_session_for_agent`.
     ///
     /// # Errors
     ///
@@ -285,9 +297,43 @@ impl LocalHost {
         })
     }
 
+    /// Permanently removes one closed Agent session owned by `agent_id`.
+    ///
+    /// A session bound to a different agent is refused before any storage is
+    /// touched. Deleting a missing session succeeds so a retried ACP request
+    /// is safe.
+    ///
+    /// # Errors
+    ///
+    /// Returns a foreign-agent rejection, or an ownership, identity, metadata,
+    /// or storage failure. A session still owned by any process cannot be
+    /// deleted.
+    pub async fn delete_session_for_agent(
+        &self,
+        agent_id: AgentId,
+        session_uuid: Uuid,
+    ) -> Result<(), LocalHostError> {
+        let session_id = SessionId::from_uuid(session_uuid);
+        let directory = self.config.sessions.join(session_id.to_string());
+        if !directory.try_exists()? {
+            return self.delete_session(session_uuid).await;
+        }
+        let manifest = read_manifest(directory.join(MANIFEST_FILE)).await?;
+        if manifest.agent_id != agent_id {
+            return Err(LocalHostError::InvalidRequest(
+                "session belongs to a different agent".to_owned(),
+            ));
+        }
+        self.delete_session(session_uuid).await
+    }
+
     /// Permanently removes one closed Agent session from durable Host storage.
     ///
     /// Deleting a missing session succeeds so a retried ACP request is safe.
+    ///
+    /// Deleting a missing session succeeds so a retried ACP request is safe. The
+    /// owning agent is not compared with a caller, so a surface deletes a
+    /// session through `delete_session_for_agent`.
     ///
     /// # Errors
     ///

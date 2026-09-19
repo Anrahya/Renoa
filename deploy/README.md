@@ -93,7 +93,7 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 27 and cuts agent-owned storage over to the
+This release requires Host schema 28 and cuts agent-owned storage over to the
 canonical agent definition. The cutover is not a migration: it discards the
 previous agent rows, routines, review records and sessions, and it runs only
 through the explicit reset described in
@@ -119,13 +119,19 @@ renoa-host /etc/renoa/host.json provision /etc/renoa/bootstrap-agent.json
 ```
 
 Observation and owner-control modules deliberately do not migrate or reset
-storage themselves. The node daemon's ledger is a separate store: this release
-renamed its task column to `agent_id` and refuses an earlier ledger by name, so
-delete the node state file before starting the node daemon. Each surface store
-is its own step, as listed in `docs/renoa-host-v0.md`. Keep the previous
-binaries and matching database snapshot in the single previous-release backup
-described above. Browser login storage is separate and does not need to be
-reset for this Host cutover.
+storage themselves. The node daemon owns two separate derived stores: its
+ledger, which this release renamed the task column to `agent_id` and refuses an
+earlier one by name, and the private Host data root, where a `host.sqlite3`
+written by an earlier runtime is refused at startup first. Stop
+`renoa-node.service`, take the backup, delete the whole node state directory
+(`/var/lib/renoa-node`; the ledger and the private Host are both derived from
+configuration and provisioning), re-provision the private Host as shown in the
+node section, then start the daemon again. The node's device credential and the
+coordinator's task binding live outside that directory and survive. Each
+surface store is its own step, as listed in `docs/renoa-host-v0.md`. Keep the
+previous binaries and matching database snapshot in the single previous-release
+backup described above. Browser login storage is separate and does not need to
+be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
 the new coordinator binary. It upgrades the identity database to schema 11 and
@@ -208,7 +214,7 @@ Host configuration, not RCP wire data:
     "defaultModel": "glm-5.3-flash"
   },
   "adapters": {
-    "mcp": "/opt/renoa/adapters/mcp-node/dist/src/main.js",
+    "mcp": "/opt/renoa/adapters/mcp-client-node/dist/src/main.js",
     "mcpRegistry": "/opt/renoa/adapters/mcp-registry-node/dist/src/main.js",
     "sharedPluginRegistry": "http://<vps-magic-dns-name>:8082/"
   },
@@ -227,6 +233,49 @@ Every configured adapter and model store must already exist at its absolute
 path. Omit any optional adapter field that this Host does not use. Each target
 binds one provisioned agent to one stable Host session and canonical workspace;
 changing a durable binding fails closed.
+
+The daemon opens its own private Host data root at `<state-directory>/host`
+(`/var/lib/renoa-node/host` for the supplied unit), separate from the shared
+Host. Each `targets[].agentId` must name an agent provisioned in that root.
+Create `/etc/renoa/node-host.json` and `/etc/renoa/node-bootstrap-agent.json`
+as root with mode `0640` and group `renoa-node`; neither document holds a
+secret, and the provision command runs as the `renoa-node` account so the
+private data root is created with the service account's ownership.
+`data_directory` must be exactly the node's private Host data root, and the
+model settings must match `node.json`'s `model` block:
+
+```json
+{
+  "data_directory": "/var/lib/renoa-node/host",
+  "model_bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+  "providers": ["opencode-go"],
+  "provider": "opencode-go",
+  "model": "glm-5.3-flash",
+  "model_auth_store": "/var/lib/renoa-node/model-auth.sqlite"
+}
+```
+
+```json
+{
+  "operationId": "<fresh-uuid>",
+  "presetId": "renoa.coding.alpha.v1",
+  "name": "Alpha"
+}
+```
+
+Then provision and copy the printed definition's `id` into every
+`targets[].agentId` in `node.json`:
+
+```sh
+install -d -m 0700 -o renoa-node -g renoa-node /var/lib/renoa-node
+sudo -u renoa-node /usr/local/bin/renoa-host \
+  /etc/renoa/node-host.json provision /etc/renoa/node-bootstrap-agent.json
+```
+
+The agent id is derived from `operationId`, so rerunning the same provision
+document converges on the same agent instead of creating a second one. A
+configured agent that is missing from the private Host refuses node startup
+before any command is admitted, naming this command in the error.
 
 On the coordinator host, create the node identity and capture its five-minute
 enrollment token directly into an owner-only file:
@@ -305,6 +354,7 @@ mode `0600`. Put the remaining explicit settings in
 
 ```text
 RENOA_TELEGRAM_ALLOWED_USER_ID=123456789
+RENOA_TELEGRAM_AGENT_ID=<provisioned-agent-uuid>
 RENOA_TELEGRAM_IPV4_ONLY=1
 RENOA_MODEL_BRIDGE=/opt/renoa/adapters/model-provider-node/dist/src/main.js
 RENOA_MODEL_AUTH_STORE=/var/lib/renoa-telegram/model-auth.sqlite
@@ -318,7 +368,13 @@ TZ=Asia/Kolkata
 The model credential store and compiled Node adapter must already exist at
 those paths. The adapter tree must be readable by `renoa-arcee`; the credential
 store must be owned by and writable only to that account so OAuth refresh can
-rotate safely. `TZ` selects the local clock Arcee sees on each turn and may be
+rotate safely. `RENOA_TELEGRAM_AGENT_ID` is required and names the provisioned
+agent Arcee executes: the `id` that the shared Host's provision command
+printed. Without it the unit restart-loops at startup. The Telegram surface
+store binds that agent and refuses an older surface schema by name, so after a
+Host cutover delete `/var/lib/renoa-telegram/surfaces/telegram/` (the model
+credential store outside it is not derived and must survive) and pair the bot
+again. `TZ` selects the local clock Arcee sees on each turn and may be
 changed to any valid IANA time-zone name. Optional MCP adapter and shared
 registry settings use the same environment names documented in
 [`renoa-telegram`](../crates/renoa-telegram/README.md).
@@ -591,7 +647,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-data root before the reset that brings it to schema 27. Install the new binaries
+data root before the reset that brings it to schema 28. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the cut-over database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must
@@ -699,12 +755,25 @@ tailscale serve status
 curl --fail --show-error http://<vps-magic-dns-name>:8082/v1/status
 ```
 
-Then add the origin—not `/v1`—to every trusted Host process:
+Then add the origin—not `/v1`—to every trusted Host process. `renoa-agent
+plugins sync` assembles the full ACP launch configuration from the environment,
+so it needs the Host data root, the provider settings, and the provisioned
+agent id alongside the registry origin:
 
 ```sh
+export RENOA_DATA_DIR=/var/lib/renoa-telegram
+export RENOA_MODEL_BRIDGE=/opt/renoa/adapters/model-provider-node/dist/src/main.js
+export RENOA_MODEL_AUTH_STORE=/var/lib/renoa-telegram/model-auth.sqlite
+export RENOA_MODEL_PROVIDER=opencode-go
+export RENOA_MODEL=your-model-id
+export RENOA_AGENT_ID=<provisioned-agent-uuid>
 export RENOA_SHARED_PLUGIN_REGISTRY='http://<vps-magic-dns-name>:8082/'
 renoa-agent plugins sync
 ```
+
+`RENOA_AGENT_ID` is the same provisioned agent id the Telegram service runs.
+Run the command as the account that owns the Host data directory; it fails
+closed when any required setting above is absent.
 
 The sync command's JSON reports local publications, downloads, and the durable
 applied revision. The first successful response binds that Host data directory

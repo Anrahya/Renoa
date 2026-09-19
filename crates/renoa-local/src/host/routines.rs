@@ -145,26 +145,39 @@ impl LocalHost {
         .await??)
     }
 
-    /// Lists a bounded page of an agent's routines in stable ID order.
+    /// Lists a bounded page of an agent's routines in stable ID order. Another
+    /// agent's routines need the actor's stored selection to contain
+    /// `agent_manage`.
     /// # Errors
-    /// Returns catalog and stored-data failures.
+    /// Rejects unauthorized targets and returns catalog and stored-data failures.
     pub async fn list_routines(
         &self,
+        actor: AgentId,
         agent: AgentId,
         after: Option<Uuid>,
     ) -> Result<Vec<RoutineRecord>, LocalHostError> {
         let database = self.config.database.clone();
-        Ok(tokio::task::spawn_blocking(move || store::list(&database, agent, after)).await??)
+        Ok(tokio::task::spawn_blocking(move || {
+            let db = super::catalog::open_verified(&database)?;
+            store::authorize(&db, actor, agent)?;
+            store::list(&db, agent, after)
+        })
+        .await??)
     }
 
-    /// Reads one complete standing task for inspection or revision-checked editing.
+    /// Reads one complete standing task for inspection or revision-checked
+    /// editing. Another agent's routines need the actor's stored selection to
+    /// contain `agent_manage`.
     /// # Errors
-    /// Returns an unknown routine or catalog failures.
-    pub async fn routine(&self, id: Uuid) -> Result<RoutineRecord, LocalHostError> {
+    /// Rejects unauthorized targets and returns an unknown routine or catalog
+    /// failures.
+    pub async fn routine(&self, actor: AgentId, id: Uuid) -> Result<RoutineRecord, LocalHostError> {
         let database = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
             let db = super::catalog::open_verified(&database)?;
-            store::get(&db, id)
+            let record = store::get(&db, id)?;
+            store::authorize(&db, actor, record.spec.agent_id)?;
+            Ok::<_, RoutineError>(record)
         })
         .await??)
     }

@@ -14,12 +14,14 @@ use crate::{
 
 /// One persisted creation receipt.
 ///
-/// The receipt proves which operation created which agent and what request it
-/// carried. Creator, origin, and the resulting agent live on the root row,
-/// which is the single durable owner of that state.
+/// The receipt proves which operation created which agent, what request it
+/// carried, and the definition its commit produced. The root row stays the
+/// single durable owner of the live definition, so replay reads this immutable
+/// result instead of the current state.
 pub(super) struct CreationReceipt {
     pub(super) agent_id: AgentId,
     pub(super) request_json: String,
+    pub(super) result_json: String,
 }
 
 /// One persisted tool-selection receipt.
@@ -63,11 +65,17 @@ pub(super) fn insert_creation_receipt(
     operation: Uuid,
     agent: AgentId,
     request_json: &str,
+    result_json: &str,
 ) -> Result<(), HostCatalogError> {
     transaction.execute(
-        "INSERT INTO host_agent_creations(operation_id, agent_id, request_json)
-         VALUES (?1, ?2, ?3)",
-        params![operation.to_string(), agent.to_string(), request_json],
+        "INSERT INTO host_agent_creations(operation_id, agent_id, request_json, result_json)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            operation.to_string(),
+            agent.to_string(),
+            request_json,
+            result_json
+        ],
     )?;
     Ok(())
 }
@@ -76,19 +84,21 @@ pub(super) fn creation_receipt(
     connection: &Connection,
     operation: Uuid,
 ) -> Result<Option<CreationReceipt>, HostCatalogError> {
-    let row: Option<(String, String)> = connection
+    let row: Option<(String, String, String)> = connection
         .query_row(
-            "SELECT agent_id, request_json FROM host_agent_creations WHERE operation_id = ?1",
+            "SELECT agent_id, request_json, result_json FROM host_agent_creations
+             WHERE operation_id = ?1",
             [operation.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
-    let Some((agent_id, request_json)) = row else {
+    let Some((agent_id, request_json, result_json)) = row else {
         return Ok(None);
     };
     Ok(Some(CreationReceipt {
         agent_id: parse_agent(&agent_id)?,
         request_json,
+        result_json,
     }))
 }
 
@@ -168,6 +178,15 @@ pub(super) fn read(
         tool_selection: read_selection(connection, id)?,
         connections: read_connections(connection, id)?,
     };
+    // Stored state must satisfy the rules every writer applies: a row written by
+    // an older runtime or edited outside the Host fails closed here instead of
+    // reaching the runtime.
+    definition.validate().map_err(|error| {
+        HostCatalogError::Invalid(format!(
+            "stored agent definition for `{}` is invalid: {error}",
+            definition.id
+        ))
+    })?;
     Ok(Some(definition))
 }
 

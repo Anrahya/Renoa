@@ -1,6 +1,6 @@
 # Renoa Slack surface
 
-A personal Slack operator using Socket Mode and the existing Arcee profile.
+A personal Slack operator using Socket Mode and the existing Arcee agent.
 Slack owns presentation and event delivery. The Host owns the durable Agent and
 assembles sessions; the kernel owns each turn, its tools, and recovery. No Slack
 policy or wire types are added to the kernel or RCP.
@@ -93,12 +93,16 @@ manifest alone does not grant scopes to the installed token.
 2. Copy its bot token (`xoxb-`). Under Basic Information, create an app-level
    token (`xapp-`) with `connections:write`. Store each in a separate regular
    file with mode `0600`. Keep token values out of config JSON and Git.
-3. Copy your Slack Member ID from your profile. Copy
+3. Copy your Slack Member ID from your Slack profile. Copy
    `deploy/renoa-slack.config.example.json` to a private launch config, replace
-   every placeholder and path, and generate one stable Agent UUID with
-   `uuidgen`. Reuse that UUID after restarts.
+   every placeholder and path, and set `agent_id` to an agent already
+   provisioned on this Host; surfaces never create agents. Provision one with
+   `renoa-host <config.json> provision <provision.json>` if needed, and read the
+   Host roster with `renoa-host inspect <data-directory>`. Reuse that agent id
+   after restarts.
 4. Point the model bridge/auth store at your existing Renoa installation.
-   Arcee's current recipe requires `opencode-go` at startup. The current Arcee recipe filters its catalog to that provider. Optional settings are `reasoning`,
+   This surface requires `opencode-go` as the initial provider and filters the
+   startup catalog to that provider. Optional settings are `reasoning`,
    `mcp_adapter`, `mcp_registry_adapter`, `shared_plugin_registry`, and
    `oauth_relay: {"origin": "https://renoa.live", "device_credential_file": "/absolute/path"}`.
    If this Slack app also authorizes the Slack MCP connection, its OAuth &
@@ -147,11 +151,12 @@ private copies of the tokens, launch JSON, and existing
 need access to the private `/etc/renoa` directory.
 The Agent UUID and allowed Slack Member ID are stable launch settings.
 
-Both surfaces now use the same Arcee profile, enabled MCP connections, private
-OAuth store, installed plugins, and profile documents. New profile attachments
-are visible without a surface restart. The Host's extension inventory also
-lets other profiles enable an existing connection or reuse an installed
-package's skills by digest; neither operation repeats OAuth.
+Both surfaces now serve the same stored Arcee agent definition, enabled MCP
+connections, private OAuth store, installed plugins, and agent documents.
+Connections newly attached to an agent are visible without a surface restart.
+The Host's extension inventory also lets other agents enable an existing
+connection or reuse an installed package's skills by digest; neither operation
+repeats OAuth.
 
 Stop an existing Slack daemon before starting this one: two independent Socket
 Mode consumers must not split events between separate Hosts. Existing local

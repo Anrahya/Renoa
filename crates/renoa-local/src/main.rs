@@ -48,7 +48,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let agent = AgentId::from_uuid(Uuid::parse_str(&required_environment("RENOA_AGENT_ID")?)?);
     if host.agent_definition(agent).await?.is_none() {
         return Err(io::Error::other(format!(
-            "agent {agent} is not provisioned in this Host; provision it with `renoa-host provision`"
+            "agent {agent} is not provisioned in this Host; provision it with `renoa-host <config.json> provision <provision.json>`"
         ))
         .into());
     }

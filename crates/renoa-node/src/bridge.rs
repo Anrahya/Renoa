@@ -116,13 +116,17 @@ pub struct RenoaNode {
 }
 
 impl RenoaNode {
-    /// Opens the node ledger and validates every configured Host target.
+    /// Opens the node ledger and validates every configured Host target,
+    /// including that each target's agent is provisioned in the Host.
+    ///
+    /// The agent check runs before the ledger opens, so a refused startup
+    /// creates no node ledger.
     ///
     /// # Errors
     ///
-    /// Returns an error for an invalid endpoint, target configuration, or
-    /// durable binding mismatch.
-    pub fn open(
+    /// Returns an error for an invalid endpoint, target configuration, an
+    /// unprovisioned target agent, or a durable binding mismatch.
+    pub async fn open(
         endpoint: impl Into<String>,
         credentials: DeviceCredentials,
         ledger_path: impl AsRef<Path>,
@@ -135,6 +139,7 @@ impl RenoaNode {
             .into_client_request()
             .map_err(NodeError::Endpoint)?;
         let targets = validate_targets(targets)?;
+        preflight_agents(&host, &targets).await?;
         let state = NodeStore::open(ledger_path)?;
         let durable_targets = targets
             .values()
@@ -418,6 +423,29 @@ async fn wait_to_reconnect(
             }
         }
     }
+}
+
+async fn preflight_agents(
+    host: &LocalHost,
+    targets: &BTreeMap<String, HostTarget>,
+) -> Result<(), NodeError> {
+    for (name, target) in targets {
+        let provisioned = host
+            .agent_definition(target.agent_id)
+            .await
+            .map_err(|error| NodeError::Store(error.to_string()))?;
+        if provisioned.is_some() {
+            continue;
+        }
+        return Err(NodeError::Configuration(format!(
+            "Host target `{name}` names agent {}, which is not provisioned in this node's \
+             private Host data root; provision it with \
+             `renoa-host <node-host-config.json> provision <provision-document.json>` \
+             before starting the node",
+            target.agent_id
+        )));
+    }
+    Ok(())
 }
 
 fn validate_targets(targets: Vec<HostTarget>) -> Result<BTreeMap<String, HostTarget>, NodeError> {

@@ -16,6 +16,27 @@ use crate::{
 const RETAINED_INTEGRATION: &str = "retained.integration";
 const REQUEST_ID: &str = "00000000-0000-0000-0000-000000000001";
 
+/// A managed root that is a symbolic link must be refused rather than followed.
+#[test]
+fn a_symlinked_managed_root_is_refused() {
+    let directory = tempdir().expect("fixture");
+    let elsewhere = tempdir().expect("escape target");
+    let data = directory.path().join("data");
+    fs::create_dir_all(&data).expect("data root");
+    fs::write(elsewhere.path().join("kept.txt"), "keep\n").expect("external file");
+    std::os::unix::fs::symlink(elsewhere.path(), data.join("sessions")).expect("link sessions");
+
+    let error = reset_host_data_root(&data).expect_err("a symlinked managed root must be refused");
+    assert!(
+        error.to_string().contains("symbolic link"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        fs::read_to_string(elsewhere.path().join("kept.txt")).expect("external file survives"),
+        "keep\n"
+    );
+}
+
 fn open_host(root: &Path) -> LocalHost {
     LocalHost::assemble(HostInitialization {
         data_directory: root.join("data"),

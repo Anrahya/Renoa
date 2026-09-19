@@ -37,7 +37,12 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
     api.require_long_polling().await?;
     let store = SurfaceStore::open(&config.data_directory)?;
     store
-        .bind_identity(bot.id, config.allowed_user_id, &config.workspace)
+        .bind_identity(
+            config.agent_id,
+            bot.id,
+            config.allowed_user_id,
+            &config.workspace,
+        )
         .await?;
     let recovery = store.recover().await?;
     api.set_commands().await?;

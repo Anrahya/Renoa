@@ -31,18 +31,42 @@ pub(super) fn document_root(
     }
     let data_directory = fs::canonicalize(data_directory)
         .map_err(|source| document_io("resolve Host data directory", data_directory, source))?;
-    let root = data_directory
-        .join(DOCUMENT_DIRECTORY)
-        .join(agent.to_string());
-    fs::create_dir_all(&root)
-        .map_err(|source| document_io("create agent document directory", &root, source))?;
+    let directory = data_directory.join(DOCUMENT_DIRECTORY);
+    let root = directory.join(agent.to_string());
+    create_plain_directory(&directory, agent)?;
+    create_plain_directory(&root, agent)?;
     restrict_directory(&root)?;
-    let root = fs::canonicalize(&root)
+    let resolved = fs::canonicalize(&root)
         .map_err(|source| document_io("resolve agent document directory", &root, source))?;
-    if !root.starts_with(&data_directory) {
-        return Err(AgentDefinitionError::DocumentsOutsideDataDirectory { agent, path: root });
+    // Every component was created without following a link, so the root is the
+    // agent's own directory only when it resolves to exactly this path.
+    if resolved != root {
+        return Err(AgentDefinitionError::DocumentsOutsideDataDirectory {
+            agent,
+            path: resolved,
+        });
     }
-    Ok(root)
+    Ok(resolved)
+}
+
+/// Creates one document directory component unless it already exists, refusing
+/// a symlink or any other file in its place before anything is written through
+/// it.
+fn create_plain_directory(path: &Path, agent: AgentId) -> Result<(), AgentDefinitionError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
+        Ok(_) => Err(AgentDefinitionError::DocumentsOutsideDataDirectory {
+            agent,
+            path: path.to_path_buf(),
+        }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => fs::create_dir(path)
+            .map_err(|source| document_io("create agent document directory", path, source)),
+        Err(source) => Err(document_io(
+            "inspect agent document directory",
+            path,
+            source,
+        )),
+    }
 }
 
 pub(super) fn restrict_directory(path: &Path) -> Result<(), AgentDefinitionError> {
@@ -83,7 +107,23 @@ impl Document {
     }
 }
 
-pub(super) fn publish_document(path: &Path, content: &str) -> Result<(), AgentDefinitionError> {
+/// What a document path already holds for the content about to be published.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Publication {
+    /// Nothing is published at the path.
+    Absent,
+    /// The path already holds exactly this content.
+    Identical,
+    /// The path holds different content.
+    Conflicting,
+}
+
+/// Classifies one document path against `content`, failing when the path is a
+/// symlink or not a readable regular file.
+pub(super) fn publication_state(
+    path: &Path,
+    content: &str,
+) -> Result<Publication, AgentDefinitionError> {
     match fs::symlink_metadata(path) {
         Ok(_) => {
             require_regular_file(path)?;
@@ -91,15 +131,26 @@ pub(super) fn publish_document(path: &Path, content: &str) -> Result<(), AgentDe
             File::open(path)
                 .and_then(|mut file| file.read_to_end(&mut existing))
                 .map_err(|source| document_io("read agent document", path, source))?;
-            if existing == content.as_bytes() {
-                return Ok(());
-            }
+            Ok(if existing == content.as_bytes() {
+                Publication::Identical
+            } else {
+                Publication::Conflicting
+            })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Publication::Absent),
+        Err(source) => Err(document_io("inspect agent document", path, source)),
+    }
+}
+
+pub(super) fn publish_document(path: &Path, content: &str) -> Result<(), AgentDefinitionError> {
+    match publication_state(path, content)? {
+        Publication::Identical => return Ok(()),
+        Publication::Conflicting => {
             return Err(AgentDefinitionError::DocumentConflict {
                 path: path.to_path_buf(),
             });
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => return Err(document_io("inspect agent document", path, source)),
+        Publication::Absent => {}
     }
     let parent = path
         .parent()
@@ -122,7 +173,16 @@ pub(super) fn publish_document(path: &Path, content: &str) -> Result<(), AgentDe
                 .and_then(|directory| directory.sync_all())
                 .map_err(|source| document_io("sync agent document directory", parent, source))?;
         }
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        // A writer outside the Host can take the path between the classification
+        // above and this persist, so the winner is adopted only when it holds
+        // exactly this content.
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if publication_state(path, content)? != Publication::Identical {
+                return Err(AgentDefinitionError::DocumentConflict {
+                    path: path.to_path_buf(),
+                });
+            }
+        }
         Err(error) => {
             return Err(document_io("publish agent document", path, error.error));
         }

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::{
     AgentCreateRequest, LocalHost, LocalHostError, catalog_error, check_cancellation,
-    require_selectable, store,
+    require_consumable, require_selectable, store,
 };
 use crate::{
     AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDocuments, AgentOperationalDefinition,
@@ -25,6 +25,9 @@ const ROUTINE_ID_DOMAIN: &str = "renoa.agent.routine.v1";
 impl LocalHost {
     /// Creates one durable agent, or replays the stored result of the same
     /// operation.
+    ///
+    /// A replay returns the definition this operation committed. Later edits
+    /// change the live agent but never that stored result.
     ///
     /// # Errors
     /// Rejects an untrusted actor/origin pairing, an unknown preset, invalid
@@ -54,7 +57,11 @@ impl LocalHost {
             },
             tool_selection: AgentToolSelection {
                 revision: 1,
-                tools: resolve_selection(preset.tool_baseline(), &request.tools)?,
+                tools: resolve_selection(
+                    preset.tool_baseline(),
+                    preset.documents(),
+                    &request.tools,
+                )?,
             },
             connections: request.connections.clone(),
         };
@@ -65,6 +72,7 @@ impl LocalHost {
             ));
         }
         let request_json = serde_json::to_string(&request)?;
+        let result_json = serde_json::to_string(&definition)?;
         let routine = request.routine.map(|routine| {
             (
                 stable_id(&format!("{ROUTINE_ID_DOMAIN}:{}", request.operation_id)),
@@ -83,6 +91,7 @@ impl LocalHost {
             definition,
             operation_id: request.operation_id,
             request_json,
+            result_json,
             document_defaults: preset.documents().zip(preset.document_defaults()),
             routine,
             cancellation,
@@ -99,6 +108,7 @@ struct CreateCommit {
     definition: AgentDefinition,
     operation_id: Uuid,
     request_json: String,
+    result_json: String,
     document_defaults: Option<(AgentDocuments, DocumentDefaults)>,
     routine: Option<(Uuid, routines::RoutineSpec)>,
     cancellation: CancellationToken,
@@ -111,6 +121,7 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         definition,
         operation_id,
         request_json,
+        result_json,
         document_defaults,
         routine,
         cancellation,
@@ -142,7 +153,13 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
             definition.created_at_ms,
         )?;
     }
-    store::insert_creation_receipt(&transaction, *operation_id, definition.id, request_json)?;
+    store::insert_creation_receipt(
+        &transaction,
+        *operation_id,
+        definition.id,
+        request_json,
+        result_json,
+    )?;
     check_cancellation(cancellation)?;
     // Publication is the last step before the commit so that every rejection
     // above has no filesystem effect, while the row still cannot become visible
@@ -169,12 +186,14 @@ fn replay(
     let Some(receipt) = store::creation_receipt(connection, commit.operation_id)? else {
         return Ok(None);
     };
-    let stored = store::read(connection, receipt.agent_id)?.ok_or_else(|| {
-        LocalHostError::InvalidRequest(format!(
+    if !store::exists(connection, receipt.agent_id)? {
+        return Err(LocalHostError::InvalidRequest(format!(
             "creation receipt for operation `{}` has no agent row",
             commit.operation_id
-        ))
-    })?;
+        )));
+    }
+    let stored: AgentDefinition = serde_json::from_str(&receipt.result_json)?;
+    stored.validate()?;
     if receipts_conflict(commit, &receipt, &stored) {
         return Err(LocalHostError::AgentConflict(receipt.agent_id));
     }
@@ -218,12 +237,15 @@ fn validate_actor(
 
 fn resolve_selection(
     baseline: capabilities::PresetToolBaseline,
+    documents: Option<AgentDocuments>,
     caller: &BTreeSet<String>,
 ) -> Result<BTreeSet<String>, LocalHostError> {
-    for name in caller {
+    let tools = capabilities::baseline_selection(baseline, caller);
+    for name in &tools {
         require_selectable(name)?;
+        require_consumable(name, documents)?;
     }
-    Ok(capabilities::baseline_selection(baseline, caller))
+    Ok(tools)
 }
 
 fn data_directory(config: &HostConfig) -> Result<PathBuf, LocalHostError> {

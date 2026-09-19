@@ -38,12 +38,12 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
         matches!(output,LocalTurnOutcome::Completed {output,..} if output=="Automation deleted")
     );
     assert!(
-        h.list_routines(child, None)
+        h.list_routines(parent, child, None)
             .await
             .expect("inventory")
             .is_empty()
     );
-    assert!(h.routine(record.id).await.is_err());
+    assert!(h.routine(parent, record.id).await.is_err());
     assert!(
         store::next(&h.config.database, record.next_due_ms + 100_000_000)
             .expect("no future occurrence")
@@ -116,7 +116,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         .await
         .expect("original creation replay");
     assert!(
-        h.list_routines(child, None)
+        h.list_routines(parent, child, None)
             .await
             .expect("still deleted")
             .is_empty()
@@ -179,7 +179,7 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
     crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let h = host(d.path());
     assert!(
-        h.routine(record.id).await.is_err(),
+        h.routine(parent, record.id).await.is_err(),
         "the cutover discards the legacy schedule"
     );
     let (parent, child) = provisioned(&h).await;
@@ -197,7 +197,7 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
     .await
     .expect("delete after the cutover");
     assert!(
-        h.list_routines(child, None)
+        h.list_routines(parent, child, None)
             .await
             .expect("deleted")
             .is_empty()
@@ -238,5 +238,8 @@ async fn rejected_or_cancelled_deletions_leave_the_automation_unchanged() {
             .await
             .is_err()
     );
-    assert_eq!(h.routine(record.id).await.expect("retained"), record);
+    assert_eq!(
+        h.routine(parent, record.id).await.expect("retained"),
+        record
+    );
 }

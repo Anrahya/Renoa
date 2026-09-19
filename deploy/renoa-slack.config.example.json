@@ -1,7 +1,7 @@
 {
   "data_directory": "/home/you/.local/share/renoa",
   "workspace": "/home/you/workspace",
-  "agent_id": "REPLACE_WITH_A_STABLE_UUID",
+  "agent_id": "REPLACE_WITH_THE_ID_OF_AN_AGENT_PROVISIONED_ON_THIS_HOST",
   "allowed_user_id": "REPLACE_WITH_YOUR_SLACK_MEMBER_ID",
   "bot_token_file": "/home/you/.config/renoa/slack-bot-token",
   "app_token_file": "/home/you/.config/renoa/slack-app-token",

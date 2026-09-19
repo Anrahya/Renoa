@@ -100,7 +100,7 @@ impl Tool for Manage {
             let result = if let Input::List { agent_id, cursor } = input {
                 let records = self
                     .host
-                    .list_routines(agent_id.unwrap_or(actor), cursor)
+                    .list_routines(actor, agent_id.unwrap_or(actor), cursor)
                     .await
                     .map_err(|e| ToolError::invalid_input(e.to_string()))?;
                 let cursor = if records.len() == 20 {
@@ -111,7 +111,7 @@ impl Tool for Manage {
                 let summaries:Vec<_>=records.iter().map(|r|json!({"id":r.id,"agent_id":r.spec.agent_id,"revision":r.revision,"name":r.spec.name,"schedule":r.spec.schedule,"enabled":r.spec.enabled,"next_due_ms":r.next_due_ms})).collect();
                 json!({"current_agent":actor,"routines":summaries,"next_cursor":cursor})
             } else if let Input::Get { id } = input {
-                json!({"routine":self.host.routine(id).await.map_err(|e|ToolError::invalid_input(e.to_string()))?})
+                json!({"routine":self.host.routine(actor,id).await.map_err(|e|ToolError::invalid_input(e.to_string()))?})
             } else {
                 let mutation = match input {
                     Input::Create { spec } => RoutineMutation::Create { spec },

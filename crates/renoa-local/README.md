@@ -101,8 +101,9 @@ cargo run -p renoa-local -- \
 ```
 
 The Host data directory is the same root the Host serves, and the agent must
-already exist there: provision it with `renoa-host provision <config.json>` or
-create it from a surface. The command fails closed when the configured agent is
+already exist there: provision it with `renoa-host <config.json> provision
+<provision.json>`. Surfaces never create agents; they receive explicit agent
+ids. The command fails closed when the configured agent is
 absent, and model and reasoning remain session settings.
 
 The command prints the stable session ID. Pass that ID instead of `new` to add

@@ -4,6 +4,7 @@ use renoa_agent::{AgentEvent, AgentEventSink as _, ContentBlock, ToolCall, ToolO
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use super::SurfaceEvents;
 use crate::{
@@ -20,7 +21,7 @@ async fn an_authorization_update_crosses_the_durable_store_and_permanent_message
     std::fs::create_dir(&workspace).expect("create workspace");
     let store = SurfaceStore::open(directory.path()).expect("open surface store");
     store
-        .bind_identity(9, 42, &workspace)
+        .bind_identity(Uuid::from_u128(1), 9, 42, &workspace)
         .await
         .expect("bind surface identity");
     let topic = Topic {

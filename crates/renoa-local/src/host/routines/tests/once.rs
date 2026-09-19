@@ -42,7 +42,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .await
         .expect("model schedules once");
     let record = h
-        .list_routines(child, None)
+        .list_routines(parent, child, None)
         .await
         .expect("routines")
         .remove(0);
@@ -59,7 +59,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
     let run = store::next(&h.config.database, expected + 60_000)
         .expect("late catchup")
         .expect("run");
-    let disarmed = h.routine(record.id).await.expect("disarmed");
+    let disarmed = h.routine(parent, record.id).await.expect("disarmed");
     assert!(!disarmed.spec.enabled);
     assert_eq!(disarmed.revision, record.revision + 1);
     assert!(
@@ -259,7 +259,7 @@ async fn schema_seventeen_upgrade_retains_existing_routines_and_receipts() {
     crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let restored = host(d.path());
     assert!(
-        restored.routine(record.id).await.is_err(),
+        restored.routine(parent, record.id).await.is_err(),
         "the cutover discards the legacy routine and its receipts"
     );
     let (parent, child) = provisioned(&restored).await;

@@ -1020,7 +1020,9 @@ daemon. Each surface store is its own step: the Slack store owns
 `deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
 `routine_deliveries`, `routine_delivery_cursor`, and `routine_context_receipts`;
 the Telegram store owns `surface_identity`, `surface_sessions`, `conversations`,
-`updates`, `delivery_messages`, and `surface_actions`. Because no transaction
+`updates`, `delivery_messages`, and `surface_actions`, and binds the configured
+agent in `surface_identity`; it refuses an earlier schema by name, so delete
+the Telegram surface store after the Host cutover and re-pair. Because no transaction
 spans them, a crash between steps leaves each store internally consistent and
 every step repeatable; a surface whose stored agent id no longer exists fails
 closed until it is provisioned against the current Host.
@@ -1081,8 +1083,10 @@ definition lookup is separate. Agent inventory includes persisted specialists.
 `agent_manage rename` edits the Host display name with an expected-current-name
 check and a durable operation receipt; an agent may rename itself, and renaming
 another agent requires the actor's stored selection to contain `agent_manage`.
-Replay returns the original rename result; replaying creation never reverts the
-current name. Agent identity, sessions, workspace, tools, and connections remain intact.
+Replay returns the original rename result; replaying a creation operation
+returns the definition that operation committed, and later edits (rename,
+capability changes) are not reflected. Agent identity, sessions, workspace,
+tools, and connections remain intact.
 Names should be short job labels, such as X Desk, News, or Research. Slack
 projects display-name changes onto the existing channel by its retained ID.
 Slack projects the Host specialist inventory into dedicated private channels and
@@ -1171,7 +1175,7 @@ introduced only with a consuming execution path or invariant test.
 
 `routine_manage` and `LocalHost::manage_routine` share typed creation, revision-checked
 replacement, and manual-run operations. An agent manages its own routines; managing
-another agent's routines requires the actor's stored selection to contain
+or reading another agent's routines requires the actor's stored selection to contain
 `agent_manage`. The Arcee and specialist presets seed routine management for the
 agent itself; Alpha seeds neither routine capability. This is
 Host management policy; selecting workspace tools

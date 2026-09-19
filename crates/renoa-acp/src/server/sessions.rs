@@ -82,7 +82,7 @@ impl Server {
         let session = match self
             .config
             .host()
-            .load_session(session_id, &request.cwd)
+            .load_session_for_agent(self.config.agent_id(), session_id, &request.cwd)
             .await
         {
             Ok(session) => session,
@@ -90,7 +90,7 @@ impl Server {
                 let history = self
                     .config
                     .host()
-                    .inspect_session(session_id, &request.cwd)
+                    .inspect_session(self.config.agent_id(), session_id, &request.cwd)
                     .await?;
                 events::replay_history(
                     connection,
@@ -177,7 +177,10 @@ impl Server {
                 "close the active ACP session before deleting it".to_owned(),
             ));
         }
-        self.config.host().delete_session(session_id).await?;
+        self.config
+            .host()
+            .delete_session_for_agent(self.config.agent_id(), session_id)
+            .await?;
         Ok(DeleteSessionResponse::new())
     }
 }

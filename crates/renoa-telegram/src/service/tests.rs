@@ -180,7 +180,12 @@ async fn service_fixture() -> ServiceFixture {
         .id;
     let store = SurfaceStore::open(&data).expect("open Telegram store");
     store
-        .bind_identity(9, 42, &workspace)
+        .bind_identity(
+            Uuid::parse_str(&agent_id.to_string()).expect("agent id"),
+            9,
+            42,
+            &workspace,
+        )
         .await
         .expect("bind Telegram identity");
     let (origin, server_shutdown, server) = draft_server().await;

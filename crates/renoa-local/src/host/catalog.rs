@@ -9,7 +9,7 @@ mod migrations;
 
 pub(crate) use cutover::cutover;
 
-const SCHEMA_VERSION: u32 = 27;
+const SCHEMA_VERSION: u32 = 28;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -361,6 +361,48 @@ mod tests {
                 )
                 .expect("retained integration"),
             1
+        );
+    }
+
+    #[test]
+    fn a_creation_receipt_without_a_result_is_refused_and_repaired() {
+        let directory = tempfile::tempdir().expect("temporary Host catalog");
+        let database = directory.path().join("host.sqlite3");
+        initialize(&database).expect("initialize current catalog");
+        {
+            let connection = open_verified(&database).expect("open current catalog");
+            connection
+                .execute_batch(
+                    "DROP TABLE host_agent_creations;
+                     CREATE TABLE host_agent_creations (
+                        operation_id TEXT PRIMARY KEY,
+                        agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
+                        request_json TEXT NOT NULL CHECK (json_valid(request_json))
+                     ) STRICT;
+                     UPDATE host_metadata SET schema_version = 27 WHERE singleton = 1;
+                     PRAGMA user_version = 27;",
+                )
+                .expect("construct schema-twenty-seven fixture");
+        }
+        let refused = initialize(&database);
+        assert!(
+            matches!(&refused, Err(HostCatalogError::Invalid(message)) if message.contains("reset")),
+            "a receipt without a stored result must be refused until it is reset: {refused:?}"
+        );
+        cutover(&database).expect("cut over schema twenty-seven");
+        initialize(&database).expect("open after the cutover");
+        let connection = open_verified(&database).expect("open cut-over catalog");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('host_agent_creations')
+                     WHERE name = 'result_json'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .expect("read creation receipt columns"),
+            1,
+            "the cutover must restore the canonical receipt shape"
         );
     }
 }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, HostCatalogError,
-    LocalTurnOutcome, ModelProvider, host::HostInitialization,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentSession,
+    HostCatalogError, LocalTurnOutcome, ModelProvider, host::HostInitialization,
 };
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
 use renoa_kernel::AgentId;
@@ -105,6 +105,20 @@ fn spec(agent_id: AgentId) -> RoutineSpec {
         prompt: "scheduled digest".to_owned(),
         schedule: RoutineSchedule::Interval { hours: 12 },
         enabled: true,
+    }
+}
+async fn turn(session: &AgentSession, prompt: String, label: &str) -> String {
+    match session
+        .execute_turn(
+            Uuid::new_v4(),
+            vec![ContentBlock::text(prompt)],
+            Arc::new(Quiet),
+        )
+        .await
+        .unwrap_or_else(|error| panic!("{label} failed: {error}"))
+    {
+        LocalTurnOutcome::Completed { output, .. } => output,
+        other => panic!("{label} did not complete: {other:?}"),
     }
 }
 
@@ -285,7 +299,10 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
         .await
         .expect("management through model");
     assert!(matches!(result, LocalTurnOutcome::Completed { .. }));
-    let records = h.list_routines(child, None).await.expect("routines");
+    let records = h
+        .list_routines(parent, child, None)
+        .await
+        .expect("routines");
     assert_eq!(records.len(), 1);
     let run = store::next(&h.config.database, records[0].next_due_ms)
         .expect("admit")
@@ -346,7 +363,7 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
         .await
         .expect("specialist changes own schedule");
     let changed = restarted
-        .list_routines(child, None)
+        .list_routines(parent, child, None)
         .await
         .expect("new schedule");
     assert_eq!(changed[0].revision, 2);
@@ -456,6 +473,96 @@ async fn paused_routines_allow_one_idempotent_manual_run_and_intervals_keep_thei
             .advance_past(43_200_000, 90_000_000)
             .expect("retain phase"),
         129_600_000
+    );
+}
+
+#[tokio::test]
+async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
+    let (_d, h, parent, child) = fixture().await;
+    let own = h
+        .manage_routine(
+            parent,
+            Uuid::new_v4(),
+            RoutineMutation::Create { spec: spec(child) },
+            0,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("own routine");
+    let foreign = h
+        .manage_routine(
+            parent,
+            Uuid::new_v4(),
+            RoutineMutation::Create { spec: spec(parent) },
+            0,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("foreign routine");
+    let child_workspace = h.agent_workspace(child).await.expect("workspace");
+    let specialist = h
+        .ensure_agent_session(child, &child_workspace, Uuid::new_v4())
+        .await
+        .expect("specialist session");
+    let parent_workspace = h.agent_workspace(parent).await.expect("workspace");
+    let operator = h
+        .ensure_agent_session(parent, &parent_workspace, Uuid::new_v4())
+        .await
+        .expect("operator session");
+    let denied = turn(
+        &specialist,
+        format!("foreign routine list {parent}"),
+        "foreign list",
+    )
+    .await;
+    assert!(
+        denied.contains("agent_manage") && !denied.contains("Digest"),
+        "a specialist must not list another agent's routines: {denied}"
+    );
+    let denied = turn(
+        &specialist,
+        format!("foreign routine get {}", foreign.id),
+        "foreign get",
+    )
+    .await;
+    assert!(
+        denied.contains("agent_manage") && !denied.contains("scheduled digest"),
+        "a specialist must not read another agent's standing task: {denied}"
+    );
+    let own_list = turn(&specialist, "own routine list".to_owned(), "own list").await;
+    assert!(
+        own_list.contains("Digest"),
+        "a specialist lists its own routines: {own_list}"
+    );
+    let own_get = turn(
+        &specialist,
+        format!("own routine get {}", own.id),
+        "own get",
+    )
+    .await;
+    assert!(
+        own_get.contains("scheduled digest"),
+        "a specialist reads its own standing task: {own_get}"
+    );
+    let managed_list = turn(
+        &operator,
+        format!("foreign routine list {child}"),
+        "managed list",
+    )
+    .await;
+    assert!(
+        managed_list.contains("Digest"),
+        "an agent_manage holder lists another agent's routines: {managed_list}"
+    );
+    let managed_get = turn(
+        &operator,
+        format!("foreign routine get {}", own.id),
+        "managed get",
+    )
+    .await;
+    assert!(
+        managed_get.contains("scheduled digest"),
+        "an agent_manage holder reads another agent's standing task: {managed_get}"
     );
 }
 
