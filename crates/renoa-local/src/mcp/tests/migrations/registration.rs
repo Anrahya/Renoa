@@ -8,6 +8,7 @@ use crate::mcp::{McpConnectionAuth, McpOAuthRegistration, McpRequestHeaders};
 fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     let (directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     let path = store.path().to_owned();
     let oauth = McpConnectionAuth::oauth(
         "oauth",

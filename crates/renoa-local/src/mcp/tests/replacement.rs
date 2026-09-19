@@ -7,6 +7,7 @@ use crate::mcp::{
 fn explicit_connection_replacement_commits_config_catalog_and_attachment_together() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .register_direct_connection("stable-integration", "drive", ENDPOINT)
         .expect("register original no-auth connection");

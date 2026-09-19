@@ -3,7 +3,7 @@ import type { HostSnapshot } from "./host-contract";
 import { directorySummary } from "./host-agent-directory-model";
 import { agentExample } from "./agent-work-preview/agent-example";
 
-const agent = { id: "agent", name: "Agent", created_by: null, created_at_ms: 1, preset_id: null };
+const agent = { id: "agent", name: "Agent", created_by: null, preset_id: null };
 const host: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [] };
 
 describe("agent directory observations", () => {

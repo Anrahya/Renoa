@@ -3,7 +3,7 @@ import type { HostSnapshot, Routine, Review } from "./host-contract";
 import { agentOverview } from "./host-agent-overview";
 
 it("scopes the overview to exact agent relationships and orders only known timestamps", () => {
-  const agent = { id: "a", name: "Same name", created_by: null, created_at_ms: 1, preset_id: null };
+  const agent = { id: "a", name: "Same name", created_by: null, preset_id: null };
   const routine = (id: string, due: number, enabled = true, agent_id = "a"): Routine => ({
     id, agent_id, name: id, enabled, revision: 1, next_due_ms: due,
     schedule: { kind: "interval", hours: 1 }, pending_runs: 0, completed_runs: 0,

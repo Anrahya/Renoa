@@ -11,7 +11,7 @@ const review = (id: string, fields: Partial<Review> = {}): Review => ({
   retry_after_ms: null, state: "incomplete", ...fields,
 });
 const host: HostSnapshot = {
-  host_id: "host", agents: [{ id: "reviewer", name: "Reviewer", created_by: null, created_at_ms: 1, preset_id: null }],
+  host_id: "host", agents: [{ id: "reviewer", name: "Reviewer", created_by: null, preset_id: null }],
   sessions: [], routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [],
 };
 afterEach(() => vi.unstubAllGlobals());

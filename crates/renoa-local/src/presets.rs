@@ -14,9 +14,9 @@ use crate::{
     documents::DocumentDefaults,
 };
 
-/// Renoa's built-in coding profile seed.
+/// Renoa's built-in coding agent seed.
 pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v1";
-/// Renoa's personal operator profile seed.
+/// Renoa's personal operator agent seed.
 pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v1";
 /// The seed every caller-defined specialist agent is created from.
 pub(crate) const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v1";

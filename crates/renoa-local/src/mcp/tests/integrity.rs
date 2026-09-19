@@ -7,6 +7,7 @@ use crate::mcp::{McpHostError, McpToolReference};
 fn catalog_refresh_is_hot_and_old_references_fail_closed() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
@@ -38,6 +39,7 @@ fn catalog_refresh_is_hot_and_old_references_fail_closed() {
 fn stored_catalog_contents_are_checked_against_their_digest() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");

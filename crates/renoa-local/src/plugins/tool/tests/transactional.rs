@@ -23,6 +23,7 @@ async fn failed_oauth_preflight_returns_the_reason_and_publishes_no_connection()
     let directory = tempdir().expect("temporary OAuth preflight fixture");
     let database = directory.path().join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
+    crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let adapter = directory.path().join("oauth-preflight-adapter.mjs");
     write_oauth_preflight_failure_adapter(&adapter);
@@ -60,6 +61,7 @@ async fn failed_discovery_leaves_no_active_connection_configuration() {
     let directory = tempdir().expect("temporary extension error fixture");
     let database = directory.path().join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
+    crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let adapter = directory.path().join("failed-adapter.mjs");
     write_failed_adapter(&adapter);
@@ -94,6 +96,7 @@ async fn failed_replacement_preserves_the_previous_connection_atomically() {
     let directory = tempdir().expect("temporary replacement fixture");
     let database = directory.path().join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
+    crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let working_adapter = directory.path().join("working-adapter.mjs");
     super::support::write_mcp_adapter(&working_adapter);

@@ -6,9 +6,9 @@ const id = (n: number) => `00000000-0000-0000-0000-${String(n).padStart(12, "0")
 const example: HostSnapshot = {
   host_id: id(1),
   agents: [
-    { id: id(2), name: "Arcee", created_by: null, created_at_ms: Date.parse("2026-08-12T09:30:00Z"), preset_id: "renoa.personal.arcee.v1" },
-    { id: id(3), name: "X Desk", created_by: id(2), created_at_ms: Date.parse("2026-08-15T11:00:00Z"), preset_id: "renoa.coding.alpha.v1" },
-    { id: id(4), name: "Soundwave", created_by: id(2), created_at_ms: Date.parse("2026-08-18T16:45:00Z"), preset_id: "renoa.specialist.v1" },
+    { id: id(2), name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v1" },
+    { id: id(3), name: "X Desk", created_by: id(2), preset_id: "renoa.coding.alpha.v1" },
+    { id: id(4), name: "Soundwave", created_by: id(2), preset_id: "renoa.specialist.v1" },
   ],
   sessions: [],
   routines: [

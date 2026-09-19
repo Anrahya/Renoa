@@ -157,6 +157,7 @@ async fn api_key_plugin_connects_and_hot_loads_without_persisting_the_secret() {
     let directory = tempdir().expect("temporary extension fixture");
     let database = directory.path().join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
+    crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let agent_id = test_agent_id(1);
 

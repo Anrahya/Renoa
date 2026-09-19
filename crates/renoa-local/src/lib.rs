@@ -42,6 +42,8 @@ pub use git_repository::{GitChange, GitSide};
 
 #[cfg(test)]
 mod model_adapter_process_tests;
+#[cfg(test)]
+mod test_agents;
 
 pub use agent_definition::{
     AgentBehavior, AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDefinitionError,

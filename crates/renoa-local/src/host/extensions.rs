@@ -12,7 +12,7 @@ use super::{LocalHost, LocalHostError};
 impl LocalHost {
     /// Reconciles this Host's immutable Agent Plugin library with its configured shared registry.
     ///
-    /// Existing MCP credentials, profile attachments, and sessions remain local.
+    /// Existing MCP credentials, agent connection bindings, and sessions remain local.
     ///
     /// # Errors
     ///
@@ -56,7 +56,7 @@ impl LocalHost {
         Ok(self.config.plugins.list().await?)
     }
 
-    /// Connects one installed package MCP server for an exact registered profile.
+    /// Connects one installed package MCP server for one exact agent.
     ///
     /// # Errors
     ///

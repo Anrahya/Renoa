@@ -76,6 +76,7 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
     store
         .publish_catalog(&snapshot)
         .expect("publish large catalog");
+    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
     store
         .enable_agent_connection(&agent(1).to_string(), "primary")
         .expect("enable connection");
@@ -127,6 +128,7 @@ async fn live_registry_tools_read_only_their_agent_attachments() {
     )
     .expect("build catalog");
     store.publish_catalog(&snapshot).expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
     store
         .enable_agent_connection(&agent(1).to_string(), "primary")
         .expect("attach catalog to the first agent");
@@ -134,6 +136,7 @@ async fn live_registry_tools_read_only_their_agent_attachments() {
     assert_eq!(run_search(&first_search, "echo").await["total_matches"], 1);
     assert_eq!(run_search(&second_search, "echo").await["total_matches"], 0);
 
+    crate::test_agents::insert_agent(store.path(), &second.to_string());
     store
         .enable_agent_connection(&second.to_string(), "primary")
         .expect("share catalog with the second agent");
@@ -168,6 +171,7 @@ async fn schema_loading_fails_instead_of_truncating_an_exact_large_schema() {
     .expect("build catalog");
     let reference = format!("mcp:primary:{}:large", snapshot.digest());
     store.publish_catalog(&snapshot).expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
     store
         .enable_agent_connection(&agent(1).to_string(), "primary")
         .expect("enable connection");

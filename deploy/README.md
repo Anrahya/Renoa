@@ -93,17 +93,39 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-The routine control API requires Host schema 24; shared specialist tool selection
-requires schema 25. The current release includes both. Stop all readers/writers
-of the shared Host catalog, including management, Slack, Telegram and GitHub workers,
-and back it up with SQLite's backup API. Build/install all Host consumers from the
-same revision, then start a normal Host process to apply the catalog migration
-before restarting management. Observation and owner-control modules deliberately
-do not migrate storage themselves. The migration preserves schedules, admitted
-runs, results and agent receipts, and adds owner operation receipts and revisioned
-tool selections. Keep the previous binaries and matching database snapshot in
-the single previous-release backup described above. Browser
-login storage is separate and does not need to be reset for this Host migration.
+This release requires Host schema 26 and cuts agent-owned storage over to the
+canonical agent definition. The cutover is not a migration: it discards the
+previous agent rows, routines, review records and sessions, and it runs only
+through the explicit reset described in
+[`docs/renoa-host-v0.md`](../docs/renoa-host-v0.md). Starting a normal Host
+process against an earlier data root fails closed with the reset command in the
+error, so stop all readers/writers of the shared Host catalog, including
+management, Slack, Telegram and GitHub workers, then run:
+
+```sh
+renoa-host /etc/renoa/host.json reset /var/backups/renoa-previous-release
+```
+
+The reset copies the whole data root to that directory first (refusing a
+non-empty backup, or one inside the data root), then applies the cutover. Host
+identity, MCP integrations, connections, catalogs, authorizations and
+credentials, installed plugins, immutable skill revisions and sources, the
+shared registry, and every workspace file are preserved; agent-owned rows, the
+session directories and the agent document roots are not. Provision the
+configured agent again after the reset:
+
+```sh
+renoa-host /etc/renoa/host.json provision /etc/renoa/bootstrap-agent.json
+```
+
+Observation and owner-control modules deliberately do not migrate or reset
+storage themselves. The node daemon's ledger is a separate store: this release
+renamed its task column to `agent_id` and refuses an earlier ledger by name, so
+delete the node state file before starting the node daemon. Each surface store
+is its own step, as listed in `docs/renoa-host-v0.md`. Keep the previous
+binaries and matching database snapshot in the single previous-release backup
+described above. Browser login storage is separate and does not need to be
+reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
 the new coordinator binary. It upgrades the identity database to schema 11 and
@@ -570,9 +592,9 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-database before upgrading to schema 24. Install the new binaries atomically and
-replace the model adapter's built `dist` files. Do not resume an older reader
-against the migrated database. Keep the matching database snapshot and binaries
+data root before the reset that brings it to schema 26. Install the new binaries
+atomically and replace the model adapter's built `dist` files. Do not resume an
+older reader against the cut-over database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must
 use that matching set; do not restore binaries automatically or retain older sets.
 

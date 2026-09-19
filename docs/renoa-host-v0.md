@@ -984,8 +984,11 @@ deletes broad filesystem state.
    root and its normalized children in their current shape, running the earlier
    migration ladder first for the shared domains it still owns.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
-   agent-owned rows and the `sessions/` and `review-sessions/` directories, and
-   it never deletes workspace files or the Host's shared state.
+   agent-owned rows, the `sessions/` and `review-sessions/` directories, and
+   the `agents/<agent-id>/` document roots, and it never deletes workspace files
+   or the Host's shared state. One transaction deletes the whole row set with
+   foreign keys deferred, so the delete list is what must be complete, not the
+   order it is written in.
    Host identity, MCP catalogs, connections, authorizations and credentials,
    installed plugins, skill revisions, shared registry state, and provider
    credentials are preserved. Applying the reset twice is safe, and a failed
@@ -1008,7 +1011,9 @@ The stores are separate databases with no cross-store transaction. The Host
 reset is one idempotent step over `host.sqlite3` and the Host session
 directories. The node store is a separate idempotent step over
 `host_node_metadata`, `host_node_tasks`, `host_node_executions`, and
-`host_node_events`. Each surface store is its own step: the Slack store owns
+`host_node_events`; this release renames the task's agent column and refuses an
+earlier ledger by name, so delete the node state file before starting the node
+daemon. Each surface store is its own step: the Slack store owns
 `identity`, `sessions`, `conversations`, `requests`, `messages`, `receipts`,
 `deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
 `routine_deliveries`, `routine_delivery_cursor`, and `routine_context_receipts`;

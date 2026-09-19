@@ -50,7 +50,14 @@ fn provision(root: &Path) {
 }
 
 fn reset(root: &Path, backup: &Path) -> std::process::Output {
+    reset_from(root, backup)
+}
+
+/// Runs the reset from the data root's parent, so a relative backup argument
+/// resolves inside the data root.
+fn reset_from(root: &Path, backup: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_renoa-host"))
+        .current_dir(root)
         .arg(root.join("host.json"))
         .arg("reset")
         .arg(backup)
@@ -113,4 +120,24 @@ async fn reset_scenario() {
         "{}",
         String::from_utf8_lossy(&nested.stderr)
     );
+
+    // A relative destination that resolves inside the data root, and one that
+    // reaches it through a symlink, must be refused before anything is copied.
+    let relative = reset_from(root, Path::new("data/backup"));
+    assert!(!relative.status.success());
+    assert!(
+        String::from_utf8_lossy(&relative.stderr).contains("must not be inside"),
+        "{}",
+        String::from_utf8_lossy(&relative.stderr)
+    );
+    let link = root.join("link");
+    std::os::unix::fs::symlink(root.join("data"), &link).expect("data root symlink");
+    let linked = reset(root, &link.join("backup"));
+    assert!(!linked.status.success());
+    assert!(
+        String::from_utf8_lossy(&linked.stderr).contains("must not be inside"),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    assert!(!root.join("data/backup").exists());
 }

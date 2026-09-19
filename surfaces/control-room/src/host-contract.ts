@@ -1,4 +1,4 @@
-export interface Agent { id: string; name: string; created_by: string | null; created_at_ms: number; preset_id: string | null }
+export interface Agent { id: string; name: string; created_by: string | null; preset_id: string | null }
 export type Schedule = { kind: "once"; at: string } | { kind: "interval"; hours: number } |
   { kind: "daily"; hour: number; minute: number; timezone: string };
 export interface Routine { id: string; agent_id: string; name: string; schedule: Schedule; enabled: boolean;
@@ -50,7 +50,7 @@ function schedule(v: unknown): boolean {
 }
 export function parseHost(value: unknown): HostSnapshot {
   if (!record(value) || !id(value.host_id) ||
-    !array(value.agents, v => record(v) && id(v.id) && text(v.name) && nullable(v.created_by, id) && count(v.created_at_ms) && nullable(v.preset_id, text)) ||
+    !array(value.agents, v => record(v) && id(v.id) && text(v.name) && nullable(v.created_by, id) && nullable(v.preset_id, text)) ||
     !array(value.sessions, v => record(v) && id(v.id) && nullable(v.agent_id, id) && (
       v.observation === "unavailable" ? text(v.reason) : v.observation === "available" && count(v.event_count) &&
       count(v.queued_operations) && operation(v.active_operation) && operation(v.latest_operation))) ||

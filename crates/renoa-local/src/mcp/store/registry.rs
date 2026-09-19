@@ -355,7 +355,7 @@ fn enabled_connection(
         .optional()?
         .ok_or_else(|| {
             McpHostError::NotFound(format!(
-                "connection '{connection_id}' is not enabled for profile '{agent_id}'"
+                "connection '{connection_id}' is not enabled for agent '{agent_id}'"
             ))
         })
 }

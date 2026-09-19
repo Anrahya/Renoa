@@ -199,6 +199,7 @@ fn gh_connection_persists_only_its_exact_credential_reference() {
 fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     let auth = McpConnectionAuth::oauth("oauth", ENDPOINT, McpOAuthRegistration::dynamic())
         .expect("OAuth reference");
     store
@@ -275,6 +276,7 @@ fn catalog_publication_is_atomic_when_a_late_tool_insert_fails() {
 fn registered_plugin_catalog_publication_rolls_back_catalog_and_attachment() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .register_connection(
             "plugin.integration",
@@ -347,6 +349,7 @@ fn a_catalog_cannot_be_published_under_a_different_registered_endpoint() {
 fn agent_connection_survives_a_store_restart_and_exposes_its_complete_catalog() {
     let (directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");
@@ -379,6 +382,7 @@ fn agent_connection_survives_a_store_restart_and_exposes_its_complete_catalog() 
 fn connection_status_and_disconnect_keep_catalogs_but_remove_agent_access() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register direct connection");
@@ -472,9 +476,28 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_agent_access() {
 }
 
 #[test]
+fn a_fresh_catalog_rejects_a_binding_for_an_unknown_agent() {
+    let (_directory, store) = store();
+    store
+        .register_direct_connection("example", "primary", ENDPOINT)
+        .expect("register connection");
+    store
+        .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
+        .expect("publish catalog");
+    let error = store
+        .enable_agent_connection(&agent_id(1).to_string(), "primary")
+        .expect_err("the canonical binding requires an existing agent");
+    assert!(
+        error.to_string().contains("FOREIGN KEY constraint failed"),
+        "{error}"
+    );
+}
+
+#[test]
 fn enabling_a_connection_requires_a_complete_catalog() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register connection");

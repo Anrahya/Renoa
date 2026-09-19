@@ -43,7 +43,7 @@ impl AgentSessionHistory {
 impl LocalHost {
     /// Opens existing history without discovering models or resolving a runtime.
     ///
-    /// The registered profile, exact session/agent identity, workspace binding,
+    /// The exact session/agent identity, workspace binding,
     /// and exclusive kernel ownership are checked just as for executable loading.
     /// Diagnostic failures are reported by the handle and do not hide history.
     /// Drop the handle before loading the session for execution.

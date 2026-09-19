@@ -79,6 +79,7 @@ async fn run_credential_setup(
 
     let database = directory.path().join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
+    crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let adapter = directory.path().join("credential-adapter.mjs");
     write_credential_adapter(&adapter);

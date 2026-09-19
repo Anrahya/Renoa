@@ -11,7 +11,6 @@ pub struct ObservedAgent {
     pub name: String,
     /// The creator agent id when an agent created this agent, otherwise null.
     pub created_by: Option<Uuid>,
-    pub created_at_ms: i64,
     pub preset_id: Option<String>,
 }
 
@@ -53,7 +52,7 @@ pub struct ObservedSkill {
 
 pub(super) fn agents(db: &Connection) -> Result<Vec<ObservedAgent>, HostCatalogError> {
     let mut q = db.prepare(
-        "SELECT agent_id,name,created_at_ms,preset_id,creator_agent_id
+        "SELECT agent_id,name,preset_id,creator_agent_id
          FROM host_agents ORDER BY agent_id",
     )?;
     let mut rows = q.query([])?;
@@ -62,10 +61,9 @@ pub(super) fn agents(db: &Connection) -> Result<Vec<ObservedAgent>, HostCatalogE
         items.push(ObservedAgent {
             id: parse_id(&row.get::<_, String>(0)?)?,
             name: row.get(1)?,
-            created_at_ms: row.get(2)?,
-            preset_id: row.get(3)?,
+            preset_id: row.get(2)?,
             created_by: row
-                .get::<_, Option<String>>(4)?
+                .get::<_, Option<String>>(3)?
                 .as_deref()
                 .map(parse_id)
                 .transpose()?,

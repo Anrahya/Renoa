@@ -190,7 +190,7 @@ impl McpCatalogSnapshot {
     }
 }
 
-/// One exact catalog-bound MCP target resolved for profile execution.
+/// One exact catalog-bound MCP target resolved for agent execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedMcpTool {
     integration_id: String,

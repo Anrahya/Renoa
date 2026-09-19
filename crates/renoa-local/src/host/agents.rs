@@ -27,15 +27,6 @@ impl LocalHost {
         .await?
     }
 
-    /// Looks up one canonical agent definition without discovering a model or
-    /// constructing a runtime.
-    ///
-    /// # Errors
-    /// Returns catalog storage or definition corruption errors.
-    pub async fn agent(&self, id: AgentId) -> Result<Option<AgentDefinition>, LocalHostError> {
-        self.agent_definition(id).await
-    }
-
     /// Lists canonical agent definitions in identity order.
     ///
     /// No model or diagnostic store is required. Deleted sessions do not delete

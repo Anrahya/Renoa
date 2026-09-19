@@ -4,13 +4,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use renoa_kernel::AgentId;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    AGENT_ID_DOMAIN, AgentCreateRequest, LocalHost, LocalHostError, catalog_error,
-    check_cancellation, require_selectable, store,
+    AgentCreateRequest, LocalHost, LocalHostError, catalog_error, check_cancellation,
+    require_selectable, store,
 };
 use crate::{
     AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDocuments, AgentOperationalDefinition,
@@ -41,10 +40,7 @@ impl LocalHost {
         validate_actor(&creator, origin)?;
         let preset = presets::preset(&request.preset_id)?;
         let definition = AgentDefinition {
-            id: AgentId::from_uuid(stable_id(&format!(
-                "{AGENT_ID_DOMAIN}:{}",
-                request.operation_id
-            ))),
+            id: super::derived_agent_id(request.operation_id),
             name: request.name.clone(),
             created_at_ms: host_now_ms()?,
             creator,

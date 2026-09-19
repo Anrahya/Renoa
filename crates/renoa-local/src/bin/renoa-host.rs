@@ -239,11 +239,7 @@ fn backup_data_root(
     backup: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
     let data_directory = std::fs::canonicalize(data_directory)?;
-    let backup = if backup.exists() {
-        std::fs::canonicalize(backup)?
-    } else {
-        backup.to_path_buf()
-    };
+    let backup = resolve_destination(backup)?;
     if backup.starts_with(&data_directory) {
         return Err(std::io::Error::other(
             "the backup directory must not be inside the Host data directory",
@@ -252,7 +248,7 @@ fn backup_data_root(
     }
     if backup.exists() && std::fs::read_dir(&backup)?.next().is_some() {
         return Err(std::io::Error::other(format!(
-            "backup directory {} is not empty; keep exactly one backup per reset",
+            "backup directory {} is not empty; delete the previous backup first",
             backup.display()
         ))
         .into());
@@ -264,6 +260,31 @@ fn backup_data_root(
         backup.display()
     );
     Ok(())
+}
+
+/// Resolves one destination for the containment guard.
+///
+/// The result is absolute and every existing ancestor is canonicalized, so a
+/// relative path and a path reaching the data root through a symlink are both
+/// compared as the filesystem would resolve them.
+fn resolve_destination(path: &std::path::Path) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let absolute = std::path::absolute(path)?;
+    let mut ancestor = absolute.as_path();
+    let mut missing = Vec::new();
+    while !ancestor.exists() {
+        let name = ancestor.file_name().ok_or_else(|| {
+            std::io::Error::other("the backup directory has no existing ancestor")
+        })?;
+        missing.push(name.to_os_string());
+        ancestor = ancestor.parent().ok_or_else(|| {
+            std::io::Error::other("the backup directory has no existing ancestor")
+        })?;
+    }
+    let mut resolved = std::fs::canonicalize(ancestor)?;
+    for name in missing.iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolved)
 }
 
 fn copy_tree(

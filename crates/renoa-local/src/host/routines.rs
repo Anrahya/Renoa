@@ -119,7 +119,8 @@ pub enum RoutineError {
 
 impl LocalHost {
     /// Applies a management operation once, retaining its exact result for replay.
-    /// Specialists may manage themselves; Arcee may manage any Host specialist.
+    /// An agent manages its own routines; another agent's routines need the
+    /// actor's stored selection to contain `agent_manage`.
     /// # Errors
     /// Rejects invalid targets, stale revisions, conflicting replay, or storage failures.
     pub async fn manage_routine(

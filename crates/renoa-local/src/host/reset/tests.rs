@@ -9,7 +9,8 @@ use uuid::Uuid;
 use super::super::{HostInitialization, reset_host_data_root};
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, ModelProvider,
-    presets::SPECIALIST_PRESET_ID,
+    RoutineMutation, RoutineSchedule, RoutineSpec,
+    presets::{ARCEE_PRESET_ID, SPECIALIST_PRESET_ID},
 };
 
 const RETAINED_INTEGRATION: &str = "retained.integration";
@@ -65,6 +66,23 @@ fn database(root: &Path) -> std::path::PathBuf {
     root.join("data").join("host.sqlite3")
 }
 
+/// Writes one review binding chain for an agent, so the reset's delete set
+/// spans the tables that reference the agent root.
+fn seed_review_records(path: &Path, agent: crate::AgentId) {
+    let connection = Connection::open(path).expect("open Host catalog");
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO host_review_repositories(repository_id, agent_id, record_json)
+             VALUES (7, '{agent}', '{{}}');
+             INSERT INTO host_review_requests(id, repository_id, repository_json, pull_number,
+                base_sha, head_sha, admitted_at_ms)
+             VALUES ('00000000-0000-0000-0000-000000000001', 7, '{{}}', 1, 'a', 'b', 0);
+             INSERT INTO host_review_runs(request_id, terminal, record_json)
+             VALUES ('00000000-0000-0000-0000-000000000001', 0, '{{}}');"
+        ))
+        .expect("review binding fixture");
+}
+
 #[tokio::test]
 async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     let (directory, host) = fixture();
@@ -78,14 +96,31 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::new(
                 Uuid::new_v4(),
-                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
-                "Digest",
-            )
-            .with_instructions("Write the digest."),
+                AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
+                "Operator",
+            ),
             CancellationToken::new(),
         )
         .await
         .expect("agent");
+    host.manage_routine(
+        agent.id,
+        Uuid::new_v4(),
+        RoutineMutation::Create {
+            spec: RoutineSpec {
+                agent_id: agent.id,
+                name: "Digest".to_owned(),
+                prompt: "Write the digest.".to_owned(),
+                schedule: RoutineSchedule::Interval { hours: 12 },
+                enabled: true,
+            },
+        },
+        0,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("routine");
+    seed_review_records(&database(root), agent.id);
     let workspace = host.agent_workspace(agent.id).await.expect("workspace");
     fs::write(workspace.join("notes.md"), "kept\n").expect("workspace file");
     let sessions = root.join("data/sessions");
@@ -94,9 +129,11 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
 
     let report = reset_host_data_root(&root.join("data")).expect("reset");
 
-    assert!(report.total_rows() >= 2, "{report:?}");
+    assert!(report.total_rows() >= 6, "{report:?}");
     assert_eq!(report.removed_sessions, 1);
+    assert_eq!(report.removed_document_roots, 1);
     assert_eq!(report.preserved_workspaces, ["agent-workspaces"]);
+    assert!(!root.join("data/agents").join(agent.id.to_string()).exists());
     let path = database(root);
     assert_eq!(count(&path, "host_agents"), 0);
     assert_eq!(count(&path, "host_agent_tool_selections"), 0);
@@ -112,6 +149,7 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     let second = reset_host_data_root(&root.join("data")).expect("repeat reset");
     assert_eq!(second.total_rows(), 0);
     assert_eq!(second.removed_sessions, 0);
+    assert_eq!(second.removed_document_roots, 0);
     assert_eq!(count(&path, "mcp_integrations"), 1);
 }
 

@@ -4,7 +4,12 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::NodeStoreError;
 
-const SCHEMA_VERSION: u32 = 1;
+/// The ledger shape this runtime reads.
+///
+/// Version 2 renamed the task's `profile_id` column to `agent_id`, so a ledger
+/// written by an earlier runtime is refused by name instead of failing later on
+/// a missing column.
+const SCHEMA_VERSION: u32 = 2;
 
 pub(super) fn initialize(path: &Path) -> Result<(), NodeStoreError> {
     let connection = open_connection(path)?;
@@ -88,4 +93,41 @@ fn restrict_file_permissions(path: &Path) -> Result<(), std::io::Error> {
 #[cfg(not(unix))]
 fn restrict_file_permissions(_path: &Path) -> Result<(), std::io::Error> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::initialize;
+    use rusqlite::Connection;
+    use tempfile::tempdir;
+
+    #[test]
+    fn an_earlier_ledger_shape_is_refused_by_name() {
+        let directory = tempdir().expect("fixture");
+        let path = directory.path().join("node.sqlite");
+        initialize(&path).expect("current ledger");
+        {
+            let connection = Connection::open(&path).expect("open ledger");
+            connection
+                .execute_batch(
+                    "DROP TABLE host_node_tasks;
+                     CREATE TABLE host_node_tasks (
+                        task_id TEXT PRIMARY KEY,
+                        target TEXT NOT NULL,
+                        profile_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL UNIQUE,
+                        workspace TEXT NOT NULL
+                     );
+                     UPDATE host_node_metadata SET schema_version = 1;",
+                )
+                .expect("earlier ledger shape");
+        }
+        let error = initialize(&path).expect_err("an earlier ledger is refused");
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported node ledger schema 1"),
+            "{error}"
+        );
+    }
 }

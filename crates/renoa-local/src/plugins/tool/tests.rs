@@ -156,6 +156,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
 async fn extension_management_changes_only_its_bound_agent() {
     let fixture = ResearchedMcpFixture::new().await;
     let second_agent = test_agent_id(2);
+    crate::test_agents::insert_agent(fixture.mcp.path(), &second_agent.to_string());
     let second_tool = ManageTool::for_session(
         second_agent,
         fixture.manager.clone(),
@@ -218,6 +219,7 @@ impl ResearchedMcpFixture {
         let directory = tempdir().expect("temporary researched MCP fixture");
         let database = directory.path().join("host.sqlite3");
         catalog::initialize(&database).expect("initialize Host catalog");
+        crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
         let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
         let mcp_adapter = directory.path().join("mcp.mjs");
         write_mcp_adapter(&mcp_adapter);
@@ -274,6 +276,7 @@ async fn researched_mcp_public_headers_cannot_smuggle_a_credential_into_a_packag
     let directory = tempdir().expect("temporary researched MCP header fixture");
     let database = directory.path().join("host.sqlite3");
     catalog::initialize(&database).expect("initialize Host catalog");
+    crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
     let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
     let skills = test_skill_store(&database, directory.path());
     let manager = PluginManager::initialize(

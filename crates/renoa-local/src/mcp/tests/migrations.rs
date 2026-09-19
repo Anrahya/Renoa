@@ -109,6 +109,7 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .enable_agent_connection(&agent, "primary")
         .expect("enable connection");
@@ -257,6 +258,7 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .enable_agent_connection(&agent, "primary")
         .expect("enable connection");
@@ -319,6 +321,7 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
     store
         .publish_catalog(&snapshot("primary", ENDPOINT, &["echo"]))
         .expect("publish catalog");
+    crate::test_agents::insert_agent(store.path(), &agent);
     store
         .enable_agent_connection(&agent, "primary")
         .expect("enable connection");
@@ -394,6 +397,7 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
         .register_direct_connection("example", "primary", ENDPOINT)
         .expect("register existing connection");
     let existing = snapshot("primary", ENDPOINT, &["search"]);
+    crate::test_agents::insert_agent(store.path(), &agent_id(1).to_string());
     store
         .publish_and_enable_connection(&agent_id(1).to_string(), &existing)
         .expect("publish and attach existing catalog");

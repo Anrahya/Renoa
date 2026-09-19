@@ -19,6 +19,7 @@ struct HistoricalDigest<'a> {
 fn every_released_catalog_revision_remains_resolvable_after_upgrade() {
     let (_directory, store) = store();
     let agent = agent_id(1).to_string();
+    crate::test_agents::insert_agent(store.path(), &agent);
     for revision in [
         "mcp-client-node-v0.1.0",
         "mcp-client-node-v0.2.0",
