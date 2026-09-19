@@ -67,7 +67,6 @@ impl LocalHost {
             directory.join(TRACE_DATABASE),
             manifest.session_id,
             manifest.agent_id,
-            &manifest.profile,
         )
         .err()
         .map(|error| error.to_string());

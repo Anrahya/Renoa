@@ -58,7 +58,8 @@ pub use credential_file::credential_file_is_private;
 pub use host::agents::AgentRecord;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
-    AgentCreateRequest, AgentRoutine, AgentToolsUpdate, RenameAgent, derived_agent_id,
+    AgentCreateRequest, AgentRoutine, AgentToolsUpdate, RenameAgent, ResolvedAgentDefinition,
+    derived_agent_id,
 };
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
@@ -81,6 +82,7 @@ pub use plugins::{
     PluginMetadata, PluginNotice, PluginOAuthRegistration,
 };
 pub use profile::{AgentProfile, AgentProfileError, AgentProfileId};
+pub use renoa_kernel::AgentId;
 pub use runtime::{
     LocalRuntimeConfig, LocalRuntimeError, build_local_runtime, build_local_runtime_with_events,
 };

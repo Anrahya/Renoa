@@ -1,13 +1,20 @@
-use std::{env, error::Error, io, path::Path};
+use std::{env, error::Error, io, path::Path, sync::Arc};
 
-use renoa_agent::ContentBlock;
-use renoa_kernel::{AgentId, CommandId, SessionId};
+use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
+use renoa_kernel::AgentId;
 use renoa_local::{
-    LocalRuntimeConfig, LocalSession, LocalTurnOutcome, LocalWorkspace, ReasoningLevel,
-    build_local_runtime,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, LocalTurnOutcome, ModelProvider,
+    ReasoningLevel,
 };
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+struct Quiet;
+
+impl AgentEventSink for Quiet {
+    fn emit(&self, _: AgentEvent) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -18,34 +25,52 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn Error>> {
-    let arguments = env::args().skip(1).collect::<Vec<_>>();
+    let arguments: Vec<String> = env::args().skip(1).collect();
     if arguments.len() < 4 {
         return Err(io::Error::other(
-            "usage: renoa-local <database> <workspace> <new|session-id> <prompt>",
+            "usage: renoa-local <host-data-directory> <workspace> <new|session-id> <prompt>",
         )
         .into());
     }
-    let database = Path::new(&arguments[0]);
-    let workspace = LocalWorkspace::open(&arguments[1])?;
+    let data_directory = Path::new(&arguments[0]);
+    let workspace = Path::new(&arguments[1]);
     let prompt = arguments[3..].join(" ");
-    let mut runtime_config = LocalRuntimeConfig::for_alpha(
+    let provider = ModelProvider::from_id(&required_environment("RENOA_MODEL_PROVIDER")?)
+        .ok_or_else(|| io::Error::other("RENOA_MODEL_PROVIDER must be xai or opencode-go"))?;
+    let models = LocalModelConfiguration::new(
         required_environment("RENOA_MODEL_BRIDGE")?,
-        required_environment("RENOA_MODEL_PROVIDER")?,
+        vec![provider],
+        provider,
         required_environment("RENOA_MODEL")?,
         required_environment("RENOA_MODEL_AUTH_STORE")?,
-        &workspace,
+    );
+    let host = LocalHost::new(
+        data_directory,
+        models,
+        Vec::new(),
+        LocalHostAdapters::new(None),
     )?;
-    if let Some(reasoning) = optional_reasoning()? {
-        runtime_config = runtime_config.with_reasoning(reasoning);
+    let agent = AgentId::from_uuid(Uuid::parse_str(&required_environment("RENOA_AGENT_ID")?)?);
+    if host.agent_definition(agent).await?.is_none() {
+        return Err(io::Error::other(format!(
+            "agent {agent} is not provisioned in this Host; provision it with `renoa-host provision`"
+        ))
+        .into());
     }
-    let runtime = build_local_runtime(runtime_config, &workspace).await?;
-    let session = open_session(database, &arguments[2])?;
-    let cancellation = CancellationToken::new();
+    let session_uuid = match arguments[2].as_str() {
+        "new" => Uuid::new_v4(),
+        value => Uuid::parse_str(value)?,
+    };
+    let session = host
+        .ensure_agent_session(agent, workspace, session_uuid)
+        .await?;
+    if let Some(reasoning) = optional_reasoning()? {
+        session.set_reasoning(reasoning).await?;
+    }
     let execution = session.execute_turn(
-        CommandId::new(),
+        Uuid::new_v4(),
         vec![ContentBlock::text(prompt)],
-        &runtime,
-        cancellation.clone(),
+        Arc::new(Quiet),
     );
     tokio::pin!(execution);
     let outcome = tokio::select! {
@@ -53,12 +78,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
         result = &mut execution => result?,
         signal = tokio::signal::ctrl_c() => {
             signal?;
-            cancellation.cancel();
+            session.cancel_active_turn()?;
             execution.await?
         }
     };
 
-    println!("session_id={}", session.session_id());
+    println!("session_id={}", session.id());
     report(outcome)
 }
 
@@ -75,16 +100,6 @@ fn report(outcome: LocalTurnOutcome) -> Result<(), Box<dyn Error>> {
         }
         _ => Err(io::Error::other("the local Host returned an unsupported outcome").into()),
     }
-}
-
-fn open_session(database: &Path, value: &str) -> Result<LocalSession, Box<dyn Error>> {
-    if value == "new" {
-        let agent_id = AgentId::new();
-        let session_id = SessionId::new();
-        return Ok(LocalSession::create(database, agent_id, session_id)?);
-    }
-    let session_id = SessionId::from_uuid(Uuid::parse_str(value)?);
-    Ok(LocalSession::load(database, session_id)?)
 }
 
 fn required_environment(name: &str) -> Result<String, Box<dyn Error>> {

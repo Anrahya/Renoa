@@ -4,14 +4,15 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+use renoa_kernel::AgentId;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    AgentProfile, AgentProfileId, LocalHistoryEntry, LocalHostError, LocalSession, LocalWorkspace,
-    ModelChoice, ModelProvider, ReasoningLevel,
+    LocalHistoryEntry, LocalHostError, LocalSession, LocalWorkspace, ModelChoice, ModelProvider,
+    ReasoningLevel,
     host::{
-        HostConfig, RuntimeRequest, discover_profile_models, initial_reasoning, require_model,
+        HostConfig, RuntimeRequest, discover_models_for, initial_reasoning, require_model,
         resolve_runtime, selected_model_by_selection_id,
     },
     selection::{RuntimeSelection, append_selection},
@@ -20,10 +21,10 @@ use crate::{
 
 mod execution;
 
-/// One durable Agent session assembled from an exact Host profile.
+/// One durable Agent session assembled from one canonical agent definition.
 pub struct AgentSession {
     id: Uuid,
-    profile_id: AgentProfileId,
+    agent: AgentId,
     host: Arc<HostConfig>,
     kernel: LocalSession,
     workspace: PathBuf,
@@ -70,7 +71,7 @@ pub struct AgentSessionConfiguration {
 impl AgentSession {
     pub(crate) fn new(
         id: Uuid,
-        profile_id: AgentProfileId,
+        agent: AgentId,
         host: Arc<HostConfig>,
         storage: AgentSessionStorage,
         models: Vec<ModelChoice>,
@@ -78,7 +79,7 @@ impl AgentSession {
     ) -> Self {
         Self {
             id,
-            profile_id,
+            agent,
             host,
             kernel: storage.kernel,
             workspace: storage.workspace,
@@ -102,13 +103,8 @@ impl AgentSession {
     }
 
     #[must_use]
-    pub const fn profile_id(&self) -> &AgentProfileId {
-        &self.profile_id
-    }
-
-    #[must_use]
-    pub const fn agent_id(&self) -> renoa_kernel::AgentId {
-        self.kernel.agent_id()
+    pub const fn agent_id(&self) -> AgentId {
+        self.agent
     }
 
     /// Returns the complete kernel-backed transcript for a loading surface.
@@ -135,7 +131,7 @@ impl AgentSession {
         })
     }
 
-    /// Refreshes this profile's provider catalog without changing the active selection.
+    /// Refreshes this agent's provider catalog without changing the active selection.
     ///
     /// # Errors
     ///
@@ -147,8 +143,8 @@ impl AgentSession {
             let state = self.state()?;
             (state.provider, state.model.clone(), state.reasoning)
         };
-        let profile = self.profile().await?;
-        let models = discover_profile_models(&self.host, &profile).await?;
+        let definition = self.definition().await?;
+        let models = discover_models_for(&self.host, definition.provider_restriction()).await?;
         let model = require_model(&models, provider, &model_id, "active")?;
         if !model.reasoning_levels().contains(&reasoning) {
             return Err(LocalHostError::Configuration(format!(
@@ -264,15 +260,15 @@ impl AgentSession {
         if current_selection == model_id {
             return Ok(());
         }
-        let profile = self.profile().await?;
-        let models = discover_profile_models(&self.host, &profile).await?;
+        let definition = self.definition().await?;
+        let models = discover_models_for(&self.host, definition.provider_restriction()).await?;
         let model = if let Some(model) = selected_model_by_selection_id(&models, model_id) {
             model.clone()
         } else {
             let mut matching = models.iter().filter(|model| model.id() == model_id);
             let model = matching.next().ok_or_else(|| {
                 LocalHostError::InvalidRequest(format!(
-                    "model `{model_id}` is not available for this agent profile"
+                    "model `{model_id}` is not available for this agent"
                 ))
             })?;
             if matching.next().is_some() {
@@ -367,11 +363,11 @@ impl AgentSession {
         model_id: String,
     ) -> Result<(), LocalHostError> {
         let workspace = LocalWorkspace::open(&self.workspace)?;
-        let profile = self.profile().await?;
+        let definition = self.definition().await?;
         resolve_runtime(
             &self.host,
             RuntimeRequest {
-                profile: &profile,
+                definition: &definition,
                 session_id: renoa_kernel::SessionId::from_uuid(self.id),
                 command_id: None,
                 model,
@@ -392,8 +388,10 @@ impl AgentSession {
         .await
     }
 
-    async fn profile(&self) -> Result<AgentProfile, LocalHostError> {
-        crate::host::bots::resolve_profile(&self.host, &self.profile_id).await
+    pub(crate) async fn definition(
+        &self,
+    ) -> Result<crate::host::definition::ResolvedAgentDefinition, LocalHostError> {
+        crate::host::definition::resolve_definition(&self.host, self.agent).await
     }
 
     fn state(&self) -> Result<MutexGuard<'_, SessionState>, LocalHostError> {

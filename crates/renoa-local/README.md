@@ -87,12 +87,19 @@ export RENOA_MODEL_REASONING='high' # optional: off|minimal|low|medium|high|xhig
 export RENOA_MCP_ADAPTER='/absolute/path/to/adapters/mcp-client-node/dist/src/main.js'
 export RENOA_MCP_REGISTRY_ADAPTER='/absolute/path/to/adapters/mcp-registry-node/dist/src/main.js'
 
+export RENOA_AGENT_ID='<provisioned agent uuid>'
+
 cargo run -p renoa-local -- \
-  /absolute/path/to/kernel.sqlite \
+  /absolute/path/to/host-data-directory \
   /absolute/path/to/workspace \
   new \
   'Read the project, make the requested change, and run its build.'
 ```
+
+The Host data directory is the same root the Host serves, and the agent must
+already exist there: provision it with `renoa-host provision <config.json>` or
+create it from a surface. The command fails closed when the configured agent is
+absent, and model and reasoning remain session settings.
 
 The command prints the stable session ID. Pass that ID instead of `new` to add
 the next turn to the same durable conversation. `Ctrl-C` requests ordered

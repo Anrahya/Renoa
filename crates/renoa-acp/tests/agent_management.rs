@@ -3,14 +3,23 @@ use std::{
     process::{Command, Output},
 };
 
+use renoa_local::{
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+};
 use serde_json::{Value, json};
 use tempfile::tempdir;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
-fn run(data: &Path, arguments: &[&str]) -> Output {
+const PRESET_ID: &str = "renoa.coding.alpha.v1";
+
+fn run(data: &Path, configured_agent: &str, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
         .env_clear()
         .env("PATH", std::env::var_os("PATH").expect("test PATH"))
         .env("RENOA_DATA_DIR", data)
+        .env("RENOA_AGENT_ID", configured_agent)
         .env("RENOA_MODEL_BRIDGE", data.join("model.mjs"))
         .env("RENOA_MODEL_PROVIDER", "xai")
         .env("RENOA_MODEL", "grok-test")
@@ -30,24 +39,61 @@ fn result(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("management JSON")
 }
 
+/// Provisions one canonical agent through the real Host path.
+fn provision(data: &Path, name: &str) -> String {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("provisioning runtime");
+    let agent_id = runtime.block_on(async {
+        let host = LocalHost::new(
+            data,
+            LocalModelConfiguration::new(
+                data.join("model.mjs"),
+                vec![ModelProvider::Xai],
+                ModelProvider::Xai,
+                "grok-test",
+                data.join("auth.sqlite"),
+            ),
+            Vec::new(),
+            LocalHostAdapters::default(),
+        )
+        .expect("provisioning Host");
+        host.create_agent(
+            AgentCreator::System {
+                component: "management-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(PRESET_ID).expect("alpha preset id"),
+                name,
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("provision agent")
+        .id
+    });
+    agent_id.to_string()
+}
+
 #[test]
-fn separate_cli_processes_manage_one_durable_roster_without_execution_dependencies() {
+fn separate_cli_processes_read_one_durable_roster_without_execution_dependencies() {
     let directory = tempdir().expect("Host directory");
     let data = directory.path();
-    let parent = "66b9dba1-a904-47c8-82a2-a6861d1bf7bc";
-    let child = "70e49c48-f3c6-48c8-be78-5b7597618a2e";
-    let before = result(&run(data, &["list"]));
-    let record = result(&run(data, &["ensure", parent, "Operator"]));
-    assert_eq!(record["id"], parent);
-    assert_eq!(result(&run(data, &["ensure", parent, "Operator"])), record);
-    assert!(!run(data, &["ensure", parent, "Different"]).status.success());
-    let specialist = result(&run(data, &["ensure", child, "News", parent]));
-    assert_eq!(specialist["created_by"], parent);
-    assert_eq!(result(&run(data, &["show", child])), specialist);
-    let after = result(&run(data, &["list"]));
-    assert_eq!(before["host_id"], after["host_id"]);
-    assert_eq!(after["agents"].as_array().expect("roster").len(), 2);
-    assert_eq!(specialist["profile"], json!(renoa_local::ALPHA_PROFILE_ID));
+    let operator = provision(data, "Operator");
+    let news = provision(data, "News");
+    let listed = result(&run(data, &operator, &["list"]));
+    assert_eq!(listed["agents"].as_array().expect("roster").len(), 2);
+    assert_eq!(
+        listed["host_id"],
+        result(&run(data, &operator, &["list"]))["host_id"]
+    );
+    let shown = result(&run(data, &operator, &["show", &news]));
+    assert_eq!(shown["id"], json!(news));
+    assert_eq!(shown["name"], json!("News"));
+    assert_eq!(shown["preset_id"], json!(PRESET_ID));
     assert!(!data.join("model.mjs").exists());
 }
 
@@ -61,13 +107,12 @@ fn cli_session_creation_retries_reopen_the_same_agent_and_session() {
     let workspace = data.join("workspace");
     std::fs::create_dir(&workspace).expect("workspace");
     let workspace = workspace.to_str().expect("workspace path");
-    let agent = "92a24461-47f1-4e6c-a709-5fb4f03a7d10";
+    let agent = provision(data, "Operator");
     let session = "3c8b3b62-ad4d-4411-ac20-f3299742fb9e";
-    result(&run(data, &["ensure", agent, "Operator"]));
-    let created = result(&run(data, &["session", agent, session, workspace]));
+    let created = result(&run(data, &agent, &["session", &agent, session, workspace]));
     assert_eq!(created, json!({"agent_id": agent, "session_id": session}));
     assert_eq!(
-        result(&run(data, &["session", agent, session, workspace])),
+        result(&run(data, &agent, &["session", &agent, session, workspace])),
         created
     );
 }

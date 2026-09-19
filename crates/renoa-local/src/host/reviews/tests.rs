@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    AgentProfile, AgentProfileId, AgentRecord, BotRecipe, BotRecord, ModelProvider,
-    host::HostInitialization,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentProfile, BotRecipe,
+    BotRecord, ModelProvider, host::HostInitialization,
 };
 use ring::hmac;
 use std::{fs, path::Path};
@@ -41,15 +41,22 @@ async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
     .expect("model boundary");
     fs::write(directory.path().join("auth.sqlite"), "").expect("auth boundary");
     let host = host(directory.path());
-    let operator = AgentId::new();
-    host.ensure_agent(AgentRecord {
-        id: operator,
-        profile: AgentProfileId::new(crate::ARCEE_PROFILE_ID).expect("profile"),
-        name: "Arcee".to_owned(),
-        created_by: None,
-    })
-    .await
-    .expect("operator");
+    let operator = host
+        .create_agent(
+            AgentCreator::System {
+                component: "review-fixture".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::ARCEE_PRESET_ID).expect("preset"),
+                "Arcee",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("operator")
+        .id;
     let reviewer = AgentId::new();
     host.ensure_bot(BotRecord {
         id: reviewer,

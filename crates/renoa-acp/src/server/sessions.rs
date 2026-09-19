@@ -58,7 +58,7 @@ impl Server {
         let session = self
             .config
             .host()
-            .create_session(self.config.profile_id(), &request.cwd)
+            .ensure_agent_session(self.config.agent_id(), &request.cwd, Uuid::new_v4())
             .await?;
         let id = session.id().to_string();
         let config_options = config_options(&session)?;

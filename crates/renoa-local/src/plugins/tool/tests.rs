@@ -14,7 +14,7 @@ mod transactional;
 use super::{ManageTool, TOOL_NAME};
 use crate::plugins::tests::test_skill_store;
 use crate::{
-    AgentProfileId,
+    AgentId,
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
     plugins::PluginManager,
@@ -52,7 +52,7 @@ async fn an_agent_researched_mcp_uses_the_same_install_and_hot_load_path() {
     assert_eq!(
         fixture
             .mcp
-            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read hot-loaded researched tools")
             .len(),
         1
@@ -124,7 +124,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     assert!(
         fixture
             .mcp
-            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read tools after disconnect")
             .is_empty()
     );
@@ -145,7 +145,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
     assert_eq!(
         fixture
             .mcp
-            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("read tools after re-enable")
             .len(),
         1
@@ -155,8 +155,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
 #[tokio::test]
 async fn extension_management_changes_only_its_bound_profile() {
     let fixture = ResearchedMcpFixture::new().await;
-    let second_profile =
-        AgentProfileId::new("renoa.test.second.v1").expect("valid second profile id");
+    let second_profile = AgentId::new("renoa.test.second.v1").expect("valid second profile id");
     let second_tool = ManageTool::for_session(
         second_profile.clone(),
         fixture.manager.clone(),
@@ -178,7 +177,7 @@ async fn extension_management_changes_only_its_bound_profile() {
     assert_eq!(
         fixture
             .mcp
-            .profile_tool_summaries(second_profile.as_str())
+            .agent_tool_summaries(second_profile.as_str())
             .expect("read second profile registry")
             .len(),
         1
@@ -191,14 +190,14 @@ async fn extension_management_changes_only_its_bound_profile() {
     assert!(
         fixture
             .mcp
-            .profile_tool_summaries(second_profile.as_str())
+            .agent_tool_summaries(second_profile.as_str())
             .expect("read second profile after disconnect")
             .is_empty()
     );
     assert_eq!(
         fixture
             .mcp
-            .profile_tool_summaries(crate::ALPHA_PROFILE_ID)
+            .agent_tool_summaries(crate::ALPHA_PROFILE_ID)
             .expect("Alpha attachment remains unchanged")
             .len(),
         1

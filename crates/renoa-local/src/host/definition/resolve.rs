@@ -22,7 +22,7 @@ const MAX_PROJECT_INSTRUCTIONS_BYTES: usize = 32 * 1024;
 const MAX_PROJECT_INSTRUCTIONS_BYTES_U64: u64 = 32 * 1024;
 
 /// One agent's definition plus the state only the runtime needs.
-pub(crate) struct ResolvedAgentDefinition {
+pub struct ResolvedAgentDefinition {
     definition: AgentDefinition,
     documents: Option<AgentDocumentStore>,
 }
@@ -69,7 +69,7 @@ impl ResolvedAgentDefinition {
     ///
     /// Returns an error when an enabled document or the workspace project
     /// instructions cannot be read safely.
-    pub(crate) fn system_prompt(&self, workspace: &Path) -> Result<String, AgentDefinitionError> {
+    pub fn system_prompt(&self, workspace: &Path) -> Result<String, AgentDefinitionError> {
         let base = &self.definition.operational.instructions;
         let documents = self
             .documents

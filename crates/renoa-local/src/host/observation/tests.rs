@@ -5,9 +5,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::{
-    AgentProfileId, AgentRecord, BotRecipe, BotRecord, LocalHost, LocalHostAdapters,
-    LocalModelConfiguration, ModelProvider, ReasoningLevel, RoutineMutation, RoutineSchedule,
-    RoutineSpec, alpha_profile, host_storage::create_session_storage, selection::RuntimeSelection,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, BotRecipe, BotRecord,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
+    RoutineMutation, RoutineSchedule, RoutineSpec, alpha_profile,
+    host_storage::create_session_storage, selection::RuntimeSelection,
 };
 
 fn host(root: &Path) -> LocalHost {
@@ -26,23 +27,29 @@ fn host(root: &Path) -> LocalHost {
     .expect("Host without model startup")
 }
 
-async fn agent(host: &LocalHost) -> AgentRecord {
-    host.ensure_agent(AgentRecord {
-        id: AgentId::new(),
-        profile: AgentProfileId::new(crate::ALPHA_PROFILE_ID).expect("profile"),
-        name: "Operator".to_owned(),
-        created_by: None,
-    })
+async fn agent(host: &LocalHost) -> AgentId {
+    host.create_agent(
+        AgentCreator::System {
+            component: "observation-fixture".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new(crate::presets::ALPHA_PRESET_ID).expect("preset"),
+            "Operator",
+        ),
+        CancellationToken::new(),
+    )
     .await
     .expect("agent")
+    .id
 }
 
-fn session(root: &Path, agent: &AgentRecord) -> (Uuid, Kernel) {
+fn session(root: &Path, agent_id: AgentId) -> (Uuid, Kernel) {
     let id = Uuid::new_v4();
     create_session_storage(
         &root.join("sessions"),
-        agent.profile.clone(),
-        agent.id,
+        agent_id,
         SessionId::from_uuid(id),
         root.to_owned(),
         &RuntimeSelection {
@@ -66,7 +73,7 @@ async fn observes_owned_sessions_without_loading_models_or_repairing_runtime_log
     let root = tempfile::tempdir().expect("root");
     let host = host(root.path());
     let agent = agent(&host).await;
-    let (id, owner) = session(root.path(), &agent);
+    let (id, owner) = session(root.path(), agent);
     let runtime_file = root
         .path()
         .join("sessions")
@@ -125,7 +132,7 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
     let bot = host
         .ensure_bot(BotRecord {
             id: AgentId::new(),
-            created_by: creator.id,
+            created_by: creator,
             recipe: BotRecipe {
                 name: "X Desk".to_owned(),
                 instructions: "PRIVATE INSTRUCTIONS".to_owned(),
@@ -163,8 +170,8 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
     assert_eq!(snapshot.routines.len(), 1);
     assert_eq!(snapshot.routines[0].revision, routine.revision);
     assert_eq!(
-        snapshot.connections[0].selected_by_profiles,
-        vec![format!("renoa.bot.{}", bot.id)]
+        snapshot.connections[0].selected_by_agents,
+        vec![bot.id.to_string()]
     );
     assert!(snapshot.connections[0].catalog_available);
     let encoded = serde_json::to_string(&snapshot).expect("json");
@@ -199,14 +206,12 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
 }
 
 #[tokio::test]
-async fn isolates_corrupt_sessions_and_does_not_import_legacy_agents() {
+async fn reports_sessions_without_an_agent_row_and_isolates_corrupt_metadata() {
     let root = tempfile::tempdir().expect("root");
-    let host = host(root.path());
-    let agent = agent(&host).await;
-    let (id, _owner) = session(root.path(), &agent);
+    let _host = host(root.path());
+    let missing_agent = AgentId::new();
+    let (id, _owner) = session(root.path(), missing_agent);
     let db = catalog::open_verified(&root.path().join(catalog::HOST_DATABASE)).expect("catalog");
-    db.execute("DELETE FROM host_agents", [])
-        .expect("legacy session");
     let bad = root
         .path()
         .join("sessions")
@@ -218,22 +223,26 @@ async fn isolates_corrupt_sessions_and_does_not_import_legacy_agents() {
         .snapshot()
         .await
         .expect("partial snapshot");
-    assert_eq!(snapshot.agents.len(), 1);
+    assert!(snapshot.agents.is_empty());
     assert_eq!(snapshot.sessions.len(), 2);
+    let orphan = snapshot
+        .sessions
+        .iter()
+        .find(|s| s.id == id)
+        .expect("session without an agent row");
+    assert_eq!(
+        orphan.agent_id.map(|id| id.to_string()),
+        Some(missing_agent.to_string())
+    );
     assert!(matches!(
-        snapshot
-            .sessions
-            .iter()
-            .find(|s| s.id == id)
-            .expect("valid session")
-            .state,
-        ObservedSessionState::Available { .. }
+        orphan.state,
+        ObservedSessionState::Unavailable { .. }
     ));
     assert!(
         snapshot
             .sessions
             .iter()
-            .any(|s| matches!(s.state, ObservedSessionState::Unavailable { .. }))
+            .all(|s| matches!(s.state, ObservedSessionState::Unavailable { .. }))
     );
     assert_eq!(
         db.query_row("SELECT count(*) FROM host_agents", [], |r| r
@@ -268,7 +277,7 @@ async fn review_inventory_distinguishes_queued_and_incomplete_without_hydrating_
     let reviewer = host
         .ensure_bot(BotRecord {
             id: AgentId::new(),
-            created_by: agent.id,
+            created_by: agent,
             recipe: BotRecipe {
                 name: "Soundwave".to_owned(),
                 instructions: "Review code".to_owned(),

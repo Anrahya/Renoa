@@ -23,7 +23,8 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use resolve::{ResolvedAgentDefinition, resolve_definition};
+pub use resolve::ResolvedAgentDefinition;
+pub(crate) use resolve::resolve_definition;
 
 /// The largest page a caller may request when listing agents.
 pub(in crate::host) const MAX_AGENT_PAGE: usize = 20;
@@ -121,6 +122,18 @@ pub fn derived_agent_id(operation_id: Uuid) -> AgentId {
 }
 
 impl LocalHost {
+    /// Resolves one agent's definition for runtime composition.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown agent, corrupt stored state, or an
+    /// unreadable document root.
+    pub async fn resolve_definition(
+        &self,
+        id: AgentId,
+    ) -> Result<ResolvedAgentDefinition, LocalHostError> {
+        resolve_definition(&self.config, id).await
+    }
+
     /// Reads one canonical agent definition.
     ///
     /// # Errors
@@ -210,6 +223,66 @@ impl LocalHost {
             Ok(selection)
         })
         .await?
+    }
+
+    /// Reads one agent's stored tool selection.
+    ///
+    /// # Errors
+    /// Returns catalog storage errors, including a missing selection row.
+    pub async fn agent_tool_selection(
+        &self,
+        id: AgentId,
+    ) -> Result<AgentToolSelection, LocalHostError> {
+        let database = self.config.database.clone();
+        tokio::task::spawn_blocking(move || {
+            let connection = catalog::open_verified(&database)?;
+            Ok(store::read_selection(&connection, id)?)
+        })
+        .await?
+    }
+
+    /// Adds one existing Host connection to an agent.
+    ///
+    /// # Errors
+    /// Rejects unknown agents or connections and storage failures.
+    pub async fn enable_agent_connection(
+        &self,
+        id: AgentId,
+        connection_id: &str,
+    ) -> Result<BTreeSet<String>, LocalHostError> {
+        if connection_id.is_empty() {
+            return Err(LocalHostError::InvalidRequest(
+                "connection id must not be empty".to_owned(),
+            ));
+        }
+        let database = self.config.database.clone();
+        let connection_id = connection_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let mut catalog_connection = catalog::open_verified(&database)?;
+            let transaction = catalog_connection
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(catalog_error)?;
+            if !store::exists(&transaction, id)? {
+                return Err(LocalHostError::AgentNotFound(id));
+            }
+            let mut selected = store::read_connections(&transaction, id)?;
+            selected.insert(connection_id);
+            store::set_connections(&transaction, id, &selected)?;
+            transaction.commit().map_err(catalog_error)?;
+            Ok(selected)
+        })
+        .await?
+    }
+
+    /// Fails unless one agent exists in this Host.
+    ///
+    /// # Errors
+    /// Returns `AgentNotFound` for an unknown agent or catalog storage errors.
+    pub(crate) async fn require_agent(&self, id: AgentId) -> Result<(), LocalHostError> {
+        if self.agent_definition(id).await?.is_none() {
+            return Err(LocalHostError::AgentNotFound(id));
+        }
+        Ok(())
     }
 
     /// Renames one agent. An agent may rename itself, and an agent whose

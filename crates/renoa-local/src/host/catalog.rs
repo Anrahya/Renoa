@@ -128,11 +128,11 @@ const SCHEMA: &str = "
         PRIMARY KEY (connection_id, source_index)
     ) STRICT;
 
-    CREATE TABLE profile_mcp_connections (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+    CREATE TABLE host_agent_mcp_connections (
+        agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
         connection_id TEXT NOT NULL
             REFERENCES mcp_connections(connection_id) ON DELETE RESTRICT,
-        PRIMARY KEY (profile_id, connection_id)
+        PRIMARY KEY (agent_id, connection_id)
     ) STRICT;
 
     CREATE TABLE mcp_oauth_flows (
@@ -181,8 +181,8 @@ const SCHEMA: &str = "
         UNIQUE (skill_digest, name)
     ) STRICT;
 
-    CREATE TABLE profile_skill_bindings (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+    CREATE TABLE agent_skill_bindings (
+        agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
         scope_kind TEXT NOT NULL CHECK (
             scope_kind IN ('global', 'workspace', 'plugin')
         ),
@@ -197,11 +197,11 @@ const SCHEMA: &str = "
             OR
             (scope_kind = 'workspace' AND length(workspace) > 0)
         ),
-        PRIMARY KEY (profile_id, source_id, skill_name)
+        PRIMARY KEY (agent_id, source_id, skill_name)
     ) STRICT;
 
-    CREATE TABLE skill_source_rejections (
-        profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
+    CREATE TABLE agent_skill_source_rejections (
+        agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
         scope_kind TEXT NOT NULL CHECK (
             scope_kind IN ('global', 'workspace', 'plugin')
         ),
@@ -214,7 +214,7 @@ const SCHEMA: &str = "
             OR
             (scope_kind = 'workspace' AND length(workspace) > 0)
         ),
-        PRIMARY KEY (profile_id, source_id, entry_name)
+        PRIMARY KEY (agent_id, source_id, entry_name)
     ) STRICT;
 
     CREATE TABLE session_skills (
@@ -451,7 +451,7 @@ fn initialize_bots(transaction: &rusqlite::Transaction<'_>) -> Result<(), HostCa
     transaction.execute_batch(
         "CREATE TABLE IF NOT EXISTS host_bots (
         agent_id TEXT PRIMARY KEY REFERENCES host_agents(agent_id),
-        profile_id TEXT NOT NULL UNIQUE,
+        agent_id TEXT NOT NULL UNIQUE,
         record_json TEXT NOT NULL CHECK(json_valid(record_json))
     ) STRICT;
     UPDATE host_metadata SET schema_version = 15 WHERE singleton = 1;",

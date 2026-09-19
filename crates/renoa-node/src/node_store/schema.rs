@@ -16,7 +16,7 @@ pub(super) fn initialize(path: &Path) -> Result<(), NodeStoreError> {
          CREATE TABLE IF NOT EXISTS host_node_tasks (
             task_id TEXT PRIMARY KEY,
             target TEXT NOT NULL,
-            profile_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
             session_id TEXT NOT NULL UNIQUE,
             workspace TEXT NOT NULL
          );

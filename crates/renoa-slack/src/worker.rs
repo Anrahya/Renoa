@@ -206,11 +206,6 @@ impl Worker {
             session.cancel_before_execution(work.request_id, content.as_deref())?
         } else {
             let agent_id = AgentId::from_uuid(self.store.session_agent(work.session_id).await?);
-            let agent = self
-                .host
-                .agent(agent_id)
-                .await?
-                .ok_or(renoa_local::LocalHostError::AgentNotFound(agent_id))?;
             let workspace = if agent_id == self.agent_id {
                 self.workspace.clone()
             } else {
@@ -218,7 +213,7 @@ impl Worker {
             };
             self.host
                 .cancel_before_execution(
-                    &agent.profile,
+                    agent_id,
                     &workspace,
                     work.session_id,
                     work.request_id,

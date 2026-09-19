@@ -11,7 +11,7 @@ use crate::mcp::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
     McpCatalogStore, McpCatalogTool,
 };
-use crate::{ALPHA_PROFILE_ID, AgentProfileId};
+use crate::{ALPHA_PROFILE_ID, AgentId};
 
 #[test]
 fn registry_tool_names_are_small_and_stable() {
@@ -103,7 +103,7 @@ async fn live_registry_tools_read_only_their_profile_attachments() {
     let directory = tempdir().expect("temporary Host catalog");
     let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("initialize Host catalog");
-    let second = AgentProfileId::new("renoa.test.second.v1").expect("valid second profile id");
+    let second = AgentId::new("renoa.test.second.v1").expect("valid second profile id");
     let alpha_search = SearchTool::new(alpha_id(), store.clone());
     let second_search = SearchTool::new(second.clone(), store.clone());
     store
@@ -195,8 +195,8 @@ async fn schema_loading_fails_instead_of_truncating_an_exact_large_schema() {
     assert!(text.contains("65536"));
 }
 
-fn alpha_id() -> AgentProfileId {
-    AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id")
+fn alpha_id() -> AgentId {
+    AgentId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id")
 }
 
 async fn run_search(tool: &SearchTool, query: &str) -> Value {

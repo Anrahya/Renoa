@@ -8,18 +8,18 @@ use crate::skills::SkillError;
 impl SkillStore {
     pub(crate) fn plugin_source_reports(
         &self,
-        profile_id: &str,
+        agent_id: &str,
     ) -> Result<Vec<SkillSourceReport>, SkillError> {
         let connection = self.connection()?;
         let mut reports = BTreeMap::<String, SkillComponentReport>::new();
 
         let mut accepted = connection.prepare(
             "SELECT source_id, skill_name
-             FROM profile_skill_bindings
-             WHERE profile_id = ?1 AND scope_kind = 'plugin'
+             FROM agent_skill_bindings
+             WHERE agent_id = ?1 AND scope_kind = 'plugin'
              ORDER BY source_id, skill_name",
         )?;
-        let rows = accepted.query_map([profile_id], |row| {
+        let rows = accepted.query_map([agent_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         for row in rows {
@@ -34,11 +34,11 @@ impl SkillStore {
 
         let mut rejected = connection.prepare(
             "SELECT source_id, entry_name, reason
-             FROM skill_source_rejections
-             WHERE profile_id = ?1 AND scope_kind = 'plugin'
+             FROM agent_skill_source_rejections
+             WHERE agent_id = ?1 AND scope_kind = 'plugin'
              ORDER BY source_id, entry_name, reason",
         )?;
-        let rows = rejected.query_map(params![profile_id], |row| {
+        let rows = rejected.query_map(params![agent_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

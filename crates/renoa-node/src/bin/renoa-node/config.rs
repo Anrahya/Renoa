@@ -1,14 +1,12 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use renoa_control::{DeviceCredential, DeviceCredentials, DeviceId};
-use renoa_local::{
-    ALPHA_PROFILE_ID, ARCEE_PROFILE_ID, AgentProfile, AgentProfileId, LocalHost, LocalHostAdapters,
-    LocalModelConfiguration, ModelProvider, alpha_profile, arcee_profile,
-};
+use renoa_kernel::AgentId;
+use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
 use renoa_node::HostTarget;
 use renoa_protocol::TargetRef;
 use serde::Deserialize;
@@ -63,7 +61,7 @@ struct AdapterDocument {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TargetDocument {
     target: String,
-    profile: AgentProfileId,
+    agent_id: Uuid,
     session_id: Uuid,
     workspace: PathBuf,
 }
@@ -91,11 +89,9 @@ pub(crate) fn load(
         .map_err(|error| {
             ServiceError::Configuration(format!("invalid coordinator endpoint: {error}"))
         })?;
-    let profile_ids = profile_ids_for(&config.targets)?;
     validate_target_uniqueness(&config.targets)?;
     let targets = build_targets(config.targets)?;
     let state_directory = prepare_state_directory(state_directory)?;
-    let profiles = build_profiles(profile_ids, &state_directory)?;
 
     let host = Arc::new(LocalHost::new(
         state_directory.join("host"),
@@ -106,7 +102,7 @@ pub(crate) fn load(
             config.model.default_model,
             &config.model.credential_store,
         ),
-        profiles,
+        Vec::new(),
         LocalHostAdapters::new(config.adapters.mcp.as_deref())
             .with_mcp_registry(config.adapters.mcp_registry.as_deref())
             .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref()),
@@ -179,47 +175,12 @@ fn prepare_state_directory(path: &Path) -> Result<PathBuf, ServiceError> {
     Ok(path)
 }
 
-fn profile_ids_for(targets: &[TargetDocument]) -> Result<Vec<AgentProfileId>, ServiceError> {
+fn validate_target_uniqueness(targets: &[TargetDocument]) -> Result<(), ServiceError> {
     if targets.is_empty() {
         return Err(ServiceError::Configuration(
             "at least one Host target must be configured".to_owned(),
         ));
     }
-    let profile_ids = targets
-        .iter()
-        .map(|target| target.profile.clone())
-        .collect::<BTreeSet<_>>();
-    for profile_id in &profile_ids {
-        if !matches!(profile_id.as_str(), ALPHA_PROFILE_ID | ARCEE_PROFILE_ID) {
-            return Err(ServiceError::Configuration(format!(
-                "node target references unsupported built-in profile `{profile_id}`"
-            )));
-        }
-    }
-    Ok(profile_ids.into_iter().collect())
-}
-
-fn build_profiles(
-    profile_ids: Vec<AgentProfileId>,
-    state_directory: &Path,
-) -> Result<Vec<AgentProfile>, ServiceError> {
-    let mut profiles = Vec::with_capacity(profile_ids.len());
-    for profile_id in profile_ids {
-        match profile_id.as_str() {
-            ALPHA_PROFILE_ID => profiles.push(alpha_profile()),
-            ARCEE_PROFILE_ID => profiles
-                .push(arcee_profile(state_directory).map_err(renoa_local::LocalHostError::from)?),
-            _ => {
-                return Err(ServiceError::Configuration(format!(
-                    "node target references unsupported built-in profile `{profile_id}`"
-                )));
-            }
-        }
-    }
-    Ok(profiles)
-}
-
-fn validate_target_uniqueness(targets: &[TargetDocument]) -> Result<(), ServiceError> {
     let mut target_names = HashSet::new();
     let mut sessions = HashSet::new();
     for target in targets {
@@ -245,7 +206,7 @@ fn build_targets(targets: Vec<TargetDocument>) -> Result<Vec<HostTarget>, Servic
         .map(|target| {
             HostTarget::new(
                 &TargetRef::new(target.target),
-                target.profile,
+                AgentId::from_uuid(target.agent_id),
                 target.session_id,
                 target.workspace,
             )
@@ -303,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn config_is_versioned_strict_and_references_known_profiles() {
+    fn config_is_versioned_strict_and_targets_one_configured_agent() {
         let files = tempfile::tempdir().expect("temporary directory");
         let bridge = files.path().join("bridge.mjs");
         let credential_store = files.path().join("model.sqlite");
@@ -311,6 +272,7 @@ mod tests {
         std::fs::write(&bridge, "").expect("write bridge");
         std::fs::write(&credential_store, "").expect("write model store");
         std::fs::create_dir(&workspace).expect("create workspace");
+        let agent_id = Uuid::new_v4();
         let base = json!({
             "schemaVersion": 1,
             "endpoint": "ws://127.0.0.1:9/connect",
@@ -323,7 +285,7 @@ mod tests {
             },
             "targets": [{
                 "target": "workspace:test",
-                "profile": ALPHA_PROFILE_ID,
+                "agentId": agent_id,
                 "sessionId": Uuid::new_v4(),
                 "workspace": workspace
             }]
@@ -334,17 +296,19 @@ mod tests {
         #[cfg(unix)]
         private(&path);
         let decoded = decode_config(&path).expect("decode strict config");
-        assert_eq!(decoded.targets[0].profile.as_str(), ALPHA_PROFILE_ID);
+        assert_eq!(decoded.targets[0].agent_id, agent_id);
 
-        let mut unsupported_profile = base.clone();
-        unsupported_profile["targets"][0]["profile"] = json!("renoa.unknown.v1");
+        let mut missing_agent = base.clone();
+        missing_agent["targets"][0]
+            .as_object_mut()
+            .expect("target document")
+            .remove("agentId");
         std::fs::write(
             &path,
-            serde_json::to_vec(&unsupported_profile).expect("encode config"),
+            serde_json::to_vec(&missing_agent).expect("encode config"),
         )
-        .expect("write unsupported profile config");
-        let unsupported_profile = decode_config(&path).expect("decode profile ID");
-        assert!(profile_ids_for(&unsupported_profile.targets).is_err());
+        .expect("write target without agent id");
+        assert!(decode_config(&path).is_err());
 
         let mut unknown = base.clone();
         unknown["unexpected"] = json!(true);

@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     LocalHost, LocalHostError, TurnObservation,
-    host::{discover_profile_models, initial_reasoning, require_model},
+    host::{discover_models_for, initial_reasoning, require_model},
 };
 
 impl LocalHost {
@@ -56,31 +56,32 @@ impl LocalHost {
         head_sha: String,
         context: context::ReviewContext,
     ) -> Result<Box<GitHubReviewSnapshot>, LocalHostError> {
-        let agent = self
-            .agent(request.repository.policy.agent_id)
+        let definition = self
+            .agent_definition(request.repository.policy.agent_id)
             .await?
             .ok_or(LocalHostError::AgentNotFound(
                 request.repository.policy.agent_id,
             ))?;
-        let profile = self.profile(&agent.profile).await?;
-        let models = discover_profile_models(&self.config, &profile).await?;
-        let provider = profile
-            .model_provider()
+        let models =
+            discover_models_for(&self.config, definition.operational.provider_restriction).await?;
+        let provider = definition
+            .operational
+            .provider_restriction
             .unwrap_or(self.config.initial_provider);
         let model = require_model(&models, provider, &self.config.initial_model, "review")?;
         let reasoning = initial_reasoning(model, self.config.initial_reasoning)?;
         let recipe = self
-            .bot(agent.id)
+            .bot(definition.id)
             .await?
-            .ok_or(LocalHostError::AgentNotFound(agent.id))?;
+            .ok_or(LocalHostError::AgentNotFound(definition.id))?;
         let skills = self.config.skill_store.clone();
         let workspace = self.config.database.with_file_name("review-sessions");
-        let skill_profile = agent.profile.as_str().to_owned();
+        let skill_agent = definition.id.to_string();
         let id = request.id;
         let skill = tokio::task::spawn_blocking(move || {
             crate::skills::frozen_instructions(
                 &skills,
-                &skill_profile,
+                &skill_agent,
                 &workspace,
                 SessionId::from_uuid(id),
                 renoa_kernel::CommandId::from_uuid(id),
@@ -89,7 +90,7 @@ impl LocalHost {
         })
         .await??;
         let tools = if context.source == context::ReviewSource::GitCommits {
-            Some(self.bot_tool_selection(agent.id).await?.tools)
+            Some(self.agent_tool_selection(definition.id).await?.tools)
         } else {
             None
         };

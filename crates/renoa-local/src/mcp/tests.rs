@@ -212,7 +212,7 @@ fn oauth_reference_cannot_be_rebound_to_another_endpoint() {
         .expect("mutate stored OAuth reference");
 
     assert!(matches!(
-        store.resolve_profile_tools(PROFILE, &[reference]),
+        store.resolve_agent_tools(PROFILE, &[reference]),
         Err(McpHostError::Invalid(_))
     ));
 }
@@ -338,7 +338,7 @@ fn alpha_connection_survives_a_store_restart_and_exposes_its_complete_catalog() 
     let reopened = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("reopen Host catalog");
     let tools = reopened
-        .profile_tool_summaries(PROFILE)
+        .agent_tool_summaries(PROFILE)
         .expect("load searchable tools");
 
     assert_eq!(
@@ -419,12 +419,12 @@ fn connection_status_and_disconnect_keep_catalogs_but_remove_alpha_access() {
     );
     assert!(
         store
-            .profile_tool_summaries(PROFILE)
+            .agent_tool_summaries(PROFILE)
             .expect("read tools after disconnect")
             .is_empty()
     );
     assert!(matches!(
-        store.resolve_profile_tools(PROFILE, &[reference]),
+        store.resolve_agent_tools(PROFILE, &[reference]),
         Err(McpHostError::NotFound(_))
     ));
     assert_eq!(

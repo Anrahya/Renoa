@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use renoa_local::{AgentProfileId, AgentSession, LocalHost, LocalTurnOutcome};
+use renoa_kernel::AgentId;
+use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome};
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -45,7 +46,7 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
         "surface_started",
         &serde_json::json!({
             "bot_id": bot.id,
-            "profile_id": config.profile_id.as_str(),
+            "agent_id": config.agent_id,
             "requeued": recovery.requeued,
             "delivery_unknown": recovery.delivery_unknown,
             "action_delivery_unknown": recovery.action_delivery_unknown,
@@ -69,7 +70,7 @@ pub async fn run(config: Config) -> Result<(), TelegramServiceError> {
         api,
         store,
         host: Arc::new(config.host),
-        profile_id: config.profile_id,
+        agent_id: AgentId::from_uuid(config.agent_id),
         workspace: config.workspace,
         sessions: HashMap::new(),
         active: Arc::clone(&active),
@@ -195,7 +196,7 @@ struct Worker {
     api: Arc<TelegramApi>,
     store: SurfaceStore,
     host: Arc<LocalHost>,
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
     workspace: std::path::PathBuf,
     sessions: HashMap<Uuid, Arc<AgentSession>>,
     active: Arc<ActiveTurn>,

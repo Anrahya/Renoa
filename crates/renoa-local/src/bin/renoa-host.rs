@@ -1,9 +1,10 @@
 use renoa_local::{
-    BotRecord, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
-    ReasoningLevel, arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentRoutine, BotRecord,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
+    arcee_profile,
 };
 use serde::Deserialize;
-use std::{error::Error, path::PathBuf};
+use std::{collections::BTreeSet, error::Error, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 #[path = "renoa-host/github_review.rs"]
@@ -33,6 +34,35 @@ struct Relay {
     device_credential_file: PathBuf,
 }
 
+/// One trusted provisioning request: the canonical creation operation as JSON.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProvisionDocument {
+    operation_id: uuid::Uuid,
+    preset_id: AgentPresetId,
+    name: String,
+    instructions: Option<String>,
+    #[serde(default)]
+    tools: BTreeSet<String>,
+    #[serde(default)]
+    connections: BTreeSet<String>,
+    routine: Option<AgentRoutine>,
+}
+
+impl ProvisionDocument {
+    fn into_request(self) -> AgentCreateRequest {
+        AgentCreateRequest {
+            operation_id: self.operation_id,
+            preset_id: self.preset_id,
+            name: self.name,
+            instructions: self.instructions,
+            tools: self.tools,
+            connections: self.connections,
+            routine: self.routine,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -53,7 +83,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if !(args.len() == 1
         || (args.len() == 6 && args[1] == "rename-bot")
         || (args.len() == 3
-            && (args[1] == "github-review"
+            && (args[1] == "provision"
+                || args[1] == "github-review"
                 || args[1] == "github-webhook"
                 || args[1] == "github-execute"
                 || args[1] == "github-service"
@@ -61,7 +92,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
                 || args[1] == "ensure-bot"
                 || args[1] == "bot-tools")))
     {
-        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [ensure-bot <bot.json> | bot-tools <edit.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | ensure-bot <bot.json> | bot-tools <edit.json> | rename-bot <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
     }
     let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
@@ -160,6 +191,21 @@ async fn run_command(
     command: &std::ffi::OsStr,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
+    if command == "provision" {
+        let document: ProvisionDocument = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        let definition = host
+            .create_agent(
+                AgentCreator::System {
+                    component: "provisioning".to_owned(),
+                },
+                AgentCreationOrigin::Provisioning,
+                document.into_request(),
+                CancellationToken::new(),
+            )
+            .await?;
+        println!("{}", serde_json::to_string(&definition)?);
+        return Ok(());
+    }
     if command == "bot-tools" {
         let edit = serde_json::from_slice(&tokio::fs::read(path).await?)?;
         println!(

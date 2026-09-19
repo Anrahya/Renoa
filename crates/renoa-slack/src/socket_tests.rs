@@ -17,7 +17,7 @@ async fn websocket_ack_follows_commit_and_redelivery_keeps_the_same_request() {
             "fixture",
             auth,
         ),
-        vec![renoa_local::AgentProfile::new("fixture", "Test ingress.").expect("profile")],
+        Vec::new(),
         renoa_local::LocalHostAdapters::default(),
     )
     .expect("Host");

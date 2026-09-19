@@ -2,11 +2,13 @@ use std::{collections::HashMap, fs, sync::Arc};
 
 use renoa_agent::Message;
 use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, arcee_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use tempfile::{TempDir, tempdir};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use super::{ActiveTurn, Worker, retry_delay};
 use crate::{
@@ -148,8 +150,6 @@ async fn service_fixture() -> ServiceFixture {
     fs::create_dir(&workspace).expect("create workspace");
     fs::write(&bridge, MODEL_BRIDGE).expect("write deterministic bridge");
     fs::write(&credentials, "").expect("write credential placeholder");
-    let profile = arcee_profile(&data).expect("create Arcee profile");
-    let profile_id = profile.id().clone();
     let host = LocalHost::new(
         &data,
         LocalModelConfiguration::new(
@@ -159,10 +159,26 @@ async fn service_fixture() -> ServiceFixture {
             "fixture-model",
             &credentials,
         ),
-        vec![profile],
+        Vec::new(),
         LocalHostAdapters::default(),
     )
     .expect("assemble Arcee Host");
+    let agent_id = host
+        .create_agent(
+            AgentCreator::System {
+                component: "telegram-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new("renoa.personal.arcee.v1").expect("Arcee preset id"),
+                "Arcee",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("provision Arcee")
+        .id;
     let store = SurfaceStore::open(&data).expect("open Telegram store");
     store
         .bind_identity(9, 42, &workspace)
@@ -173,7 +189,7 @@ async fn service_fixture() -> ServiceFixture {
         api: Arc::new(TelegramApi::for_test(&origin, "9:test").expect("test API")),
         store: store.clone(),
         host: Arc::new(host),
-        profile_id,
+        agent_id,
         workspace,
         sessions: HashMap::new(),
         active: Arc::new(ActiveTurn::default()),
@@ -307,11 +323,11 @@ if (action !== "stream") process.exit(2);
 writeFileSync(new URL("./stream-called", import.meta.url), "called");
 const request = JSON.parse(input);
 if (!request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) {
-  process.stderr.write("Telegram surface selected the wrong profile");
+  process.stderr.write("Telegram surface selected the wrong agent definition");
   process.exit(3);
 }
-if (!request.tools.some((tool) => tool.name === "profile_update")) {
-  process.stderr.write("Arcee profile update tool was not assembled");
+if (!request.tools.some((tool) => tool.name === "agent_documents")) {
+  process.stderr.write("Arcee agent-document tool was not assembled");
   process.exit(4);
 }
 if (request.system_prompt.includes("current_time:")) {

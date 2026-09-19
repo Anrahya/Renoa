@@ -10,10 +10,10 @@ use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
     PeerIdentity, ServerMessage, TaskEvent, TaskEventKind, TaskId, TaskSpec,
 };
-use renoa_kernel::{Kernel, SessionId};
+use renoa_kernel::{AgentId, Kernel, SessionId};
 use renoa_local::{
-    ALPHA_PROFILE_ID, AgentProfileId, LocalHost, LocalHostAdapters, LocalModelConfiguration,
-    ModelProvider, alpha_profile,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use renoa_node::HostTarget;
 use renoa_protocol::{
@@ -178,6 +178,7 @@ impl TestSystem {
 pub(crate) struct HostFixture {
     pub(crate) data: PathBuf,
     pub(crate) workspace: PathBuf,
+    pub(crate) agent_id: AgentId,
     bridge: PathBuf,
     credentials: PathBuf,
     target: TargetRef,
@@ -185,7 +186,7 @@ pub(crate) struct HostFixture {
 }
 
 impl HostFixture {
-    pub(crate) fn install(system: &TestSystem) -> Self {
+    pub(crate) async fn install(system: &TestSystem) -> Self {
         let data = system.files.path().join("host");
         let workspace = system.files.path().join("workspace");
         let bridge = system.files.path().join("model-bridge.mjs");
@@ -194,9 +195,11 @@ impl HostFixture {
         fs::write(workspace.join("proof.txt"), "durable proof\n").expect("write proof file");
         fs::write(&bridge, bridge_script(&workspace)).expect("write model bridge");
         fs::write(&credentials, "").expect("write credential placeholder");
+        let agent_id = provision_alpha(&data, &bridge, &credentials).await;
         Self {
             data,
             workspace,
+            agent_id,
             bridge,
             credentials,
             target: system.target.clone(),
@@ -215,7 +218,7 @@ impl HostFixture {
                     "fixture-model",
                     &self.credentials,
                 ),
-                vec![alpha_profile()],
+                Vec::new(),
                 LocalHostAdapters::default(),
             )
             .expect("assemble local Host"),
@@ -223,21 +226,21 @@ impl HostFixture {
     }
 
     pub(crate) fn target(&self) -> HostTarget {
-        Self::target_for(&self.target, self.session_id, &self.workspace)
+        Self::target_for(
+            &self.target,
+            self.agent_id,
+            self.session_id,
+            &self.workspace,
+        )
     }
 
     pub(crate) fn target_for(
         target: &TargetRef,
+        agent_id: AgentId,
         session_id: Uuid,
         workspace: &std::path::Path,
     ) -> HostTarget {
-        HostTarget::new(
-            target,
-            AgentProfileId::new(ALPHA_PROFILE_ID).expect("valid Alpha profile id"),
-            session_id,
-            workspace,
-        )
-        .expect("configure Host target")
+        HostTarget::new(target, agent_id, session_id, workspace).expect("configure Host target")
     }
 
     pub(crate) fn additional_workspace(&self) -> PathBuf {
@@ -276,6 +279,45 @@ impl HostFixture {
         .operations
         .len()
     }
+}
+
+/// Provisions the canonical Alpha agent a node fixture executes.
+///
+/// Node targets never register built-in profiles, so the durable definition
+/// must already exist in the Host data root the node opens.
+async fn provision_alpha(
+    data: &std::path::Path,
+    bridge: &std::path::Path,
+    credentials: &std::path::Path,
+) -> AgentId {
+    let host = LocalHost::new(
+        data,
+        LocalModelConfiguration::new(
+            bridge,
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "fixture-model",
+            credentials,
+        ),
+        Vec::new(),
+        LocalHostAdapters::default(),
+    )
+    .expect("provisioning Host");
+    host.create_agent(
+        AgentCreator::System {
+            component: "node-test".to_owned(),
+        },
+        AgentCreationOrigin::Provisioning,
+        AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new("renoa.coding.alpha.v1").expect("alpha preset id"),
+            "Alpha",
+        ),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("provision Alpha")
+    .id
 }
 
 pub(crate) struct CuttableProxy {

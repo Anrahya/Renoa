@@ -3,7 +3,7 @@ mod support;
 use std::time::Duration;
 
 use renoa_control::TaskEventKind;
-use renoa_local::AgentProfileId;
+use renoa_kernel::AgentId;
 use renoa_node::{HostTarget, RenoaNode};
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef, TargetRef};
 use tokio::time::timeout;
@@ -19,7 +19,7 @@ use support::{
 async fn real_alpha_tool_turn_crosses_the_durable_rcp_bridge() {
     timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
+        let fixture = HostFixture::install(&system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
@@ -87,15 +87,15 @@ async fn real_alpha_tool_turn_crosses_the_durable_rcp_bridge() {
 async fn host_setup_failure_never_claims_that_a_turn_started() {
     timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
-        let missing_profile = AgentProfileId::new("missing-profile").expect("valid profile id");
+        let fixture = HostFixture::install(&system).await;
+        let missing_agent = AgentId::new();
         let target = HostTarget::new(
             &system.target,
-            missing_profile,
+            missing_agent,
             fixture.session_id,
             &fixture.workspace,
         )
-        .expect("configure missing Host profile target");
+        .expect("configure target for an unprovisioned Host agent");
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
@@ -141,7 +141,7 @@ async fn host_setup_failure_never_claims_that_a_turn_started() {
 async fn transport_reconnect_does_not_interrupt_the_running_host_turn() {
     timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
+        let fixture = HostFixture::install(&system).await;
         let proxy = CuttableProxy::start(system.url.clone()).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
@@ -206,7 +206,7 @@ async fn transport_reconnect_does_not_interrupt_the_running_host_turn() {
 async fn node_restart_redrives_the_same_safe_kernel_turn() {
     timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
+        let fixture = HostFixture::install(&system).await;
         let node_credentials = system.enroll_node().await;
         let node_path = system.files.path().join("node.sqlite");
         let first_shutdown = CancellationToken::new();
@@ -275,7 +275,7 @@ async fn node_restart_redrives_the_same_safe_kernel_turn() {
 async fn queued_turns_publish_in_host_session_order() {
     timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
+        let fixture = HostFixture::install(&system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
@@ -345,7 +345,7 @@ async fn queued_turns_publish_in_host_session_order() {
 async fn independent_host_sessions_execute_in_parallel() {
     timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
+        let fixture = HostFixture::install(&system).await;
         let second_target_ref = TargetRef::new("workspace:second");
         let second_task = system.create_task(second_target_ref.clone()).await;
         let second_workspace = fixture.additional_workspace();
@@ -358,7 +358,12 @@ async fn independent_host_sessions_execute_in_parallel() {
             fixture.host(),
             vec![
                 fixture.target(),
-                HostFixture::target_for(&second_target_ref, second_session, &second_workspace),
+                HostFixture::target_for(
+                    &second_target_ref,
+                    fixture.agent_id,
+                    second_session,
+                    &second_workspace,
+                ),
             ],
         )
         .expect("open multi-session execution node");
@@ -414,7 +419,7 @@ async fn independent_host_sessions_execute_in_parallel() {
 async fn independently_enrolled_surfaces_continue_one_host_session() {
     Box::pin(timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system);
+        let fixture = HostFixture::install(&system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),

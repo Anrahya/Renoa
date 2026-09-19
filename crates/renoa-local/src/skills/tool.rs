@@ -15,15 +15,15 @@ use super::{
     render,
     store::SkillStore,
 };
-use crate::AgentProfileId;
+use renoa_kernel::AgentId;
 
 pub(super) const SKILL_LOAD_TOOL: &str = "skill_load";
 const SKILL_SEARCH_TOOL: &str = "skill_search";
 pub(super) const ACTIVATION_DETAIL_KIND: &str = "renoa.skill.activation.v1";
 const REGISTRY_REVISION: &str = "renoa-skill-registry-v4";
 
-pub(crate) fn profile_skill_bindings(
-    profile_id: AgentProfileId,
+pub(crate) fn agent_skill_bindings(
+    agent_id: AgentId,
     store: SkillStore,
     workspace: PathBuf,
     session_id: SessionId,
@@ -33,7 +33,7 @@ pub(crate) fn profile_skill_bindings(
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/search"),
             Arc::new(SearchTool::new(
-                profile_id.clone(),
+                agent_id.clone(),
                 store.clone(),
                 workspace.clone(),
             )),
@@ -42,7 +42,7 @@ pub(crate) fn profile_skill_bindings(
         AgentToolBinding::new(
             format!("{REGISTRY_REVISION}/load"),
             Arc::new(LoadTool::new(
-                profile_id, store, workspace, session_id, command_id,
+                agent_id, store, workspace, session_id, command_id,
             )),
             EffectRecovery::SafeToReplay,
         ),
@@ -50,16 +50,16 @@ pub(crate) fn profile_skill_bindings(
 }
 
 struct SearchTool {
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
     store: SkillStore,
     workspace: PathBuf,
     spec: ToolSpec,
 }
 
 impl SearchTool {
-    fn new(profile_id: AgentProfileId, store: SkillStore, workspace: PathBuf) -> Self {
+    fn new(agent_id: AgentId, store: SkillStore, workspace: PathBuf) -> Self {
         Self {
-            profile_id,
+            agent_id,
             store,
             workspace,
             spec: ToolSpec {
@@ -98,13 +98,13 @@ impl Tool for SearchTool {
             let input: SearchInput = decode(&call, SKILL_SEARCH_TOOL)?;
             require_active(&cancellation, false)?;
             let store = self.store.clone();
-            let profile_id = self.profile_id.clone();
+            let agent_id = self.agent_id.clone();
             let workspace = self.workspace.clone();
             let query = input.query;
             let result = tokio::task::spawn_blocking(move || {
-                store.sync(profile_id.as_str(), &workspace)?;
+                store.sync(&agent_id.to_string(), &workspace)?;
                 let matches =
-                    rank_skills(store.summaries(profile_id.as_str(), &workspace)?, &query)?
+                    rank_skills(store.summaries(&agent_id.to_string(), &workspace)?, &query)?
                         .into_iter()
                         .map(|skill| SearchMatch {
                             name: skill.name,
@@ -123,7 +123,7 @@ impl Tool for SearchTool {
 }
 
 struct LoadTool {
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
     store: SkillStore,
     workspace: PathBuf,
     session_id: SessionId,
@@ -133,14 +133,14 @@ struct LoadTool {
 
 impl LoadTool {
     fn new(
-        profile_id: AgentProfileId,
+        agent_id: AgentId,
         store: SkillStore,
         workspace: PathBuf,
         session_id: SessionId,
         command_id: Option<CommandId>,
     ) -> Self {
         Self {
-            profile_id,
+            agent_id,
             store,
             workspace,
             session_id,
@@ -179,13 +179,13 @@ impl Tool for LoadTool {
             })?;
             require_active(&cancellation, false)?;
             let store = self.store.clone();
-            let profile_id = self.profile_id.clone();
+            let agent_id = self.agent_id.clone();
             let workspace = self.workspace.clone();
             let session_id = self.session_id;
             let selected = input.name;
             let skill = tokio::task::spawn_blocking(move || {
                 store.activate(
-                    profile_id.as_str(),
+                    &agent_id.to_string(),
                     &workspace,
                     session_id,
                     command_id,

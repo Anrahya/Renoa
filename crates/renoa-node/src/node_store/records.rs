@@ -50,7 +50,7 @@ pub(super) fn decode_record(row: &StoredRow) -> Result<ExecutionRecord, NodeStor
         execution_id: ExecutionId::from_uuid(parse_uuid(&row.3, "execution")?),
         binding: TargetBinding {
             target: row.4.clone(),
-            profile_id: row.5.clone(),
+            agent_id: parse_uuid(&row.5, "agent")?,
             session_id: parse_uuid(&row.6, "session")?,
             workspace: PathBuf::from(&row.7),
         },
@@ -73,7 +73,7 @@ pub(super) fn load_record(
     let row = connection
         .query_row(
             "SELECT e.admission_sequence, e.task_id, e.command_json, e.execution_id,
-                t.target, t.profile_id, t.session_id, t.workspace,
+                t.target, t.agent_id, t.session_id, t.workspace,
                 e.admission_acked, e.terminal, e.published_through
          FROM host_node_executions e
          JOIN host_node_tasks t USING(task_id)
@@ -92,7 +92,7 @@ pub(super) fn ensure_task_binding(
 ) -> Result<(), NodeStoreError> {
     let existing = transaction
         .query_row(
-            "SELECT target, profile_id, session_id, workspace
+            "SELECT target, agent_id, session_id, workspace
          FROM host_node_tasks WHERE task_id = ?1",
             [task_id.to_string()],
             |row| {
@@ -105,10 +105,10 @@ pub(super) fn ensure_task_binding(
             },
         )
         .optional()?;
-    if let Some((target, profile_id, session_id, workspace)) = existing {
+    if let Some((target, agent_id, session_id, workspace)) = existing {
         let existing = TargetBinding {
             target,
-            profile_id,
+            agent_id: parse_uuid(&agent_id, "agent")?,
             session_id: parse_uuid(&session_id, "session")?,
             workspace: PathBuf::from(workspace),
         };
@@ -136,12 +136,12 @@ pub(super) fn ensure_task_binding(
         NodeStoreError::Invalid("Host target workspace is not valid UTF-8".to_owned())
     })?;
     transaction.execute(
-        "INSERT INTO host_node_tasks (task_id, target, profile_id, session_id, workspace)
+        "INSERT INTO host_node_tasks (task_id, target, agent_id, session_id, workspace)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             task_id.to_string(),
             binding.target,
-            binding.profile_id,
+            binding.agent_id.to_string(),
             binding.session_id.to_string(),
             workspace,
         ],

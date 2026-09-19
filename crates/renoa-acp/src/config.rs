@@ -1,10 +1,12 @@
 use std::{collections::HashSet, env, path::PathBuf};
 
+use renoa_kernel::AgentId;
 use renoa_local::{
-    AgentProfileId, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
-    ModelChoice, ModelProvider, SharedPluginSyncReport, alpha_profile, discover_models,
+    LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration, ModelChoice,
+    ModelProvider, SharedPluginSyncReport, discover_models,
 };
 use serde::Serialize;
+use uuid::Uuid;
 
 use crate::ServerError;
 
@@ -16,7 +18,7 @@ const GITHUB_HOSTNAME: &str = "github.com";
 /// Process configuration for the local ACP adapter.
 pub struct Config {
     host: LocalHost,
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
 }
 
 #[derive(Serialize)]
@@ -62,13 +64,13 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns an error when required provider settings or a usable data directory are absent.
+    /// Returns an error when required provider settings, the configured agent
+    /// identity, or a usable data directory are absent.
     pub fn from_environment() -> Result<Self, ServerError> {
         let data_directory = data_directory()?;
         let settings = ProviderSettings::from_environment()?;
         let shared_plugin_registry = optional("RENOA_SHARED_PLUGIN_REGISTRY")?;
-        let profile = alpha_profile();
-        let profile_id = profile.id().clone();
+        let agent_id = required_agent_id("RENOA_AGENT_ID")?;
         Ok(Self {
             host: LocalHost::new(
                 data_directory,
@@ -79,12 +81,12 @@ impl Config {
                     settings.model,
                     settings.credential_store,
                 ),
-                vec![profile],
+                Vec::new(),
                 LocalHostAdapters::new(optional_path("RENOA_MCP_ADAPTER").as_deref())
                     .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref())
                     .with_shared_plugin_registry(shared_plugin_registry.as_deref()),
             )?,
-            profile_id,
+            agent_id,
         })
     }
 
@@ -92,8 +94,8 @@ impl Config {
         &self.host
     }
 
-    pub(crate) const fn profile_id(&self) -> &AgentProfileId {
-        &self.profile_id
+    pub(crate) const fn agent_id(&self) -> AgentId {
+        self.agent_id
     }
 }
 
@@ -203,7 +205,7 @@ pub async fn install_github_mcp(account: &str) -> Result<GitHubMcpInstallation, 
         .await?;
     config
         .host
-        .enable_profile_mcp_connection(config.profile_id(), GITHUB_CONNECTION_ID)
+        .enable_agent_connection(config.agent_id(), GITHUB_CONNECTION_ID)
         .await?;
     Ok(GitHubMcpInstallation {
         connection_id: GITHUB_CONNECTION_ID,
@@ -279,6 +281,13 @@ fn required(name: &str) -> Result<String, ServerError> {
 
 fn required_path(name: &str) -> Result<PathBuf, ServerError> {
     required(name).map(PathBuf::from)
+}
+
+fn required_agent_id(name: &str) -> Result<AgentId, ServerError> {
+    let value = required(name)?;
+    Uuid::parse_str(&value)
+        .map(AgentId::from_uuid)
+        .map_err(|_| ServerError::Configuration(format!("{name} must be a UUID")))
 }
 
 fn optional_path(name: &str) -> Option<PathBuf> {

@@ -2,8 +2,9 @@ use renoa_agent::ToolUpdates;
 use tokio_util::sync::CancellationToken;
 
 use super::{PluginManager, credential::credential_auth, identity::integration_id};
+use renoa_kernel::AgentId;
+
 use crate::{
-    AgentProfileId,
     mcp::{
         McpAdapterError, McpCatalogSnapshot, McpConnectionCandidate, McpHostError,
         McpOAuthAuthorizationRequest, McpOAuthError, McpRequestHeaders, discover_cancellable,
@@ -12,7 +13,7 @@ use crate::{
 };
 
 pub(crate) struct ProfileConnectionRequest<'a> {
-    pub(crate) profile_id: &'a AgentProfileId,
+    pub(crate) agent_id: &'a AgentId,
     pub(crate) package_digest: &'a str,
     pub(crate) server_id: &'a str,
     pub(crate) connection_id: &'a str,
@@ -25,7 +26,7 @@ pub(crate) struct ProfileConnectionRequest<'a> {
 }
 
 pub(crate) struct ProfileAuthorizationRequest<'a> {
-    pub(crate) profile_id: &'a AgentProfileId,
+    pub(crate) agent_id: &'a AgentId,
     pub(crate) connection_id: &'a str,
     pub(crate) operation_id: &'a str,
     pub(crate) restart: bool,
@@ -36,7 +37,7 @@ pub(crate) struct ProfileAuthorizationRequest<'a> {
 impl PluginManager {
     pub(crate) async fn connect_profile(
         &self,
-        profile_id: &AgentProfileId,
+        agent_id: &AgentId,
         package_digest: &str,
         server_id: &str,
         connection_id: &str,
@@ -46,7 +47,7 @@ impl PluginManager {
         let operation_id = format!("host-connect.{}", uuid::Uuid::new_v4());
         self.connect_profile_operation(
             ProfileConnectionRequest {
-                profile_id,
+                agent_id,
                 package_digest,
                 server_id,
                 connection_id,
@@ -144,12 +145,12 @@ impl PluginManager {
         )
         .await?;
         let catalog = self.mcp_catalog.clone();
-        let profile_id = request.profile_id.clone();
+        let agent_id = request.agent_id.clone();
         let committed = candidate.clone();
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || {
             catalog.commit_connection(
-                profile_id.as_str(),
+                &agent_id.to_string(),
                 &committed,
                 &stored_snapshot,
                 request.replace,
@@ -267,10 +268,10 @@ impl PluginManager {
         )
         .await?;
         let catalog = self.mcp_catalog.clone();
-        let profile_id = request.profile_id.clone();
+        let agent_id = request.agent_id.clone();
         let stored_snapshot = snapshot.clone();
         tokio::task::spawn_blocking(move || {
-            catalog.publish_and_enable_connection(profile_id.as_str(), &stored_snapshot)
+            catalog.publish_and_enable_connection(&agent_id.to_string(), &stored_snapshot)
         })
         .await??;
         Ok(snapshot)

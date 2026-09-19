@@ -2068,6 +2068,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -2344,6 +2345,7 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "renoa-agent",
+ "renoa-kernel",
  "renoa-local",
  "reqwest",
  "rusqlite",

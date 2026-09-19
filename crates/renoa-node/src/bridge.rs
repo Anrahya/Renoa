@@ -7,7 +7,8 @@ use std::{
 
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
-use renoa_local::{AgentProfileId, AgentSession, LocalHost, LocalHostError};
+use renoa_kernel::AgentId;
+use renoa_local::{AgentSession, LocalHost, LocalHostError};
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use thiserror::Error;
 use tokio::{
@@ -53,11 +54,11 @@ impl From<NodeStoreError> for NodeError {
     }
 }
 
-/// One coordinator target resolved to an exact Host profile, session, and workspace.
+/// One coordinator target resolved to an exact Host agent, session, and workspace.
 #[derive(Clone, Debug)]
 pub struct HostTarget {
     binding: TargetBinding,
-    profile_id: AgentProfileId,
+    agent_id: AgentId,
 }
 
 impl HostTarget {
@@ -69,7 +70,7 @@ impl HostTarget {
     /// existing absolute directory.
     pub fn new(
         target: &TargetRef,
-        profile_id: AgentProfileId,
+        agent_id: AgentId,
         session_id: Uuid,
         workspace: impl AsRef<Path>,
     ) -> Result<Self, NodeError> {
@@ -94,13 +95,17 @@ impl HostTarget {
         Ok(Self {
             binding: TargetBinding {
                 target: target.as_str().to_owned(),
-                profile_id: profile_id.as_str().to_owned(),
+                agent_id: agent_uuid(agent_id),
                 session_id,
                 workspace,
             },
-            profile_id,
+            agent_id,
         })
     }
+}
+
+fn agent_uuid(agent_id: AgentId) -> Uuid {
+    Uuid::parse_str(&agent_id.to_string()).expect("a kernel AgentId always formats as a UUID")
 }
 
 /// A durable RCP execution node backed by Renoa's real local Host.
@@ -268,8 +273,8 @@ impl NodeRuntime {
         let target = self.target_for(&record.binding)?.clone();
         let session = match self
             .host
-            .ensure_session(
-                &target.profile_id,
+            .ensure_agent_session(
+                target.agent_id,
                 &target.binding.workspace,
                 target.binding.session_id,
             )

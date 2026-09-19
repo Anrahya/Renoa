@@ -1,10 +1,16 @@
 use std::fs;
 
-use renoa_local::{LocalRuntimeConfig, LocalWorkspace, build_local_runtime};
+use renoa_local::{
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
+    LocalHostAdapters, LocalModelConfiguration, LocalRuntimeConfig, LocalWorkspace, ModelProvider,
+    build_local_runtime,
+};
 use tempfile::tempdir;
 
+/// The runtime a Host composes comes from the agent's durable definition, and a
+/// workspace-rule change is visible to the next composition.
 #[tokio::test]
-async fn local_host_resolves_the_complete_coding_runtime() {
+async fn the_host_composes_the_coding_runtime_from_the_stored_definition() {
     let directory = tempdir().expect("temporary directory");
     let workspace_path = directory.path().join("workspace");
     let bridge = directory.path().join("bridge.mjs");
@@ -18,15 +24,49 @@ async fn local_host_resolves_the_complete_coding_runtime() {
     fs::write(&bridge, DESCRIBE_BRIDGE).expect("write bridge");
     fs::write(&credentials, "").expect("write credential placeholder");
 
+    let host = LocalHost::new(
+        directory.path().join("data"),
+        LocalModelConfiguration::new(
+            bridge.clone(),
+            vec![ModelProvider::Xai],
+            ModelProvider::Xai,
+            "grok-test",
+            credentials.clone(),
+        ),
+        Vec::new(),
+        LocalHostAdapters::new(None),
+    )
+    .expect("assemble Host");
+    let agent = host
+        .create_agent(
+            AgentCreator::System {
+                component: "composition-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                uuid::Uuid::new_v4(),
+                AgentPresetId::new("renoa.coding.alpha.v1").expect("preset id"),
+                "Local",
+            ),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("provision the coding agent");
+
     let workspace = LocalWorkspace::open(&workspace_path).expect("open workspace");
-    let captured = LocalRuntimeConfig::for_alpha(
+    let resolved = host
+        .resolve_definition(agent.id)
+        .await
+        .expect("resolve the stored definition");
+    let captured = LocalRuntimeConfig::for_definition(
         bridge.clone(),
         "xai",
         "grok-test",
         credentials.clone(),
+        &resolved,
         &workspace,
     )
-    .expect("capture Alpha runtime configuration");
+    .expect("capture the agent runtime configuration");
     fs::write(
         workspace_path.join("AGENTS.md"),
         "Use the changed project instructions.\n",
@@ -39,7 +79,6 @@ async fn local_host_resolves_the_complete_coding_runtime() {
     let manifest = runtime.manifest();
     assert_eq!(manifest.loop_binding, "renoa.agent.model-tool-loop");
     assert_eq!(manifest.checkpoint_schema_version, 3);
-    assert_eq!(manifest.effect_bindings.len(), 10);
     assert!(manifest.effect_bindings.contains_key("renoa.agent.model"));
     for tool in [
         "read_file",
@@ -56,13 +95,24 @@ async fn local_host_resolves_the_complete_coding_runtime() {
             manifest
                 .effect_bindings
                 .contains_key(&format!("renoa.agent.tool/{tool}")),
-            "missing full-access tool binding `{tool}`"
+            "missing selected tool binding `{tool}`"
         );
     }
 
+    let recomposed = host
+        .resolve_definition(agent.id)
+        .await
+        .expect("re-resolve the stored definition");
     let changed = build_local_runtime(
-        LocalRuntimeConfig::for_alpha(bridge, "xai", "grok-test", credentials, &workspace)
-            .expect("recompose Alpha runtime configuration"),
+        LocalRuntimeConfig::for_definition(
+            bridge,
+            "xai",
+            "grok-test",
+            credentials,
+            &recomposed,
+            &workspace,
+        )
+        .expect("recompose the agent runtime configuration"),
         &workspace,
     )
     .await
@@ -70,7 +120,7 @@ async fn local_host_resolves_the_complete_coding_runtime() {
     assert_ne!(
         manifest.config_digest,
         changed.manifest().config_digest,
-        "Alpha must preserve its synchronously captured project instructions"
+        "the next composition must read the changed workspace rules"
     );
 }
 

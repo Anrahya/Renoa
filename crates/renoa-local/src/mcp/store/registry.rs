@@ -13,10 +13,10 @@ use crate::mcp::{
 impl McpCatalogStore {
     pub(crate) fn enable_profile_connection(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         connection_id: &str,
     ) -> Result<(), McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         validate_identity("connection", connection_id)?;
         let mut connection = self.connection()?;
         let transaction =
@@ -35,9 +35,9 @@ impl McpCatalogStore {
             )));
         }
         transaction.execute(
-            "INSERT OR IGNORE INTO profile_mcp_connections(profile_id, connection_id)
+            "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)
              VALUES (?1, ?2)",
-            params![profile_id, connection_id],
+            params![agent_id, connection_id],
         )?;
         transaction.commit()?;
         Ok(())
@@ -45,25 +45,25 @@ impl McpCatalogStore {
 
     pub(crate) fn profile_connection_ids(
         &self,
-        profile_id: &str,
+        agent_id: &str,
     ) -> Result<Vec<String>, McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT connection_id FROM profile_mcp_connections
-             WHERE profile_id = ?1 ORDER BY connection_id",
+            "SELECT connection_id FROM host_agent_mcp_connections
+             WHERE agent_id = ?1 ORDER BY connection_id",
         )?;
         let identifiers = statement
-            .query_map([profile_id], |row| row.get(0))?
+            .query_map([agent_id], |row| row.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(identifiers)
     }
 
     pub(crate) fn profile_connection_statuses(
         &self,
-        profile_id: &str,
+        agent_id: &str,
     ) -> Result<Vec<McpConnectionStatus>, McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT configured.connection_id, configured.integration_id,
@@ -73,8 +73,8 @@ impl McpCatalogStore {
                     (SELECT count(*) FROM mcp_rejected_tools AS rejected
                      WHERE rejected.connection_id = configured.connection_id),
                     EXISTS(
-                        SELECT 1 FROM profile_mcp_connections AS binding
-                        WHERE binding.profile_id = ?1
+                        SELECT 1 FROM host_agent_mcp_connections AS binding
+                        WHERE binding.agent_id = ?1
                           AND binding.connection_id = configured.connection_id
                     )
              FROM mcp_connections AS configured
@@ -83,7 +83,7 @@ impl McpCatalogStore {
              ORDER BY configured.connection_id",
         )?;
         let stored = statement
-            .query_map([profile_id], |row| {
+            .query_map([agent_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -133,10 +133,10 @@ impl McpCatalogStore {
 
     pub(crate) fn disable_profile_connection(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         connection_id: &str,
     ) -> Result<bool, McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         validate_identity("connection", connection_id)?;
         let mut connection = self.connection()?;
         let transaction =
@@ -155,35 +155,35 @@ impl McpCatalogStore {
                 McpHostError::NotFound(format!("connection '{connection_id}' is not registered"))
             })?;
         transaction.execute(
-            "DELETE FROM profile_mcp_connections
-             WHERE profile_id = ?1 AND connection_id = ?2",
-            params![profile_id, connection_id],
+            "DELETE FROM host_agent_mcp_connections
+             WHERE agent_id = ?1 AND connection_id = ?2",
+            params![agent_id, connection_id],
         )?;
         transaction.commit()?;
         Ok(catalog_retained)
     }
 
-    pub(crate) fn profile_tool_summaries(
+    pub(crate) fn agent_tool_summaries(
         &self,
-        profile_id: &str,
+        agent_id: &str,
     ) -> Result<Vec<McpToolSummary>, McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT connection.integration_id, binding.connection_id,
                     catalog.catalog_digest, tool.name, tool.description
-             FROM profile_mcp_connections AS binding
+             FROM host_agent_mcp_connections AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
              JOIN mcp_catalogs AS catalog
                ON catalog.connection_id = binding.connection_id
              JOIN mcp_tools AS tool
                ON tool.connection_id = binding.connection_id
-             WHERE binding.profile_id = ?1
+             WHERE binding.agent_id = ?1
              ORDER BY binding.connection_id, tool.name",
         )?;
         let tools = statement
-            .query_map([profile_id], |row| {
+            .query_map([agent_id], |row| {
                 Ok(McpToolSummary {
                     integration_id: row.get(0)?,
                     connection_id: row.get(1)?,
@@ -196,12 +196,12 @@ impl McpCatalogStore {
         Ok(tools)
     }
 
-    pub(crate) fn resolve_profile_tools(
+    pub(crate) fn resolve_agent_tools(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         references: &[McpToolReference],
     ) -> Result<Vec<ResolvedMcpTool>, McpHostError> {
-        validate_identity("profile", profile_id)?;
+        validate_identity("agent", agent_id)?;
         if references.is_empty() {
             return Err(McpHostError::Invalid(
                 "at least one MCP tool reference is required".to_owned(),
@@ -213,7 +213,7 @@ impl McpCatalogStore {
         let mut catalogs = HashMap::new();
         let mut tools = Vec::with_capacity(references.len());
         for reference in references {
-            let enabled = enabled_connection(&transaction, profile_id, reference.connection_id())?;
+            let enabled = enabled_connection(&transaction, agent_id, reference.connection_id())?;
             if !catalogs.contains_key(reference.connection_id()) {
                 let catalog =
                     load_catalog(&transaction, reference.connection_id())?.ok_or_else(|| {
@@ -323,7 +323,7 @@ struct EnabledConnection {
 
 fn enabled_connection(
     transaction: &Transaction<'_>,
-    profile_id: &str,
+    agent_id: &str,
     connection_id: &str,
 ) -> Result<EnabledConnection, McpHostError> {
     transaction
@@ -332,11 +332,11 @@ fn enabled_connection(
                     connection.auth_hostname, connection.auth_account,
                     connection.auth_credential_id, connection.oauth_registration_json,
                     connection.auth_header_name, connection.auth_header_prefix
-             FROM profile_mcp_connections AS binding
+             FROM host_agent_mcp_connections AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
-             WHERE binding.profile_id = ?1 AND binding.connection_id = ?2",
-            params![profile_id, connection_id],
+             WHERE binding.agent_id = ?1 AND binding.connection_id = ?2",
+            params![agent_id, connection_id],
             |row| {
                 Ok(EnabledConnection {
                     integration_id: row.get(0)?,
@@ -353,7 +353,7 @@ fn enabled_connection(
         .optional()?
         .ok_or_else(|| {
             McpHostError::NotFound(format!(
-                "connection '{connection_id}' is not enabled for profile '{profile_id}'"
+                "connection '{connection_id}' is not enabled for profile '{agent_id}'"
             ))
         })
 }

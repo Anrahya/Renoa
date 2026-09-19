@@ -3,7 +3,7 @@ use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentProfileId, InstalledPlugin, McpCatalogSnapshot, PluginCredential, PluginInspection,
+    AgentId, InstalledPlugin, McpCatalogSnapshot, PluginCredential, PluginInspection,
     shared_registry::SharedPluginSyncReport,
 };
 
@@ -63,18 +63,18 @@ impl LocalHost {
     /// Returns package, credential, adapter, discovery, or durable storage failures.
     pub async fn connect_profile_plugin_mcp(
         &self,
-        profile_id: &AgentProfileId,
+        agent_id: &AgentId,
         package_digest: &str,
         server_id: &str,
         connection_id: &str,
         credential: PluginCredential,
     ) -> Result<McpCatalogSnapshot, LocalHostError> {
-        self.profile(profile_id).await?;
+        self.require_agent(*agent_id).await?;
         Ok(self
             .config
             .plugins
             .connect_profile(
-                profile_id,
+                agent_id,
                 package_digest,
                 server_id,
                 connection_id,

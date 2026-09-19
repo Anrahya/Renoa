@@ -9,14 +9,14 @@ use renoa_kernel::{AgentId, KernelError, SessionId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentProfileId, LocalHostError, LocalSession, LocalSessionError,
+    LocalHostError, LocalSession, LocalSessionError,
     selection::{RuntimeSelection, create_selection_log},
     trace::{TRACE_DATABASE, TraceStore},
 };
 
 pub(crate) const KERNEL_DATABASE: &str = "kernel.sqlite3";
 pub(crate) const MANIFEST_FILE: &str = "session.json";
-const MANIFEST_VERSION: u32 = 3;
+const MANIFEST_VERSION: u32 = 4;
 const CREATION_LOCK_FILE: &str = ".session-creation.lock";
 const OWNERSHIP_HANDOFF_TIMEOUT: Duration = Duration::from_millis(100);
 const OWNERSHIP_HANDOFF_POLL: Duration = Duration::from_millis(1);
@@ -30,7 +30,6 @@ pub(crate) enum SessionPublication {
 #[serde(deny_unknown_fields)]
 pub(crate) struct SessionManifest {
     version: u32,
-    pub(crate) profile: AgentProfileId,
     pub(crate) agent_id: AgentId,
     pub(crate) session_id: SessionId,
     pub(crate) workspace: PathBuf,
@@ -43,7 +42,6 @@ struct SessionManifestHeader {
 
 pub(crate) fn create_session_storage(
     sessions: &Path,
-    profile: AgentProfileId,
     agent_id: AgentId,
     session_id: SessionId,
     workspace: PathBuf,
@@ -51,7 +49,6 @@ pub(crate) fn create_session_storage(
 ) -> Result<SessionPublication, LocalHostError> {
     let manifest = SessionManifest {
         version: MANIFEST_VERSION,
-        profile,
         agent_id,
         session_id,
         workspace,
@@ -65,7 +62,6 @@ pub(crate) fn create_session_storage(
             staging.join(TRACE_DATABASE),
             session_id,
             agent_id,
-            &manifest.profile,
         )?);
         Ok(())
     })
@@ -78,7 +74,6 @@ pub(crate) async fn read_manifest(path: PathBuf) -> Result<SessionManifest, Loca
 pub(crate) fn delete_session_storage(
     sessions: &Path,
     session_id: SessionId,
-    retain_agent: impl FnOnce(&SessionManifest) -> Result<(), LocalHostError>,
 ) -> Result<(), LocalHostError> {
     let directory = sessions.join(session_id.to_string());
     let tombstone = sessions.join(format!(".deleting-{session_id}"));
@@ -114,8 +109,6 @@ pub(crate) fn delete_session_storage(
         ));
     }
 
-    // Retention must commit before the last published identity source is hidden.
-    retain_agent(&manifest)?;
     std::fs::rename(&directory, &tombstone)?;
     File::open(sessions)?.sync_all()?;
     drop(owner);
@@ -287,8 +280,8 @@ mod tests {
         load_session_after_handoff, publish_session,
     };
     use crate::{
-        ALPHA_PROFILE_ID, AgentProfileId, LocalHostError, LocalSessionError, ModelProvider,
-        ReasoningLevel, selection::RuntimeSelection,
+        LocalHostError, LocalSessionError, ModelProvider, ReasoningLevel,
+        selection::RuntimeSelection,
     };
 
     #[test]
@@ -379,7 +372,6 @@ mod tests {
         let session_id = SessionId::new();
         let SessionPublication::Created(directory) = create_session_storage(
             sessions.path(),
-            AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
             agent_id,
             session_id,
             workspace.path().to_owned(),
@@ -395,7 +387,7 @@ mod tests {
         let owner = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)
             .expect("own kernel session");
 
-        let active_delete = delete_session_storage(sessions.path(), session_id, |_| Ok(()));
+        let active_delete = delete_session_storage(sessions.path(), session_id);
         assert!(matches!(
             active_delete,
             Err(LocalHostError::Session(LocalSessionError::Kernel(
@@ -405,15 +397,7 @@ mod tests {
         assert!(directory.is_dir());
 
         drop(owner);
-        let failed_retention = delete_session_storage(sessions.path(), session_id, |_| {
-            Err(LocalHostError::InvalidRequest(
-                "retention failed".to_owned(),
-            ))
-        });
-        assert!(failed_retention.is_err());
-        assert!(directory.is_dir());
-        delete_session_storage(sessions.path(), session_id, |_| Ok(()))
-            .expect("delete session storage");
+        delete_session_storage(sessions.path(), session_id).expect("delete session storage");
         assert!(!directory.exists());
         assert!(
             !sessions
@@ -422,7 +406,7 @@ mod tests {
                 .exists()
         );
 
-        delete_session_storage(sessions.path(), session_id, |_| Ok(()))
+        delete_session_storage(sessions.path(), session_id)
             .expect("repeat session deletion idempotently");
     }
 
@@ -434,7 +418,6 @@ mod tests {
         let session_id = SessionId::new();
         let SessionPublication::Created(directory) = create_session_storage(
             sessions.path(),
-            AgentProfileId::new(ALPHA_PROFILE_ID).expect("Alpha profile id"),
             agent_id,
             session_id,
             workspace.path().to_owned(),
@@ -481,8 +464,7 @@ mod tests {
         std::fs::write(directory.join("data"), "durable").expect("write session data");
         std::fs::rename(&directory, &tombstone).expect("publish deletion tombstone");
 
-        delete_session_storage(sessions.path(), session_id, |_| Ok(()))
-            .expect("resume session deletion");
+        delete_session_storage(sessions.path(), session_id).expect("resume session deletion");
 
         assert!(!directory.exists());
         assert!(!tombstone.exists());

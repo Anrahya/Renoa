@@ -39,7 +39,7 @@ use crate::{
 };
 
 pub(crate) use models::{
-    discover_profile_models, initial_reasoning, require_model, selected_model_by_selection_id,
+    discover_models_for, initial_reasoning, require_model, selected_model_by_selection_id,
 };
 use profiles::collect_profiles;
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
