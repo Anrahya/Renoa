@@ -544,7 +544,7 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v27 keeps Host identity, the canonical agent definition
+`host.sqlite3` schema v28 keeps Host identity, the canonical agent definition
 tables (`host_agents`, `host_agent_tool_selections`, `host_agent_mcp_connections`,
 `host_agent_creations`, `host_agent_tool_selection_operations`,
 `host_agent_renames`), installed package metadata, supported package MCP entries,
