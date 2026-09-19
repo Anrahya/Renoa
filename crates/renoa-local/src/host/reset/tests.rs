@@ -1,0 +1,210 @@
+use std::fs;
+use std::path::Path;
+
+use rusqlite::Connection;
+use tempfile::tempdir;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use super::super::{HostInitialization, reset_host_data_root};
+use crate::{
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, ModelProvider,
+    presets::SPECIALIST_PRESET_ID,
+};
+
+const RETAINED_INTEGRATION: &str = "retained.integration";
+
+fn open_host(root: &Path) -> LocalHost {
+    LocalHost::assemble(HostInitialization {
+        data_directory: root.join("data"),
+        bridge: root.join("model.mjs"),
+        providers: vec![ModelProvider::Xai],
+        initial_provider: ModelProvider::Xai,
+        initial_model: "fixture".to_owned(),
+        initial_reasoning: None,
+        credential_store: root.join("auth.sqlite"),
+        mcp_adapter: None,
+        mcp_registry_adapter: None,
+        shared_plugin_registry: None,
+        global_skill_source: None,
+        oauth_relay: None,
+    })
+    .expect("Host")
+}
+
+fn fixture() -> (tempfile::TempDir, LocalHost) {
+    let directory = tempdir().expect("fixture");
+    let root = directory.path();
+    fs::write(root.join("model.mjs"), "// fixture\n").expect("model");
+    fs::write(root.join("auth.sqlite"), "").expect("auth boundary");
+    let host = open_host(root);
+    (directory, host)
+}
+
+/// Registers one retained MCP integration, the shared state a reset must keep.
+async fn register_retained_connection(host: &LocalHost) {
+    host.register_direct_mcp_connection(
+        RETAINED_INTEGRATION,
+        "retained",
+        "https://example.com/mcp",
+    )
+    .await
+    .expect("retained connection");
+}
+
+fn count(path: &Path, table: &str) -> i64 {
+    let connection = Connection::open(path).expect("open Host catalog");
+    connection
+        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .expect("count rows")
+}
+
+fn database(root: &Path) -> std::path::PathBuf {
+    root.join("data").join("host.sqlite3")
+}
+
+#[tokio::test]
+async fn a_reset_removes_agent_state_and_keeps_shared_state() {
+    let (directory, host) = fixture();
+    let root = directory.path();
+    register_retained_connection(&host).await;
+    let agent = host
+        .create_agent(
+            AgentCreator::System {
+                component: "reset-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                "Digest",
+            )
+            .with_instructions("Write the digest."),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("agent");
+    let workspace = host.agent_workspace(agent.id).await.expect("workspace");
+    fs::write(workspace.join("notes.md"), "kept\n").expect("workspace file");
+    let sessions = root.join("data/sessions");
+    fs::create_dir_all(sessions.join("session-one")).expect("session directory");
+    fs::write(sessions.join("session-one/manifest.json"), "{}\n").expect("session file");
+
+    let report = reset_host_data_root(&root.join("data")).expect("reset");
+
+    assert!(report.total_rows() >= 2, "{report:?}");
+    assert_eq!(report.removed_sessions, 1);
+    assert_eq!(report.preserved_workspaces, ["agent-workspaces"]);
+    let path = database(root);
+    assert_eq!(count(&path, "host_agents"), 0);
+    assert_eq!(count(&path, "host_agent_tool_selections"), 0);
+    assert_eq!(count(&path, "host_agent_creations"), 0);
+    assert_eq!(count(&path, "mcp_integrations"), 1);
+    assert_eq!(count(&path, "host_identity"), 1);
+    assert!(!sessions.join("session-one").exists());
+    assert_eq!(
+        fs::read_to_string(workspace.join("notes.md")).expect("kept file"),
+        "kept\n"
+    );
+
+    let second = reset_host_data_root(&root.join("data")).expect("repeat reset");
+    assert_eq!(second.total_rows(), 0);
+    assert_eq!(second.removed_sessions, 0);
+    assert_eq!(count(&path, "mcp_integrations"), 1);
+}
+
+#[tokio::test]
+async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables() {
+    let (directory, host) = fixture();
+    let root = directory.path();
+    let path = database(root);
+    drop(host);
+    {
+        let connection = Connection::open(&path).expect("open catalog");
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 CREATE TABLE host_bots (
+                    bot_id TEXT PRIMARY KEY,
+                    created_by TEXT NOT NULL,
+                    recipe_json TEXT NOT NULL
+                 ) STRICT;
+                 CREATE TABLE profile_mcp_connections (
+                    profile_id TEXT NOT NULL,
+                    connection_id TEXT NOT NULL,
+                    PRIMARY KEY (profile_id, connection_id)
+                 ) STRICT;
+                 CREATE TABLE profile_skill_bindings (
+                    profile_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    skill_name TEXT NOT NULL
+                 ) STRICT;
+                 INSERT INTO host_bots VALUES ('legacy-bot', 'legacy-owner', '{}');
+                 INSERT INTO mcp_integrations(integration_id, kind, endpoint, request_headers_json)
+                 VALUES ('retained.integration', 'direct_streamable_http', 'https://example.com/mcp', '{}');
+                 DROP TABLE host_agent_tool_selections;
+                 DROP TABLE host_agent_creations;
+                 DROP TABLE host_agents;
+                 UPDATE host_metadata SET schema_version = 25 WHERE singleton = 1;
+                 PRAGMA user_version = 25;",
+            )
+            .expect("earlier runtime fixture");
+    }
+
+    let refused = crate::host::catalog::initialize(&database(root));
+    assert!(
+        matches!(&refused, Err(crate::HostCatalogError::Invalid(message)) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {refused:?}"
+    );
+
+    let report = reset_host_data_root(&root.join("data")).expect("cutover reset");
+    assert_eq!(report.total_rows(), 0, "{report:?}");
+    let migrated = open_host(root);
+    migrated
+        .agent_definition(crate::AgentId::from_uuid(Uuid::new_v4()))
+        .await
+        .expect("canonical tables are queryable");
+    let path = database(root);
+    assert_eq!(count(&path, "host_agents"), 0);
+    assert_eq!(count(&path, "mcp_integrations"), 1);
+    assert_eq!(count(&path, "host_identity"), 1);
+    for retired in [
+        "host_bots",
+        "profile_mcp_connections",
+        "profile_skill_bindings",
+    ] {
+        let connection = Connection::open(&path).expect("open catalog");
+        let present: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [retired],
+                |row| row.get(0),
+            )
+            .expect("table lookup");
+        assert_eq!(present, 0, "retired table {retired} survived migration");
+    }
+
+    let agent = migrated
+        .create_agent(
+            AgentCreator::System {
+                component: "post-migration".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::new(
+                Uuid::new_v4(),
+                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                "Fresh",
+            )
+            .with_instructions("Run after the cutover."),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("post-migration creation");
+    assert_eq!(count(&path, "host_agents"), 1);
+    assert_eq!(
+        migrated.agent_definition(agent.id).await.expect("read"),
+        Some(agent)
+    );
+}

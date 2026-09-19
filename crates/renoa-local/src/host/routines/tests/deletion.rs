@@ -170,8 +170,22 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
     db.execute_batch("DROP TABLE host_routine_deletions; UPDATE host_metadata SET schema_version=18; PRAGMA user_version=18;").expect("old schema");
     drop(db);
     drop(h);
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let h = host(d.path());
-    assert_eq!(h.routine(record.id).await.expect("preserved"), record);
+    assert!(
+        h.routine(record.id).await.is_err(),
+        "the cutover discards the legacy schedule"
+    );
+    let (parent, child) = provisioned(&h).await;
+    let record = change(&h, parent, RoutineMutation::Create { spec: spec(child) })
+        .await
+        .expect("create after the cutover");
     change(
         &h,
         child,
@@ -181,7 +195,7 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
         },
     )
     .await
-    .expect("delete after migration");
+    .expect("delete after the cutover");
     assert!(
         h.list_routines(child, None)
             .await

@@ -3,7 +3,7 @@ import { agentActivity, currentReviews, sessionUnfinished } from "./host-present
 
 /** Project only recorded relationships. Session positions cannot order separate sessions. */
 export function agentOverview(host: HostSnapshot, agent: Agent) {
-  const connections = host.connections.filter(connection => connection.selected_by_profiles.includes(agent.profile));
+  const connections = host.connections.filter(connection => connection.selected_by_agents.includes(agent.id));
   const routines = host.routines.filter(routine => routine.agent_id === agent.id);
   const sessions = host.sessions.filter(session => session.agent_id === agent.id);
   const reviews = host.reviews.filter(review => review.agent_id === agent.id);

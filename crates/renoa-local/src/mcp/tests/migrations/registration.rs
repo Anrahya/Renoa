@@ -1,7 +1,8 @@
 use rusqlite::Connection;
 
 use super::super::{agent_id, snapshot, store};
-use crate::mcp::{McpCatalogStore, McpConnectionAuth, McpOAuthRegistration, McpRequestHeaders};
+use super::{count, count_where, cut_over, migrated_connections};
+use crate::mcp::{McpConnectionAuth, McpOAuthRegistration, McpRequestHeaders};
 
 #[test]
 fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
@@ -78,8 +79,7 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
         .expect("downgrade fixture to version eight");
     drop(connection);
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate version eight OAuth connection");
+    let migrated = cut_over(directory.path());
     assert_eq!(
         migrated
             .connection_config("oauth")
@@ -89,21 +89,23 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     );
     assert_eq!(
         migrated
-            .agent_tool_summaries(&agent)
-            .expect("load migrated attachment")
-            .len(),
-        1
+            .load_catalog("oauth")
+            .expect("load retained OAuth catalog")
+            .tools()[0]
+            .name(),
+        "search"
+    );
+    assert!(
+        migrated_connections(migrated.path(), &agent).is_empty(),
+        "the cutover must not fabricate an agent attachment"
     );
     let connection = Connection::open(migrated.path()).expect("inspect migrated OAuth state");
     for table in ["mcp_oauth_flows", "mcp_oauth_receipts"] {
-        let count = connection
-            .query_row(
-                &format!("SELECT count(*) FROM {table} WHERE connection_id = 'oauth'"),
-                [],
-                |row| row.get::<_, u32>(0),
-            )
-            .expect("count preserved OAuth state");
-        assert_eq!(count, 1, "{table} must survive migration");
+        assert_eq!(
+            count_where(&connection, table, "connection_id", "oauth"),
+            1,
+            "{table} must survive migration"
+        );
     }
 }
 
@@ -155,8 +157,7 @@ fn version_nine_credentials_survive_and_custom_headers_become_available() {
         )
         .expect("downgrade fixture to version nine");
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate version nine credential state");
+    let migrated = cut_over(directory.path());
     assert_eq!(
         migrated
             .connection_config("existing")
@@ -242,9 +243,8 @@ fn version_eleven_loopback_oauth_flow_gains_an_empty_relay_identity() {
         )
         .expect("downgrade fixture to version eleven");
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate version eleven callback flow");
-    let connection = Connection::open(migrated.path()).expect("inspect migrated callback flow");
+    let migrated = cut_over(directory.path());
+    let connection = Connection::open(migrated.path()).expect("inspect cut-over callback flow");
     let callback = connection
         .query_row(
             "SELECT callback_port, callback_relay_id FROM mcp_oauth_flows
@@ -317,20 +317,15 @@ fn version_twelve_oauth_attempts_are_decoupled_from_active_connections() {
         .expect("downgrade fixture to version twelve");
     drop(connection);
 
-    let migrated = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("migrate version twelve OAuth state");
-    let connection = Connection::open(migrated.path()).expect("inspect migrated OAuth state");
-    let flow_count = connection
-        .query_row("SELECT count(*) FROM mcp_oauth_flows", [], |row| {
-            row.get::<_, u32>(0)
-        })
-        .expect("count migrated flows");
-    let receipt_count = connection
-        .query_row("SELECT count(*) FROM mcp_oauth_receipts", [], |row| {
-            row.get::<_, u32>(0)
-        })
-        .expect("count migrated receipts");
-    assert_eq!((flow_count, receipt_count), (1, 1));
+    let migrated = cut_over(directory.path());
+    let connection = Connection::open(migrated.path()).expect("inspect cut-over OAuth state");
+    assert_eq!(
+        (
+            count(&connection, "mcp_oauth_flows"),
+            count(&connection, "mcp_oauth_receipts")
+        ),
+        (1, 1)
+    );
     for table in ["mcp_oauth_flows", "mcp_oauth_receipts"] {
         let foreign_keys = connection
             .query_row(

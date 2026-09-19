@@ -17,7 +17,7 @@ export function ProfileOverview({ host, agent, navigate }: { host: HostSnapshot;
   const next = data.scheduled[0];
   const activeRepositories = data.repositories.filter(repository => repository.policy.enabled);
   const parts = [
-    { panel: "configure" as const, label: "Profile", detail: agent.profile, icon: Fingerprint },
+    { panel: "configure" as const, label: "Creation preset", detail: agent.preset_id ?? "No creation preset", icon: Fingerprint },
     { panel: "connections" as const, label: "Connections", detail: `${data.connections.length} selected from the Host`, icon: Plugs },
     { panel: "automations" as const, label: "Automations", detail: `${data.scheduled.length} enabled · ${data.paused.length} paused`, icon: Timer },
     ...(data.repositories.length ? [{ panel: "policy" as const, label: "Review policy", detail: `${data.repositories.length} ${data.repositories.length === 1 ? "repository" : "repositories"}`, icon: GitPullRequest }] : []),

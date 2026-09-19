@@ -15,6 +15,7 @@ mod lease;
 mod mcp;
 mod models;
 pub(crate) mod observation;
+mod reset;
 pub(crate) mod reviews;
 pub(crate) mod routines;
 mod runtime;
@@ -39,6 +40,7 @@ use crate::{
 pub(crate) use models::{
     discover_models_for, initial_reasoning, require_model, selected_model_by_selection_id,
 };
+pub use reset::{HostResetReport, reset_host_data_root};
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 
 /// Process-local configuration used to assemble Renoa Agent sessions.

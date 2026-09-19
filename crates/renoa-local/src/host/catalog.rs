@@ -12,7 +12,7 @@ use migrations::{
     MIGRATE_V11_TO_V12, MIGRATE_V12_TO_V13,
 };
 
-const SCHEMA_VERSION: u32 = 25;
+const SCHEMA_VERSION: u32 = 26;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -181,54 +181,6 @@ const SCHEMA: &str = "
         UNIQUE (skill_digest, name)
     ) STRICT;
 
-    CREATE TABLE agent_skill_bindings (
-        agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (
-            scope_kind IN ('global', 'workspace', 'plugin')
-        ),
-        workspace TEXT,
-        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
-        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-        skill_digest TEXT NOT NULL,
-        FOREIGN KEY (skill_digest, skill_name)
-            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-        CHECK (
-            (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
-            OR
-            (scope_kind = 'workspace' AND length(workspace) > 0)
-        ),
-        PRIMARY KEY (agent_id, source_id, skill_name)
-    ) STRICT;
-
-    CREATE TABLE agent_skill_source_rejections (
-        agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
-        scope_kind TEXT NOT NULL CHECK (
-            scope_kind IN ('global', 'workspace', 'plugin')
-        ),
-        workspace TEXT,
-        source_id TEXT NOT NULL CHECK (length(source_id) > 0),
-        entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
-        reason TEXT NOT NULL CHECK (length(reason) > 0),
-        CHECK (
-            (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
-            OR
-            (scope_kind = 'workspace' AND length(workspace) > 0)
-        ),
-        PRIMARY KEY (agent_id, source_id, entry_name)
-    ) STRICT;
-
-    CREATE TABLE session_skills (
-        activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL CHECK (length(session_id) > 0),
-        activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
-        skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
-        skill_digest TEXT NOT NULL,
-        FOREIGN KEY (skill_digest, skill_name)
-            REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
-        UNIQUE (session_id, skill_name),
-        UNIQUE (session_id, skill_digest)
-    ) STRICT;
-
     CREATE TABLE installed_plugins (
         plugin_digest TEXT PRIMARY KEY CHECK (length(plugin_digest) = 64),
         name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 64),
@@ -294,7 +246,9 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
     if (1..SCHEMA_VERSION).contains(&observed) {
-        return migrate(connection);
+        return Err(HostCatalogError::Invalid(format!(
+            "this data root holds schema {observed}; the canonical agent cutover discards agent-owned state, so start it with `renoa-host <config.json> reset <backup-directory>`"
+        )));
     }
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version =
@@ -307,6 +261,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
         0 => {
             transaction.execute_batch(SCHEMA)?;
             agents::initialize(&transaction)?;
+            crate::skills::SkillStore::initialize_tables(&transaction)?;
             super::definition::schema::initialize(&transaction)?;
             super::routines::initialize(&transaction)?;
             super::reviews::initialize(&transaction)?;
@@ -322,6 +277,22 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             "schema {found} is unsupported; expected {SCHEMA_VERSION}"
         ))),
     }
+}
+
+/// Applies the canonical agent cutover to one existing Host catalog.
+///
+/// This is the bounded reset's schema step. It runs the earlier migration ladder
+/// for the shared domains it still owns, drops every retired agent-owned table,
+/// and recreates the canonical tables empty. Applying it to a catalog that is
+/// already current only verifies it.
+///
+/// # Errors
+///
+/// Returns catalog storage failures or a catalog that cannot reach the current
+/// schema.
+pub(crate) fn cutover(path: &Path) -> Result<(), HostCatalogError> {
+    let mut connection = open(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    migrate(&mut connection)
 }
 
 fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
@@ -357,9 +328,13 @@ fn migrate(connection: &mut Connection) -> Result<(), HostCatalogError> {
                 if version < 14 {
                     agents::initialize(&transaction)?;
                 }
+                if version < 26 {
+                    retire_agent_owners(&transaction)?;
+                }
                 super::definition::schema::initialize(&transaction)?;
                 super::routines::initialize(&transaction)?;
                 super::reviews::initialize(&transaction)?;
+                crate::skills::SkillStore::initialize_tables(&transaction)?;
                 transaction.execute(
                     "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                     [SCHEMA_VERSION],
@@ -402,6 +377,52 @@ fn require_complete_selected_catalogs(connection: &Connection) -> Result<(), Hos
     Ok(())
 }
 
+/// Drops the agent-owned tables an earlier runtime owned, so the canonical
+/// initializers below can recreate them in their current shape.
+///
+/// This is the schema half of the clean break: a data root written by an earlier
+/// runtime keeps its Host identity, catalogs, credentials, plugins and skill
+/// revisions, and loses the agent rows whose shape this runtime does not read.
+fn retire_agent_owners(transaction: &rusqlite::Transaction<'_>) -> Result<(), HostCatalogError> {
+    for table in [
+        // Canonical owners whose shape or children changed.
+        "host_agent_tool_selections",
+        "host_agent_mcp_connections",
+        "host_agent_creations",
+        "host_agent_tool_selection_operations",
+        "host_agent_renames",
+        "host_agents",
+        "agent_skill_bindings",
+        "agent_skill_source_rejections",
+        "session_skills",
+        // Agent-owned records whose rows cannot survive the canonical shape.
+        "host_routine_deletions",
+        "host_routine_mutations",
+        "host_routine_owner_mutations",
+        "host_routine_runs",
+        "host_routines",
+        "host_review_deliveries",
+        "host_review_jobs",
+        "host_review_operations",
+        "host_review_publications",
+        "host_review_requests",
+        "host_review_runs",
+        "host_review_repositories",
+        // Retired owners from earlier runtime versions.
+        "host_bots",
+        "host_bot_tool_selections",
+        "host_bot_tool_operations",
+        "host_bot_renames",
+        "profile_mcp_connections",
+        "profile_mcp_tools",
+        "profile_skill_bindings",
+        "skill_source_rejections",
+    ] {
+        transaction.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+    }
+    Ok(())
+}
+
 fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
     let version =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
@@ -418,12 +439,14 @@ fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
         ));
     }
     let violation = connection
-        .query_row("PRAGMA foreign_key_check", [], |_| Ok(()))
+        .query_row("PRAGMA foreign_key_check", [], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(2)?))
+        })
         .optional()?;
-    if violation.is_some() {
-        return Err(HostCatalogError::Invalid(
-            "foreign-key validation failed".to_owned(),
-        ));
+    if let Some((table, parent)) = violation {
+        return Err(HostCatalogError::Invalid(format!(
+            "foreign-key validation failed: {table} references {parent}"
+        )));
     }
     Ok(())
 }
@@ -443,7 +466,7 @@ fn restrict_database_permissions(_path: &Path) -> Result<(), HostCatalogError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{initialize, open_verified};
+    use super::{HostCatalogError, cutover, initialize, open_verified};
 
     #[test]
     fn schema_ten_adds_an_unbound_shared_registry_cursor() {
@@ -454,7 +477,12 @@ mod tests {
             let connection = open_verified(&database).expect("open current catalog");
             connection
                 .execute_batch(
-                    "DROP TABLE host_agents;
+                    "INSERT INTO mcp_integrations(
+                        integration_id, kind, endpoint, request_headers_json
+                     ) VALUES (
+                        'retained', 'direct_streamable_http', 'https://example.com/mcp', '{}'
+                     );
+                     DROP TABLE host_agents;
                      DROP TABLE host_identity;
                      DROP TABLE shared_plugin_registry_state;
                      UPDATE host_metadata SET schema_version = 10 WHERE singleton = 1;
@@ -462,8 +490,14 @@ mod tests {
                 )
                 .expect("construct schema-ten fixture");
         }
-        initialize(&database).expect("migrate schema ten");
-        let connection = open_verified(&database).expect("open migrated catalog");
+        let refused = initialize(&database);
+        assert!(
+            matches!(&refused, Err(HostCatalogError::Invalid(message)) if message.contains("reset")),
+            "an earlier data root must be refused until it is reset: {refused:?}"
+        );
+        cutover(&database).expect("cut over schema ten");
+        initialize(&database).expect("open after the cutover");
+        let connection = open_verified(&database).expect("open cut-over catalog");
         let rows = connection
             .query_row(
                 "SELECT COUNT(*) FROM shared_plugin_registry_state",
@@ -472,5 +506,15 @@ mod tests {
             )
             .expect("read shared registry state");
         assert_eq!(rows, 0);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM mcp_integrations WHERE integration_id = 'retained'",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .expect("retained integration"),
+            1
+        );
     }
 }

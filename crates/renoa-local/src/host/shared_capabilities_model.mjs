@@ -42,7 +42,7 @@ if (prompt.startsWith("Reuse ")) {
       const inventory = value(0).items;
       if (!inventory.some(item => item.kind === "package" && item.package_digest === digest)) fail("package missing from shared library");
       const connection = inventory.find(item => item.kind === "connection" && item.connection === "shared-x");
-      if (!connection || connection.enabled_for_profile || !connection.catalog_loaded) fail("profile did not see reusable connection");
+      if (!connection || connection.enabled_for_agent || !connection.catalog_loaded) fail("second agent already saw the connection enabled");
       call("extension_manage", {action:"enable",connection:"shared-x"}); break;
     }
     case 2: call("extension_manage", {action:"add",source:{kind:"installed",package_digest:digest}}); break;

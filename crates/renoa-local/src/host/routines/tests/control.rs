@@ -203,13 +203,20 @@ async fn owner_receipt_failure_rolls_back_change_and_migration_keeps_agent_recei
     db.execute_batch("DROP TABLE host_routine_owner_mutations; UPDATE host_metadata SET schema_version=23; PRAGMA user_version=23;").expect("schema 23");
     drop(db);
     drop(h);
-    let h = host(d.path());
-    assert_eq!(
-        h.manage_routine(parent, op, creation, 100, CancellationToken::new())
-            .await
-            .expect("old receipt after migration"),
-        routine
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
     );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
+    let h = host(d.path());
+    assert!(
+        h.routine(routine.id).await.is_err(),
+        "the cutover discards the legacy routine and its receipts"
+    );
+    let (parent, child) = provisioned(&h).await;
+    let routine = create(&h, parent, spec(child)).await;
     let (control, owner) = controls(&h).await;
     let pause = command(1, false);
     let db = catalog::open_verified(&h.config.database).expect("catalog");

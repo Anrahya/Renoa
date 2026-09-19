@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalTurnOutcome,
-    ModelProvider, host::HostInitialization,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, HostCatalogError,
+    LocalTurnOutcome, ModelProvider, host::HostInitialization,
 };
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
 use renoa_kernel::AgentId;
@@ -15,7 +15,7 @@ impl AgentEventSink for Quiet {
         Box::pin(async {})
     }
 }
-fn host(root: &Path) -> LocalHost {
+fn try_host(root: &Path) -> Result<LocalHost, LocalHostError> {
     LocalHost::assemble(HostInitialization {
         data_directory: root.join("data"),
         bridge: root.join("model.mjs"),
@@ -30,13 +30,11 @@ fn host(root: &Path) -> LocalHost {
         global_skill_source: None,
         oauth_relay: None,
     })
-    .expect("host")
 }
-async fn fixture() -> (tempfile::TempDir, LocalHost, AgentId, AgentId) {
-    let d = tempfile::tempdir().expect("directory");
-    fs::write(d.path().join("model.mjs"), include_str!("test_model.mjs")).expect("model");
-    fs::write(d.path().join("auth.sqlite"), "").expect("auth boundary");
-    let h = host(d.path());
+fn host(root: &Path) -> LocalHost {
+    try_host(root).expect("host")
+}
+async fn provisioned(h: &LocalHost) -> (AgentId, AgentId) {
     let creator = AgentCreator::System {
         component: "routine-fixture".to_owned(),
     };
@@ -72,6 +70,14 @@ async fn fixture() -> (tempfile::TempDir, LocalHost, AgentId, AgentId) {
         .await
         .expect("specialist")
         .id;
+    (parent, child)
+}
+async fn fixture() -> (tempfile::TempDir, LocalHost, AgentId, AgentId) {
+    let d = tempfile::tempdir().expect("directory");
+    fs::write(d.path().join("model.mjs"), include_str!("test_model.mjs")).expect("model");
+    fs::write(d.path().join("auth.sqlite"), "").expect("auth boundary");
+    let h = host(d.path());
+    let (parent, child) = provisioned(&h).await;
     (d, h, parent, child)
 }
 async fn outsider(h: &LocalHost) -> AgentId {
@@ -358,14 +364,21 @@ async fn schema_fifteen_upgrade_preserves_agent_identity_and_runner_has_exclusiv
     db.execute_batch("DROP TABLE host_routine_deletions; DROP TABLE host_routine_mutations; DROP TABLE host_routine_runs; DROP TABLE host_routines; UPDATE host_metadata SET schema_version=15; PRAGMA user_version=15;").expect("schema fifteen");
     drop(db);
     drop(h);
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let restored = host(d.path());
     assert_eq!(restored.host_id().await.expect("retained Host"), identity);
     assert!(
         restored
             .agent_definition(child)
             .await
-            .expect("agent retained")
-            .is_some()
+            .expect("agent discarded")
+            .is_none()
     );
     let lock = std::fs::OpenOptions::new()
         .read(true)

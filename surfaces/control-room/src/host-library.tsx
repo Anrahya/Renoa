@@ -5,19 +5,19 @@ import { agentHref, connectionName, displayName, isEarlier } from "./host-presen
 export function ConnectionList({ host, connections }: { host: HostSnapshot; connections: Connection[] }) {
   return <div className="host-connection-list">
     {connections.map(connection => {
-      const selected = host.agents.filter(a => connection.selected_by_profiles.includes(a.profile));
+      const selected = host.agents.filter(a => connection.selected_by_agents.includes(a.id));
       const named = selected.filter(a => !isEarlier(a));
       const earlier = selected.filter(isEarlier);
       return <details className="host-record" key={connection.id}>
         <summary><span>{connectionName(host, connection)}<small className="host-record-meta">{named.map(a => a.name).join(" · ") || "No named agent selects this connection"}</small></span>
           <span className={`host-record-state ${connection.catalog_available ? "" : "host-error"}`}>{connection.catalog_available ? `${connection.tool_count} tools` : "Catalog unavailable"}{" "}<small>Stored catalog</small></span></summary>
         <div className="host-record-body"><p className="host-caption">Tool catalog saved by the Host. Connection health has not been checked by this view.</p>
-          <p>Selected by {connection.selected_by_profiles.length} profiles</p>
+          <p>Selected by {connection.selected_by_agents.length} agents</p>
           <div className="host-inline-links">{named.map(agent => <a key={agent.id} className="host-link" href={agentHref(agent.id, "connections")}>{displayName(agent.name)}</a>)}</div>
           {!!earlier.length && <details className="host-details"><summary>{earlier.length} earlier agent identities</summary>
             <div className="host-inline-links">{earlier.map(agent => <a key={agent.id} className="host-link" href={agentHref(agent.id, "connections")}>{displayName(agent.name)} <code>{agent.id.slice(0, 8)}</code></a>)}</div></details>}
           <p className="host-caption">Connection <code>{connection.id}</code></p>
-          <details className="host-details"><summary>Selected profile identities</summary>{connection.selected_by_profiles.map(profile => <p key={profile}><code>{profile}</code></p>)}</details>
+          <details className="host-details"><summary>Selected agent identities</summary>{connection.selected_by_agents.map(agentId => <p key={agentId}><code>{agentId}</code></p>)}</details>
         </div>
       </details>;
     })}

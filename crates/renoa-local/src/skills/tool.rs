@@ -61,7 +61,7 @@ impl SearchTool {
             spec: ToolSpec {
                 name: SKILL_SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find Agent Skills available to this agent profile without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} matches containing only name and description. Use query `*` to browse, then call skill_load with one name. Local global/project .agents sources are rescanned on each call, and installed Agent Plugin skills are hot-loaded. Precedence is project, global, then plugin; different plugins cannot silently compete for one name."
+                    "Find Agent Skills available to this agent without loading their instructions. Returns at most {SEARCH_RESULT_LIMIT} matches containing only name and description. Use query `*` to browse, then call skill_load with one name. Local global/project .agents sources are rescanned on each call, and installed Agent Plugin skills are hot-loaded. Precedence is project, global, then plugin; different plugins cannot silently compete for one name."
                 ),
                 input_schema: json!({
                     "type": "object",

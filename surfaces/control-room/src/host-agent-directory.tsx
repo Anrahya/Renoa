@@ -28,7 +28,7 @@ export function HostAgentDirectory({ host, missingAgent = false }: { host: HostS
   const automated = summaries.filter(({ summary }) => summary.automated).length;
   const term = query.trim().toLocaleLowerCase();
   useEffect(() => { if (term) setEarlierOpen(true); }, [term]);
-  const matches = (agent: Agent, name = agent.name) => `${name} ${agent.name} ${agent.profile} ${agent.id}`.toLocaleLowerCase().includes(term);
+  const matches = (agent: Agent, name = agent.name) => `${name} ${agent.name} ${agent.preset_id ?? ""} ${agent.id}`.toLocaleLowerCase().includes(term);
   const visible = summaries.filter(({ agent, name, summary }) => matches(agent, name) && (filter === "attention" ? needsAttention(summary) : filter === "automated" ? summary.automated : true));
   const visibleEarlier = earlier.filter(agent => matches(agent));
   const reset = () => { setQuery(""); setFilter("all"); };
@@ -55,7 +55,7 @@ export function HostAgentDirectory({ host, missingAgent = false }: { host: HostS
         {visible.length > 0 ? <ItemGroup aria-label="Agents" className="gap-0">{visible.map(({ agent, name, summary }) => <DirectoryRow key={agent.id} {...{ agent, name, summary }} />)}</ItemGroup> : <Empty className="min-h-64 border border-dashed">
           <EmptyHeader><EmptyMedia variant="icon"><CirclesThree /></EmptyMedia>
             <EmptyTitle>{term ? "No matching agents" : filter === "attention" ? "No agents need attention" : filter === "automated" ? "No automations assigned" : "No named agents yet"}</EmptyTitle>
-            <EmptyDescription>{term ? "Try another name, profile, or agent ID." : filter === "attention" ? "There are no attention records for these agents." : filter === "automated" ? "Agents with schedules or event triggers appear here, including paused ones." : earlier.length ? "Earlier identities are available below." : "Agents will appear here when they are registered on your Host."}</EmptyDescription>
+            <EmptyDescription>{term ? "Try another name, preset, or agent ID." : filter === "attention" ? "There are no attention records for these agents." : filter === "automated" ? "Agents with schedules or event triggers appear here, including paused ones." : earlier.length ? "Earlier identities are available below." : "Agents will appear here when they are registered on your Host."}</EmptyDescription>
           </EmptyHeader>
           {(term || filter !== "all") && <EmptyContent><Button variant="outline" onClick={reset}>Show all agents</Button></EmptyContent>}
         </Empty>}
@@ -65,7 +65,7 @@ export function HostAgentDirectory({ host, missingAgent = false }: { host: HostS
     </div>
     {earlier.length > 0 && <details open={earlierOpen} onToggle={event => setEarlierOpen(event.currentTarget.open)} className="border-t pt-5">
       <summary className="text-sm text-muted-foreground">Earlier identities <span className="ml-2">{visibleEarlier.length}</span></summary>
-      <p className="mt-3 text-sm text-muted-foreground">Original profile-named identities, retained with their own records.</p>
+      <p className="mt-3 text-sm text-muted-foreground">Original agent records, retained with their own records.</p>
       <ul className="mt-2 flex flex-col">{visibleEarlier.map(agent => <li key={agent.id} className="border-b py-3 last:border-0"><a href={agentHref(agent.id)} className="flex flex-wrap items-center justify-between gap-2 text-sm hover:underline"><span className="break-all">{agent.name}</span><code className="text-xs text-muted-foreground">{agent.id.slice(0, 8)}</code><ArrowRight aria-hidden="true" /></a></li>)}</ul>
       {!visibleEarlier.length && <p className="py-3 text-sm text-muted-foreground">No earlier identities match this search.</p>}
     </details>}
@@ -76,7 +76,7 @@ function DirectoryRow({ agent, name, summary }: { agent: Agent; name: string; su
   return <Item role="listitem" className="directory-agent" data-tone={summary.tone}>
     <ItemMedia className="directory-identity"><a href={agentHref(agent.id)} className="directory-agent-link">
       <Avatar size="lg"><AvatarImage src={portraitForAgent(agent.id, agent.name)} alt="" /><AvatarFallback><CirclesThree aria-hidden="true" /></AvatarFallback></Avatar>
-      <span><h2>{name}</h2><span className="directory-profile" title={agent.profile}>Host-owned agent</span></span>
+      <span><h2>{name}</h2><span className="directory-profile" title={agent.preset_id ?? "No creation preset"}>Host-owned agent</span></span>
       <CaretRight aria-hidden="true" />
     </a></ItemMedia>
     <ItemContent className="directory-work">

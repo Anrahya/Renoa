@@ -80,7 +80,7 @@ impl SearchTool {
             spec: ToolSpec {
                 name: SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find tools enabled for this agent profile without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before tool_execute. Use query `*` to browse."
+                    "Find tools enabled for this agent without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before tool_execute. Use query `*` to browse."
                 ),
                 input_schema: json!({
                     "type": "object",

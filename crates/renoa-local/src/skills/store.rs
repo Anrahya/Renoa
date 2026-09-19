@@ -87,6 +87,64 @@ impl SkillComponentRejection {
 }
 
 impl SkillStore {
+    /// Creates the agent-keyed skill tables on one Host catalog.
+    ///
+    /// The fresh-catalog path, the schema migration tail, and the bounded reset
+    /// all call this, so there is exactly one definition of these tables.
+    pub(crate) fn initialize_tables(
+        transaction: &rusqlite::Transaction<'_>,
+    ) -> Result<(), rusqlite::Error> {
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_skill_bindings (
+                agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
+                scope_kind TEXT NOT NULL CHECK (
+                    scope_kind IN ('global', 'workspace', 'plugin')
+                ),
+                workspace TEXT,
+                source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+                skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+                skill_digest TEXT NOT NULL,
+                FOREIGN KEY (skill_digest, skill_name)
+                    REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+                CHECK (
+                    (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
+                    OR
+                    (scope_kind = 'workspace' AND length(workspace) > 0)
+                ),
+                PRIMARY KEY (agent_id, source_id, skill_name)
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS agent_skill_source_rejections (
+                agent_id TEXT NOT NULL CHECK (length(agent_id) > 0),
+                scope_kind TEXT NOT NULL CHECK (
+                    scope_kind IN ('global', 'workspace', 'plugin')
+                ),
+                workspace TEXT,
+                source_id TEXT NOT NULL CHECK (length(source_id) > 0),
+                entry_name TEXT NOT NULL CHECK (length(entry_name) > 0),
+                reason TEXT NOT NULL CHECK (length(reason) > 0),
+                CHECK (
+                    (scope_kind IN ('global', 'plugin') AND workspace IS NULL)
+                    OR
+                    (scope_kind = 'workspace' AND length(workspace) > 0)
+                ),
+                PRIMARY KEY (agent_id, source_id, entry_name)
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS session_skills (
+                activation_order INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL CHECK (length(session_id) > 0),
+                activation_command_id TEXT NOT NULL CHECK (length(activation_command_id) > 0),
+                skill_name TEXT NOT NULL CHECK (length(skill_name) > 0),
+                skill_digest TEXT NOT NULL,
+                FOREIGN KEY (skill_digest, skill_name)
+                    REFERENCES skill_revisions(skill_digest, name) ON DELETE RESTRICT,
+                UNIQUE (session_id, skill_name),
+                UNIQUE (session_id, skill_digest)
+            ) STRICT;",
+        )
+    }
+
     pub(crate) fn initialize(
         database: PathBuf,
         packages: PathBuf,

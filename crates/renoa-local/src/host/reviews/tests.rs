@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, ModelProvider,
-    host::HostInitialization,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, HostCatalogError,
+    ModelProvider, host::HostInitialization,
 };
 use ring::hmac;
 use std::{fs, path::Path};
@@ -13,7 +13,7 @@ pub(super) mod source_tool;
 
 const SECRET: &[u8] = b"deterministic webhook boundary secret";
 
-fn host(root: &Path) -> LocalHost {
+fn try_host(root: &Path) -> Result<LocalHost, LocalHostError> {
     LocalHost::assemble(HostInitialization {
         data_directory: root.join("data"),
         bridge: root.join("model.mjs"),
@@ -28,18 +28,13 @@ fn host(root: &Path) -> LocalHost {
         global_skill_source: Some(root.join("skills")),
         oauth_relay: None,
     })
-    .expect("Host")
 }
 
-async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
-    let directory = tempfile::tempdir().expect("directory");
-    fs::write(
-        directory.path().join("model.mjs"),
-        "throw new Error('admission must not call a model');",
-    )
-    .expect("model boundary");
-    fs::write(directory.path().join("auth.sqlite"), "").expect("auth boundary");
-    let host = host(directory.path());
+fn host(root: &Path) -> LocalHost {
+    try_host(root).expect("Host")
+}
+
+async fn reviewer_policy(host: &LocalHost) -> GitHubReviewPolicy {
     let reviewer = host
         .create_agent(
             AgentCreator::System {
@@ -68,7 +63,7 @@ async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
         .await
         .expect("specialist")
         .id;
-    let policy = GitHubReviewPolicy {
+    GitHubReviewPolicy {
         repository_id: 42,
         installation_id: 7,
         full_name: "owner/repository".to_owned(),
@@ -81,7 +76,19 @@ async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
         ]
         .into(),
         skip_drafts: true,
-    };
+    }
+}
+
+async fn fixture() -> (tempfile::TempDir, LocalHost, GitHubReviewPolicy) {
+    let directory = tempfile::tempdir().expect("directory");
+    fs::write(
+        directory.path().join("model.mjs"),
+        "throw new Error('admission must not call a model');",
+    )
+    .expect("model boundary");
+    fs::write(directory.path().join("auth.sqlite"), "").expect("auth boundary");
+    let host = host(directory.path());
+    let policy = reviewer_policy(&host).await;
     set(&host, policy.clone(), None).await;
     (directory, host, policy)
 }
@@ -362,17 +369,25 @@ async fn schema_nineteen_migrates_without_changing_existing_host_or_specialist()
     db.execute_batch("DROP TABLE host_review_deliveries; DROP TABLE host_review_requests; DROP TABLE host_review_operations; DROP TABLE host_review_repositories; UPDATE host_metadata SET schema_version=19; PRAGMA user_version=19;").expect("schema 19");
     drop(db);
     drop(host);
+    let refused = try_host(directory.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&directory.path().join("data")).expect("cutover reset");
     let reopened = self::host(directory.path());
     assert_eq!(reopened.host_id().await.expect("identity"), identity);
     assert!(
         reopened
             .agent_definition(policy.agent_id)
             .await
-            .expect("specialist")
-            .is_some()
+            .expect("discarded specialist")
+            .is_none()
     );
+    let policy = reviewer_policy(&reopened).await;
     set(&reopened, policy, None).await;
     deliver(&reopened, Uuid::new_v4(), &payload('b'))
         .await
-        .expect("admission after migration");
+        .expect("admission after the cutover");
 }

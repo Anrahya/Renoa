@@ -32,13 +32,13 @@ Commands are ordinary messages (not Slack slash commands):
 - `!cancel`: stop the earliest outstanding model turn in this conversation.
 - `!help`: show the controls.
 
-Arcee uses the existing personal-operator recipe and full access through its
-configured tools and workspace. One worker serializes requests across this
-surface and holds at most one live session handle. Arcee's `bot_manage` tool
-creates persistent specialists with their own instructions, selected tools,
-and existing Host connections. A specialist uses a working directory at
-`<Host data>/bot-workspaces/<agent-id>`. The recipe is immutable in this slice;
-schedules and cross-machine execution migration
+Arcee uses the existing personal-operator preset and full access through its
+stored capability selection and workspace. One worker serializes requests across
+this surface and holds at most one live session handle. Arcee's `agent_manage`
+tool creates durable agents with their own creation preset, instructions, exact
+capability selection, and existing Host connections. An agent uses a working
+directory at `<Host data>/agent-workspaces/<agent-id>`. Instructions are
+immutable in this slice; schedules and cross-machine execution migration
 remain future work. It uses normal Slack messaging and does not require Slack
 AI or paid workflow features.
 
@@ -55,10 +55,10 @@ is not authoritative for the currently active interface.
 
 A supervised Slack provisioning task discovers Host specialists at startup,
 after Slack turns, and once per minute. This is a surface projection of the Host
-inventory, including bots created through another surface. It never makes Slack
-channel IDs part of the Host recipe. Ready channels use short job names, such as
+inventory, including agents created through another surface. It never makes
+Slack channel IDs part of the stored agent definition. Ready channels use short job names, such as
 `x-desk`, `news`, or `research`. Collisions get small suffixes such as `news-2`.
-Ask Arcee to rename a specialist through `bot_manage`; the Host display name
+Ask Arcee to rename an agent through `agent_manage`; the Host display name
 changes and Slack renames the existing channel, preserving its history and routing.
 Manual Slack renames remain until the Host display name changes again.
 

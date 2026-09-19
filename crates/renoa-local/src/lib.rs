@@ -63,7 +63,10 @@ pub use host::observation::{
     ObservedRoutine, ObservedSession, ObservedSessionState, ObservedSkill,
 };
 pub use host::reviews::{HostReviewControl, ReviewPolicyUpdate};
-pub use host::{LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration};
+pub use host::{
+    HostResetReport, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
+    reset_host_data_root,
+};
 pub use isolated_workspace::InspectionSandboxConfig;
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError, McpFailureKind,

@@ -250,11 +250,27 @@ async fn schema_seventeen_upgrade_retains_existing_routines_and_receipts() {
         .expect("old schema");
     drop(db);
     drop(h);
-    let restored = host(d.path());
-    assert_eq!(
-        restored.routine(record.id).await.expect("preserved"),
-        record
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
     );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
+    let restored = host(d.path());
+    assert!(
+        restored.routine(record.id).await.is_err(),
+        "the cutover discards the legacy routine and its receipts"
+    );
+    let (parent, child) = provisioned(&restored).await;
+    let record = change(
+        &restored,
+        parent,
+        RoutineMutation::Create { spec: spec(child) },
+        0,
+    )
+    .await
+    .expect("interval after the cutover");
     let replay = restored
         .manage_routine(
             parent,
@@ -264,6 +280,6 @@ async fn schema_seventeen_upgrade_retains_existing_routines_and_receipts() {
             CancellationToken::new(),
         )
         .await
-        .expect("receipt preserved");
+        .expect("receipt after the cutover");
     assert_eq!(replay.next_due_ms, record.next_due_ms);
 }

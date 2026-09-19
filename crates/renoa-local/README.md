@@ -3,13 +3,15 @@
 `renoa-local` is the first real Host for `renoa-kernel`. It resolves Agent
 runtimes from:
 
-- a versioned profile such as Alpha or Arcee, plus workspace `AGENTS.md` rules;
+- one stored agent definition: its instructions, behavior, exact capability
+  selection, and connection bindings, plus workspace `AGENTS.md` rules where
+  the agent's stored behavior reads them;
 - the `@renoa/model-provider` process adapter for xAI and OpenCode Go; and
 - Renoa's durable model/tool loop and compaction strategy;
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
   tools; and
 - three fixed extension-registry tools over durable MCP integration,
-  connection, catalog, and profile-attachment records; and
+  connection, catalog, and per-agent attachment records; and
 - one fixed `extension_manage` tool whose read-only official Registry
   search/lookup is backed by a replaceable process adapter.
 
@@ -43,9 +45,11 @@ lower kernel command boundary also used by the headless diagnostic runner.
 Live ACP updates come from a presentation-only event observer in the model and
 tool adapters; the kernel remains the sole durable execution owner.
 
-The Host data root contains `host.sqlite3` for MCP catalog and profile-attachment
-state, non-secret OAuth phases and terminal receipts, and `oauth-locks/` for
-per-connection refresh coordination, plus `sessions/<session-id>/`. OAuth credential bundles live in
+The Host data root contains `host.sqlite3` for the canonical agent definitions,
+MCP catalog and per-agent attachment state, non-secret OAuth phases and terminal
+receipts, and `oauth-locks/` for per-connection refresh coordination, plus
+`sessions/<session-id>/`, `agents/<agent-id>/` for the agents that keep SOUL.md
+and USER.md, and `agent-workspaces/<agent-id>/` for headless and scheduled work. OAuth credential bundles live in
 the desktop Secret Service, not this data root; the current desktop flow
 requires `secret-tool` and `xdg-open`. Each session uses `session.json` for
 identity, `runtime.jsonl` for acknowledged provider/model/reasoning choices,
@@ -114,7 +118,7 @@ Alpha loads `AGENTS.md` from the canonical workspace root before every new
 turn. The file must be
 UTF-8, remain inside the workspace after symlink resolution, and fit within 32
 KiB. Oversized rules fail clearly instead of entering the context partially.
-The full profile contract and research record are in
+The Alpha preset contract and research record are in
 [`docs/renoa-alpha-v1.md`](../../docs/renoa-alpha-v1.md).
 
 Before each newly admitted turn the Host resolves the selected model's context,

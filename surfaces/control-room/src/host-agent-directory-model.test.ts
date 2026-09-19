@@ -3,7 +3,7 @@ import type { HostSnapshot } from "./host-contract";
 import { directorySummary } from "./host-agent-directory-model";
 import { agentExample } from "./agent-work-preview/agent-example";
 
-const agent = { id: "agent", name: "Agent", profile: "profile", created_by: null };
+const agent = { id: "agent", name: "Agent", created_by: null, created_at_ms: 1, preset_id: null };
 const host: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [] };
 
 describe("agent directory observations", () => {
@@ -37,7 +37,7 @@ describe("agent directory observations", () => {
     expect(paused.automated).toBe(true);
     expect(paused.tone).toBe(enabled.tone);
   });
-  it("opens only records available in that agent's profile", () => {
+  it("opens only records available to that agent", () => {
     for (const id of ["20340f86-7f10-4c52-8757-c3124d9af0e1", "42357f5e-ae1f-0802-5218-d7f65a043086", "c8a63c3b-166d-45a0-9324-2b9db6f3d2df"]) {
       const example = agentExample(id);
       const summary = directorySummary(host, { ...agent, id }, example);

@@ -30,47 +30,51 @@ create another loop or history store. Renoa-specific management uses separate
 logical Host operations. The planned browser consumer uses the HTTPS boundary
 described below; browser, CLI, and model-facing adapters share domain semantics.
 
-The first concrete coding profile is Renoa Alpha v1, specified in
-[`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable Host identity is
-`renoa.coding.alpha.v1`. Alpha is one built-in profile, not a special Host
-execution type. Arcee is the first personal-operator profile, with stable identity
-`renoa.personal.arcee.v1`; Telegram is only its first surface. A Host process
-registers one or more `AgentProfile` recipes and can create a session from any
-exact registered `AgentProfileId`.
+The first concrete coding preset is Renoa Alpha v1, specified in
+[`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable creation preset identity is
+`renoa.coding.alpha.v1`. Alpha is one code-owned creation preset, not a special
+Host execution type. Arcee is the first personal-operator preset, with stable
+identity `renoa.personal.arcee.v1`; Telegram is only its first surface. A
+caller-defined specialist is created from `renoa.specialist.v1`. Every agent is
+one durable, provider-neutral `AgentDefinition`: identity and creation provenance,
+an optional creation preset id, the complete core operational document, the exact
+tool selection, and the exact selected Host connection ids. Creation snapshots
+the preset into that definition; runtime resolution never consults a preset again.
 
-Arcee's stable system rules remain part of the registered profile. The Host
-seeds owner-editable `SOUL.md` and `USER.md` files under
-`profiles/renoa.personal.arcee.v1/` in its data directory and reads both for
-every newly admitted turn. `profile_update` replaces one complete document
-atomically against the revision shown in the prompt. A stale edit fails without
-changing the newer file. Existing files are never overwritten during startup.
-The Soul controls Arcee's identity and voice. The User file stores durable facts
-and preferences about the user. Neither file changes kernel state or the
-surface binding.
+An Arcee agent's stable system rules are part of its stored definition. When
+that definition enables documents, the Host publishes owner-editable `SOUL.md`
+and `USER.md` files under `agents/<agent-id>/` in its data directory and reads
+both for every newly admitted turn. The `agent_documents` tool replaces one
+complete document atomically against the revision shown in the prompt. A stale
+edit fails without changing the newer file. Existing files are never overwritten
+during startup. The Soul controls the agent's identity and voice. The User file
+stores durable facts and preferences about the user. Neither file changes kernel
+state or the surface binding.
 
-Arcee starts with an intentionally empty User file. She learns durable facts
-during ordinary work and may update either document through `profile_update`
-when the evidence is strong enough. Startup does not interrogate the user or
-invent a profile from environment data.
+A new Arcee agent's User document starts with no recorded durable facts. The
+agent learns durable facts during ordinary work and may update either document
+through `agent_documents` when the evidence is strong enough. Startup does not
+interrogate the user or invent durable user facts from environment data.
 
-Arcee's profile starts automatic compaction when the exact projected model
-input reaches 400,000 tokens. The provider's advertised context window remains
-unchanged. Compaction targets a 40,000-token rebuilt request containing the
-fixed instructions and tools, a bounded checkpoint, and the latest safe
-conversation tail. When no safe transcript cut can meet that target, the
-planner keeps the smallest safe tail and still respects the real provider
-limit. This policy follows Arcee across surfaces and does not change Alpha's
-context policy.
+An Arcee agent's stored definition starts automatic compaction when the exact
+projected model input reaches 400,000 tokens. The provider's advertised context
+window remains unchanged. Compaction targets a 40,000-token rebuilt request
+containing the fixed instructions and tools, a bounded checkpoint, and the
+latest safe conversation tail. When no safe transcript cut can meet that
+target, the planner keeps the smallest safe tail and still respects the real
+provider limit. This stored policy follows the agent across surfaces and does
+not change Alpha's context policy.
 
-Arcee permits only the OpenCode Go model provider. This is Host profile policy,
-not Telegram policy: every surface that opens an Arcee session sees the same
-provider boundary. The selected OpenCode Go model and reasoning level remain
-session configuration and may change between operations. Host launch
-configuration may set the initial reasoning level for new sessions; saved
-sessions keep their own acknowledged model and reasoning selection.
+The Arcee preset also stores the OpenCode Go provider restriction in the
+agent's own definition. This is agent policy, not Telegram policy: every
+surface that opens a session for that agent sees the same provider boundary.
+The selected OpenCode Go model and reasoning level remain session configuration
+and may change between operations. Host launch configuration may set the
+initial reasoning level for new sessions; saved sessions keep their own
+acknowledged model and reasoning selection.
 
 The product direction for portable packages, external integrations,
-connections, profile selection, and agent-driven capability changes is recorded
+connections, agent selection, and agent-driven capability changes is recorded
 in [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md). That
 document does not override this Host boundary or prematurely settle the open
 v0 storage, permission, and management contracts below.
@@ -84,15 +88,16 @@ Host and `AgentToolBinding` path rather than adding a parallel runtime.
 The same component has three distinct states:
 
 ```text
-Capability library   installed pieces available to the Host
-Agent profile        a recipe selecting desired pieces and configuration
-Resolved runtime     exact bound pieces for one kernel operation
+Capability library      installed pieces available to the Host
+Agent definition        the durable identity, operational document, exact
+                        tool selection, and selected connections of one agent
+Resolved runtime        exact bound pieces for one kernel operation
 ```
 
-The Host owns the capability library, profiles, runtime resolution, provider
-configuration, credentials, workspace bindings, and future policy. The kernel
-owns Agent and Session identity, command admission, operation state, semantic
-events, effect safety, checkpoints, and the frozen `RuntimeManifest`.
+The Host owns the capability library, agent definitions, runtime resolution,
+provider configuration, credentials, workspace bindings, and future policy. The
+kernel owns Agent and Session identity, command admission, operation state,
+semantic events, effect safety, checkpoints, and the frozen `RuntimeManifest`.
 
 The kernel stores compatibility identities and revisions for selected pieces.
 It does not store or interpret provider, tool, skill, workspace, or product
@@ -103,21 +108,22 @@ configuration.
 A Host is identified by its durable data root and Host UUID, not by a surface
 process. Several local surface processes may open that same root under the same
 OS identity and compatible Renoa build. They share installed plugin revisions,
-MCP connection identities and credential resolution, profile attachments, and
-immutable skill files. Each kernel session still has one exclusive execution
-owner. An unrelated data root is a separate Host even on the same machine.
+MCP connection identities and credential resolution, agent connection
+selections, and immutable skill files. Each kernel session still has one
+exclusive execution owner. An unrelated data root is a separate Host even on
+the same machine.
 
 `extension_manage list` inventories the Host's packages and connections and
-reports whether each connection is enabled for the calling profile. `enable`
+reports whether each connection is enabled for the calling agent. `enable`
 attaches an existing connection without reinstallation, rediscovery, or another
-credential ceremony. Every surface using that profile sees the same attachment.
-A different profile selects the connection explicitly; availability in the Host
-library does not automatically expose every tool to every recipe.
+credential ceremony. Every session of that agent sees the same attachment.
+A different agent selects the connection explicitly; availability in the Host
+library does not automatically expose every tool to every definition.
 
 To reuse a package's skills, call `add` with
 `source: {"kind": "installed", "package_digest": "<digest from list>"}`.
 The Host verifies that exact installed revision and attaches its supported
-skills to the profile without needing the original source directory or a
+skills to the agent without needing the original source directory or a
 network registry. This does not connect the package's MCP servers. Existing
 connection identities are reused through `enable`; a new connection remains an
 explicit separate operation. Missing or corrupt revisions fail rather than
@@ -125,7 +131,7 @@ being downloaded or substituted. This extends the frozen extension manager
 binding from revision 16 to 17; unfinished older operations retain the existing
 fail-closed runtime compatibility behavior.
 
-Global skills are discoverable by each profile through the configured global
+Global skills are discoverable by each agent through the configured global
 source; workspace skills keep their workspace scope. Loading a skill pins its
 exact revision to that session. Sharing the library does not share conversation
 history or silently activate another session's instructions. Cross-machine Host
@@ -135,7 +141,7 @@ access and credential sharing between distinct Hosts remain separate work.
 
 The personal-system direction below guides the control-panel implementation.
 Authenticated browser observation, owner routine enablement, and review-policy
-editing exist; general recipe editing and delegation remain future work. Host ownership is a logical boundary, not a requirement that one
+editing exist; general agent editing and delegation remain future work. Host ownership is a logical boundary, not a requirement that one
 object, executable, or crate implement every subsystem. A laptop and a VPS are
 deployment choices. Preserving a Host across machine replacement requires its
 durable identity, records, and credential material; a hostname is not its identity.
@@ -174,14 +180,15 @@ any agent. A personal operator receives explicit management authority and can
 be replaced; being the first agent or creating a child grants no implicit root
 authority. Human management must not impersonate Arcee to reuse an agent API.
 
-Future recipe editing selects supported installed components and persists that
-selection before runtime assembly. Installing a capability, attaching it to a
-recipe, and resolving it for an operation remain separate. A surface binding is
-optional and independent of the recipe: schedules or delegated work may target
-an agent without a chat channel. This direction does not promise arbitrary hot
-loading of Rust implementations or make existing built-in profiles editable.
-Future delegation needs durable assignments and result references outside the
-orchestrator's transcript. Add those contracts only with their execution consumer.
+Future agent editing selects supported installed components and persists that
+selection before runtime assembly. Installing a capability, selecting it for an
+agent, and resolving it for an operation remain separate. A surface binding is
+optional and independent of the definition: schedules or delegated work may
+target an agent without a chat channel. This direction does not promise
+arbitrary hot loading of Rust implementations or make existing built-in presets
+editable. Future delegation needs durable assignments and result references
+outside the orchestrator's transcript. Add those contracts only with their
+execution consumer.
 
 ### Personal control-panel boundary
 
@@ -251,7 +258,7 @@ returns 422 and needs a new future date through the existing agent editing path.
 Deleted routines return 404; replaying an older receipt cannot restore them.
 Host identity is checked inside the mutation transaction, including on replay.
 Owner receipts remain distinct from agent receipts and cannot grant agent tools
-owner authority. Agent creation, recipe editors, and delegation remain separate
+owner authority. Agent creation, definition editors, and delegation remain separate
 work; this operation does not require them.
 
 ### Consistent management
@@ -260,7 +267,7 @@ One configured human owner controls one durable Host. The panel has three entrie
 Work for current attention, unfinished work and upcoming schedules; Agents for
 the records that own that work and their applicable controls; and Shared library
 for installed connections, plugins and recorded skills. Shared connections link
-back to the agents whose profiles select them. Similar names do not justify merging
+back to the agents whose definitions select them. Similar names do not justify merging
 agent identities, and a surface process is not a separate human owner.
 
 Management is composition of domain operations, not a second execution system.
@@ -268,7 +275,7 @@ The HTTP adapter authenticates the owner, validates the request origin and adapt
 typed requests; routine and review modules retain their transactions and rules.
 Human operations do not impersonate an agent. Agent tools bind their own actor in
 the trusted runtime. They share domain rules with owner operations without gaining
-owner authority. Adding a future recipe editor, binding editor or management tool
+owner authority. Adding a future definition editor, binding editor or management tool
 must follow this boundary rather than introduce another store or an HTTP-only rule.
 
 `HostReviewControl` edits admission policy for existing review repositories through
@@ -308,7 +315,7 @@ current repository revision before a new POST. Changing a schedule is not cancel
 its agent, and changing review policy is not an immediate worker cancellation.
 
 These controls establish a consistent management path, not general agent assembly.
-Owner creation and editing of recipes, surface-binding controls, runtime capability
+Owner creation and editing of definitions, surface-binding controls, runtime capability
 resolution and durable delegation remain future consumers. The existing Host remains
 their composition point; RCP's continuity contracts do not absorb product policy.
 
@@ -337,7 +344,7 @@ session identities are projected without writing them into the catalog.
 The kernel's non-owning observation API supplies committed operation state without
 loading command bodies, checkpoints, effect payloads or transcripts. An unfinished
 operation is not proof of a live worker. A stored MCP catalog is not a connection
-health probe. Profile connection selections are not a claim about the frozen tools
+health probe. Agent connection selections are not a claim about the frozen tools
 of an already-admitted operation. Recorded skills are not necessarily loaded in
 any session. A reviewed outcome is separate from publication success. Large
 artifacts, instructions, provider diagnostics and credential material stay outside
@@ -355,58 +362,69 @@ temporary collection of Rust objects used to execute one operation.
 For each operation, the Host conceptually resolves:
 
 ```text
-Agent Instance + profile + installed capabilities + current scope
+Agent Instance + stored definition + installed capabilities + current scope
                               |
                               v
                     exact resolved Runtime
 ```
 
-The kernel freezes that runtime before execution. A later profile or component
+The kernel freezes that runtime before execution. A later definition or component
 change cannot replace its implementations. The fixed extension registry is an
 explicit exception for data visibility: it may read later committed Host state,
 but every executable reference is catalog-bound and fails stale rather than
 changing behavior.
 
-Profiles are declarative recipes. They do not execute effects and do not own
-session history. Installed availability does not imply future authorization;
+Agent definitions are durable Host records. They do not execute effects and do not
+own session history. Installed availability does not imply future authorization;
 that distinction remains required even though v0 intentionally has no
 permission system.
 
-Built-in profiles are immutable process configuration: a stable validated identity,
-base instructions, an optional exact model-provider restriction, and whether
-the canonical workspace-root `AGENTS.md` is included. A session manifest persists the selected profile identity beside its
-Agent, Session, and workspace identity. Loading fails closed when that exact
-profile cannot be resolved from process configuration or the Host catalog.
-Specialist recipes are stored in `host.sqlite3` and resolved by already-running
-Host processes. Both kinds remain immutable in this slice.
+Creation presets are code-owned, versioned, immutable seeds: a stable validated
+identity, base instructions, an optional exact model-provider restriction, the
+workspace-instruction and turn-timing policy, an optional document set, and an
+optional automatic-compaction policy. Creation copies the applicable values into
+the agent's own operational document, so a preset change requires a new preset id
+and never rewrites an existing agent. A session manifest persists the exact agent
+id; Host catalog storage holds the definition. Loading fails closed when the agent
+definition is absent or corrupt. Caller-defined agents store their own
+instructions, and every agent definition is stored in `host.sqlite3` and resolved
+by already-running Host processes.
 
-The Host catalog stores one stable Host UUID and durable Agent records: an
-Agent ID, registered profile identity, display name, and optional creating Agent.
-Creation uses a caller-supplied identity and is idempotent only for identical
-fields; conflicting creation data or an absent creator fails. Creator links are
-immutable and reference existing agents, so they cannot form cycles.
+The Host catalog stores one stable Host UUID and the canonical agent tables: one
+`host_agents` row owning identity, creation provenance, the optional preset id,
+and the complete operational document, plus normalized rows for the exact tool
+selection (`host_agent_tool_selections`) and selected connections
+(`host_agent_mcp_connections`). Typed receipts make creation, rename, and
+tool-selection edits idempotent. `LocalHost::create_agent(creator, origin,
+request, cancellation)` is the one creation operation: the agent id derives from
+the operation id (`derived_agent_id`), so a retried call returns the same agent
+while a changed request under the same operation id conflicts. Trusted
+actor/origin pairs are enforced: an agent-tool caller is `AgentCreator::Agent`
+with `AgentCreationOrigin::AgentTool`; owner management is `Principal` with
+`Management`; trusted provisioning is `System` with `Provisioning`.
 `ensure_agent_session` binds an exact caller-supplied Session ID to an existing
 Agent. Several sessions may share that Agent while retaining independent
 workspaces, model selections, histories, and exclusive execution ownership.
-Deleting a session does not delete its Agent record.
+Deleting a session does not delete its Agent definition.
 
-The older create/ensure-session APIs retain their one-new-Agent-per-session
-behavior. Published session manifests remain authoritative for their Agent,
-profile, and workspace binding; loading a legacy session or listing the roster
-imports its existing identity into the catalog without opening a model or trace
-store. Catalog publication may follow session publication: a crash in between
-is reconciled from the existing manifest, without creating another Agent.
-The catalog records identity and composition selection, not a second execution
-journal. Kernel operation facts remain the execution authority.
-The [Slack adapter](../crates/renoa-slack/README.md) consumes the durable Agent
-management path: its Arcee Agent survives restarts, while DMs and channel
-threads bind independent conversations through `ensure_agent_session`. Its
-transport admission and reply receipts remain surface-owned. Specialist recipe
-creation now uses the same Host management path; routines use the same Host identities and execute independently of surfaces.
+A session manifest is `{version: 4, agent_id, session_id, workspace}`. Published
+manifests remain authoritative for their Agent, Session, and workspace binding;
+the agent must already exist when the session is created, and a manifest naming a
+missing or mismatched agent fails closed. Creation commits the agent definition
+before any session can bind to it, so a crash between the two never invents
+another Agent. The catalog records identity and composition selection, not a
+second execution journal. Kernel operation facts remain the execution authority.
+The [Slack adapter](../crates/renoa-slack/README.md) consumes the durable agent
+management path: its configured Arcee Agent survives restarts, while DMs and
+channel threads bind independent conversations through `ensure_agent_session`.
+Its transport admission and reply receipts remain surface-owned. Slack verifies
+that its configured agent id is already provisioned and no surface can create a
+`host_agents` row; routines use the same Host identities and execute
+independently of surfaces.
 
 Telegram, Slack, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
-adapters; they do not become profiles merely because they deliver messages. A
-GitHub-review recipe or a daily-assistant recipe is a profile and may be used
+adapters; they do not become agents merely because they deliver messages. A
+GitHub-review or daily-assistant agent definition may be used
 from any compatible surface.
 
 ## Full-access first slice
@@ -414,15 +432,16 @@ from any compatible surface.
 Permission semantics are deliberately open. V0 does not introduce roles,
 levels, grants, approval records, or a permission trait.
 
-Profiles run with full access through the tools selected for them. Built-in
-profiles advertise all local workspace tools; specialist recipes select a subset.
-The creation recipe remains immutable for exact creation replay. An optional
-revisioned tool selection changes a specialist's effective local tools without
-rewriting that recipe. `configure_bot_tools` is a trusted owner-management
-operation, also available as `renoa-host <config.json> bot-tools <edit.json>`.
-The edit contains `operation_id`, `id`, `expected_revision` (zero before the first
-edit), and `tools`. Its transaction persists the edit and replay receipt together;
-stale revisions and conflicting retries fail. Ordinary bot profiles and review
+Agents run with full access through the capabilities selected for them. The
+creation preset seeds an exact selection; a revision-checked capability edit
+changes an agent's effective tools without rewriting its creation receipt, and
+the exact stored names are the whole rule. `set_agent_tools` is a trusted
+owner-management operation, also available as
+`renoa-host <config.json> agent-tools <edit.json>`.
+The edit contains `operation_id`, `id`, `expected_revision` (positive; the
+creation selection is revision 1), and `tools`. Its transaction persists the
+edit and replay receipt together;
+stale revisions and conflicting retries fail. Ordinary agents and review
 assembly consume the same selection. Active reviews retain their frozen selection;
 new runs use the updated one. This operation is not exposed as a self-granting
 model tool or an unauthenticated remote endpoint.
@@ -440,16 +459,29 @@ find
 git_changes
 git_diff
 git_show
+extension_manage
+agent_manage
+routine_manage
+routine_results
 tool_search
 tool_load
 tool_execute
-extension_manage
 skill_search
 skill_load
+agent_documents
 ```
 
-Arcee also receives `bot_manage`; specialists receive it only when selected
-in their recipe.
+Capability names are exact: there is no wildcard and no revision-0 fallback. An
+agent binds exactly the capabilities its stored selection names, so a name that
+is absent is absent from both the model request and the execution boundary.
+The Alpha preset seeds all nine workspace tools plus `extension_manage`, the
+three registry tools, and the two skill tools. The Arcee preset seeds
+`extension_manage`, `agent_manage`, `routine_manage`,
+`routine_results`, the three registry tools, the two skill tools, and
+`agent_documents` on top of the workspace tools. A caller-defined specialist
+seeds `routine_manage`, `routine_results`, the registry and skill tools, and
+receives `agent_manage` or `extension_manage` only when its creation selection
+or a later capability edit names it.
 
 Existing tool invariants remain in force. File tools stay within the configured
 workspace. Bash starts in that workspace but is unrestricted and is not a
@@ -469,13 +501,14 @@ Grep and find skip hidden paths, including `.git`; unrestricted Bash is the
 explicit path for hidden-file access. Its reported revision is part of each
 search binding identity.
 
-Revision-checked file edits and profile updates coordinate cooperating Renoa
-writers, including separate processes, with a persistent `.renoa-lock-<digest>`
-sidecar in the target's canonical parent directory. The OS lock covers revision
+Revision-checked file edits and agent-document updates coordinate cooperating
+Renoa writers, including separate processes, with a persistent
+`.renoa-lock-<digest>` sidecar in the target's canonical parent directory. The
+OS lock covers revision
 validation, replacement, and parent-directory sync; its empty sidecar must not
 be deleted while writers may be active. Process exit releases ownership.
 Distinct replacements based on one revision cannot both succeed. Identical
-profile retries still succeed. Unconditional `write_file` also takes the lock
+document retries still succeed. Unconditional `write_file` also takes the lock
 but intentionally overwrites the latest contents without a revision check.
 This coordination does not prevent arbitrary external programs from changing
 files or removing the lock sidecars.
@@ -506,20 +539,23 @@ library, MCP catalog, skill library, and credential resolution boundary.
 catalog discovery, saved-model validation, or runtime construction. Its
 `AgentSessionHistory` handle retains exclusive kernel ownership and exposes a
 separate diagnostic-store error without hiding intact history. Inspection checks
-the registered profile, exact session/Agent identity, canonical workspace binding,
+the stored agent definition, exact session/Agent identity, canonical workspace binding,
 and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v25 keeps Host and Agent identity records, installed package metadata, supported package MCP entries,
+`host.sqlite3` schema v26 keeps Host identity, the canonical agent definition
+tables (`host_agents`, `host_agent_tool_selections`, `host_agent_mcp_connections`,
+`host_agent_creations`, `host_agent_tool_selection_operations`,
+`host_agent_renames`), installed package metadata, supported package MCP entries,
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
-snapshots, per-profile attached connection identities, immutable skill revisions,
-source/profile bindings, rejected skill entries, session activation pins, routines
+snapshots, per-agent selected connection identities, immutable skill revisions,
+agent skill bindings and rejections, session skill activations, routines
 and their results and receipts, GitHub review policy and execution/publication
-records, authenticated-owner routine receipts, and revisioned bot-tool selections.
-Registration, discovery, and profile attachment remain separate states.
-Catalog replacement and attachment are transactional, and multi-query reads use
+records, and authenticated-owner routine receipts.
+Registration, discovery, and agent connection selection remain separate states.
+Catalog replacement and selection are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
 One shared authorization resolver is composed into management, discovery, and
 runtime tool execution. Desktop composition selects loopback callbacks and
@@ -531,8 +567,8 @@ requesting Host keeps the decryption key and stores the resulting credential.
 
 An optional private shared plugin registry replicates only the immutable Agent
 Plugin library between Hosts. Each Host remains a complete local runtime and
-keeps its own credentials, MCP connections and discovered catalogs, profile
-attachments, session skill activations, workspaces, and session history. The
+keeps its own credentials, MCP connections and discovered catalogs, agent
+connection selections, session skill activations, workspaces, and session history. The
 registry is a separate Host service, not the RCP coordinator and not a remote
 kernel. Its stable UUID is the authority identity; its URL is only a replaceable
 route. A Host binds to one identity and fails closed if an endpoint later names
@@ -560,8 +596,9 @@ offline.
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
-The Host adds three fixed extension-registry tools to every assembled profile
-runtime: `tool_search`, `tool_load`, and `tool_execute`. Search returns at most
+The Host offers three fixed extension-registry tools to every assembled agent
+runtime and binds them when the stored selection names them: `tool_search`,
+`tool_load`, and `tool_execute`. Search returns at most
 200 compact matches without schemas. Load returns only one through three
 explicitly requested model-facing schemas. Execute resolves one exact reference
 containing the current catalog digest, then reuses the proven MCP credential,
@@ -576,7 +613,7 @@ already running. The runtime itself is unchanged: the kernel freezes the same th
 registry implementations, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host adds one fixed `extension_manage` tool. Its v18 model-facing schema is
+The Host offers one fixed `extension_manage` tool. Its v18 model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
 for each of ten typed actions and rejects missing or cross-action fields:
@@ -585,10 +622,10 @@ exact published Registry name/version; add one MCP definition independently
 verified against the provider's official documentation or one content-bound
 local Agent Plugins 1.0 directory; inspect a local package; install the exact
 inspected digest; list package integrity and durable connection state; connect
-one supported package MCP server for the active profile, optionally carrying
+one supported package MCP server for the calling agent, optionally carrying
 an exact scope from a prior `oauth_insufficient_scope` result; authorize,
 scope-upgrade, or explicitly restart one registered OAuth connection;
-disconnect one connection from that profile without deleting its durable
+disconnect one connection from that agent without deleting its durable
 package, registration, catalog, or credential reference; or re-enable that
 retained complete catalog without a network request.
 The model-facing descriptions state the remote-MCP setup sequence at the
@@ -659,13 +696,13 @@ package facts. List keeps aggregate state below that boundary by returning at
 most 32 compact package, server, notice, connection, and skill facts per page.
 Its opaque cursor is bound to the complete inventory revision, so concurrent
 changes produce a visible conflict and a fresh first-page requirement rather
-than offset drift. Package integrity, durable connection state, profile
-attachment, and accepted/rejected plugin skill bindings remain separate facts.
+than offset drift. Package integrity, durable connection state, agent
+selection, and accepted/rejected plugin skill bindings remain separate facts.
 Revision 12 freezes encrypted credential intake and transactional connection
 publication. An unfinished revision-11 management call fails closed after
 upgrade instead of resuming across the changed effect boundary.
 
-The Host also adds exactly two Agent Skills tools: `skill_search` and
+The Host also offers exactly two Agent Skills tools: `skill_search` and
 `skill_load`. Search rescans global `~/.agents/skills` and the canonical
 workspace's `.agents/skills` on every call, imports each accepted directory into
 `skills/<sha256>`, atomically publishes one complete source snapshot, and
@@ -697,19 +734,20 @@ provider context limit is reported as a provider failure rather than disguised
 as a Renoa skill rule.
 
 `LocalRuntimeConfig` is the lower composition input used inside the Host. The
-Host selects the session's registered profile before resolving these inputs:
+Host resolves the agent's stored definition before resolving these inputs:
 
 - provider and model;
 - reasoning configuration;
-- the profile's base prompt, optional bounded workspace `AGENTS.md`, and exact
-  active skill instructions; and
-- the six workspace tools, three fixed MCP registry tools, one fixed extension
-  manager, and two fixed skill registry tools.
+- the agent's stored instructions, optional bounded workspace `AGENTS.md`, and
+  exact active skill instructions; and
+- the nine workspace tools, three fixed MCP registry tools, the fixed extension
+  manager, the fixed agent manager, the routine tools, and the fixed skill
+  registry tools, filtered to the exact stored capability selection.
 
-`build_local_runtime` resolves that recipe with a `LocalWorkspace`:
+`build_local_runtime` resolves that definition with a `LocalWorkspace`:
 
 ```text
-LocalRuntimeConfig + registered AgentProfile
+LocalRuntimeConfig + stored AgentDefinition
   + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
@@ -728,13 +766,13 @@ the existing local product path. Model identity, reasoning, context behavior,
 instructions, limits, tool specifications, recovery declarations, and
 workspace-bound tool revisions are represented by the resulting manifest.
 
-Model and reasoning selection are not profile or Agent identity. They may change
+Model and reasoning selection are not agent identity. They may change
 between operations while the Agent Instance, Session, instructions, tools, and
 history remain continuous. A change never mutates an active operation; the
 kernel freezes each operation's exact model and reasoning revision.
-Profiles may restrict which configured providers are eligible without fixing a
-particular model. Discovery, loading, and later model changes all enforce the
-same restriction.
+An agent definition may restrict which configured providers are eligible
+without fixing a particular model. Discovery, loading, and later model changes
+all enforce the same restriction.
 
 The Host resolves a fresh runtime for every newly admitted operation. This
 re-reads the canonical workspace `AGENTS.md`, so a project-rule edit applies to
@@ -742,9 +780,10 @@ the next turn without restarting the surface. It cannot change an operation
 that is already admitted because the kernel has frozen that operation's
 manifest.
 
-The selected profile identity is durable session state. The recipe itself
-remains process-registered configuration until a real profile-management
-consumer proves the storage and mutation contract.
+The selected agent identity is durable session state, and the definition itself
+is durable Host state in `host.sqlite3`. Capability edits are revision-checked
+and receipt-backed; editing instructions or connection selections remains future
+work until a consumer proves that mutation contract.
 
 ## Command path
 
@@ -752,18 +791,33 @@ Local management commands use the same typed Host operations as future
 surface and model-facing callers, and emit JSON:
 
 ```sh
-renoa-agent agents list
-renoa-agent agents show AGENT_UUID
-renoa-agent agents ensure AGENT_UUID NAME [CREATOR_UUID]
-renoa-agent agents session AGENT_UUID SESSION_UUID /absolute/workspace
+renoa-host inspect <data-directory>
+renoa-host <config.json> provision <provision.json>
+renoa-host <config.json> agent-tools <edit.json>
+renoa-host <config.json> reset <backup-directory>
+renoa-host <config.json> rename-agent <agent-id> <expected-name> <name> <operation-id>
 ```
 
-These commands use the existing `RENOA_DATA_DIR` and provider launch settings.
-`ensure` selects the CLI's registered Alpha profile; arbitrary recipe editing is
-not implemented. Listing, lookup, and creation need no executable model bridge.
-Session creation resolves the real registered profile and model normally, and
-the returned Session ID can be reopened through the existing ACP load path.
-Host and Agent identity, creation retries, parent relationships, and isolated
+`inspect` opens the existing data root read-only and prints the Host snapshot.
+The remaining commands assemble the ordinary Host from the same launch
+configuration a running service uses. `provision` is the trusted creation path
+for a `System`/`Provisioning` caller: the first agent on an empty Host is created
+by it. Its document is the canonical creation request in camelCase JSON, for
+example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v1","name":"Alpha"}`,
+with optional `instructions`, `tools`, `connections`, and `routine`. `agent-tools`
+applies one revision-checked capability edit. `rename-agent` applies one
+expected-current-name-checked display-name edit with an explicit operation id. `reset` is the
+bounded clean-break reset described below. None of these commands needs an
+executable model bridge.
+
+The ACP adapter's `renoa-agent agents list`, `renoa-agent agents show AGENT_UUID`,
+and `renoa-agent agents session AGENT_UUID SESSION_UUID /absolute/workspace`
+commands remain optional adapters over the same reads and session binding. They
+use `RENOA_DATA_DIR`, `RENOA_AGENT_ID`, and the provider launch settings. Listing
+and lookup need no executable model bridge; session creation resolves the stored
+definition and model normally, and the returned Session ID can be reopened
+through the existing ACP load path. Host and Agent identity, creation retries,
+creator links, and isolated
 multi-session execution are tested across restart. The Host UUID identifies a
 durable data root; this slice does not replicate catalogs across machines.
 
@@ -776,19 +830,20 @@ renoa-agent mcp github install --account ACCOUNT
 
 It registers the exact `github.com` account reference, resolves its token with
 `gh` only for discovery, atomically publishes the complete catalog, and attaches
-the GitHub connection to Alpha. Repeating the command converges on the same
-durable state. The next registry search sees the connection without restarting
-Waku or Alpha; no GitHub schema is advertised until explicitly loaded.
+the GitHub connection to the agent named by `RENOA_AGENT_ID`. Repeating the
+command converges on the same durable state. The next registry search sees the
+connection without restarting Waku or the agent; no GitHub schema is advertised
+until explicitly loaded.
 
 The first real Host flow accepts either an ordinary prompt or a typed compact
 control:
 
 ```text
 surface adapter or local caller
-  -> LocalHost creates, ensures, or loads AgentSession
+  -> LocalHost loads or creates an AgentSession for an existing agent
   -> AgentSession accepts one caller-identified command
        -> read current workspace rules
-       -> resolve the selected model, context, loop, and tools
+       -> resolve the stored definition, model, context, loop, and tools
        -> LocalSession atomically admits the command
        -> drive that exact operation through the kernel
        -> project a durable assistant or compaction result
@@ -797,11 +852,11 @@ surface adapter or local caller
 `Kernel::submit_exclusive` combines the unfinished-operation check and command
 insert in one immediate SQLite transaction. `AgentSession` uses this optional
 admission primitive because one conversation turn must finish before another begins.
-The general kernel `submit` path still permits ordered queues for future
-profiles. Exact redelivery remains idempotent; a different command is rejected
+The general kernel `submit` path still permits ordered queues for other
+compositions. Exact redelivery remains idempotent; a different command is rejected
 without leaving ghost queued work.
 
-`LocalSession` remains the lower shared command boundary used by Agent profiles
+`LocalSession` remains the lower shared command boundary used by Host agents
 and the headless diagnostic runner. Its prompt and explicit-compaction methods share
 the same exclusive admission, stable command identity, drive, cancellation,
 and durable replay path. `LocalTurnOutcome::Compacted` carries the persisted
@@ -810,7 +865,7 @@ produced an assistant message. `AgentSession` is the complete surface-facing
 Host boundary: it also owns runtime selection, persistence, fresh per-turn
 composition, and cancellation coordination.
 
-Profiles may opt into Host turn timing. A direct caller observes the Host clock
+Agent definitions may opt into Host turn timing. A direct caller observes the Host clock
 once; a queue-backed surface supplies the receive time it already persisted.
 That observation is serialized in the exact command before admission. A retry
 with the same command identity reuses the admitted value, even if the process
@@ -827,9 +882,9 @@ each prior turn with the same durable suffix, which preserves the exact prompt
 prefix used by provider caches. Alpha remains content-only; Arcee opts into
 this behavior.
 
-`LocalHost::ensure_session` accepts a caller-chosen UUID for durable surface
+`LocalHost::ensure_agent_session` accepts a caller-chosen UUID for durable surface
 admission. Repeating it resolves the already-published session with its stored
-profile, model selection, Agent identity, and workspace instead of validating a
+model selection, Agent identity, and workspace instead of validating a
 new-session default or creating an orphan replacement. Publication remains an
 atomic hidden-directory rename under a process-shared creation lock.
 
@@ -866,8 +921,10 @@ Local Host state has one intentionally visible layout:
 
 ```text
 <data-root>/
-  host.sqlite3                  package metadata, MCP state, credential
-                                references, and skill/session bindings
+  host.sqlite3                  agent definitions, package metadata, MCP state,
+                                credential references, and skill/session bindings
+  agents/<agent-id>/            published SOUL.md and USER.md documents
+  agent-workspaces/<agent-id>/  Host-owned workspace for scheduled and headless runs
   oauth-locks/<sha256>.lock     process-crash-safe per-connection OAuth lock
   oauth-secrets/<sha256>.json   headless-only owner-protected credentials
   credential-relay-state/      owner-only pending encrypted-intake identities
@@ -875,11 +932,11 @@ Local Host state has one intentionally visible layout:
   shared-registry/              owner-only transient package transfers
   skills/<sha256>/              immutable imported Agent Skill directory
   sessions/<session-uuid>/
-    session.json                durable identity and workspace/profile binding
+    session.json                durable identity and workspace/agent binding
     runtime.jsonl               acknowledged provider/model/reasoning selections
     kernel.sqlite3              authoritative execution and recovery truth
     trace.sqlite3               ordered Host/model/tool diagnostics plus exact
-                                profile, Agent, and Session identity
+                                Agent and Session identity
 ```
 
 Usage, cache counts, execution timings, provider payloads, streamed chunks, and
@@ -887,8 +944,9 @@ tool diagnostics belong in `trace.sqlite3`, never `runtime.jsonl` or model
 context. The admitted user-turn observation described above is the narrow
 exception: it is semantic model context, not diagnostic trace timing.
 Trace rows explain execution but never decide replay or semantic history. A
-v1 trace is migrated in place to add the durable Agent and profile identity
-already proven by its session manifest.
+trace database is owned by one exact Agent and Session; a mismatched or
+unsupported trace schema fails closed instead of being reinterpreted. The clean
+break below does not migrate old session or trace stores.
 
 The Host assembles these files in a hidden directory. After all four are synced
 and the kernel lease is closed, it atomically renames that directory to the
@@ -900,25 +958,85 @@ The global `host.sqlite3`, `plugins/`, and `skills/` stores are owner-only on Un
 `runtime.jsonl` recovery truncates an incomplete crash tail before any later
 append; future valid records can never be joined onto torn JSON.
 
+## Clean-break deployment and reset
+
+The canonical agent definition replaces the earlier profile and bot records
+rather than reading both shapes. The cutover is explicit and bounded: an earlier
+data root fails closed at startup with the required command in the error, so no
+runtime ever discards a live agent roster silently, and ordinary startup never
+deletes broad filesystem state.
+
+1. Stop every writer: the routine service (`renoa-host <config.json>`), every
+   surface, every review worker, and every node daemon that owns the data root.
+   A copied data root must not have a live writer.
+2. Create exactly one consolidated backup of the previous release's data root.
+   `renoa-host <config.json> reset <backup-directory>` does this FIRST: it copies
+   the whole data root to a fresh backup directory, refuses a non-empty backup
+   directory, and refuses a backup inside the data root. The copy completes
+   before the cutover touches the root.
+3. Apply the bounded reset, which performs the schema cutover. An earlier data
+   root (any catalog version below 26) is refused at startup until this runs, so
+   the reset is the only path that changes those tables. It drops the retired
+   agent-owned tables (`host_agents` in its old shape, `host_bots*`,
+   `profile_mcp_connections`, `profile_mcp_tools`, `profile_skill_bindings`,
+   `skill_source_rejections`, the agent skill bindings, and the routine and
+   review records tied to those agents) and recreates the canonical `host_agents`
+   root and its normalized children in their current shape, running the earlier
+   migration ladder first for the shared domains it still owns.
+   `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
+   agent-owned rows and the `sessions/` and `review-sessions/` directories, and
+   it never deletes workspace files or the Host's shared state.
+   Host identity, MCP catalogs, connections, authorizations and credentials,
+   installed plugins, skill revisions, shared registry state, and provider
+   credentials are preserved. Applying the reset twice is safe, and a failed
+   reset leaves its database transaction uncommitted.
+4. Provision the configured bootstrap agent. `renoa-host <config.json> provision
+   <provision.json>` performs the one canonical creation operation with a
+   trusted `System`/`Provisioning` actor, so an empty Host gets its first agent
+   without a model call. Surfaces never create agents; they receive explicit
+   agent ids.
+5. Start and health-check the current runtime. The Host fails closed when the
+   schema or Host identity is incompatible, and each surface fails closed rather
+   than creating an agent when its configured agent id is absent. Confirm the
+   roster and shared inventory with `renoa-host inspect <data-directory>`, or
+   the authenticated `GET /v1/host` snapshot.
+6. Only after health succeeds, replace the older release backup. Retain the
+   single consolidated backup described in step 2 and delete older release
+   archives, snapshots, and unused versioned binaries.
+
+The stores are separate databases with no cross-store transaction. The Host
+reset is one idempotent step over `host.sqlite3` and the Host session
+directories. The node store is a separate idempotent step over
+`host_node_metadata`, `host_node_tasks`, `host_node_executions`, and
+`host_node_events`. Each surface store is its own step: the Slack store owns
+`identity`, `sessions`, `conversations`, `requests`, `messages`, `receipts`,
+`deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
+`routine_deliveries`, `routine_delivery_cursor`, and `routine_context_receipts`;
+the Telegram store owns `surface_identity`, `surface_sessions`, `conversations`,
+`updates`, `delivery_messages`, and `surface_actions`. Because no transaction
+spans them, a crash between steps leaves each store internally consistent and
+every step repeatable; a surface whose stored agent id no longer exists fails
+closed until it is provisioned against the current Host.
+
 ## Agent-driven changes
 
 The full intended extension lifecycle and its staged proof plan are recorded in
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md).
 
 The GUI is a surface, not the sole controller. `LocalHost` methods and each
-profile's `extension_manage` tool reach the same `PluginManager`; a future Waku
+agent's `extension_manage` tool reach the same `PluginManager`; a future Waku
 view will call that Host path rather than own extension state:
 
 ```text
 human surface --\
-                 -> effective session/profile policy -> Host operation
+                 -> effective session/agent policy -> Host operation
 running agent --/                                      -> durable change
 ```
 
 The current deliberate full-access policy permits search, lookup, inspect,
 install, list, connect, and authorize without a second plugin approval prompt.
 Service OAuth consent is authentication, not another Renoa permission decision.
-A later restricted profile will gate the same management binding through its
+A later restricted agent definition will gate the same management binding through its
 one effective permission scope. An agent may exercise that authority but cannot
 broaden it.
 MCP registry attachments are visible at the next lookup; static runtime changes
@@ -929,30 +1047,35 @@ modification.
 
 ### Persistent specialist agents
 
-Arcee now creates persistent specialists through the `bot_manage` tool, backed
-by typed Host operations. The Host atomically stores a bot's identity, creating
-Agent, immutable recipe (initial name, instructions, selected local tools and existing
-MCP connections), Agent record, and connection attachments. Every attachment
+Arcee now creates persistent specialists through the `agent_manage` tool, backed
+by the one typed Host creation operation. The Host atomically stores an agent's
+identity, typed creation provenance, complete operational document, exact tool
+selection, and selected connections in one root row plus its normalized
+children. Every named connection
 must have a complete discovered catalog. Creation derives a stable identity
-from the kernel tool-call identity; identical replay returns the existing bot,
-while conflicting data fails. Cancellation is checked after acquiring the
-write lock and before committing, so abandoned creation does not publish a bot.
+from the operation id (which the tool derives from the kernel tool-call
+identity); identical replay returns the existing agent,
+while conflicting data fails. Cancellation is checked before document
+publication and again under the write lock before committing, so abandoned
+creation does not publish an agent.
 
-Already-running Host processes resolve these persisted profiles without a
-restart. The selected instructions replace the operator's instructions, and
-selected workspace tools are the actual advertised tools. Registry and skill
+Already-running Host processes resolve these stored definitions without a
+restart. Each definition is self-contained: its stored instructions are the
+whole standing prompt and its stored selection is the actual advertised
+tool set. Registry and skill
 execution retain the existing Host capability path; selecting `extension_manage`
 allows reuse of installed packages and existing connections without repeating
-OAuth. Selecting `bot_manage` allows a specialist to create descendants. These
+OAuth. Selecting `agent_manage` allows a specialist to create descendants. These
 are capability choices, not a permission or OS isolation guarantee.
 
-`list_bots` and the model-facing list operation return compact pages of 20
-identities, names, and creator relationships with a continuation cursor. Exact
-recipe lookup is separate. Profile inventory includes persisted specialists.
-`bot_manage rename` edits the Host display name with an expected-current-name
-check and a durable operation receipt. Replay returns the original rename result;
-replaying creation retains its immutable recipe without reverting the current
-name. Agent identity, sessions, workspace, tools, and connections remain intact.
+`agent_manage list` returns compact pages of 20 definitions with identity,
+name, preset id, tools, and connections plus a continuation cursor. Exact
+definition lookup is separate. Agent inventory includes persisted specialists.
+`agent_manage rename` edits the Host display name with an expected-current-name
+check and a durable operation receipt; an agent may rename itself, and renaming
+another agent requires the actor's stored selection to contain `agent_manage`.
+Replay returns the original rename result; replaying creation never reverts the
+current name. Agent identity, sessions, workspace, tools, and connections remain intact.
 Names should be short job labels, such as X Desk, News, or Research. Slack
 projects display-name changes onto the existing channel by its retained ID.
 Slack projects the Host specialist inventory into dedicated private channels and
@@ -962,19 +1085,19 @@ Plain messages in a dedicated channel route to that specialist. The adapter
 also persists a concise interface-capability snapshot with each admitted prompt,
 so the model can distinguish automatic surface behavior from connected MCP
 capabilities. This remains surface-owned input, not Slack policy in the Host or
-kernel. Shared profile memory must not determine the active message surface. Slack also
+kernel. Shared agent memory must not determine the active message surface. Slack also
 supports optional `!agent <id>` routing in DMs and ordinary threads: admission persists the
 target Agent alongside a fresh Session before acknowledging the command. Earlier
 queued requests retain their targets. `!new` keeps the selected Agent; `!agent arcee` returns to the operator in a fresh conversation. A separate channel
 thread can keep another conversation open. Specialist working directories live
-under the Host's `bot-workspaces/<agent-id>` directory.
+under the Host's `agent-workspaces/<agent-id>` directory.
 
-The following behavior describes the remaining product direction. Recipe edits and structured generated-artifact management remain open. Host-owned
+The following behavior describes the remaining product direction. Definition edits and structured generated-artifact management remain open. Host-owned
 routines and Slack result delivery are implemented below.
 
 For example, the user asks Arcee to create a news-digest agent with selected
 sources, research tools, and a document-generation capability. Arcee uses Host
-management operations to create the specialist's recipe and durable Agent
+management operations to create the specialist's definition and durable Agent
 Instance, select available capabilities and account connections, and request a
 Slack conversation binding. If a needed capability is missing, existing
 extension management supplies the installation/authentication path; mentioning
@@ -989,7 +1112,7 @@ that run and deleting a persistent specialist are different lifecycle actions.
 
 The Host must retain distinct relationships:
 
-- the recipe describes the specialist's instructions and selected components;
+- the definition describes the specialist's instructions and selected components;
 - the Agent Instance identifies the persistent specialist;
 - the creating-agent relationship supports the operator/specialist hierarchy
   without making the creator's current session own the specialist's lifetime;
@@ -1040,9 +1163,11 @@ introduced only with a consuming execution path or invariant test.
 ### Host-owned routines
 
 `routine_manage` and `LocalHost::manage_routine` share typed creation, revision-checked
-replacement, and manual-run operations. Arcee may manage any persistent specialist;
-each specialist receives routine management for itself, including specialists whose
-recipes predate this tool. This is Host management policy; selecting workspace tools
+replacement, and manual-run operations. An agent manages its own routines; managing
+another agent's routines requires the actor's stored selection to contain
+`agent_manage`. The Arcee and specialist presets seed routine management for the
+agent itself; Alpha seeds neither routine capability. This is
+Host management policy; selecting workspace tools
 and account connections remains independent. List returns bounded pages with exact
 routine IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
 complete routine for inspection or editing.
@@ -1086,13 +1211,14 @@ unchanged overdue task are allowed. Re-arming requires a future timestamp and th
 current revision; admitted work is unaffected by subsequent edits.
 
 `routine_results` exposes completed-run summaries and exact run lookup through
-Host APIs. Specialists can inspect their own runs; Arcee can inspect any specialist.
+Host APIs. An agent reads only its own results; reading another agent's results
+requires the actor's stored selection to contain `agent_manage`.
 Listing is bounded to 20 results, newest first, with sequence pagination; exact
 lookup returns the retained task, output, and execution-session identity. This path
 does not execute the routine and remains available from any surface.
 
 Each routine has a stable execution session, separate from interactive chats, with
-the same specialist recipe, workspace, and selected Host connections. Its standing
+the same stored definition, workspace, and selected Host connections. Its standing
 request must contain the recurring job's requirements; interactive chat history is
 not implicitly copied into it. Admission time enters the existing durable user-turn
 time context, preserving the system/tool cache prefix. The kernel remains the
@@ -1116,13 +1242,13 @@ through `routine_results`, including after compaction or when delivery is uncert
 
 Slack projects completed Host results into its own durable outbox. Projection and
 cursor advancement commit together, even if a channel is not ready. Delivery resolves
-each agent's ready channel binding; one unbound bot does not block other bots.
+each agent's ready channel binding; one unbound agent does not block other agents.
 The adapter marks posting intent before calling Slack; rate limits retry and uncertain
 posts remain unknown rather than being blindly duplicated. Slack downtime delays
 notification while the Host continues execution. Other surfaces can consume the same
 Host result API with their own delivery cursors. This slice delivers text and durable
 workspace file references; binary artifact upload and general workflow graphs remain
-separate work. Bot files remain retrievable through that bot's configured file tools.
+separate work. An agent's files remain retrievable through that agent's configured file tools.
 
 The daemon launch JSON contains `data_directory`, `model_bridge`, `providers`,
 `provider`, `model`, `model_auth_store`, and optional `reasoning`, `mcp_adapter`,
@@ -1190,11 +1316,16 @@ publication backoff) and `host_review_publications` (intent and remote outcome).
 Schema 23 adds worker-entry evidence, execution retry timing and the last job failure.
 Schema 24 adds `host_routine_owner_mutations` for authenticated owner receipts,
 preserving existing agent receipts and their foreign-key restrictions.
-Schema 25 adds `host_bot_tool_selections` and `host_bot_tool_operations` for
-revisioned tool selection and idempotent owner edits, preserving creation recipes.
-Existing Host, specialist, session, capability, routine and
-admission records are preserved. All processes sharing the database must support
-schema 25 before opening it with these binaries.
+Schema 26 is the clean break: it drops the retired agent-owned tables
+(`host_agents` in its old shape, `host_bots`, `host_bot_tool_selections`,
+`host_bot_tool_operations`, `host_bot_renames`, `profile_mcp_connections`,
+`profile_mcp_tools`, `profile_skill_bindings`, `skill_source_rejections`, and
+the agent skill bindings) and recreates the canonical `host_agents` root and its
+normalized children in their current shape. Host identity, MCP catalogs,
+connections, authorizations and credentials, installed plugins, skill revisions,
+shared registry state, and provider credentials are preserved. The bounded reset
+that clears agent rows and session directories, and the deployment procedure that
+surrounds it, are described in the clean-break section above.
 
 The GitHub service verifies at startup that its worker configuration resolves to
 the same canonical Host database as the supervisor. Separate model configuration
@@ -1204,16 +1335,19 @@ before loading App credentials or accepting webhook traffic.
 The local CLI exposes the same operations without a browser:
 
 ```text
-renoa-host /absolute/host.json ensure-bot /absolute/bot.json
+renoa-host /absolute/host.json provision /absolute/provision.json
+renoa-host /absolute/host.json agent-tools /absolute/edit.json
 renoa-host /absolute/host.json github-review /absolute/request.json
 renoa-host /absolute/host.json github-webhook /absolute/envelope.json
 ```
 
-A bot file contains the existing `BotRecord` shape: `id`, `created_by`, and
-`recipe` (`name`, `instructions`, `tools`, `connections`). `ensure-bot` calls
-the same durable specialist creation operation as the agent tool. The creator
-must already exist in this Host. Repeating the same record is idempotent;
-reusing an ID with a changed recipe conflicts. It starts no model or surface.
+A provision file is the canonical creation request in camelCase JSON:
+`operationId`, `presetId`, `name`, and optional `instructions`, `tools`,
+`connections`, and `routine`. `provision` calls the same durable creation
+operation as `agent_manage` with a `System`/`Provisioning` actor and starts no
+model or surface. Repeating the same request is idempotent;
+reusing an operation id with a changed request conflicts. An `agent-tools` edit
+contains `operation_id`, `id`, `expected_revision`, and `tools`.
 
 A request file is a serialized `GitHubReviewCommand`, for example
 `{"action":"requests","after":0}` or
@@ -1245,8 +1379,8 @@ identity, then mints a token restricted to the repository and read-only contents
 pull requests and checks. Credentials stay outside model context and results.
 
 Before inference, the Host reconciles the PR and freezes base/head and merge-base
-commits, repository policy, specialist instructions, model specification and
-reasoning and the recipe's selected tools. Applicable base AGENTS.md files supply
+commits, repository policy, the review agent's stored instructions, model specification and
+reasoning and its stored tool selection. Applicable base AGENTS.md files supply
 conventions. PR instructions are review material. Initial model context contains
 the pinned commits, PR metadata, change count and observed CI status. The complete
 change inventory is captured from local Git objects in the durable snapshot;
@@ -1264,14 +1398,15 @@ there is no persistent sandbox process during model reasoning. This shares the
 operating-system kernel and is not a microVM;
 the initial deployment serves the owner's personal review workflow.
 
-The Host assembles the named specialist recipe with `review_instructions.txt`,
-the shared Rust model/tool loop and the existing replaceable compaction strategy.
+The Host assembles the named review agent's stored definition with
+`review_instructions.txt`, the shared Rust model/tool loop and the existing
+replaceable compaction strategy.
 `renoa-workspace-tool` executes the same read_file, grep, find, git_changes,
 git_diff and git_show implementations as local agents; only their transport
 changes. The shared Git capability also supports ordinary registered Git
-worktrees. Each new review freezes its recipe's tool selection and intersects
+worktrees. Each new review freezes the agent's stored tool selection and intersects
 it with the inspection environment's read-only capabilities. No generic assistant/coding
-profile is inherited. Bash, dependency installation, test execution, automatic
+definition is inherited. Bash, dependency installation, test execution, automatic
 fixes and unrelated Host connections are unavailable in this version.
 
 Investigation and validation run until completion, cancellation, failure or the
@@ -1439,7 +1574,8 @@ has been adapted into Renoa as part of this design.
 
 ### Ownership and management
 
-Review Desk is a Host-owned reviewer identity with a review recipe. Repository
+Review Desk is a Host-owned reviewer identity with a review agent
+definition. Repository
 subscriptions, trigger policy, frozen run configuration, outcomes, and discussion
 context belong to the Host. A temporary review workspace belongs to one admitted
 run. The GitHub adapter owns webhook parsing, installation authentication, and
@@ -1526,10 +1662,10 @@ with a one-hour lifetime and optional repository/permission restrictions. App
 registration and installation remain deployment prerequisites; the existing
 interactive GitHub MCP connection is not proof that a review App is installed.
 
-`host/runtime.rs` automatically adds `routine_manage` to ordinary `renoa.bot.*`
-profiles. The review composer reuses the shared loop and compaction while supplying
-only the sandbox's inspection tools. It does not inherit interactive management
-capabilities. This is tool composition, not a new popup permission system.
+The review composer reuses the shared loop and compaction while supplying
+only the sandbox's inspection tools; it intersects them with the review agent's
+stored selection and does not inherit interactive management capabilities. This
+is tool composition, not a new popup permission system.
 
 The review composer selects the optional `renoa-code-review` skill from the
 Host's existing shared skill catalog. It pins the content-addressed revision and
@@ -1599,17 +1735,23 @@ does not establish that the reviewer finds useful bugs.
 1. The Host, not a surface or loop, resolves runtime composition.
 2. `renoa-local` is the first concrete Host; no competing Host crate is added.
 3. Agent identity and runtime assembly remain separate.
-4. Profiles, installed capabilities, and resolved runtimes remain distinct.
+4. (Superseded by the canonical agent definition.) Agent definitions, installed
+   capabilities, and resolved runtimes remain distinct.
 5. The exact runtime is frozen by the kernel per operation.
 6. GUI and agent changes will use the same Host management semantics.
-7. V0 exposes all configured local tools and adds no permission model.
+7. (Superseded by exact capability selection.) V0 adds no permission model, but
+   an agent runs with full access through exactly the capabilities its stored
+   selection names.
 8. Provider, workspace, surface, and future permission policy stay outside the
    kernel.
-9. The Host registers concrete profiles, persists the exact selected identity
-   per session, and fails closed when a required profile is unavailable.
-10. Installed packages, MCP catalogs, and immutable skill revisions are one
-    Host inventory; access and activation are explicitly profile-scoped.
-11. Every trace database identifies its profile, Agent, and Session.
+9. (Superseded by canonical agent storage.) The Host stores durable agent
+   definitions in `host.sqlite3`, persists the exact agent id per session, and
+   fails closed when that definition is unavailable.
+10. (Superseded by agent-scoped selection.) Installed packages, MCP catalogs,
+    and immutable skill revisions are one Host inventory; access and activation
+    are explicitly agent-scoped.
+11. (Superseded by agent-keyed traces.) Every trace database identifies its
+    Agent and Session.
 12. The Host owns OAuth coordination, client-registration policy, and secret
     references; the MCP adapter speaks the protocol, while packages, surfaces,
     the loop, and kernel never own credentials. Callback transport is selected
@@ -1620,27 +1762,27 @@ does not establish that the reviewer finds useful bugs.
     never replaces a working one.
 14. Shared package availability is a Host concern. The package registry carries
     immutable package bytes and ordered revisions only; it never becomes RCP,
-    remote execution, credential distribution, profile authorization, or
+    remote execution, credential distribution, agent authorization, or
     surface state.
 
 ## Open decisions
 
 - future Host schema migrations beyond the implemented catalog version;
-- historical resolved-binding retention across explicit catalog/profile
+- historical resolved-binding retention across explicit catalog/definition
   changes for unfinished-operation recovery;
 - explicit skill deactivation, active-revision upgrade, source configuration,
   and immutable-package garbage collection;
-- editing specialist instructions/connections, profile inheritance, and Agent
-  Instance overrides beyond the existing tool-selection edit;
-- permission vocabulary, scopes, policy inheritance, and enforcement;
+- editing agent instructions and connection selections beyond the existing
+  capability edit;
+- permission vocabulary, scopes, and enforcement;
 - public package discovery, updates, rollback, removal, and garbage collection;
 - Host management beyond the personal HTTPS panel, including remote CLI
   enrollment and broader configuration operations;
 - whether capability changes pause and continue a task through one or more
   internal operations; and
 - process placement and supervision for multiple concurrent local Agent Instances
-  beyond the existing durable Agent catalog and multiple Sessions per Agent;
-- credential, profile-definition, connection, and attachment distribution
+  beyond the existing durable agent definitions and multiple Sessions per Agent;
+- credential, connection, and agent-definition distribution
   across Hosts or nodes; and
 - surface routing and cross-node continuity, which remain future RCP/product work.
 
@@ -1655,14 +1797,14 @@ The Host foundation proved that:
    and complete local tool set into a kernel `Runtime`;
 2. the local headless runner executes its real coding turn through
    `renoa-kernel`, not the legacy harness;
-3. the frozen manifest names the model and all six tool bindings;
+3. the frozen manifest names the model and the exact workspace tool bindings;
 4. the existing real workspace edit and Bash cancellation paths remain green;
    and
 5. ACP, RCP, package installation, permissions, and UI code remained outside
    that coherent foundation slice.
 
 The next consumer slice is also complete: ACP talks only to `LocalHost` and
-`AgentSession`, creates and reloads Alpha identities, admits stable turn IDs,
+`AgentSession`, loads and binds provisioned Alpha agent identities, admits stable turn IDs,
 streams transient model and tool events, durably cancels active effects, and
 projects final answers from semantic history. Exact redelivery is proven both
 within one process and after restart. Concurrent admission cannot leave ghost
@@ -1672,13 +1814,14 @@ and torn runtime logs remain appendable. Per-turn trace rows preserve ordered
 model/tool flow without entering kernel truth. The legacy harness crate is
 retired.
 
-The Host is now profile-generic while ACP deliberately remains Alpha-specific.
-A deterministic non-Alpha profile reaches the model with its own instructions,
-persists its exact profile/Agent/Session trace identity, survives Host restart,
-and fails closed when reopened by a process that did not register it. One MCP
-catalog can be attached to two profiles without copying it, while attaching it
-to one profile alone does not leak access to the other. This prepares the Host
-for additional agent recipes without inventing surface or permission policy.
+The Host is now agent-generic while ACP deliberately selects one configured
+Alpha agent. A deterministic non-Alpha agent definition reaches the model with
+its own instructions,
+persists its exact Agent/Session trace identity, survives Host restart,
+and fails closed when reopened without its stored definition. One MCP
+catalog can be selected by two agents without copying it, while selecting it
+for one agent alone does not leak access to the other. This prepares the Host
+for additional agent definitions without inventing surface or permission policy.
 
 The first hosted surface registers Arcee and maps each allowlisted private
 Telegram topic to one caller-identified Host session. It persists an update
@@ -1686,7 +1829,7 @@ before advancing the polling offset, preserves request identity across process
 loss, re-drives kernel-owned execution, and never blindly repeats an uncertain
 Telegram final send. `/new`, `/compact`, `/status`, `/model`, `/reasoning`,
 `/cancel`, native draft
-stopping, bounded live drafts, and exact-profile execution cross the real Host
+stopping, bounded live drafts, and exact-agent execution cross the real Host
 path. Telegram keeps only ingress, topic mapping, and delivery state; it does
 not copy Agent history or runtime composition.
 
@@ -1707,8 +1850,9 @@ owns or reconstructs that state.
 The first extension path is also complete. `LocalHost` registers direct no-auth
 or exact `gh`-referenced MCP connections, runs the replaceable Node adapter for
 bounded discovery and invocation, atomically publishes catalogs and tool
-attachments, and restores them after process restart. Every assembled profile
-exposes three fixed registry tools regardless of catalog size. Search and load are bounded
+attachments, and restores them after process restart. Every assembled agent
+runtime is offered three fixed registry tools regardless of catalog size, and
+the stored selection decides whether they bind. Search and load are bounded
 `SafeToReplay` reads; execute carries an exact catalog reference through the
 normal loop and kernel as a `NeverReplay` effect. Exact registration retries
 converge, identity changes conflict, failed refresh publication preserves the
@@ -1805,7 +1949,7 @@ downloads and independently validates it without restarting. Exact publication
 does not create a second revision, executable bits survive transfer, a service
 and Host restart resume from the durable cursor without duplicates, a network
 failure does not advance that cursor, and a different registry identity is
-rejected. No credential, connection, profile attachment, session record,
+rejected. No credential, connection, agent selection, session record,
 kernel type, RCP type, or surface contract is copied.
 This synchronization path changes the frozen `extension_manage` implementation
 from revision 9 to revision 10. An unfinished revision-9 operation fails closed
