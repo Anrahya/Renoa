@@ -1,7 +1,14 @@
 use super::*;
 use renoa_agent_loop::AgentCommand;
-use renoa_kernel::{Command, CommandId, Kernel, OperationStatus, SessionId};
+use renoa_kernel::{Command, CommandId, Kernel, KernelError, OperationStatus, SessionId};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 use tokio_util::sync::CancellationToken;
+
+const KERNEL_HANDOFF_TIMEOUT: Duration = Duration::from_millis(100);
+const KERNEL_HANDOFF_POLL: Duration = Duration::from_millis(1);
 
 #[tokio::test]
 async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned() {
@@ -25,7 +32,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
         let db = session_database(&data, id);
         let request_id = Uuid::new_v4();
         let content = vec![ContentBlock::text("Original")];
-        let kernel = Kernel::open(&db).expect("admission owner");
+        let kernel = open_kernel_after_handoff(&db).expect("admission owner");
         kernel
             .submit(
                 SessionId::from_uuid(id),
@@ -137,7 +144,7 @@ async fn assert_durable_recovery(
     request_id: Uuid,
     content: Vec<ContentBlock>,
 ) {
-    let kernel = Kernel::open(database).expect("inspect interruption");
+    let kernel = open_kernel_after_handoff(database).expect("inspect interruption");
     let snapshot = kernel.inspect(SessionId::from_uuid(id)).expect("snapshot");
     let agent = snapshot.agent_id;
     assert_eq!(snapshot.operations[0].status, OperationStatus::Queued);
@@ -178,4 +185,20 @@ async fn assert_durable_recovery(
             .expect("later request"),
         LocalTurnOutcome::Completed { .. }
     ));
+}
+
+/// Acquires test-fixture ownership after its previous local owner was dropped.
+/// Live-owner assertions use `Kernel::open` directly.
+fn open_kernel_after_handoff(database: &Path) -> Result<Kernel, KernelError> {
+    let started = Instant::now();
+    loop {
+        match Kernel::open(database) {
+            Err(KernelError::AlreadyRunning { .. })
+                if started.elapsed() < KERNEL_HANDOFF_TIMEOUT =>
+            {
+                thread::sleep(KERNEL_HANDOFF_POLL);
+            }
+            result => return result,
+        }
+    }
 }

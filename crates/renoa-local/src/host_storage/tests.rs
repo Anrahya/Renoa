@@ -199,6 +199,73 @@ fn ownership_handoff_waits_briefly_for_a_released_local_owner() {
 }
 
 #[test]
+fn loading_waits_for_a_brief_kernel_handoff_but_refuses_a_live_owner() {
+    let sessions = tempdir().expect("temporary directory");
+    let workspace = tempdir().expect("workspace directory");
+    let agent_id = AgentId::new();
+    let session_id = SessionId::new();
+    let SessionPublication::Created(opened) = create_session_storage(
+        sessions.path(),
+        agent_id,
+        session_id,
+        workspace.path().to_owned(),
+        &RuntimeSelection {
+            provider: ModelProvider::Xai,
+            model: "test".to_owned(),
+            reasoning: ReasoningLevel::High,
+        },
+    )
+    .expect("create session storage") else {
+        panic!("new session unexpectedly existed");
+    };
+    let owner = opened.kernel;
+    let sessions_for_load = sessions.path().to_owned();
+    let workspace_for_load = workspace.path().to_owned();
+    let (manifest_sender, manifest_receiver) = mpsc::sync_channel(1);
+    let (result_sender, result_receiver) = mpsc::sync_channel(1);
+    let loading = thread::spawn(move || {
+        let result = open_session_storage_with_hook(
+            &sessions_for_load,
+            agent_id,
+            session_id,
+            &workspace_for_load,
+            || manifest_sender.send(()).expect("announce manifest read"),
+        );
+        result_sender.send(result).expect("send load result");
+    });
+
+    manifest_receiver.recv().expect("load reached manifest");
+    assert!(matches!(
+        result_receiver.recv_timeout(Duration::from_millis(20)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+    drop(owner);
+
+    let reopened = result_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("load resumes after handoff")
+        .expect("reopen after ownership release");
+    assert_eq!(reopened.kernel.agent_id(), agent_id);
+
+    let active_load = open_session_storage_with_hook(
+        sessions.path(),
+        agent_id,
+        session_id,
+        workspace.path(),
+        || {},
+    );
+    assert!(matches!(
+        active_load,
+        Err(LocalHostError::Session(LocalSessionError::Kernel(
+            KernelError::AlreadyRunning { .. }
+        )))
+    ));
+
+    drop(reopened);
+    loading.join().expect("load thread completed");
+}
+
+#[test]
 fn deletion_retry_cleans_a_published_tombstone() {
     let sessions = tempdir().expect("temporary directory");
     let session_id = SessionId::new();
