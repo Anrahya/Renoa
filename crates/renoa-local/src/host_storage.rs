@@ -162,7 +162,7 @@ fn open_session_storage_locked(
             "session workspace differs from its durable binding".to_owned(),
         ));
     }
-    let kernel = LocalSession::load(directory.join(KERNEL_DATABASE), session_id)?;
+    let kernel = load_session_after_handoff(&directory.join(KERNEL_DATABASE), session_id)?;
     if kernel.agent_id() != manifest.agent_id {
         return Err(LocalHostError::InvalidRequest(
             "session metadata differs from its kernel agent binding".to_owned(),
