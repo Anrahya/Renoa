@@ -125,6 +125,12 @@ fn a_repeated_discord_message_does_not_queue_a_second_turn() {
             .expect("duplicate"),
         Enqueue::Duplicate
     );
+    assert_eq!(
+        store
+            .enqueue(&message_id, &channel_id, &author_id, b"different", "other")
+            .expect("different bytes"),
+        Enqueue::Duplicate
+    );
     store.mark_running("101").expect("running");
     store.recover().expect("recover");
     assert!(store.next_queued().expect("requeued").is_some());

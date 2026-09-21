@@ -26,6 +26,8 @@ pub(crate) fn addressed(
     bot_user_id: &Snowflake,
     guild_id: &Snowflake,
     operator_user_id: &Snowflake,
+    replies_to_bot: bool,
+    open_thread: bool,
 ) -> Result<Option<Addressed>, DiscordError> {
     let message: MessageCreate = serde_json::from_slice(payload)?;
     if message.author.bot == Some(true) || message.author.id == bot_user_id.as_str() {
@@ -37,8 +39,15 @@ pub(crate) fn addressed(
         .any(|mention| mention.id == bot_user_id.as_str());
     let direct = message.guild_id.is_none();
     let in_guild = message.guild_id.as_deref() == Some(guild_id.as_str());
-    let speak =
-        (direct && message.author.id == operator_user_id.as_str()) || (in_guild && mentioned);
+    let referenced_bot = message
+        .referenced_message
+        .as_ref()
+        .is_some_and(|referenced| referenced.author.id == bot_user_id.as_str());
+    let in_open_thread = in_guild && message.position.is_some() && open_thread;
+    let speak = (direct && message.author.id == operator_user_id.as_str())
+        || (in_guild && mentioned)
+        || (in_guild && (replies_to_bot || referenced_bot))
+        || in_open_thread;
     if !speak {
         return Ok(None);
     }
@@ -73,6 +82,41 @@ struct MessageCreate {
     author: Author,
     #[serde(default)]
     mentions: Vec<Mention>,
+    #[serde(default)]
+    message_reference: Option<MessageReference>,
+    #[serde(default)]
+    referenced_message: Option<ReferencedMessage>,
+    #[serde(default)]
+    position: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct MessageReference {
+    message_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReferencedMessage {
+    author: Author,
+}
+
+/// The channel and reply target needed before the surface store is consulted.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Route {
+    pub(crate) channel_id: String,
+    pub(crate) reference_id: Option<String>,
+    pub(crate) in_thread: bool,
+}
+
+pub(crate) fn route(payload: &[u8]) -> Result<Route, DiscordError> {
+    let message: MessageCreate = serde_json::from_slice(payload)?;
+    Ok(Route {
+        channel_id: message.channel_id,
+        reference_id: message
+            .message_reference
+            .and_then(|reference| reference.message_id),
+        in_thread: message.position.is_some(),
+    })
 }
 
 #[derive(Deserialize)]
@@ -135,6 +179,8 @@ mod tests {
             &bot,
             &guild,
             &operator,
+            false,
+            false,
         )
         .expect("mention");
         let mentioned = mentioned.expect("addressed");
@@ -146,6 +192,8 @@ mod tests {
             &bot,
             &guild,
             &operator,
+            false,
+            false,
         )
         .expect("chatter");
         assert!(chatter.is_none());
@@ -161,6 +209,8 @@ mod tests {
             &bot,
             &guild,
             &operator,
+            false,
+            false,
         )
         .expect("dm");
         assert_eq!(owned.expect("operator dm").prompt, "hello");
@@ -169,9 +219,53 @@ mod tests {
             &bot,
             &guild,
             &operator,
+            false,
+            false,
         )
         .expect("stranger");
         assert!(stranger.is_none());
+    }
+
+    #[test]
+    fn a_reply_to_the_bot_continues_without_another_mention() {
+        let bot = snowflake("50");
+        let guild = snowflake("10");
+        let operator = snowflake("20");
+        let payload = br#"{"id":"103","channel_id":"202","guild_id":"10","content":"and then","author":{"id":"99"},"message_reference":{"message_id":"900"},"referenced_message":{"author":{"id":"50"}}}"#;
+        let turn = addressed(payload, &bot, &guild, &operator, false, false)
+            .expect("reply")
+            .expect("continues");
+        assert_eq!(turn.prompt, "and then");
+        let plain = addressed(
+            br#"{"id":"104","channel_id":"202","guild_id":"10","content":"unrelated","author":{"id":"99"}}"#,
+            &bot,
+            &guild,
+            &operator,
+            false,
+            false,
+        )
+        .expect("plain");
+        assert!(plain.is_none());
+    }
+
+    #[test]
+    fn a_later_thread_message_continues_an_open_thread() {
+        let bot = snowflake("50");
+        let guild = snowflake("10");
+        let operator = snowflake("20");
+        let payload = br#"{"id":"105","channel_id":"404","guild_id":"10","content":"next","author":{"id":"99"},"position":2}"#;
+        assert!(
+            addressed(payload, &bot, &guild, &operator, false, false)
+                .expect("closed")
+                .is_none()
+        );
+        assert_eq!(
+            addressed(payload, &bot, &guild, &operator, false, true)
+                .expect("open")
+                .expect("continues")
+                .prompt,
+            "next"
+        );
     }
 
     #[test]

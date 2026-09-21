@@ -62,15 +62,10 @@ impl DiscordApi {
         struct Created {
             id: String,
         }
-        let reference = reply_to.map(|message_id| json!({ "message_id": message_id }));
         let created: Created = self
             .post(
                 &format!("/channels/{channel_id}/messages"),
-                &json!({
-                    "content": content,
-                    "message_reference": reference,
-                    "allowed_mentions": { "parse": [] },
-                }),
+                &message_body(content, reply_to),
             )
             .await?;
         Ok(created.id)
@@ -140,11 +135,35 @@ impl DiscordApi {
     }
 }
 
+pub(crate) fn message_body(content: &str, reply_to: Option<&str>) -> serde_json::Value {
+    let mut body = json!({
+        "content": content,
+        "allowed_mentions": { "parse": [] },
+    });
+    if let Some(message_id) = reply_to {
+        body["message_reference"] = json!({ "message_id": message_id });
+    }
+    body
+}
+
 impl From<ApiError> for DiscordError {
     fn from(error: ApiError) -> Self {
         match error {
             ApiError::Unauthorized => Self::Invalid("Discord refused the bot token".to_owned()),
             other => Self::Api(other.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::message_body;
+
+    #[test]
+    fn a_follow_up_page_omits_message_reference() {
+        let first = message_body("page", Some("101"));
+        assert_eq!(first["message_reference"]["message_id"], "101");
+        let next = message_body("page", None);
+        assert!(next.get("message_reference").is_none());
     }
 }

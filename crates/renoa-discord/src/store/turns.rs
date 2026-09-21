@@ -94,12 +94,7 @@ impl SurfaceStore {
                     |row| row.get::<_, Vec<u8>>(0),
                 )
                 .optional()?;
-            if let Some(stored) = existing {
-                if stored != canonical {
-                    return Err(DiscordError::Invalid(format!(
-                        "Discord reused message {message_id} with different content"
-                    )));
-                }
+            if existing.is_some() {
                 transaction.commit()?;
                 return Ok(Enqueue::Duplicate);
             }
@@ -256,6 +251,36 @@ impl SurfaceStore {
 
     pub(crate) fn mark_failed(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
         self.transition_delivery(message_id, chunk, "sending", "failed", None)
+    }
+
+    pub(crate) fn has_conversation(&self, channel_id: &str) -> Result<bool, DiscordError> {
+        let channel_id = channel_id.to_owned();
+        self.access(move |connection| {
+            connection
+                .query_row(
+                    "SELECT 1 FROM conversations WHERE channel_id = ?1",
+                    [channel_id],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map(|row| row.is_some())
+                .map_err(DiscordError::from)
+        })
+    }
+
+    pub(crate) fn has_reply(&self, message_id: &str) -> Result<bool, DiscordError> {
+        let message_id = message_id.to_owned();
+        self.access(move |connection| {
+            connection
+                .query_row(
+                    "SELECT 1 FROM deliveries WHERE reply_id = ?1",
+                    [message_id],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map(|row| row.is_some())
+                .map_err(DiscordError::from)
+        })
     }
 
     pub(crate) fn load_gateway(&self) -> Result<GatewayCursor, DiscordError> {

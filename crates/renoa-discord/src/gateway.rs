@@ -34,6 +34,7 @@ pub(crate) enum Step {
     Message(Vec<u8>),
     Reconnect { fresh: bool },
     Ready,
+    Ack,
 }
 
 impl SocketState {
@@ -64,6 +65,7 @@ impl SocketState {
         }
         match opcode {
             10 => Ok(Step::Send(self.hello_reply(token, &frame)?)),
+            11 => Ok(Step::Ack),
             1 => Ok(Step::Send(self.heartbeat())),
             7 => Ok(Step::Reconnect { fresh: false }),
             9 => {
@@ -247,6 +249,7 @@ async fn connect(shutdown: &CancellationToken, url: &str, drive: &mut Drive<'_>)
         return End::Reconnect { fresh: false };
     };
     let mut next_heartbeat = None;
+    let mut awaiting_ack = false;
     loop {
         let heartbeat = async {
             if let Some(at) = next_heartbeat {
@@ -258,6 +261,15 @@ async fn connect(shutdown: &CancellationToken, url: &str, drive: &mut Drive<'_>)
         tokio::select! {
             () = shutdown.cancelled() => return End::Shutdown,
             () = heartbeat => {
+                if awaiting_ack {
+                    let _ = socket
+                        .close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                            code: 4000.into(),
+                            reason: "heartbeat ack missing".into(),
+                        }))
+                        .await;
+                    return End::Reconnect { fresh: false };
+                }
                 if socket
                     .send(Message::Text(drive.state.heartbeat().to_string().into()))
                     .await
@@ -265,8 +277,9 @@ async fn connect(shutdown: &CancellationToken, url: &str, drive: &mut Drive<'_>)
                 {
                     return End::Reconnect { fresh: false };
                 }
+                awaiting_ack = true;
                 next_heartbeat = Some(
-                    tokio::time::Instant::now() + Duration::from_millis(drive.state.interval_ms),
+                    tokio::time::Instant::now() + Duration::from_millis(drive.state.interval_ms.max(1)),
                 );
             }
             incoming = socket.next() => {
@@ -274,7 +287,7 @@ async fn connect(shutdown: &CancellationToken, url: &str, drive: &mut Drive<'_>)
                     return End::Reconnect { fresh: false };
                 };
                 match message {
-                    Message::Text(text) => match handle_text(&mut socket, drive, &text).await {
+                    Message::Text(text) => match handle_text(&mut socket, drive, &text, &mut awaiting_ack).await {
                         Ok(Some(at)) => next_heartbeat = Some(at),
                         Ok(None) => {}
                         Err(end) => return end,
@@ -293,6 +306,7 @@ async fn handle_text(
     >,
     drive: &mut Drive<'_>,
     text: &str,
+    awaiting_ack: &mut bool,
 ) -> Result<Option<tokio::time::Instant>, End> {
     let step = drive
         .state
@@ -302,6 +316,9 @@ async fn handle_text(
         .then(|| tokio::time::Instant::now() + Duration::from_millis(drive.state.interval_ms));
     match step {
         Step::Send(frame) if !frame.is_null() => {
+            if frame.get("op").and_then(serde_json::Value::as_i64) == Some(1) {
+                *awaiting_ack = true;
+            }
             if socket
                 .send(Message::Text(frame.to_string().into()))
                 .await
@@ -309,6 +326,10 @@ async fn handle_text(
             {
                 return Err(End::Reconnect { fresh: false });
             }
+        }
+        Step::Ack => {
+            *awaiting_ack = false;
+            return Ok(None);
         }
         Step::Ready => remember_bot(drive)?,
         Step::Message(payload) => accept_message(drive, &payload).map_err(End::Failed)?,
@@ -352,11 +373,25 @@ fn accept_message(drive: &Drive<'_>, payload: &[u8]) -> Result<(), DiscordError>
     let Some(bot_user_id) = drive.state.bot_user_id.as_deref() else {
         return Ok(());
     };
+    let route = match ingress::route(payload) {
+        Ok(route) => route,
+        Err(error) => {
+            eprintln!("renoa-discord: ignored unreadable Discord message: {error}");
+            return Ok(());
+        }
+    };
+    let replies_to_bot = match route.reference_id.as_deref() {
+        Some(message_id) => drive.store.has_reply(message_id)?,
+        None => false,
+    };
+    let open_thread = route.in_thread && drive.store.has_conversation(&route.channel_id)?;
     let addressed = match ingress::addressed(
         payload,
         &Snowflake::parse(bot_user_id)?,
         drive.guild_id,
         drive.operator_user_id,
+        replies_to_bot,
+        open_thread,
     ) {
         Ok(addressed) => addressed,
         Err(error) => {
@@ -412,55 +447,5 @@ pub(crate) fn allowed_gateway(url: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{SocketState, Step};
-
-    #[test]
-    fn hello_identifies_and_a_mention_payload_is_exposed() {
-        let mut state = SocketState::new(None, None, None);
-        let hello = state
-            .receive(r#"{"op":10,"d":{"heartbeat_interval":1000}}"#, "token")
-            .expect("hello");
-        let Step::Send(frame) = hello else {
-            panic!("hello did not identify");
-        };
-        assert_eq!(frame["op"], 2);
-        assert_eq!(frame["d"]["intents"], super::INTENTS);
-
-        let ready = state
-            .receive(
-                r#"{"op":0,"s":1,"t":"READY","d":{"session_id":"sess","resume_gateway_url":"wss://gateway.discord.gg","user":{"id":"50"}}}"#,
-                "token",
-            )
-            .expect("ready");
-        assert!(matches!(ready, Step::Ready));
-        assert_eq!(state.bot_user_id.as_deref(), Some("50"));
-        assert_eq!(state.sequence, Some(1));
-
-        let message = state
-            .receive(
-                r#"{"op":0,"s":2,"t":"MESSAGE_CREATE","d":{"id":"101","content":"hi"}}"#,
-                "token",
-            )
-            .expect("message");
-        let Step::Message(payload) = message else {
-            panic!("message was not exposed");
-        };
-        let payload: serde_json::Value = serde_json::from_slice(&payload).expect("payload");
-        assert_eq!(payload["id"], "101");
-    }
-
-    #[test]
-    fn an_invalid_session_drops_resume_state() {
-        let mut state = SocketState::new(
-            Some("sess".to_owned()),
-            Some("wss://gateway.discord.gg".to_owned()),
-            Some(4),
-        );
-        let step = state
-            .receive(r#"{"op":9,"d":false}"#, "token")
-            .expect("invalid");
-        assert!(matches!(step, Step::Reconnect { fresh: true }));
-        assert!(state.session_id.is_none());
-    }
-}
+#[path = "gateway_tests.rs"]
+mod tests;
