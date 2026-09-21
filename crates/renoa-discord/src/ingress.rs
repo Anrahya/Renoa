@@ -68,6 +68,7 @@ struct MessageCreate {
     id: String,
     channel_id: String,
     guild_id: Option<String>,
+    #[serde(default)]
     content: String,
     author: Author,
     #[serde(default)]

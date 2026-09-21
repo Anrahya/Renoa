@@ -352,13 +352,19 @@ fn accept_message(drive: &Drive<'_>, payload: &[u8]) -> Result<(), DiscordError>
     let Some(bot_user_id) = drive.state.bot_user_id.as_deref() else {
         return Ok(());
     };
-    let Some(addressed) = ingress::addressed(
+    let addressed = match ingress::addressed(
         payload,
         &Snowflake::parse(bot_user_id)?,
         drive.guild_id,
         drive.operator_user_id,
-    )?
-    else {
+    ) {
+        Ok(addressed) => addressed,
+        Err(error) => {
+            eprintln!("renoa-discord: ignored unreadable Discord message: {error}");
+            return Ok(());
+        }
+    };
+    let Some(addressed) = addressed else {
         return Ok(());
     };
     match drive.store.enqueue(
