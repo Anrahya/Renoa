@@ -43,6 +43,47 @@ paths solely to support old releases. Recovery is an explicit owner action,
 not an automatic rollback. Live conversation history, credentials, and current
 Host databases are application data and are not release backups.
 
+## Optional MCP Code Mode worker
+
+Code Mode is opt-in per agent. It needs the configured Node.js MCP adapter and one
+exact Monty subprocess binary; it does not download a runtime during a turn.
+This release uses `monty-pool`/`monty-types` `1.0.0-beta.2` and the Monty
+upstream [commit `64662cc`](https://github.com/pydantic/monty/commit/64662cc567c5c0e515121cc1ba42cb115a19ffd6)
+(MIT license). The official Linux x86-64 `manylinux_2_28` worker comes from
+`pydantic-monty-runtime==1.0.0b2`. Its wheel SHA-256 is
+`f2b31e47835f13b0d2735c4f30470eb796c6c42fe381b6ece19cac148c784c5b`; the extracted
+`monty` executable SHA-256 is
+`f596526655da1026bfbd928e4fa26bdbbe461e3130a351cea77208acd2bae140`.
+The Host verifies the executable hash before opening mutable Host state and
+refuses a different worker. Rust 1.96 or newer is needed to build this release.
+
+Stage and verify the worker before setting a Host configuration field:
+
+```sh
+monty_stage=$(mktemp -d)
+python3 -m pip download --pre --no-deps --only-binary=:all: \
+  --dest "$monty_stage" 'pydantic-monty-runtime==1.0.0b2'
+monty_wheel="$monty_stage/pydantic_monty_runtime-1.0.0b2-py3-none-manylinux_2_28_x86_64.whl"
+sha256sum "$monty_wheel"
+unzip -j "$monty_wheel" \
+  'pydantic_monty_runtime-1.0.0b2.data/scripts/monty' -d "$monty_stage"
+sha256sum "$monty_stage/monty"
+sudo install -D -o root -g root -m 0755 "$monty_stage/monty" \
+  /opt/renoa/libexec/monty/f596526655da1026bfbd928e4fa26bdbbe461e3130a351cea77208acd2bae140/monty
+```
+
+Compare both printed hashes with the values above before installing. Use an
+app-owned immutable path; do not replace that executable in place while work
+is active. Set `code_mode_worker` to the installed absolute path in a Host,
+Slack, or Discord JSON configuration; use `adapters.codeModeWorker` in the
+RCP node JSON, or `RENOA_CODE_MODE_WORKER` for ACP, Telegram, and the local CLI.
+Also configure the normal MCP adapter. Merely installing the worker does not
+change an existing agent: select `code_mode` in its capability set, preferably
+with `tool_search` and `tool_load`. When selected, direct `tool_execute` is
+hidden from the model and used only behind the durable Code Mode boundary.
+Drain active work before upgrading the worker, and retain only the immediately
+previous release's consolidated backup as described above.
+
 ## Personal Host observation
 
 To inspect the existing personal Host without starting models or acquiring agent

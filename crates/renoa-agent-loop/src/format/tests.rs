@@ -117,6 +117,47 @@ fn compaction_attempt_cannot_exceed_its_persisted_bound() {
 }
 
 #[test]
+fn pending_tool_checkpoint_rejects_empty_and_duplicate_calls() {
+    for pending in [
+        json!({"remaining": []}),
+        json!({
+            "current": {"id": "same", "name": "read_file", "arguments": {}},
+            "remaining": [{"id": "same", "name": "read_file", "arguments": {}}]
+        }),
+    ] {
+        let saved = Checkpoint::new(
+            4,
+            json!({
+                "phase": "need_tool",
+                "model_turns": 1,
+                "pending": pending,
+            }),
+        );
+        assert!(
+            decode_checkpoint(&saved).is_err(),
+            "invalid pending calls must fail before dispatch"
+        );
+    }
+}
+
+#[test]
+fn tool_checkpoint_cannot_point_past_its_pending_work() {
+    let saved = Checkpoint::new(
+        3,
+        json!({
+            "phase": "need_tool",
+            "model_turns": 1,
+            "calls": [{"id": "one", "name": "read_file", "arguments": {}}],
+            "next_index": 1,
+        }),
+    );
+    assert!(
+        decode_checkpoint(&saved).is_err(),
+        "a checkpoint with no next call must fail at decode"
+    );
+}
+
+#[test]
 fn active_checkpoint_must_cover_an_earlier_durable_message() {
     let operation_id = OperationId::new();
     let command_id = CommandId::new();

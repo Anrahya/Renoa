@@ -9,6 +9,8 @@ rust-version.workspace = true
 [dependencies]
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
 base64.workspace = true
+monty-pool.workspace = true
+monty-types.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 globset.workspace = true

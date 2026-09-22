@@ -82,6 +82,7 @@ impl Config {
                     settings.credential_store,
                 ),
                 LocalHostAdapters::new(optional_path("RENOA_MCP_ADAPTER").as_deref())
+                    .with_code_mode_worker(optional_path("RENOA_CODE_MODE_WORKER").as_deref())
                     .with_mcp_registry(optional_path("RENOA_MCP_REGISTRY_ADAPTER").as_deref())
                     .with_shared_plugin_registry(shared_plugin_registry.as_deref()),
             )?,

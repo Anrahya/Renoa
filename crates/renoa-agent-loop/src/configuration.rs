@@ -8,13 +8,14 @@ use thiserror::Error;
 
 use crate::{
     adapters::{ModelAdapter, ToolAdapter},
+    code_mode::{CODE_MODE_TOOL, CODE_STEP_EFFECT_BINDING, spec as code_mode_spec},
     context::{ContextStrategy, FullHistoryStrategy},
-    decision::{AgentLoop, LoopTool},
+    decision::{AgentLoop, LoopCodeMode, LoopTool},
 };
 
-pub(crate) const CHECKPOINT_SCHEMA_VERSION: u32 = 3;
+pub(crate) const CHECKPOINT_SCHEMA_VERSION: u32 = 4;
 pub(crate) const LOOP_BINDING: &str = "renoa.agent.model-tool-loop";
-pub(crate) const LOOP_REVISION: &str = "11";
+pub(crate) const LOOP_REVISION: &str = "12";
 pub(crate) const MODEL_EFFECT_BINDING: &str = "renoa.agent.model";
 const FULL_HISTORY_CONTEXT_REVISION: &str = "renoa.context.full-history.v1";
 const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -108,6 +109,28 @@ pub struct AgentToolBinding {
     recovery: EffectRecovery,
 }
 
+/// The visible Python tool, its pure evaluator, and its hidden MCP executor.
+pub struct CodeModeBinding {
+    revision: String,
+    evaluator: Arc<dyn renoa_kernel::EffectAdapter>,
+    nested: AgentToolBinding,
+}
+
+impl CodeModeBinding {
+    #[must_use]
+    pub fn new(
+        revision: impl Into<String>,
+        evaluator: Arc<dyn renoa_kernel::EffectAdapter>,
+        nested: AgentToolBinding,
+    ) -> Self {
+        Self {
+            revision: revision.into(),
+            evaluator,
+            nested,
+        }
+    }
+}
+
 impl AgentToolBinding {
     /// Binds a provider-neutral tool implementation to one stable revision.
     #[must_use]
@@ -141,7 +164,7 @@ pub fn build_runtime(
     model: ModelBinding,
     tools: Vec<AgentToolBinding>,
 ) -> Result<Runtime, AgentLoopBuildError> {
-    build_runtime_inner(config, context, model, tools, None)
+    build_runtime_inner(config, context, model, tools, None, None)
 }
 
 /// Builds a runtime whose transient model and tool events are forwarded to a host observer.
@@ -160,7 +183,40 @@ pub fn build_runtime_with_events(
     tools: Vec<AgentToolBinding>,
     events: Arc<dyn AgentEventSink>,
 ) -> Result<Runtime, AgentLoopBuildError> {
-    build_runtime_inner(config, context, model, tools, Some(events))
+    build_runtime_inner(config, context, model, tools, None, Some(events))
+}
+
+/// Builds a runtime with a single model-visible Code Mode capability and a
+/// hidden, independently durable MCP execution binding.
+///
+/// # Errors
+///
+/// Rejects an invalid evaluator identity or a nested binding that is not the
+/// Host's MCP executor.
+pub fn build_runtime_with_code_mode(
+    config: AgentLoopConfig,
+    context: ContextBinding,
+    model: ModelBinding,
+    tools: Vec<AgentToolBinding>,
+    code_mode: CodeModeBinding,
+) -> Result<Runtime, AgentLoopBuildError> {
+    build_runtime_inner(config, context, model, tools, Some(code_mode), None)
+}
+
+/// The observed form of [`build_runtime_with_code_mode`].
+///
+/// # Errors
+///
+/// Applies the same binding validation.
+pub fn build_runtime_with_code_mode_and_events(
+    config: AgentLoopConfig,
+    context: ContextBinding,
+    model: ModelBinding,
+    tools: Vec<AgentToolBinding>,
+    code_mode: CodeModeBinding,
+    events: Arc<dyn AgentEventSink>,
+) -> Result<Runtime, AgentLoopBuildError> {
+    build_runtime_inner(config, context, model, tools, Some(code_mode), Some(events))
 }
 
 fn build_runtime_inner(
@@ -168,6 +224,7 @@ fn build_runtime_inner(
     context: ContextBinding,
     model: ModelBinding,
     tools: Vec<AgentToolBinding>,
+    code_mode: Option<CodeModeBinding>,
     events: Option<Arc<dyn AgentEventSink>>,
 ) -> Result<Runtime, AgentLoopBuildError> {
     if context.revision.is_empty() {
@@ -213,21 +270,38 @@ fn build_runtime_inner(
         ));
     }
 
-    let config_digest =
-        digest_configuration(&config, &context.revision, model.recovery, &digest_tools)?;
+    let code_mode = code_mode
+        .map(|binding| prepare_code_mode(binding, &names, events.as_ref()))
+        .transpose()?;
+    let config_digest = digest_configuration(
+        &config,
+        &context.revision,
+        model.recovery,
+        &digest_tools,
+        code_mode.as_ref().map(|prepared| &prepared.digest),
+    )?;
     let loop_plugin = Arc::new(AgentLoop::new(
         config,
         context.strategy,
         model.recovery,
         loop_tools,
+        code_mode.as_ref().map(|prepared| LoopCodeMode {
+            spec: prepared.spec.clone(),
+            nested_name: prepared.nested_name.clone(),
+            nested_binding: prepared.nested_binding.clone(),
+            nested_recovery: prepared.nested_recovery,
+        }),
     ));
-    let mut effects = Vec::with_capacity(tool_adapters.len() + 1);
+    let mut effects = Vec::with_capacity(tool_adapters.len() + 3);
     effects.push(EffectBinding::new(
         MODEL_EFFECT_BINDING,
         model.revision,
         Arc::new(ModelAdapter::new(model.model, events)),
     ));
     effects.extend(tool_adapters);
+    if let Some(prepared) = code_mode {
+        effects.extend(prepared.effects);
+    }
     Runtime::new(
         LoopBinding::new(LOOP_BINDING, LOOP_REVISION, loop_plugin),
         CHECKPOINT_SCHEMA_VERSION,
@@ -235,6 +309,77 @@ fn build_runtime_inner(
         effects,
     )
     .map_err(Into::into)
+}
+
+struct PreparedCodeMode {
+    spec: ToolSpec,
+    nested_name: String,
+    nested_binding: String,
+    nested_recovery: EffectRecovery,
+    digest: DigestCodeMode,
+    effects: [EffectBinding; 2],
+}
+
+fn prepare_code_mode(
+    binding: CodeModeBinding,
+    direct_names: &HashSet<String>,
+    events: Option<&Arc<dyn AgentEventSink>>,
+) -> Result<PreparedCodeMode, AgentLoopBuildError> {
+    if binding.revision.is_empty() {
+        return Err(AgentLoopBuildError::EmptyCodeModeRevision);
+    }
+    let nested_spec = binding.nested.tool.spec().clone();
+    if nested_spec.name != "tool_execute" {
+        return Err(AgentLoopBuildError::InvalidCodeModeExecutor(
+            nested_spec.name,
+        ));
+    }
+    if binding.nested.revision.is_empty() {
+        return Err(AgentLoopBuildError::EmptyToolRevision(nested_spec.name));
+    }
+    if binding.nested.recovery != EffectRecovery::NeverReplay {
+        return Err(AgentLoopBuildError::ReplayableCodeModeExecutor);
+    }
+    if direct_names.contains(CODE_MODE_TOOL) {
+        return Err(AgentLoopBuildError::DuplicateToolName(
+            CODE_MODE_TOOL.to_owned(),
+        ));
+    }
+    if direct_names.contains(&nested_spec.name) {
+        return Err(AgentLoopBuildError::DuplicateToolName(nested_spec.name));
+    }
+    let nested_binding = tool_effect_binding(&nested_spec.name);
+    let spec = code_mode_spec();
+    let digest = DigestCodeMode {
+        revision: binding.revision.clone(),
+        spec: spec.clone(),
+        nested_revision: binding.nested.revision.clone(),
+        nested_spec: nested_spec.clone(),
+        nested_recovery: binding.nested.recovery,
+    };
+    let effects = [
+        EffectBinding::new(
+            CODE_STEP_EFFECT_BINDING,
+            binding.revision,
+            binding.evaluator,
+        ),
+        EffectBinding::new(
+            nested_binding.clone(),
+            binding.nested.revision,
+            Arc::new(ToolAdapter::new(
+                binding.nested.tool,
+                events.map(Arc::clone),
+            )),
+        ),
+    ];
+    Ok(PreparedCodeMode {
+        spec,
+        nested_name: nested_spec.name,
+        nested_binding,
+        nested_recovery: binding.nested.recovery,
+        digest,
+        effects,
+    })
 }
 
 pub(crate) fn tool_effect_binding(tool_name: &str) -> String {
@@ -249,6 +394,7 @@ struct DigestConfiguration<'a> {
     context_revision: &'a str,
     model_recovery: EffectRecovery,
     tools: &'a [DigestTool],
+    code_mode: Option<&'a DigestCodeMode>,
 }
 
 #[derive(Serialize)]
@@ -258,11 +404,21 @@ struct DigestTool {
     recovery: EffectRecovery,
 }
 
+#[derive(Serialize)]
+struct DigestCodeMode {
+    revision: String,
+    spec: ToolSpec,
+    nested_revision: String,
+    nested_spec: ToolSpec,
+    nested_recovery: EffectRecovery,
+}
+
 fn digest_configuration(
     config: &AgentLoopConfig,
     context_revision: &str,
     model_recovery: EffectRecovery,
     tools: &[DigestTool],
+    code_mode: Option<&DigestCodeMode>,
 ) -> Result<String, AgentLoopBuildError> {
     let encoded = serde_json::to_vec(&DigestConfiguration {
         system_prompt: &config.system_prompt,
@@ -271,6 +427,7 @@ fn digest_configuration(
         context_revision,
         model_recovery,
         tools,
+        code_mode,
     })
     .map_err(AgentLoopBuildError::ConfigurationEncoding)?;
     let digest = Sha256::digest(encoded);
@@ -296,6 +453,12 @@ pub enum AgentLoopBuildError {
     EmptyToolRevision(String),
     #[error("tool name `{0}` is configured more than once")]
     DuplicateToolName(String),
+    #[error("Code Mode evaluator revision cannot be empty")]
+    EmptyCodeModeRevision,
+    #[error("Code Mode requires the hidden `tool_execute` executor, not `{0}`")]
+    InvalidCodeModeExecutor(String),
+    #[error("Code Mode's hidden MCP executor must be NeverReplay")]
+    ReplayableCodeModeExecutor,
     #[error("agent-loop configuration cannot be encoded: {0}")]
     ConfigurationEncoding(#[source] serde_json::Error),
     #[error(transparent)]

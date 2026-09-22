@@ -79,6 +79,7 @@ The process reads:
   the full configuration and require it; `renoa-agent models --json` does not.
 - optional `RENOA_DATA_DIR`
 - optional `RENOA_MCP_ADAPTER`
+- optional `RENOA_CODE_MODE_WORKER`
 - optional `RENOA_MCP_REGISTRY_ADAPTER`
 - optional `RENOA_SHARED_PLUGIN_REGISTRY`
 
@@ -88,6 +89,11 @@ enables Host catalog refresh and invocation. A tool reaches the configured agent
 only after a per-agent attachment such as the GitHub command above. A committed
 change is visible on the next registry call without restarting ACP or the
 surface.
+`RENOA_CODE_MODE_WORKER` is the absolute path to the exact-pinned Monty binary.
+It is used only when the agent's selected capabilities include `code_mode`,
+which exposes Python MCP execution while hiding direct `tool_execute` from the
+model. The Host refuses a missing or different binary before opening its data
+root; installing it alone does not change an agent's selection.
 `RENOA_MCP_REGISTRY_ADAPTER` is the absolute path to the built read-only
 official MCP Registry adapter. It enables the `extension_manage` `search` and
 exact `lookup` actions. Registry metadata remains publisher-supplied research
@@ -305,8 +311,8 @@ an interrupted runtime under a different configuration.
 - Earlier pre-release session manifests used storage versions 1 and 2. This
   adapter rejects them explicitly instead of guessing at an execution or trace
   migration.
-- Agent-loop revision 11 and checkpoint schema 3 are forward-only for unfinished
-  operations. A revision-10 operation needs its original runtime to finish; the
+- Agent-loop revision 12 and checkpoint schema 4 are forward-only for unfinished
+  operations. A revision-11 operation needs its original runtime to finish; the
   current Host does not migrate frozen manifests. An older binary also cannot
   decode the new compact control command.
 - If the client loses the successful `session/new` response, stable ACP v1

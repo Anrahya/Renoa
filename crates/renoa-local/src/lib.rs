@@ -6,6 +6,7 @@ mod agent_trace;
 mod atomic_file;
 mod bash;
 mod capabilities;
+mod code_mode;
 mod credential_file;
 mod deadline;
 mod documents;
@@ -51,6 +52,7 @@ pub use agent_definition::{
     AutomaticCompaction, TurnTiming, WorkspaceInstructions,
 };
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
+pub use code_mode::validate_code_mode_worker;
 pub use credential_file::credential_file_is_private;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{

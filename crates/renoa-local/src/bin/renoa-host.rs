@@ -23,6 +23,7 @@ struct Config {
     reasoning: Option<ReasoningLevel>,
     model_auth_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
+    code_mode_worker: Option<PathBuf>,
     mcp_registry_adapter: Option<PathBuf>,
     shared_plugin_registry: Option<String>,
     oauth_relay: Option<Relay>,
@@ -98,6 +99,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
         .into_iter()
         .chain(c.mcp_adapter.iter())
+        .chain(c.code_mode_worker.iter())
         .chain(c.mcp_registry_adapter.iter())
         .chain(c.oauth_relay.iter().map(|r| &r.device_credential_file))
     {
@@ -124,6 +126,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         models = models.with_initial_reasoning(reasoning);
     }
     let mut adapters = LocalHostAdapters::new(c.mcp_adapter.as_deref())
+        .with_code_mode_worker(c.code_mode_worker.as_deref())
         .with_mcp_registry(c.mcp_registry_adapter.as_deref())
         .with_shared_plugin_registry(c.shared_plugin_registry.as_deref());
     if let Some(relay) = &c.oauth_relay {

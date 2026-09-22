@@ -210,6 +210,7 @@ fn local_host(data: &Path, bridge: &Path, credentials: &Path, global: &Path) -> 
         shared_plugin_registry: None,
         global_skill_source: Some(global.to_path_buf()),
         oauth_relay: None,
+        code_mode: None,
     })
     .expect("assemble local Host with isolated skill sources")
 }

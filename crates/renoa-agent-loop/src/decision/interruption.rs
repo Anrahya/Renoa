@@ -9,13 +9,16 @@ use super::{
     AgentLoop, LoopPhase, MODEL_EFFECT_BINDING, checkpoint, decode, encode, unavailable_result,
 };
 use crate::format::{decode_checkpoint, message_events};
+use crate::pending_tools::PendingToolCalls;
 
 impl LoopPlugin for AgentLoop {
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
         let Some(saved) = input.checkpoint.as_ref() else {
             return self.decide_initial(&input);
         };
-        match decode_checkpoint(saved)? {
+        let phase = decode_checkpoint(saved)?;
+        self.validate_code_phase(&phase, input.operation_id)?;
+        match phase {
             LoopPhase::NeedModel { model_turns } => self.request_model(model_turns, &input),
             LoopPhase::AwaitingModel { model_turns } => self.settle_model(model_turns, input),
             LoopPhase::AwaitingCompaction {
@@ -31,14 +34,32 @@ impl LoopPlugin for AgentLoop {
             } => self.settle_explicit_compaction(plan, max_attempts, attempt, input),
             LoopPhase::NeedTool {
                 model_turns,
-                calls,
-                next_index,
-            } => self.request_tool(model_turns, calls, next_index, input.effect_batch.as_ref()),
+                pending,
+            } => self.request_tool(model_turns, pending, &input),
             LoopPhase::AwaitingTool {
                 model_turns,
+                pending,
+            } => self.settle_tool(model_turns, pending, input.effect_batch),
+            LoopPhase::AwaitingCodeStep {
+                model_turns,
+                pending,
+                run,
+                request,
+            } => self.settle_code_step(model_turns, pending, run, &request, input.effect_batch),
+            LoopPhase::AwaitingCodeCalls {
+                model_turns,
+                pending,
+                run,
+                snapshot,
                 calls,
-                next_index,
-            } => self.settle_tool(model_turns, calls, next_index, input.effect_batch),
+            } => self.settle_code_calls(
+                model_turns,
+                pending,
+                run,
+                snapshot,
+                &calls,
+                input.effect_batch,
+            ),
             LoopPhase::Terminal => Err(LoopError::new(
                 "a terminal agent checkpoint cannot be driven",
             )),
@@ -49,15 +70,24 @@ impl LoopPlugin for AgentLoop {
         &self,
         input: UnknownEffectInput,
     ) -> Result<UnknownEffectAbandonment, LoopError> {
-        match decode_checkpoint(&input.checkpoint)? {
+        let phase = decode_checkpoint(&input.checkpoint)?;
+        self.validate_code_phase(&phase, input.operation_id)?;
+        match phase {
             LoopPhase::AwaitingModel { .. } => self.abandon_unknown_model(&input),
             LoopPhase::AwaitingCompaction { plan, .. }
             | LoopPhase::AwaitingExplicitCompaction { plan, .. } => {
                 Self::abandon_unknown_compaction(&plan, &input)
             }
-            LoopPhase::AwaitingTool {
-                calls, next_index, ..
-            } => self.abandon_unknown_tool(&calls, next_index, &input),
+            LoopPhase::AwaitingTool { pending, .. } => self.abandon_unknown_tool(&pending, &input),
+            LoopPhase::AwaitingCodeStep {
+                pending, request, ..
+            } => self.abandon_unknown_code_step(&pending, &request, &input),
+            LoopPhase::AwaitingCodeCalls {
+                pending,
+                run,
+                calls,
+                ..
+            } => self.abandon_unknown_code_calls(&pending, &run, &calls, &input),
             LoopPhase::NeedModel { .. } | LoopPhase::NeedTool { .. } | LoopPhase::Terminal => Err(
                 LoopError::new("checkpoint is not awaiting the unknown effect"),
             ),
@@ -72,7 +102,9 @@ impl LoopPlugin for AgentLoop {
             require_no_cancellation_effect(&input)?;
             return cancelled(Vec::new());
         };
-        match decode_checkpoint(saved)? {
+        let phase = decode_checkpoint(saved)?;
+        self.validate_code_phase(&phase, input.operation_id)?;
+        match phase {
             LoopPhase::NeedModel { .. } => {
                 require_no_cancellation_effect(&input)?;
                 cancelled(Vec::new())
@@ -82,12 +114,17 @@ impl LoopPlugin for AgentLoop {
             | LoopPhase::AwaitingExplicitCompaction { plan, .. } => {
                 Self::cancel_compaction(&plan, &input)
             }
-            LoopPhase::NeedTool {
-                calls, next_index, ..
-            } => Self::cancel_planned_tools(&calls, next_index, &input),
-            LoopPhase::AwaitingTool {
-                calls, next_index, ..
-            } => self.cancel_current_tool(&calls, next_index, &input),
+            LoopPhase::NeedTool { pending, .. } => Self::cancel_planned_tools(&pending, &input),
+            LoopPhase::AwaitingTool { pending, .. } => self.cancel_current_tool(&pending, &input),
+            LoopPhase::AwaitingCodeStep {
+                pending, request, ..
+            } => self.cancel_code_step(&pending, &request, &input),
+            LoopPhase::AwaitingCodeCalls {
+                pending,
+                run,
+                calls,
+                ..
+            } => self.cancel_code_calls(&pending, &run, &calls, &input),
             LoopPhase::Terminal => Err(LoopError::new(
                 "a terminal agent checkpoint cannot be cancelled",
             )),
@@ -129,30 +166,26 @@ impl AgentLoop {
 
     fn abandon_unknown_tool(
         &self,
-        calls: &[ToolCall],
-        next_index: u32,
+        pending: &PendingToolCalls,
         input: &UnknownEffectInput,
     ) -> Result<UnknownEffectAbandonment, LoopError> {
-        let (index, call) = indexed_call(calls, next_index)?;
+        let call = pending.current();
         let tool = self.configured_tool(call)?;
         require_unknown_effect_identity(
             &input.effect_batch,
             &tool.effect_binding,
             &encode("tool request", call)?,
         )?;
-        let mut results = Vec::with_capacity(calls.len() - index);
-        results.push(Message::Tool {
+        let results = pending.iter().enumerate().map(|(position, call)| Message::Tool {
             result: unavailable_result(
                 call,
-                "This tool may have finished, but Renoa could not recover a definite result.",
+                if position == 0 {
+                    "This tool may have finished, but Renoa could not recover a definite result."
+                } else {
+                    "Tool call was not run because an earlier tool outcome is unknown."
+                },
             ),
         });
-        results.extend(calls[index + 1..].iter().map(|call| Message::Tool {
-            result: unavailable_result(
-                call,
-                "Tool call was not run because an earlier tool outcome is unknown.",
-            ),
-        }));
         Ok(UnknownEffectAbandonment {
             checkpoint: checkpoint(LoopPhase::Terminal)?,
             events: message_events(results)?,
@@ -188,13 +221,11 @@ impl AgentLoop {
     }
 
     fn cancel_planned_tools(
-        calls: &[ToolCall],
-        next_index: u32,
+        pending: &PendingToolCalls,
         input: &CancellationInput,
     ) -> Result<CancellationTransition, LoopError> {
         require_no_cancellation_effect(input)?;
-        let (index, _) = indexed_call(calls, next_index)?;
-        let results = calls[index..].iter().map(|call| Message::Tool {
+        let results = pending.iter().map(|call| Message::Tool {
             result: unavailable_result(
                 call,
                 "Tool call was not run because the operation was cancelled.",
@@ -205,11 +236,10 @@ impl AgentLoop {
 
     fn cancel_current_tool(
         &self,
-        calls: &[ToolCall],
-        next_index: u32,
+        pending: &PendingToolCalls,
         input: &CancellationInput,
     ) -> Result<CancellationTransition, LoopError> {
-        let (index, call) = indexed_call(calls, next_index)?;
+        let call = pending.current();
         let tool = self.configured_tool(call)?;
         let effect_batch = input.effect_batch.as_ref().ok_or_else(|| {
             LoopError::new("an awaiting tool checkpoint has no cancellation effect batch")
@@ -231,14 +261,14 @@ impl AgentLoop {
             EffectFact::Settled(effect) => settled_tool_result(call, &effect.outcome)?,
             _ => return Err(LoopError::new("cancellation effect version is unsupported")),
         };
-        let mut results = Vec::with_capacity(calls.len() - index);
-        results.push(Message::Tool { result: current });
-        results.extend(calls[index + 1..].iter().map(|call| Message::Tool {
-            result: unavailable_result(
-                call,
-                "Tool call was not run because the operation was cancelled.",
-            ),
-        }));
+        let results = std::iter::once(Message::Tool { result: current }).chain(
+            pending.remaining().map(|call| Message::Tool {
+                result: unavailable_result(
+                    call,
+                    "Tool call was not run because the operation was cancelled.",
+                ),
+            }),
+        );
         cancelled(message_events(results)?)
     }
 
@@ -269,15 +299,6 @@ fn settled_tool_result(call: &ToolCall, outcome: &EffectOutcome) -> Result<ToolR
     }
 }
 
-fn indexed_call(calls: &[ToolCall], next_index: u32) -> Result<(usize, &ToolCall), LoopError> {
-    let index = usize::try_from(next_index)
-        .map_err(|error| LoopError::new(format!("tool call index is invalid: {error}")))?;
-    let call = calls
-        .get(index)
-        .ok_or_else(|| LoopError::new("tool checkpoint points outside its durable call batch"))?;
-    Ok((index, call))
-}
-
 fn require_no_cancellation_effect(input: &CancellationInput) -> Result<(), LoopError> {
     if input.effect_batch.is_some() {
         Err(LoopError::new(
@@ -288,7 +309,7 @@ fn require_no_cancellation_effect(input: &CancellationInput) -> Result<(), LoopE
     }
 }
 
-fn require_unknown_effect_identity(
+pub(super) fn require_unknown_effect_identity(
     batch: &EffectBatchFacts,
     binding: &str,
     request: &serde_json::Value,
@@ -308,7 +329,7 @@ fn require_unknown_effect_identity(
     )
 }
 
-fn require_cancellation_effect_identity<'a>(
+pub(super) fn require_cancellation_effect_identity<'a>(
     batch: &'a EffectBatchFacts,
     binding: &str,
     request: &serde_json::Value,
@@ -338,7 +359,9 @@ fn require_single_effect_fact<'a>(
     Ok(effect)
 }
 
-fn cancelled(events: Vec<renoa_kernel::NewEvent>) -> Result<CancellationTransition, LoopError> {
+pub(super) fn cancelled(
+    events: Vec<renoa_kernel::NewEvent>,
+) -> Result<CancellationTransition, LoopError> {
     Ok(CancellationTransition {
         checkpoint: checkpoint(LoopPhase::Terminal)?,
         events,

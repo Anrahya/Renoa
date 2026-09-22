@@ -466,6 +466,7 @@ routine_results
 tool_search
 tool_load
 tool_execute
+code_mode
 skill_search
 skill_load
 agent_documents
@@ -605,6 +606,20 @@ containing the current catalog digest, then reuses the proven MCP credential,
 adapter, result, and `NeverReplay` boundary. A missing adapter fails execution
 visibly; it does not prevent an Agent from starting or hide searchable catalog
 state.
+
+`code_mode` is a separate selectable Host capability, not an implicit MCP
+registry tool. When selected, the Host requires a configured exact-pinned
+Monty worker and MCP adapter, removes `tool_execute` from the model-visible
+bindings, and binds that same executor behind the Code Mode loop. This holds
+even if a preset's stored selection also names `tool_execute`.
+`tool_search` and `tool_load` remain visible only when individually selected.
+The evaluator pool is shared by this Host process, starts with no idle worker,
+and is capped at two subprocesses; an agent without `code_mode` starts without
+the worker. The Host validates the configured worker's binary hash before
+opening mutable Host state. This release's pinned binary is Linux x86-64 only.
+A wrong configured worker refuses Host startup, and a missing worker refuses a
+Code Mode agent's runtime; neither case falls back to system Python or direct
+MCP execution.
 
 The registry tools open current `host.sqlite3` state for each call. A committed
 connection attachment or catalog refresh is therefore visible on the next
@@ -1274,7 +1289,7 @@ separate work. An agent's files remain retrievable through that agent's configur
 
 The daemon launch JSON contains `data_directory`, `model_bridge`, `providers`,
 `provider`, `model`, `model_auth_store`, and optional `reasoning`, `mcp_adapter`,
-`mcp_registry_adapter`, `shared_plugin_registry`, and `oauth_relay` (origin and private
+`code_mode_worker`, `mcp_registry_adapter`, `shared_plugin_registry`, and `oauth_relay` (origin and private
 device credential path). These are Host settings; there are no Slack tokens or
 channel IDs. `deploy/renoa-host.service` runs this process independently of surfaces.
 The supplied systemd unit loads `/etc/renoa/host.json` as `host-config` and the

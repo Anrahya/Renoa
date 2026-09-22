@@ -28,6 +28,7 @@ mod skill_tests;
 use crate::{
     LocalRuntimeError, LocalSessionError, LocalWorkspaceError, ModelBridgeError, ModelProvider,
     ReasoningLevel,
+    code_mode::MontyEvaluator,
     mcp::{
         McpAuthorizationResolver, McpCatalogStore, McpCredentialResolver, McpHostError,
         resolve_adapter,
@@ -59,6 +60,7 @@ pub struct LocalHostAdapters<'a> {
     mcp_registry: Option<&'a Path>,
     shared_plugin_registry: Option<&'a str>,
     oauth_relay: Option<(&'a str, &'a Path)>,
+    code_mode_worker: Option<&'a Path>,
 }
 
 impl<'a> LocalHostAdapters<'a> {
@@ -70,6 +72,7 @@ impl<'a> LocalHostAdapters<'a> {
             mcp_registry: None,
             shared_plugin_registry: None,
             oauth_relay: None,
+            code_mode_worker: None,
         }
     }
 
@@ -93,6 +96,13 @@ impl<'a> LocalHostAdapters<'a> {
         self.oauth_relay = Some((origin, credentials));
         self
     }
+
+    /// Selects the exact-pinned Monty worker for MCP-only Code Mode.
+    #[must_use]
+    pub const fn with_code_mode_worker(mut self, worker: Option<&'a Path>) -> Self {
+        self.code_mode_worker = worker;
+        self
+    }
 }
 
 pub(crate) struct HostConfig {
@@ -109,6 +119,7 @@ pub(crate) struct HostConfig {
     pub(crate) mcp_authorizations: McpAuthorizationResolver,
     pub(crate) skill_store: SkillStore,
     pub(crate) plugins: PluginManager,
+    pub(crate) code_mode: Option<Arc<MontyEvaluator>>,
 }
 
 struct HostInitialization {
@@ -124,6 +135,7 @@ struct HostInitialization {
     shared_plugin_registry: Option<String>,
     global_skill_source: Option<PathBuf>,
     oauth_relay: Option<(String, PathBuf)>,
+    code_mode: Option<Arc<MontyEvaluator>>,
 }
 
 /// Model-provider settings shared by every agent assembled by one Host.
@@ -237,6 +249,12 @@ impl LocalHost {
         models: LocalModelConfiguration,
         adapters: LocalHostAdapters<'_>,
     ) -> Result<Self, LocalHostError> {
+        let code_mode = adapters
+            .code_mode_worker
+            .map(MontyEvaluator::new)
+            .transpose()
+            .map_err(LocalHostError::Configuration)?
+            .map(Arc::new);
         let mcp_adapter = adapters
             .mcp
             .map(resolve_adapter)
@@ -262,6 +280,7 @@ impl LocalHost {
             oauth_relay: adapters
                 .oauth_relay
                 .map(|(origin, credentials)| (origin.to_owned(), credentials.to_path_buf())),
+            code_mode,
         })
     }
 
@@ -279,6 +298,7 @@ impl LocalHost {
             shared_plugin_registry,
             global_skill_source,
             oauth_relay,
+            code_mode,
         } = initialization;
         if providers.is_empty() {
             return Err(LocalHostError::Configuration(
@@ -354,6 +374,7 @@ impl LocalHost {
                 mcp_authorizations,
                 skill_store,
                 plugins,
+                code_mode,
             }),
         })
     }
@@ -428,6 +449,7 @@ mod tests {
             shared_plugin_registry: None,
             global_skill_source: None,
             oauth_relay: None,
+            code_mode: None,
         })
     }
 

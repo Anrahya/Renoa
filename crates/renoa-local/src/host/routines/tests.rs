@@ -29,6 +29,7 @@ fn try_host(root: &Path) -> Result<LocalHost, LocalHostError> {
         shared_plugin_registry: None,
         global_skill_source: None,
         oauth_relay: None,
+        code_mode: None,
     })
 }
 fn host(root: &Path) -> LocalHost {

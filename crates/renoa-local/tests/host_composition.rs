@@ -99,7 +99,7 @@ async fn the_host_composes_the_coding_runtime_from_the_stored_definition() {
 
     let manifest = runtime.manifest();
     assert_eq!(manifest.loop_binding, "renoa.agent.model-tool-loop");
-    assert_eq!(manifest.checkpoint_schema_version, 3);
+    assert_eq!(manifest.checkpoint_schema_version, 4);
     assert!(manifest.effect_bindings.contains_key("renoa.agent.model"));
     assert_workspace_bindings(manifest);
 

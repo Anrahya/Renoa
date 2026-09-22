@@ -25,6 +25,7 @@ pub struct Config {
     reasoning: Option<ReasoningLevel>,
     model_auth_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
+    code_mode_worker: Option<PathBuf>,
     mcp_registry_adapter: Option<PathBuf>,
     shared_plugin_registry: Option<String>,
     oauth_relay: Option<Relay>,
@@ -54,6 +55,7 @@ impl Config {
         ]
         .into_iter()
         .chain(config.mcp_adapter.iter())
+        .chain(config.code_mode_worker.iter())
         .chain(config.mcp_registry_adapter.iter())
         {
             if !path.is_absolute() {
@@ -128,6 +130,7 @@ impl Config {
             models = models.with_initial_reasoning(reasoning);
         }
         let mut adapters = LocalHostAdapters::new(self.mcp_adapter.as_deref())
+            .with_code_mode_worker(self.code_mode_worker.as_deref())
             .with_mcp_registry(self.mcp_registry_adapter.as_deref())
             .with_shared_plugin_registry(self.shared_plugin_registry.as_deref());
         if let Some(relay) = &self.oauth_relay {

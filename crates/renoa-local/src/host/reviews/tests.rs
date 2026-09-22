@@ -27,6 +27,7 @@ fn try_host(root: &Path) -> Result<LocalHost, LocalHostError> {
         shared_plugin_registry: None,
         global_skill_source: Some(root.join("skills")),
         oauth_relay: None,
+        code_mode: None,
     })
 }
 

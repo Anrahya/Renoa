@@ -51,6 +51,14 @@ credentials, or a network except through kernel-dispatched effect adapters.
 - zero or more `AgentToolBinding` values: any `renoa-agent::Tool`, a stable
   revision, and recovery declaration.
 
+`build_runtime_with_code_mode` adds one optional, closed `CodeModeBinding`:
+the model sees `code_mode`, while its evaluator and `tool_execute` MCP executor
+are separate hidden effect bindings. The builder rejects a visible duplicate
+of either name and requires the hidden executor to be `NeverReplay`. The
+evaluator is `SafeToReplay` because it runs Python without dispatching MCP
+calls itself. Its stable revision includes the worker binary and resource
+policy. Existing runtimes without this binding keep their direct-tool shape.
+
 The builder validates context, model, and tool revisions, computes a content
 digest over the context revision, instructions, limits, advertised tool order
 and specifications, and recovery declarations, and then creates the exact
@@ -185,7 +193,7 @@ Its payload contains the deterministic estimated input tokens for the exact
 idle request after checkpoint activation. It is durable surface telemetry, not
 conversation content. Unknown versions under this namespace fail closed.
 
-Checkpoint schema 3 contains the loop program counter and in-flight compaction
+Checkpoint schema 4 contains the loop program counter and in-flight compaction
 intent:
 
 ```text
@@ -193,19 +201,27 @@ NeedModel(model_turns)
 AwaitingModel(model_turns)
 AwaitingCompaction(model_turns, exact_plan, max_attempts, attempt)
 AwaitingExplicitCompaction(exact_plan, max_attempts, attempt)
-NeedTool(model_turns, calls, next_index)
-AwaitingTool(model_turns, calls, next_index)
+NeedTool(model_turns, pending_current, pending_remaining)
+AwaitingTool(model_turns, pending_current, pending_remaining)
+AwaitingCodeStep(model_turns, pending, run, exact_step_request)
+AwaitingCodeCalls(model_turns, pending, run, snapshot, identity_indexed_call_wave)
 Terminal
 ```
 
 Conversation history is reconstructed from durable semantic events. It is not
 hidden in process memory or owned only by the checkpoint. The checkpoint keeps
-the active tool batch and exact next index so restart never guesses which call
-may run. While compacting, it also keeps the exact summary request, durable cut,
+one current top-level tool call and a queue of remaining calls, so restart
+never interprets an unchecked positional cursor. A Code Mode run keeps its
+stable operation/call identity, wave and total-call budgets, and an opaque
+Monty snapshot. A call wave retains exact call identities and declaration
+order; settled children are matched by identity, not completion order. While
+compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 11 validates a candidate checkpoint against its own
+Loop binding revision 12 adds Code Mode phases and a validated pending-call
+queue, and balances an already-recorded assistant call when a tool adapter
+fails definitively. Revision 11 validates a candidate checkpoint against its own
 budget, so fixed request overhead is charged exactly once instead of once as
 retained shape and again as checkpoint. Revision 10 adds durable per-turn
 timing and deterministic model-facing projection without changing content-only
@@ -224,7 +240,7 @@ validation and typed live tool uncertainty.
 Runtime revisions are forward-only for unfinished operations. The Host
 currently supplies only the current loop revision, while the kernel freezes the
 exact manifest per admitted operation. An operation left unfinished under
-revision 10 therefore returns `RuntimeMismatch` under a revision-11-only Host and
+revision 11 therefore returns `RuntimeMismatch` under a revision-12-only Host and
 must be finished with its original runtime; Renoa does not guess a migration.
 Deployments drain active work before replacing the runtime and do not retain
 historical runtime installations to satisfy these mismatches.
@@ -248,7 +264,7 @@ command
   -> persist exact model request
   -> model effect
   -> commit complete assistant message
-  -> zero or more persisted sequential tool effects and tool-result events
+  -> zero or more persisted top-level tool effects and tool-result events
   -> next model effect
   -> commit final assistant message and complete
 ```
@@ -266,11 +282,33 @@ compact control
   -> complete without a normal assistant model call
 ```
 
-The loop expresses each sequential model, compaction, or tool call as a
+The loop expresses each sequential model, compaction, or direct tool call as a
 one-member kernel effect batch. Before accepting the settled batch, it requires
 exactly one child and checks that child's binding and request against the durable
 checkpoint and reconstructed transcript. A tool result must retain the call
 identity and name from its request.
+
+When `code_mode` is selected, the loop records its one outer assistant tool
+call, persists a pure Python evaluator step, and either records one final
+`code_mode` result or persists a batch of independently dispatched MCP child
+effects. Child requests use a stable run/wave/call identity, the unchanged MCP
+reference and exact arguments. Each child uses the existing `tool_execute`
+adapter and `NeverReplay` recovery. After every child settles, the loop
+validates the whole batch before resuming the saved Monty snapshot with results
+keyed by Monty call identity. A later wave is another persisted batch. Nested
+requests, outputs and snapshots stay in the kernel effect journal; only the
+final outer result enters semantic conversation history and model context.
+Definite evaluator or nested-adapter failure, unknown abandonment, and
+cancellation close the outer call and any later top-level calls with error
+results. An unknown MCP child is never replayed by the loop.
+
+Code Mode accepts at most 64 KiB of source, 32 MCP calls in one wave, 128
+calls and 32 waves in one run, a 2 MiB encoded snapshot, 2 MiB of MCP results
+returned to Python per wave, and a 1 MiB final Python value. A result over
+the wave limit becomes one model-visible `code_mode` error without resuming
+Python. Values crossing the MCP boundary must be JSON-compatible; integers
+outside signed 64-bit range are rejected rather than rounded. These are loop
+and worker limits, not a claim that a remote MCP server deduplicates a request.
 
 The implemented behavior matches the shared Renoa loop rules needed by this
 slice:
