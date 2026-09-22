@@ -58,7 +58,7 @@ impl LocalHost {
             tool_selection: AgentToolSelection {
                 revision: 1,
                 tools: resolve_selection(
-                    preset.tool_baseline(),
+                    preset.capability_baseline(),
                     preset.documents(),
                     &request.tools,
                 )?,
@@ -243,7 +243,7 @@ fn validate_actor(
 }
 
 fn resolve_selection(
-    baseline: capabilities::PresetToolBaseline,
+    baseline: &[capabilities::BuiltInCapability],
     documents: Option<AgentDocuments>,
     caller: &BTreeSet<String>,
 ) -> Result<BTreeSet<String>, LocalHostError> {

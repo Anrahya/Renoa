@@ -9,8 +9,7 @@ use std::sync::LazyLock;
 
 use crate::{
     AgentBehavior, AgentDefinitionError, AgentDocuments, AgentPresetId, AutomaticCompaction,
-    ModelProvider, TurnTiming, WorkspaceInstructions,
-    capabilities::{self, PresetToolBaseline},
+    ModelProvider, TurnTiming, WorkspaceInstructions, capabilities::BuiltInCapability,
     documents::DocumentDefaults,
 };
 
@@ -28,6 +27,56 @@ const ARCEE_USER: &str = include_str!("../prompts/arcee-v1/USER.md");
 
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
+
+const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
+    BuiltInCapability::ReadFile,
+    BuiltInCapability::EditFile,
+    BuiltInCapability::WriteFile,
+    BuiltInCapability::Bash,
+    BuiltInCapability::Grep,
+    BuiltInCapability::Find,
+    BuiltInCapability::GitChanges,
+    BuiltInCapability::GitDiff,
+    BuiltInCapability::GitShow,
+    BuiltInCapability::ExtensionManage,
+    BuiltInCapability::ToolSearch,
+    BuiltInCapability::ToolLoad,
+    BuiltInCapability::ToolExecute,
+    BuiltInCapability::SkillSearch,
+    BuiltInCapability::SkillLoad,
+];
+
+const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
+    BuiltInCapability::ReadFile,
+    BuiltInCapability::EditFile,
+    BuiltInCapability::WriteFile,
+    BuiltInCapability::Bash,
+    BuiltInCapability::Grep,
+    BuiltInCapability::Find,
+    BuiltInCapability::GitChanges,
+    BuiltInCapability::GitDiff,
+    BuiltInCapability::GitShow,
+    BuiltInCapability::ExtensionManage,
+    BuiltInCapability::ToolSearch,
+    BuiltInCapability::ToolLoad,
+    BuiltInCapability::ToolExecute,
+    BuiltInCapability::SkillSearch,
+    BuiltInCapability::SkillLoad,
+    BuiltInCapability::AgentManage,
+    BuiltInCapability::AgentDocuments,
+    BuiltInCapability::RoutineManage,
+    BuiltInCapability::RoutineResults,
+];
+
+const SPECIALIST_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
+    BuiltInCapability::ToolSearch,
+    BuiltInCapability::ToolLoad,
+    BuiltInCapability::ToolExecute,
+    BuiltInCapability::SkillSearch,
+    BuiltInCapability::SkillLoad,
+    BuiltInCapability::RoutineManage,
+    BuiltInCapability::RoutineResults,
+];
 
 /// Where a preset's instructions come from.
 #[derive(Clone, Copy)]
@@ -47,7 +96,7 @@ pub(crate) struct AgentPreset {
     documents: Option<AgentDocuments>,
     document_defaults: Option<DocumentDefaults>,
     provider_restriction: Option<ModelProvider>,
-    tool_baseline: PresetToolBaseline,
+    capability_baseline: &'static [BuiltInCapability],
 }
 
 impl AgentPreset {
@@ -83,8 +132,8 @@ impl AgentPreset {
     }
 
     #[must_use]
-    pub(crate) const fn tool_baseline(&self) -> PresetToolBaseline {
-        self.tool_baseline
+    pub(crate) const fn capability_baseline(&self) -> &'static [BuiltInCapability] {
+        self.capability_baseline
     }
 
     /// Resolves the instructions this preset stores for a new agent.
@@ -128,7 +177,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             documents: None,
             document_defaults: None,
             provider_restriction: None,
-            tool_baseline: PresetToolBaseline::WorkspacePlus(capabilities::ALPHA_EXTENSIONS),
+            capability_baseline: ALPHA_CAPABILITY_BASELINE,
         },
         AgentPreset {
             id: preset_id(ARCEE_PRESET_ID),
@@ -151,7 +200,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
                 user: ARCEE_USER,
             }),
             provider_restriction: Some(ModelProvider::OpenCodeGo),
-            tool_baseline: PresetToolBaseline::WorkspacePlus(capabilities::ARCEE_EXTENSIONS),
+            capability_baseline: ARCEE_CAPABILITY_BASELINE,
         },
         AgentPreset {
             id: preset_id(SPECIALIST_PRESET_ID),
@@ -165,7 +214,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             documents: None,
             document_defaults: None,
             provider_restriction: None,
-            tool_baseline: PresetToolBaseline::CallerPlus(capabilities::SPECIALIST_EXTENSIONS),
+            capability_baseline: SPECIALIST_CAPABILITY_BASELINE,
         },
     ];
     presets

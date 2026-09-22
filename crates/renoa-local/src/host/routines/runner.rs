@@ -8,7 +8,7 @@ struct HeadlessProgress(CancellationToken);
 impl AgentEventSink for HeadlessProgress {
     fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
         if let AgentEvent::ToolExecutionUpdate { call, update } = event
-            && call.name == "extension_manage"
+            && call.name == crate::capabilities::EXTENSION_MANAGE
             && !update.is_error
             && let [ContentBlock::Text { text }] = update.content.as_slice()
         {

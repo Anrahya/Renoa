@@ -1,5 +1,6 @@
 use super::LocalHost;
 use crate::{
+    capabilities,
     host::HostConfig,
     host_storage::{MANIFEST_FILE, read_manifest},
 };
@@ -16,7 +17,7 @@ pub(crate) fn binding(host: Arc<HostConfig>, session: SessionId) -> AgentToolBin
     AgentToolBinding::new("renoa-routine-results-v1", Arc::new(Results {
         host:LocalHost {config:host}, session,
         spec:ToolSpec {
-            name:"routine_results".to_owned(),
+            name:capabilities::ROUTINE_RESULTS.to_owned(),
             description:"Read results from this Host's scheduled or manually triggered routine runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task, output and execution session. An agent reads only its own results; reading another agent's results needs the agent_manage capability and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
             input_schema:json!({"type":"object","properties":{"action":{"enum":["list","read"]},"agent_id":{"type":"string","format":"uuid"},"before":{"type":"integer","minimum":1},"id":{"type":"string","format":"uuid"}},"required":["action"],"additionalProperties":false,"oneOf":[{"properties":{"action":{"const":"list"},"id":false}},{"properties":{"action":{"const":"read"},"agent_id":false,"before":false},"required":["id"]}]}),
         },
@@ -52,7 +53,7 @@ impl Tool for Results {
             if cancellation.is_cancelled() {
                 return Err(ToolError::cancelled("result lookup cancelled", false));
             }
-            if call.name != "routine_results" {
+            if call.name != capabilities::ROUTINE_RESULTS {
                 return Err(ToolError::invalid_input("wrong result tool binding"));
             }
             let input: Input = serde_json::from_value(call.arguments)

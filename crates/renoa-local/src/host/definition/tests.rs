@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
@@ -12,7 +12,7 @@ use crate::{
     AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, LocalHostError, ModelProvider,
     host::HostInitialization,
     host::routines::RoutineSchedule,
-    presets::{ARCEE_PRESET_ID, SPECIALIST_PRESET_ID},
+    presets::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, SPECIALIST_PRESET_ID},
 };
 
 const VECTOR_OPERATION: Uuid = Uuid::from_u128(0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f);
@@ -61,6 +61,107 @@ fn system(component: &str) -> (AgentCreator, AgentCreationOrigin) {
         },
         AgentCreationOrigin::Provisioning,
     )
+}
+
+struct PresetExpectation {
+    preset_id: &'static str,
+    agent_name: &'static str,
+    instructions: Option<&'static str>,
+    capabilities: &'static [&'static str],
+}
+
+#[tokio::test]
+async fn preset_capability_baselines_keep_the_existing_exact_runtime_selections() {
+    let (_directory, host) = fixture();
+    let (creator, origin) = system("test");
+    let cases = [
+        PresetExpectation {
+            preset_id: ALPHA_PRESET_ID,
+            agent_name: "Alpha",
+            instructions: None,
+            capabilities: &[
+                "bash",
+                "edit_file",
+                "extension_manage",
+                "find",
+                "git_changes",
+                "git_diff",
+                "git_show",
+                "grep",
+                "read_file",
+                "skill_load",
+                "skill_search",
+                "tool_execute",
+                "tool_load",
+                "tool_search",
+                "write_file",
+            ],
+        },
+        PresetExpectation {
+            preset_id: ARCEE_PRESET_ID,
+            agent_name: "Arcee",
+            instructions: None,
+            capabilities: &[
+                "agent_documents",
+                "agent_manage",
+                "bash",
+                "edit_file",
+                "extension_manage",
+                "find",
+                "git_changes",
+                "git_diff",
+                "git_show",
+                "grep",
+                "read_file",
+                "routine_manage",
+                "routine_results",
+                "skill_load",
+                "skill_search",
+                "tool_execute",
+                "tool_load",
+                "tool_search",
+                "write_file",
+            ],
+        },
+        PresetExpectation {
+            preset_id: SPECIALIST_PRESET_ID,
+            agent_name: "Specialist",
+            instructions: Some("Do the assigned job."),
+            capabilities: &[
+                "routine_manage",
+                "routine_results",
+                "skill_load",
+                "skill_search",
+                "tool_execute",
+                "tool_load",
+                "tool_search",
+            ],
+        },
+    ];
+    for case in cases {
+        let mut request = AgentCreateRequest::new(
+            Uuid::new_v4(),
+            AgentPresetId::new(case.preset_id).expect("preset id"),
+            case.agent_name,
+        );
+        if let Some(instructions) = case.instructions {
+            request = request.with_instructions(instructions);
+        }
+        let definition = host
+            .create_agent(creator.clone(), origin, request, CancellationToken::new())
+            .await
+            .expect("create from capability-backed preset");
+        let expected: BTreeSet<String> = case
+            .capabilities
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        assert_eq!(
+            definition.tool_selection.tools, expected,
+            "preset `{}`",
+            case.preset_id
+        );
+    }
 }
 
 #[tokio::test]

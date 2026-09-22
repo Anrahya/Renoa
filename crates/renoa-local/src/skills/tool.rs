@@ -17,8 +17,8 @@ use super::{
 };
 use renoa_kernel::AgentId;
 
-pub(super) const SKILL_LOAD_TOOL: &str = "skill_load";
-const SKILL_SEARCH_TOOL: &str = "skill_search";
+pub(super) const SKILL_LOAD_TOOL: &str = crate::capabilities::SKILL_LOAD;
+const SKILL_SEARCH_TOOL: &str = crate::capabilities::SKILL_SEARCH;
 pub(super) const ACTIVATION_DETAIL_KIND: &str = "renoa.skill.activation.v1";
 const REGISTRY_REVISION: &str = "renoa-skill-registry-v4";
 

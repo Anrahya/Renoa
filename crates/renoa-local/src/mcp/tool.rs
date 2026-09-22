@@ -25,9 +25,9 @@ use renoa_kernel::AgentId;
 
 pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 
-const SEARCH_TOOL: &str = "tool_search";
-const LOAD_TOOL: &str = "tool_load";
-const EXECUTE_TOOL: &str = "tool_execute";
+const SEARCH_TOOL: &str = crate::capabilities::TOOL_SEARCH;
+const LOAD_TOOL: &str = crate::capabilities::TOOL_LOAD;
+const EXECUTE_TOOL: &str = crate::capabilities::TOOL_EXECUTE;
 const SEARCH_REVISION: &str = "renoa-mcp-registry-v3/search";
 const LOAD_REVISION: &str = "renoa-mcp-registry-v1/load";
 const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
