@@ -6,8 +6,8 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AgentId, CancellationInput, CancellationTransition, Command, EffectId, KernelError,
-    OperationId, SemanticEvent, SessionId,
+    AgentId, CancellationInput, CancellationTransition, Command, EffectBatchId, EffectId,
+    KernelError, OperationId, SemanticEvent, SessionId,
 };
 
 /// Opaque loop-owned durable state.
@@ -102,6 +102,7 @@ impl From<EffectOutcome> for EffectCompletion {
 /// Exact persisted effect data plus the lifecycle signal for this attempt.
 #[derive(Debug, Clone)]
 pub struct EffectInvocation {
+    pub batch_id: EffectBatchId,
     pub effect_id: EffectId,
     pub binding: String,
     pub binding_revision: String,
@@ -135,16 +136,50 @@ pub struct SettledEffect {
     pub outcome: EffectOutcome,
 }
 
-/// One loop-visible effect whose external outcome cannot be proven.
+/// Exact persisted effect identity without a definite outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnknownEffect {
+pub struct UnsettledEffect {
     pub effect_id: EffectId,
     pub binding: String,
     pub binding_revision: String,
     pub request: Value,
 }
 
-/// Owned durable input for explicitly abandoning one unknown effect.
+/// One durable child fact used when an effect batch did not settle normally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EffectFact {
+    /// Durable intent exists and dispatch provably never started.
+    NotDispatched(UnsettledEffect),
+    /// The adapter produced one exact definite result.
+    Settled(SettledEffect),
+    /// Dispatch may have happened but no definite result is known.
+    OutcomeUnknown(UnsettledEffect),
+}
+
+/// One external action requested as a member of an ordered effect batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectRequest {
+    pub binding: String,
+    pub request: Value,
+    pub recovery: EffectRecovery,
+}
+
+/// One fully settled effect batch, ordered exactly as the loop requested it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledEffectBatch {
+    pub batch_id: EffectBatchId,
+    pub effects: Vec<SettledEffect>,
+}
+
+/// Ordered durable facts for one effect batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectBatchFacts {
+    pub batch_id: EffectBatchId,
+    pub effects: Vec<EffectFact>,
+}
+
+/// Owned durable input for explicitly abandoning one batch with unknown children.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownEffectInput {
     pub agent_id: AgentId,
@@ -153,10 +188,10 @@ pub struct UnknownEffectInput {
     pub command: Command,
     pub events: Vec<SemanticEvent>,
     pub checkpoint: Checkpoint,
-    pub effect: UnknownEffect,
+    pub effect_batch: EffectBatchFacts,
 }
 
-/// The loop-owned state and semantic events that close an unknown effect.
+/// The loop-owned state and semantic events that close an unknown effect batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownEffectAbandonment {
     pub checkpoint: Checkpoint,
@@ -173,7 +208,7 @@ pub struct LoopInput {
     pub command: Command,
     pub events: Vec<SemanticEvent>,
     pub checkpoint: Option<Checkpoint>,
-    pub effect: Option<SettledEffect>,
+    pub effect_batch: Option<SettledEffectBatch>,
 }
 
 /// A plugin failure that left the durable decision state unchanged.
@@ -206,7 +241,7 @@ pub trait LoopPlugin: Send + Sync {
     /// A loop error commits no state and leaves the decision retryable.
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError>;
 
-    /// Closes the loop-owned state after the host abandons an unknown effect.
+    /// Closes the loop-owned state after the host abandons an unknown effect batch.
     ///
     /// This boundary is decision-only: its output cannot request another
     /// effect. A loop that does not support abandonment leaves the operation
@@ -214,7 +249,7 @@ pub trait LoopPlugin: Send + Sync {
     ///
     /// # Errors
     ///
-    /// A loop error commits no state and leaves the unknown effect blocked.
+    /// A loop error commits no state and leaves the unknown batch blocked.
     fn abandon_unknown_effect(
         &self,
         _input: UnknownEffectInput,
@@ -246,11 +281,9 @@ pub trait LoopPlugin: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LoopDecision {
-    InvokeEffect {
+    InvokeEffects {
         checkpoint: Checkpoint,
-        binding: String,
-        request: Value,
-        recovery: EffectRecovery,
+        effects: Vec<EffectRequest>,
     },
     AppendEventsAndContinue {
         checkpoint: Checkpoint,
@@ -274,7 +307,7 @@ pub enum LoopDecision {
 impl LoopDecision {
     pub(crate) const fn checkpoint(&self) -> &Checkpoint {
         match self {
-            Self::InvokeEffect { checkpoint, .. }
+            Self::InvokeEffects { checkpoint, .. }
             | Self::AppendEventsAndContinue { checkpoint, .. }
             | Self::WaitForInput { checkpoint, .. }
             | Self::Complete { checkpoint, .. }

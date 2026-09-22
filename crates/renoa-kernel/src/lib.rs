@@ -26,22 +26,23 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub use cancellation::{
-    CancellationEffect, CancellationInput, CancellationTransition, UnsettledEffect,
-};
+pub use cancellation::{CancellationInput, CancellationTransition};
 use database::DatabaseLease;
 pub use events::{EventCursor, EventPage, SemanticEvent};
-pub use ids::{AgentId, CancellationId, CommandId, EffectId, EventId, OperationId, SessionId};
+pub use ids::{
+    AgentId, CancellationId, CommandId, EffectBatchId, EffectId, EventId, OperationId, SessionId,
+};
 pub use observation::{OperationObservation, SessionObservation, observe_session};
 pub use runtime::{
-    Checkpoint, EffectAdapter, EffectBinding, EffectCompletion, EffectFuture, EffectInvocation,
-    EffectOutcome, EffectRecovery, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin,
-    NewEvent, Runtime, RuntimeError, RuntimeManifest, SettledEffect, UnknownEffect,
-    UnknownEffectAbandonment, UnknownEffectInput,
+    Checkpoint, EffectAdapter, EffectBatchFacts, EffectBinding, EffectCompletion, EffectFact,
+    EffectFuture, EffectInvocation, EffectOutcome, EffectRecovery, EffectRequest, LoopBinding,
+    LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent, Runtime, RuntimeError,
+    RuntimeManifest, SettledEffect, SettledEffectBatch, UnknownEffectAbandonment,
+    UnknownEffectInput, UnsettledEffect,
 };
 pub use state::{
-    Admission, Command, DriveResult, EffectSnapshot, EffectStatus, OperationOutcome,
-    OperationSnapshot, OperationStatus, SessionSnapshot,
+    Admission, Command, DriveResult, EffectBatchSnapshot, EffectSnapshot, EffectStatus,
+    OperationOutcome, OperationSnapshot, OperationStatus, SessionSnapshot,
 };
 use thiserror::Error;
 
@@ -151,7 +152,7 @@ pub enum KernelError {
         operation_id: OperationId,
         command_id: CommandId,
     },
-    #[error("operation {0} has no unknown effect to abandon")]
+    #[error("operation {0} has no unknown effect batch to abandon")]
     NoUnknownEffect(OperationId),
     #[error("cancellation {cancellation_id} is already bound to operation {operation_id}")]
     CancellationConflict {

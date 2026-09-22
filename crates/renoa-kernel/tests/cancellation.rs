@@ -5,11 +5,11 @@ use std::sync::{
 };
 
 use renoa_kernel::{
-    AgentId, CancellationEffect, CancellationId, CancellationInput, CancellationTransition,
-    Checkpoint, Command, CommandId, DriveResult, EffectAdapter, EffectBinding, EffectFuture,
-    EffectInvocation, EffectOutcome, EffectRecovery, EffectStatus, Kernel, KernelError,
-    LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent, OperationOutcome,
-    OperationStatus, Runtime, SessionId,
+    AgentId, CancellationId, CancellationInput, CancellationTransition, Checkpoint, Command,
+    CommandId, DriveResult, EffectAdapter, EffectBatchFacts, EffectBinding, EffectFact,
+    EffectFuture, EffectInvocation, EffectOutcome, EffectRecovery, EffectRequest, EffectStatus,
+    Kernel, KernelError, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent,
+    OperationOutcome, OperationStatus, Runtime, SessionId,
 };
 use tempfile::tempdir;
 use tokio::sync::Notify;
@@ -87,7 +87,7 @@ async fn queued_cancellation_survives_restart_without_reordering_or_deciding_the
             .expect("settled snapshot")
             .operations
             .iter()
-            .all(|operation| operation.effects.is_empty())
+            .all(|operation| operation.effect_batches.is_empty())
     );
 }
 
@@ -219,15 +219,15 @@ async fn cancellation_waits_for_started_effect_cleanup_and_preserves_its_result(
 
     let effects = cancellation_effects.lock().expect("cancellation effects");
     assert!(matches!(
-        effects.as_slice(),
-        [CancellationEffect::Settled(effect)]
+        effects[0].effects.as_slice(),
+        [EffectFact::Settled(effect)]
             if effect.outcome == EffectOutcome::Success(serde_json::json!({"cleaned": true}))
     ));
     drop(effects);
     let snapshot = kernel.inspect(session_id).expect("inspect cancellation");
     assert_eq!(snapshot.operations[0].status, OperationStatus::Cancelled);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
 }
@@ -289,7 +289,7 @@ async fn cancellation_committed_while_the_loop_decides_prevents_effect_intent() 
     ));
     assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
     let snapshot = kernel.inspect(session_id).expect("inspect cancellation");
-    assert!(snapshot.operations[0].effects.is_empty());
+    assert!(snapshot.operations[0].effect_batches.is_empty());
 }
 
 fn create_session(kernel: &Kernel) -> SessionId {
@@ -348,7 +348,7 @@ fn effect_runtime(
     invoked: Arc<Notify>,
     cleanup_started: Arc<Notify>,
     release_cleanup: Arc<Notify>,
-    cancellation_effects: Arc<Mutex<Vec<CancellationEffect>>>,
+    cancellation_effects: Arc<Mutex<Vec<EffectBatchFacts>>>,
 ) -> Runtime {
     Runtime::new(
         LoopBinding::new(
@@ -374,22 +374,24 @@ fn effect_runtime(
 }
 
 struct EffectLoop {
-    cancellation_effects: Arc<Mutex<Vec<CancellationEffect>>>,
+    cancellation_effects: Arc<Mutex<Vec<EffectBatchFacts>>>,
 }
 
 impl LoopPlugin for EffectLoop {
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
-        if input.effect.is_some() {
+        if input.effect_batch.is_some() {
             Ok(LoopDecision::Complete {
                 checkpoint: terminal_checkpoint(),
                 events: Vec::new(),
             })
         } else {
-            Ok(LoopDecision::InvokeEffect {
+            Ok(LoopDecision::InvokeEffects {
                 checkpoint: Checkpoint::new(1, serde_json::json!({"awaiting": true})),
-                binding: "external".to_owned(),
-                request: input.command.content().clone(),
-                recovery: EffectRecovery::NeverReplay,
+                effects: vec![EffectRequest {
+                    binding: "external".to_owned(),
+                    request: input.command.content().clone(),
+                    recovery: EffectRecovery::NeverReplay,
+                }],
             })
         }
     }
@@ -401,7 +403,7 @@ impl LoopPlugin for EffectLoop {
         self.cancellation_effects
             .lock()
             .expect("cancellation effects")
-            .push(input.effect.expect("cancellation effect"));
+            .push(input.effect_batch.expect("cancellation effect batch"));
         Ok(CancellationTransition {
             checkpoint: terminal_checkpoint(),
             events: Vec::new(),
@@ -440,11 +442,13 @@ impl LoopPlugin for BlockingLoop {
             .expect("release receiver")
             .recv()
             .expect("receive release");
-        Ok(LoopDecision::InvokeEffect {
+        Ok(LoopDecision::InvokeEffects {
             checkpoint: Checkpoint::new(1, serde_json::json!({"awaiting": true})),
-            binding: "external".to_owned(),
-            request: input.command.content().clone(),
-            recovery: EffectRecovery::NeverReplay,
+            effects: vec![EffectRequest {
+                binding: "external".to_owned(),
+                request: input.command.content().clone(),
+                recovery: EffectRecovery::NeverReplay,
+            }],
         })
     }
 

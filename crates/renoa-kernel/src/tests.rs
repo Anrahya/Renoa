@@ -6,9 +6,9 @@ use std::sync::{
 use tempfile::tempdir;
 
 use crate::{
-    AgentId, CancellationEffect, CancellationId, CancellationInput, CancellationTransition,
-    Checkpoint, Command, CommandId, CrashPoint, DriveResult, EffectAdapter, EffectBinding,
-    EffectCompletion, EffectFuture, EffectInvocation, EffectOutcome, EffectRecovery, EffectStatus,
+    AgentId, CancellationId, CancellationInput, CancellationTransition, Checkpoint, Command,
+    CommandId, CrashPoint, DriveResult, EffectAdapter, EffectBinding, EffectCompletion, EffectFact,
+    EffectFuture, EffectInvocation, EffectOutcome, EffectRecovery, EffectRequest, EffectStatus,
     EventCursor, Kernel, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent,
     OperationOutcome, OperationStatus, Runtime, SessionId, UnknownEffectAbandonment,
     UnknownEffectInput,
@@ -38,9 +38,12 @@ async fn never_replay_intent_committed_before_dispatch_runs_after_restart() {
         .expect("dispatch committed intent");
     assert_eq!(calls.lock().expect("calls lock").len(), 1);
     let snapshot = kernel.inspect(session_id).expect("inspect session");
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 1);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        1
+    );
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
 }
@@ -73,9 +76,71 @@ async fn dispatch_marker_makes_never_replay_recovery_conservatively_unknown() {
     assert!(calls.lock().expect("calls lock").is_empty());
     let snapshot = kernel.inspect(session_id).expect("inspect session");
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
+}
+
+#[tokio::test]
+async fn batch_restart_replays_only_safe_children_and_preserves_batch_identity() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("batch-restart.sqlite3");
+    let (mut kernel, session_id) = kernel_with_command(&database);
+    kernel.crash_at(CrashPoint::EffectDispatchCommitted);
+    let runtime =
+        batch_recovery_runtime(Arc::new(NeverCalledAdapter), Arc::new(NeverCalledAdapter));
+    let task = tokio::spawn(async move { kernel.drive(session_id, &runtime).await });
+    assert!(task.await.expect_err("injected crash").is_panic());
+
+    let kernel = Kernel::open(&database).expect("reopen kernel");
+    let interrupted = kernel
+        .inspect(session_id)
+        .expect("inspect dispatched batch");
+    let operation_id = interrupted.operations[0].operation_id;
+    let original_batch = &interrupted.operations[0].effect_batches[0];
+    assert_eq!(original_batch.effects.len(), 2);
+    assert!(
+        original_batch
+            .effects
+            .iter()
+            .all(|effect| effect.status == EffectStatus::DispatchStarted)
+    );
+    let safe_effect_id = original_batch.effects[0].effect_id;
+    let never_effect_id = original_batch.effects[1].effect_id;
+    let batch_id = original_batch.batch_id;
+
+    let safe_calls = Arc::new(Mutex::new(Vec::new()));
+    assert_eq!(
+        kernel
+            .drive(
+                session_id,
+                &batch_recovery_runtime(
+                    Arc::new(RecordingAdapter(Arc::clone(&safe_calls))),
+                    Arc::new(NeverCalledAdapter),
+                ),
+            )
+            .await
+            .expect("recover mixed batch"),
+        DriveResult::Blocked { operation_id }
+    );
+    let safe_calls = safe_calls.lock().expect("safe calls lock");
+    assert_eq!(safe_calls.len(), 1);
+    assert_eq!(safe_calls[0].batch_id, batch_id);
+    assert_eq!(safe_calls[0].effect_id, safe_effect_id);
+    drop(safe_calls);
+
+    let recovered = kernel.inspect(session_id).expect("inspect recovered batch");
+    let recovered_batch = &recovered.operations[0].effect_batches[0];
+    assert_eq!(recovered_batch.batch_id, batch_id);
+    assert_eq!(recovered_batch.effects[0].effect_id, safe_effect_id);
+    assert_eq!(recovered_batch.effects[0].status, EffectStatus::Settled);
+    assert_eq!(recovered_batch.effects[0].dispatch_count, 2);
+    assert_eq!(recovered_batch.effects[1].effect_id, never_effect_id);
+    assert_eq!(
+        recovered_batch.effects[1].status,
+        EffectStatus::OutcomeUnknown
+    );
+    assert_eq!(recovered_batch.effects[1].dispatch_count, 1);
 }
 
 #[tokio::test]
@@ -113,10 +178,13 @@ async fn cancellation_of_committed_intent_proves_the_effect_never_dispatched() {
     let snapshot = kernel.inspect(session_id).expect("inspect cancellation");
     assert_eq!(snapshot.operations[0].status, OperationStatus::Cancelled);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::IntentCommitted
     );
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 0);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        0
+    );
 }
 
 #[tokio::test]
@@ -148,10 +216,13 @@ async fn cancellation_after_a_dispatch_crash_never_replays_the_effect() {
     let snapshot = kernel.inspect(session_id).expect("inspect cancellation");
     assert_eq!(snapshot.operations[0].status, OperationStatus::Cancelled);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 1);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        1
+    );
 }
 
 #[tokio::test]
@@ -204,7 +275,7 @@ async fn settlement_commit_survives_without_repeating_the_effect() {
     let kernel = Kernel::open(&database).expect("reopen kernel");
     let snapshot = kernel.inspect(session_id).expect("inspect settlement");
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
     assert!(
@@ -376,11 +447,29 @@ fn effect_runtime(recovery: EffectRecovery, adapter: Arc<dyn EffectAdapter>) -> 
     .expect("valid runtime")
 }
 
+fn batch_recovery_runtime(
+    safe_adapter: Arc<dyn EffectAdapter>,
+    never_adapter: Arc<dyn EffectAdapter>,
+) -> Runtime {
+    Runtime::new(
+        LoopBinding::new("batch-recovery-loop", "1", Arc::new(BatchRecoveryLoop)),
+        1,
+        "batch-recovery-config-1",
+        vec![
+            EffectBinding::new("safe", "1", safe_adapter),
+            EffectBinding::new("never", "1", never_adapter),
+        ],
+    )
+    .expect("valid runtime")
+}
+
 struct EffectLoop(EffectRecovery);
 
 impl LoopPlugin for EffectLoop {
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
-        if let Some(effect) = input.effect {
+        if let Some(batch) = input.effect_batch {
+            let [effect] =
+                <[_; 1]>::try_from(batch.effects).expect("test loop receives one settled effect");
             Ok(LoopDecision::Complete {
                 checkpoint: Checkpoint::new(1, serde_json::json!({"done": true})),
                 events: vec![crate::NewEvent::new(
@@ -389,11 +478,13 @@ impl LoopPlugin for EffectLoop {
                 )],
             })
         } else {
-            Ok(LoopDecision::InvokeEffect {
+            Ok(LoopDecision::InvokeEffects {
                 checkpoint: Checkpoint::new(1, serde_json::json!({"requested": true})),
-                binding: "external".to_owned(),
-                request: input.command.content().clone(),
-                recovery: self.0,
+                effects: vec![EffectRequest {
+                    binding: "external".to_owned(),
+                    request: input.command.content().clone(),
+                    recovery: self.0,
+                }],
             })
         }
     }
@@ -402,11 +493,15 @@ impl LoopPlugin for EffectLoop {
         &self,
         input: UnknownEffectInput,
     ) -> Result<UnknownEffectAbandonment, LoopError> {
+        let effect_id = match &input.effect_batch.effects[0] {
+            EffectFact::OutcomeUnknown(effect) => effect.effect_id,
+            other => panic!("unexpected abandonment fact: {other:?}"),
+        };
         Ok(UnknownEffectAbandonment {
             checkpoint: Checkpoint::new(1, serde_json::json!({"abandoned": true})),
             events: vec![NewEvent::new(
                 "abandoned",
-                serde_json::json!({"effect_id": input.effect.effect_id}),
+                serde_json::json!({"effect_id": effect_id}),
             )],
         })
     }
@@ -415,10 +510,14 @@ impl LoopPlugin for EffectLoop {
         &self,
         input: CancellationInput,
     ) -> Result<CancellationTransition, LoopError> {
-        let effect_state = match input.effect {
-            Some(CancellationEffect::NotDispatched(_)) => "not_dispatched",
-            Some(CancellationEffect::Settled(_)) => "settled",
-            Some(CancellationEffect::OutcomeUnknown(_)) => "outcome_unknown",
+        let effect_state = match input
+            .effect_batch
+            .as_ref()
+            .and_then(|batch| batch.effects.first())
+        {
+            Some(EffectFact::NotDispatched(_)) => "not_dispatched",
+            Some(EffectFact::Settled(_)) => "settled",
+            Some(EffectFact::OutcomeUnknown(_)) => "outcome_unknown",
             None => "none",
         };
         Ok(CancellationTransition {
@@ -427,6 +526,34 @@ impl LoopPlugin for EffectLoop {
                 "cancelled",
                 serde_json::json!({"effect": effect_state}),
             )],
+        })
+    }
+}
+
+struct BatchRecoveryLoop;
+
+impl LoopPlugin for BatchRecoveryLoop {
+    fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
+        if input.effect_batch.is_some() {
+            return Ok(LoopDecision::Complete {
+                checkpoint: Checkpoint::new(1, serde_json::json!({"done": true})),
+                events: Vec::new(),
+            });
+        }
+        Ok(LoopDecision::InvokeEffects {
+            checkpoint: Checkpoint::new(1, serde_json::json!({"requested": true})),
+            effects: vec![
+                EffectRequest {
+                    binding: "safe".to_owned(),
+                    request: serde_json::json!({"kind": "safe"}),
+                    recovery: EffectRecovery::SafeToReplay,
+                },
+                EffectRequest {
+                    binding: "never".to_owned(),
+                    request: serde_json::json!({"kind": "never"}),
+                    recovery: EffectRecovery::NeverReplay,
+                },
+            ],
         })
     }
 }

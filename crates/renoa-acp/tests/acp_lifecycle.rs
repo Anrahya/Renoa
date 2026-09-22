@@ -210,10 +210,13 @@ fn unknown_provider_outcome_keeps_detailed_ui_error_and_unknown_effect() {
     .expect("inspect abandoned unknown effect");
     assert_eq!(snapshot.operations[0].status, OperationStatus::Failed);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(snapshot.operations[0].effects[0].outcome, None);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].outcome,
+        None
+    );
 }
 
 #[test]

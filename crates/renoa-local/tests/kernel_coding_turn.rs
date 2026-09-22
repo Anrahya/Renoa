@@ -98,9 +98,9 @@ async fn kernel_agent_loop_edits_a_real_local_workspace() {
         .expect("read durable transcript");
     assert_eq!(page.events.len(), 4);
     let snapshot = kernel.inspect(session_id).expect("inspect operation");
-    assert_eq!(snapshot.operations[0].effects.len(), 3);
+    assert_eq!(snapshot.operations[0].effect_batches.len(), 3);
     assert_eq!(
-        snapshot.operations[0].effects[1].recovery,
+        snapshot.operations[0].effect_batches[1].effects[0].recovery,
         EffectRecovery::NeverReplay
     );
 }
@@ -184,13 +184,13 @@ async fn kernel_agent_loop_routes_find_and_grep_results_back_to_the_model() {
     drop(requests);
 
     let snapshot = kernel.inspect(session_id).expect("inspect search turn");
-    assert_eq!(snapshot.operations[0].effects.len(), 5);
+    assert_eq!(snapshot.operations[0].effect_batches.len(), 5);
     assert_eq!(
-        snapshot.operations[0].effects[1].recovery,
+        snapshot.operations[0].effect_batches[1].effects[0].recovery,
         EffectRecovery::SafeToReplay
     );
     assert_eq!(
-        snapshot.operations[0].effects[3].recovery,
+        snapshot.operations[0].effect_batches[3].effects[0].recovery,
         EffectRecovery::SafeToReplay
     );
 }

@@ -5,10 +5,10 @@ use std::sync::{
 
 use renoa_kernel::{
     AgentId, Checkpoint, Command, CommandId, DriveResult, EffectAdapter, EffectBinding,
-    EffectCompletion, EffectFuture, EffectInvocation, EffectRecovery, EffectStatus, EventCursor,
-    Kernel, KernelError, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent,
-    OperationOutcome, OperationStatus, Runtime, SessionId, UnknownEffectAbandonment,
-    UnknownEffectInput,
+    EffectCompletion, EffectFact, EffectFuture, EffectInvocation, EffectRecovery, EffectRequest,
+    EffectStatus, EventCursor, Kernel, KernelError, LoopBinding, LoopDecision, LoopError,
+    LoopInput, LoopPlugin, NewEvent, OperationOutcome, OperationStatus, Runtime, SessionId,
+    UnknownEffectAbandonment, UnknownEffectInput,
 };
 use tempfile::tempdir;
 
@@ -84,10 +84,13 @@ async fn abandonment_is_atomic_idempotent_and_unblocks_queued_work() {
     assert_eq!(snapshot.operations[0].status, OperationStatus::Failed);
     assert_eq!(snapshot.operations[0].outcome, Some(expected));
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(snapshot.operations[0].effects[0].outcome, None);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].outcome,
+        None
+    );
     let events = kernel
         .events_after(session_id, EventCursor::START)
         .expect("read abandonment events")
@@ -398,11 +401,13 @@ impl LoopPlugin for TestLoop {
                 events: vec![NewEvent::new("started", serde_json::json!(true))],
             });
         }
-        Ok(LoopDecision::InvokeEffect {
+        Ok(LoopDecision::InvokeEffects {
             checkpoint: Checkpoint::new(1, serde_json::json!({"phase": "awaiting"})),
-            binding: "external".to_owned(),
-            request: input.command.content().clone(),
-            recovery: EffectRecovery::NeverReplay,
+            effects: vec![EffectRequest {
+                binding: "external".to_owned(),
+                request: input.command.content().clone(),
+                recovery: EffectRecovery::NeverReplay,
+            }],
         })
     }
 
@@ -411,9 +416,12 @@ impl LoopPlugin for TestLoop {
         input: UnknownEffectInput,
     ) -> Result<UnknownEffectAbandonment, LoopError> {
         self.abandon_calls.fetch_add(1, Ordering::SeqCst);
-        if input.effect.binding != "external"
-            || input.effect.binding_revision != "1"
-            || input.effect.request != serde_json::json!({"effect": true})
+        let [EffectFact::OutcomeUnknown(effect)] = input.effect_batch.effects.as_slice() else {
+            return Err(LoopError::new("unknown effect batch shape changed"));
+        };
+        if effect.binding != "external"
+            || effect.binding_revision != "1"
+            || effect.request != serde_json::json!({"effect": true})
         {
             return Err(LoopError::new("unknown effect input changed"));
         }
@@ -421,12 +429,12 @@ impl LoopPlugin for TestLoop {
             .observed_unknown
             .lock()
             .map_err(|error| LoopError::new(format!("observation lock poisoned: {error}")))? =
-            Some(input.effect.effect_id);
+            Some(effect.effect_id);
         Ok(UnknownEffectAbandonment {
             checkpoint: Checkpoint::new(1, serde_json::json!({"phase": "terminal"})),
             events: vec![NewEvent::new(
                 "unknown_effect_abandoned",
-                serde_json::json!({"effect_id": input.effect.effect_id}),
+                serde_json::json!({"effect_id": effect.effect_id}),
             )],
         })
     }

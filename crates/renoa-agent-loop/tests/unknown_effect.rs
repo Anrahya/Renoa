@@ -94,10 +94,13 @@ async fn a_mutating_tool_crash_is_abandoned_honestly_without_replay() {
     let snapshot = kernel.inspect(session_id).expect("inspect abandonment");
     assert_eq!(snapshot.operations[0].status, OperationStatus::Failed);
     assert_eq!(
-        snapshot.operations[0].effects[1].status,
+        snapshot.operations[0].effect_batches[1].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(snapshot.operations[0].effects[1].outcome, None);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[1].effects[0].outcome,
+        None
+    );
     let messages = messages(&kernel, session_id);
     assert_eq!(messages.len(), 4);
     assert_eq!(messages[2], error_result(&calls[0], UNKNOWN_RESULT));
@@ -184,12 +187,15 @@ async fn a_live_unknown_model_effect_replays_once_and_settles_one_assistant_mess
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect replayed model effect");
-    assert_eq!(snapshot.operations[0].effects.len(), 1);
+    assert_eq!(snapshot.operations[0].effect_batches.len(), 1);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 2);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        2
+    );
 
     let recovered = messages(&kernel, session_id);
     assert_eq!(

@@ -1,12 +1,12 @@
 use renoa_agent::{Message, ToolCall, ToolResult};
 use renoa_kernel::{
-    CancellationEffect, CancellationInput, CancellationTransition, EffectOutcome, LoopDecision,
-    LoopError, LoopInput, LoopPlugin, UnknownEffect, UnknownEffectAbandonment, UnknownEffectInput,
+    CancellationInput, CancellationTransition, EffectBatchFacts, EffectFact, EffectOutcome,
+    LoopDecision, LoopError, LoopInput, LoopPlugin, UnknownEffectAbandonment, UnknownEffectInput,
 };
 
+use super::effect_input::require_effect_request_identity;
 use super::{
-    AgentLoop, LoopPhase, MODEL_EFFECT_BINDING, checkpoint, decode, encode,
-    require_effect_request_identity, unavailable_result,
+    AgentLoop, LoopPhase, MODEL_EFFECT_BINDING, checkpoint, decode, encode, unavailable_result,
 };
 use crate::format::{decode_checkpoint, message_events};
 
@@ -33,12 +33,12 @@ impl LoopPlugin for AgentLoop {
                 model_turns,
                 calls,
                 next_index,
-            } => self.request_tool(model_turns, calls, next_index, input.effect.as_ref()),
+            } => self.request_tool(model_turns, calls, next_index, input.effect_batch.as_ref()),
             LoopPhase::AwaitingTool {
                 model_turns,
                 calls,
                 next_index,
-            } => self.settle_tool(model_turns, calls, next_index, input.effect),
+            } => self.settle_tool(model_turns, calls, next_index, input.effect_batch),
             LoopPhase::Terminal => Err(LoopError::new(
                 "a terminal agent checkpoint cannot be driven",
             )),
@@ -102,7 +102,7 @@ impl AgentLoop {
     ) -> Result<UnknownEffectAbandonment, LoopError> {
         let expected_request = self.normal_model_request(input.operation_id, &input.events)?;
         require_unknown_effect_identity(
-            &input.effect,
+            &input.effect_batch,
             MODEL_EFFECT_BINDING,
             &encode("model request", expected_request)?,
         )?;
@@ -117,7 +117,7 @@ impl AgentLoop {
         input: &UnknownEffectInput,
     ) -> Result<UnknownEffectAbandonment, LoopError> {
         require_unknown_effect_identity(
-            &input.effect,
+            &input.effect_batch,
             MODEL_EFFECT_BINDING,
             &encode("compaction request", plan.summary_request())?,
         )?;
@@ -136,7 +136,7 @@ impl AgentLoop {
         let (index, call) = indexed_call(calls, next_index)?;
         let tool = self.configured_tool(call)?;
         require_unknown_effect_identity(
-            &input.effect,
+            &input.effect_batch,
             &tool.effect_binding,
             &encode("tool request", call)?,
         )?;
@@ -161,11 +161,11 @@ impl AgentLoop {
 
     fn cancel_model(&self, input: &CancellationInput) -> Result<CancellationTransition, LoopError> {
         let expected_request = self.normal_model_request(input.operation_id, &input.events)?;
-        let effect = input.effect.as_ref().ok_or_else(|| {
-            LoopError::new("an awaiting model checkpoint has no cancellation effect")
+        let effect_batch = input.effect_batch.as_ref().ok_or_else(|| {
+            LoopError::new("an awaiting model checkpoint has no cancellation effect batch")
         })?;
         require_cancellation_effect_identity(
-            effect,
+            effect_batch,
             MODEL_EFFECT_BINDING,
             &encode("model request", expected_request)?,
         )?;
@@ -176,11 +176,11 @@ impl AgentLoop {
         plan: &crate::CompactionPlan,
         input: &CancellationInput,
     ) -> Result<CancellationTransition, LoopError> {
-        let effect = input.effect.as_ref().ok_or_else(|| {
-            LoopError::new("an awaiting compaction checkpoint has no cancellation effect")
+        let effect_batch = input.effect_batch.as_ref().ok_or_else(|| {
+            LoopError::new("an awaiting compaction checkpoint has no cancellation effect batch")
         })?;
         require_cancellation_effect_identity(
-            effect,
+            effect_batch,
             MODEL_EFFECT_BINDING,
             &encode("compaction request", plan.summary_request())?,
         )?;
@@ -211,24 +211,24 @@ impl AgentLoop {
     ) -> Result<CancellationTransition, LoopError> {
         let (index, call) = indexed_call(calls, next_index)?;
         let tool = self.configured_tool(call)?;
-        let effect = input.effect.as_ref().ok_or_else(|| {
-            LoopError::new("an awaiting tool checkpoint has no cancellation effect")
+        let effect_batch = input.effect_batch.as_ref().ok_or_else(|| {
+            LoopError::new("an awaiting tool checkpoint has no cancellation effect batch")
         })?;
-        require_cancellation_effect_identity(
-            effect,
+        let effect = require_cancellation_effect_identity(
+            effect_batch,
             &tool.effect_binding,
             &encode("tool request", call)?,
         )?;
         let current = match effect {
-            CancellationEffect::NotDispatched(_) => unavailable_result(
+            EffectFact::NotDispatched(_) => unavailable_result(
                 call,
                 "Tool call was not run because the operation was cancelled.",
             ),
-            CancellationEffect::OutcomeUnknown(_) => unavailable_result(
+            EffectFact::OutcomeUnknown(_) => unavailable_result(
                 call,
                 "This tool may have finished, but its result is unavailable because the operation was cancelled.",
             ),
-            CancellationEffect::Settled(effect) => settled_tool_result(call, &effect.outcome)?,
+            EffectFact::Settled(effect) => settled_tool_result(call, &effect.outcome)?,
             _ => return Err(LoopError::new("cancellation effect version is unsupported")),
         };
         let mut results = Vec::with_capacity(calls.len() - index);
@@ -279,7 +279,7 @@ fn indexed_call(calls: &[ToolCall], next_index: u32) -> Result<(usize, &ToolCall
 }
 
 fn require_no_cancellation_effect(input: &CancellationInput) -> Result<(), LoopError> {
-    if input.effect.is_some() {
+    if input.effect_batch.is_some() {
         Err(LoopError::new(
             "a ready checkpoint cannot contain a cancellation effect",
         ))
@@ -289,10 +289,16 @@ fn require_no_cancellation_effect(input: &CancellationInput) -> Result<(), LoopE
 }
 
 fn require_unknown_effect_identity(
-    effect: &UnknownEffect,
+    batch: &EffectBatchFacts,
     binding: &str,
     request: &serde_json::Value,
 ) -> Result<(), LoopError> {
+    let effect = require_single_effect_fact(batch, "unknown")?;
+    let EffectFact::OutcomeUnknown(effect) = effect else {
+        return Err(LoopError::new(
+            "unknown effect batch contains a child that is not unknown",
+        ));
+    };
     require_effect_request_identity(
         "unknown",
         &effect.binding,
@@ -302,24 +308,34 @@ fn require_unknown_effect_identity(
     )
 }
 
-fn require_cancellation_effect_identity(
-    effect: &CancellationEffect,
+fn require_cancellation_effect_identity<'a>(
+    batch: &'a EffectBatchFacts,
     binding: &str,
     request: &serde_json::Value,
-) -> Result<(), LoopError> {
+) -> Result<&'a EffectFact, LoopError> {
+    let effect = require_single_effect_fact(batch, "cancellation")?;
     let (kind, actual_binding, actual_request) = match effect {
-        CancellationEffect::NotDispatched(effect) => {
+        EffectFact::NotDispatched(effect) => {
             ("not-dispatched", effect.binding.as_str(), &effect.request)
         }
-        CancellationEffect::Settled(effect) => {
-            ("settled", effect.binding.as_str(), &effect.request)
-        }
-        CancellationEffect::OutcomeUnknown(effect) => {
-            ("unknown", effect.binding.as_str(), &effect.request)
-        }
+        EffectFact::Settled(effect) => ("settled", effect.binding.as_str(), &effect.request),
+        EffectFact::OutcomeUnknown(effect) => ("unknown", effect.binding.as_str(), &effect.request),
         _ => return Err(LoopError::new("cancellation effect version is unsupported")),
     };
-    require_effect_request_identity(kind, actual_binding, actual_request, binding, request)
+    require_effect_request_identity(kind, actual_binding, actual_request, binding, request)?;
+    Ok(effect)
+}
+
+fn require_single_effect_fact<'a>(
+    batch: &'a EffectBatchFacts,
+    expected: &str,
+) -> Result<&'a EffectFact, LoopError> {
+    let [effect] = batch.effects.as_slice() else {
+        return Err(LoopError::new(format!(
+            "{expected} effect batch must contain exactly one effect"
+        )));
+    };
+    Ok(effect)
 }
 
 fn cancelled(events: Vec<renoa_kernel::NewEvent>) -> Result<CancellationTransition, LoopError> {

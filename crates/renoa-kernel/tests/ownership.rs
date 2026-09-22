@@ -8,9 +8,9 @@ use std::{
 
 use renoa_kernel::{
     AgentId, Checkpoint, Command, CommandId, EffectAdapter, EffectBinding, EffectFuture,
-    EffectInvocation, EffectOutcome, EffectRecovery, EffectStatus, Kernel, KernelError,
-    LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, OperationStatus, Runtime,
-    SessionId, StoreErrorKind,
+    EffectInvocation, EffectOutcome, EffectRecovery, EffectRequest, EffectStatus, Kernel,
+    KernelError, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, OperationStatus,
+    Runtime, SessionId, StoreErrorKind,
 };
 use tempfile::tempdir;
 use tokio::sync::Notify;
@@ -185,7 +185,7 @@ async fn dropped_driver_holds_the_session_until_effect_cleanup_finishes() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        blocked.operations[0].effects[0].status,
+        blocked.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
 }
@@ -230,12 +230,14 @@ struct PendingLoop;
 
 impl LoopPlugin for PendingLoop {
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
-        if input.effect.is_none() {
-            Ok(LoopDecision::InvokeEffect {
+        if input.effect_batch.is_none() {
+            Ok(LoopDecision::InvokeEffects {
                 checkpoint: Checkpoint::new(1, serde_json::json!({"waiting": true})),
-                binding: "pending".to_owned(),
-                request: input.command.content().clone(),
-                recovery: EffectRecovery::NeverReplay,
+                effects: vec![EffectRequest {
+                    binding: "pending".to_owned(),
+                    request: input.command.content().clone(),
+                    recovery: EffectRecovery::NeverReplay,
+                }],
             })
         } else {
             Ok(LoopDecision::Complete {

@@ -149,7 +149,7 @@ async fn assert_durable_recovery(
     let agent = snapshot.agent_id;
     assert_eq!(snapshot.operations[0].status, OperationStatus::Queued);
     assert_eq!(snapshot.operations[0].outcome, None);
-    assert!(snapshot.operations[0].effects.is_empty());
+    assert!(snapshot.operations[0].effect_batches.is_empty());
     drop(kernel);
     let connection = Connection::open(database).expect("cancellation database");
     assert_eq!(

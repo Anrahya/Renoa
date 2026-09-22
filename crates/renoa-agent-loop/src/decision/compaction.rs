@@ -1,6 +1,6 @@
 use std::num::NonZeroU32;
 
-use renoa_kernel::{EffectOutcome, LoopDecision, LoopError, LoopInput};
+use renoa_kernel::{EffectOutcome, EffectRequest, LoopDecision, LoopError, LoopInput};
 
 use super::{
     AgentLoop, LoopPhase, MODEL_EFFECT_BINDING, checkpoint, decode, encode, require_effect,
@@ -54,11 +54,13 @@ impl AgentLoop {
                 attempt,
             },
         };
-        Ok(LoopDecision::InvokeEffect {
+        Ok(LoopDecision::InvokeEffects {
             checkpoint: checkpoint(phase)?,
-            binding: MODEL_EFFECT_BINDING.to_owned(),
-            request,
-            recovery: self.model_recovery,
+            effects: vec![EffectRequest {
+                binding: MODEL_EFFECT_BINDING.to_owned(),
+                request,
+                recovery: self.model_recovery,
+            }],
         })
     }
 
@@ -66,7 +68,7 @@ impl AgentLoop {
         &self,
         input: &LoopInput,
     ) -> Result<LoopDecision, LoopError> {
-        if input.effect.is_some() {
+        if input.effect_batch.is_some() {
             return Err(LoopError::new(
                 "an explicit-compaction-ready checkpoint cannot have a settled effect",
             ));
@@ -155,7 +157,7 @@ impl AgentLoop {
                 Some(context)
             }
         };
-        let effect = require_effect(input.effect, "compaction result")?;
+        let effect = require_effect(input.effect_batch, "compaction result")?;
         require_effect_identity(
             &effect,
             MODEL_EFFECT_BINDING,

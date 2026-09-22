@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use renoa_kernel::{
     AgentId, Checkpoint, Command, CommandId, EffectAdapter, EffectBinding, EffectFuture,
-    EffectInvocation, EffectOutcome, EffectRecovery, EventCursor, Kernel, KernelError, LoopBinding,
-    LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent, Runtime, SessionId,
+    EffectInvocation, EffectOutcome, EffectRecovery, EffectRequest, EventCursor, Kernel,
+    KernelError, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent, Runtime,
+    SessionId,
 };
 use tempfile::tempdir;
 
@@ -268,15 +269,15 @@ fn a_newer_database_schema_fails_closed() {
     let database = directory.path().join("kernel.sqlite3");
     let connection = rusqlite::Connection::open(&database).expect("open raw database");
     connection
-        .pragma_update(None, "user_version", 3)
+        .pragma_update(None, "user_version", 4)
         .expect("set future schema");
     drop(connection);
 
     assert!(matches!(
         Kernel::open(&database),
         Err(KernelError::UnsupportedSchema {
-            found: 3,
-            supported: 2,
+            found: 4,
+            supported: 3,
         })
     ));
 }
@@ -442,11 +443,13 @@ struct RequestEffectLoop;
 
 impl LoopPlugin for RequestEffectLoop {
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
-        Ok(LoopDecision::InvokeEffect {
+        Ok(LoopDecision::InvokeEffects {
             checkpoint: Checkpoint::new(1, serde_json::json!({"effect": "requested"})),
-            binding: "external".to_owned(),
-            request: input.command.content().clone(),
-            recovery: EffectRecovery::SafeToReplay,
+            effects: vec![EffectRequest {
+                binding: "external".to_owned(),
+                request: input.command.content().clone(),
+                recovery: EffectRecovery::SafeToReplay,
+            }],
         })
     }
 }

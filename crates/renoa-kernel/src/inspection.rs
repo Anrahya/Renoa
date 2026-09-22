@@ -3,7 +3,7 @@ use rusqlite::{OptionalExtension, TransactionBehavior};
 use crate::{
     Kernel, KernelError, OperationSnapshot, SessionId, SessionSnapshot,
     admission::{from_sql_integer, parse_agent_id, parse_operation_id},
-    effect_store::load_effect_snapshots,
+    effect_store::load_effect_batch_snapshots,
     operation_store::StoredOperationRow,
     schema::sqlite_error,
 };
@@ -33,7 +33,7 @@ impl Kernel {
                 "SELECT o.operation_id, o.position,
                         o.command_id, c.content_json, o.phase, o.state_version,
                         o.transition_version, o.manifest_json, o.checkpoint_json,
-                        o.current_effect_id, o.input_effect_id, o.outcome_json
+                        o.current_effect_batch_id, o.input_effect_batch_id, o.outcome_json
                  FROM operations AS o
                  JOIN commands AS c
                    ON c.session_id = o.session_id AND c.command_id = o.command_id
@@ -64,7 +64,7 @@ impl Kernel {
                 manifest: stored.manifest,
                 checkpoint: stored.checkpoint,
                 outcome: stored.outcome,
-                effects: load_effect_snapshots(&transaction, operation_id)?,
+                effect_batches: load_effect_batch_snapshots(&transaction, operation_id)?,
             });
         }
         drop(statement);

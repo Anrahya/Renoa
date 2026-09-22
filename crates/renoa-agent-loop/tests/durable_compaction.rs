@@ -88,13 +88,13 @@ async fn oversized_context_is_summarized_activated_and_reused() {
     assert_eq!(checkpoints[0].payload["summary"], SUMMARY);
 
     let snapshot = kernel.inspect(session_id).expect("inspect session");
-    assert_eq!(snapshot.operations[1].effects.len(), 2);
+    assert_eq!(snapshot.operations[1].effect_batches.len(), 2);
     assert_eq!(
-        snapshot.operations[1].effects[0].request,
+        snapshot.operations[1].effect_batches[0].effects[0].request,
         serde_json::to_value(&summary_request).expect("encode persisted summary request")
     );
     assert_eq!(
-        snapshot.operations[1].effects[1].request,
+        snapshot.operations[1].effect_batches[1].effects[0].request,
         serde_json::to_value(&continued).expect("encode persisted continued request")
     );
 }
@@ -149,7 +149,7 @@ async fn malformed_summaries_exhaust_the_bound_without_activating() {
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect failed operation");
-    assert_eq!(snapshot.operations[1].effects.len(), 2);
+    assert_eq!(snapshot.operations[1].effect_batches.len(), 2);
 }
 
 #[tokio::test]
@@ -211,11 +211,11 @@ async fn unknown_summary_outcome_blocks_without_activating_or_inventing_a_summar
     );
     let blocked = kernel.inspect(session_id).expect("inspect blocked summary");
     assert_eq!(
-        blocked.operations[1].effects[0].status,
+        blocked.operations[1].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
     assert_eq!(
-        blocked.operations[1].effects[0].dispatch_count, 2,
+        blocked.operations[1].effect_batches[0].effects[0].dispatch_count, 2,
         "one live unknown summary attempt replays once before staying unknown"
     );
     assert_eq!(checkpoint_count(&kernel, session_id), 0);
@@ -317,7 +317,7 @@ async fn interrupted_summary_replays_the_exact_intent_then_activates_once() {
     let interrupted = kernel
         .inspect(session_id)
         .expect("inspect interrupted summary");
-    let original = interrupted.operations[1].effects[0].clone();
+    let original = interrupted.operations[1].effect_batches[0].effects[0].clone();
     assert_eq!(original.status, EffectStatus::DispatchStarted);
     assert_eq!(original.dispatch_count, 1);
     assert!(
@@ -344,7 +344,7 @@ async fn interrupted_summary_replays_the_exact_intent_then_activates_once() {
     let recovered = reopened
         .inspect(session_id)
         .expect("inspect recovered summary");
-    let replayed = &recovered.operations[1].effects[0];
+    let replayed = &recovered.operations[1].effect_batches[0].effects[0];
     assert_eq!(replayed.effect_id, original.effect_id);
     assert_eq!(replayed.request, original.request);
     assert_eq!(replayed.dispatch_count, 2);

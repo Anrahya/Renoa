@@ -2153,6 +2153,7 @@ dependencies = [
 name = "renoa-kernel"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "rusqlite",
  "serde",
  "serde_json",

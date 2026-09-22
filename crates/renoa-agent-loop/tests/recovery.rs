@@ -26,7 +26,7 @@ async fn interrupted_model_replays_the_exact_persisted_request() {
     let interrupted = kernel
         .inspect(session_id)
         .expect("inspect interrupted model");
-    let original_effect = interrupted.operations[0].effects[0].clone();
+    let original_effect = interrupted.operations[0].effect_batches[0].effects[0].clone();
     assert_eq!(original_effect.status, EffectStatus::DispatchStarted);
     assert_eq!(original_effect.dispatch_count, 1);
     drop(kernel);
@@ -58,7 +58,7 @@ async fn interrupted_model_replays_the_exact_persisted_request() {
     );
     drop(requests);
     let recovered = kernel.inspect(session_id).expect("inspect recovered model");
-    let replayed_effect = &recovered.operations[0].effects[0];
+    let replayed_effect = &recovered.operations[0].effect_batches[0].effects[0];
     assert_eq!(replayed_effect.effect_id, original_effect.effect_id);
     assert_eq!(replayed_effect.request, original_effect.request);
     assert_eq!(replayed_effect.dispatch_count, 2);
@@ -89,9 +89,9 @@ async fn interrupted_never_replay_tool_becomes_unknown_without_invocation() {
     let interrupted = kernel
         .inspect(session_id)
         .expect("inspect interrupted tool");
-    assert_eq!(interrupted.operations[0].effects.len(), 2);
+    assert_eq!(interrupted.operations[0].effect_batches.len(), 2);
     assert_eq!(
-        interrupted.operations[0].effects[1].status,
+        interrupted.operations[0].effect_batches[1].effects[0].status,
         EffectStatus::DispatchStarted
     );
     drop(kernel);
@@ -122,7 +122,7 @@ async fn interrupted_never_replay_tool_becomes_unknown_without_invocation() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        blocked.operations[0].effects[1].status,
+        blocked.operations[0].effect_batches[1].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
 }
@@ -136,10 +136,13 @@ async fn uncertain_model_failure_blocks_the_operation_without_settling_it() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        blocked.operations[0].effects[0].status,
+        blocked.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(blocked.operations[0].effects[0].outcome, None);
+    assert_eq!(
+        blocked.operations[0].effect_batches[0].effects[0].outcome,
+        None
+    );
 }
 
 #[tokio::test]
@@ -151,10 +154,13 @@ async fn incomplete_model_stream_blocks_the_operation_without_settling_it() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        blocked.operations[0].effects[0].status,
+        blocked.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(blocked.operations[0].effects[0].outcome, None);
+    assert_eq!(
+        blocked.operations[0].effect_batches[0].effects[0].outcome,
+        None
+    );
 }
 
 #[tokio::test]
@@ -169,10 +175,14 @@ async fn known_pre_inference_rejection_remains_a_definite_failure() {
     ));
     assert_eq!(failed.operations[0].status, OperationStatus::Failed);
     assert_eq!(
-        failed.operations[0].effects[0].status,
+        failed.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
-    assert!(failed.operations[0].effects[0].outcome.is_some());
+    assert!(
+        failed.operations[0].effect_batches[0].effects[0]
+            .outcome
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -187,7 +197,7 @@ async fn known_network_failure_before_inference_is_a_definite_failure() {
     ));
     assert_eq!(failed.operations[0].status, OperationStatus::Failed);
     assert_eq!(
-        failed.operations[0].effects[0].status,
+        failed.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
 }
@@ -201,10 +211,13 @@ async fn post_dispatch_reset_blocks_without_a_definite_failure() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        blocked.operations[0].effects[0].status,
+        blocked.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(blocked.operations[0].effects[0].outcome, None);
+    assert_eq!(
+        blocked.operations[0].effect_batches[0].effects[0].outcome,
+        None
+    );
 }
 
 #[tokio::test]
@@ -245,10 +258,10 @@ async fn a_completed_model_result_survives_kernel_cancellation() {
         .inspect(session_id)
         .expect("inspect completed result");
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
-    let output = snapshot.operations[0].effects[0]
+    let output = snapshot.operations[0].effect_batches[0].effects[0]
         .outcome
         .as_ref()
         .expect("definite model result must settle");
@@ -329,12 +342,15 @@ async fn uncertain_live_tool_outcome_blocks_without_recording_a_false_result() {
         blocked.operations[0].status,
         OperationStatus::OutcomeUnknown
     );
-    assert_eq!(blocked.operations[0].effects.len(), 2);
+    assert_eq!(blocked.operations[0].effect_batches.len(), 2);
     assert_eq!(
-        blocked.operations[0].effects[1].status,
+        blocked.operations[0].effect_batches[1].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(blocked.operations[0].effects[1].outcome, None);
+    assert_eq!(
+        blocked.operations[0].effect_batches[1].effects[0].outcome,
+        None
+    );
 
     let history = kernel
         .events_after(session_id, EventCursor::START)

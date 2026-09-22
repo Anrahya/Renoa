@@ -5,11 +5,15 @@ use renoa_agent::{
     ToolResult, ToolSpec, validate_tool_call_ids,
 };
 use renoa_kernel::{
-    EffectOutcome, EffectRecovery, LoopDecision, LoopError, LoopInput, SettledEffect,
+    EffectOutcome, EffectRecovery, EffectRequest, LoopDecision, LoopError, LoopInput,
+    SettledEffectBatch,
 };
 
 mod compaction;
+mod effect_input;
 mod interruption;
+
+use effect_input::{require_effect, require_effect_identity};
 
 use crate::{
     AgentCommand,
@@ -50,7 +54,7 @@ impl AgentLoop {
     }
 
     fn decide_initial(&self, input: &LoopInput) -> Result<LoopDecision, LoopError> {
-        if input.effect.is_some() {
+        if input.effect_batch.is_some() {
             return Err(LoopError::new(
                 "an uncheckpointed operation cannot have a settled effect",
             ));
@@ -89,7 +93,7 @@ impl AgentLoop {
         model_turns: u32,
         input: &LoopInput,
     ) -> Result<LoopDecision, LoopError> {
-        if input.effect.is_some() {
+        if input.effect_batch.is_some() {
             return Err(LoopError::new(
                 "a model-ready checkpoint cannot have a settled effect",
             ));
@@ -110,13 +114,15 @@ impl AgentLoop {
                 let next_turn = model_turns
                     .checked_add(1)
                     .ok_or_else(|| LoopError::new("model turn counter overflowed"))?;
-                Ok(LoopDecision::InvokeEffect {
+                Ok(LoopDecision::InvokeEffects {
                     checkpoint: checkpoint(LoopPhase::AwaitingModel {
                         model_turns: next_turn,
                     })?,
-                    binding: MODEL_EFFECT_BINDING.to_owned(),
-                    request: encode("model request", self.model_request(messages))?,
-                    recovery: self.model_recovery,
+                    effects: vec![EffectRequest {
+                        binding: MODEL_EFFECT_BINDING.to_owned(),
+                        request: encode("model request", self.model_request(messages))?,
+                        recovery: self.model_recovery,
+                    }],
                 })
             }
             ContextPreparation::Compact { plan, max_attempts } => {
@@ -132,7 +138,7 @@ impl AgentLoop {
     }
 
     fn settle_model(&self, model_turns: u32, input: LoopInput) -> Result<LoopDecision, LoopError> {
-        let effect = require_effect(input.effect, "model result")?;
+        let effect = require_effect(input.effect_batch, "model result")?;
         let expected_request = self.normal_model_request(input.operation_id, &input.events)?;
         require_effect_identity(
             &effect,
@@ -328,9 +334,9 @@ impl AgentLoop {
         model_turns: u32,
         calls: Vec<ToolCall>,
         next_index: u32,
-        effect: Option<&SettledEffect>,
+        effect_batch: Option<&SettledEffectBatch>,
     ) -> Result<LoopDecision, LoopError> {
-        if effect.is_some() {
+        if effect_batch.is_some() {
             return Err(LoopError::new(
                 "a tool-ready checkpoint cannot have a settled effect",
             ));
@@ -346,15 +352,17 @@ impl AgentLoop {
             return Self::append_tool_result(model_turns, calls, next_index, result);
         };
         let request = encode("tool request", call)?;
-        Ok(LoopDecision::InvokeEffect {
+        Ok(LoopDecision::InvokeEffects {
             checkpoint: checkpoint(LoopPhase::AwaitingTool {
                 model_turns,
                 calls,
                 next_index,
             })?,
-            binding: tool.effect_binding.clone(),
-            request,
-            recovery: tool.recovery,
+            effects: vec![EffectRequest {
+                binding: tool.effect_binding.clone(),
+                request,
+                recovery: tool.recovery,
+            }],
         })
     }
 
@@ -363,7 +371,7 @@ impl AgentLoop {
         model_turns: u32,
         calls: Vec<ToolCall>,
         next_index: u32,
-        effect: Option<SettledEffect>,
+        effect_batch: Option<SettledEffectBatch>,
     ) -> Result<LoopDecision, LoopError> {
         let index = usize::try_from(next_index)
             .map_err(|error| LoopError::new(format!("tool call index is invalid: {error}")))?;
@@ -375,7 +383,7 @@ impl AgentLoop {
             .iter()
             .find(|tool| tool.spec.name == call.name)
             .ok_or_else(|| LoopError::new("awaited tool binding is no longer configured"))?;
-        let effect = require_effect(effect, "tool result")?;
+        let effect = require_effect(effect_batch, "tool result")?;
         require_effect_identity(
             &effect,
             &tool.effect_binding,
@@ -425,47 +433,6 @@ impl AgentLoop {
             events: vec![message_event(Message::Tool { result })?],
         })
     }
-}
-
-fn require_effect(
-    effect: Option<SettledEffect>,
-    expected: &str,
-) -> Result<SettledEffect, LoopError> {
-    effect.ok_or_else(|| LoopError::new(format!("checkpoint is missing its settled {expected}")))
-}
-
-fn require_effect_identity(
-    effect: &SettledEffect,
-    binding: &str,
-    request: &serde_json::Value,
-) -> Result<(), LoopError> {
-    require_effect_request_identity(
-        "settled",
-        &effect.binding,
-        &effect.request,
-        binding,
-        request,
-    )
-}
-
-fn require_effect_request_identity(
-    kind: &str,
-    actual_binding: &str,
-    actual_request: &serde_json::Value,
-    expected_binding: &str,
-    expected_request: &serde_json::Value,
-) -> Result<(), LoopError> {
-    if actual_binding != expected_binding {
-        return Err(LoopError::new(format!(
-            "{kind} effect binding `{actual_binding}` differs from expected `{expected_binding}`"
-        )));
-    }
-    if actual_request != expected_request {
-        return Err(LoopError::new(format!(
-            "{kind} effect request differs from durable loop state"
-        )));
-    }
-    Ok(())
 }
 
 fn encode<T: serde::Serialize>(

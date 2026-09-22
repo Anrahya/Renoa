@@ -65,15 +65,4 @@ impl OperationPhase {
             Self::NeedDecision | Self::EffectIntent | Self::EffectDispatched | Self::OutcomeUnknown
         )
     }
-
-    pub(crate) fn active_effect_status(self) -> Result<&'static str, KernelError> {
-        match self {
-            Self::EffectIntent => Ok("intent_committed"),
-            Self::EffectDispatched => Ok("dispatch_started"),
-            _ => Err(KernelError::Corrupt(format!(
-                "cannot prepare effect from phase `{}`",
-                self.as_str()
-            ))),
-        }
-    }
 }
