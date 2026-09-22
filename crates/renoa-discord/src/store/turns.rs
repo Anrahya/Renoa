@@ -89,12 +89,26 @@ impl SurfaceStore {
             let transaction = schema::immediate_transaction(connection)?;
             let existing = transaction
                 .query_row(
-                    "SELECT canonical FROM messages WHERE message_id = ?1",
+                    "SELECT channel_id, author_id, canonical FROM messages WHERE message_id = ?1",
                     [&message_id],
-                    |row| row.get::<_, Vec<u8>>(0),
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                        ))
+                    },
                 )
                 .optional()?;
-            if existing.is_some() {
+            if let Some((stored_channel, stored_author, stored_canonical)) = existing {
+                if stored_channel != channel_id
+                    || stored_author != author_id
+                    || stored_canonical != canonical
+                {
+                    return Err(DiscordError::Invalid(format!(
+                        "Discord reused message {message_id} with different content"
+                    )));
+                }
                 transaction.commit()?;
                 return Ok(Enqueue::Duplicate);
             }
@@ -141,7 +155,8 @@ impl SurfaceStore {
                     "SELECT turns.message_id, turns.session_id, turns.request_id, turns.prompt,
                             messages.created_at_ms
                      FROM turns JOIN messages ON messages.message_id = turns.message_id
-                     WHERE turns.state = 'queued' ORDER BY turns.message_id LIMIT 1",
+                     WHERE turns.state = 'queued'
+                     ORDER BY length(turns.message_id), turns.message_id LIMIT 1",
                     [],
                     |row| {
                         Ok(QueuedTurn {
@@ -207,7 +222,9 @@ impl SurfaceStore {
                            AND earlier.chunk < deliveries.chunk
                            AND earlier.state <> 'sent'
                        )
-                     ORDER BY deliveries.message_id, deliveries.chunk LIMIT 1",
+                     ORDER BY length(deliveries.message_id), deliveries.message_id,
+                              deliveries.chunk
+                     LIMIT 1",
                     [],
                     |row| {
                         Ok(Outbound {

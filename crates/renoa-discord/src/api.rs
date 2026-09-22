@@ -99,13 +99,7 @@ impl DiscordApi {
             .header("user-agent", "Renoa (https://renoa.live, 0.1.0)")
             .send()
             .await
-            .map_err(|error| {
-                if error.is_timeout() || error.is_connect() {
-                    ApiError::Unknown(error.without_url().to_string())
-                } else {
-                    ApiError::Rejected(error.without_url().to_string())
-                }
-            })?;
+            .map_err(|error| ApiError::Unknown(error.without_url().to_string()))?;
         let status = response.status();
         if status.as_u16() == 429 {
             let delay = response
@@ -122,16 +116,19 @@ impl DiscordApi {
             return Err(ApiError::Unauthorized);
         }
         let bytes = response.bytes().await.map_err(|error| {
-            if status.is_success() {
+            if status.is_success() || status.is_server_error() {
                 ApiError::Unknown(error.without_url().to_string())
             } else {
                 ApiError::Rejected(error.without_url().to_string())
             }
         })?;
+        if status.is_server_error() {
+            return Err(ApiError::Unknown(format!("HTTP {}", status.as_u16())));
+        }
         if !status.is_success() {
             return Err(ApiError::Rejected(format!("HTTP {}", status.as_u16())));
         }
-        serde_json::from_slice(&bytes).map_err(|error| ApiError::Rejected(error.to_string()))
+        serde_json::from_slice(&bytes).map_err(|error| ApiError::Unknown(error.to_string()))
     }
 }
 
@@ -157,7 +154,9 @@ impl From<ApiError> for DiscordError {
 
 #[cfg(test)]
 mod tests {
-    use super::message_body;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    use super::{ApiError, DiscordApi, message_body};
 
     #[test]
     fn a_follow_up_page_omits_message_reference() {
@@ -165,5 +164,46 @@ mod tests {
         assert_eq!(first["message_reference"]["message_id"], "101");
         let next = message_body("page", None);
         assert!(next.get("message_reference").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_server_error_has_an_unknown_send_outcome() {
+        let api = responding("500 Internal Server Error", r#"{"message":"failed"}"#).await;
+        let error = api
+            .create_message("202", "hello", Some("101"))
+            .await
+            .expect_err("server error");
+        assert!(matches!(error, ApiError::Unknown(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_success_receipt_has_an_unknown_send_outcome() {
+        let api = responding("200 OK", "not-json").await;
+        let error = api
+            .create_message("202", "hello", Some("101"))
+            .await
+            .expect_err("unreadable receipt");
+        assert!(matches!(error, ApiError::Unknown(_)), "{error:?}");
+    }
+
+    async fn responding(status: &'static str, body: &'static str) -> DiscordApi {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).await.expect("request");
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("response");
+        });
+        DiscordApi::with_origin("token".to_owned(), format!("http://{address}")).expect("api")
     }
 }

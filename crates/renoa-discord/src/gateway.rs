@@ -17,7 +17,7 @@ use crate::{
     store::{Enqueue, GatewayCursor, SurfaceStore},
 };
 
-pub(crate) const INTENTS: i64 = (1 << 0) | (1 << 9) | (1 << 12);
+pub(crate) const INTENTS: i64 = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
 
 #[derive(Debug)]
 pub(crate) struct SocketState {
@@ -73,6 +73,7 @@ impl SocketState {
                 if !resumable {
                     self.session_id = None;
                     self.resume_url = None;
+                    self.sequence = None;
                 }
                 Ok(Step::Reconnect { fresh: !resumable })
             }
@@ -206,7 +207,7 @@ pub(crate) async fn maintain(
         {
             End::Shutdown => return Ok(()),
             End::Reconnect { fresh: next } => {
-                fresh = next;
+                fresh = prepare_reconnect(store, next)?;
                 pause(shutdown).await;
             }
             End::Failed(error) => return Err(error),
@@ -350,13 +351,28 @@ fn remember_bot(drive: &Drive<'_>) -> Result<(), End> {
 
 fn close_end(frame: Option<&tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> End {
     let code = frame.map_or(0, |frame| u16::from(frame.code));
-    if matches!(code, 4004 | 4010 | 4011 | 4012 | 4013 | 4014) {
-        End::Failed(DiscordError::Invalid(format!(
+    match code {
+        4007 | 4009 => End::Reconnect { fresh: true },
+        4014 => End::Failed(DiscordError::Invalid(
+            "Discord rejected the Message Content intent; enable it under Privileged Gateway Intents in the Discord Developer Portal"
+                .to_owned(),
+        )),
+        4004 | 4010 | 4011 | 4012 | 4013 => End::Failed(DiscordError::Invalid(format!(
             "Discord closed the gateway with code {code}"
-        )))
-    } else {
-        End::Reconnect { fresh: false }
+        ))),
+        _ => End::Reconnect { fresh: false },
     }
+}
+
+fn prepare_reconnect(store: &SurfaceStore, fresh: bool) -> Result<bool, DiscordError> {
+    if fresh {
+        store.save_gateway(GatewayCursor {
+            session_id: None,
+            resume_url: None,
+            sequence: None,
+        })?;
+    }
+    Ok(fresh)
 }
 
 fn starts_session(step: &Step) -> bool {

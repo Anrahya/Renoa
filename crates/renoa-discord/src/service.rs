@@ -242,11 +242,82 @@ async fn deliver(
             store.mark_unknown(&outbound.message_id, outbound.chunk)?;
             Ok(())
         }
-        Err(ApiError::Unauthorized) => Err(ApiError::Unauthorized.into()),
+        Err(ApiError::Unauthorized) => {
+            store.release_sending(&outbound.message_id, outbound.chunk)?;
+            Err(ApiError::Unauthorized.into())
+        }
         Err(error) => {
             eprintln!("renoa-discord: reply rejected: {error}");
             store.mark_failed(&outbound.message_id, outbound.chunk)?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio_util::sync::CancellationToken;
+    use uuid::Uuid;
+
+    use super::deliver;
+    use crate::{api::DiscordApi, snowflake::Snowflake, store::SurfaceStore};
+
+    fn snowflake(value: &str) -> Snowflake {
+        Snowflake::parse(value).expect("snowflake")
+    }
+
+    #[tokio::test]
+    async fn rejected_credentials_leave_the_reply_retryable() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let store = SurfaceStore::open(directory.path()).expect("store");
+        store
+            .bind_identity(&snowflake("10"), &snowflake("20"), Uuid::new_v4())
+            .expect("identity");
+        store
+            .enqueue(
+                &snowflake("101"),
+                &snowflake("202"),
+                &snowflake("20"),
+                b"message",
+                "task",
+            )
+            .expect("enqueue");
+        store.mark_running("101").expect("running");
+        store
+            .mark_ready("101", "answer", &["answer".to_owned()])
+            .expect("ready");
+        let outbound = store
+            .next_outbound()
+            .expect("next outbound")
+            .expect("outbound");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).await.expect("request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("response");
+        });
+        let api = DiscordApi::with_origin("bad-token".to_owned(), format!("http://{address}"))
+            .expect("api");
+        let error = deliver(&api, &store, &outbound, &CancellationToken::new())
+            .await
+            .expect_err("unauthorized");
+        assert!(error.to_string().contains("token"), "{error}");
+        let retry = store
+            .next_outbound()
+            .expect("retryable outbound")
+            .expect("pending reply");
+        assert_eq!(retry.message_id, "101");
+        assert_eq!(retry.chunk, 0);
     }
 }

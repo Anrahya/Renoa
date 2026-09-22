@@ -125,15 +125,93 @@ fn a_repeated_discord_message_does_not_queue_a_second_turn() {
             .expect("duplicate"),
         Enqueue::Duplicate
     );
-    assert_eq!(
-        store
-            .enqueue(&message_id, &channel_id, &author_id, b"different", "other")
-            .expect("different bytes"),
-        Enqueue::Duplicate
+    let conflict = store
+        .enqueue(&message_id, &channel_id, &author_id, b"different", "other")
+        .expect_err("different bytes");
+    assert!(
+        conflict.to_string().contains("different content"),
+        "{conflict}"
     );
     store.mark_running("101").expect("running");
     store.recover().expect("recover");
-    assert!(store.next_queued().expect("requeued").is_some());
+    let queued = store.next_queued().expect("requeued").expect("turn");
+    assert_eq!(queued.message_id, "101");
+    assert_eq!(queued.prompt, "hello");
+}
+
+#[test]
+fn snowflakes_are_processed_in_numeric_order() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let store = SurfaceStore::open(directory.path()).expect("open store");
+    store
+        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
+        .expect("bind identity");
+    for message_id in ["100", "99"] {
+        store
+            .enqueue(
+                &snowflake(message_id),
+                &snowflake("202"),
+                &snowflake("20"),
+                message_id.as_bytes(),
+                message_id,
+            )
+            .expect("enqueue");
+    }
+
+    assert_eq!(
+        store
+            .next_queued()
+            .expect("next queued")
+            .expect("queued")
+            .message_id,
+        "99"
+    );
+    for message_id in ["99", "100"] {
+        store.mark_running(message_id).expect("running");
+        store
+            .mark_ready(message_id, message_id, &[message_id.to_owned()])
+            .expect("ready");
+    }
+    assert_eq!(
+        store
+            .next_outbound()
+            .expect("next outbound")
+            .expect("outbound")
+            .message_id,
+        "99"
+    );
+}
+
+#[test]
+fn a_previous_unreleased_schema_is_refused_without_mutation() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let database = directory.path().join("legacy.sqlite3");
+    let connection = rusqlite::Connection::open(&database).expect("legacy database");
+    connection
+        .execute_batch(
+            "CREATE TABLE identity (singleton INTEGER PRIMARY KEY) STRICT;
+             PRAGMA user_version = 2;",
+        )
+        .expect("legacy schema");
+    drop(connection);
+
+    let Err(error) = super::schema::open(&database) else {
+        panic!("an unreleased schema must not be migrated");
+    };
+    assert!(error.to_string().contains("not supported"), "{error}");
+    let connection = rusqlite::Connection::open(&database).expect("inspect legacy database");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("legacy version");
+    assert_eq!(version, 2);
+    let columns: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('identity')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("legacy columns");
+    assert_eq!(columns, 1);
 }
 
 #[test]

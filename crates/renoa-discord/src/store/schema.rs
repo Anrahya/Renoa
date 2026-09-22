@@ -6,7 +6,7 @@ use crate::DiscordError;
 
 pub(super) const DATABASE_FILE: &str = "discord.sqlite3";
 const LEASE_FILE: &str = ".discord.lock";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 1;
 
 pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
     let connection = Connection::open(path)?;
@@ -20,7 +20,6 @@ pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
     match version {
         0 => initialize(&connection)?,
-        2 => migrate_identity_binding(&connection)?,
         SCHEMA_VERSION => {}
         other => {
             return Err(DiscordError::Invalid(format!(
@@ -110,17 +109,6 @@ fn initialize(connection: &Connection) -> Result<(), DiscordError> {
          ) STRICT;
 
          {CONVERSATION_SCHEMA}",
-    ))?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    transaction.commit()?;
-    Ok(())
-}
-
-fn migrate_identity_binding(connection: &Connection) -> Result<(), DiscordError> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute_batch(&format!(
-        "ALTER TABLE identity ADD COLUMN bot_user_id TEXT;
-         {CONVERSATION_SCHEMA}"
     ))?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
