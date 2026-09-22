@@ -1,0 +1,33 @@
+[package]
+name = "renoa-discord"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "renoa-discord"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+futures-util.workspace = true
+renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
+renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
+renoa-local = { path = "../renoa-local", version = "0.1.0" }
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
