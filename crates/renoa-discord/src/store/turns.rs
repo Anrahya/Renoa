@@ -128,6 +128,7 @@ impl SurfaceStore {
                 "UPDATE deliveries SET state = 'unknown' WHERE state = 'sending'",
                 [],
             )?;
+            strand_blocked_pages(&transaction)?;
             transaction.commit()?;
             Ok(())
         })
@@ -242,7 +243,7 @@ impl SurfaceStore {
     }
 
     pub(crate) fn mark_unknown(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
-        self.transition_delivery(message_id, chunk, "sending", "unknown", None)
+        self.finish_delivery(message_id, chunk, "unknown")
     }
 
     pub(crate) fn release_sending(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
@@ -250,7 +251,33 @@ impl SurfaceStore {
     }
 
     pub(crate) fn mark_failed(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
-        self.transition_delivery(message_id, chunk, "sending", "failed", None)
+        self.finish_delivery(message_id, chunk, "failed")
+    }
+
+    fn finish_delivery(
+        &self,
+        message_id: &str,
+        chunk: i64,
+        state: &str,
+    ) -> Result<(), DiscordError> {
+        let message_id = message_id.to_owned();
+        let state = state.to_owned();
+        self.access(move |connection| {
+            let transaction = schema::immediate_transaction(connection)?;
+            let changed = transaction.execute(
+                "UPDATE deliveries SET state = ?1
+                 WHERE message_id = ?2 AND chunk = ?3 AND state = 'sending'",
+                params![state, message_id, chunk],
+            )?;
+            require_one(changed, &message_id)?;
+            transaction.execute(
+                "UPDATE deliveries SET state = 'failed'
+                 WHERE message_id = ?1 AND chunk > ?2 AND state = 'pending'",
+                params![message_id, chunk],
+            )?;
+            transaction.commit()?;
+            Ok(())
+        })
     }
 
     pub(crate) fn has_conversation(&self, channel_id: &str) -> Result<bool, DiscordError> {
@@ -389,6 +416,21 @@ fn parse_uuid(value: &str) -> Result<Uuid, rusqlite::Error> {
     Uuid::parse_str(value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })
+}
+
+fn strand_blocked_pages(connection: &rusqlite::Connection) -> Result<(), DiscordError> {
+    connection.execute(
+        "UPDATE deliveries SET state = 'failed'
+         WHERE state = 'pending'
+           AND EXISTS (
+             SELECT 1 FROM deliveries earlier
+             WHERE earlier.message_id = deliveries.message_id
+               AND earlier.chunk < deliveries.chunk
+               AND earlier.state IN ('unknown', 'failed')
+           )",
+        [],
+    )?;
+    Ok(())
 }
 
 fn require_one(changed: usize, message_id: &str) -> Result<(), DiscordError> {

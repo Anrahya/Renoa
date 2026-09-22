@@ -154,9 +154,66 @@ fn an_unknown_reply_is_not_sent_again() {
         .expect("enqueue");
     store.mark_running("101").expect("running");
     store
-        .mark_ready("101", "answer", &["answer".to_owned()])
+        .mark_ready(
+            "101",
+            "answer-more",
+            &["answer".to_owned(), "more".to_owned()],
+        )
         .expect("ready");
     store.mark_sending("101", 0).expect("sending");
     store.recover().expect("recover");
     assert!(store.next_outbound().expect("outbound").is_none());
+    assert_eq!(
+        delivery_state(&store, "101", 1).expect("later page"),
+        "failed"
+    );
+}
+
+#[test]
+fn a_rejected_first_page_does_not_leave_later_pages_pending() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let store = SurfaceStore::open(directory.path()).expect("open store");
+    store
+        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
+        .expect("bind identity");
+    store
+        .enqueue(
+            &snowflake("101"),
+            &snowflake("202"),
+            &snowflake("99"),
+            b"same",
+            "hello",
+        )
+        .expect("enqueue");
+    store.mark_running("101").expect("running");
+    store
+        .mark_ready(
+            "101",
+            "answer-more",
+            &["answer".to_owned(), "more".to_owned()],
+        )
+        .expect("ready");
+    store.mark_sending("101", 0).expect("sending");
+    store.mark_failed("101", 0).expect("failed");
+    assert!(store.next_outbound().expect("outbound").is_none());
+    assert_eq!(
+        delivery_state(&store, "101", 1).expect("later page"),
+        "failed"
+    );
+}
+
+fn delivery_state(
+    store: &SurfaceStore,
+    message_id: &str,
+    chunk: i64,
+) -> Result<String, crate::DiscordError> {
+    store.access(|connection| {
+        connection
+            .query_row(
+                "SELECT state FROM deliveries WHERE message_id = ?1 AND chunk = ?2",
+                rusqlite::params![message_id, chunk],
+                |row| row.get(0),
+            )
+            .map_err(crate::DiscordError::from)
+    })
 }

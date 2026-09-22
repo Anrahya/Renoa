@@ -66,10 +66,11 @@ pub(crate) fn addressed(
 }
 
 fn strip_mention(content: &str, bot_user_id: &str) -> String {
-    let without = content
-        .replace(&format!("<@{bot_user_id}>"), " ")
-        .replace(&format!("<@!{bot_user_id}>"), " ");
-    without.split_whitespace().collect::<Vec<_>>().join(" ")
+    content
+        .replace(&format!("<@{bot_user_id}>"), "")
+        .replace(&format!("<@!{bot_user_id}>"), "")
+        .trim()
+        .to_owned()
 }
 
 #[derive(Deserialize)]
@@ -185,6 +186,19 @@ mod tests {
         .expect("mention");
         let mentioned = mentioned.expect("addressed");
         assert_eq!(mentioned.prompt, "hello");
+        let formatted = addressed(
+            br#"{"id":"106","channel_id":"202","guild_id":"10","content":"<@50> line one\n```\ncode\n```","author":{"id":"99"},"mentions":[{"id":"50"}]}"#,
+            &bot,
+            &guild,
+            &operator,
+            false,
+            false,
+        )
+        .expect("formatted mention");
+        assert_eq!(
+            formatted.expect("kept breaks").prompt,
+            "line one\n```\ncode\n```"
+        );
         assert_eq!(mentioned.author_id.as_str(), "99");
 
         let chatter = addressed(
