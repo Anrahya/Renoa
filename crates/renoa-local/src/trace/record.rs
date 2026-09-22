@@ -308,7 +308,7 @@ impl TraceState {
 }
 
 fn redact_sensitive_tool_progress(tool: &str, mut update: ToolOutput) -> ToolOutput {
-    if tool != "extension_manage" {
+    if tool != crate::capabilities::EXTENSION_MANAGE {
         return update;
     }
     let mut redacted = false;

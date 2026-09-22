@@ -1,76 +1,79 @@
-//! The Host capability inventory and preset tool baselines.
+//! The Host's selectable native capability catalog.
 //!
-//! Every selectable capability has exactly one name, defined here. A runtime
-//! binds a capability only when the agent's exact tool selection contains its
-//! name, so no policy is inferred from identities, prefixes, or preset ids.
+//! This catalog owns each exact runtime name. Versioned presets select explicit
+//! variants, so adding a capability cannot silently change an existing preset.
+//! Agent definitions persist the resolved names consumed by the runtime and
+//! frozen by the kernel.
 
 use std::collections::BTreeSet;
 
-/// Host-owned workspace tools. A test proves this matches what
-/// [`crate::LocalWorkspace`] actually binds.
-pub(crate) const WORKSPACE_TOOL_NAMES: &[&str] = &[
-    "read_file",
-    "edit_file",
-    "write_file",
-    "bash",
-    "grep",
-    "find",
-    "git_changes",
-    "git_diff",
-    "git_show",
-];
+// One declaration generates both the closed type and its complete iterable
+// catalog, so a new variant cannot become an unlisted selectable capability.
+macro_rules! define_built_in_capabilities {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        /// One selectable native tool capability.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub(crate) enum BuiltInCapability {
+            $($variant),+
+        }
 
-pub(crate) const EXTENSION_MANAGE: &str = "extension_manage";
-pub(crate) const AGENT_MANAGE: &str = "agent_manage";
-pub(crate) const ROUTINE_MANAGE: &str = "routine_manage";
-pub(crate) const ROUTINE_RESULTS: &str = "routine_results";
-pub(crate) const TOOL_SEARCH: &str = "tool_search";
-pub(crate) const TOOL_LOAD: &str = "tool_load";
-pub(crate) const TOOL_EXECUTE: &str = "tool_execute";
-pub(crate) const SKILL_SEARCH: &str = "skill_search";
-pub(crate) const SKILL_LOAD: &str = "skill_load";
-pub(crate) const AGENT_DOCUMENTS: &str = "agent_documents";
+        impl BuiltInCapability {
+            /// Exact identity stored in an agent definition and bound at runtime.
+            #[must_use]
+            const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+        }
 
-/// Extension capabilities the Alpha preset seeds.
-pub(crate) const ALPHA_EXTENSIONS: &[&str] = &[
-    EXTENSION_MANAGE,
-    TOOL_SEARCH,
-    TOOL_LOAD,
-    TOOL_EXECUTE,
-    SKILL_SEARCH,
-    SKILL_LOAD,
-];
+        const BUILT_IN_CAPABILITIES: &[BuiltInCapability] = &[
+            $(BuiltInCapability::$variant),+
+        ];
+    };
+}
 
-/// Extension capabilities the Arcee preset seeds.
-pub(crate) const ARCEE_EXTENSIONS: &[&str] = &[
-    EXTENSION_MANAGE,
-    AGENT_MANAGE,
-    ROUTINE_MANAGE,
-    ROUTINE_RESULTS,
-    TOOL_SEARCH,
-    TOOL_LOAD,
-    TOOL_EXECUTE,
-    SKILL_SEARCH,
-    SKILL_LOAD,
-    AGENT_DOCUMENTS,
-];
+define_built_in_capabilities! {
+    ReadFile => "read_file",
+    EditFile => "edit_file",
+    WriteFile => "write_file",
+    Bash => "bash",
+    Grep => "grep",
+    Find => "find",
+    GitChanges => "git_changes",
+    GitDiff => "git_diff",
+    GitShow => "git_show",
+    ExtensionManage => "extension_manage",
+    AgentManage => "agent_manage",
+    RoutineManage => "routine_manage",
+    RoutineResults => "routine_results",
+    ToolSearch => "tool_search",
+    ToolLoad => "tool_load",
+    ToolExecute => "tool_execute",
+    SkillSearch => "skill_search",
+    SkillLoad => "skill_load",
+    AgentDocuments => "agent_documents",
+}
 
-/// Extension capabilities every caller-defined specialist keeps, matching the
-/// capability set specialists received before tool selection became explicit.
-pub(crate) const SPECIALIST_EXTENSIONS: &[&str] = &[
-    ROUTINE_MANAGE,
-    ROUTINE_RESULTS,
-    TOOL_SEARCH,
-    TOOL_LOAD,
-    TOOL_EXECUTE,
-    SKILL_SEARCH,
-    SKILL_LOAD,
-];
+pub(crate) const EXTENSION_MANAGE: &str = BuiltInCapability::ExtensionManage.name();
+pub(crate) const AGENT_MANAGE: &str = BuiltInCapability::AgentManage.name();
+pub(crate) const ROUTINE_MANAGE: &str = BuiltInCapability::RoutineManage.name();
+pub(crate) const ROUTINE_RESULTS: &str = BuiltInCapability::RoutineResults.name();
+pub(crate) const TOOL_SEARCH: &str = BuiltInCapability::ToolSearch.name();
+pub(crate) const TOOL_LOAD: &str = BuiltInCapability::ToolLoad.name();
+pub(crate) const TOOL_EXECUTE: &str = BuiltInCapability::ToolExecute.name();
+pub(crate) const SKILL_SEARCH: &str = BuiltInCapability::SkillSearch.name();
+pub(crate) const SKILL_LOAD: &str = BuiltInCapability::SkillLoad.name();
+pub(crate) const AGENT_DOCUMENTS: &str = BuiltInCapability::AgentDocuments.name();
 
-/// Whether one name is a Host capability.
+fn catalog() -> impl Iterator<Item = BuiltInCapability> {
+    BUILT_IN_CAPABILITIES.iter().copied()
+}
+
+/// Whether one name is in the Host-native capability catalog.
 #[must_use]
 pub(crate) fn is_selectable(name: &str) -> bool {
-    WORKSPACE_TOOL_NAMES.contains(&name) || extension_names().contains(&name)
+    catalog().any(|capability| capability.name() == name)
 }
 
 /// Whether one definition can exercise a selectable capability.
@@ -83,102 +86,108 @@ pub(crate) fn is_consumable(name: &str, documents: Option<crate::AgentDocuments>
     name != AGENT_DOCUMENTS || documents.is_some()
 }
 
-/// Every selectable capability name, for callers that enumerate the vocabulary.
+/// Every selectable capability name, in catalog order.
 #[must_use]
 pub(crate) fn selectable_names() -> Vec<&'static str> {
-    let mut names = WORKSPACE_TOOL_NAMES.to_vec();
-    names.extend_from_slice(extension_names());
-    names
+    catalog().map(BuiltInCapability::name).collect()
 }
 
-#[must_use]
-pub(crate) fn workspace_tool_names() -> BTreeSet<String> {
-    WORKSPACE_TOOL_NAMES
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect()
-}
-
-fn extension_names() -> &'static [&'static str] {
-    &[
-        EXTENSION_MANAGE,
-        AGENT_MANAGE,
-        ROUTINE_MANAGE,
-        ROUTINE_RESULTS,
-        TOOL_SEARCH,
-        TOOL_LOAD,
-        TOOL_EXECUTE,
-        SKILL_SEARCH,
-        SKILL_LOAD,
-        AGENT_DOCUMENTS,
-    ]
-}
-
-/// How a preset expands into an exact stored tool selection.
-#[derive(Clone, Copy)]
-pub(crate) enum PresetToolBaseline {
-    /// Every Host workspace tool plus these extension names.
-    WorkspacePlus(&'static [&'static str]),
-    /// Only the caller's exact names plus these extension names.
-    CallerPlus(&'static [&'static str]),
-}
-
-/// Expands a preset baseline and caller selection into exact capability names.
+/// Expands a preset's pinned components and caller selection into runtime names.
 #[must_use]
 pub(crate) fn baseline_selection(
-    baseline: PresetToolBaseline,
+    baseline: &[BuiltInCapability],
     caller: &BTreeSet<String>,
 ) -> BTreeSet<String> {
     let mut selection = caller.clone();
-    match baseline {
-        PresetToolBaseline::WorkspacePlus(extensions) => {
-            selection.extend(workspace_tool_names());
-            selection.extend(extensions.iter().map(|name| (*name).to_owned()));
-        }
-        PresetToolBaseline::CallerPlus(extensions) => {
-            selection.extend(extensions.iter().map(|name| (*name).to_owned()));
-        }
-    }
+    selection.extend(
+        baseline
+            .iter()
+            .map(|capability| capability.name().to_owned()),
+    );
     selection
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AGENT_MANAGE, ARCEE_EXTENSIONS, ROUTINE_MANAGE, WORKSPACE_TOOL_NAMES, is_selectable,
-    };
+    use std::collections::BTreeSet;
+
+    use super::{AGENT_MANAGE, BuiltInCapability, ROUTINE_MANAGE, catalog, is_selectable};
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct ExpectedCapability {
+        capability: BuiltInCapability,
+        name: &'static str,
+    }
+
+    const EXPECTED_CAPABILITIES: &[ExpectedCapability] = &[
+        expected(BuiltInCapability::ReadFile, "read_file"),
+        expected(BuiltInCapability::EditFile, "edit_file"),
+        expected(BuiltInCapability::WriteFile, "write_file"),
+        expected(BuiltInCapability::Bash, "bash"),
+        expected(BuiltInCapability::Grep, "grep"),
+        expected(BuiltInCapability::Find, "find"),
+        expected(BuiltInCapability::GitChanges, "git_changes"),
+        expected(BuiltInCapability::GitDiff, "git_diff"),
+        expected(BuiltInCapability::GitShow, "git_show"),
+        expected(BuiltInCapability::ExtensionManage, "extension_manage"),
+        expected(BuiltInCapability::AgentManage, "agent_manage"),
+        expected(BuiltInCapability::RoutineManage, "routine_manage"),
+        expected(BuiltInCapability::RoutineResults, "routine_results"),
+        expected(BuiltInCapability::ToolSearch, "tool_search"),
+        expected(BuiltInCapability::ToolLoad, "tool_load"),
+        expected(BuiltInCapability::ToolExecute, "tool_execute"),
+        expected(BuiltInCapability::SkillSearch, "skill_search"),
+        expected(BuiltInCapability::SkillLoad, "skill_load"),
+        expected(BuiltInCapability::AgentDocuments, "agent_documents"),
+    ];
+
+    const fn expected(capability: BuiltInCapability, name: &'static str) -> ExpectedCapability {
+        ExpectedCapability { capability, name }
+    }
 
     #[test]
-    fn the_declared_workspace_names_match_the_real_workspace_bindings() {
+    fn workspace_runtime_has_the_exact_native_capability_bindings() {
         let directory = tempfile::tempdir().expect("temporary workspace");
         let workspace = crate::LocalWorkspace::open(directory.path()).expect("open workspace");
-        let bound: Vec<String> = workspace
+        let bound: BTreeSet<String> = workspace
             .kernel_tool_bindings()
             .into_iter()
             .map(|binding| binding.tool_name().to_owned())
             .collect();
-        for name in WORKSPACE_TOOL_NAMES {
-            assert!(
-                bound.contains(&(*name).to_owned()),
-                "declared workspace tool `{name}` is not bound by LocalWorkspace: {bound:?}"
-            );
-        }
-        assert_eq!(
-            bound.len(),
-            WORKSPACE_TOOL_NAMES.len(),
-            "LocalWorkspace binds a tool this inventory does not declare: {bound:?}"
-        );
+        let expected: BTreeSet<String> = [
+            "read_file",
+            "edit_file",
+            "write_file",
+            "bash",
+            "grep",
+            "find",
+            "git_changes",
+            "git_diff",
+            "git_show",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(bound, expected);
     }
 
     #[test]
-    fn the_inventory_is_exact_and_closed() {
+    fn selection_accepts_known_names_and_rejects_names_outside_the_catalog() {
         assert!(is_selectable(AGENT_MANAGE));
         assert!(is_selectable(ROUTINE_MANAGE));
         assert!(is_selectable("bash"));
         assert!(!is_selectable("renoa.bot.manage"));
         assert!(!is_selectable("all"));
-        for extension in ARCEE_EXTENSIONS {
-            assert!(is_selectable(extension), "preset names must be selectable");
-        }
+    }
+
+    #[test]
+    fn native_capabilities_have_the_exact_names() {
+        let actual: Vec<ExpectedCapability> = catalog()
+            .map(|capability| expected(capability, capability.name()))
+            .collect();
+        assert_eq!(actual, EXPECTED_CAPABILITIES);
+
+        let unique_names: BTreeSet<&str> = catalog().map(BuiltInCapability::name).collect();
+        assert_eq!(unique_names.len(), EXPECTED_CAPABILITIES.len());
     }
 }

@@ -24,7 +24,7 @@ use crate::{
     AgentCreationOrigin, AgentCreator, AgentDefinition, AgentPresetId, capabilities, presets,
 };
 
-const TOOL_NAME: &str = "agent_manage";
+const TOOL_NAME: &str = capabilities::AGENT_MANAGE;
 const BINDING_REVISION: &str = "renoa-agent-manage-v1";
 const CREATE_OPERATION_DOMAIN: &str = "renoa.agent.create.operation.v1";
 const RENAME_OPERATION_DOMAIN: &str = "renoa.agent.rename.operation.v1";
@@ -262,4 +262,43 @@ fn input_schema() -> serde_json::Value {
         {"properties":{"action":{"const":"create"},"cursor":false,"id":false,"expected_name":false},"required":["preset_id","name"]},
         {"properties":{"action":{"const":"rename"},"cursor":false,"preset_id":false,"instructions":false,"tools":false,"connections":false},"required":["id","expected_name","name"]}
     ]})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::input_schema;
+
+    #[test]
+    fn creation_schema_presents_the_exact_native_capability_catalog() {
+        let schema = input_schema();
+        let tools = &schema["properties"]["tools"];
+        assert_eq!(
+            tools["items"]["enum"],
+            serde_json::json!([
+                "read_file",
+                "edit_file",
+                "write_file",
+                "bash",
+                "grep",
+                "find",
+                "git_changes",
+                "git_diff",
+                "git_show",
+                "extension_manage",
+                "agent_manage",
+                "routine_manage",
+                "routine_results",
+                "tool_search",
+                "tool_load",
+                "tool_execute",
+                "skill_search",
+                "skill_load",
+                "agent_documents",
+            ])
+        );
+        assert_eq!(
+            tools["description"],
+            "For create or later capability edits: exact capability names. Omit to accept the preset's own baseline."
+        );
+    }
 }

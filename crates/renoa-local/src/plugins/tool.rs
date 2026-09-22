@@ -21,7 +21,7 @@ use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
 use output::{json_output, plugin_error, registry_error_output};
 use renoa_kernel::AgentId;
 
-const TOOL_NAME: &str = "extension_manage";
+const TOOL_NAME: &str = crate::capabilities::EXTENSION_MANAGE;
 const BINDING_REVISION: &str = "renoa-extension-manager-v18";
 
 pub(crate) fn agent_plugin_binding(
