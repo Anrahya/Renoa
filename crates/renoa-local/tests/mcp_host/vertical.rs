@@ -342,8 +342,9 @@ fn assert_frozen_mcp_binding(data: &Path, session_uuid: Uuid) {
             .contains_key("renoa.agent.tool/echo")
     );
     let effect = operation
-        .effects
+        .effect_batches
         .iter()
+        .flat_map(|batch| &batch.effects)
         .find(|effect| effect.binding == "renoa.agent.tool/tool_execute")
         .expect("durable MCP effect");
     assert_eq!(effect.recovery, EffectRecovery::NeverReplay);
@@ -351,8 +352,9 @@ fn assert_frozen_mcp_binding(data: &Path, session_uuid: Uuid) {
     assert_eq!(effect.binding_revision, *revision);
     for operation in &snapshot.operations {
         let effect = operation
-            .effects
+            .effect_batches
             .iter()
+            .flat_map(|batch| &batch.effects)
             .find(|effect| effect.binding == "renoa.agent.tool/tool_execute")
             .expect("each operation has one durable MCP effect");
         assert_eq!(effect.recovery, EffectRecovery::NeverReplay);

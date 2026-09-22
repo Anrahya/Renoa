@@ -266,9 +266,11 @@ compact control
   -> complete without a normal assistant model call
 ```
 
-Before accepting a settled effect, the loop checks that its binding and exact
-request agree with the durable checkpoint and reconstructed transcript. A tool
-result must retain the call identity and name from its request.
+The loop expresses each sequential model, compaction, or tool call as a
+one-member kernel effect batch. Before accepting the settled batch, it requires
+exactly one child and checks that child's binding and request against the durable
+checkpoint and reconstructed transcript. A tool result must retain the call
+identity and name from its request.
 
 The implemented behavior matches the shared Renoa loop rules needed by this
 slice:
@@ -354,7 +356,8 @@ the host tool.
 The host selects `SafeToReplay` or `NeverReplay` per binding. The kernel, not
 the adapter or loop, applies that declaration after process loss and to a live
 unknown outcome reported by an adapter. Tests prove that an interrupted safe
-model invocation reuses the same effect identity and request, that a live
+model invocation reuses the same batch identity, effect identity, and request,
+that a live
 unknown report from a safe effect's first durable dispatch replays once with
 the same persisted
 request before uncertainty becomes durable, while an interrupted never-replay

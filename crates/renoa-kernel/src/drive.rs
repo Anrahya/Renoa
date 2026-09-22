@@ -1,12 +1,16 @@
+use futures_util::{StreamExt as _, stream::FuturesUnordered};
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use crate::{
-    AgentId, Checkpoint, Command, DriveResult, EffectCompletion, EffectId, EffectRecovery,
+    AgentId, Checkpoint, Command, DriveResult, EffectBatchId, EffectCompletion, EffectRecovery,
     EventCursor, Kernel, KernelError, LoopDecision, LoopInput, OperationId, Runtime,
     RuntimeManifest, SemanticEvent, SessionId,
     admission::{parse_agent_id, parse_operation_id},
     decision_store::CommittedDecision,
-    effect_store::{EffectIntentCommit, EffectStart, NewEffectIntent},
+    effect_store::{
+        EffectBatchFinish, EffectBatchStart, EffectIntentCommit, NewEffectBatchIntent,
+        NewEffectIntent,
+    },
     effect_supervision::{SessionDriveLease, supervise_effect},
     operation_phase::OperationPhase,
     operation_store::load_operation,
@@ -35,7 +39,7 @@ struct ActiveOperation {
     checkpoint: Option<Checkpoint>,
     transition_version: i64,
     phase: OperationPhase,
-    input_effect_id: Option<EffectId>,
+    input_effect_batch_id: Option<EffectBatchId>,
     newly_activated: bool,
 }
 
@@ -137,30 +141,42 @@ impl Kernel {
         if found != expected {
             return Err(KernelError::CheckpointSchemaMismatch { expected, found });
         }
-        if let LoopDecision::InvokeEffect {
+        if let LoopDecision::InvokeEffects {
             checkpoint,
-            binding,
-            request,
-            recovery,
+            effects,
         } = decision
         {
-            let revision = active
-                .manifest
-                .effect_bindings
-                .get(&binding)
-                .ok_or_else(|| KernelError::EffectBindingUnavailable(binding.clone()))?;
-            runtime
-                .resolve_effect(&binding, revision)
-                .ok_or_else(|| KernelError::EffectBindingUnavailable(binding.clone()))?;
-            let intent = NewEffectIntent {
+            if effects.is_empty() {
+                return Err(KernelError::InvalidDecision(
+                    "an effect batch must contain at least one effect".to_owned(),
+                ));
+            }
+            let mut intents = Vec::with_capacity(effects.len());
+            for effect in effects {
+                let revision = active
+                    .manifest
+                    .effect_bindings
+                    .get(&effect.binding)
+                    .ok_or_else(|| KernelError::EffectBindingUnavailable(effect.binding.clone()))?;
+                runtime
+                    .resolve_effect(&effect.binding, revision)
+                    .ok_or_else(|| KernelError::EffectBindingUnavailable(effect.binding.clone()))?;
+                intents.push(NewEffectIntent {
+                    binding: effect.binding,
+                    binding_revision: revision.clone(),
+                    request: effect.request,
+                    recovery: effect.recovery,
+                });
+            }
+            let intent = NewEffectBatchIntent {
                 checkpoint,
-                binding,
-                binding_revision: revision.clone(),
-                request,
-                recovery,
+                effects: intents,
             };
-            if self.commit_effect_intent(active.operation_id, active.transition_version, &intent)?
-                == EffectIntentCommit::Committed
+            if self.commit_effect_batch_intent(
+                active.operation_id,
+                active.transition_version,
+                &intent,
+            )? == EffectIntentCommit::Committed
             {
                 #[cfg(test)]
                 self.crash_if(crate::CrashPoint::EffectIntentCommitted);
@@ -184,54 +200,102 @@ impl Kernel {
         runtime: &Runtime,
         lease: &SessionDriveLease,
     ) -> Result<(), KernelError> {
-        let pending = match self.prepare_effect(active.operation_id, active.transition_version)? {
-            EffectStart::Invoke(pending) => pending,
-            EffectStart::Blocked | EffectStart::CancellationPending => return Ok(()),
-        };
-        if active.manifest.effect_bindings.get(&pending.binding) != Some(&pending.binding_revision)
-        {
-            return Err(KernelError::Corrupt(
-                "active effect differs from the frozen manifest".to_owned(),
-            ));
-        }
-        let adapter = runtime
-            .resolve_effect(&pending.binding, &pending.binding_revision)
-            .ok_or_else(|| KernelError::EffectBindingUnavailable(pending.binding.clone()))?;
+        let pending =
+            match self.prepare_effect_batch(active.operation_id, active.transition_version)? {
+                EffectBatchStart::Invoke(pending) => pending,
+                EffectBatchStart::Settled
+                | EffectBatchStart::Blocked
+                | EffectBatchStart::CancellationPending => return Ok(()),
+            };
         let executor =
             tokio::runtime::Handle::try_current().map_err(|_| KernelError::RuntimeUnavailable)?;
-        let effect_id = pending.effect_id;
-        let recovery = pending.recovery;
-        let dispatch_count = pending.dispatch_count;
-        let expected_transition = pending.transition_version;
+        let batch_id = pending.batch_id;
+        let mut resolved = Vec::with_capacity(pending.effects.len());
+        for effect in pending.effects {
+            if effect.batch_id != batch_id
+                || active.manifest.effect_bindings.get(&effect.binding)
+                    != Some(&effect.binding_revision)
+            {
+                return Err(KernelError::Corrupt(
+                    "active effect differs from its batch or frozen manifest".to_owned(),
+                ));
+            }
+            let adapter = runtime
+                .resolve_effect(&effect.binding, &effect.binding_revision)
+                .ok_or_else(|| KernelError::EffectBindingUnavailable(effect.binding.clone()))?;
+            resolved.push((effect, adapter));
+        }
         #[cfg(test)]
         self.crash_if(crate::CrashPoint::EffectDispatchCommitted);
-        let invocation =
-            pending.into_invocation(active.manifest.clone(), lease.effect_cancellation());
-        let completion = supervise_effect(&executor, adapter, invocation, lease.clone()).await?;
-        #[cfg(test)]
-        self.crash_if(crate::CrashPoint::EffectCompletedBeforeSettlement);
-        let EffectCompletion::Settled(outcome) = completion else {
-            if recovery == EffectRecovery::SafeToReplay
-                && dispatch_count < MAX_LIVE_DISPATCHES_BEFORE_UNKNOWN
-            {
-                // An adapter-reported unknown is immediately replayed only when
-                // it came from the first durable dispatch. Process-loss recovery
-                // remains unchanged. Leaving the effect dispatched and the
-                // operation in `effect_dispatched` lets the next drive iteration
-                // reuse the persisted intent, request, and recovery class.
-                return Ok(());
+        let mut attempts = FuturesUnordered::new();
+        for (effect, adapter) in resolved {
+            let effect_id = effect.effect_id;
+            let recovery = effect.recovery;
+            let dispatch_count = effect.dispatch_count;
+            let expected_transition = effect.transition_version;
+            let invocation =
+                effect.into_invocation(active.manifest.clone(), lease.effect_cancellation());
+            let future = supervise_effect(&executor, adapter, invocation, lease.clone());
+            attempts.push(async move {
+                (
+                    effect_id,
+                    recovery,
+                    dispatch_count,
+                    expected_transition,
+                    future.await,
+                )
+            });
+        }
+        let mut expected_transition = None;
+        let mut batch_finished = false;
+        while let Some((effect_id, recovery, dispatch_count, transition, completion)) =
+            attempts.next().await
+        {
+            let completion = completion?;
+            expected_transition = Some(transition);
+            #[cfg(test)]
+            self.crash_if(crate::CrashPoint::EffectCompletedBeforeSettlement);
+            match completion {
+                EffectCompletion::Settled(outcome) => {
+                    batch_finished |= self.settle_batch_effect(
+                        active.operation_id,
+                        batch_id,
+                        effect_id,
+                        transition,
+                        &outcome,
+                    )?;
+                    #[cfg(test)]
+                    self.crash_if(crate::CrashPoint::EffectSettlementCommitted);
+                }
+                EffectCompletion::OutcomeUnknown
+                    if recovery == EffectRecovery::SafeToReplay
+                        && dispatch_count < MAX_LIVE_DISPATCHES_BEFORE_UNKNOWN => {}
+                EffectCompletion::OutcomeUnknown => {
+                    batch_finished |= self.record_batch_effect_unknown(
+                        active.operation_id,
+                        batch_id,
+                        effect_id,
+                        transition,
+                    )?;
+                }
             }
-            self.record_outcome_unknown(active.operation_id, effect_id, expected_transition)?;
+        }
+        let expected_transition = expected_transition.ok_or_else(|| {
+            KernelError::Corrupt("effect batch prepared no child invocations".to_owned())
+        })?;
+        if batch_finished {
             return Ok(());
-        };
-        self.settle_effect(
+        }
+        match self.finish_effect_batch_attempt(
             active.operation_id,
-            effect_id,
+            batch_id,
             expected_transition,
-            &outcome,
-        )?;
-        #[cfg(test)]
-        self.crash_if(crate::CrashPoint::EffectSettlementCommitted);
+        )? {
+            EffectBatchFinish::Retry
+            | EffectBatchFinish::Settled
+            | EffectBatchFinish::Blocked
+            | EffectBatchFinish::CancellationPending => {}
+        }
         Ok(())
     }
 
@@ -241,17 +305,20 @@ impl Kernel {
         active: &ActiveOperation,
         events: Vec<SemanticEvent>,
     ) -> Result<LoopInput, KernelError> {
-        let effect = active
-            .input_effect_id
-            .map(|effect_id| self.load_settled_effect(effect_id, active.operation_id))
+        let effect_batch = active
+            .input_effect_batch_id
+            .map(|batch_id| self.load_settled_effect_batch(batch_id, active.operation_id))
             .transpose()?;
-        if let Some(effect) = effect.as_ref()
-            && active.manifest.effect_bindings.get(&effect.binding)
-                != Some(&effect.binding_revision)
-        {
-            return Err(KernelError::Corrupt(
-                "settled effect differs from the frozen manifest".to_owned(),
-            ));
+        if let Some(batch) = effect_batch.as_ref() {
+            for effect in &batch.effects {
+                if active.manifest.effect_bindings.get(&effect.binding)
+                    != Some(&effect.binding_revision)
+                {
+                    return Err(KernelError::Corrupt(
+                        "settled effect differs from the frozen manifest".to_owned(),
+                    ));
+                }
+            }
         }
         Ok(LoopInput {
             agent_id: active.agent_id,
@@ -261,7 +328,7 @@ impl Kernel {
             command: active.command.clone(),
             events,
             checkpoint: active.checkpoint.clone(),
-            effect,
+            effect_batch,
         })
     }
 
@@ -382,7 +449,7 @@ fn load_active_query(
         checkpoint: stored.checkpoint,
         transition_version: stored.transition_version,
         phase: stored.phase,
-        input_effect_id: stored.input_effect_id,
+        input_effect_batch_id: stored.input_effect_batch_id,
         newly_activated: false,
     })
 }

@@ -1,43 +1,43 @@
-use rusqlite::{OptionalExtension, params};
-use serde_json::Value;
-
-use super::{CancellationEffect, UnsettledEffect};
 use crate::{
-    EffectId, EffectOutcome, KernelError, OperationId, RuntimeManifest, SettledEffect,
-    operation_phase::OperationPhase,
-    schema::{json_error, sqlite_error},
+    EffectBatchFacts, EffectBatchId, EffectFact, KernelError, OperationId, RuntimeManifest,
+    effect_store::load_effect_batch_facts, operation_phase::OperationPhase,
 };
 
-pub(super) fn load_cancellation_effect(
+pub(super) fn load_cancellation_effect_batch(
     connection: &rusqlite::Connection,
     operation_id: OperationId,
     phase: OperationPhase,
-    current_effect_id: Option<EffectId>,
-    input_effect_id: Option<EffectId>,
+    current_batch_id: Option<EffectBatchId>,
+    input_batch_id: Option<EffectBatchId>,
     manifest: &RuntimeManifest,
-) -> Result<Option<CancellationEffect>, KernelError> {
-    let (effect_id, expected_status, kind) = match phase {
+) -> Result<Option<EffectBatchFacts>, KernelError> {
+    let batch_id = match phase {
         OperationPhase::NeedDecision => {
-            let Some(effect_id) = input_effect_id else {
-                if current_effect_id.is_some() {
+            let Some(batch_id) = input_batch_id else {
+                if current_batch_id.is_some() {
                     return Err(KernelError::Corrupt(
-                        "decision phase contains a current effect".to_owned(),
+                        "decision phase contains a current effect batch".to_owned(),
                     ));
                 }
                 return Ok(None);
             };
-            (effect_id, "settled", EffectKind::Settled)
+            if current_batch_id.is_some() {
+                return Err(KernelError::Corrupt(
+                    "decision phase contains both current and input effect batches".to_owned(),
+                ));
+            }
+            batch_id
         }
-        OperationPhase::EffectIntent => (
-            require_effect_id(current_effect_id, input_effect_id)?,
-            "intent_committed",
-            EffectKind::NotDispatched,
-        ),
-        OperationPhase::OutcomeUnknown => (
-            require_effect_id(current_effect_id, input_effect_id)?,
-            "outcome_unknown",
-            EffectKind::OutcomeUnknown,
-        ),
+        OperationPhase::EffectIntent | OperationPhase::OutcomeUnknown => {
+            if input_batch_id.is_some() {
+                return Err(KernelError::Corrupt(
+                    "active effect phase contains settled batch input".to_owned(),
+                ));
+            }
+            current_batch_id.ok_or_else(|| {
+                KernelError::Corrupt("active effect batch identity is missing".to_owned())
+            })?
+        }
         _ => {
             return Err(KernelError::Corrupt(format!(
                 "phase `{}` cannot be closed by cancellation",
@@ -45,78 +45,31 @@ pub(super) fn load_cancellation_effect(
             )));
         }
     };
-    let (binding, revision, request, status, outcome) = connection
-        .query_row(
-            "SELECT binding, binding_revision, request_json, status, outcome_json
-             FROM effects WHERE operation_id = ?1 AND effect_id = ?2",
-            params![operation_id.to_string(), effect_id.to_string()],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sqlite_error)?
-        .ok_or_else(|| KernelError::Corrupt("cancellation effect is missing".to_owned()))?;
-    if status != expected_status || manifest.effect_bindings.get(&binding) != Some(&revision) {
-        return Err(KernelError::Corrupt(
-            "cancellation effect differs from durable operation state".to_owned(),
-        ));
-    }
-    let request: Value = serde_json::from_str(&request).map_err(json_error)?;
-    let unsettled = || UnsettledEffect {
-        effect_id,
-        binding: binding.clone(),
-        binding_revision: revision.clone(),
-        request: request.clone(),
+    let facts = load_effect_batch_facts(connection, operation_id, batch_id, Some(manifest))?;
+    let valid = match phase {
+        OperationPhase::NeedDecision => facts
+            .effects
+            .iter()
+            .all(|fact| matches!(fact, EffectFact::Settled(_))),
+        OperationPhase::EffectIntent => facts
+            .effects
+            .iter()
+            .all(|fact| matches!(fact, EffectFact::NotDispatched(_))),
+        OperationPhase::OutcomeUnknown => {
+            facts
+                .effects
+                .iter()
+                .any(|fact| matches!(fact, EffectFact::OutcomeUnknown(_)))
+                && facts.effects.iter().all(|fact| {
+                    matches!(fact, EffectFact::Settled(_) | EffectFact::OutcomeUnknown(_))
+                })
+        }
+        _ => false,
     };
-    match kind {
-        EffectKind::NotDispatched if outcome.is_none() => {
-            Ok(Some(CancellationEffect::NotDispatched(unsettled())))
-        }
-        EffectKind::OutcomeUnknown if outcome.is_none() => {
-            Ok(Some(CancellationEffect::OutcomeUnknown(unsettled())))
-        }
-        EffectKind::Settled => {
-            let outcome = outcome
-                .map(|value| serde_json::from_str::<EffectOutcome>(&value).map_err(json_error))
-                .transpose()?
-                .ok_or_else(|| KernelError::Corrupt("settled effect has no outcome".to_owned()))?;
-            Ok(Some(CancellationEffect::Settled(SettledEffect {
-                effect_id,
-                binding,
-                binding_revision: revision,
-                request,
-                outcome,
-            })))
-        }
-        EffectKind::NotDispatched | EffectKind::OutcomeUnknown => Err(KernelError::Corrupt(
-            "unsettled cancellation effect contains an outcome".to_owned(),
-        )),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum EffectKind {
-    NotDispatched,
-    Settled,
-    OutcomeUnknown,
-}
-
-fn require_effect_id(
-    current_effect_id: Option<EffectId>,
-    input_effect_id: Option<EffectId>,
-) -> Result<EffectId, KernelError> {
-    if input_effect_id.is_some() {
+    if !valid {
         return Err(KernelError::Corrupt(
-            "active effect phase contains settled input".to_owned(),
+            "cancellation effect batch differs from durable operation state".to_owned(),
         ));
     }
-    current_effect_id
-        .ok_or_else(|| KernelError::Corrupt("active effect identity is missing".to_owned()))
+    Ok(Some(facts))
 }

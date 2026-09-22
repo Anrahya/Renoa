@@ -50,7 +50,7 @@ async fn settled_summary_activates_after_restart_without_another_model_call() {
     assert!(task.await.expect_err("injected process loss").is_panic());
 
     let interrupted = kernel.inspect(session_id).expect("inspect settled summary");
-    let summary_effect = interrupted.operations[1].effects[0].clone();
+    let summary_effect = interrupted.operations[1].effect_batches[0].effects[0].clone();
     assert_eq!(summary_effect.status, EffectStatus::Settled);
     assert_eq!(summary_effect.dispatch_count, 1);
     assert_eq!(requests.lock().expect("request lock").len(), 2);
@@ -70,10 +70,13 @@ async fn settled_summary_activates_after_restart_without_another_model_call() {
     );
     let recovered = reopened.inspect(session_id).expect("inspect activation");
     assert_eq!(
-        recovered.operations[1].effects[0].effect_id,
+        recovered.operations[1].effect_batches[0].effects[0].effect_id,
         summary_effect.effect_id
     );
-    assert_eq!(recovered.operations[1].effects[0].dispatch_count, 1);
+    assert_eq!(
+        recovered.operations[1].effect_batches[0].effects[0].dispatch_count,
+        1
+    );
     assert_eq!(requests.lock().expect("request lock").len(), 3);
     assert_eq!(checkpoint_count(&reopened, session_id), 1);
 }
@@ -110,7 +113,7 @@ async fn settled_explicit_summary_finishes_after_restart_without_a_normal_model_
     assert!(task.await.expect_err("injected process loss").is_panic());
 
     let interrupted = kernel.inspect(session_id).expect("inspect settled summary");
-    let summary_effect = interrupted.operations[1].effects[0].clone();
+    let summary_effect = interrupted.operations[1].effect_batches[0].effects[0].clone();
     assert_eq!(summary_effect.status, EffectStatus::Settled);
     assert_eq!(summary_effect.dispatch_count, 1);
     assert_eq!(requests.lock().expect("request lock").len(), 2);
@@ -130,10 +133,13 @@ async fn settled_explicit_summary_finishes_after_restart_without_a_normal_model_
     );
     let recovered = reopened.inspect(session_id).expect("inspect activation");
     assert_eq!(
-        recovered.operations[1].effects[0].effect_id,
+        recovered.operations[1].effect_batches[0].effects[0].effect_id,
         summary_effect.effect_id
     );
-    assert_eq!(recovered.operations[1].effects[0].dispatch_count, 1);
+    assert_eq!(
+        recovered.operations[1].effect_batches[0].effects[0].dispatch_count,
+        1
+    );
     assert_eq!(requests.lock().expect("request lock").len(), 2);
     assert_eq!(checkpoint_count(&reopened, session_id), 1);
     assert_eq!(

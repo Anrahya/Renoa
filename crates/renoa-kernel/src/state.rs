@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AgentId, CommandId, EffectId, EffectOutcome, EffectRecovery, OperationId, RuntimeManifest,
+    AgentId, CommandId, EffectBatchId, EffectId, EffectOutcome, EffectRecovery, OperationId,
+    RuntimeManifest,
 };
 
 /// One exact caller-identified input admitted to a session.
@@ -94,6 +95,15 @@ pub struct EffectSnapshot {
     pub outcome: Option<EffectOutcome>,
 }
 
+/// A read-only view of one ordered external-effect batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct EffectBatchSnapshot {
+    pub batch_id: EffectBatchId,
+    pub position: u64,
+    pub effects: Vec<EffectSnapshot>,
+}
+
 /// A read-only view of one operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -106,7 +116,7 @@ pub struct OperationSnapshot {
     pub manifest: Option<RuntimeManifest>,
     pub checkpoint: Option<crate::Checkpoint>,
     pub outcome: Option<OperationOutcome>,
-    pub effects: Vec<EffectSnapshot>,
+    pub effect_batches: Vec<EffectBatchSnapshot>,
 }
 
 /// A transactionally consistent read of one isolated session.

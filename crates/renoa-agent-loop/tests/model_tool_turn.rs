@@ -183,11 +183,11 @@ fn assert_durable_turn(kernel: &Kernel, session_id: SessionId) {
     assert!(matches!(messages[3], Message::Assistant { .. }));
 
     let snapshot = kernel.inspect(session_id).expect("inspect session");
-    let effects = &snapshot.operations[0].effects;
-    assert_eq!(effects.len(), 3);
-    assert_eq!(effects[0].recovery, EffectRecovery::SafeToReplay);
-    assert_eq!(effects[1].recovery, EffectRecovery::NeverReplay);
-    assert_eq!(effects[2].recovery, EffectRecovery::SafeToReplay);
+    let batches = &snapshot.operations[0].effect_batches;
+    assert_eq!(batches.len(), 3);
+    assert_eq!(batches[0].effects[0].recovery, EffectRecovery::SafeToReplay);
+    assert_eq!(batches[1].effects[0].recovery, EffectRecovery::NeverReplay);
+    assert_eq!(batches[2].effects[0].recovery, EffectRecovery::SafeToReplay);
 }
 
 #[tokio::test]
@@ -258,7 +258,7 @@ async fn duplicate_tool_call_identifiers_fail_before_any_tool_effect() {
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect failed operation");
-    assert_eq!(snapshot.operations[0].effects.len(), 1);
+    assert_eq!(snapshot.operations[0].effect_batches.len(), 1);
     let history = kernel
         .events_after(session_id, EventCursor::START)
         .expect("read failed history");
@@ -327,7 +327,7 @@ async fn empty_tool_call_identifier_fails_before_any_tool_effect() {
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect failed operation");
-    assert_eq!(snapshot.operations[0].effects.len(), 1);
+    assert_eq!(snapshot.operations[0].effect_batches.len(), 1);
     let history = kernel
         .events_after(session_id, EventCursor::START)
         .expect("read failed history");

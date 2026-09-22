@@ -1,12 +1,12 @@
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use crate::{
-    AgentId, EventCursor, Kernel, KernelError, OperationId, OperationOutcome, Runtime,
-    RuntimeManifest, SessionId, UnknownEffect, UnknownEffectAbandonment, UnknownEffectInput,
+    AgentId, EffectFact, EventCursor, Kernel, KernelError, OperationId, OperationOutcome, Runtime,
+    RuntimeManifest, SessionId, UnknownEffectAbandonment, UnknownEffectInput,
     admission::{from_sql_integer, parse_agent_id, parse_operation_id},
     cancellation::cancellation_requested,
     decision_store::append_events,
-    effect_store::parse_effect_id,
+    effect_store::{load_effect_batch_facts, parse_effect_batch_id},
     effect_supervision::SessionDriveLease,
     events::{load_event_page, validate_new_events},
     operation_phase::OperationPhase,
@@ -33,12 +33,13 @@ enum UnknownEffectState {
 }
 
 impl Kernel {
-    /// Explicitly closes an operation whose external effect outcome is unknown.
+    /// Explicitly closes an operation whose effect batch has an unknown child.
     ///
     /// The kernel validates the exact active operation, frozen runtime, gapless
-    /// semantic history, checkpoint, and effect identity before asking the loop
-    /// to close its own state. The unknown effect is never invoked or rewritten
-    /// as a definite outcome.
+    /// semantic history, checkpoint, batch identity, and ordered child facts
+    /// before asking the loop to close its own state. Unknown children are never
+    /// invoked or rewritten as definite outcomes, and settled siblings remain
+    /// unchanged.
     ///
     /// Repeating this call after a committed abandonment returns the same
     /// terminal outcome without appending duplicate events.
@@ -46,7 +47,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns [`KernelError::NoUnknownEffect`] when the operation has no
-    /// unknown effect to abandon. All compatibility, ownership, corruption,
+    /// unknown batch to abandon. All compatibility, ownership, corruption,
     /// loop, and storage failures leave the operation blocked.
     pub fn abandon_unknown_effect(
         &self,
@@ -175,32 +176,12 @@ impl Kernel {
                 "semantic history changed during unknown-effect abandonment".to_owned(),
             ));
         }
-        let effect_is_unknown = transaction
-            .query_row(
-                "SELECT 1
-                 FROM operations AS o
-                 JOIN effects AS e
-                   ON e.operation_id = o.operation_id
-                  AND e.effect_id = o.current_effect_id
-                 WHERE o.session_id = ?1 AND o.operation_id = ?2
-                   AND o.phase = 'outcome_unknown' AND o.transition_version = ?3
-                   AND o.input_effect_id IS NULL AND o.outcome_json IS NULL
-                   AND e.status = 'outcome_unknown' AND e.outcome_json IS NULL",
-                params![
-                    session_id.to_string(),
-                    operation_id.to_string(),
-                    expected_transition,
-                ],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(sqlite_error)?
-            .is_some();
-        if !effect_is_unknown {
-            return Err(KernelError::Corrupt(
-                "unknown effect changed before abandonment".to_owned(),
-            ));
-        }
+        require_unknown_batch_unchanged(
+            &transaction,
+            session_id,
+            operation_id,
+            expected_transition,
+        )?;
 
         append_events(&transaction, session_id, operation_id, &abandonment.events)?;
         let outcome = abandoned_outcome();
@@ -208,7 +189,7 @@ impl Kernel {
             .execute(
                 "UPDATE operations
                  SET phase = 'failed', checkpoint_json = ?4,
-                     current_effect_id = NULL, input_effect_id = NULL,
+                     current_effect_batch_id = NULL, input_effect_batch_id = NULL,
                      outcome_json = ?5, transition_version = transition_version + 1
                  WHERE session_id = ?1 AND operation_id = ?2
                    AND phase = 'outcome_unknown' AND transition_version = ?3",
@@ -243,6 +224,52 @@ impl Kernel {
     }
 }
 
+fn require_unknown_batch_unchanged(
+    transaction: &rusqlite::Transaction<'_>,
+    session_id: SessionId,
+    operation_id: OperationId,
+    expected_transition: i64,
+) -> Result<(), KernelError> {
+    let batch_is_unknown = transaction
+        .query_row(
+            "SELECT 1
+             FROM operations AS o
+             JOIN effect_batches AS b
+               ON b.operation_id = o.operation_id
+              AND b.batch_id = o.current_effect_batch_id
+             WHERE o.session_id = ?1 AND o.operation_id = ?2
+               AND o.phase = 'outcome_unknown' AND o.transition_version = ?3
+               AND o.input_effect_batch_id IS NULL AND o.outcome_json IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM effects AS unknown_effect
+                   WHERE unknown_effect.batch_id = b.batch_id
+                     AND unknown_effect.status = 'outcome_unknown'
+                     AND unknown_effect.outcome_json IS NULL
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM effects AS unfinished_effect
+                   WHERE unfinished_effect.batch_id = b.batch_id
+                     AND unfinished_effect.status NOT IN ('settled', 'outcome_unknown')
+               )",
+            params![
+                session_id.to_string(),
+                operation_id.to_string(),
+                expected_transition,
+            ],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(sqlite_error)?
+        .is_some();
+    if batch_is_unknown {
+        Ok(())
+    } else {
+        Err(KernelError::Corrupt(
+            "unknown effect batch changed before abandonment".to_owned(),
+        ))
+    }
+}
+
 fn load_pending_abandonment(
     transaction: &rusqlite::Transaction<'_>,
     agent_id: AgentId,
@@ -256,7 +283,7 @@ fn load_pending_abandonment(
             "unknown-effect operation is not the session's active operation".to_owned(),
         ));
     }
-    if stored.input_effect_id.is_some() || stored.outcome.is_some() {
+    if stored.input_effect_batch_id.is_some() || stored.outcome.is_some() {
         return Err(KernelError::Corrupt(
             "unknown-effect operation contains settled input or a terminal outcome".to_owned(),
         ));
@@ -267,35 +294,24 @@ fn load_pending_abandonment(
     let checkpoint = stored.checkpoint.ok_or_else(|| {
         KernelError::Corrupt("unknown-effect operation has no checkpoint".to_owned())
     })?;
-    let effect_id = stored.current_effect_id.ok_or_else(|| {
-        KernelError::Corrupt("unknown-effect operation has no current effect".to_owned())
+    let batch_id = stored.current_effect_batch_id.ok_or_else(|| {
+        KernelError::Corrupt("unknown-effect operation has no current effect batch".to_owned())
     })?;
-    let (binding, binding_revision, request_json, status, outcome_json) = transaction
-        .query_row(
-            "SELECT binding, binding_revision, request_json, status, outcome_json
-             FROM effects WHERE effect_id = ?1 AND operation_id = ?2",
-            params![effect_id.to_string(), operation_id.to_string()],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sqlite_error)?
-        .ok_or_else(|| KernelError::Corrupt("unknown current effect is missing".to_owned()))?;
-    if status != "outcome_unknown" || outcome_json.is_some() {
+    let effect_batch =
+        load_effect_batch_facts(transaction, operation_id, batch_id, Some(&manifest))?;
+    if !effect_batch
+        .effects
+        .iter()
+        .any(|effect| matches!(effect, EffectFact::OutcomeUnknown(_)))
+        || !effect_batch.effects.iter().all(|effect| {
+            matches!(
+                effect,
+                EffectFact::Settled(_) | EffectFact::OutcomeUnknown(_)
+            )
+        })
+    {
         return Err(KernelError::Corrupt(
-            "unknown operation and effect states disagree".to_owned(),
-        ));
-    }
-    if manifest.effect_bindings.get(&binding) != Some(&binding_revision) {
-        return Err(KernelError::Corrupt(
-            "unknown effect differs from the frozen manifest".to_owned(),
+            "unknown operation and effect batch states disagree".to_owned(),
         ));
     }
     let page = load_event_page(transaction, session_id, EventCursor::START)?;
@@ -307,12 +323,7 @@ fn load_pending_abandonment(
             command: stored.command,
             events: page.events,
             checkpoint,
-            effect: UnknownEffect {
-                effect_id,
-                binding,
-                binding_revision,
-                request: serde_json::from_str(&request_json).map_err(json_error)?,
-            },
+            effect_batch,
         },
         manifest,
         transition_version: stored.transition_version,
@@ -329,32 +340,30 @@ fn load_prior_abandonment(
 ) -> Result<UnknownEffectState, KernelError> {
     let mut statement = transaction
         .prepare(
-            "SELECT effect_id, binding, binding_revision, request_json, outcome_json
-             FROM effects
-             WHERE operation_id = ?1 AND status = 'outcome_unknown'",
+            "SELECT DISTINCT b.batch_id
+             FROM effect_batches AS b
+             JOIN effects AS e ON e.batch_id = b.batch_id
+             WHERE b.operation_id = ?1 AND e.status = 'outcome_unknown'
+             ORDER BY b.position",
         )
         .map_err(sqlite_error)?;
     let mut rows = statement
         .query([operation_id.to_string()])
         .map_err(sqlite_error)?;
-    let Some(effect) = rows.next().map_err(sqlite_error)? else {
+    let Some(batch) = rows.next().map_err(sqlite_error)? else {
         return Err(KernelError::NoUnknownEffect(operation_id));
     };
-    let effect_id = effect.get::<_, String>(0).map_err(sqlite_error)?;
-    let binding = effect.get::<_, String>(1).map_err(sqlite_error)?;
-    let binding_revision = effect.get::<_, String>(2).map_err(sqlite_error)?;
-    let request_json = effect.get::<_, String>(3).map_err(sqlite_error)?;
-    let outcome_json = effect.get::<_, Option<String>>(4).map_err(sqlite_error)?;
+    let batch_id = batch.get::<_, String>(0).map_err(sqlite_error)?;
     if rows.next().map_err(sqlite_error)?.is_some() {
         return Err(KernelError::Corrupt(
-            "abandoned operation has more than one unknown effect".to_owned(),
+            "abandoned operation has more than one unknown effect batch".to_owned(),
         ));
     }
     drop(rows);
     drop(statement);
     if active_operation_id.map(parse_operation_id).transpose()? == Some(operation_id)
-        || stored.current_effect_id.is_some()
-        || stored.input_effect_id.is_some()
+        || stored.current_effect_batch_id.is_some()
+        || stored.input_effect_batch_id.is_some()
     {
         return Err(KernelError::Corrupt(
             "abandoned operation still owns active execution state".to_owned(),
@@ -363,18 +372,23 @@ fn load_prior_abandonment(
     let manifest = stored.manifest.ok_or_else(|| {
         KernelError::Corrupt("unknown-effect operation has no manifest".to_owned())
     })?;
-    if manifest.effect_bindings.get(&binding) != Some(&binding_revision) {
+    let batch_id = parse_effect_batch_id(&batch_id)?;
+    let facts = load_effect_batch_facts(transaction, operation_id, batch_id, Some(&manifest))?;
+    if !facts
+        .effects
+        .iter()
+        .any(|effect| matches!(effect, EffectFact::OutcomeUnknown(_)))
+        || !facts.effects.iter().all(|effect| {
+            matches!(
+                effect,
+                EffectFact::Settled(_) | EffectFact::OutcomeUnknown(_)
+            )
+        })
+    {
         return Err(KernelError::Corrupt(
-            "abandoned unknown effect differs from the frozen manifest".to_owned(),
+            "abandoned unknown effect batch has invalid child state".to_owned(),
         ));
     }
-    parse_effect_id(&effect_id)?;
-    if outcome_json.is_some() {
-        return Err(KernelError::Corrupt(
-            "abandoned unknown effect contains a definite outcome".to_owned(),
-        ));
-    }
-    serde_json::from_str::<serde_json::Value>(&request_json).map_err(json_error)?;
     stored.checkpoint.ok_or_else(|| {
         KernelError::Corrupt("unknown-effect operation has no checkpoint".to_owned())
     })?;

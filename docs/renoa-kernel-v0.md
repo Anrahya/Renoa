@@ -12,8 +12,9 @@ the retired standalone harness reasoning and is not a current contract.
 and does not define this kernel.
 
 The foundation slice implements one local SQLite kernel, a decision-only loop
-plugin boundary, generic effect adapters, durable cancellation, explicit
-abandonment of unknown effects, durable inspection, and cursor replay. The
+plugin boundary, ordered durable effect batches, generic effect adapters,
+durable cancellation, explicit abandonment of unknown effects, durable
+inspection, and cursor replay. The
 kernel crate intentionally does not integrate RCP, ACP, surface shells, providers,
 tools, prompts, context policy, or workspaces. Its first external consumer,
 documented in
@@ -40,9 +41,9 @@ a loop plugin, effect bindings, and configuration.
 
 The central invariant is:
 
-> No external action starts until its exact intent is durably recorded, and
-> durable execution does not advance past that action until its outcome is
-> settled or explicitly unknown.
+> No external action starts until every intent in its ordered batch is durably
+> recorded, and durable execution does not advance past that batch until every
+> child is settled or explicitly unknown.
 
 If a coding agent, research agent, background operator, evaluator, or future
 agent can be introduced by supplying a runtime without changing kernel control
@@ -52,14 +53,16 @@ flow or schema, the boundary is working.
 
 The kernel owns:
 
-- stable agent, session, command, operation, effect, and event identities;
+- stable agent, session, command, operation, effect-batch, effect, and event
+  identities;
 - retry-safe agent and session creation;
 - exact command admission before acknowledgement;
 - gapless command positions and one active operation per session;
 - one in-process session driver and one lifetime-exclusive database writer;
 - the frozen runtime manifest for an active operation;
 - the versioned loop checkpoint and operational program counter;
-- exact effect intent, dispatch state, recovery class, and settlement;
+- atomic effect-batch admission plus each child's exact intent, dispatch state,
+  recovery class, and settlement;
 - exact-operation cancellation admission and process-local signalling;
 - gapless semantic event order and cursor replay;
 - atomic state transitions and fail-closed recovery; and
@@ -98,12 +101,13 @@ host / ACP / RCP node
 
 `LoopPlugin` is ordinary trusted Rust code. The kernel gives it an owned,
 read-only snapshot containing the exact command, durable semantic history,
-current checkpoint, frozen runtime manifest, and any newly settled effect. It
-has no kernel handle, SQLite connection, mutable store, model, tool, filesystem,
-or network access. It returns one decision:
+current checkpoint, frozen runtime manifest, and any newly settled effect
+batch. It has no kernel handle, SQLite connection, mutable store, model, tool,
+filesystem, or network access. It returns one decision:
 
-- `InvokeEffect` with the next checkpoint, named binding, exact JSON request,
-  and `SafeToReplay` or `NeverReplay` recovery;
+- `InvokeEffects` with the next checkpoint and a non-empty ordered list of
+  named bindings, exact JSON requests, and `SafeToReplay` or `NeverReplay`
+  recovery classes;
 - `AppendEventsAndContinue` with the next checkpoint and semantic events;
 - `WaitForInput` with the final checkpoint and semantic events;
 - `Complete` with the final checkpoint and semantic events; or
@@ -116,23 +120,25 @@ and release the session to its next admitted command. Their different outcomes
 remain visible to inspection.
 
 `LoopPlugin::abandon_unknown_effect` is a separate decision-only boundary. It
-receives the exact unknown effect plus the same durable command, history, and
-checkpoint facts, and may return only a checkpoint and semantic events. Its
-output type cannot request another effect. The host decides whether to invoke
-this action; the kernel never abandons uncertainty automatically.
+receives the exact ordered batch facts, including both settled and unknown
+children, plus the same durable command, history, and checkpoint facts. It may
+return only a checkpoint and semantic events. Its output type cannot request
+another effect. The host decides whether to invoke this action; the kernel
+never abandons uncertainty automatically.
 
 `LoopPlugin::cancel_operation` is the corresponding decision-only boundary for
 a durable user cancellation. It receives the exact command, gapless history,
-checkpoint, and any current effect fact: settled, definitely not dispatched, or
-outcome unknown. It can close loop-owned history but cannot request another
-effect or change the recorded external fact.
+checkpoint, and every current child fact in declaration order: settled,
+definitely not dispatched, or outcome unknown. It can close loop-owned history
+but cannot request another effect or change any recorded external fact.
 
-An `EffectAdapter` receives a stable effect ID, exact binding and revision, the
-frozen runtime manifest, the exact saved request, and an attempt-scoped
-cancellation signal. It reports either one definite success or failure outcome,
-or that the external outcome is unknowable. Provider transport retries, tool
-execution, and other effect-specific behavior remain inside or behind the
-adapter. Process interruption is handled by the kernel recovery class.
+An `EffectAdapter` receives the stable batch and child effect IDs, exact binding
+and revision, the frozen runtime manifest, the exact saved request, and an
+attempt-scoped cancellation signal. It reports either one definite success or
+failure outcome, or that the external outcome is unknowable. Provider transport
+retries, tool execution, and other effect-specific behavior remain inside or
+behind the adapter. Process interruption is handled by the kernel recovery
+class.
 
 An adapter must resolve only after work it started has stopped when the signal
 is cancelled. Dropping `Kernel::drive` cancels an in-flight invocation, but a
@@ -224,9 +230,19 @@ The kernel persists it but never interprets agent-specific state.
 
 ### Effects
 
-An effect records its operation-relative ordinal, stable `EffectId`, exact
-binding and binding revision, exact JSON request, recovery class, status,
-dispatch count, and eventual outcome.
+An effect batch records a stable `EffectBatchId` and operation-relative ordinal.
+Its children have gapless declaration-order positions. Each child records a
+stable `EffectId`, exact binding and binding revision, exact JSON request,
+recovery class, status, dispatch count, and eventual outcome.
+Composite foreign keys prevent an operation's current or input pointer from
+adopting a batch owned by another operation.
+
+The kernel validates every binding before committing anything, then admits the
+batch, all child intents, and the next checkpoint in one transaction. A rejected
+batch leaves no batch or child row behind. Before invoking any adapter, another
+single transaction marks every currently ready child `DispatchStarted`. The
+kernel then invokes those children concurrently. Completion order affects when
+each child is persisted, never its declaration order or loop-visible order.
 
 The v0 statuses are:
 
@@ -236,31 +252,38 @@ IntentCommitted -> DispatchStarted -> Settled
 ```
 
 `IntentCommitted` proves that adapter invocation has not started.
-`DispatchStarted` proves only that invocation may have started. Settlement
-atomically stores the outcome and returns the operation to `NeedDecision` with
-that exact result available to the loop.
+`DispatchStarted` proves only that invocation may have started. Each definite
+outcome is persisted independently as soon as it arrives. Earlier children may
+therefore be settled while siblings remain in flight or await replay. The child
+that makes the whole batch terminal atomically stores its outcome and advances
+the operation: an all-settled batch returns to `NeedDecision`, while any unknown
+child moves the operation to `OutcomeUnknown`. A recovered batch that was already
+terminal converges to the same aggregate phase without repeating a settled
+child.
 
-If a live adapter cannot prove a definite result, the kernel replays the effect
-once when the binding is safe to replay, this was that effect's first durable
-dispatch, and no cancellation is recorded for the operation; a recorded
-cancellation closes the operation as `Cancelled` instead. Otherwise the kernel
-atomically marks both the effect and operation `OutcomeUnknown`. It never
-launders uncertainty into an ordinary failure. If the driving caller disappears,
-the adapter first finishes cancellation cleanup, then the next drive applies the
+If a live adapter cannot prove a definite result, the kernel replays that child
+once when the binding is safe to replay, this was that child's first durable
+dispatch, and no cancellation is recorded for the operation. Settled siblings
+are not repeated. A recorded cancellation closes the operation as `Cancelled`
+instead. Otherwise the kernel marks the child `OutcomeUnknown` and moves the
+operation to `OutcomeUnknown` once every sibling is terminal. It never launders
+uncertainty into an ordinary failure. If the driving caller disappears, each
+adapter first finishes cancellation cleanup, then the next drive applies the
 same persisted recovery rules used after process loss.
 
 After restart:
 
 - `IntentCommitted` is dispatched once regardless of recovery class;
-- `DispatchStarted + SafeToReplay` is dispatched again with the same effect ID
-  and request;
+- `DispatchStarted + SafeToReplay` is dispatched again with the same batch ID,
+  effect ID, and request;
 - `DispatchStarted + NeverReplay` becomes `OutcomeUnknown` without invoking the
   adapter; and
 - `Settled` is never dispatched again.
 
-There is no exactly-once external-effect claim. Stable identity plus an adapter
-that consumes it may provide stronger idempotence, but the kernel does not
-invent that guarantee.
+Recovery is per child: settled or unknown siblings remain untouched while only
+eligible `DispatchStarted` children are reconsidered. There is no exactly-once
+external-effect claim. Stable identity plus an adapter that consumes it may
+provide stronger idempotence, but the kernel does not invent that guarantee.
 
 ### Semantic events and execution journal
 
@@ -269,8 +292,8 @@ a stable event ID, operation ID, session-local gapless sequence, string kind,
 and exact JSON payload. The kernel does not prescribe an agent event catalog.
 
 The execution journal is separate: operation phase, checkpoint, current input
-effect, effects, dispatch counts, and terminal outcome. Operational recovery
-details do not masquerade as portable semantic history.
+batch, ordered child effects, dispatch counts, and terminal outcome. Operational
+recovery details do not masquerade as portable semantic history.
 
 An `EventCursor` is the next unread sequence, initially zero. Reading after a
 cursor returns all events whose sequence is at least that cursor plus the new
@@ -292,16 +315,18 @@ OutcomeUnknown -> Failed  (explicit abandonment)
 
 Only `Queued` operations lack a manifest. Every other phase has the exact
 frozen manifest and a checkpoint after the first committed loop decision.
-`NeedDecision` may carry one settled effect result. The next committed decision
+`NeedDecision` may carry one fully settled batch. Its children are delivered in
+declaration order regardless of completion order. The next committed decision
 consumes that input exactly once.
 
 An `OutcomeUnknown` operation remains active and blocks later commands. A host
 may explicitly call `Kernel::abandon_unknown_effect` with the exact operation
 and frozen runtime. The kernel asks the loop to close its own checkpoint and
 semantic history, then atomically fails the operation and releases the session.
-The effect itself remains `OutcomeUnknown` with no fabricated outcome. The same
-request is idempotent after a lost reply. Supplying a confirmed external result
-is still outside v0 because no adapter can yet produce that evidence.
+Unknown children remain `OutcomeUnknown`, settled siblings retain their exact
+outcomes, and no outcome is fabricated. The same request is idempotent after a
+lost reply. Supplying a confirmed external result is still outside v0 because
+no adapter can yet produce that evidence.
 
 ## SQLite and ownership
 
@@ -333,20 +358,21 @@ No loop plugin or effect adapter runs inside a SQLite transaction.
 | Submit command | command, operation, next command position | queued exact input | return original admission or activate in order |
 | Activate | active pointer, frozen manifest, `NeedDecision` | one active ordered operation | call loop with durable input |
 | Commit semantic decision | checkpoint, events, cursor, `NeedDecision` | events and next loop position agree | call loop again |
-| Commit effect intent | checkpoint, exact effect, `EffectIntent` | adapter definitely not started | mark dispatch started |
-| Mark dispatch | effect dispatch count, `EffectDispatched` | adapter may have started | invoke now, or recover by class |
-| Replay live uncertainty | nothing; the effect stays `DispatchStarted` and the operation stays `EffectDispatched` | a live unknown report from a safe-to-replay effect's first durable dispatch, with no recorded cancellation | invoke the same persisted effect once more |
-| Settle effect | exact outcome, effect `Settled`, operation `NeedDecision` | result is available exactly once | call loop; never repeat settled effect |
-| Mark uncertainty | effect and operation `OutcomeUnknown` | recovery or the live adapter cannot prove the result | block without dispatch |
-| Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer | the operation is closed while the effect remains unknown | return the same outcome on retry or activate queued work |
+| Commit effect batch intent | checkpoint, batch identity and ordinal, every ordered child intent, `EffectIntent` | no adapter in the batch started | mark every ready child dispatched |
+| Mark batch dispatch | each ready child's dispatch count, operation `EffectDispatched` | every marked child may have started | invoke ready children concurrently, or recover each by class |
+| Replay live uncertainty | nothing; that child stays `DispatchStarted` and the operation stays `EffectDispatched` | a live unknown report from a safe-to-replay child's first durable dispatch, with no recorded cancellation | invoke only that persisted child once more |
+| Settle non-final child | exact outcome and child `Settled` | sibling work remains authoritative and in progress | persist later completions; never repeat the settled child |
+| Finish effect batch | final child fact plus operation `NeedDecision` or `OutcomeUnknown` | every child is terminal and its ordered facts are durable | call the loop with the settled batch or block without dispatch |
+| Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer | the operation is closed while unknown and settled child facts remain unchanged | return the same outcome on retry or activate queued work |
 | Request cancellation | stable cancellation identity and exact queued or active target | cancellation is authoritative even if the signal reply is lost | signal the exact live operation or close it on the next drive |
 | Close cancellation | loop checkpoint and events, operation `Cancelled`, clear active pointer | effect facts remain definite, not dispatched, or unknown as recorded | exact request retry is a no-op or activate queued work |
 | Terminate | checkpoint, events, outcome, clear active pointer | operation is terminal | activate next queued operation |
 
-Required deterministic injections cover both sides of activation, effect
-intent, dispatch, effect completion, settlement, unknown-effect abandonment,
-cancellation closure, and terminal event commits. A panic or process loss after
-a committed row never requires inference from a missing record.
+Required deterministic injections cover both sides of activation, effect-batch
+intent, batch dispatch, child completion, child settlement, unknown-effect
+abandonment, cancellation closure, and terminal event commits. A panic or
+process loss after a committed row never requires inference from a missing
+record.
 
 ## Foundation proof
 
@@ -356,28 +382,35 @@ The first complete slice must prove through the public seams:
 2. stable command admission and changed-content conflict;
 3. ordered activation with queued content kept out of semantic history;
 4. one lifetime database writer and one active driver per session;
-5. intent and dispatch are durable before adapter invocation;
-6. exact safe replay after a possibly dispatched crash;
-7. unsafe possibly dispatched work becomes explicitly unknown;
-8. settlement, next state, and effect result are atomic;
-9. a settled effect is never repeated;
-10. runtime manifests are frozen and mismatches fail before execution;
-11. checkpoint schema mismatches fail before state advances;
-12. semantic event replay is gapless and rejects an ahead cursor;
-13. newer database or stored-state versions fail closed;
-14. a live adapter can report uncertainty without creating a false failure,
-    and a live unknown report from the first durable dispatch of a
-    safe-to-replay effect replays once through the same persisted effect before
-    uncertainty becomes durable;
-15. dropping a drive cancels its adapter but retains session and database
-    ownership until cleanup finishes; and
-16. explicit unknown-effect abandonment validates the frozen runtime and
-    gapless history, never invokes an adapter, is idempotent after a lost reply,
-    preserves the effect as unknown, and releases queued work atomically; and
-17. cancellation is persisted before signalling, targets one exact queued or active
-    operation, prevents later dispatch when it wins, waits for started work to
-    stop, preserves the effect's certainty, closes loop-owned history, and
-    releases queued work atomically.
+5. a non-empty batch and all child intents commit atomically, while an invalid
+   member leaves no residue and starts no sibling;
+6. every ready child is durably marked before any adapter invocation, and
+   independent children can be in flight concurrently;
+7. child outcomes persist independently but a settled child is never repeated;
+8. the loop receives a fully settled batch in declaration order rather than
+   completion order;
+9. restart preserves stable batch and child identities, replays only eligible
+   safe children, and turns unsafe possibly dispatched children explicitly
+   unknown;
+10. the final child fact and aggregate next state are atomic;
+11. a live adapter can report uncertainty without creating a false failure,
+    and only that safe-to-replay child is retried once before uncertainty
+    becomes durable;
+12. runtime manifests are frozen and mismatches fail before execution;
+13. checkpoint schema mismatches fail before state advances;
+14. semantic event replay is gapless and rejects an ahead cursor;
+15. newer database or stored-state versions fail closed, while legacy singleton
+    effects migrate to one-member batches without losing identity or outcomes;
+16. dropping a drive cancels its adapters but retains session and database
+    ownership until cleanup finishes;
+17. explicit unknown-effect abandonment validates the frozen runtime and
+    gapless history, receives exact ordered settled/unknown child facts, never
+    invokes an adapter, is idempotent after a lost reply, and releases queued
+    work atomically; and
+18. cancellation is persisted before signalling, targets one exact queued or
+    active operation, prevents later dispatch when it wins, waits for started
+    work to stop, preserves every child's certainty, closes loop-owned history,
+    and releases queued work atomically.
 
 The scripted loop and fake effect adapter are test boundaries only. They are
 not product policy or privileged kernel implementations.
@@ -388,6 +421,10 @@ not product policy or privileged kernel implementations.
 `renoa-agent` vocabulary. It reconstructs model history from versioned semantic
 message events, stores only its operational program counter in the opaque
 checkpoint, and expresses every model and tool call as a named kernel effect.
+Those existing sequential calls use canonical one-member batches; future
+consumers can request multiple independent effects without a kernel-specific
+tool or provider type.
+
 `renoa-local` resolves the model adapter, durable context strategy, instructions,
 and concrete workspace tools into the first complete local Host runtime. Its
 contract is recorded in [`renoa-host-v0.md`](renoa-host-v0.md). This preserves
@@ -440,24 +477,28 @@ fork or movement path plus idempotence, isolation, recovery, and fencing tests.
    effect execution.
 6. The loop is decision-only and cannot access kernel storage or external
    capabilities through its interface.
-7. Every external action has an exact durable intent and an explicit dispatch
+7. Every external action belongs to one non-empty ordered batch whose exact
+   child intents are admitted atomically before an explicit batch dispatch
    boundary.
-8. Unsafe possibly dispatched effects become unknown and never replay
-   automatically. A safe-to-replay effect replays once after a live adapter
+8. Ready children dispatch concurrently, settle independently, and become
+   loop-visible only as one declaration-ordered aggregate.
+9. Unsafe possibly dispatched children become unknown and never replay
+   automatically. A safe-to-replay child replays once after a live adapter
    reports an unknown outcome for its first durable dispatch, and is never
    repeated automatically once that outcome is recorded.
-9. Effect settlement and the next durable program-counter state are atomic.
-10. Semantic events and operational recovery state are separate journals.
-11. SQLite is the only v0 store and one process owns it exclusively.
-12. Provider, tool, surface, workspace, and product policy stay outside the
+10. Earlier child settlements are durable independently; the final child fact
+    and the next aggregate program-counter state are atomic.
+11. Semantic events and operational recovery state are separate journals.
+12. SQLite is the only v0 store and one process owns it exclusively.
+13. Provider, tool, surface, workspace, and product policy stay outside the
     kernel.
-13. Unknown schema and state versions fail closed before any external action.
-14. Unknown effects remain blocked until an explicit host action; abandonment
-    can close loop-owned history but cannot change the effect into a definite
-    success or failure.
-15. Cancellation is an idempotent, exact-operation durable command. It is
+14. Unknown schema and state versions fail closed before any external action.
+15. Unknown batches remain blocked until an explicit host action; abandonment
+    can close loop-owned history but cannot change any unknown child into a
+    definite success or failure.
+16. Cancellation is an idempotent, exact-operation durable command. It is
     committed before signalling, cannot start new effects, and does not erase
-    whether existing work settled, never dispatched, or may have run.
+    whether each child settled, never dispatched, or may have run.
 
 ## Explicitly open decisions
 

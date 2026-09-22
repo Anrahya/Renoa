@@ -53,8 +53,10 @@ impl Kernel {
                 OperationPhase::Failed,
                 Some(OperationOutcome::Failed { reason }),
             ),
-            LoopDecision::InvokeEffect { binding, .. } => {
-                return Err(KernelError::EffectBindingUnavailable(binding));
+            LoopDecision::InvokeEffects { .. } => {
+                return Err(KernelError::InvalidDecision(
+                    "effect batches must be committed through the effect store".to_owned(),
+                ));
             }
         };
         validate_new_events(&events)?;
@@ -77,7 +79,7 @@ impl Kernel {
             .execute(
                 "UPDATE operations
                  SET phase = ?3, checkpoint_json = ?4, outcome_json = ?5,
-                     input_effect_id = NULL,
+                     input_effect_batch_id = NULL,
                      transition_version = transition_version + 1
                  WHERE operation_id = ?1 AND phase = 'need_decision'
                      AND transition_version = ?2",

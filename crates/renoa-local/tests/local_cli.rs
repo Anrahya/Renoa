@@ -238,7 +238,7 @@ fn authentication_failure_is_clear_and_does_not_block_the_session() {
     let snapshot = kernel.inspect(session_id).expect("inspect failed session");
     assert_eq!(snapshot.operations[0].status, OperationStatus::Failed);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
 }

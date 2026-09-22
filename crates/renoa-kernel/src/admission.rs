@@ -170,7 +170,8 @@ impl Kernel {
                 "INSERT INTO operations (
                     operation_id, session_id, command_id, position, phase,
                     state_version, transition_version, manifest_json, checkpoint_json,
-                    current_effect_id, input_effect_id, outcome_json, next_effect_position
+                    current_effect_batch_id, input_effect_batch_id, outcome_json,
+                    next_effect_batch_position
                  ) VALUES (
                     ?1, ?2, ?3, ?4, 'queued', ?5, 0,
                     NULL, NULL, NULL, NULL, NULL, 0

@@ -1,13 +1,10 @@
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
-use serde_json::Value;
-
 use crate::{
-    AgentId, CancellationId, Checkpoint, Command, EffectId, EventCursor, Kernel, KernelError,
-    NewEvent, OperationId, OperationOutcome, Runtime, RuntimeManifest, SemanticEvent, SessionId,
-    SettledEffect,
+    AgentId, CancellationId, Checkpoint, Command, EffectBatchFacts, EventCursor, Kernel,
+    KernelError, NewEvent, OperationId, OperationOutcome, Runtime, RuntimeManifest, SemanticEvent,
+    SessionId,
     admission::{from_sql_integer, parse_agent_id, parse_operation_id},
     decision_store::append_events,
-    effect_store::mark_outcome_unknown,
+    effect_store::close_dispatched_batch_for_cancellation,
     effect_supervision::signal_running_operation,
     events::{load_event_page, validate_new_events},
     operation_phase::OperationPhase,
@@ -15,31 +12,11 @@ use crate::{
     runtime::require_compatible_checkpoint,
     schema::{json_error, sqlite_error},
 };
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 mod store;
 
-use store::load_cancellation_effect;
-
-/// Exact persisted effect identity without a definite outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnsettledEffect {
-    pub effect_id: EffectId,
-    pub binding: String,
-    pub binding_revision: String,
-    pub request: Value,
-}
-
-/// The durable external-effect fact visible while closing cancellation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CancellationEffect {
-    /// Durable intent exists and dispatch provably never started.
-    NotDispatched(UnsettledEffect),
-    /// The adapter produced one exact definite result.
-    Settled(SettledEffect),
-    /// Dispatch may have happened but no definite result is known.
-    OutcomeUnknown(UnsettledEffect),
-}
+use store::load_cancellation_effect_batch;
 
 /// Owned durable input for loop-defined cancellation closure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +27,7 @@ pub struct CancellationInput {
     pub command: Command,
     pub events: Vec<SemanticEvent>,
     pub checkpoint: Option<Checkpoint>,
-    pub effect: Option<CancellationEffect>,
+    pub effect_batch: Option<EffectBatchFacts>,
 }
 
 /// The loop-owned state and semantic events that close cancellation.
@@ -229,30 +206,37 @@ impl Kernel {
             ));
         }
         if phase == OperationPhase::EffectDispatched {
-            let effect_id = stored.current_effect_id.ok_or_else(|| {
-                KernelError::Corrupt("dispatched operation has no current effect".to_owned())
+            let batch_id = stored.current_effect_batch_id.ok_or_else(|| {
+                KernelError::Corrupt("dispatched operation has no current effect batch".to_owned())
             })?;
-            mark_outcome_unknown(
+            phase = close_dispatched_batch_for_cancellation(
                 &transaction,
                 operation_id,
-                effect_id,
+                batch_id,
                 stored.transition_version,
             )?;
             stored.transition_version = stored
                 .transition_version
                 .checked_add(1)
                 .ok_or_else(|| KernelError::Corrupt("transition version overflowed".to_owned()))?;
-            phase = OperationPhase::OutcomeUnknown;
+            match phase {
+                OperationPhase::NeedDecision => {
+                    stored.current_effect_batch_id = None;
+                    stored.input_effect_batch_id = Some(batch_id);
+                }
+                OperationPhase::OutcomeUnknown => {}
+                _ => unreachable!("batch cancellation closure returns a terminal batch phase"),
+            }
         }
         let manifest = stored.manifest.ok_or_else(|| {
             KernelError::Corrupt("cancelled operation has no manifest".to_owned())
         })?;
-        let effect = load_cancellation_effect(
+        let effect_batch = load_cancellation_effect_batch(
             &transaction,
             operation_id,
             phase,
-            stored.current_effect_id,
-            stored.input_effect_id,
+            stored.current_effect_batch_id,
+            stored.input_effect_batch_id,
             &manifest,
         )?;
         let page = load_event_page(&transaction, session_id, EventCursor::START)?;
@@ -264,7 +248,7 @@ impl Kernel {
                 command: stored.command,
                 events: page.events,
                 checkpoint: stored.checkpoint,
-                effect,
+                effect_batch,
             },
             manifest,
             transition_version: stored.transition_version,
@@ -333,7 +317,7 @@ impl Kernel {
             .execute(
                 "UPDATE operations
                  SET phase = 'cancelled', checkpoint_json = ?4,
-                     current_effect_id = NULL, input_effect_id = NULL,
+                     current_effect_batch_id = NULL, input_effect_batch_id = NULL,
                      outcome_json = ?5, transition_version = transition_version + 1
                  WHERE session_id = ?1 AND operation_id = ?2
                    AND transition_version = ?3 AND phase = ?6",

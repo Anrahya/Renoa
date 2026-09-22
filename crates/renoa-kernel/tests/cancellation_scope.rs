@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use renoa_kernel::{
     AgentId, CancellationId, CancellationInput, CancellationTransition, Checkpoint, Command,
     CommandId, DriveResult, EffectAdapter, EffectBinding, EffectFuture, EffectInvocation,
-    EffectOutcome, EffectRecovery, Kernel, KernelError, LoopBinding, LoopDecision, LoopError,
-    LoopInput, LoopPlugin, OperationOutcome, Runtime, SessionId,
+    EffectOutcome, EffectRecovery, EffectRequest, Kernel, KernelError, LoopBinding, LoopDecision,
+    LoopError, LoopInput, LoopPlugin, OperationOutcome, Runtime, SessionId,
 };
 use tempfile::tempdir;
 use tokio::sync::{Notify, oneshot};
@@ -108,17 +108,19 @@ impl LoopPlugin for ScopeLoop {
         if input.command.content()["mode"] == "pause" {
             return Err(LoopError::new("pause before cancellation"));
         }
-        if input.effect.is_some() {
+        if input.effect_batch.is_some() {
             Ok(LoopDecision::Complete {
                 checkpoint: terminal_checkpoint(),
                 events: Vec::new(),
             })
         } else {
-            Ok(LoopDecision::InvokeEffect {
+            Ok(LoopDecision::InvokeEffects {
                 checkpoint: Checkpoint::new(1, serde_json::json!({"awaiting": true})),
-                binding: "external".to_owned(),
-                request: input.command.content().clone(),
-                recovery: EffectRecovery::NeverReplay,
+                effects: vec![EffectRequest {
+                    binding: "external".to_owned(),
+                    request: input.command.content().clone(),
+                    recovery: EffectRecovery::NeverReplay,
+                }],
             })
         }
     }

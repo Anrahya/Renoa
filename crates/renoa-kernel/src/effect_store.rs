@@ -3,15 +3,21 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    Checkpoint, EffectId, EffectInvocation, EffectOutcome, EffectRecovery, EffectSnapshot,
-    EffectStatus, Kernel, KernelError, OperationId, RuntimeManifest, SettledEffect,
+    Checkpoint, EffectBatchId, EffectId, EffectInvocation, EffectOutcome, EffectRecovery,
+    EffectStatus, Kernel, KernelError, OperationId, RuntimeManifest,
     admission::from_sql_integer,
     cancellation::cancellation_requested,
     operation_phase::OperationPhase,
     schema::{json_error, sqlite_error},
 };
 
+mod dispatch;
+mod projection;
+
+pub(crate) use projection::{load_effect_batch_facts, load_effect_batch_snapshots};
+
 pub(crate) struct PendingEffect {
+    pub(crate) batch_id: EffectBatchId,
     pub(crate) effect_id: EffectId,
     pub(crate) binding: String,
     pub(crate) binding_revision: String,
@@ -22,12 +28,21 @@ pub(crate) struct PendingEffect {
     pub(crate) transition_version: i64,
 }
 
+pub(crate) struct PendingEffectBatch {
+    pub(crate) batch_id: EffectBatchId,
+    pub(crate) effects: Vec<PendingEffect>,
+}
+
 pub(crate) struct NewEffectIntent {
-    pub(crate) checkpoint: Checkpoint,
     pub(crate) binding: String,
     pub(crate) binding_revision: String,
     pub(crate) request: Value,
     pub(crate) recovery: EffectRecovery,
+}
+
+pub(crate) struct NewEffectBatchIntent {
+    pub(crate) checkpoint: Checkpoint,
+    pub(crate) effects: Vec<NewEffectIntent>,
 }
 
 impl PendingEffect {
@@ -37,6 +52,7 @@ impl PendingEffect {
         cancellation: CancellationToken,
     ) -> EffectInvocation {
         EffectInvocation {
+            batch_id: self.batch_id,
             effect_id: self.effect_id,
             binding: self.binding,
             binding_revision: self.binding_revision,
@@ -47,8 +63,16 @@ impl PendingEffect {
     }
 }
 
-pub(crate) enum EffectStart {
-    Invoke(PendingEffect),
+pub(crate) enum EffectBatchStart {
+    Invoke(PendingEffectBatch),
+    Settled,
+    Blocked,
+    CancellationPending,
+}
+
+pub(crate) enum EffectBatchFinish {
+    Retry,
+    Settled,
     Blocked,
     CancellationPending,
 }
@@ -60,187 +84,26 @@ pub(crate) enum EffectIntentCommit {
 }
 
 impl Kernel {
-    pub(crate) fn commit_effect_intent(
+    pub(crate) fn settle_batch_effect(
         &self,
         operation_id: OperationId,
-        expected_transition: i64,
-        intent: &NewEffectIntent,
-    ) -> Result<EffectIntentCommit, KernelError> {
-        let mut connection = self.database.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite_error)?;
-        if cancellation_requested(&transaction, operation_id)? {
-            transaction.commit().map_err(sqlite_error)?;
-            return Ok(EffectIntentCommit::CancellationPending);
-        }
-        let position = transaction
-            .query_row(
-                "SELECT next_effect_position FROM operations
-                 WHERE operation_id = ?1 AND phase = 'need_decision'
-                     AND transition_version = ?2",
-                params![operation_id.to_string(), expected_transition],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(sqlite_error)?
-            .ok_or_else(|| {
-                KernelError::Corrupt("effect intent compare-and-set failed".to_owned())
-            })?;
-        let effect_id = EffectId::new();
-        transaction
-            .execute(
-                "INSERT INTO effects (
-                    effect_id, operation_id, position, binding, binding_revision,
-                    recovery, request_json, status, dispatch_count, outcome_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'intent_committed', 0, NULL)",
-                params![
-                    effect_id.to_string(),
-                    operation_id.to_string(),
-                    position,
-                    &intent.binding,
-                    &intent.binding_revision,
-                    intent.recovery.as_str(),
-                    serde_json::to_string(&intent.request).map_err(json_error)?,
-                ],
-            )
-            .map_err(sqlite_error)?;
-        let changed = transaction
-            .execute(
-                "UPDATE operations
-                 SET phase = 'effect_intent', checkpoint_json = ?3,
-                     current_effect_id = ?4, input_effect_id = NULL,
-                     next_effect_position = next_effect_position + 1,
-                     transition_version = transition_version + 1
-                 WHERE operation_id = ?1 AND phase = 'need_decision'
-                     AND transition_version = ?2",
-                params![
-                    operation_id.to_string(),
-                    expected_transition,
-                    serde_json::to_string(&intent.checkpoint).map_err(json_error)?,
-                    effect_id.to_string(),
-                ],
-            )
-            .map_err(sqlite_error)?;
-        if changed != 1 {
-            return Err(KernelError::Corrupt(
-                "effect intent state update failed".to_owned(),
-            ));
-        }
-        transaction.commit().map_err(sqlite_error)?;
-        Ok(EffectIntentCommit::Committed)
-    }
-
-    pub(crate) fn prepare_effect(
-        &self,
-        operation_id: OperationId,
-        expected_transition: i64,
-    ) -> Result<EffectStart, KernelError> {
-        let next_transition = expected_transition
-            .checked_add(1)
-            .ok_or_else(|| KernelError::Corrupt("transition version overflowed".to_owned()))?;
-        let mut connection = self.database.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite_error)?;
-        if cancellation_requested(&transaction, operation_id)? {
-            transaction.commit().map_err(sqlite_error)?;
-            return Ok(EffectStart::CancellationPending);
-        }
-        let (phase, current_effect_id) = transaction
-            .query_row(
-                "SELECT phase, current_effect_id FROM operations
-                 WHERE operation_id = ?1 AND transition_version = ?2",
-                params![operation_id.to_string(), expected_transition],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-            )
-            .optional()
-            .map_err(sqlite_error)?
-            .ok_or_else(|| {
-                KernelError::Corrupt("effect state changed before dispatch".to_owned())
-            })?;
-        let phase = OperationPhase::from_database(&phase)?;
-        let current_effect_id = current_effect_id
-            .ok_or_else(|| KernelError::Corrupt("effect phase has no current effect".to_owned()))?;
-        let effect_id = parse_effect_id(&current_effect_id)?;
-        let stored = load_prepared_effect(&transaction, effect_id, operation_id)?;
-        let expected_status = phase.active_effect_status()?;
-        if stored.status != expected_status {
-            return Err(KernelError::Corrupt(
-                "effect status does not match operation phase".to_owned(),
-            ));
-        }
-        let request = serde_json::from_str(&stored.request_json).map_err(json_error)?;
-        if phase == OperationPhase::EffectDispatched
-            && stored.recovery == EffectRecovery::NeverReplay
-        {
-            mark_outcome_unknown(&transaction, operation_id, effect_id, expected_transition)?;
-            transaction.commit().map_err(sqlite_error)?;
-            return Ok(EffectStart::Blocked);
-        }
-        let changed = transaction
-            .execute(
-                "UPDATE effects
-                 SET status = 'dispatch_started', dispatch_count = dispatch_count + 1
-                 WHERE effect_id = ?1 AND status = ?2",
-                params![effect_id.to_string(), expected_status],
-            )
-            .map_err(sqlite_error)?;
-        if changed != 1 {
-            return Err(KernelError::Corrupt(
-                "effect dispatch compare-and-set failed".to_owned(),
-            ));
-        }
-        let changed = transaction
-            .execute(
-                "UPDATE operations
-                 SET phase = 'effect_dispatched', transition_version = transition_version + 1
-                 WHERE operation_id = ?1 AND transition_version = ?2 AND phase = ?3",
-                params![
-                    operation_id.to_string(),
-                    expected_transition,
-                    phase.as_str()
-                ],
-            )
-            .map_err(sqlite_error)?;
-        if changed != 1 {
-            return Err(KernelError::Corrupt(
-                "operation dispatch compare-and-set failed".to_owned(),
-            ));
-        }
-        transaction.commit().map_err(sqlite_error)?;
-        Ok(EffectStart::Invoke(PendingEffect {
-            effect_id,
-            binding: stored.binding,
-            binding_revision: stored.binding_revision,
-            request,
-            recovery: stored.recovery,
-            dispatch_count: stored.dispatch_count,
-            transition_version: next_transition,
-        }))
-    }
-
-    pub(crate) fn settle_effect(
-        &self,
-        operation_id: OperationId,
+        batch_id: EffectBatchId,
         effect_id: EffectId,
         expected_transition: i64,
         outcome: &EffectOutcome,
-    ) -> Result<(), KernelError> {
+    ) -> Result<bool, KernelError> {
+        let outcome_json = serde_json::to_string(outcome).map_err(json_error)?;
         let mut connection = self.database.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
+        require_dispatched_batch(&transaction, operation_id, batch_id, expected_transition)?;
         let changed = transaction
             .execute(
-                "UPDATE effects SET status = 'settled', outcome_json = ?2
-                 WHERE effect_id = ?1 AND operation_id = ?3
-                     AND status = 'dispatch_started'",
-                params![
-                    effect_id.to_string(),
-                    serde_json::to_string(outcome).map_err(json_error)?,
-                    operation_id.to_string(),
-                ],
+                "UPDATE effects SET status = 'settled', outcome_json = ?3
+                 WHERE effect_id = ?1 AND batch_id = ?2
+                   AND status = 'dispatch_started'",
+                params![effect_id.to_string(), batch_id.to_string(), outcome_json],
             )
             .map_err(sqlite_error)?;
         if changed != 1 {
@@ -248,103 +111,179 @@ impl Kernel {
                 "effect settlement compare-and-set failed".to_owned(),
             ));
         }
-        let changed = transaction
-            .execute(
-                "UPDATE operations
-                 SET phase = 'need_decision', current_effect_id = NULL,
-                     input_effect_id = ?3, transition_version = transition_version + 1
-                 WHERE operation_id = ?1 AND phase = 'effect_dispatched'
-                     AND transition_version = ?2 AND current_effect_id = ?3",
-                params![
-                    operation_id.to_string(),
-                    expected_transition,
-                    effect_id.to_string(),
-                ],
-            )
-            .map_err(sqlite_error)?;
-        if changed != 1 {
-            return Err(KernelError::Corrupt(
-                "operation effect settlement compare-and-set failed".to_owned(),
-            ));
-        }
-        transaction.commit().map_err(sqlite_error)
+        let finished = transition_batch_if_terminal(
+            &transaction,
+            operation_id,
+            batch_id,
+            expected_transition,
+        )?
+        .is_some();
+        transaction.commit().map_err(sqlite_error)?;
+        Ok(finished)
     }
 
-    pub(crate) fn record_outcome_unknown(
+    pub(crate) fn record_batch_effect_unknown(
         &self,
         operation_id: OperationId,
+        batch_id: EffectBatchId,
         effect_id: EffectId,
         expected_transition: i64,
-    ) -> Result<(), KernelError> {
+    ) -> Result<bool, KernelError> {
         let mut connection = self.database.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error)?;
-        mark_outcome_unknown(&transaction, operation_id, effect_id, expected_transition)?;
-        transaction.commit().map_err(sqlite_error)
+        require_dispatched_batch(&transaction, operation_id, batch_id, expected_transition)?;
+        update_effect_status(
+            &transaction,
+            effect_id,
+            EffectStatus::DispatchStarted,
+            EffectStatus::OutcomeUnknown,
+        )?;
+        let finished = transition_batch_if_terminal(
+            &transaction,
+            operation_id,
+            batch_id,
+            expected_transition,
+        )?
+        .is_some();
+        transaction.commit().map_err(sqlite_error)?;
+        Ok(finished)
     }
 
-    pub(crate) fn load_settled_effect(
+    pub(crate) fn finish_effect_batch_attempt(
         &self,
-        effect_id: EffectId,
         operation_id: OperationId,
-    ) -> Result<SettledEffect, KernelError> {
-        let connection = self.database.connection()?;
-        let (binding, binding_revision, request, outcome) = connection
-            .query_row(
-                "SELECT binding, binding_revision, request_json, outcome_json FROM effects
-                 WHERE effect_id = ?1 AND operation_id = ?2 AND status = 'settled'",
-                params![effect_id.to_string(), operation_id.to_string()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(sqlite_error)?
-            .ok_or_else(|| KernelError::Corrupt("settled input effect is missing".to_owned()))?;
-        Ok(SettledEffect {
-            effect_id,
-            binding,
-            binding_revision,
-            request: serde_json::from_str(&request).map_err(json_error)?,
-            outcome: serde_json::from_str(&outcome).map_err(json_error)?,
+        batch_id: EffectBatchId,
+        expected_transition: i64,
+    ) -> Result<EffectBatchFinish, KernelError> {
+        let mut connection = self.database.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        require_dispatched_batch(&transaction, operation_id, batch_id, expected_transition)?;
+        if cancellation_requested(&transaction, operation_id)? {
+            transaction.commit().map_err(sqlite_error)?;
+            return Ok(EffectBatchFinish::CancellationPending);
+        }
+        let Some(blocked) = transition_batch_if_terminal(
+            &transaction,
+            operation_id,
+            batch_id,
+            expected_transition,
+        )?
+        else {
+            transaction.commit().map_err(sqlite_error)?;
+            return Ok(EffectBatchFinish::Retry);
+        };
+        transaction.commit().map_err(sqlite_error)?;
+        Ok(if blocked {
+            EffectBatchFinish::Blocked
+        } else {
+            EffectBatchFinish::Settled
         })
+    }
+
+    pub(crate) fn load_settled_effect_batch(
+        &self,
+        batch_id: EffectBatchId,
+        operation_id: OperationId,
+    ) -> Result<crate::SettledEffectBatch, KernelError> {
+        let connection = self.database.connection()?;
+        projection::load_settled_effect_batch(&connection, operation_id, batch_id)
     }
 }
 
-pub(crate) fn mark_outcome_unknown(
+fn transition_batch_if_terminal(
     transaction: &rusqlite::Transaction<'_>,
     operation_id: OperationId,
-    effect_id: EffectId,
+    batch_id: EffectBatchId,
     expected_transition: i64,
-) -> Result<(), KernelError> {
-    let changed = transaction
-        .execute(
-            "UPDATE effects SET status = 'outcome_unknown'
-             WHERE effect_id = ?1 AND status = 'dispatch_started'",
-            [effect_id.to_string()],
-        )
-        .map_err(sqlite_error)?;
-    if changed != 1 {
+) -> Result<Option<bool>, KernelError> {
+    let statuses = load_batch_statuses(transaction, operation_id, batch_id)?;
+    if statuses.contains(&EffectStatus::IntentCommitted) {
         return Err(KernelError::Corrupt(
-            "unknown effect compare-and-set failed".to_owned(),
+            "dispatched effect batch contains an unmarked child".to_owned(),
         ));
     }
+    if statuses.contains(&EffectStatus::DispatchStarted) {
+        return Ok(None);
+    }
+    let blocked = statuses.contains(&EffectStatus::OutcomeUnknown);
+    transition_finished_batch(
+        transaction,
+        operation_id,
+        batch_id,
+        expected_transition,
+        blocked,
+    )?;
+    Ok(Some(blocked))
+}
+
+pub(crate) fn close_dispatched_batch_for_cancellation(
+    transaction: &rusqlite::Transaction<'_>,
+    operation_id: OperationId,
+    batch_id: EffectBatchId,
+    expected_transition: i64,
+) -> Result<OperationPhase, KernelError> {
+    require_dispatched_batch(transaction, operation_id, batch_id, expected_transition)?;
+    transaction
+        .execute(
+            "UPDATE effects SET status = 'outcome_unknown'
+             WHERE batch_id = ?1 AND status = 'dispatch_started'",
+            [batch_id.to_string()],
+        )
+        .map_err(sqlite_error)?;
+    let statuses = load_batch_statuses(transaction, operation_id, batch_id)?;
+    if statuses.contains(&EffectStatus::IntentCommitted)
+        || statuses.contains(&EffectStatus::DispatchStarted)
+    {
+        return Err(KernelError::Corrupt(
+            "cancellation could not close every dispatched child".to_owned(),
+        ));
+    }
+    let blocked = statuses.contains(&EffectStatus::OutcomeUnknown);
+    transition_finished_batch(
+        transaction,
+        operation_id,
+        batch_id,
+        expected_transition,
+        blocked,
+    )?;
+    Ok(if blocked {
+        OperationPhase::OutcomeUnknown
+    } else {
+        OperationPhase::NeedDecision
+    })
+}
+
+fn transition_finished_batch(
+    transaction: &rusqlite::Transaction<'_>,
+    operation_id: OperationId,
+    batch_id: EffectBatchId,
+    expected_transition: i64,
+    blocked: bool,
+) -> Result<(), KernelError> {
+    let (phase, current_batch, input_batch): (&str, Option<String>, Option<String>) = if blocked {
+        ("outcome_unknown", Some(batch_id.to_string()), None)
+    } else {
+        ("need_decision", None, Some(batch_id.to_string()))
+    };
     let changed = transaction
         .execute(
             "UPDATE operations
-             SET phase = 'outcome_unknown', transition_version = transition_version + 1
+             SET phase = ?4, current_effect_batch_id = ?5,
+                 input_effect_batch_id = ?6,
+                 transition_version = transition_version + 1
              WHERE operation_id = ?1 AND phase = 'effect_dispatched'
-                 AND transition_version = ?2 AND current_effect_id = ?3",
+               AND transition_version = ?2 AND current_effect_batch_id = ?3",
             params![
                 operation_id.to_string(),
                 expected_transition,
-                effect_id.to_string(),
+                batch_id.to_string(),
+                phase,
+                current_batch,
+                input_batch,
             ],
         )
         .map_err(sqlite_error)?;
@@ -352,56 +291,109 @@ pub(crate) fn mark_outcome_unknown(
         Ok(())
     } else {
         Err(KernelError::Corrupt(
-            "unknown operation compare-and-set failed".to_owned(),
+            "effect batch completion compare-and-set failed".to_owned(),
         ))
     }
 }
 
-pub(crate) fn load_effect_snapshots(
+fn require_dispatched_batch(
+    transaction: &rusqlite::Transaction<'_>,
+    operation_id: OperationId,
+    batch_id: EffectBatchId,
+    expected_transition: i64,
+) -> Result<(), KernelError> {
+    let active = transaction
+        .query_row(
+            "SELECT 1 FROM operations
+             WHERE operation_id = ?1 AND phase = 'effect_dispatched'
+               AND transition_version = ?2 AND current_effect_batch_id = ?3",
+            params![
+                operation_id.to_string(),
+                expected_transition,
+                batch_id.to_string(),
+            ],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(sqlite_error)?
+        .is_some();
+    if active {
+        Ok(())
+    } else {
+        Err(KernelError::Corrupt(
+            "effect batch changed before child settlement".to_owned(),
+        ))
+    }
+}
+
+fn update_effect_status(
+    transaction: &rusqlite::Transaction<'_>,
+    effect_id: EffectId,
+    expected: EffectStatus,
+    next: EffectStatus,
+) -> Result<(), KernelError> {
+    let changed = transaction
+        .execute(
+            "UPDATE effects SET status = ?3
+             WHERE effect_id = ?1 AND status = ?2",
+            params![
+                effect_id.to_string(),
+                status_name(expected),
+                status_name(next)
+            ],
+        )
+        .map_err(sqlite_error)?;
+    if changed == 1 {
+        Ok(())
+    } else {
+        Err(KernelError::Corrupt(
+            "effect status compare-and-set failed".to_owned(),
+        ))
+    }
+}
+
+fn load_batch_statuses(
     connection: &rusqlite::Connection,
     operation_id: OperationId,
-) -> Result<Vec<EffectSnapshot>, KernelError> {
+    batch_id: EffectBatchId,
+) -> Result<Vec<EffectStatus>, KernelError> {
     let mut statement = connection
         .prepare(
-            "SELECT effect_id, position, binding, binding_revision, recovery,
-                    request_json, status, dispatch_count, outcome_json
-             FROM effects WHERE operation_id = ?1 ORDER BY position",
+            "SELECT e.position, e.status
+             FROM effect_batches AS b
+             JOIN effects AS e ON e.batch_id = b.batch_id
+             WHERE b.operation_id = ?1 AND b.batch_id = ?2
+             ORDER BY e.position",
         )
         .map_err(sqlite_error)?;
     let rows = statement
-        .query_map([operation_id.to_string()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, i64>(7)?,
-                row.get::<_, Option<String>>(8)?,
-            ))
-        })
+        .query_map(
+            params![operation_id.to_string(), batch_id.to_string()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
         .map_err(sqlite_error)?;
-    let mut effects = Vec::new();
-    for row in rows {
-        let (id, position, binding, revision, recovery, request, status, dispatches, outcome) =
-            row.map_err(sqlite_error)?;
-        effects.push(EffectSnapshot {
-            effect_id: parse_effect_id(&id)?,
-            position: from_sql_integer(position, "effect position")?,
-            binding,
-            binding_revision: revision,
-            recovery: parse_recovery(&recovery)?,
-            request: serde_json::from_str(&request).map_err(json_error)?,
-            status: parse_status(&status)?,
-            dispatch_count: from_sql_integer(dispatches, "effect dispatch count")?,
-            outcome: outcome
-                .map(|value| serde_json::from_str(&value).map_err(json_error))
-                .transpose()?,
-        });
+    let mut statuses = Vec::new();
+    for (expected_position, row) in rows.enumerate() {
+        let (position, status) = row.map_err(sqlite_error)?;
+        if from_sql_integer(position, "effect position")? != expected_position as u64 {
+            return Err(KernelError::Corrupt(
+                "effect batch child positions are not gapless".to_owned(),
+            ));
+        }
+        statuses.push(parse_status(&status)?);
     }
-    Ok(effects)
+    if statuses.is_empty() {
+        return Err(KernelError::Corrupt(
+            "effect batch contains no children".to_owned(),
+        ));
+    }
+    Ok(statuses)
+}
+
+pub(crate) fn parse_effect_batch_id(value: &str) -> Result<EffectBatchId, KernelError> {
+    uuid::Uuid::parse_str(value)
+        .map(EffectBatchId::from_uuid)
+        .map_err(|error| KernelError::Corrupt(format!("invalid effect batch id: {error}")))
 }
 
 pub(crate) fn parse_effect_id(value: &str) -> Result<EffectId, KernelError> {
@@ -410,54 +402,7 @@ pub(crate) fn parse_effect_id(value: &str) -> Result<EffectId, KernelError> {
         .map_err(|error| KernelError::Corrupt(format!("invalid effect id: {error}")))
 }
 
-/// One persisted effect row prepared for dispatch, with the dispatch count the
-/// row will hold once this dispatch is committed.
-struct PreparedEffect {
-    binding: String,
-    binding_revision: String,
-    recovery: EffectRecovery,
-    request_json: String,
-    status: String,
-    dispatch_count: u64,
-}
-
-fn load_prepared_effect(
-    transaction: &rusqlite::Transaction<'_>,
-    effect_id: EffectId,
-    operation_id: OperationId,
-) -> Result<PreparedEffect, KernelError> {
-    let (binding, binding_revision, recovery, request_json, status, dispatch_count) = transaction
-        .query_row(
-            "SELECT binding, binding_revision, recovery, request_json, status, dispatch_count
-             FROM effects WHERE effect_id = ?1 AND operation_id = ?2",
-            params![effect_id.to_string(), operation_id.to_string()],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, i64>(5)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sqlite_error)?
-        .ok_or_else(|| KernelError::Corrupt("current effect is missing".to_owned()))?;
-    Ok(PreparedEffect {
-        binding,
-        binding_revision,
-        recovery: parse_recovery(&recovery)?,
-        request_json,
-        status,
-        dispatch_count: from_sql_integer(dispatch_count, "effect dispatch count")?
-            .checked_add(1)
-            .ok_or_else(|| KernelError::Corrupt("effect dispatch count overflowed".to_owned()))?,
-    })
-}
-
-fn parse_recovery(value: &str) -> Result<EffectRecovery, KernelError> {
+pub(crate) fn parse_recovery(value: &str) -> Result<EffectRecovery, KernelError> {
     match value {
         "safe_to_replay" => Ok(EffectRecovery::SafeToReplay),
         "never_replay" => Ok(EffectRecovery::NeverReplay),
@@ -467,7 +412,7 @@ fn parse_recovery(value: &str) -> Result<EffectRecovery, KernelError> {
     }
 }
 
-fn parse_status(value: &str) -> Result<EffectStatus, KernelError> {
+pub(crate) fn parse_status(value: &str) -> Result<EffectStatus, KernelError> {
     match value {
         "intent_committed" => Ok(EffectStatus::IntentCommitted),
         "dispatch_started" => Ok(EffectStatus::DispatchStarted),
@@ -476,5 +421,14 @@ fn parse_status(value: &str) -> Result<EffectStatus, KernelError> {
         _ => Err(KernelError::Corrupt(format!(
             "unknown effect status `{value}`"
         ))),
+    }
+}
+
+const fn status_name(status: EffectStatus) -> &'static str {
+    match status {
+        EffectStatus::IntentCommitted => "intent_committed",
+        EffectStatus::DispatchStarted => "dispatch_started",
+        EffectStatus::Settled => "settled",
+        EffectStatus::OutcomeUnknown => "outcome_unknown",
     }
 }

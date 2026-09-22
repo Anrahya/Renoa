@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex, Weak};
 
 use renoa_kernel::{
-    AgentId, CancellationEffect, CancellationId, CancellationInput, CancellationTransition,
-    Checkpoint, Command, CommandId, DriveResult, EffectAdapter, EffectBinding, EffectCompletion,
-    EffectFuture, EffectInvocation, EffectOutcome, EffectRecovery, EffectStatus, EventCursor,
-    Kernel, KernelError, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin, NewEvent,
-    OperationId, OperationOutcome, OperationStatus, Runtime, SessionId, UnknownEffectAbandonment,
-    UnknownEffectInput,
+    AgentId, CancellationId, CancellationInput, CancellationTransition, Checkpoint, Command,
+    CommandId, DriveResult, EffectAdapter, EffectBinding, EffectCompletion, EffectFact,
+    EffectFuture, EffectInvocation, EffectOutcome, EffectRecovery, EffectRequest, EffectStatus,
+    EventCursor, Kernel, KernelError, LoopBinding, LoopDecision, LoopError, LoopInput, LoopPlugin,
+    NewEvent, OperationId, OperationOutcome, OperationStatus, Runtime, SessionId,
+    UnknownEffectAbandonment, UnknownEffectInput,
 };
 use tempfile::tempdir;
 
@@ -38,7 +38,7 @@ async fn exact_intent_and_dispatch_are_durable_before_adapter_invocation() {
 
     assert!(*observed.lock().expect("observation lock"));
     let snapshot = kernel.inspect(session_id).expect("inspect session");
-    let effect = &snapshot.operations[0].effects[0];
+    let effect = &snapshot.operations[0].effect_batches[0].effects[0];
     assert_eq!(effect.request, request);
     assert_eq!(effect.status, EffectStatus::Settled);
     assert_eq!(effect.dispatch_count, 1);
@@ -101,7 +101,10 @@ async fn a_possibly_dispatched_safe_effect_replays_with_exact_identity() {
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect recovered session");
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 2);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        2
+    );
 }
 
 #[tokio::test]
@@ -163,7 +166,7 @@ async fn a_possibly_dispatched_unsafe_effect_becomes_unknown_without_replay() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
 }
@@ -218,8 +221,8 @@ async fn a_live_unknown_safe_effect_is_replayed_through_the_same_effect_row() {
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect replayed session");
-    assert_eq!(snapshot.operations[0].effects.len(), 1);
-    let effect = &snapshot.operations[0].effects[0];
+    assert_eq!(snapshot.operations[0].effect_batches[0].effects.len(), 1);
+    let effect = &snapshot.operations[0].effect_batches[0].effects[0];
     assert_eq!(effect.status, EffectStatus::Settled);
     assert_eq!(effect.dispatch_count, 2);
     assert_eq!(
@@ -286,7 +289,7 @@ async fn a_second_live_unknown_safe_dispatch_becomes_durable_unknown_without_a_t
         snapshot.operations[0].status,
         OperationStatus::OutcomeUnknown
     );
-    let effect = &snapshot.operations[0].effects[0];
+    let effect = &snapshot.operations[0].effect_batches[0].effects[0];
     assert_eq!(effect.status, EffectStatus::OutcomeUnknown);
     assert_eq!(effect.dispatch_count, 2);
     assert_eq!(effect.outcome, None);
@@ -346,10 +349,13 @@ async fn a_live_unknown_never_replay_effect_is_never_redispatched() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 1);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        1
+    );
 }
 
 #[tokio::test]
@@ -398,9 +404,12 @@ async fn a_cancellation_requested_during_a_live_unknown_dispatch_prevents_the_re
         .inspect(session_id)
         .expect("inspect cancelled session");
     assert_eq!(snapshot.operations[0].status, OperationStatus::Cancelled);
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 1);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        1
+    );
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
 }
@@ -435,10 +444,13 @@ async fn settled_effect_and_next_loop_input_are_atomic_and_never_repeated() {
     let settled = kernel.inspect(session_id).expect("inspect settlement");
     assert_eq!(settled.operations[0].status, OperationStatus::Running);
     assert_eq!(
-        settled.operations[0].effects[0].status,
+        settled.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
-    assert_eq!(settled.operations[0].effects[0].dispatch_count, 1);
+    assert_eq!(
+        settled.operations[0].effect_batches[0].effects[0].dispatch_count,
+        1
+    );
     assert!(
         kernel
             .events_after(session_id, EventCursor::START)
@@ -508,21 +520,23 @@ struct EffectLoop {
 
 impl LoopPlugin for EffectLoop {
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
-        match input.effect {
-            None => Ok(LoopDecision::InvokeEffect {
+        match input.effect_batch {
+            None => Ok(LoopDecision::InvokeEffects {
                 checkpoint: Checkpoint::new(1, serde_json::json!({"step": "effect_requested"})),
-                binding: "external".to_owned(),
-                request: input.command.content().clone(),
-                recovery: self.recovery,
+                effects: vec![EffectRequest {
+                    binding: "external".to_owned(),
+                    request: input.command.content().clone(),
+                    recovery: self.recovery,
+                }],
             }),
-            Some(_effect) if self.fail_after_effect => {
+            Some(_batch) if self.fail_after_effect => {
                 Err(LoopError::new("injected post-settlement failure"))
             }
-            Some(effect) => Ok(LoopDecision::Complete {
+            Some(batch) => Ok(LoopDecision::Complete {
                 checkpoint: Checkpoint::new(1, serde_json::json!({"step": "done"})),
                 events: vec![NewEvent::new(
                     "effect_result",
-                    serde_json::to_value(effect.outcome).expect("serialize outcome"),
+                    serde_json::to_value(&batch.effects[0].outcome).expect("serialize outcome"),
                 )],
             }),
         }
@@ -533,7 +547,13 @@ impl LoopPlugin for EffectLoop {
         input: CancellationInput,
     ) -> Result<CancellationTransition, LoopError> {
         assert!(
-            matches!(input.effect, Some(CancellationEffect::OutcomeUnknown(_))),
+            matches!(
+                input
+                    .effect_batch
+                    .as_ref()
+                    .and_then(|batch| batch.effects.first()),
+                Some(EffectFact::OutcomeUnknown(_))
+            ),
             "a dispatched effect must be classified as possibly run when cancellation closes it"
         );
         Ok(CancellationTransition {
@@ -640,7 +660,7 @@ impl EffectAdapter for ObservingAdapter {
         let snapshot = kernel
             .inspect(self.session_id)
             .expect("inspect during effect");
-        let effect = &snapshot.operations[0].effects[0];
+        let effect = &snapshot.operations[0].effect_batches[0].effects[0];
         assert_eq!(effect.status, EffectStatus::DispatchStarted);
         assert_eq!(effect.request, self.expected_request);
         assert_eq!(effect.dispatch_count, 1);

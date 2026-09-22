@@ -12,7 +12,8 @@ pub fn recorded_token_usage(snapshot: &SessionSnapshot) -> Option<TokenUsage> {
     for effect in snapshot
         .operations
         .iter()
-        .flat_map(|operation| &operation.effects)
+        .flat_map(|operation| &operation.effect_batches)
+        .flat_map(|batch| &batch.effects)
         .filter(|effect| effect.binding == MODEL_EFFECT_BINDING)
     {
         let Some(EffectOutcome::Success(value)) = &effect.outcome else {

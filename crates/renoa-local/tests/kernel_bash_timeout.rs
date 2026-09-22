@@ -102,9 +102,13 @@ async fn bash_timeout_stops_the_process_tree_and_reaches_the_model_durably() {
 
     let snapshot = kernel.inspect(session_id).expect("inspect timeout turn");
     let operation = &snapshot.operations[0];
-    assert_eq!(operation.effects.len(), 3);
-    assert_eq!(operation.effects[1].recovery, EffectRecovery::NeverReplay);
-    let Some(EffectOutcome::Success(value)) = &operation.effects[1].outcome else {
+    assert_eq!(operation.effect_batches.len(), 3);
+    assert_eq!(
+        operation.effect_batches[1].effects[0].recovery,
+        EffectRecovery::NeverReplay
+    );
+    let Some(EffectOutcome::Success(value)) = &operation.effect_batches[1].effects[0].outcome
+    else {
         panic!("Bash timeout did not settle as a durable tool result")
     };
     let durable_result: ToolResult =

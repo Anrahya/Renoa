@@ -183,12 +183,15 @@ async fn post_dispatch_socket_reset_never_settles_a_definite_kernel_failure() {
         OperationStatus::OutcomeUnknown
     );
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::OutcomeUnknown
     );
-    assert_eq!(snapshot.operations[0].effects[0].outcome, None);
     assert_eq!(
-        snapshot.operations[0].effects[0].dispatch_count, 2,
+        snapshot.operations[0].effect_batches[0].effects[0].outcome,
+        None
+    );
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count, 2,
         "the live unknown outcome must replay once through the same effect"
     );
     // Each dispatch may spend its own transport retry budget, so the total
@@ -238,12 +241,15 @@ async fn a_truncated_provider_stream_replays_the_model_effect_and_completes_the_
     let snapshot = kernel
         .inspect(session_id)
         .expect("inspect replayed truncated stream");
-    assert_eq!(snapshot.operations[0].effects.len(), 1);
+    assert_eq!(snapshot.operations[0].effect_batches.len(), 1);
     assert_eq!(
-        snapshot.operations[0].effects[0].status,
+        snapshot.operations[0].effect_batches[0].effects[0].status,
         EffectStatus::Settled
     );
-    assert_eq!(snapshot.operations[0].effects[0].dispatch_count, 2);
+    assert_eq!(
+        snapshot.operations[0].effect_batches[0].effects[0].dispatch_count,
+        2
+    );
 
     let received = received.lock().expect("request lock");
     assert_eq!(

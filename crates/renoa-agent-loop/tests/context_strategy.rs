@@ -173,7 +173,7 @@ async fn strategy_failure_is_retryable_and_precedes_model_dispatch() {
     let failed = kernel
         .inspect(session_id)
         .expect("inspect failed projection");
-    assert!(failed.operations[0].effects.is_empty());
+    assert!(failed.operations[0].effect_batches.is_empty());
     assert_eq!(
         kernel
             .events_after(session_id, EventCursor::START)
@@ -216,7 +216,7 @@ async fn recovery_reuses_the_persisted_projection_and_freezes_its_revision() {
     let interrupted = kernel
         .inspect(session_id)
         .expect("inspect interrupted model");
-    let original_effect = interrupted.operations[0].effects[0].clone();
+    let original_effect = interrupted.operations[0].effect_batches[0].effects[0].clone();
     let original_request: ModelRequest =
         serde_json::from_value(original_effect.request.clone()).expect("decode model request");
     assert_eq!(
@@ -264,7 +264,7 @@ async fn recovery_reuses_the_persisted_projection_and_freezes_its_revision() {
     );
 
     let recovered = kernel.inspect(session_id).expect("inspect recovered model");
-    let replayed_effect = &recovered.operations[0].effects[0];
+    let replayed_effect = &recovered.operations[0].effect_batches[0].effects[0];
     assert_eq!(replayed_effect.effect_id, original_effect.effect_id);
     assert_eq!(replayed_effect.request, original_effect.request);
     assert_eq!(replayed_effect.dispatch_count, 2);
