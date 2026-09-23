@@ -8,20 +8,38 @@ use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, To
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{AgentId, EffectRecovery, SessionId};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(crate) fn binding(host: Arc<HostConfig>, session: SessionId) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-routine-results-v1", Arc::new(Results {
+    AgentToolBinding::new("renoa-routine-results-v2", Arc::new(Results {
         host:LocalHost {config:host}, session,
         spec:ToolSpec {
             name:capabilities::ROUTINE_RESULTS.to_owned(),
             description:"Read results from this Host's scheduled or manually triggered routine runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task, output and execution session. An agent reads only its own results; reading another agent's results needs the agent_manage capability and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
-            input_schema:json!({"type":"object","properties":{"action":{"enum":["list","read"]},"agent_id":{"type":"string","format":"uuid"},"before":{"type":"integer","minimum":1},"id":{"type":"string","format":"uuid"}},"required":["action"],"additionalProperties":false,"oneOf":[{"properties":{"action":{"const":"list"},"id":false}},{"properties":{"action":{"const":"read"},"agent_id":false,"before":false},"required":["id"]}]}),
+            input_schema:input_schema(),
         },
     }), EffectRecovery::SafeToReplay)
+}
+
+pub(super) fn input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "read"],
+                "description": "list: optional agent_id and before. read: required id only. Pass only fields for the selected action."
+            },
+            "agent_id": {"type": "string", "format": "uuid"},
+            "before": {"type": "integer", "minimum": 1},
+            "id": {"type": "string", "format": "uuid"}
+        },
+        "required": ["action"],
+        "additionalProperties": false
+    })
 }
 struct Results {
     host: LocalHost,
@@ -39,6 +57,7 @@ enum Input {
         id: Uuid,
     },
 }
+
 impl Tool for Results {
     fn spec(&self) -> &ToolSpec {
         &self.spec
@@ -92,5 +111,27 @@ impl Tool for Results {
                 is_error: false,
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::Input;
+
+    #[test]
+    fn action_variants_still_reject_foreign_or_missing_fields() {
+        assert!(
+            serde_json::from_value::<Input>(json!({"action": "list", "id": Uuid::nil()})).is_err()
+        );
+        assert!(serde_json::from_value::<Input>(json!({"action": "read"})).is_err());
+        assert!(
+            serde_json::from_value::<Input>(
+                json!({"action": "read", "id": Uuid::nil(), "before": 1})
+            )
+            .is_err()
+        );
     }
 }

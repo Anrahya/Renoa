@@ -5,11 +5,53 @@ use crate::{
 };
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
 use renoa_kernel::AgentId;
+use serde_json::{Value, json};
 use std::{fs, path::Path, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 struct Quiet;
+
+#[test]
+fn routine_model_schemas_avoid_unaccepted_unions_and_keep_action_guidance() {
+    fn assert_no_one_of(value: &Value) {
+        match value {
+            Value::Object(fields) => {
+                assert!(
+                    !fields.contains_key("oneOf"),
+                    "provider rejects oneOf: {value}"
+                );
+                for child in fields.values() {
+                    assert_no_one_of(child);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    assert_no_one_of(child);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let manage = tool::input_schema();
+    let results = result_tool::input_schema();
+    assert_no_one_of(&manage);
+    assert_no_one_of(&results);
+    assert_eq!(
+        manage["properties"]["action"]["enum"],
+        json!(["list", "get", "create", "update", "run_now", "delete"])
+    );
+    assert_eq!(
+        manage["properties"]["spec"]["properties"]["schedule"]["properties"]["kind"]["enum"],
+        json!(["once", "daily", "interval"])
+    );
+    assert_eq!(
+        results["properties"]["action"]["enum"],
+        json!(["list", "read"])
+    );
+}
+
 impl AgentEventSink for Quiet {
     fn emit(&self, _: AgentEvent) -> BoxFuture<'_, ()> {
         Box::pin(async {})
