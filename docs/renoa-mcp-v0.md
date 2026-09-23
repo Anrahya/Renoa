@@ -457,10 +457,13 @@ Self-reported `serverInfo.name` is never identity.
 MCP names never become top-level model tool names. A direct-MCP agent can
 select three small, provider-neutral Host tools:
 
-- `tool_search` searches names, services, and descriptions and returns a page
-  of at most 20 compact matches containing only names, descriptions, and exact
-  references, never schemas. An optional offset and returned `next_offset`
-  allow browsing later matches. One result is capped at 16 KiB;
+- `tool_search` searches names, services, and descriptions. Its model-facing
+  guidance asks for a targeted search first, then `*` if the needed tool is not
+  found.
+  Each page returns at most 200 individual tools from enabled MCP connections,
+  containing only names, short descriptions, and exact references, never
+  schemas. An optional offset and returned `next_offset` allow browsing later
+  matches;
 - `tool_load` accepts one through three unchanged references and returns their
   exact model-facing descriptions and input schemas, bounded to 64 KiB total;
 - `tool_execute` accepts one unchanged reference plus an argument object and
@@ -683,7 +686,7 @@ not duplicate them.
 Discovery and search never load schemas into model context. Every normal profile
 request carries the same three small registry specifications, independent of
 whether the Host has zero, ten, or one thousand external tools. Search returns
-at most 20 short summaries in a 16 KiB page. Only a successful `tool_load`
+at most 200 short summaries per page. Only a successful `tool_load`
 result inserts the requested model-facing schemas into conversation history,
 where normal context and compaction rules apply. Server instructions, endpoint
 URLs, cache hints, output schemas, adapter bookkeeping, and every unloaded

@@ -2,7 +2,7 @@ use std::{cmp::Reverse, collections::HashSet, fmt, str::FromStr};
 
 use super::{McpHostError, validate_identity};
 
-pub(crate) const SEARCH_RESULT_LIMIT: usize = 20;
+pub(crate) const SEARCH_RESULT_LIMIT: usize = 200;
 pub(crate) const LOAD_REFERENCE_LIMIT: usize = 3;
 pub(crate) const LOAD_OUTPUT_BYTES: usize = 64 * 1_024;
 const QUERY_BYTES: usize = 256;
@@ -286,10 +286,10 @@ mod tests {
             ranked.matches.first().expect("first match").name,
             "tool_000"
         );
-        assert_eq!(ranked.matches.last().expect("last match").name, "tool_019");
+        assert_eq!(ranked.matches.last().expect("last match").name, "tool_199");
         let second = rank_tools(tools.clone(), "tool", SEARCH_RESULT_LIMIT).expect("second page");
         assert_eq!(second.total_matches, 201);
-        assert_eq!(second.matches.first().expect("next match").name, "tool_020");
+        assert_eq!(second.matches.first().expect("next match").name, "tool_200");
         let last = rank_tools(tools, "tool", 200).expect("last page");
         assert_eq!(last.matches.len(), 1);
         assert_eq!(last.matches[0].name, "tool_200");

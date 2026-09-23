@@ -10,7 +10,7 @@ use super::{
 use crate::AgentId;
 use crate::mcp::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
-    McpCatalogStore, McpCatalogTool, SEARCH_RESULT_LIMIT,
+    McpCatalogStore, McpCatalogTool,
 };
 
 #[test]
@@ -36,7 +36,7 @@ fn schema_loading_rejects_duplicate_and_oversized_batches() {
 }
 
 #[tokio::test]
-async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump() {
+async fn registry_search_pages_individual_tools_without_loading_schemas() {
     let directory = tempdir().expect("temporary Host catalog");
     let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("initialize Host catalog");
@@ -83,27 +83,19 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
 
     let after = run_search(&search_tool, "*").await;
     assert_eq!(after["total_matches"], 1_000);
-    assert!(
-        serde_json::to_vec(&after)
-            .expect("encode search result")
-            .len()
-            <= 16 * 1_024,
-        "one discovery result must fit its model-context budget"
-    );
     let first_page = after["matches"].as_array().expect("search matches array");
-    assert!(!first_page.is_empty());
-    assert!(first_page.len() <= SEARCH_RESULT_LIMIT);
-    assert_eq!(after["next_offset"], first_page.len());
-    let next = run_search_at(&search_tool, "*", first_page.len()).await;
+    assert_eq!(first_page.len(), 200);
+    assert_eq!(after["next_offset"], 200);
+    let next = run_search_at(&search_tool, "*", 200).await;
     assert_eq!(next["total_matches"], 1_000);
-    assert_eq!(
-        next["matches"][0]["name"],
-        format!("tool_{:04}", first_page.len())
-    );
-    assert!(serde_json::to_vec(&next).unwrap().len() <= 16 * 1_024);
+    assert_eq!(next["matches"].as_array().unwrap().len(), 200);
+    assert_eq!(next["matches"][0]["name"], "tool_0200");
     let last = run_search_at(&search_tool, "*", 999).await;
     assert_eq!(last["matches"][0]["name"], "tool_0999");
     assert_eq!(last["next_offset"], Value::Null);
+    let targeted = run_search(&search_tool, "0999").await;
+    assert_eq!(targeted["total_matches"], 1);
+    assert_eq!(targeted["matches"][0]["name"], "tool_0999");
     let first = after["matches"][0]
         .as_object()
         .expect("compact search match object");

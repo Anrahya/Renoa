@@ -30,7 +30,7 @@ pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 const SEARCH_TOOL: &str = crate::capabilities::TOOL_SEARCH;
 const LOAD_TOOL: &str = crate::capabilities::TOOL_LOAD;
 const EXECUTE_TOOL: &str = crate::capabilities::TOOL_EXECUTE;
-const SEARCH_REVISION: &str = "renoa-mcp-registry-v5/search";
+const SEARCH_REVISION: &str = "renoa-mcp-registry-v6/search";
 const LOAD_REVISION: &str = "renoa-mcp-registry-v2/load";
 const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
 

@@ -9,8 +9,6 @@ use tokio_util::sync::CancellationToken;
 use super::{SEARCH_TOOL, background_error, decode_call, host_error, require_active};
 use crate::mcp::{McpCatalogStore, McpHostError, SEARCH_RESULT_LIMIT, rank_tools};
 
-const SEARCH_OUTPUT_BYTES: usize = 16 * 1_024;
-
 pub(super) struct SearchTool {
     agent_id: AgentId,
     store: McpCatalogStore,
@@ -25,14 +23,14 @@ impl SearchTool {
             spec: ToolSpec {
                 name: SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find enabled tools without loading schemas. Returns a page of at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Use query `*` to browse; pass next_offset with the same query for another page. Call tool_load before executing a reference."
+                    "Search enabled MCP tools by capability first. If the needed tool is not found, use `*` to browse. Returns up to {SEARCH_RESULT_LIMIT} individual tools per page with compact descriptions and exact references, without schemas. Follow next_offset with the same query for more matches. Call tool_load before executing a reference."
                 ),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Capability, service, or tool to find; use * to browse."
+                            "description": "Capability, service, or tool to find. Use * if the needed tool is not found."
                         },
                         "offset": {
                             "type": "integer",
@@ -84,30 +82,20 @@ impl Tool for SearchTool {
                 })
                 .collect::<Result<Vec<_>, McpHostError>>()
                 .map_err(host_error)?;
-            let mut output = SearchOutput {
+            let consumed = input.offset.saturating_add(matches.len());
+            let output = SearchOutput {
                 matches,
                 total_matches: ranked.total_matches,
-                next_offset: None,
+                next_offset: (consumed < ranked.total_matches).then_some(consumed),
             };
-            loop {
-                let consumed = input.offset.saturating_add(output.matches.len());
-                output.next_offset = (consumed < output.total_matches).then_some(consumed);
-                let encoded = serde_json::to_string(&output).map_err(|error| {
-                    ToolError::internal(format!("tool search result could not be encoded: {error}"))
-                })?;
-                if encoded.len() <= SEARCH_OUTPUT_BYTES {
-                    return Ok(ToolOutput {
-                        content: vec![ContentBlock::text(encoded)],
-                        details: None,
-                        is_error: false,
-                    });
-                }
-                if output.matches.pop().is_none() {
-                    return Err(ToolError::output_limit(
-                        "one tool search match exceeds the output budget",
-                    ));
-                }
-            }
+            let encoded = serde_json::to_string(&output).map_err(|error| {
+                ToolError::internal(format!("tool search result could not be encoded: {error}"))
+            })?;
+            Ok(ToolOutput {
+                content: vec![ContentBlock::text(encoded)],
+                details: None,
+                is_error: false,
+            })
         })
     }
 }
