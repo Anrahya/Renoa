@@ -60,8 +60,8 @@ export RENOA_OAUTH_RELAY_DEVICE_CREDENTIAL_FILE='/absolute/path/to/owner-only/no
 Arcee's stored agent definition supplies her behavior and capabilities; the
 provider and model come from the launch settings above. The model adapter
 remains a replaceable Host component shared with other agents; Telegram
-contains no provider-specific request code. A future Discord surface can call
-the same session configuration methods without moving model state into Discord.
+contains no provider-specific request code. Discord uses the same Host model
+configuration without moving model state into its surface.
 `RENOA_CODE_MODE_WORKER` is optional, but required if this agent selects
 `code_mode`; it must name the exact-pinned executable documented in
 [`deploy/README.md`](../../deploy/README.md). Selecting Code Mode also requires

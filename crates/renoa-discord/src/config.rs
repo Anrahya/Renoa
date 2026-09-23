@@ -70,8 +70,7 @@ impl Config {
         {
             if !path.is_absolute() {
                 return Err(DiscordError::Invalid(
-                    "workspace, model_bridge, and model_auth_store must be absolute paths"
-                        .to_owned(),
+                    "workspace, model_bridge, model_auth_store, mcp_adapter, and code_mode_worker must be absolute paths".to_owned(),
                 ));
             }
         }

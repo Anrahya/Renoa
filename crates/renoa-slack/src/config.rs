@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use renoa_local::{
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
+    validate_code_mode_worker,
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -69,14 +70,17 @@ impl Config {
                 "allowed_user_id must be a Slack member ID".to_owned(),
             ));
         }
-        std::fs::create_dir_all(&config.data_directory)?;
-        config.data_directory = std::fs::canonicalize(&config.data_directory)?;
+        if let Some(worker) = &config.code_mode_worker {
+            validate_code_mode_worker(worker).map_err(SlackError::Invalid)?;
+        }
         config.workspace = std::fs::canonicalize(&config.workspace)?;
         if !config.workspace.is_dir() {
             return Err(SlackError::Invalid(
                 "workspace must be a directory".to_owned(),
             ));
         }
+        std::fs::create_dir_all(&config.data_directory)?;
+        config.data_directory = std::fs::canonicalize(&config.data_directory)?;
         Ok(config)
     }
 
@@ -170,6 +174,41 @@ pub(crate) fn read_token(path: &Path, prefix: &str) -> Result<String, SlackError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_code_mode_worker_does_not_create_slack_data_directory() {
+        let directory = tempfile::tempdir().expect("directory");
+        let data_directory = directory.path().join("uncreated-slack-data");
+        let config_path = directory.path().join("slack.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec(&serde_json::json!({
+                "data_directory": data_directory,
+                "workspace": directory.path(),
+                "agent_id": Uuid::nil(),
+                "allowed_user_id": "U3",
+                "bot_token_file": directory.path().join("bot"),
+                "app_token_file": directory.path().join("app"),
+                "model_bridge": directory.path().join("bridge.mjs"),
+                "providers": ["opencode-go"],
+                "provider": "opencode-go",
+                "model": "fixture",
+                "model_auth_store": directory.path().join("auth.sqlite"),
+                "code_mode_worker": directory.path().join("missing-monty"),
+            }))
+            .expect("encode config"),
+        )
+        .expect("write config");
+
+        let error = Config::read(&config_path)
+            .err()
+            .expect("worker must be refused");
+        assert!(error.to_string().contains("Monty worker"), "{error}");
+        assert!(
+            !data_directory.exists(),
+            "invalid worker must leave no Slack data directory"
+        );
+    }
 
     #[tokio::test]
     async fn preflight_resolves_the_actual_catalog_and_inspection_needs_no_execution_files() {

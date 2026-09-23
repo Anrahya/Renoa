@@ -92,8 +92,10 @@ surface.
 `RENOA_CODE_MODE_WORKER` is the absolute path to the exact-pinned Monty binary.
 It is used only when the agent's selected capabilities include `code_mode`,
 which exposes Python MCP execution while hiding direct `tool_execute` from the
-model. The Host refuses a missing or different binary before opening its data
-root; installing it alone does not change an agent's selection.
+model. If configured, a missing or different binary is refused before the Host
+opens its data root. An agent selecting `code_mode` without a configured worker
+is refused when its runtime is assembled. Installing the worker alone does not
+change an agent's selection.
 `RENOA_MCP_REGISTRY_ADAPTER` is the absolute path to the built read-only
 official MCP Registry adapter. It enables the `extension_manage` `search` and
 exact `lookup` actions. Registry metadata remains publisher-supplied research
