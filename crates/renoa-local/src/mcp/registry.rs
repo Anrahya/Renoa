@@ -2,7 +2,7 @@ use std::{cmp::Reverse, collections::HashSet, fmt, str::FromStr};
 
 use super::{McpHostError, validate_identity};
 
-pub(crate) const SEARCH_RESULT_LIMIT: usize = 200;
+pub(crate) const SEARCH_RESULT_LIMIT: usize = 20;
 pub(crate) const LOAD_REFERENCE_LIMIT: usize = 3;
 pub(crate) const LOAD_OUTPUT_BYTES: usize = 64 * 1_024;
 const QUERY_BYTES: usize = 256;
@@ -120,6 +120,7 @@ pub(crate) struct RankedTools {
 pub(crate) fn rank_tools(
     tools: Vec<McpToolSummary>,
     query: &str,
+    offset: usize,
 ) -> Result<RankedTools, McpHostError> {
     let query = query.trim();
     if query.is_empty() || query.len() > QUERY_BYTES {
@@ -155,6 +156,7 @@ pub(crate) fn rank_tools(
     let total_matches = scored.len();
     let matches = scored
         .into_iter()
+        .skip(offset)
         .take(SEARCH_RESULT_LIMIT)
         .map(|(_, mut tool)| {
             tool.description = summarize(&tool.description);
@@ -257,7 +259,7 @@ mod tests {
             summary("work", "unrelated", "Send an email"),
         ];
 
-        let ranked = rank_tools(tools, "issue").expect("rank tools");
+        let ranked = rank_tools(tools, "issue", 0).expect("rank tools");
 
         assert_eq!(ranked.total_matches, 2);
         assert_eq!(
@@ -271,12 +273,12 @@ mod tests {
     }
 
     #[test]
-    fn search_returns_two_hundred_matching_tool_summaries() {
+    fn search_pages_matching_tool_summaries() {
         let tools = (0..201)
             .map(|index| summary("primary", &format!("tool_{index:03}"), "Fixture tool"))
-            .collect();
+            .collect::<Vec<_>>();
 
-        let ranked = rank_tools(tools, "tool").expect("rank tool summaries");
+        let ranked = rank_tools(tools.clone(), "tool", 0).expect("rank tool summaries");
 
         assert_eq!(ranked.total_matches, 201);
         assert_eq!(ranked.matches.len(), SEARCH_RESULT_LIMIT);
@@ -284,7 +286,13 @@ mod tests {
             ranked.matches.first().expect("first match").name,
             "tool_000"
         );
-        assert_eq!(ranked.matches.last().expect("last match").name, "tool_199");
+        assert_eq!(ranked.matches.last().expect("last match").name, "tool_019");
+        let second = rank_tools(tools.clone(), "tool", SEARCH_RESULT_LIMIT).expect("second page");
+        assert_eq!(second.total_matches, 201);
+        assert_eq!(second.matches.first().expect("next match").name, "tool_020");
+        let last = rank_tools(tools, "tool", 200).expect("last page");
+        assert_eq!(last.matches.len(), 1);
+        assert_eq!(last.matches[0].name, "tool_200");
     }
 
     fn summary(connection: &str, name: &str, description: &str) -> McpToolSummary {

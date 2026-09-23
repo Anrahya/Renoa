@@ -4,13 +4,13 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, SEARCH_RESULT_LIMIT, SEARCH_TOOL,
-    SearchTool, parse_references,
+    EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, SEARCH_TOOL, SearchTool,
+    parse_references,
 };
 use crate::AgentId;
 use crate::mcp::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
-    McpCatalogStore, McpCatalogTool,
+    McpCatalogStore, McpCatalogTool, SEARCH_RESULT_LIMIT,
 };
 
 #[test]
@@ -41,7 +41,7 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
     let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
         .expect("initialize Host catalog");
     let search_tool = SearchTool::new(agent(1), store.clone());
-    let before = run_search(&search_tool, "tool").await;
+    let before = run_search(&search_tool, "*").await;
     assert_eq!(before["total_matches"], 0);
 
     store
@@ -50,7 +50,7 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
     let tools = (0..1_000)
         .map(|index| McpCatalogTool {
             name: format!("tool_{index:04}"),
-            description: format!("Fixture capability {index}"),
+            description: format!("Fixture capability {index} {}", "🦊".repeat(320)),
             input_schema: json!({
                 "type": "object",
                 "properties": {"value": {"type": "string"}}
@@ -81,15 +81,29 @@ async fn one_live_registry_tool_sees_a_thousand_new_tools_without_a_schema_dump(
         .enable_agent_connection(&agent(1).to_string(), "primary")
         .expect("enable connection");
 
-    let after = run_search(&search_tool, "tool").await;
+    let after = run_search(&search_tool, "*").await;
     assert_eq!(after["total_matches"], 1_000);
-    assert_eq!(
-        after["matches"]
-            .as_array()
-            .expect("search matches array")
-            .len(),
-        SEARCH_RESULT_LIMIT
+    assert!(
+        serde_json::to_vec(&after)
+            .expect("encode search result")
+            .len()
+            <= 16 * 1_024,
+        "one discovery result must fit its model-context budget"
     );
+    let first_page = after["matches"].as_array().expect("search matches array");
+    assert!(!first_page.is_empty());
+    assert!(first_page.len() <= SEARCH_RESULT_LIMIT);
+    assert_eq!(after["next_offset"], first_page.len());
+    let next = run_search_at(&search_tool, "*", first_page.len()).await;
+    assert_eq!(next["total_matches"], 1_000);
+    assert_eq!(
+        next["matches"][0]["name"],
+        format!("tool_{:04}", first_page.len())
+    );
+    assert!(serde_json::to_vec(&next).unwrap().len() <= 16 * 1_024);
+    let last = run_search_at(&search_tool, "*", 999).await;
+    assert_eq!(last["matches"][0]["name"], "tool_0999");
+    assert_eq!(last["next_offset"], Value::Null);
     let first = after["matches"][0]
         .as_object()
         .expect("compact search match object");
@@ -204,12 +218,20 @@ fn agent(seed: u128) -> AgentId {
 }
 
 async fn run_search(tool: &SearchTool, query: &str) -> Value {
+    run_search_with_arguments(tool, json!({"query": query})).await
+}
+
+async fn run_search_at(tool: &SearchTool, query: &str, offset: usize) -> Value {
+    run_search_with_arguments(tool, json!({"query": query, "offset": offset})).await
+}
+
+async fn run_search_with_arguments(tool: &SearchTool, arguments: Value) -> Value {
     let result = invoke_tool(
         Some(tool),
         ToolCall {
             id: "search-fixture".to_owned(),
             name: SEARCH_TOOL.to_owned(),
-            arguments: json!({"query": query}),
+            arguments,
             thought_signature: None,
             namespace: None,
         },

@@ -599,8 +599,8 @@ Host types; it does not construct a kernel `Runtime` or persist Host state.
 
 The Host offers three fixed extension-registry tools to every assembled agent
 runtime and binds them when the stored selection names them: `tool_search`,
-`tool_load`, and `tool_execute`. Search returns at most
-200 compact matches without schemas. Load returns only one through three
+`tool_load`, and `tool_execute`. Search returns at most 20 compact matches in a
+16 KiB page without schemas. Load returns only one through three
 explicitly requested model-facing schemas. Execute resolves one exact reference
 containing the current catalog digest, then reuses the proven MCP credential,
 adapter, result, and `NeverReplay` boundary. A missing adapter fails execution
