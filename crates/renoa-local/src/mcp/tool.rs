@@ -28,8 +28,8 @@ pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 const SEARCH_TOOL: &str = crate::capabilities::TOOL_SEARCH;
 const LOAD_TOOL: &str = crate::capabilities::TOOL_LOAD;
 const EXECUTE_TOOL: &str = crate::capabilities::TOOL_EXECUTE;
-const SEARCH_REVISION: &str = "renoa-mcp-registry-v3/search";
-const LOAD_REVISION: &str = "renoa-mcp-registry-v1/load";
+const SEARCH_REVISION: &str = "renoa-mcp-registry-v4/search";
+const LOAD_REVISION: &str = "renoa-mcp-registry-v2/load";
 const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
 
 pub(crate) fn agent_registry_bindings(
@@ -80,7 +80,7 @@ impl SearchTool {
             spec: ToolSpec {
                 name: SEARCH_TOOL.to_owned(),
                 description: format!(
-                    "Find tools enabled for this agent without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before tool_execute. Use query `*` to browse."
+                    "Find tools enabled for this agent without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before executing a reference. Use query `*` to browse."
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -156,7 +156,7 @@ impl LoadTool {
             spec: ToolSpec {
                 name: LOAD_TOOL.to_owned(),
                 description: format!(
-                    "Load exact descriptions and input schemas for 1-{LOAD_REFERENCE_LIMIT} references returned by tool_search. Load only tools you are about to call, then pass the unchanged reference to tool_execute."
+                    "Load exact descriptions and input schemas for 1-{LOAD_REFERENCE_LIMIT} references returned by tool_search. Load only tools you are about to call, then pass each unchanged reference to code_mode's Python mcp(reference, arguments), or to tool_execute when Code Mode is not selected."
                 ),
                 input_schema: json!({
                     "type": "object",

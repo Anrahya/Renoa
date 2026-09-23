@@ -6,12 +6,14 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
-rust-version = "1.95"
+rust-version = "1.96"
 
 [workspace.dependencies]
 agent-client-protocol = "2.0.0"
 axum = { version = "0.8.9", default-features = false }
 base64 = "0.22.1"
+monty-pool = "=1.0.0-beta.2"
+monty-types = "=1.0.0-beta.2"
 futures-util = "0.3.33"
 getrandom = "0.4.3"
 globset = { version = "0.4.20", default-features = false }

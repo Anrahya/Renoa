@@ -6,7 +6,9 @@ use std::{
 
 use renoa_control::{DeviceCredential, DeviceCredentials, DeviceId};
 use renoa_kernel::AgentId;
-use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
+use renoa_local::{
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, validate_code_mode_worker,
+};
 use renoa_node::HostTarget;
 use renoa_protocol::TargetRef;
 use serde::Deserialize;
@@ -66,6 +68,7 @@ struct ModelDocument {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AdapterDocument {
     mcp: Option<PathBuf>,
+    code_mode_worker: Option<PathBuf>,
     mcp_registry: Option<PathBuf>,
     shared_plugin_registry: Option<String>,
 }
@@ -116,6 +119,7 @@ pub(crate) fn load(
             &config.model.credential_store,
         ),
         LocalHostAdapters::new(config.adapters.mcp.as_deref())
+            .with_code_mode_worker(config.adapters.code_mode_worker.as_deref())
             .with_mcp_registry(config.adapters.mcp_registry.as_deref())
             .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref()),
     )?);
@@ -265,6 +269,9 @@ fn validate_model(model: &ModelDocument) -> Result<(), ServiceError> {
 fn validate_adapters(adapters: &AdapterDocument) -> Result<(), ServiceError> {
     if let Some(path) = &adapters.mcp {
         require_regular_absolute(path, "MCP adapter")?;
+    }
+    if let Some(path) = &adapters.code_mode_worker {
+        validate_code_mode_worker(path).map_err(ServiceError::Configuration)?;
     }
     if let Some(path) = &adapters.mcp_registry {
         require_regular_absolute(path, "MCP Registry adapter")?;
@@ -421,6 +428,72 @@ mod tests {
         private(&path);
 
         assert!(decode_credentials(&path).is_err());
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn wrong_code_mode_worker_is_refused_before_state_directory_creation() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let files = tempfile::tempdir().expect("temporary directory");
+        let bridge = files.path().join("bridge.mjs");
+        let credential_store = files.path().join("model.sqlite");
+        let workspace = files.path().join("workspace");
+        let worker = files.path().join("wrong-monty");
+        let config = files.path().join("node.json");
+        let credentials = files.path().join("device.json");
+        let state = files.path().join("uncreated-state");
+        std::fs::write(&bridge, "").expect("write bridge");
+        std::fs::write(&credential_store, "").expect("write model store");
+        std::fs::write(&worker, "not the pinned worker").expect("write wrong worker");
+        std::fs::set_permissions(&worker, std::fs::Permissions::from_mode(0o755))
+            .expect("make worker executable");
+        std::fs::create_dir(&workspace).expect("create workspace");
+        std::fs::write(
+            &config,
+            serde_json::to_vec(&json!({
+                "schemaVersion": 2,
+                "endpoint": "ws://127.0.0.1:9/connect",
+                "model": {
+                    "bridge": bridge,
+                    "credentialStore": credential_store,
+                    "providers": ["xai"],
+                    "defaultProvider": "xai",
+                    "defaultModel": "fixture-model"
+                },
+                "adapters": {"codeModeWorker": worker},
+                "targets": [{
+                    "target": "workspace:test",
+                    "agentId": Uuid::new_v4(),
+                    "sessionId": Uuid::new_v4(),
+                    "workspace": workspace
+                }]
+            }))
+            .expect("encode config"),
+        )
+        .expect("write config");
+        std::fs::write(
+            &credentials,
+            serde_json::to_vec(&json!({
+                "deviceId": Uuid::new_v4(),
+                "credential": "00".repeat(32)
+            }))
+            .expect("encode credentials"),
+        )
+        .expect("write credentials");
+        #[cfg(unix)]
+        {
+            private(&config);
+            private(&credentials);
+        }
+        let error = load(&config, &credentials, &state)
+            .err()
+            .expect("wrong worker must be refused");
+        assert!(error.to_string().contains("hash mismatch"), "{error}");
+        assert!(
+            !state.exists(),
+            "invalid worker must leave no state directory"
+        );
     }
 
     #[cfg(unix)]

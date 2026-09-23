@@ -55,8 +55,10 @@ impl Config {
             optional_path("RENOA_OAUTH_RELAY_DEVICE_CREDENTIAL_FILE"),
         )?;
         let mcp_adapter = optional_path("RENOA_MCP_ADAPTER");
+        let code_mode_worker = optional_path("RENOA_CODE_MODE_WORKER");
         let mcp_registry_adapter = optional_path("RENOA_MCP_REGISTRY_ADAPTER");
         let mut adapters = LocalHostAdapters::new(mcp_adapter.as_deref())
+            .with_code_mode_worker(code_mode_worker.as_deref())
             .with_mcp_registry(mcp_registry_adapter.as_deref())
             .with_shared_plugin_registry(shared_plugin_registry.as_deref());
         if let Some((origin, credentials)) = oauth_relay.as_ref() {

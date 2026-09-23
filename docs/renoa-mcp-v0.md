@@ -454,8 +454,8 @@ isolated catalog-entry failure.
 Host identity is the tuple of connection identity and exact MCP tool name.
 Self-reported `serverInfo.name` is never identity.
 
-MCP names never become top-level model tool names. Every assembled profile sees
-three small, provider-neutral Host tools:
+MCP names never become top-level model tool names. A direct-MCP agent can
+select three small, provider-neutral Host tools:
 
 - `tool_search` searches names, services, and descriptions and returns at most
   200 compact matches containing only names, descriptions, and exact
@@ -465,9 +465,27 @@ three small, provider-neutral Host tools:
 - `tool_execute` accepts one unchanged reference plus an argument object and
   invokes that exact remote tool.
 
+When an agent selects `code_mode`, `tool_execute` is hidden from its model
+request even if a pinned preset also selected it. `tool_search` and `tool_load`
+remain individually selectable, and one `code_mode` schema replaces direct
+MCP execution. Python calls `await mcp(reference, arguments)` with the exact
+loaded reference and a JSON-compatible argument dictionary; independent calls
+may run under `asyncio.gather`. The Python evaluator cannot dispatch MCP
+directly. It returns a durable batch of nested `tool_execute` effects, then
+resumes only after those children settle. The model sees the final Python value
+as one outer tool result, not a transcript of nested MCP calls. Other native
+capabilities are not callable from Code Mode Python. Every `mcp` await returns
+a JSON dictionary with `content`, `details`, and `is_error` from the settled
+`tool_execute` result; Python must inspect `is_error` when a remote MCP reports
+an error. The 2 MiB per-wave result budget prevents a large remote result from
+being injected into the evaluator or the next model context. A call created in
+Python but never awaited ends the Code Mode run with an error; it is not
+silently dropped or dispatched outside the kernel.
+
 Search ranks deterministically and uses `*` for bounded browsing. A catalog may
-hold 1,024 entries, but the model API still receives only these three fixed
-schemas. Loading is explicit and atomic: an oversized group fails rather than
+hold 1,024 entries, but the model API receives only the selected compact
+schemas rather than one schema per MCP method. Loading is explicit and atomic:
+an oversized group fails rather than
 truncating a JSON Schema. Transport-only `x-mcp-header` annotations, titles,
 icons, endpoints, protocol metadata, output schemas, and adapter bookkeeping
 remain outside model context. The resolved invocation retains the unmodified
@@ -475,12 +493,19 @@ input schema so the adapter can project transport headers correctly.
 
 ## Frozen runtime identity
 
-The runtime freezes three ordinary `AgentToolBinding`s. Search and load are
+For direct execution the runtime freezes the selected ordinary
+`AgentToolBinding`s. Search and load are
 `SafeToReplay` Host reads. Execute is `NeverReplay`. Their revisions cover the
 registry contract, result projection, error mapping, MCP process wire,
 deadlines, and bounds. The agent-loop digest freezes their order, specs,
 recovery declarations, and revisions. No kernel field or MCP-specific path is
-added.
+added. For Code Mode, the hidden `tool_execute` binding keeps that exact
+`NeverReplay` adapter and frozen revision. The separate Python evaluator is
+`SafeToReplay`, and each nested MCP invocation is its own durable kernel
+effect. The effect request carries a stable Code Mode run/wave/call identity;
+the kernel's generated effect identity is not used as a substitute for the
+MCP invocation identity. A settled batch is matched by those call identities
+and exact request values before the Python snapshot is resumed.
 
 Mutable catalog data is not smuggled into those static revisions. Search reads
 one current SQLite snapshot. Load and execute resolve the reference against one

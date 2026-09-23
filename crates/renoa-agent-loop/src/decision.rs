@@ -9,9 +9,13 @@ use renoa_kernel::{
     SettledEffectBatch,
 };
 
+mod code_mode;
 mod compaction;
 mod effect_input;
 mod interruption;
+
+#[cfg(test)]
+mod tests;
 
 use effect_input::{require_effect, require_effect_identity};
 
@@ -23,6 +27,7 @@ use crate::{
         AgentCommandKind, LoopPhase, ModelEffectOutput, checkpoint, context_input, message_event,
         message_events, turn_timing_event,
     },
+    pending_tools::PendingToolCalls,
 };
 
 pub(crate) struct LoopTool {
@@ -31,11 +36,19 @@ pub(crate) struct LoopTool {
     pub(crate) recovery: EffectRecovery,
 }
 
+pub(crate) struct LoopCodeMode {
+    pub(crate) spec: ToolSpec,
+    pub(crate) nested_name: String,
+    pub(crate) nested_binding: String,
+    pub(crate) nested_recovery: EffectRecovery,
+}
+
 pub(crate) struct AgentLoop {
     config: AgentLoopConfig,
     context: Arc<dyn ContextStrategy>,
     model_recovery: EffectRecovery,
     tools: Vec<LoopTool>,
+    code_mode: Option<LoopCodeMode>,
 }
 
 impl AgentLoop {
@@ -44,12 +57,14 @@ impl AgentLoop {
         context: Arc<dyn ContextStrategy>,
         model_recovery: EffectRecovery,
         tools: Vec<LoopTool>,
+        code_mode: Option<LoopCodeMode>,
     ) -> Self {
         Self {
             config,
             context,
             model_recovery,
             tools,
+            code_mode,
         }
     }
 
@@ -240,8 +255,7 @@ impl AgentLoop {
         Ok(LoopDecision::AppendEventsAndContinue {
             checkpoint: checkpoint(LoopPhase::NeedTool {
                 model_turns,
-                calls,
-                next_index: 0,
+                pending: PendingToolCalls::new(calls)?,
             })?,
             events: vec![message_event(assistant)?],
         })
@@ -273,6 +287,7 @@ impl AgentLoop {
             .tools
             .iter()
             .map(|tool| tool.spec.clone())
+            .chain(self.code_mode.iter().map(|code| code.spec.clone()))
             .collect::<Vec<_>>();
         context_input(
             active_operation_id,
@@ -325,38 +340,44 @@ impl AgentLoop {
         ModelRequest {
             system_prompt: self.config.system_prompt.clone(),
             messages: crate::context::model_visible_messages(messages),
-            tools: self.tools.iter().map(|tool| tool.spec.clone()).collect(),
+            tools: self
+                .tools
+                .iter()
+                .map(|tool| tool.spec.clone())
+                .chain(self.code_mode.iter().map(|code| code.spec.clone()))
+                .collect(),
         }
     }
 
     fn request_tool(
         &self,
         model_turns: u32,
-        calls: Vec<ToolCall>,
-        next_index: u32,
-        effect_batch: Option<&SettledEffectBatch>,
+        pending: PendingToolCalls,
+        input: &LoopInput,
     ) -> Result<LoopDecision, LoopError> {
-        if effect_batch.is_some() {
+        if input.effect_batch.is_some() {
             return Err(LoopError::new(
                 "a tool-ready checkpoint cannot have a settled effect",
             ));
         }
-        let index = usize::try_from(next_index)
-            .map_err(|error| LoopError::new(format!("tool call index is invalid: {error}")))?;
-        let call = calls.get(index).ok_or_else(|| {
-            LoopError::new("tool checkpoint points outside its durable call batch")
-        })?;
+        let call = pending.current();
+        if self
+            .code_mode
+            .as_ref()
+            .is_some_and(|code| call.name == code.spec.name)
+        {
+            return Self::request_code_mode(model_turns, pending, input.operation_id);
+        }
         let Some(tool) = self.tools.iter().find(|tool| tool.spec.name == call.name) else {
             let result =
                 unavailable_result(call, &format!("Tool `{}` is not available.", call.name));
-            return Self::append_tool_result(model_turns, calls, next_index, result);
+            return Self::append_tool_result(model_turns, pending, result);
         };
         let request = encode("tool request", call)?;
         Ok(LoopDecision::InvokeEffects {
             checkpoint: checkpoint(LoopPhase::AwaitingTool {
                 model_turns,
-                calls,
-                next_index,
+                pending,
             })?,
             effects: vec![EffectRequest {
                 binding: tool.effect_binding.clone(),
@@ -369,15 +390,10 @@ impl AgentLoop {
     fn settle_tool(
         &self,
         model_turns: u32,
-        calls: Vec<ToolCall>,
-        next_index: u32,
+        pending: PendingToolCalls,
         effect_batch: Option<SettledEffectBatch>,
     ) -> Result<LoopDecision, LoopError> {
-        let index = usize::try_from(next_index)
-            .map_err(|error| LoopError::new(format!("tool call index is invalid: {error}")))?;
-        let call = calls.get(index).ok_or_else(|| {
-            LoopError::new("tool checkpoint points outside its durable call batch")
-        })?;
+        let call = pending.current();
         let tool = self
             .tools
             .iter()
@@ -392,11 +408,7 @@ impl AgentLoop {
         let result = match effect.outcome {
             EffectOutcome::Success(result) => decode::<ToolResult>("tool result", result)?,
             EffectOutcome::Failure { message } => {
-                return Ok(LoopDecision::Fail {
-                    checkpoint: checkpoint(LoopPhase::Terminal)?,
-                    events: Vec::new(),
-                    reason: message,
-                });
+                return Self::fail_tool(&pending, message);
             }
             _ => return Err(LoopError::new("tool effect outcome version is unsupported")),
         };
@@ -405,32 +417,46 @@ impl AgentLoop {
                 "tool result identity differs from its persisted request",
             ));
         }
-        Self::append_tool_result(model_turns, calls, next_index, result)
+        Self::append_tool_result(model_turns, pending, result)
     }
 
     fn append_tool_result(
         model_turns: u32,
-        calls: Vec<ToolCall>,
-        next_index: u32,
+        pending: PendingToolCalls,
         result: ToolResult,
     ) -> Result<LoopDecision, LoopError> {
-        let following = next_index
-            .checked_add(1)
-            .ok_or_else(|| LoopError::new("tool call index overflowed"))?;
-        let call_count = u32::try_from(calls.len())
-            .map_err(|error| LoopError::new(format!("tool call count is invalid: {error}")))?;
-        let phase = if following < call_count {
-            LoopPhase::NeedTool {
-                model_turns,
-                calls,
-                next_index: following,
-            }
-        } else {
-            LoopPhase::NeedModel { model_turns }
-        };
+        let phase = pending
+            .advance()
+            .map_or(LoopPhase::NeedModel { model_turns }, |pending| {
+                LoopPhase::NeedTool {
+                    model_turns,
+                    pending,
+                }
+            });
         Ok(LoopDecision::AppendEventsAndContinue {
             checkpoint: checkpoint(phase)?,
             events: vec![message_event(Message::Tool { result })?],
+        })
+    }
+
+    fn fail_tool(pending: &PendingToolCalls, reason: String) -> Result<LoopDecision, LoopError> {
+        let events = pending
+            .iter()
+            .enumerate()
+            .map(|(position, call)| Message::Tool {
+                result: unavailable_result(
+                    call,
+                    if position == 0 {
+                        "Tool execution ended without a model-visible result."
+                    } else {
+                        "Tool call was not run because an earlier tool failed."
+                    },
+                ),
+            });
+        Ok(LoopDecision::Fail {
+            checkpoint: checkpoint(LoopPhase::Terminal)?,
+            events: message_events(events)?,
+            reason,
         })
     }
 }

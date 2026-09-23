@@ -5,9 +5,11 @@ use std::{
 };
 
 use renoa_agent_loop::{
-    AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CompactingContextStrategy,
-    CompactionLimits, CompactionLimitsError, ContextBinding, ContextSizer, ModelBinding,
-    build_runtime as build_agent_runtime,
+    AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CodeModeBinding,
+    CompactingContextStrategy, CompactionLimits, CompactionLimitsError, ContextBinding,
+    ContextSizer, ModelBinding, build_runtime as build_agent_runtime,
+    build_runtime_with_code_mode as build_code_mode_runtime,
+    build_runtime_with_code_mode_and_events as build_observed_code_mode_runtime,
     build_runtime_with_events as build_observed_agent_runtime,
 };
 use renoa_kernel::{EffectRecovery, Runtime};
@@ -38,6 +40,7 @@ pub struct LocalRuntimeConfig {
     automatic_compaction: Option<crate::AutomaticCompaction>,
     selected_tools: Option<std::collections::BTreeSet<String>>,
     session_id: Option<renoa_kernel::SessionId>,
+    code_mode: Option<CodeModeBinding>,
 }
 
 impl LocalRuntimeConfig {
@@ -67,6 +70,7 @@ impl LocalRuntimeConfig {
             automatic_compaction: definition.automatic_compaction(),
             selected_tools: Some(definition.selected_tools().tools.clone()),
             session_id: None,
+            code_mode: None,
         })
     }
 
@@ -93,6 +97,11 @@ impl LocalRuntimeConfig {
     #[must_use]
     pub const fn with_session(mut self, session_id: renoa_kernel::SessionId) -> Self {
         self.session_id = Some(session_id);
+        self
+    }
+
+    pub(crate) fn with_code_mode(mut self, code_mode: CodeModeBinding) -> Self {
+        self.code_mode = Some(code_mode);
         self
     }
 }
@@ -188,9 +197,15 @@ async fn build_local_runtime_inner(
     let model = ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay);
     let mut tools = workspace.selected_kernel_tool_bindings(resolved.selected_tools.as_ref());
     tools.extend(extension_tools);
-    match events {
-        Some(events) => build_observed_agent_runtime(config, context, model, tools, events),
-        None => build_agent_runtime(config, context, model, tools),
+    match (resolved.code_mode, events) {
+        (Some(code_mode), Some(events)) => {
+            build_observed_code_mode_runtime(config, context, model, tools, code_mode, events)
+        }
+        (Some(code_mode), None) => {
+            build_code_mode_runtime(config, context, model, tools, code_mode)
+        }
+        (None, Some(events)) => build_observed_agent_runtime(config, context, model, tools, events),
+        (None, None) => build_agent_runtime(config, context, model, tools),
     }
     .map_err(Into::into)
 }
@@ -203,6 +218,7 @@ struct ResolvedModel {
     skill_context: Option<SkillRuntimeContext>,
     automatic_compaction: Option<crate::AutomaticCompaction>,
     selected_tools: Option<std::collections::BTreeSet<String>>,
+    code_mode: Option<CodeModeBinding>,
 }
 
 async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, ModelBridgeError> {
@@ -232,6 +248,7 @@ async fn resolve_model(config: LocalRuntimeConfig) -> Result<ResolvedModel, Mode
         skill_context: config.skill_context,
         automatic_compaction: config.automatic_compaction,
         selected_tools: config.selected_tools,
+        code_mode: config.code_mode,
     })
 }
 

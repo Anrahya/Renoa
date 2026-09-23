@@ -19,6 +19,8 @@ pub(crate) struct Config {
     pub(crate) model_auth_store: PathBuf,
     pub(crate) model: String,
     pub(crate) provider: ModelProvider,
+    pub(crate) mcp_adapter: Option<PathBuf>,
+    pub(crate) code_mode_worker: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -34,6 +36,8 @@ struct LaunchFile {
     model_auth_store: PathBuf,
     model: String,
     provider: ModelProvider,
+    mcp_adapter: Option<PathBuf>,
+    code_mode_worker: Option<PathBuf>,
 }
 
 impl Config {
@@ -59,11 +63,14 @@ impl Config {
         let agent_id = Uuid::parse_str(&file.agent_id).map_err(|_| {
             DiscordError::Invalid("agent_id must be the UUID of an existing agent".to_owned())
         })?;
-        for path in [&file.workspace, &file.model_bridge, &file.model_auth_store] {
+        for path in [&file.workspace, &file.model_bridge, &file.model_auth_store]
+            .into_iter()
+            .chain(file.mcp_adapter.iter())
+            .chain(file.code_mode_worker.iter())
+        {
             if !path.is_absolute() {
                 return Err(DiscordError::Invalid(
-                    "workspace, model_bridge, and model_auth_store must be absolute paths"
-                        .to_owned(),
+                    "workspace, model_bridge, model_auth_store, mcp_adapter, and code_mode_worker must be absolute paths".to_owned(),
                 ));
             }
         }
@@ -82,6 +89,8 @@ impl Config {
             model_auth_store: file.model_auth_store,
             model: file.model,
             provider: file.provider,
+            mcp_adapter: file.mcp_adapter,
+            code_mode_worker: file.code_mode_worker,
         })
     }
 
@@ -104,7 +113,8 @@ impl Config {
                 &self.model,
                 &self.model_auth_store,
             ),
-            LocalHostAdapters::default(),
+            LocalHostAdapters::new(self.mcp_adapter.as_deref())
+                .with_code_mode_worker(self.code_mode_worker.as_deref()),
         )
         .map_err(DiscordError::from)
     }

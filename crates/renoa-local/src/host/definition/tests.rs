@@ -31,6 +31,7 @@ fn host(root: &Path) -> LocalHost {
         shared_plugin_registry: None,
         global_skill_source: None,
         oauth_relay: None,
+        code_mode: None,
     })
     .expect("Host")
 }

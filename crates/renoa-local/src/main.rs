@@ -44,7 +44,14 @@ async fn run() -> Result<(), Box<dyn Error>> {
         required_environment("RENOA_MODEL")?,
         required_environment("RENOA_MODEL_AUTH_STORE")?,
     );
-    let host = LocalHost::new(data_directory, models, LocalHostAdapters::new(None))?;
+    let mcp_adapter = env::var_os("RENOA_MCP_ADAPTER").map(std::path::PathBuf::from);
+    let code_mode_worker = env::var_os("RENOA_CODE_MODE_WORKER").map(std::path::PathBuf::from);
+    let host = LocalHost::new(
+        data_directory,
+        models,
+        LocalHostAdapters::new(mcp_adapter.as_deref())
+            .with_code_mode_worker(code_mode_worker.as_deref()),
+    )?;
     let agent = AgentId::from_uuid(Uuid::parse_str(&required_environment("RENOA_AGENT_ID")?)?);
     if host.agent_definition(agent).await?.is_none() {
         return Err(io::Error::other(format!(

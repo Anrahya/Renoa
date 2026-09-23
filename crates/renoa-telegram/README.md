@@ -50,6 +50,7 @@ export TZ='Asia/Kolkata' # Optional; otherwise use the host system time zone.
 # Optional Host pieces:
 export RENOA_MODEL_PROVIDERS='opencode-go'
 export RENOA_MCP_ADAPTER='/absolute/path/to/adapters/mcp-client-node/dist/src/main.js'
+export RENOA_CODE_MODE_WORKER='/absolute/path/to/pinned/monty'
 export RENOA_MCP_REGISTRY_ADAPTER='/absolute/path/to/adapters/mcp-registry-node/dist/src/main.js'
 export RENOA_SHARED_PLUGIN_REGISTRY='http://tailnet-host:8082/'
 export RENOA_OAUTH_RELAY_ORIGIN='https://renoa.live'
@@ -59,8 +60,12 @@ export RENOA_OAUTH_RELAY_DEVICE_CREDENTIAL_FILE='/absolute/path/to/owner-only/no
 Arcee's stored agent definition supplies her behavior and capabilities; the
 provider and model come from the launch settings above. The model adapter
 remains a replaceable Host component shared with other agents; Telegram
-contains no provider-specific request code. A future Discord surface can call
-the same session configuration methods without moving model state into Discord.
+contains no provider-specific request code. Discord uses the same Host model
+configuration without moving model state into its surface.
+`RENOA_CODE_MODE_WORKER` is optional, but required if this agent selects
+`code_mode`; it must name the exact-pinned executable documented in
+[`deploy/README.md`](../../deploy/README.md). Selecting Code Mode also requires
+`RENOA_MCP_ADAPTER`.
 
 The two OAuth relay settings are atomic: set both or neither. With them, Arcee
 shows a provider authorization link in Telegram instead of trying to open a

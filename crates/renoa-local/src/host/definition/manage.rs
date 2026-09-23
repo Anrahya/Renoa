@@ -291,6 +291,7 @@ mod tests {
                 "tool_search",
                 "tool_load",
                 "tool_execute",
+                "code_mode",
                 "skill_search",
                 "skill_load",
                 "agent_documents",

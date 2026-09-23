@@ -1,18 +1,16 @@
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZeroU32,
-};
+use std::collections::{HashMap, HashSet};
 
 use renoa_agent::{ContentBlock, Message, ModelResponse, ToolSpec};
-use renoa_kernel::{Checkpoint, LoopError, NewEvent, SemanticEvent};
+use renoa_kernel::{LoopError, NewEvent, SemanticEvent};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    CompactionPlan,
-    configuration::CHECKPOINT_SCHEMA_VERSION,
     context::{ActivatedCheckpoint, ContextInput, ContextOrigin},
     turn_timing::TurnTiming,
 };
+
+mod checkpoint;
+pub(crate) use checkpoint::{LoopPhase, checkpoint, decode_checkpoint};
 
 #[cfg(test)]
 mod tests;
@@ -191,39 +189,6 @@ impl<'de> Deserialize<'de> for AgentCommand {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum LoopPhase {
-    NeedModel {
-        model_turns: u32,
-    },
-    AwaitingModel {
-        model_turns: u32,
-    },
-    AwaitingCompaction {
-        model_turns: u32,
-        plan: CompactionPlan,
-        max_attempts: NonZeroU32,
-        attempt: NonZeroU32,
-    },
-    AwaitingExplicitCompaction {
-        plan: CompactionPlan,
-        max_attempts: NonZeroU32,
-        attempt: NonZeroU32,
-    },
-    NeedTool {
-        model_turns: u32,
-        calls: Vec<renoa_agent::ToolCall>,
-        next_index: u32,
-    },
-    AwaitingTool {
-        model_turns: u32,
-        calls: Vec<renoa_agent::ToolCall>,
-        next_index: u32,
-    },
-    Terminal,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum ModelEffectOutput {
@@ -236,36 +201,6 @@ pub(crate) enum ModelEffectOutput {
 struct ContextCheckpointEvent {
     covered_through_sequence: u64,
     summary: String,
-}
-
-pub(crate) fn checkpoint(phase: LoopPhase) -> Result<Checkpoint, LoopError> {
-    serde_json::to_value(phase)
-        .map(|state| Checkpoint::new(CHECKPOINT_SCHEMA_VERSION, state))
-        .map_err(|error| LoopError::new(format!("agent checkpoint encoding failed: {error}")))
-}
-
-pub(crate) fn decode_checkpoint(checkpoint: &Checkpoint) -> Result<LoopPhase, LoopError> {
-    let phase = serde_json::from_value(checkpoint.state().clone())
-        .map_err(|error| LoopError::new(format!("agent checkpoint is invalid: {error}")))?;
-    let attempts = match &phase {
-        LoopPhase::AwaitingCompaction {
-            max_attempts,
-            attempt,
-            ..
-        }
-        | LoopPhase::AwaitingExplicitCompaction {
-            max_attempts,
-            attempt,
-            ..
-        } => Some((attempt, max_attempts)),
-        _ => None,
-    };
-    if attempts.is_some_and(|(attempt, max_attempts)| attempt > max_attempts) {
-        return Err(LoopError::new(
-            "agent checkpoint compaction attempt exceeds its maximum",
-        ));
-    }
-    Ok(phase)
 }
 
 pub(crate) fn message_event(message: Message) -> Result<NewEvent, LoopError> {
