@@ -14,17 +14,17 @@ import {
   withOpenCode,
 } from "./stream-support.js";
 
-test("xAI Grok 4.6 sends distinct reasoning_effort values on the chat completions wire", async () => {
+test("xAI Grok 4.6 and 4.7 send distinct reasoning_effort values on the chat completions wire", async () => {
   const efforts = ["low", "high", "xhigh"] as const;
   const bodies: string[] = [];
-  for (const effort of efforts) {
+  for (const modelId of ["grok-4.6", "grok-4.7"]) for (const effort of efforts) {
     const server = await startFakeServer();
     server.enqueue({ sse: successfulChat(effort) });
     const directory = tempDir();
     try {
       await runStream({
         directory: directory.path,
-        modelId: "grok-4.6",
+        modelId,
         baseUrl: server.baseUrl,
         credential: oauthCredential(),
         reasoningLevel: effort,
@@ -41,7 +41,7 @@ test("xAI Grok 4.6 sends distinct reasoning_effort values on the chat completion
         max_completion_tokens?: number;
         stream?: boolean;
       };
-      assert.equal(body.model, "grok-4.6");
+      assert.equal(body.model, modelId);
       assert.equal(body.reasoning_effort, effort);
       assert.equal(body.stream, true);
       assert.equal(typeof body.max_completion_tokens, "number");
@@ -51,7 +51,7 @@ test("xAI Grok 4.6 sends distinct reasoning_effort values on the chat completion
       directory.close();
     }
   }
-  assert.equal(new Set(bodies).size, 3);
+  assert.equal(new Set(bodies).size, 6);
 });
 
 test("OpenCode Go Ox Alpha sends its documented chat, reasoning, and tool fields", async () => {

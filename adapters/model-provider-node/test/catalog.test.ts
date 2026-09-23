@@ -109,6 +109,7 @@ test("catalog probing is read-only and does not rewrite stored credentials", asy
     store.close();
     const models = await loadCatalog("xai", path);
     assert.ok(models.some((model) => model.id === "grok-4.6"));
+    assert.ok(models.some((model) => model.id === "grok-4.7"));
     const after = new SqliteCredentialStore(path);
     assert.deepEqual(after.read("xai"), before);
     after.close();
@@ -280,6 +281,25 @@ test("OpenCode Go rejects an oversized metadata response", async () => {
 test("Grok 4.6 advertises verified reasoning levels and no off or minimal", () => {
   const grok = findCatalogModel("xai", "grok-4.6");
   assert.ok(grok);
+  assert.deepEqual([...grok.reasoning_levels], ["low", "medium", "high", "xhigh"]);
+});
+
+test("Grok 4.7 has the verified xAI OAuth binding and high reasoning", () => {
+  const matches = loadPinnedCatalog("xai").filter((entry) => entry.id === "grok-4.7");
+  assert.equal(matches.length, 1, "the overlay and upstream catalog must not both own Grok 4.7");
+  const grok = matches[0];
+  assert.ok(grok);
+  assert.equal(grok.name, "Grok 4.7");
+  assert.equal(grok.model.api, "openai-completions");
+  assert.equal(grok.model.baseUrl, "https://api.x.ai/v1");
+  assert.equal(grok.model.contextWindow, 500_000);
+  assert.deepEqual(grok.model.input, ["text", "image"]);
+  assert.deepEqual(grok.model.cost, {
+    input: 2,
+    output: 6,
+    cacheRead: 0.5,
+    cacheWrite: 0,
+  });
   assert.deepEqual([...grok.reasoning_levels], ["low", "medium", "high", "xhigh"]);
 });
 

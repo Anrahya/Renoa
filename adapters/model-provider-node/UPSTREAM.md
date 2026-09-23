@@ -18,6 +18,11 @@ The Renoa-owned OpenCode Go catalog overlay also projects metadata from
 
 Full license text: `src/upstream/LICENSE-MODELS-DEV-MIT`.
 
+The Renoa-owned Grok 4.7 catalog addition uses the [xAI model documentation](https://docs.x.ai/developers/grok-4-7)
+and [September 21, 2026 release notes](https://docs.x.ai/developers/release-notes).
+Its Chat Completions transport and OAuth access were checked against the live xAI endpoint.
+No xAI source code was copied.
+
 Live OpenCode Go discovery projects the same MIT-licensed schema from
 `https://models.dev/api.json`, verified against models.dev revision
 `826d9fe918d9d208791314dd6892f7327c1de5b2`. Availability and documented
@@ -93,5 +98,5 @@ These remain because advertised xAI or OpenCode Go models still require them:
 - `maxTokensField: "max_tokens"` — OpenCode Chat Completions models (GLM, Kimi, MiniMax, and others) still send `max_tokens` rather than `max_completion_tokens`.
 - `sessionAffinityFormat: "openai-nosession"` — OpenCode Responses `grok-4.5` and `gpt-5.6-luna` set this in the pinned catalog. Other Responses models keep the OpenAI default.
 - xAI/OpenCode `supportsStore: false` and `supportsDeveloperRole: false` — both remaining providers reject OpenAI stored responses and the developer role.
-- Default OpenAI `reasoning_effort` mapping — Grok 4.6 overrides `supportsReasoningEffort` and maps kernel levels onto Chat Completions `reasoning_effort`.
+- Default OpenAI `reasoning_effort` mapping — Grok 4.6 and 4.7 override `supportsReasoningEffort` and map kernel levels onto Chat Completions `reasoning_effort`.
 - JSON-schema strict tool conversion — OpenAI Chat Completions and Responses still convert advertised function tools through `getJsonSchemaToolParameters` / `resolveJsonSchemaStrictSampling`.
