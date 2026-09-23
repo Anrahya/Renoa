@@ -19,6 +19,8 @@ use super::{
     ALPHA_PRESET_ID, compiled_adapter, provision_agent, read_http_request, workspace_root,
 };
 
+#[path = "vertical/code_mode.rs"]
+mod code_mode;
 #[path = "vertical/model.rs"]
 mod model;
 
@@ -42,7 +44,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     let address = listener.local_addr().expect("MCP fixture address");
     let endpoint = format!("http://127.0.0.1:{}/mcp", address.port());
     let server = thread::spawn(move || serve_vertical_mcp(&listener));
-    let host = new_vertical_host(&data, &bridge, &credentials, &adapter);
+    let host = new_vertical_host(&data, &bridge, &credentials, &adapter, None);
     let alpha = provision_agent(&host, ALPHA_PRESET_ID, "Alpha", None).await;
     configure_echo_mcp(&host, &endpoint, alpha).await;
 
@@ -113,7 +115,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
     drop(session);
     drop(host);
     assert_frozen_mcp_binding(&data, session_id);
-    let reopened = new_vertical_host(&data, &bridge, &credentials, &adapter);
+    let reopened = new_vertical_host(&data, &bridge, &credentials, &adapter, None);
     let restored = reopened
         .load_session_for_agent(alpha, session_id, &workspace)
         .await
@@ -164,7 +166,13 @@ async fn execute_tool_turn(
     outcome.expect("run Alpha through MCP and the kernel")
 }
 
-fn new_vertical_host(data: &Path, bridge: &Path, credentials: &Path, adapter: &Path) -> LocalHost {
+fn new_vertical_host(
+    data: &Path,
+    bridge: &Path,
+    credentials: &Path,
+    adapter: &Path,
+    worker: Option<&Path>,
+) -> LocalHost {
     LocalHost::new(
         data,
         LocalModelConfiguration::new(
@@ -174,7 +182,7 @@ fn new_vertical_host(data: &Path, bridge: &Path, credentials: &Path, adapter: &P
             "fixture-model",
             credentials,
         ),
-        renoa_local::LocalHostAdapters::new(Some(adapter)),
+        renoa_local::LocalHostAdapters::new(Some(adapter)).with_code_mode_worker(worker),
     )
     .expect("create local Host")
 }
@@ -399,38 +407,7 @@ fn serve_vertical_mcp(listener: &TcpListener) -> Vec<String> {
                     "capabilities": {"tools": {}}
                 }),
             ),
-            "tools/list" => (
-                200,
-                json!({
-                    "resultType": "complete",
-                    "tools": [
-                        {
-                            "name": "unused",
-                            "description": "Must stay outside model context.",
-                            "inputSchema": {"type": "object", "properties": {}}
-                        },
-                        {
-                            "name": "echo",
-                            "description": "Echo one string.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "tenant": {"type": "string", "x-mcp-header": "Tenant"},
-                                    "text": {"type": "string"}
-                                },
-                                "required": ["tenant", "text"]
-                            },
-                            "outputSchema": {
-                                "type": "object",
-                                "properties": {"echoed": {"type": "string"}},
-                                "required": ["echoed"]
-                            }
-                        }
-                    ],
-                    "ttlMs": 0,
-                    "cacheScope": "private"
-                }),
-            ),
+            "tools/list" => (200, vertical_tool_catalog()),
             "tools/call" => match tool_call_result(&rpc, &headers) {
                 Some(result) => result,
                 None => continue,
@@ -454,6 +431,38 @@ fn serve_vertical_mcp(listener: &TcpListener) -> Vec<String> {
         stream.flush().expect("flush MCP response");
     }
     methods
+}
+
+fn vertical_tool_catalog() -> Value {
+    json!({
+        "resultType": "complete",
+        "tools": [
+            {
+                "name": "unused",
+                "description": "Must stay outside model context.",
+                "inputSchema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "echo",
+                "description": "Echo one string.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tenant": {"type": "string", "x-mcp-header": "Tenant"},
+                        "text": {"type": "string"}
+                    },
+                    "required": ["tenant", "text"]
+                },
+                "outputSchema": {
+                    "type": "object",
+                    "properties": {"echoed": {"type": "string"}},
+                    "required": ["echoed"]
+                }
+            }
+        ],
+        "ttlMs": 0,
+        "cacheScope": "private"
+    })
 }
 
 fn tool_call_result(rpc: &Value, headers: &str) -> Option<(u16, Value)> {

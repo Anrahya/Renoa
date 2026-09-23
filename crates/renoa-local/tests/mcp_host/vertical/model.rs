@@ -3,6 +3,10 @@ use std::{fs, path::Path};
 use serde_json::Value;
 
 pub(super) fn write_model_bridge(path: &Path, requests: &Path) {
+    write_model_bridge_with_behavior(path, requests, STREAM_BEHAVIOR);
+}
+
+pub(super) fn write_model_bridge_with_behavior(path: &Path, requests: &Path, behavior: &str) {
     let mut source = format!(
         r#"
 import {{ appendFileSync }} from "node:fs";
@@ -37,7 +41,7 @@ appendFileSync({}, JSON.stringify(request) + "\n");
 "#,
         serde_json::to_string(requests).expect("encode model request log path")
     );
-    source.push_str(STREAM_BEHAVIOR);
+    source.push_str(behavior);
     fs::write(path, source).expect("write model bridge");
 }
 
