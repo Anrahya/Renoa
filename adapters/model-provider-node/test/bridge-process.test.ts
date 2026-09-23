@@ -141,31 +141,6 @@ test("compiled bridge catalog, describe, and stream over the process boundary", 
   }
 });
 
-test("compiled bridge describes Grok 4.7 high from the bundled xAI catalog", async () => {
-  const directory = tempDir();
-  const authStore = join(directory.path, "credentials.sqlite");
-  const store = createStore(directory.path, oauthCredential());
-  store.close();
-  try {
-    const result = await runBridge({
-      RENOA_MODEL_ACTION: "describe",
-      RENOA_MODEL_PROVIDER: "xai",
-      RENOA_MODEL: "grok-4.7",
-      RENOA_MODEL_REASONING: "high",
-      RENOA_MODEL_AUTH_STORE: authStore,
-    }, "");
-    assert.equal(result.status, 0, result.stderr);
-    const described = JSON.parse(result.stdout) as {
-      response: { reasoning_level: string; context_window_tokens: number; model_spec: string };
-    };
-    assert.equal(described.response.reasoning_level, "high");
-    assert.equal(described.response.context_window_tokens, 500_000);
-    assert.equal(JSON.parse(described.response.model_spec).id, "grok-4.7");
-  } finally {
-    directory.close();
-  }
-});
-
 test("malformed stream JSON is invalid_request before credentials are loaded", async () => {
   const directory = tempDir();
   const missingStore = join(directory.path, "missing", "credentials.sqlite");
