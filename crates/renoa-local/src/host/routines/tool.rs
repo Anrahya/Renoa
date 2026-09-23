@@ -8,7 +8,7 @@ use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, To
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{AgentId, CommandId, EffectRecovery, SessionId};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -18,24 +18,55 @@ pub(crate) fn binding(
     session: SessionId,
     command: Option<CommandId>,
 ) -> AgentToolBinding {
-    let spec = json!({"type":"object","properties":{
-        "agent_id":{"type":"string","format":"uuid"},"name":{"type":"string","minLength":1,"maxLength":512},"prompt":{"type":"string","minLength":1,"maxLength":32768},"enabled":{"type":"boolean"},
-        "schedule":{"oneOf":[
-            {"type":"object","properties":{"kind":{"const":"once"},"at":{"type":"string","format":"date-time","maxLength":128,"description":"One absolute future date/time with explicit UTC offset or Z, e.g. 2026-09-08T14:00:00+05:30. Resolve relative requests using the current date/time and user's timezone."}},"required":["kind","at"],"additionalProperties":false},
-            {"type":"object","properties":{"kind":{"const":"daily"},"hour":{"type":"integer","minimum":0,"maximum":23},"minute":{"type":"integer","minimum":0,"maximum":59},"timezone":{"type":"string","description":"Explicit IANA timezone, e.g. Asia/Kolkata"}},"required":["kind","hour","minute","timezone"],"additionalProperties":false},
-            {"type":"object","properties":{"kind":{"const":"interval"},"hours":{"type":"integer","minimum":1,"maximum":8760}},"required":["kind","hours"],"additionalProperties":false}
-        ]}},"required":["agent_id","name","prompt","schedule","enabled"],"additionalProperties":false});
-    AgentToolBinding::new("renoa-routine-manage-v3",Arc::new(Manage{host:LocalHost{config:host},session,command,spec:ToolSpec{
+    AgentToolBinding::new("renoa-routine-manage-v4",Arc::new(Manage{host:LocalHost{config:host},session,command,spec:ToolSpec{
         name:capabilities::ROUTINE_MANAGE.to_owned(),
         description:"Manage Host-owned scheduled tasks. List first for compact routine summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own routines; managing another agent's routines needs the agent_manage capability. Create only when the user requests scheduled work. Update the existing routine using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from routine listings and prevents future scheduling or manual runs; past results remain available through routine_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces to one catch-up. Results are durable in the agent's Host inbox; connected surfaces deliver them. Scheduled runs have their own persistent session, separate from interactive chat. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
-        input_schema:json!({"type":"object","properties":{"action":{"enum":["list","get","create","update","run_now","delete"]},"agent_id":{"type":"string","format":"uuid"},"cursor":{"type":"string","format":"uuid"},"id":{"type":"string","format":"uuid"},"expected_revision":{"type":"integer","minimum":1},"spec":spec},"required":["action"],"additionalProperties":false,"oneOf":[
-            {"properties":{"action":{"const":"list"},"id":false,"expected_revision":false,"spec":false}},
-            {"properties":{"action":{"const":"create"},"agent_id":false,"cursor":false,"id":false,"expected_revision":false},"required":["spec"]},
-            {"properties":{"action":{"const":"update"},"agent_id":false,"cursor":false},"required":["id","expected_revision","spec"]},
-            {"properties":{"action":{"const":"delete"},"agent_id":false,"cursor":false,"spec":false},"required":["id","expected_revision"]},
-            {"properties":{"action":{"enum":["get","run_now"]},"agent_id":false,"cursor":false,"spec":false,"expected_revision":false},"required":["id"]}
-        ]})
+        input_schema:input_schema()
     }}),EffectRecovery::SafeToReplay)
+}
+
+pub(super) fn input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "get", "create", "update", "run_now", "delete"],
+                "description": "list: optional agent_id and cursor. get or run_now: id. create: spec. update: id, expected_revision, and spec. delete: id and expected_revision. Pass only fields for the selected action."
+            },
+            "agent_id": {"type": "string", "format": "uuid"},
+            "cursor": {"type": "string", "format": "uuid"},
+            "id": {"type": "string", "format": "uuid"},
+            "expected_revision": {"type": "integer", "minimum": 1},
+            "spec": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string", "format": "uuid"},
+                    "name": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "prompt": {"type": "string", "minLength": 1, "maxLength": 32768},
+                    "enabled": {"type": "boolean"},
+                    "schedule": {
+                        "type": "object",
+                        "description": "kind=once requires at with a future absolute timestamp and UTC offset or Z. kind=daily requires hour, minute, and an IANA timezone. kind=interval requires hours. Pass only fields for that kind.",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["once", "daily", "interval"]},
+                            "at": {"type": "string", "format": "date-time", "maxLength": 128},
+                            "hour": {"type": "integer", "minimum": 0, "maximum": 23},
+                            "minute": {"type": "integer", "minimum": 0, "maximum": 59},
+                            "timezone": {"type": "string", "description": "Explicit IANA timezone, e.g. Asia/Kolkata"},
+                            "hours": {"type": "integer", "minimum": 1, "maximum": 8760}
+                        },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                    }
+                },
+                "required": ["agent_id", "name", "prompt", "schedule", "enabled"],
+                "additionalProperties": false
+            }
+        },
+        "required": ["action"],
+        "additionalProperties": false
+    })
 }
 struct Manage {
     host: LocalHost,
@@ -69,6 +100,7 @@ enum Input {
         expected_revision: i64,
     },
 }
+
 impl Tool for Manage {
     fn spec(&self) -> &ToolSpec {
         &self.spec
@@ -171,5 +203,34 @@ impl Tool for Manage {
                 is_error: false,
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::Input;
+
+    #[test]
+    fn action_and_schedule_variants_still_reject_foreign_or_missing_fields() {
+        assert!(
+            serde_json::from_value::<Input>(json!({"action": "list", "id": Uuid::nil()})).is_err()
+        );
+        assert!(serde_json::from_value::<Input>(json!({"action": "create"})).is_err());
+        assert!(
+            serde_json::from_value::<Input>(json!({
+                "action": "create",
+                "spec": {
+                    "agent_id": Uuid::nil(),
+                    "name": "Digest",
+                    "prompt": "Summarize",
+                    "schedule": {"kind": "daily", "hour": 9, "timezone": "Asia/Kolkata"},
+                    "enabled": true
+                }
+            }))
+            .is_err()
+        );
     }
 }
