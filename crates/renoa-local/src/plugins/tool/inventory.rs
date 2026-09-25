@@ -37,7 +37,7 @@ impl<'a> ExtensionListPage<'a> {
         let total = inventory.len();
         let encoded = serde_json::to_vec(&inventory).map_err(|error| {
             ToolError::internal(format!(
-                "extension inventory could not be fingerprinted: {error}"
+                "plugin inventory could not be fingerprinted: {error}"
             ))
         })?;
         let revision = hex_sha256(&encoded);
@@ -59,7 +59,7 @@ impl<'a> ExtensionListPage<'a> {
             };
             let encoded = serde_json::to_vec(&page).map_err(|error| {
                 ToolError::internal(format!(
-                    "extension inventory page could not be encoded: {error}"
+                    "plugin inventory page could not be encoded: {error}"
                 ))
             })?;
             if encoded.len() <= MAX_TOOL_OUTPUT_BYTES {
@@ -67,7 +67,7 @@ impl<'a> ExtensionListPage<'a> {
             }
             if page.items.len() <= 1 {
                 return Err(ToolError::output_limit(format!(
-                    "one extension inventory fact exceeds the {MAX_TOOL_OUTPUT_BYTES}-byte tool output boundary"
+                    "one plugin inventory fact exceeds the {MAX_TOOL_OUTPUT_BYTES}-byte tool output boundary"
                 )));
             }
             items = page.items;
@@ -93,7 +93,7 @@ fn parse_cursor(cursor: Option<&str>, revision: &str, total: usize) -> Result<us
     let offset = offset.parse::<usize>().map_err(|_| invalid_cursor())?;
     if cursor_revision != revision {
         return Err(ToolError::conflict(
-            "extension inventory changed while it was being listed; restart from the first page without a cursor",
+            "plugin inventory changed while it was being listed; restart from the first page without a cursor",
         ));
     }
     if offset >= total {

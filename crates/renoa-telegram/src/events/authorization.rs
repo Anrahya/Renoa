@@ -184,7 +184,7 @@ fn parse_credential(tool: &str, update: &ToolOutput) -> Option<ParsedCredential>
 }
 
 fn extension_text<'a>(tool: &str, update: &'a ToolOutput) -> Option<&'a str> {
-    if tool != "extension_manage" || update.is_error || update.content.len() != 1 {
+    if tool != "plugin_manage" || update.is_error || update.content.len() != 1 {
         return None;
     }
     let ContentBlock::Text { text } = &update.content[0] else {
@@ -233,10 +233,10 @@ mod tests {
             false,
         );
         assert_eq!(
-            extension_progress("extension_manage", &update).as_deref(),
+            extension_progress("plugin_manage", &update).as_deref(),
             Some("Authorization needed for Notion MCP. Open the message I sent.")
         );
-        let action = extension_action("request/call", "extension_manage", &update)
+        let action = extension_action("request/call", "plugin_manage", &update)
             .expect("valid authorization becomes a permanent action");
         assert_eq!(action.title, "Authorize Notion MCP");
         assert_eq!(action.button, "Authorize");
@@ -257,10 +257,10 @@ mod tests {
             false,
         );
         assert_eq!(
-            extension_progress("extension_manage", &update).as_deref(),
+            extension_progress("plugin_manage", &update).as_deref(),
             Some("A credential is needed for x.default. Open the secure message I sent.")
         );
-        let action = extension_action("request/call", "extension_manage", &update)
+        let action = extension_action("request/call", "plugin_manage", &update)
             .expect("valid credential update becomes a secure action");
         assert_eq!(action.id, "request/call/credential");
         assert!(action.sensitive_fragment);
@@ -279,7 +279,7 @@ mod tests {
                 true,
             ),
         ] {
-            assert!(extension_progress("extension_manage", &update).is_none());
+            assert!(extension_progress("plugin_manage", &update).is_none());
         }
     }
 

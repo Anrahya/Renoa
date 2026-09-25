@@ -1,5 +1,7 @@
 # Engineering rules
 
+- Before assuming or stating how software features, behavior, or architecture work,
+  inspect the implementing code first; if it is unavailable, state that limit.
 - Treat `docs/rcp-v0.md` as the canonical continuity architecture. Distinguish
   its locked decisions from its explicitly open decisions.
 - Keep the RCP core independent of agent harnesses. Do not deepen the current

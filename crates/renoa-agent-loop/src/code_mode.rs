@@ -29,7 +29,7 @@ pub(crate) struct CodeModeInput {
 pub(crate) fn spec() -> ToolSpec {
     ToolSpec {
         name: CODE_MODE_TOOL.to_owned(),
-        description: "Run Python for MCP work. Find MCP references with tool_search and inspect their schemas with tool_load. In Python, call await mcp(reference, arguments), or use asyncio.gather for independent calls. Each mcp result is a dictionary with content, details, and is_error. Only the final Python value is returned; each MCP call is durably recorded before dispatch."
+        description: "Run Python for MCP work. Find MCP references with plugin_search and inspect their schemas with tool_load. In Python, call await mcp(reference, arguments), or use asyncio.gather for independent calls. Each mcp result is a dictionary with content, details, and is_error. Only the final Python value is returned; each MCP call is durably recorded before dispatch."
             .to_owned(),
         input_schema: json!({
             "type": "object",

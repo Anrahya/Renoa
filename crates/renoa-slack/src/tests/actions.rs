@@ -20,7 +20,7 @@ fn setup_event(stage: &str) -> AgentEvent {
     AgentEvent::ToolExecutionUpdate {
         call: ToolCall {
             id: "connect-1".to_owned(),
-            name: "extension_manage".to_owned(),
+            name: "plugin_manage".to_owned(),
             arguments: json!({}),
             thought_signature: None,
             namespace: None,

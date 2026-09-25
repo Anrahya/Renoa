@@ -179,7 +179,7 @@ fn manager(
         McpCredentialResolver::default(),
         test_skill_store(database, directory.path()),
     )
-    .expect("initialize extension manager")
+    .expect("initialize plugin manager")
 }
 
 async fn connect(

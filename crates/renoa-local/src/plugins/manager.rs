@@ -26,6 +26,7 @@ use crate::{
     skills::{SkillComponentReport, SkillStore},
 };
 use identity::default_connection_id;
+pub(super) use identity::integration_id;
 
 pub(crate) use connect::{ProfileAuthorizationRequest, ProfileConnectionRequest};
 

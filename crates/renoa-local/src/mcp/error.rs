@@ -38,7 +38,7 @@ pub enum McpHostError {
 #[non_exhaustive]
 pub enum McpOAuthError {
     #[error(
-        "MCP connection '{0}' requires browser authorization; call extension_manage with action 'authorize'"
+        "MCP connection '{0}' requires browser authorization; call plugin_manage with action 'authorize'"
     )]
     AuthorizationRequired(String),
     #[error("MCP OAuth configuration is invalid: {0}")]
@@ -46,19 +46,19 @@ pub enum McpOAuthError {
     #[error("MCP OAuth for connection '{0}' is already running; wait for that flow to finish")]
     InProgress(String),
     #[error(
-        "MCP OAuth outcome for connection '{connection}' is unknown; Renoa did not retry the credential exchange. Retry with restart=true: use extension_manage connect with the retained package, server, connection and credential if unpublished, or authorize if registered. Boundary error: {detail}"
+        "MCP OAuth outcome for connection '{connection}' is unknown; Renoa did not retry the credential exchange. Retry with restart=true: use plugin_manage connect with the retained package, server, connection and credential if unpublished, or authorize if registered. Boundary error: {detail}"
     )]
     OutcomeUnknown { connection: String, detail: String },
     #[error(
-        "MCP OAuth already completed for this recovered operation on connection '{0}', but its credential is no longer usable; start a new extension_manage authorize call"
+        "MCP OAuth already completed for this recovered operation on connection '{0}', but its credential is no longer usable; start a new plugin_manage authorize call"
     )]
     ReceiptUnavailable(String),
     #[error(
-        "MCP OAuth previously returned a definite credential failure for this recovered operation on connection '{0}'; Renoa did not repeat the authorization flow. Start a new extension_manage authorize call to try again"
+        "MCP OAuth previously returned a definite credential failure for this recovered operation on connection '{0}'; Renoa did not repeat the authorization flow. Start a new plugin_manage authorize call to try again"
     )]
     ReceiptFailure(String),
     #[error(
-        "MCP OAuth callback expired; retry with restart=true. Use extension_manage connect with the retained package, server, connection and credential if no connection was published; use authorize for an existing registered connection"
+        "MCP OAuth callback expired; retry with restart=true. Use plugin_manage connect with the retained package, server, connection and credential if no connection was published; use authorize for an existing registered connection"
     )]
     CallbackExpired,
     #[error("MCP OAuth callback was cancelled")]

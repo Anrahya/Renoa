@@ -68,10 +68,10 @@ fn acp_runs_the_frozen_alpha_profile_through_the_kernel() {
         "git_changes",
         "git_diff",
         "git_show",
-        "tool_search",
+        "plugin_search",
         "tool_load",
         "tool_execute",
-        "extension_manage",
+        "plugin_manage",
         "skill_search",
         "skill_load",
     ] {

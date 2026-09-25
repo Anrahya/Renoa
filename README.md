@@ -53,7 +53,7 @@ without turning the kernel into product policy or one giant plugin interface.
   search/load/execute schemas to Alpha.
 - [`mcp-registry-node`](adapters/mcp-registry-node) is the replaceable,
   read-only downstream adapter for official MCP Registry discovery.
-  `extension_manage` can search names and inspect one exact published version,
+  `plugin_search` can search names and inspect one exact published version,
   but Registry metadata never becomes an installation input. Alpha must still
   verify the provider's official documentation before adding the normalized
   MCP definition. Exact local Agent Plugin packages use the same Host manager.

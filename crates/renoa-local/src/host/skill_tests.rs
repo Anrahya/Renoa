@@ -165,7 +165,7 @@ async fn a_non_alpha_agent_uses_its_own_skill_registry_binding() {
                     "git_changes",
                     "git_diff",
                     "git_show",
-                    "extension_manage",
+                    "plugin_manage",
                 ]
                 .map(str::to_owned),
             ),
@@ -314,7 +314,7 @@ Confirm restoration.` }]);
 const workspaceTools = [
   "read_file", "edit_file", "write_file", "bash", "grep", "find",
   "git_changes", "git_diff", "git_show",
-  "tool_search", "tool_load", "tool_execute", "extension_manage"
+  "plugin_search", "tool_load", "tool_execute", "plugin_manage"
 ];
 const expectedTools = request.system_prompt.startsWith("You are a test agent.")
   ? [...workspaceTools, "routine_results", "routine_manage", "skill_search", "skill_load"]

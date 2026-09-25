@@ -37,7 +37,8 @@ pub use error::{
 
 pub(crate) use process::{discover, discover_cancellable};
 pub(crate) use registry::{
-    LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, SEARCH_RESULT_LIMIT, rank_tools,
+    LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpToolReference, McpToolSummary, SEARCH_RESULT_LIMIT,
+    rank_tools,
 };
 pub(crate) use store::{McpCatalogStore, McpConnectionCandidate, McpConnectionStatus};
 pub(crate) use tool::{adapter_tool_error, agent_registry_bindings};

@@ -154,7 +154,7 @@ The Agent UUID and allowed Slack Member ID are stable launch settings.
 Both surfaces now serve the same stored Arcee agent definition, enabled MCP
 connections, private OAuth store, installed plugins, and agent documents.
 Connections newly attached to an agent are visible without a surface restart.
-The Host's extension inventory also lets other agents enable an existing
+The Host's plugin inventory also lets other agents enable an existing
 connection or reuse an installed package's skills by digest; neither operation
 repeats OAuth.
 

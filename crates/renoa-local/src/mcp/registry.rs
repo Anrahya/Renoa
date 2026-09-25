@@ -103,18 +103,34 @@ pub(crate) struct McpToolSummary {
 }
 
 impl McpToolSummary {
-    pub(super) fn reference(&self) -> Result<McpToolReference, McpHostError> {
+    pub(crate) fn integration_id(&self) -> &str {
+        &self.integration_id
+    }
+
+    pub(crate) fn reference(&self) -> Result<McpToolReference, McpHostError> {
         McpToolReference::new(
             self.connection_id.clone(),
             self.catalog_digest.clone(),
             self.name.clone(),
         )
     }
+
+    pub(crate) fn connection_id(&self) -> &str {
+        &self.connection_id
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn description(&self) -> &str {
+        &self.description
+    }
 }
 
 pub(crate) struct RankedTools {
-    pub(super) matches: Vec<McpToolSummary>,
-    pub(super) total_matches: usize,
+    pub(crate) matches: Vec<McpToolSummary>,
+    pub(crate) total_matches: usize,
 }
 
 pub(crate) fn rank_tools(

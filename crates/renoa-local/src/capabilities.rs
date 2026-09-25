@@ -43,11 +43,11 @@ define_built_in_capabilities! {
     GitChanges => "git_changes",
     GitDiff => "git_diff",
     GitShow => "git_show",
-    ExtensionManage => "extension_manage",
+    PluginManage => "plugin_manage",
     AgentManage => "agent_manage",
     RoutineManage => "routine_manage",
     RoutineResults => "routine_results",
-    ToolSearch => "tool_search",
+    PluginSearch => "plugin_search",
     ToolLoad => "tool_load",
     ToolExecute => "tool_execute",
     CodeMode => "code_mode",
@@ -56,11 +56,11 @@ define_built_in_capabilities! {
     AgentDocuments => "agent_documents",
 }
 
-pub(crate) const EXTENSION_MANAGE: &str = BuiltInCapability::ExtensionManage.name();
+pub(crate) const PLUGIN_MANAGE: &str = BuiltInCapability::PluginManage.name();
 pub(crate) const AGENT_MANAGE: &str = BuiltInCapability::AgentManage.name();
 pub(crate) const ROUTINE_MANAGE: &str = BuiltInCapability::RoutineManage.name();
 pub(crate) const ROUTINE_RESULTS: &str = BuiltInCapability::RoutineResults.name();
-pub(crate) const TOOL_SEARCH: &str = BuiltInCapability::ToolSearch.name();
+pub(crate) const PLUGIN_SEARCH: &str = BuiltInCapability::PluginSearch.name();
 pub(crate) const TOOL_LOAD: &str = BuiltInCapability::ToolLoad.name();
 pub(crate) const TOOL_EXECUTE: &str = BuiltInCapability::ToolExecute.name();
 pub(crate) const CODE_MODE: &str = BuiltInCapability::CodeMode.name();
@@ -131,11 +131,11 @@ mod tests {
         expected(BuiltInCapability::GitChanges, "git_changes"),
         expected(BuiltInCapability::GitDiff, "git_diff"),
         expected(BuiltInCapability::GitShow, "git_show"),
-        expected(BuiltInCapability::ExtensionManage, "extension_manage"),
+        expected(BuiltInCapability::PluginManage, "plugin_manage"),
         expected(BuiltInCapability::AgentManage, "agent_manage"),
         expected(BuiltInCapability::RoutineManage, "routine_manage"),
         expected(BuiltInCapability::RoutineResults, "routine_results"),
-        expected(BuiltInCapability::ToolSearch, "tool_search"),
+        expected(BuiltInCapability::PluginSearch, "plugin_search"),
         expected(BuiltInCapability::ToolLoad, "tool_load"),
         expected(BuiltInCapability::ToolExecute, "tool_execute"),
         expected(BuiltInCapability::CodeMode, "code_mode"),

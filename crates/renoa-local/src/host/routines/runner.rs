@@ -8,7 +8,7 @@ struct HeadlessProgress(CancellationToken);
 impl AgentEventSink for HeadlessProgress {
     fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
         if let AgentEvent::ToolExecutionUpdate { call, update } = event
-            && call.name == crate::capabilities::EXTENSION_MANAGE
+            && call.name == crate::capabilities::PLUGIN_MANAGE
             && !update.is_error
             && let [ContentBlock::Text { text }] = update.content.as_slice()
         {
@@ -99,7 +99,7 @@ mod tests {
             let cancellation = CancellationToken::new();
             let sink = HeadlessProgress(cancellation.clone());
             sink.emit(AgentEvent::ToolExecutionUpdate{
-                call:renoa_agent::ToolCall{id:"setup".to_owned(),name:"extension_manage".to_owned(),arguments:serde_json::json!({}),namespace:None,thought_signature:None},
+                call:renoa_agent::ToolCall{id:"setup".to_owned(),name:"plugin_manage".to_owned(),arguments:serde_json::json!({}),namespace:None,thought_signature:None},
                 update:renoa_agent::ToolOutput{content:vec![ContentBlock::text(serde_json::json!({"status":status,"authorization_url":"https://example.com/private"}).to_string())],details:None,is_error:false}
             }).await;
             assert!(cancellation.is_cancelled());

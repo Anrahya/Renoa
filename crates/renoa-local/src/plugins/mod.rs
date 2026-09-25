@@ -4,6 +4,7 @@ mod generated;
 pub(crate) mod inspect;
 mod json;
 mod manager;
+mod search;
 pub(crate) mod store;
 mod tool;
 
@@ -23,6 +24,9 @@ use serde::Serialize;
 pub(crate) use discovery::OfficialRegistry;
 pub use error::PluginError;
 pub(crate) use manager::PluginManager;
+#[cfg(test)]
+pub(crate) use search::PluginSearchTool;
+pub(crate) use search::binding as agent_plugin_search_binding;
 pub(crate) use tool::agent_plugin_binding;
 
 pub(crate) const PLUGIN_STORE_DIRECTORY: &str = "plugins";

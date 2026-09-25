@@ -37,34 +37,38 @@ const finish = () => complete([{type:"text",text:"Shared capabilities ready."}])
 if (prompt.startsWith("Reuse ")) {
   const digest = prompt.slice(6);
   switch (results.length) {
-    case 0: call("extension_manage", {action:"list"}); break;
+    case 0: call("plugin_manage", {action:"list"}); break;
     case 1: {
       const inventory = value(0).items;
       if (!inventory.some(item => item.kind === "package" && item.package_digest === digest)) fail("package missing from shared library");
       const connection = inventory.find(item => item.kind === "connection" && item.connection === "shared-x");
       if (!connection || connection.enabled_for_agent || !connection.catalog_loaded) fail("second agent already saw the connection enabled");
-      call("extension_manage", {action:"enable",connection:"shared-x"}); break;
+      call("plugin_manage", {action:"enable",connection:"shared-x"}); break;
     }
-    case 2: call("extension_manage", {action:"add",source:{kind:"installed",package_digest:digest}}); break;
+    case 2: call("plugin_manage", {action:"add",source:{kind:"installed",package_digest:digest}}); break;
     case 3:
       if (value(2).source !== "installed" || value(2).skills.accepted[0] !== "shared-workflow") fail("installed skill reuse failed");
       call("skill_search", {query:"shared-workflow"}); break;
     case 4:
       if (!value(3).some(item => item.name === "shared-workflow")) fail("shared skill absent");
       call("skill_load", {name:"shared-workflow"}); break;
-    case 5: call("tool_search", {query:"shared_echo"}); break;
-    case 6: call("tool_load", {references:[value(5).matches[0].reference]}); break;
-    case 7: call("tool_execute", {reference:value(5).matches[0].reference,arguments:{}}); break;
-    case 8:
-      if (!results[7].result.content[0].text.includes("Authenticated shared tool succeeded")) fail("shared credential invocation failed");
+    case 5: call("plugin_search", {query:"shared_echo"}); break;
+    case 6: call("plugin_search", {plugin:value(5).items[0].id}); break;
+    case 7: call("plugin_search", {connection:value(6).items.find(item => item.kind === "connection").connection,query:"shared_echo"}); break;
+    case 8: call("tool_load", {references:[value(7).items[0].reference]}); break;
+    case 9: call("tool_execute", {reference:value(7).items[0].reference,arguments:{}}); break;
+    case 10:
+      if (!results[9].result.content[0].text.includes("Authenticated shared tool succeeded")) fail("shared credential invocation failed");
       finish(); break;
     default: fail("unexpected reuse turn");
   }
 } else if (prompt === "Confirm") {
   if (!request.system_prompt.includes("SHARED_HOST_SKILL_INSTRUCTIONS")) fail("pinned shared skill missing after restart");
-  if (results.length === 0) call("tool_search", {query:"shared_echo"});
-  else if (results.length === 1) call("tool_load", {references:[value(0).matches[0].reference]});
-  else if (results.length === 2) call("tool_execute", {reference:value(0).matches[0].reference,arguments:{}});
-  else if (results.length === 3) finish();
+  if (results.length === 0) call("plugin_search", {query:"shared_echo"});
+  else if (results.length === 1) call("plugin_search", {plugin:value(0).items[0].id});
+  else if (results.length === 2) call("plugin_search", {connection:value(1).items.find(item => item.kind === "connection").connection,query:"shared_echo"});
+  else if (results.length === 3) call("tool_load", {references:[value(2).items[0].reference]});
+  else if (results.length === 4) call("tool_execute", {reference:value(2).items[0].reference,arguments:{}});
+  else if (results.length === 5) finish();
   else fail("unexpected confirmation turn");
 } else fail("unexpected prompt");

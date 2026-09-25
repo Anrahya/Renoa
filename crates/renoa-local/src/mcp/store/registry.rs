@@ -312,6 +312,32 @@ pub(crate) struct McpConnectionStatus {
     rejected_tools: usize,
 }
 
+impl McpConnectionStatus {
+    pub(crate) fn connection(&self) -> &str {
+        &self.connection
+    }
+
+    pub(crate) fn integration(&self) -> &str {
+        &self.integration
+    }
+
+    pub(crate) fn enabled_for_agent(&self) -> bool {
+        self.enabled_for_agent
+    }
+
+    pub(crate) fn catalog_loaded(&self) -> bool {
+        self.catalog_loaded
+    }
+
+    pub(crate) fn tool_count(&self) -> usize {
+        self.tools
+    }
+
+    pub(crate) fn credential_configured(&self) -> bool {
+        self.auth != McpConnectionAuthKind::None
+    }
+}
+
 struct EnabledConnection {
     integration_id: String,
     auth_kind: String,

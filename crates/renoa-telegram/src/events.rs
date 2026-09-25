@@ -351,7 +351,7 @@ mod tests {
             AgentEvent::MessageUpdate {
                 content_index: 0,
                 delta: AssistantDelta::Text {
-                    text: "Checking the extension catalog.".to_owned(),
+                    text: "Checking the plugin catalog.".to_owned(),
                 },
             },
         ));
@@ -359,23 +359,23 @@ mod tests {
         assert!(observe(
             &mut state,
             AgentEvent::ToolExecutionStart {
-                call: tool_call("extension_manage"),
+                call: tool_call("plugin_manage"),
             },
         ));
         let using = render_draft(&state);
         assert_eq!(
             using.thinking.as_deref(),
-            Some("Checking the extension catalog.\n\nUsing extension manage…")
+            Some("Checking the plugin catalog.\n\nUsing plugin manage…")
         );
         assert_eq!(using.text, None);
 
         assert!(observe(
             &mut state,
             AgentEvent::ToolExecutionEnd {
-                call: tool_call("extension_manage"),
+                call: tool_call("plugin_manage"),
                 result: ToolResult {
                     call_id: "call-1".to_owned(),
-                    name: "extension_manage".to_owned(),
+                    name: "plugin_manage".to_owned(),
                     content: vec![ContentBlock::text("done")],
                     details: None,
                     is_error: false,
@@ -405,7 +405,7 @@ mod tests {
         let final_stream = render_draft(&state);
         assert_eq!(
             final_stream.thinking.as_deref(),
-            Some("Checking the extension catalog.\n\nFinished extension manage.")
+            Some("Checking the plugin catalog.\n\nFinished plugin manage.")
         );
         assert_eq!(final_stream.text.as_deref(), Some("Found Exa."));
     }

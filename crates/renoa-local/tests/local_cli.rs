@@ -321,7 +321,7 @@ const toolNames = request.tools.map((tool) => tool.name);
 if (JSON.stringify(toolNames) !== JSON.stringify([
   "read_file", "edit_file", "write_file", "bash", "grep", "find",
   "git_changes", "git_diff", "git_show",
-  "tool_search", "tool_load", "tool_execute", "extension_manage", "skill_search", "skill_load"
+  "plugin_search", "tool_load", "tool_execute", "plugin_manage", "skill_search", "skill_load"
 ])) {
   throw new Error(`unexpected Alpha tools: ${JSON.stringify(toolNames)}`);
 }

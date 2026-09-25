@@ -231,7 +231,7 @@ client certificates, proxies, and insecure TLS switches are outside v0.
 ## OAuth lifecycle
 
 OAuth remains Host connection policy, not MCP tool behavior and not kernel
-state. `extension_manage` can add or connect a package with `credential.kind =
+state. `plugin_manage` can add or connect a package with `credential.kind =
 "oauth"`; this is the model's only OAuth choice. Before producing any setup or
 sign-in link, the Host requires RFC 9728 protected-resource metadata naming
 exactly one authorization server and valid metadata for that exact issuer.
@@ -336,7 +336,7 @@ lock, so concurrent sessions share one rotating refresh-token exchange. A
 revoked but unexpired token produces the server's ordinary model-visible 401;
 the agent can then invoke explicit reauthorization.
 
-`extension_manage` is safe to replay only because the Host also commits a
+`plugin_manage` is safe to replay only because the Host also commits a
 bounded terminal receipt before returning. Re-entry with the same stable
 session/command/tool-call identity reads that receipt and performs no remote
 OAuth mutation. An authorized receipt is accepted only while its endpoint-bound
@@ -364,14 +364,14 @@ Repeating the same replacement is a no-op and preserves its
 catalog. A successful unauthenticated discovery reports `catalog_loaded`; only
 a completed OAuth flow reports `authorized`.
 
-`extension_manage disconnect` is narrower than replacement or removal. It
+`plugin_manage disconnect` is narrower than replacement or removal. It
 deletes only the active profile's attachment in one transaction and is idempotent.
 The durable connection, catalog, package, credential reference, OAuth state,
 and receipts remain available for recovery and later reattachment. List output
 therefore reports registration, authentication kind, catalog presence, and
 profile attachment as separate facts; it never infers that an OAuth token is
 currently valid merely because the connection is registered.
-`extension_manage enable` is the symmetric, idempotent reattachment path. It
+`plugin_manage enable` is the symmetric, idempotent reattachment path. It
 requires the retained complete catalog and performs no network request.
 Management list output also reports the committed accepted and rejected skill
 bindings per plugin source, separately from immutable package installation.
@@ -457,13 +457,13 @@ Self-reported `serverInfo.name` is never identity.
 MCP names never become top-level model tool names. A direct-MCP agent can
 select three small, provider-neutral Host tools:
 
-- `tool_search` searches names, services, and descriptions. Its model-facing
-  guidance asks for a targeted search first, then `*` if the needed tool is not
-  found.
-  Each page returns at most 200 individual tools from enabled MCP connections,
-  containing only names, short descriptions, and exact references, never
-  schemas. An optional offset and returned `next_offset` allow browsing later
-  matches;
+- `plugin_search` first returns compact plugin cards for targeted capability,
+  service, and name queries; `*` browses the local library. An exact plugin id
+  returns its server and connection facts. An enabled connection id opens its
+  nested MCP tools. Each page returns at most 200 facts, stays within the Host's
+  50 KiB output bound, and provides `next_offset` for later matches. Tool pages
+  contain names, short descriptions, and exact references, never schemas.
+  External official Registry research requires an explicit source;
 - `tool_load` accepts one through three unchanged references and returns their
   exact model-facing descriptions and input schemas, bounded to 64 KiB total;
 - `tool_execute` accepts one unchanged reference plus an argument object and
@@ -474,7 +474,7 @@ pages can change ranking; a reference from an older snapshot fails on load or
 execute instead of selecting a different tool.
 
 When an agent selects `code_mode`, `tool_execute` is hidden from its model
-request even if a pinned preset also selected it. `tool_search` and `tool_load`
+request even if a pinned preset also selected it. `plugin_search` and `tool_load`
 remain individually selectable, and one `code_mode` schema replaces direct
 MCP execution. Python calls `await mcp(reference, arguments)` with the exact
 loaded reference and a JSON-compatible argument dictionary; independent calls
@@ -712,7 +712,7 @@ refresh.
 
 Every registry call opens current Host state instead of consulting a process
 cache. A connection attached or refreshed by a GUI, another local command, or
-the running agent becomes visible to the next `tool_search` call, including
+the running agent becomes visible to the next `plugin_search` call, including
 inside an already active Agent turn. The surface and Agent do not restart. This
 does not alter an in-flight remote call. The stateless v0 MCP adapter also does
 not keep a subscription open for `notifications/tools/list_changed`; a Host
@@ -786,7 +786,7 @@ and the real process boundary:
 26. v8 OAuth connections migrate to explicit DCR without losing durable Host
     state, and explicit replacement drops stale tools but is idempotent; and
 27. one corrupt installed package is reported separately without hiding valid
-    packages from `extension_manage list`; and
+    packages from `plugin_manage list`; and
 28. disconnect immediately removes search and execution access, survives
     replay, and retains the exact complete catalog for later reattachment;
 29. enable reattaches that retained catalog without network access, and list

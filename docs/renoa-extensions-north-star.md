@@ -406,11 +406,11 @@ not provide.
 Extension breadth must not become context pollution. For one resolved
 operation, the model receives only:
 
-1. the profile's instructions, two fixed skill-registry definitions, and only
-   deliberately activated full skill content;
+1. the profile's instructions and only deliberately activated full skill
+   content;
 2. the durable context projection; and
-3. the six local tools, three fixed MCP-registry tools, and one fixed
-   `extension_manage` definition required for the current full-access profile.
+3. the Host-selected local tools, `plugin_search`, `plugin_manage`,
+   `tool_load`, `tool_execute`, and two fixed skill-registry definitions.
 
 Package manifests, marketplace descriptions, setup instructions, connection
 state, OAuth scopes, environment variables, secret references, process
@@ -698,7 +698,7 @@ there is no nested plugin approval path. The resulting capability becomes
 available only at the next safe registry lookup or operation boundary,
 according to its resolved component type.
 
-Current proof: `LocalHost` and `extension_manage` call the same manager;
+Current proof: `LocalHost` and `plugin_manage` call the same manager;
 inspect/install retries are content-bound and idempotent; local package adds
 require the inspected digest; connect reuses the
 existing catalog/attachment path; official Registry search and exact lookup run
@@ -710,36 +710,23 @@ accepted as installation inputs; standard package skills enter
 the existing skill registry; and connection discovery runs only after
 installation. Connection failure reports the retained package,
 skill result, package notices, exact safe service error, and any known
-connection identity. One live `skill_search` or `tool_search` registry observes
+connection identity. One live `skill_search` or `plugin_search` registry observes
 the committed component without restart. Retrying the same source converges on
 the same digest and connection identity. OAuth connections use that same path:
 the Host owns exact loopback browser authorization and refresh, Secret Service
 owns credential values, SQLite owns only the connection reference and durable
 phase plus semantic terminal receipts, and uncertain exchanges are never
 replayed.
-Official Registry discovery changes the frozen `extension_manage` binding from
-revision 5 to revision 6. An unfinished operation admitted with revision 5
-fails closed after upgrade instead of gaining `search` or `lookup` under a
-different tool contract. Settled history and already installed immutable
-packages are unchanged.
-Connection-state reporting and idempotent Alpha disconnect change the binding
-from revision 6 to revision 7. An unfinished revision-6 management operation
-likewise fails closed after upgrade rather than gaining the new mutating action.
-The durable connection and catalog remain intact when a settled disconnect is
-replayed.
-Exact per-action schemas, generic Secret Service credential headers,
-idempotent re-enable, and separate package/connection/skill-source reporting
-change the binding from revision 7 to revision 8. The MCP adapter wire changes
-from 6 to 7 so the exact credential header is frozen, redacted, and scoped to
-one endpoint. Discovery compiles every remote input schema and invocation
-validates the frozen schema before dispatch. Invalid catalog siblings are
-isolated, failed refresh keeps the previous complete catalog, and re-enable
-uses that retained catalog without a network call. Management inventory uses
-bounded revision-bound cursor pages rather than one unbounded aggregate.
-The later official Registry trust and identity hardening is frozen as revision
-9. Private package synchronization changes the implementation to revision 10;
-an unfinished operation frozen at revision 9 fails closed instead of acquiring
-a new remote side effect under its old manifest.
+Current `plugin_search` returns compact local plugin cards, paged component
+facts, and paged tools for one enabled connection. External Registry search and
+exact lookup require an explicit source and never install a package. Each local
+page has a 200 item and 50 KiB bound. `plugin_manage` owns installation,
+connection, authorization, enable, and disable actions; its list uses
+revision-bound cursor pages. A schema-28 Host catalog migrates selected tool
+names and stored result receipts to `plugin_search` and `plugin_manage` in one
+transaction. The MCP adapter continues to compile remote input schemas before
+tool dispatch, isolate invalid catalog siblings, retain the previous complete
+catalog after failed refresh, and re-enable without a network call.
 Remaining proof: wire the first GUI consumer and resolve the general permission
 vocabulary without letting an agent broaden its own effective scope.
 

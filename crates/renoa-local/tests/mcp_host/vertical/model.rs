@@ -55,30 +55,40 @@ if (toolResults.length === 0) {
   content = [{
     type: "tool_call",
     id: `mcp-search-${prompt.includes("denied") ? "denied" : prompt.includes("lost") ? "lost" : "ok"}`,
-    name: "tool_search",
+    name: "plugin_search",
     arguments: { query: "echo" }
   }];
   stopReason = "tool_use";
-} else if (toolResults.length === 1 && toolResults[0].result.name === "tool_search") {
+} else if (toolResults.length === 1 && toolResults[0].result.name === "plugin_search") {
   const search = JSON.parse(toolResults[0].result.content[0].text);
   if (
     toolResults[0].result.details !== null ||
-    search.total_matches !== 1 ||
-    search.matches.length !== 1 ||
-    search.matches[0].name !== "echo" ||
-    "input_schema" in search.matches[0]
+    search.total !== 1 ||
+    search.items.length !== 1 ||
+    search.items[0].id !== "direct:fixture" ||
+    "reference" in search.items[0]
   ) process.exit(3);
   content = [{
     type: "tool_call",
-    id: `mcp-load-${prompt.includes("denied") ? "denied" : prompt.includes("lost") ? "lost" : "ok"}`,
-    name: "tool_load",
-    arguments: { references: [search.matches[0].reference] }
+    id: "mcp-inspect",
+    name: "plugin_search",
+    arguments: { plugin: search.items[0].id }
   }];
   stopReason = "tool_use";
-} else if (toolResults.length === 2 && toolResults[1].result.name === "tool_load") {
-  const loaded = JSON.parse(toolResults[1].result.content[0].text);
+} else if (toolResults.length === 2 && toolResults[1].result.name === "plugin_search") {
+  const inspected = JSON.parse(toolResults[1].result.content[0].text);
+  if (inspected.items[0].connection !== "primary" || inspected.items[0].enabled_for_agent !== true) process.exit(3);
+  content = [{ type: "tool_call", id: "mcp-tools", name: "plugin_search", arguments: { connection: inspected.items[0].connection, query: "echo" } }];
+  stopReason = "tool_use";
+} else if (toolResults.length === 3 && toolResults[2].result.name === "plugin_search") {
+  const matches = JSON.parse(toolResults[2].result.content[0].text);
+  if (matches.items[0].name !== "echo" || "input_schema" in matches.items[0]) process.exit(3);
+  content = [{ type: "tool_call", id: "mcp-load", name: "tool_load", arguments: { references: [matches.items[0].reference] } }];
+  stopReason = "tool_use";
+} else if (toolResults.length === 4 && toolResults[3].result.name === "tool_load") {
+  const loaded = JSON.parse(toolResults[3].result.content[0].text);
   if (
-    toolResults[1].result.details !== null ||
+    toolResults[3].result.details !== null ||
     loaded.tools.length !== 1 ||
     loaded.tools[0].name !== "echo" ||
     loaded.tools[0].input_schema.required.join(",") !== "tenant,text" ||
@@ -98,33 +108,33 @@ if (toolResults.length === 0) {
   stopReason = "tool_use";
 } else if (
   prompt === "Use the echo tool." &&
-  toolResults.length === 3 &&
-  toolResults[2].result.name === "tool_execute" &&
-  toolResults[2].result.content[0].text === "echo: hello" &&
-  toolResults[2].result.details === null &&
-  toolResults[2].result.is_error === false
+  toolResults.length === 5 &&
+  toolResults[4].result.name === "tool_execute" &&
+  toolResults[4].result.content[0].text === "echo: hello" &&
+  toolResults[4].result.details === null &&
+  toolResults[4].result.is_error === false
 ) {
   content = [{ type: "text", text: "Echo completed." }];
   stopReason = "stop";
 } else if (
   prompt === "Use the denied echo tool." &&
-  toolResults.length === 3 &&
-  toolResults[2].result.name === "tool_execute" &&
-  toolResults[2].result.content[0].text.includes("HTTP 401") &&
-  toolResults[2].result.content[0].text.includes("permission denied") &&
-  toolResults[2].result.details === null &&
-  toolResults[2].result.is_error === true
+  toolResults.length === 5 &&
+  toolResults[4].result.name === "tool_execute" &&
+  toolResults[4].result.content[0].text.includes("HTTP 401") &&
+  toolResults[4].result.content[0].text.includes("permission denied") &&
+  toolResults[4].result.details === null &&
+  toolResults[4].result.is_error === true
 ) {
   content = [{ type: "text", text: "MCP error handled." }];
   stopReason = "stop";
 } else if (
   prompt === "Use the lost echo tool." &&
-  toolResults.length === 3 &&
-  toolResults[2].result.name === "tool_execute" &&
-  toolResults[2].result.content[0].text.includes("may or may not have succeeded") &&
-  toolResults[2].result.content[0].text.includes("did not replay it") &&
-  toolResults[2].result.details === null &&
-  toolResults[2].result.is_error === true
+  toolResults.length === 5 &&
+  toolResults[4].result.name === "tool_execute" &&
+  toolResults[4].result.content[0].text.includes("may or may not have succeeded") &&
+  toolResults[4].result.content[0].text.includes("did not replay it") &&
+  toolResults[4].result.details === null &&
+  toolResults[4].result.is_error === true
 ) {
   content = [{ type: "text", text: "MCP uncertainty handled." }];
   stopReason = "stop";

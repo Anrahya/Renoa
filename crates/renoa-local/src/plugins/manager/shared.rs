@@ -40,6 +40,10 @@ impl PluginManager {
 
     pub(crate) async fn list_report(&self) -> Result<PluginListReport, PluginError> {
         self.synchronize_shared().await?;
+        self.local_list_report().await
+    }
+
+    pub(crate) async fn local_list_report(&self) -> Result<PluginListReport, PluginError> {
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || store.list_report()).await?
     }

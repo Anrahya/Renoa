@@ -97,8 +97,8 @@ opens its data root. An agent selecting `code_mode` without a configured worker
 is refused when its runtime is assembled. Installing the worker alone does not
 change an agent's selection.
 `RENOA_MCP_REGISTRY_ADAPTER` is the absolute path to the built read-only
-official MCP Registry adapter. It enables the `extension_manage` `search` and
-exact `lookup` actions. Registry metadata remains publisher-supplied research
+official MCP Registry adapter. It enables external `plugin_search` queries and
+exact name/version lookups. Registry metadata remains publisher-supplied research
 input and never installs or connects an extension by itself.
 `RENOA_SHARED_PLUGIN_REGISTRY` is an HTTP or HTTPS origin with no path,
 credentials, query, or fragment. It points at Renoa's private package service.
@@ -108,7 +108,7 @@ by a session, and session history stay local. The first deployment exposes the
 loopback-only service through the private tailnet, but Tailscale is not part of
 the Host or registry wire contract.
 OAuth MCP connections additionally require the desktop `secret-tool` command
-and `xdg-open`. The configured agent invokes the same `extension_manage` tool
+and `xdg-open`. The configured agent invokes the same `plugin_manage` tool
 over ACP; the Host opens the browser, streams an authorization-required tool
 update, waits for its exact loopback callback, and publishes the catalog only
 after authenticated discovery succeeds. ACP and Waku never store or replay OAuth

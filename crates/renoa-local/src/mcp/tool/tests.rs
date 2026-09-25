@@ -1,12 +1,9 @@
 use renoa_agent::{ContentBlock, ToolCall, invoke_tool};
-use serde_json::{Value, json};
+use serde_json::json;
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
-use super::{
-    EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, SEARCH_TOOL, SearchTool,
-    parse_references,
-};
+use super::{EXECUTE_TOOL, LOAD_REFERENCE_LIMIT, LOAD_TOOL, LoadTool, parse_references};
 use crate::AgentId;
 use crate::mcp::{
     AdapterCatalog, MCP_ADAPTER_REVISION, MCP_PROTOCOL_VERSION, McpCatalogSnapshot,
@@ -15,10 +12,7 @@ use crate::mcp::{
 
 #[test]
 fn registry_tool_names_are_small_and_stable() {
-    assert_eq!(
-        [SEARCH_TOOL, LOAD_TOOL, EXECUTE_TOOL],
-        ["tool_search", "tool_load", "tool_execute",]
-    );
+    assert_eq!([LOAD_TOOL, EXECUTE_TOOL], ["tool_load", "tool_execute"]);
 }
 
 #[test]
@@ -33,120 +27,6 @@ fn schema_loading_rejects_duplicate_and_oversized_batches() {
         )
         .is_err()
     );
-}
-
-#[tokio::test]
-async fn registry_search_pages_individual_tools_without_loading_schemas() {
-    let directory = tempdir().expect("temporary Host catalog");
-    let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("initialize Host catalog");
-    let search_tool = SearchTool::new(agent(1), store.clone());
-    let before = run_search(&search_tool, "*").await;
-    assert_eq!(before["total_matches"], 0);
-
-    store
-        .register_direct_connection("fixture", "primary", "http://127.0.0.1:43127/mcp")
-        .expect("register connection after constructing registry tool");
-    let tools = (0..1_000)
-        .map(|index| McpCatalogTool {
-            name: format!("tool_{index:04}"),
-            description: format!("Fixture capability {index} {}", "🦊".repeat(320)),
-            input_schema: json!({
-                "type": "object",
-                "properties": {"value": {"type": "string"}}
-            }),
-            model_input_schema: json!({
-                "type": "object",
-                "properties": {"value": {"type": "string"}}
-            }),
-            output_schema: None,
-        })
-        .collect();
-    let snapshot = McpCatalogSnapshot::from_adapter(
-        "primary",
-        AdapterCatalog {
-            endpoint: "http://127.0.0.1:43127/mcp".to_owned(),
-            protocol_version: MCP_PROTOCOL_VERSION.to_owned(),
-            adapter_revision: MCP_ADAPTER_REVISION.to_owned(),
-            tools,
-            rejected_tools: Vec::new(),
-        },
-    )
-    .expect("build large catalog");
-    store
-        .publish_catalog(&snapshot)
-        .expect("publish large catalog");
-    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
-    store
-        .enable_agent_connection(&agent(1).to_string(), "primary")
-        .expect("enable connection");
-
-    let after = run_search(&search_tool, "*").await;
-    assert_eq!(after["total_matches"], 1_000);
-    let first_page = after["matches"].as_array().expect("search matches array");
-    assert_eq!(first_page.len(), 200);
-    assert_eq!(after["next_offset"], 200);
-    let next = run_search_at(&search_tool, "*", 200).await;
-    assert_eq!(next["total_matches"], 1_000);
-    assert_eq!(next["matches"].as_array().unwrap().len(), 200);
-    assert_eq!(next["matches"][0]["name"], "tool_0200");
-    let last = run_search_at(&search_tool, "*", 999).await;
-    assert_eq!(last["matches"][0]["name"], "tool_0999");
-    assert_eq!(last["next_offset"], Value::Null);
-    let targeted = run_search(&search_tool, "0999").await;
-    assert_eq!(targeted["total_matches"], 1);
-    assert_eq!(targeted["matches"][0]["name"], "tool_0999");
-    let first = after["matches"][0]
-        .as_object()
-        .expect("compact search match object");
-    let mut keys = first.keys().map(String::as_str).collect::<Vec<_>>();
-    keys.sort_unstable();
-    assert_eq!(keys, ["description", "name", "reference"]);
-    assert!(!after.to_string().contains("input_schema"));
-}
-
-#[tokio::test]
-async fn live_registry_tools_read_only_their_agent_attachments() {
-    let directory = tempdir().expect("temporary Host catalog");
-    let store = McpCatalogStore::initialize(directory.path().join("host.sqlite3"))
-        .expect("initialize Host catalog");
-    let second = agent(2);
-    let first_search = SearchTool::new(agent(1), store.clone());
-    let second_search = SearchTool::new(second, store.clone());
-    store
-        .register_direct_connection("fixture", "primary", "http://127.0.0.1:43127/mcp")
-        .expect("register connection");
-    let snapshot = McpCatalogSnapshot::from_adapter(
-        "primary",
-        AdapterCatalog {
-            endpoint: "http://127.0.0.1:43127/mcp".to_owned(),
-            protocol_version: MCP_PROTOCOL_VERSION.to_owned(),
-            adapter_revision: MCP_ADAPTER_REVISION.to_owned(),
-            tools: vec![McpCatalogTool {
-                name: "echo".to_owned(),
-                description: "Echo one value".to_owned(),
-                input_schema: json!({"type": "object"}),
-                model_input_schema: json!({"type": "object"}),
-                output_schema: None,
-            }],
-            rejected_tools: Vec::new(),
-        },
-    )
-    .expect("build catalog");
-    store.publish_catalog(&snapshot).expect("publish catalog");
-    crate::test_agents::insert_agent(store.path(), &agent(1).to_string());
-    store
-        .enable_agent_connection(&agent(1).to_string(), "primary")
-        .expect("attach catalog to the first agent");
-
-    assert_eq!(run_search(&first_search, "echo").await["total_matches"], 1);
-    assert_eq!(run_search(&second_search, "echo").await["total_matches"], 0);
-
-    crate::test_agents::insert_agent(store.path(), &second.to_string());
-    store
-        .enable_agent_connection(&second.to_string(), "primary")
-        .expect("share catalog with the second agent");
-    assert_eq!(run_search(&second_search, "echo").await["total_matches"], 1);
 }
 
 #[tokio::test]
@@ -207,34 +87,4 @@ async fn schema_loading_fails_instead_of_truncating_an_exact_large_schema() {
 
 fn agent(seed: u128) -> AgentId {
     crate::derived_agent_id(uuid::Uuid::from_u128(seed))
-}
-
-async fn run_search(tool: &SearchTool, query: &str) -> Value {
-    run_search_with_arguments(tool, json!({"query": query})).await
-}
-
-async fn run_search_at(tool: &SearchTool, query: &str, offset: usize) -> Value {
-    run_search_with_arguments(tool, json!({"query": query, "offset": offset})).await
-}
-
-async fn run_search_with_arguments(tool: &SearchTool, arguments: Value) -> Value {
-    let result = invoke_tool(
-        Some(tool),
-        ToolCall {
-            id: "search-fixture".to_owned(),
-            name: SEARCH_TOOL.to_owned(),
-            arguments,
-            thought_signature: None,
-            namespace: None,
-        },
-        CancellationToken::new(),
-        None,
-    )
-    .await
-    .expect("search has a definite outcome");
-    assert!(!result.is_error, "search failed: {result:?}");
-    let ContentBlock::Text { text } = &result.content[0] else {
-        panic!("search result must be text")
-    };
-    serde_json::from_str(text).expect("search returns JSON")
 }

@@ -11,7 +11,7 @@ pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 
-const SCHEMA_VERSION: u32 = 28;
+const SCHEMA_VERSION: u32 = 29;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -237,7 +237,7 @@ fn open(path: &Path, flags: rusqlite::OpenFlags) -> Result<Connection, HostCatal
 fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogError> {
     let observed =
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
-    if (1..SCHEMA_VERSION).contains(&observed) {
+    if (1..28).contains(&observed) {
         return Err(HostCatalogError::Invalid(format!(
             "this data root holds schema {observed}; the canonical agent cutover discards agent-owned state, so start it with `renoa-host <config.json> reset <backup-directory>`"
         )));
@@ -247,6 +247,26 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
         transaction.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
     match version {
         SCHEMA_VERSION => {
+            transaction.commit()?;
+            verify(connection)
+        }
+        28 => {
+            let metadata = transaction.query_row(
+                "SELECT schema_version FROM host_metadata WHERE singleton = 1",
+                [],
+                |row| row.get::<_, u32>(0),
+            )?;
+            if metadata != 28 {
+                return Err(HostCatalogError::Invalid(
+                    "Host schema version and metadata disagree".to_owned(),
+                ));
+            }
+            migrate_selected_plugin_tool_names(&transaction)?;
+            transaction.execute(
+                "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
+                [SCHEMA_VERSION],
+            )?;
+            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             transaction.commit()?;
             verify(connection)
         }
@@ -269,6 +289,120 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             "schema {found} is unsupported; expected {SCHEMA_VERSION}"
         ))),
     }
+}
+
+fn migrate_selected_plugin_tool_names(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<(), HostCatalogError> {
+    use std::collections::BTreeSet;
+
+    let mut statement = transaction
+        .prepare("SELECT agent_id, revision, tools_json FROM host_agent_tool_selections")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let selections = rows.collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (agent, revision, encoded) in selections {
+        let tools: BTreeSet<String> = serde_json::from_str(&encoded).map_err(|error| {
+            HostCatalogError::Invalid(format!(
+                "stored tool selection for agent {agent} is malformed: {error}"
+            ))
+        })?;
+        let changed = tools.contains("extension_manage") || tools.contains("tool_search");
+        if !changed {
+            continue;
+        }
+        let renamed = tools
+            .into_iter()
+            .map(|name| match name.as_str() {
+                "extension_manage" => "plugin_manage".to_owned(),
+                "tool_search" => "plugin_search".to_owned(),
+                _ => name,
+            })
+            .collect::<BTreeSet<_>>();
+        let next_revision = revision.checked_add(1).ok_or_else(|| {
+            HostCatalogError::Invalid(format!(
+                "tool selection revision overflow for agent {agent}"
+            ))
+        })?;
+        transaction.execute(
+            "UPDATE host_agent_tool_selections SET revision=?2, tools_json=?3 WHERE agent_id=?1",
+            rusqlite::params![
+                agent,
+                next_revision,
+                serde_json::to_string(&renamed)
+                    .map_err(|error| HostCatalogError::Invalid(error.to_string()))?
+            ],
+        )?;
+    }
+    migrate_tool_names_in_receipts(transaction, "host_agent_creations", "/tool_selection/tools")?;
+    migrate_tool_names_in_receipts(transaction, "host_agent_renames", "/tool_selection/tools")?;
+    migrate_tool_names_in_receipts(
+        transaction,
+        "host_agent_tool_selection_operations",
+        "/tools",
+    )?;
+    Ok(())
+}
+
+fn migrate_tool_names_in_receipts(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+    pointer: &str,
+) -> Result<(), HostCatalogError> {
+    let mut statement =
+        transaction.prepare(&format!("SELECT operation_id, result_json FROM {table}"))?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let receipts = rows.collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for (operation, encoded) in receipts {
+        let mut result: serde_json::Value = serde_json::from_str(&encoded).map_err(|error| {
+            HostCatalogError::Invalid(format!("{table} receipt {operation} is malformed: {error}"))
+        })?;
+        let tools = result
+            .pointer_mut(pointer)
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| {
+                HostCatalogError::Invalid(format!(
+                    "{table} receipt {operation} has no selected tools"
+                ))
+            })?;
+        let mut changed = false;
+        for tool in tools {
+            let name = tool.as_str().ok_or_else(|| {
+                HostCatalogError::Invalid(format!(
+                    "{table} receipt {operation} has a malformed tool name"
+                ))
+            })?;
+            let replacement = match name {
+                "extension_manage" => Some("plugin_manage"),
+                "tool_search" => Some("plugin_search"),
+                _ => None,
+            };
+            if let Some(replacement) = replacement {
+                *tool = serde_json::Value::String(replacement.to_owned());
+                changed = true;
+            }
+        }
+        if changed {
+            transaction.execute(
+                &format!("UPDATE {table} SET result_json=?2 WHERE operation_id=?1"),
+                rusqlite::params![
+                    operation,
+                    serde_json::to_string(&result)
+                        .map_err(|error| HostCatalogError::Invalid(error.to_string()))?
+                ],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
@@ -315,6 +449,81 @@ fn restrict_database_permissions(_path: &Path) -> Result<(), HostCatalogError> {
 #[cfg(test)]
 mod tests {
     use super::{HostCatalogError, cutover, initialize, open_verified};
+
+    #[test]
+    fn schema_28_selections_migrate_exact_plugin_tool_names_once() {
+        let directory = tempfile::tempdir().expect("temporary Host catalog");
+        let database = directory.path().join("host.sqlite3");
+        initialize(&database).expect("initialize current catalog");
+        {
+            let connection = open_verified(&database).expect("open current catalog");
+            connection
+                .execute_batch(
+                    "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                    preset_id, operational_json, creator_kind, creator_component)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 'Fixture', 1,
+                    'provisioning', NULL, '{}', 'system', 'migration-test');
+                 INSERT INTO host_agent_tool_selections(agent_id, revision, tools_json)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 4,
+                    '[\"extension_manage\",\"tool_search\",\"bash\"]');
+                 INSERT INTO host_agent_creations(operation_id, agent_id, request_json, result_json)
+                 VALUES ('00000000-0000-0000-0000-000000000002',
+                    '00000000-0000-0000-0000-000000000001', '{}',
+                    '{\"tool_selection\":{\"revision\":1,\"tools\":[\"extension_manage\",\"tool_search\"]}}');
+                 INSERT INTO host_agent_renames(operation_id, agent_id, actor_agent_id, request_json, result_json)
+                 VALUES ('00000000-0000-0000-0000-000000000003',
+                    '00000000-0000-0000-0000-000000000001',
+                    '00000000-0000-0000-0000-000000000001', '{}',
+                    '{\"tool_selection\":{\"revision\":2,\"tools\":[\"extension_manage\"]}}');
+                 INSERT INTO host_agent_tool_selection_operations(operation_id, request_json, result_json)
+                 VALUES ('00000000-0000-0000-0000-000000000004', '{}',
+                    '{\"revision\":3,\"tools\":[\"tool_search\"]}');
+                 UPDATE host_metadata SET schema_version = 28 WHERE singleton = 1;
+                 PRAGMA user_version = 28;",
+                )
+                .expect("construct schema-28 selection");
+        }
+        initialize(&database).expect("migrate schema-28 selections");
+        initialize(&database).expect("reopening the current catalog is stable");
+        let connection = open_verified(&database).expect("open migrated catalog");
+        let (revision, encoded): (i64, String) = connection
+            .query_row(
+                "SELECT revision, tools_json FROM host_agent_tool_selections WHERE agent_id = ?1",
+                ["00000000-0000-0000-0000-000000000001"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated selection");
+        assert_eq!(revision, 5);
+        assert_eq!(encoded, r#"["bash","plugin_manage","plugin_search"]"#);
+        for (table, expected) in [
+            (
+                "host_agent_creations",
+                r#"["plugin_manage","plugin_search"]"#,
+            ),
+            ("host_agent_renames", r#"["plugin_manage"]"#),
+            (
+                "host_agent_tool_selection_operations",
+                r#"["plugin_search"]"#,
+            ),
+        ] {
+            let path = if table == "host_agent_tool_selection_operations" {
+                "$.tools"
+            } else {
+                "$.tool_selection.tools"
+            };
+            let selected: String = connection
+                .query_row(
+                    &format!("SELECT json_extract(result_json, '{path}') FROM {table}"),
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("read migrated receipt");
+            assert_eq!(
+                selected, expected,
+                "{table} receipt must use the new tool names"
+            );
+        }
+    }
 
     #[test]
     fn schema_ten_adds_an_unbound_shared_registry_cursor() {

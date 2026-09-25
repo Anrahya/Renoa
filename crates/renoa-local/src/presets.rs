@@ -38,8 +38,8 @@ const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::GitChanges,
     BuiltInCapability::GitDiff,
     BuiltInCapability::GitShow,
-    BuiltInCapability::ExtensionManage,
-    BuiltInCapability::ToolSearch,
+    BuiltInCapability::PluginManage,
+    BuiltInCapability::PluginSearch,
     BuiltInCapability::ToolLoad,
     BuiltInCapability::ToolExecute,
     BuiltInCapability::SkillSearch,
@@ -56,8 +56,8 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::GitChanges,
     BuiltInCapability::GitDiff,
     BuiltInCapability::GitShow,
-    BuiltInCapability::ExtensionManage,
-    BuiltInCapability::ToolSearch,
+    BuiltInCapability::PluginManage,
+    BuiltInCapability::PluginSearch,
     BuiltInCapability::ToolLoad,
     BuiltInCapability::ToolExecute,
     BuiltInCapability::SkillSearch,
@@ -69,7 +69,7 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
 ];
 
 const SPECIALIST_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
-    BuiltInCapability::ToolSearch,
+    BuiltInCapability::PluginSearch,
     BuiltInCapability::ToolLoad,
     BuiltInCapability::ToolExecute,
     BuiltInCapability::SkillSearch,

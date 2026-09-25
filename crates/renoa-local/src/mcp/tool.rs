@@ -1,8 +1,9 @@
 use std::{collections::HashSet, path::PathBuf, str::FromStr as _, sync::Arc};
 
 mod execute;
-mod search;
 
+#[cfg(test)]
+mod plugin_search_tests;
 #[cfg(test)]
 mod tests;
 
@@ -23,14 +24,11 @@ use super::{
 };
 use execute::{authorization_failure, definite_boundary_error, execution_details, map_failure};
 use renoa_kernel::AgentId;
-use search::SearchTool;
 
 pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 
-const SEARCH_TOOL: &str = crate::capabilities::TOOL_SEARCH;
 const LOAD_TOOL: &str = crate::capabilities::TOOL_LOAD;
 const EXECUTE_TOOL: &str = crate::capabilities::TOOL_EXECUTE;
-const SEARCH_REVISION: &str = "renoa-mcp-registry-v6/search";
 const LOAD_REVISION: &str = "renoa-mcp-registry-v2/load";
 const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
 
@@ -43,11 +41,6 @@ pub(crate) fn agent_registry_bindings(
     command_id: Option<CommandId>,
 ) -> Vec<AgentToolBinding> {
     vec![
-        AgentToolBinding::new(
-            SEARCH_REVISION,
-            Arc::new(SearchTool::new(agent_id, store.clone())),
-            EffectRecovery::SafeToReplay,
-        ),
         AgentToolBinding::new(
             LOAD_REVISION,
             Arc::new(LoadTool::new(agent_id, store.clone())),
@@ -82,7 +75,7 @@ impl LoadTool {
             spec: ToolSpec {
                 name: LOAD_TOOL.to_owned(),
                 description: format!(
-                    "Load exact descriptions and input schemas for 1-{LOAD_REFERENCE_LIMIT} references returned by tool_search. Load only tools you are about to call, then pass each unchanged reference to code_mode's Python mcp(reference, arguments), or to tool_execute when Code Mode is not selected."
+                    "Load exact descriptions and input schemas for 1-{LOAD_REFERENCE_LIMIT} references returned by plugin_search. Load only tools you are about to call, then pass each unchanged reference to code_mode's Python mcp(reference, arguments), or to tool_execute when Code Mode is not selected."
                 ),
                 input_schema: json!({
                     "type": "object",
@@ -187,7 +180,7 @@ impl ExecuteTool {
             command_id,
             spec: ToolSpec {
                 name: EXECUTE_TOOL.to_owned(),
-                description: "Execute one extension tool using an unchanged reference from tool_search after reading its schema with tool_load. Arguments must match that loaded schema. Stale references fail and must be searched again.".to_owned(),
+                description: "Execute one plugin MCP tool using an unchanged reference from plugin_search after reading its schema with tool_load. Arguments must match that loaded schema. Stale references fail and must be searched again.".to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {

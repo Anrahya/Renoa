@@ -5,19 +5,20 @@ use serde_json::{Value, json};
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
-use super::{super::BINDING_REVISION, call};
+use super::super::BINDING_REVISION;
 use crate::{
     host::catalog,
     mcp::{McpCatalogStore, McpCredentialResolver},
     plugins::{
         PluginManager,
+        search::PluginSearchTool,
         tests::{test_agent_id, test_skill_store},
     },
 };
 
 #[test]
 fn model_guidance_changes_the_frozen_extension_contract() {
-    assert_eq!(BINDING_REVISION, "renoa-extension-manager-v18");
+    assert_eq!(BINDING_REVISION, "renoa-plugin-manager-v1");
 }
 
 #[tokio::test]
@@ -26,15 +27,11 @@ async fn search_and_exact_lookup_cross_the_real_adapter_boundary_without_install
     let adapter = directory.path().join("registry.mjs");
     write_registry_adapter(&adapter);
     let manager = manager(directory.path(), Some(adapter));
-    let tool = super::super::ManageTool::new(
-        test_agent_id(1),
-        manager.clone(),
-        directory.path().to_path_buf(),
-    );
+    let tool = PluginSearchTool::new(test_agent_id(1), manager.clone(), false);
 
-    let search = call(
+    let search = search_call(
         &tool,
-        json!({"action": "search", "query": "install Cloudflare MCP"}),
+        json!({"source":"official_mcp_registry", "query": "install Cloudflare MCP"}),
     )
     .await;
     assert_eq!(search["action"], "search");
@@ -52,10 +49,10 @@ async fn search_and_exact_lookup_cross_the_real_adapter_boundary_without_install
     assert!(search["candidates"][0].get("remotes").is_none());
     assert_eq!(search["trust"]["verified"], "publisher_namespace_control");
 
-    let lookup = call(
+    let lookup = search_call(
         &tool,
         json!({
-            "action": "lookup",
+            "source":"official_mcp_registry",
             "registry_name": "com.cloudflare.mcp/mcp",
             "registry_version": "1.0.0"
         }),
@@ -88,15 +85,14 @@ async fn registry_http_status_and_safe_message_reach_the_model() {
     let adapter = directory.path().join("registry-error.mjs");
     write_registry_error_adapter(&adapter);
     let manager = manager(directory.path(), Some(adapter));
-    let tool =
-        super::super::ManageTool::new(test_agent_id(1), manager, directory.path().to_path_buf());
+    let tool = PluginSearchTool::new(test_agent_id(1), manager, false);
 
     let output = invoke_tool(
         Some(&tool),
         ToolCall {
             id: "registry-failure".to_owned(),
-            name: super::super::TOOL_NAME.to_owned(),
-            arguments: json!({"action": "search", "query": "cloudflare"}),
+            name: crate::capabilities::PLUGIN_SEARCH.to_owned(),
+            arguments: json!({"source":"official_mcp_registry", "query": "cloudflare"}),
             thought_signature: None,
             namespace: None,
         },
@@ -130,15 +126,14 @@ async fn registry_http_status_and_safe_message_reach_the_model() {
 async fn missing_registry_adapter_is_a_model_visible_configuration_failure() {
     let directory = tempdir().expect("temporary missing Registry fixture");
     let manager = manager(directory.path(), None);
-    let tool =
-        super::super::ManageTool::new(test_agent_id(1), manager, directory.path().to_path_buf());
+    let tool = PluginSearchTool::new(test_agent_id(1), manager, false);
 
     let output = invoke_tool(
         Some(&tool),
         ToolCall {
             id: "missing-registry".to_owned(),
-            name: super::super::TOOL_NAME.to_owned(),
-            arguments: json!({"action": "search", "query": "exa"}),
+            name: crate::capabilities::PLUGIN_SEARCH.to_owned(),
+            arguments: json!({"source":"official_mcp_registry", "query": "exa"}),
             thought_signature: None,
             namespace: None,
         },
@@ -194,7 +189,29 @@ fn manager(path: &Path, registry_adapter: Option<std::path::PathBuf>) -> PluginM
         McpCredentialResolver::default(),
         skills,
     )
-    .expect("initialize extension manager")
+    .expect("initialize plugin manager")
+}
+
+async fn search_call(tool: &PluginSearchTool, arguments: Value) -> Value {
+    let result = invoke_tool(
+        Some(tool),
+        ToolCall {
+            id: "registry-search".to_owned(),
+            name: crate::capabilities::PLUGIN_SEARCH.to_owned(),
+            arguments,
+            thought_signature: None,
+            namespace: None,
+        },
+        CancellationToken::new(),
+        None,
+    )
+    .await
+    .expect("Registry discovery has a definite result");
+    assert!(!result.is_error, "Registry discovery failed: {result:?}");
+    let [ContentBlock::Text { text }] = result.content.as_slice() else {
+        panic!("Registry discovery returns one text block")
+    };
+    serde_json::from_str(text).expect("Registry discovery returns JSON")
 }
 
 fn write_registry_adapter(path: &Path) {
