@@ -237,7 +237,7 @@ fn description() -> String {
             .expect("writing to a String cannot fail");
     }
     description.push_str(
-        "Use the user's chosen name; otherwise choose a short job name of 1-3 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Select only the capabilities the job needs, and reuse exact connection ids from extension_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use routine_manage.",
+        "Use the user's chosen name; otherwise choose a short job name of 1-3 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Select only the capabilities the job needs, and reuse exact connection ids from plugin_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use routine_manage.",
     );
     description
 }
@@ -284,12 +284,11 @@ mod tests {
                 "git_changes",
                 "git_diff",
                 "git_show",
-                "extension_manage",
+                "plugin_manage",
                 "agent_manage",
                 "routine_manage",
                 "routine_results",
-                "tool_search",
-                "tool_load",
+                "plugin_search",
                 "tool_execute",
                 "code_mode",
                 "skill_search",

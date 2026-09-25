@@ -26,6 +26,7 @@ use crate::{
     skills::{SkillComponentReport, SkillStore},
 };
 use identity::default_connection_id;
+pub(super) use identity::integration_id;
 
 pub(crate) use connect::{ProfileAuthorizationRequest, ProfileConnectionRequest};
 
@@ -41,6 +42,10 @@ pub(crate) struct PluginManager {
 }
 
 impl PluginManager {
+    pub(crate) fn mcp_catalog(&self) -> McpCatalogStore {
+        self.mcp_catalog.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn initialize(
         database: PathBuf,

@@ -122,7 +122,7 @@ impl AgentEventSink for Progress {
                 self.status(format!("Using {}…", call.name));
             }
             AgentEvent::ToolExecutionUpdate { call, update } => {
-                if call.name == "extension_manage"
+                if call.name == "plugin_manage"
                     && let Some(action) = Action::parse(&update)
                     && let Some(actions) = &self.actions
                 {

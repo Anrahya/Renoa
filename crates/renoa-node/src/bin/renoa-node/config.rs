@@ -385,7 +385,7 @@ mod tests {
             },
             "targets": [{
                 "target": "workspace:example",
-                "profile": "renoa.coding.alpha.v1",
+                "profile": "renoa.coding.alpha.v2",
                 "sessionId": Uuid::new_v4(),
                 "workspace": "/srv/renoa/node-workspaces/example"
             }]

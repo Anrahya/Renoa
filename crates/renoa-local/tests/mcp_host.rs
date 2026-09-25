@@ -18,8 +18,8 @@ use tempfile::tempdir;
 #[path = "mcp_host/vertical.rs"]
 mod vertical;
 
-const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v1";
-const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v1";
+const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v2";
+const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
 const SECOND_AGENT_INSTRUCTIONS: &str = "You are a test agent.";
 
 async fn provision_agent(

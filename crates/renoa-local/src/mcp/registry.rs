@@ -3,8 +3,7 @@ use std::{cmp::Reverse, collections::HashSet, fmt, str::FromStr};
 use super::{McpHostError, validate_identity};
 
 pub(crate) const SEARCH_RESULT_LIMIT: usize = 200;
-pub(crate) const LOAD_REFERENCE_LIMIT: usize = 3;
-pub(crate) const LOAD_OUTPUT_BYTES: usize = 64 * 1_024;
+pub(crate) const SCHEMA_LOOKUP_OUTPUT_BYTES: usize = 64 * 1_024;
 const QUERY_BYTES: usize = 256;
 const QUERY_TOKENS: usize = 12;
 const DESCRIPTION_SUMMARY_CHARS: usize = 320;
@@ -103,18 +102,34 @@ pub(crate) struct McpToolSummary {
 }
 
 impl McpToolSummary {
-    pub(super) fn reference(&self) -> Result<McpToolReference, McpHostError> {
+    pub(crate) fn integration_id(&self) -> &str {
+        &self.integration_id
+    }
+
+    pub(crate) fn reference(&self) -> Result<McpToolReference, McpHostError> {
         McpToolReference::new(
             self.connection_id.clone(),
             self.catalog_digest.clone(),
             self.name.clone(),
         )
     }
+
+    pub(crate) fn connection_id(&self) -> &str {
+        &self.connection_id
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn description(&self) -> &str {
+        &self.description
+    }
 }
 
 pub(crate) struct RankedTools {
-    pub(super) matches: Vec<McpToolSummary>,
-    pub(super) total_matches: usize,
+    pub(crate) matches: Vec<McpToolSummary>,
+    pub(crate) total_matches: usize,
 }
 
 pub(crate) fn rank_tools(

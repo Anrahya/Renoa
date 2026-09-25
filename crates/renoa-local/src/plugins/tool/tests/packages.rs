@@ -80,8 +80,6 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
             .map(|action| action.as_str().expect("action is a string"))
             .collect::<Vec<_>>(),
         [
-            "search",
-            "lookup",
             "add",
             "inspect",
             "install",
@@ -110,17 +108,23 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     assert!(!encoded.contains("\"const\""));
     assert!(!encoded.contains("\"not\""));
     assert!(!encoded.contains("candidate"));
-    assert!(encoded.contains("query"));
+    assert!(!properties.contains_key("query"));
+    assert!(!properties.contains_key("registry_name"));
+    assert!(!properties.contains_key("registry_version"));
     assert!(!encoded.contains("connection_id"));
     assert_eq!(properties["limit"]["maximum"], 32);
-    serde_json::from_value::<ManageInput>(json!({"action": "search", "query": "cloudflare"}))
-        .expect("official Registry search is a typed action");
-    serde_json::from_value::<ManageInput>(json!({
-        "action": "lookup",
-        "registry_name": "com.cloudflare.mcp/mcp",
-        "registry_version": "1.0.0"
-    }))
-    .expect("official Registry exact lookup is a typed action");
+    assert!(
+        serde_json::from_value::<ManageInput>(json!({"action": "search", "query": "cloudflare"}))
+            .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ManageInput>(json!({
+            "action": "lookup",
+            "registry_name": "com.cloudflare.mcp/mcp",
+            "registry_version": "1.0.0"
+        }))
+        .is_err()
+    );
     assert!(
         serde_json::from_value::<ManageInput>(json!({
             "action": "add",
@@ -134,21 +138,14 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
 fn extension_schema_explains_the_complete_oauth_setup_flow() {
     let spec = manage_tool_spec(TOOL_NAME);
     for required_guidance in [
-        "Use list and tool_search",
-        "instead of adding a duplicate",
-        "not permission to enable, install, or substitute another provider",
-        "Return its exact safe error",
-        "Remote MCP setup:",
-        "Include connection and credential",
-        "pass exactly credential.kind=oauth",
-        "verifies the endpoint's OAuth metadata",
-        "Do not choose an issuer, registration mode, or credential label",
-        "Never put a Client ID, secret, token, or authorization code",
-        "secure setup link",
-        "provider sign-in link",
-        "Renoa handles both",
-        "keep this call running",
-        "saves no connection",
+        "plugin_search before adding a duplicate",
+        "not permission to substitute another provider",
+        "source=official_mcp_registry",
+        "verify the endpoint and authentication",
+        "pass credential.kind=oauth",
+        "secure credential setup",
+        "Never put secrets in tool arguments or chat",
+        "only after add, connect, or authorize succeeds",
         "untrusted metadata",
         "oauth_insufficient_scope",
     ] {
@@ -228,7 +225,7 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
         McpCredentialResolver::default(),
         skills,
     )
-    .expect("initialize extension manager");
+    .expect("initialize plugin manager");
     let source = directory.path().join("source");
     fs::create_dir(&source).expect("create plugin source");
     fs::write(
@@ -410,7 +407,7 @@ impl LocalPackageFixture {
             McpCredentialResolver::default(),
             skills.clone(),
         )
-        .expect("initialize extension manager");
+        .expect("initialize plugin manager");
         let source = directory.path().join("source");
         fs::create_dir(&source).expect("create plugin source");
         write_local_manifest(&source);

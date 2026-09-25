@@ -10,15 +10,16 @@ runtimes from:
 - Renoa's durable model/tool loop and compaction strategy;
 - local `read_file`, `edit_file`, `write_file`, `bash`, `grep`, and `find`
   tools; and
-- three fixed extension-registry tools over durable MCP integration,
-  connection, catalog, and per-agent attachment records; and
-- one fixed `extension_manage` tool whose read-only official Registry
-  search/lookup is backed by a replaceable process adapter.
+- `plugin_search` for compact local plugin discovery, callable MCP previews,
+  and exact schema lookup, followed by `tool_execute` for exact references; and
+- `plugin_manage` for installation, connection, authorization, and selection.
+  External MCP Registry research is an explicit `plugin_search` source backed
+  by a replaceable process adapter.
 
 Provider credentials and tool implementations stay outside the kernel.
 The host is intentionally all-allowed. Attaching a connection makes its tools
 searchable, but no external schema is advertised automatically. The configured
-agent uses `tool_search`, `tool_load`, and `tool_execute`; those bindings read
+agent uses `plugin_search` and `tool_execute`; those bindings read
 committed Host state on each call, so neither a connected surface nor the agent
 restarts after a catalog change. Paths are confined to the configured
 workspace, but `bash` is unrestricted and this is not a sandbox for untrusted

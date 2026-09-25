@@ -14,11 +14,11 @@ use crate::{
 };
 
 /// Renoa's built-in coding agent seed.
-pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v1";
+pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v2";
 /// Renoa's personal operator agent seed.
-pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v1";
+pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v2";
 /// The seed every caller-defined specialist agent is created from.
-pub(crate) const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v1";
+pub(crate) const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
@@ -38,9 +38,8 @@ const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::GitChanges,
     BuiltInCapability::GitDiff,
     BuiltInCapability::GitShow,
-    BuiltInCapability::ExtensionManage,
-    BuiltInCapability::ToolSearch,
-    BuiltInCapability::ToolLoad,
+    BuiltInCapability::PluginManage,
+    BuiltInCapability::PluginSearch,
     BuiltInCapability::ToolExecute,
     BuiltInCapability::SkillSearch,
     BuiltInCapability::SkillLoad,
@@ -56,9 +55,8 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::GitChanges,
     BuiltInCapability::GitDiff,
     BuiltInCapability::GitShow,
-    BuiltInCapability::ExtensionManage,
-    BuiltInCapability::ToolSearch,
-    BuiltInCapability::ToolLoad,
+    BuiltInCapability::PluginManage,
+    BuiltInCapability::PluginSearch,
     BuiltInCapability::ToolExecute,
     BuiltInCapability::SkillSearch,
     BuiltInCapability::SkillLoad,
@@ -69,8 +67,7 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
 ];
 
 const SPECIALIST_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
-    BuiltInCapability::ToolSearch,
-    BuiltInCapability::ToolLoad,
+    BuiltInCapability::PluginSearch,
     BuiltInCapability::ToolExecute,
     BuiltInCapability::SkillSearch,
     BuiltInCapability::SkillLoad,

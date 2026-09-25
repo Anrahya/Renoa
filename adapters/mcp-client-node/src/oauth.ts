@@ -158,7 +158,7 @@ async function refreshOnce(
   if (refreshToken === undefined) {
     throw new AdapterProblem(
       "protocol",
-      "Stored OAuth authorization has expired and cannot be refreshed because the authorization server did not issue a refresh token. Run extension_manage authorize with restart=true.",
+      "Stored OAuth authorization has expired and cannot be refreshed because the authorization server did not issue a refresh token. Run plugin_manage authorize with restart=true.",
       { code: "oauth_refresh_token_missing" },
     );
   }

@@ -101,7 +101,7 @@ impl McpCredentialResolver {
                 source_name: "OAuth",
                 reference: "an interactive MCP connection".to_owned(),
                 status: "authorization required".to_owned(),
-                guidance: "authorize the connection through extension_manage".to_owned(),
+                guidance: "authorize the connection through plugin_manage".to_owned(),
             }),
         }
     }
@@ -142,9 +142,8 @@ impl McpCredentialResolver {
                     source_name: "private Host store",
                     reference: format!("credential `{credential_id}`"),
                     status: "not found".to_owned(),
-                    guidance:
-                        "complete the secure credential setup link emitted by extension_manage"
-                            .to_owned(),
+                    guidance: "complete the secure credential setup link emitted by plugin_manage"
+                        .to_owned(),
                 }),
             };
         }

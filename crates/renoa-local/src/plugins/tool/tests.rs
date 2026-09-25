@@ -153,7 +153,7 @@ async fn disconnect_and_enable_preserve_one_complete_catalog() {
 }
 
 #[tokio::test]
-async fn extension_management_changes_only_its_bound_agent() {
+async fn plugin_management_changes_only_its_bound_agent() {
     let fixture = ResearchedMcpFixture::new().await;
     let second_agent = test_agent_id(2);
     crate::test_agents::insert_agent(fixture.mcp.path(), &second_agent.to_string());
@@ -233,7 +233,7 @@ impl ResearchedMcpFixture {
             McpCredentialResolver::default(),
             skills,
         )
-        .expect("initialize extension manager");
+        .expect("initialize plugin manager");
         let agent_id = test_agent_id(1);
         let tool = ManageTool::new(agent_id, manager.clone(), directory.path().to_path_buf());
 
@@ -288,7 +288,7 @@ async fn researched_mcp_public_headers_cannot_smuggle_a_credential_into_a_packag
         McpCredentialResolver::default(),
         skills,
     )
-    .expect("initialize extension manager");
+    .expect("initialize plugin manager");
     let tool = ManageTool::new(
         test_agent_id(1),
         manager.clone(),
@@ -345,10 +345,10 @@ async fn call(tool: &ManageTool, arguments: Value) -> Value {
         None,
     )
     .await
-    .expect("extension management has a definite result");
-    assert!(!result.is_error, "extension management failed: {result:?}");
+    .expect("plugin management has a definite result");
+    assert!(!result.is_error, "plugin management failed: {result:?}");
     let [ContentBlock::Text { text }] = result.content.as_slice() else {
-        panic!("extension management must return one text block")
+        panic!("plugin management must return one text block")
     };
-    serde_json::from_str(text).expect("decode extension management result")
+    serde_json::from_str(text).expect("decode plugin management result")
 }

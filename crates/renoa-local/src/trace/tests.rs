@@ -32,7 +32,7 @@ async fn trace_omits_credential_setup_and_oauth_authorization_urls() {
         .emit(AgentEvent::ToolExecutionUpdate {
             call: ToolCall {
                 id: "credential-call".to_owned(),
-                name: "extension_manage".to_owned(),
+                name: "plugin_manage".to_owned(),
                 arguments: json!({}),
                 thought_signature: None,
                 namespace: None,
@@ -50,7 +50,7 @@ async fn trace_omits_credential_setup_and_oauth_authorization_urls() {
         .emit(AgentEvent::ToolExecutionUpdate {
             call: ToolCall {
                 id: "oauth-call".to_owned(),
-                name: "extension_manage".to_owned(),
+                name: "plugin_manage".to_owned(),
                 arguments: json!({}),
                 thought_signature: None,
                 namespace: None,

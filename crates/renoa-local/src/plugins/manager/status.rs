@@ -1,9 +1,27 @@
 use super::PluginManager;
 use renoa_kernel::AgentId;
 
-use crate::{mcp::McpConnectionStatus, plugins::PluginError, skills::SkillSourceReport};
+use crate::{
+    mcp::{McpConnectionStatus, McpToolSummary},
+    plugins::PluginError,
+    skills::SkillSourceReport,
+};
 
 impl PluginManager {
+    pub(crate) async fn tool_summaries(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<McpToolSummary>, PluginError> {
+        let catalog = self.mcp_catalog.clone();
+        let agent_id = *agent_id;
+        Ok(
+            tokio::task::spawn_blocking(move || {
+                catalog.agent_tool_summaries(&agent_id.to_string())
+            })
+            .await??,
+        )
+    }
+
     pub(crate) async fn connection_statuses(
         &self,
         agent_id: &AgentId,

@@ -1,6 +1,6 @@
 use sha2::{Digest as _, Sha256};
 
-pub(super) fn integration_id(plugin_digest: &str, server_id: &str) -> String {
+pub(crate) fn integration_id(plugin_digest: &str, server_id: &str) -> String {
     let server_digest = hex(&Sha256::digest(server_id.as_bytes()));
     format!("plugin.{}.{}", &plugin_digest[..24], &server_digest[..24])
 }

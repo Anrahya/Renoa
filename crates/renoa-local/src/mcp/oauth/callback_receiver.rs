@@ -43,7 +43,7 @@ impl OAuthCallbackReceiver {
                     .map_err(|error| match error {
                         McpHostError::Io(_) => {
                             McpHostError::OAuth(McpOAuthError::CallbackUnavailable(
-                                "saved callback port is unavailable; retry later or call extension_manage authorize with restart=true"
+                                "saved callback port is unavailable; retry later or call plugin_manage authorize with restart=true"
                                     .to_owned(),
                             ))
                         }

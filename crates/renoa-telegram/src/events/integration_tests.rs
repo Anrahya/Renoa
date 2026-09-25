@@ -100,7 +100,7 @@ async fn an_authorization_update_crosses_the_durable_store_and_permanent_message
 fn tool_call() -> ToolCall {
     ToolCall {
         id: "call-1".to_owned(),
-        name: "extension_manage".to_owned(),
+        name: "plugin_manage".to_owned(),
         arguments: serde_json::json!({}),
         thought_signature: None,
         namespace: None,

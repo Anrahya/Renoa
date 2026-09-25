@@ -32,10 +32,10 @@ described below; browser, CLI, and model-facing adapters share domain semantics.
 
 The first concrete coding preset is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable creation preset identity is
-`renoa.coding.alpha.v1`. Alpha is one code-owned creation preset, not a special
+`renoa.coding.alpha.v2`. Alpha is one code-owned creation preset, not a special
 Host execution type. Arcee is the first personal-operator preset, with stable
-identity `renoa.personal.arcee.v1`; Telegram is only its first surface. A
-caller-defined specialist is created from `renoa.specialist.v1`. Every agent is
+identity `renoa.personal.arcee.v2`; Telegram is only its first surface. A
+caller-defined specialist is created from `renoa.specialist.v2`. Every agent is
 one durable, provider-neutral `AgentDefinition`: identity and creation provenance,
 an optional creation preset id, the complete core operational document, the exact
 tool selection, and the exact selected Host connection ids. Creation snapshots
@@ -113,7 +113,7 @@ selections, and immutable skill files. Each kernel session still has one
 exclusive execution owner. An unrelated data root is a separate Host even on
 the same machine.
 
-`extension_manage list` inventories the Host's packages and connections and
+`plugin_manage list` inventories the Host's packages and connections and
 reports whether each connection is enabled for the calling agent. `enable`
 attaches an existing connection without reinstallation, rediscovery, or another
 credential ceremony. Every session of that agent sees the same attachment.
@@ -127,9 +127,7 @@ skills to the agent without needing the original source directory or a
 network registry. This does not connect the package's MCP servers. Existing
 connection identities are reused through `enable`; a new connection remains an
 explicit separate operation. Missing or corrupt revisions fail rather than
-being downloaded or substituted. This extends the frozen extension manager
-binding from revision 16 to 17; unfinished older operations retain the existing
-fail-closed runtime compatibility behavior.
+being downloaded or substituted.
 
 Global skills are discoverable by each agent through the configured global
 source; workspace skills keep their workspace scope. Loading a skill pins its
@@ -446,7 +444,7 @@ assembly consume the same selection. Active reviews retain their frozen selectio
 new runs use the updated one. This operation is not exposed as a self-granting
 model tool or an unauthenticated remote endpoint.
 This selection does not add an OS sandbox or a permission system. External catalogs are
-reached through three fixed registry tools so catalog size does not become
+reached through two fixed registry tools so catalog size does not become
 model context. The current top-level set is:
 
 ```text
@@ -459,12 +457,11 @@ find
 git_changes
 git_diff
 git_show
-extension_manage
+plugin_manage
 agent_manage
 routine_manage
 routine_results
-tool_search
-tool_load
+plugin_search
 tool_execute
 code_mode
 skill_search
@@ -475,13 +472,13 @@ agent_documents
 Capability names are exact: there is no wildcard and no revision-0 fallback. An
 agent binds exactly the capabilities its stored selection names, so a name that
 is absent is absent from both the model request and the execution boundary.
-The Alpha preset seeds all nine workspace tools plus `extension_manage`, the
-three registry tools, and the two skill tools. The Arcee preset seeds
-`extension_manage`, `agent_manage`, `routine_manage`,
-`routine_results`, the three registry tools, the two skill tools, and
+The Alpha preset seeds all nine workspace tools plus `plugin_manage`, the
+two registry tools, and the two skill tools. The Arcee preset seeds
+`plugin_manage`, `agent_manage`, `routine_manage`,
+`routine_results`, the two registry tools, the two skill tools, and
 `agent_documents` on top of the workspace tools. A caller-defined specialist
 seeds `routine_manage`, `routine_results`, the registry and skill tools, and
-receives `agent_manage` or `extension_manage` only when its creation selection
+receives `agent_manage` or `plugin_manage` only when its creation selection
 or a later capability edit names it.
 
 Existing tool invariants remain in force. File tools stay within the configured
@@ -597,12 +594,12 @@ offline.
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
-The Host offers three fixed extension-registry tools to every assembled agent
-runtime and binds them when the stored selection names them: `tool_search`,
-`tool_load`, and `tool_execute`. Search returns at most 200 individual MCP tools
-per page without schemas and guides targeted search before `*`. Load returns
-only one through three explicitly requested model-facing schemas. Execute
-resolves one exact reference
+The Host offers `plugin_search` and `tool_execute` when the stored selection
+names them. A targeted search returns compact plugin cards and up to three
+matching MCP tools. Each small preview schema is complete; when it is absent,
+an exact reference request returns the full model-facing schema within 64 KiB.
+Search also pages plugin facts and enabled connection tools at up to 200 items
+and 50 KiB per page. Use a targeted query before `*`. Execute resolves one exact reference
 containing the current catalog digest, then reuses the proven MCP credential,
 adapter, result, and `NeverReplay` boundary. A missing adapter fails execution
 visibly; it does not prevent an Agent from starting or hide searchable catalog
@@ -613,7 +610,7 @@ registry tool. When selected, the Host requires a configured exact-pinned
 Monty worker and MCP adapter, removes `tool_execute` from the model-visible
 bindings, and binds that same executor behind the Code Mode loop. This holds
 even if a preset's stored selection also names `tool_execute`.
-`tool_search` and `tool_load` remain visible only when individually selected.
+`plugin_search` remains visible only when individually selected.
 The evaluator pool is shared by this Host process, starts with no idle worker,
 and is capped at two subprocesses; an agent without `code_mode` starts without
 the worker. The Host validates the configured worker's binary hash before
@@ -622,19 +619,17 @@ A wrong configured worker refuses Host startup, and a missing worker refuses a
 Code Mode agent's runtime; neither case falls back to system Python or direct
 MCP execution.
 
-The registry tools open current `host.sqlite3` state for each call. A committed
+The discovery and MCP tools open current `host.sqlite3` state for each call. A committed
 connection attachment or catalog refresh is therefore visible on the next
 search even when the surface process, Agent session, and current turn are
-already running. The runtime itself is unchanged: the kernel freezes the same three
-registry implementations, while exact references prevent a newer catalog from
+already running. The kernel freezes their bindings, while exact references prevent a newer catalog from
 silently changing a selected invocation.
 
-The Host offers one fixed `extension_manage` tool. Its v18 model-facing schema is
+The Host offers one fixed `plugin_manage` tool. Its model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
-for each of ten typed actions and rejects missing or cross-action fields:
-search compact publisher metadata in the official MCP Registry; lookup one
-exact published Registry name/version; add one MCP definition independently
+for each of eight typed actions and rejects missing or cross-action fields:
+add one MCP definition independently
 verified against the provider's official documentation or one content-bound
 local Agent Plugins 1.0 directory; inspect a local package; install the exact
 inspected digest; list package integrity and durable connection state; connect
@@ -687,7 +682,7 @@ and state rather than opening another authorization flow. The Host
 selects initial OAuth scopes from the first challenge, then protected-resource
 metadata, as required by MCP. A later HTTP 403
 `insufficient_scope` result is a definite, model-visible failure carrying the
-server's exact validated scope. `extension_manage` unions that scope with the
+server's exact validated scope. `plugin_manage` unions that scope with the
 stored grant and opens fresh consent when it widens permission. It never
 silently retries the denied MCP call; the Agent must authorize and then issue
 one explicit retry. Registration modes are not model input or fallbacks to
@@ -698,7 +693,7 @@ headless setup form's frozen wire spelling is `oauth_client`; coordinators also
 accept the short-lived buggy `o_auth_client` spelling only for rolling upgrade
 compatibility.
 The Host discovers and attaches through the same MCP catalog path used by
-`LocalHost`; the next `tool_search` sees the connection
+`LocalHost`; the next `plugin_search` sees the connection
 without restarting the session or surface. Disconnect is idempotent and the
 next search stops exposing its tools while the verified catalog remains
 available for recovery or later reattachment. Package skills enter the same
@@ -756,9 +751,9 @@ Host resolves the agent's stored definition before resolving these inputs:
 - reasoning configuration;
 - the agent's stored instructions, optional bounded workspace `AGENTS.md`, and
   exact active skill instructions; and
-- the nine workspace tools, three fixed MCP registry tools, the fixed extension
-  manager, the fixed agent manager, the routine tools, and the fixed skill
-  registry tools, filtered to the exact stored capability selection.
+- the nine workspace tools, `plugin_search`, `plugin_manage`,
+  `tool_execute`, the fixed agent manager, the routine tools, and the fixed
+  skill registry tools, filtered to the exact stored capability selection.
 
 `build_local_runtime` resolves that definition with a `LocalWorkspace`:
 
@@ -767,7 +762,7 @@ LocalRuntimeConfig + stored AgentDefinition
   + BridgeModel
   + CompactingContextStrategy
   + LocalWorkspace tools
-  + Host MCP, extension manager, and skill registry tools
+  + Host MCP, plugin manager, and skill registry tools
             |
             v
 renoa-agent-loop::build_runtime
@@ -819,7 +814,7 @@ The remaining commands assemble the ordinary Host from the same launch
 configuration a running service uses. `provision` is the trusted creation path
 for a `System`/`Provisioning` caller: the first agent on an empty Host is created
 by it. Its document is the canonical creation request in camelCase JSON, for
-example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v1","name":"Alpha"}`,
+example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v2","name":"Alpha"}`,
 with optional `instructions`, `tools`, `connections`, and `routine`. `agent-tools`
 applies one revision-checked capability edit. `rename-agent` applies one
 expected-current-name-checked display-name edit with an explicit operation id. `reset` is the
@@ -1060,7 +1055,7 @@ The full intended extension lifecycle and its staged proof plan are recorded in
 [`renoa-extensions-north-star.md`](renoa-extensions-north-star.md).
 
 The GUI is a surface, not the sole controller. `LocalHost` methods and each
-agent's `extension_manage` tool reach the same `PluginManager`; a future Waku
+agent's `plugin_manage` tool reach the same `PluginManager`; a future Waku
 view will call that Host path rather than own extension state:
 
 ```text
@@ -1099,7 +1094,7 @@ Already-running Host processes resolve these stored definitions without a
 restart. Each definition is self-contained: its stored instructions are the
 whole standing prompt and its stored selection is the actual advertised
 tool set. Registry and skill
-execution retain the existing Host capability path; selecting `extension_manage`
+execution retain the existing Host capability path; selecting `plugin_manage`
 allows reuse of installed packages and existing connections without repeating
 OAuth. Selecting `agent_manage` allows a specialist to create descendants. These
 are capability choices, not a permission or OS isolation guarantee.
@@ -1138,7 +1133,7 @@ sources, research tools, and a document-generation capability. Arcee uses Host
 management operations to create the specialist's definition and durable Agent
 Instance, select available capabilities and account connections, and request a
 Slack conversation binding. If a needed capability is missing, existing
-extension management supplies the installation/authentication path; mentioning
+plugin management supplies the installation/authentication path; mentioning
 a tool in instructions never makes that tool available.
 
 The specialist is independently addressable and retains its own conversations,
@@ -1892,18 +1887,18 @@ The first extension path is also complete. `LocalHost` registers direct no-auth
 or exact `gh`-referenced MCP connections, runs the replaceable Node adapter for
 bounded discovery and invocation, atomically publishes catalogs and tool
 attachments, and restores them after process restart. Every assembled agent
-runtime is offered three fixed registry tools regardless of catalog size, and
-the stored selection decides whether they bind. Search and load are bounded
-`SafeToReplay` reads; execute carries an exact catalog reference through the
+runtime is offered two fixed registry tools regardless of catalog size, and
+the stored selection decides whether they bind. Search is a bounded
+`SafeToReplay` read; execute carries an exact catalog reference through the
 normal loop and kernel as a `NeverReplay` effect. Exact registration retries
 converge, identity changes conflict, failed refresh publication preserves the
 previous snapshot, stale references fail closed, structured details stay
 outside model context, unknown calls are not replayed, and schemas v1 and v2
 migrate to v3 without losing catalog state. A live registry object observes a
-newly committed attachment, and searching 1,000 tools exposes no schema. No
+newly committed attachment, and broad browsing of 1,000 tools exposes no schema. No
 kernel type or table changed.
 
-The first OAuth connection path is also complete. One `extension_manage`
+The first OAuth connection path is also complete. One `plugin_manage`
 invocation can register an OAuth package connection, open PKCE browser
 authorization, persist the callback before acknowledgement, perform one code
 exchange, discover and attach the authenticated catalog, and make it visible
@@ -1946,7 +1941,7 @@ storage or protocol path.
 The first portable package path is complete. The Host validates Agent Plugins
 1.0 manifests locally, isolates invalid or unsupported MCP entries, denies
 symlinked fixed components, and publishes exact full trees under a verified
-content digest. One fixed `extension_manage` schema drives the same manager as
+content digest. One fixed `plugin_manage` schema drives the same manager as
 the public `LocalHost` methods. Schema v6 stores package metadata, public MCP
 headers, and only named Secret Service references. Schema v7 preserves plugin
 homepage metadata and imports package skills without changing existing source
@@ -1959,7 +1954,7 @@ failures. No kernel, loop, ACP, Waku, or RCP type was added.
 
 The first public discovery path is also complete. The Host supervises a
 replaceable Node adapter over one bounded versioned process contract.
-`extension_manage search` queries the official MCP Registry's stable `v0.1`
+`plugin_search` with source `official_mcp_registry` queries the official MCP Registry's stable `v0.1`
 API with deterministic multi-word normalization, cursor bounds, no cache, and
 no retry; `lookup` accepts only one exact name/version. The Rust boundary
 revalidates every normalized result and fixed trust statement. Search exposes
@@ -1992,7 +1987,7 @@ and Host restart resume from the durable cursor without duplicates, a network
 failure does not advance that cursor, and a different registry identity is
 rejected. No credential, connection, agent selection, session record,
 kernel type, RCP type, or surface contract is copied.
-This synchronization path changes the frozen `extension_manage` implementation
+This synchronization path changes the frozen `plugin_manage` implementation
 from revision 9 to revision 10. An unfinished revision-9 operation fails closed
 after upgrade instead of acquiring network synchronization under its old
 manifest.

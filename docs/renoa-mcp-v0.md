@@ -89,7 +89,7 @@ unsupported server fails with a typed diagnostic.
 | Owner | Responsibility in this slice |
 | --- | --- |
 | Kernel | Persist effect intent and dispatch before invocation, freeze the runtime, settle definite results, and preserve uncertainty |
-| Agent loop | Expose three fixed registry `ToolSpec`s, persist each exact `ToolCall`, and balance definite results into conversation history |
+| Agent loop | Expose two fixed registry `ToolSpec`s, persist each exact `ToolCall`, and balance definite results into conversation history |
 | Local Host | Own endpoint configuration, catalog refresh, profile attachment, search, exact-reference resolution, OAuth coordination, deadlines, and adapter process lifecycles |
 | MCP Node adapter | Speak the pinned MCP revision through the official SDK, validate untrusted protocol data, and report dispatch certainty |
 | MCP server | Implement its tools, validate service inputs, and return protocol-compliant results |
@@ -231,7 +231,7 @@ client certificates, proxies, and insecure TLS switches are outside v0.
 ## OAuth lifecycle
 
 OAuth remains Host connection policy, not MCP tool behavior and not kernel
-state. `extension_manage` can add or connect a package with `credential.kind =
+state. `plugin_manage` can add or connect a package with `credential.kind =
 "oauth"`; this is the model's only OAuth choice. Before producing any setup or
 sign-in link, the Host requires RFC 9728 protected-resource metadata naming
 exactly one authorization server and valid metadata for that exact issuer.
@@ -336,7 +336,7 @@ lock, so concurrent sessions share one rotating refresh-token exchange. A
 revoked but unexpired token produces the server's ordinary model-visible 401;
 the agent can then invoke explicit reauthorization.
 
-`extension_manage` is safe to replay only because the Host also commits a
+`plugin_manage` is safe to replay only because the Host also commits a
 bounded terminal receipt before returning. Re-entry with the same stable
 session/command/tool-call identity reads that receipt and performs no remote
 OAuth mutation. An authorized receipt is accepted only while its endpoint-bound
@@ -364,14 +364,14 @@ Repeating the same replacement is a no-op and preserves its
 catalog. A successful unauthenticated discovery reports `catalog_loaded`; only
 a completed OAuth flow reports `authorized`.
 
-`extension_manage disconnect` is narrower than replacement or removal. It
+`plugin_manage disconnect` is narrower than replacement or removal. It
 deletes only the active profile's attachment in one transaction and is idempotent.
 The durable connection, catalog, package, credential reference, OAuth state,
 and receipts remain available for recovery and later reattachment. List output
 therefore reports registration, authentication kind, catalog presence, and
 profile attachment as separate facts; it never infers that an OAuth token is
 currently valid merely because the connection is registered.
-`extension_manage enable` is the symmetric, idempotent reattachment path. It
+`plugin_manage enable` is the symmetric, idempotent reattachment path. It
 requires the retained complete catalog and performs no network request.
 Management list output also reports the committed accepted and rejected skill
 bindings per plugin source, separately from immutable package installation.
@@ -455,29 +455,28 @@ Host identity is the tuple of connection identity and exact MCP tool name.
 Self-reported `serverInfo.name` is never identity.
 
 MCP names never become top-level model tool names. A direct-MCP agent can
-select three small, provider-neutral Host tools:
+select two small, provider-neutral Host tools:
 
-- `tool_search` searches names, services, and descriptions. Its model-facing
-  guidance asks for a targeted search first, then `*` if the needed tool is not
-  found.
-  Each page returns at most 200 individual tools from enabled MCP connections,
-  containing only names, short descriptions, and exact references, never
-  schemas. An optional offset and returned `next_offset` allow browsing later
-  matches;
-- `tool_load` accepts one through three unchanged references and returns their
-  exact model-facing descriptions and input schemas, bounded to 64 KiB total;
+- `plugin_search` returns compact plugin cards and up to three matching MCP
+  tools for a targeted query. A small tool schema is included in full. If a
+  match has no `input_schema`, an exact reference request returns its complete
+  model-facing schema or fails at the 64 KiB bound; it never truncates a schema.
+  `*` browses the local library without schemas. An exact plugin id returns
+  server and connection facts. An enabled connection id opens nested MCP tools.
+  Each page returns at most 200 items within 50 KiB, with `next_offset` for
+  later matches. Official Registry research requires an explicit source;
 - `tool_execute` accepts one unchanged reference plus an argument object and
   invokes that exact remote tool.
 
 Each search page reads the current catalog snapshot. A catalog refresh between
-pages can change ranking; a reference from an older snapshot fails on load or
+pages can change ranking; a reference from an older snapshot fails on lookup or
 execute instead of selecting a different tool.
 
 When an agent selects `code_mode`, `tool_execute` is hidden from its model
-request even if a pinned preset also selected it. `tool_search` and `tool_load`
-remain individually selectable, and one `code_mode` schema replaces direct
-MCP execution. Python calls `await mcp(reference, arguments)` with the exact
-loaded reference and a JSON-compatible argument dictionary; independent calls
+request even if a pinned preset also selected it. `plugin_search` remains
+individually selectable, and one `code_mode` schema replaces direct MCP
+execution. Python calls `await mcp(reference, arguments)` with the exact
+searched reference and a JSON-compatible argument dictionary; independent calls
 may run under `asyncio.gather`. The Python evaluator cannot dispatch MCP
 directly. It returns a durable batch of nested `tool_execute` effects, then
 resumes only after those children settle. The model sees the final Python value
@@ -492,9 +491,8 @@ silently dropped or dispatched outside the kernel.
 
 Search ranks deterministically and uses `*` for bounded browsing. A catalog may
 hold 1,024 entries, but the model API receives only the selected compact
-schemas rather than one schema per MCP method. Loading is explicit and atomic:
-an oversized group fails rather than
-truncating a JSON Schema. Transport-only `x-mcp-header` annotations, titles,
+schemas rather than one schema per MCP method. An oversized exact lookup fails
+rather than truncating a JSON Schema. Transport-only `x-mcp-header` annotations, titles,
 icons, endpoints, protocol metadata, output schemas, and adapter bookkeeping
 remain outside model context. The resolved invocation retains the unmodified
 input schema so the adapter can project transport headers correctly.
@@ -502,8 +500,8 @@ input schema so the adapter can project transport headers correctly.
 ## Frozen runtime identity
 
 For direct execution the runtime freezes the selected ordinary
-`AgentToolBinding`s. Search and load are
-`SafeToReplay` Host reads. Execute is `NeverReplay`. Their revisions cover the
+`AgentToolBinding`s. Search is a `SafeToReplay` Host read. Execute is
+`NeverReplay`. Their revisions cover the
 registry contract, result projection, error mapping, MCP process wire,
 deadlines, and bounds. The agent-loop digest freezes their order, specs,
 recovery declarations, and revisions. No kernel field or MCP-specific path is
@@ -516,7 +514,7 @@ MCP invocation identity. A settled batch is matched by those call identities
 and exact request values before the Python snapshot is resumed.
 
 Mutable catalog data is not smuggled into those static revisions. Search reads
-one current SQLite snapshot. Load and execute resolve the reference against one
+one current SQLite snapshot. Exact lookup and execute resolve the reference against one
 current snapshot and reject a different digest as stale. The persisted
 `tool_execute` request therefore carries the exact catalog identity selected by
 the model; a refresh can never substitute a new schema or endpoint underneath
@@ -683,12 +681,13 @@ not duplicate them.
 
 ## Context and observability
 
-Discovery and search never load schemas into model context. Every normal profile
-request carries the same three small registry specifications, independent of
-whether the Host has zero, ten, or one thousand external tools. Search returns
-at most 200 short summaries per page. Only a successful `tool_load`
-result inserts the requested model-facing schemas into conversation history,
-where normal context and compaction rules apply. Server instructions, endpoint
+Discovery never loads schemas into model context. Every normal profile request
+carries the same two small registry specifications, independent of whether the
+Host has zero, ten, or one thousand external tools. Search returns at most 200
+short summaries per page; a targeted query includes up to three matching tool
+previews with complete small schemas. Exact reference lookup inserts the full
+model-facing schema into conversation history when needed, where normal context
+and compaction rules apply. Server instructions, endpoint
 URLs, cache hints, output schemas, adapter bookkeeping, and every unloaded
 schema remain outside.
 
@@ -712,7 +711,7 @@ refresh.
 
 Every registry call opens current Host state instead of consulting a process
 cache. A connection attached or refreshed by a GUI, another local command, or
-the running agent becomes visible to the next `tool_search` call, including
+the running agent becomes visible to the next `plugin_search` call, including
 inside an already active Agent turn. The surface and Agent do not restart. This
 does not alter an in-flight remote call. The stateless v0 MCP adapter also does
 not keep a subscription open for `notifications/tools/list_changed`; a Host
@@ -755,9 +754,9 @@ and the real process boundary:
 12. a terminal result wins races with cancellation, stderr overflow, nonzero
     exit, and hung cleanup;
 13. diagnostics are bounded and redact sensitive header and URL forms;
-14. every model request advertises only the three registry schemas, while
-    search over 1,000 entries returns no schema and load returns only requested
-    exact schemas;
+14. every model request advertises only the two registry schemas, while
+    broad search over 1,000 entries returns no schema and targeted search
+    returns at most three complete small schemas;
 15. one live registry object sees a committed attachment without restart, and
     catalog replacement makes prior references fail stale;
 16. restart never repeats a possibly dispatched tool call;
@@ -786,7 +785,7 @@ and the real process boundary:
 26. v8 OAuth connections migrate to explicit DCR without losing durable Host
     state, and explicit replacement drops stale tools but is idempotent; and
 27. one corrupt installed package is reported separately without hiding valid
-    packages from `extension_manage list`; and
+    packages from `plugin_manage list`; and
 28. disconnect immediately removes search and execution access, survives
     replay, and retains the exact complete catalog for later reattachment;
 29. enable reattaches that retained catalog without network access, and list
@@ -853,14 +852,14 @@ and the real process boundary:
 - Discovery publishes only complete, bounded, deterministic catalog snapshots.
 - The stored Host identity is composite; self-reported server names are not
   identity.
-- Every assembled profile exposes three fixed registry tools rather than every
+- Every assembled profile exposes two fixed registry tools rather than every
   external schema.
-- Search and load are `SafeToReplay`; exact remote execution is `NeverReplay`.
+- Search is `SafeToReplay`; exact remote execution is `NeverReplay`.
 - An exact catalog digest in every reference prevents silent schema changes.
 - Committed Host changes are visible on the next registry call without an
   agent or surface restart.
 - No invocation layer performs an automatic retry.
-- Only explicitly loaded exact schemas become model-visible.
+- Only targeted previews and exact reference lookups expose external schemas.
 - Existing kernel effect certainty, cancellation, and recovery semantics remain
   authoritative.
 

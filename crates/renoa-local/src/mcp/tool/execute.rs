@@ -40,7 +40,7 @@ fn remote_authorization_failure(
     });
     let recovery = if remote.diagnostic_code() == Some("oauth_refresh_token_missing") {
         format!(
-            " Call `extension_manage` with exactly {} before retrying the MCP tool.",
+            " Call `plugin_manage` with exactly {} before retrying the MCP tool.",
             restart_authorization(selected)
         )
     } else {
@@ -76,7 +76,7 @@ fn unknown_authorization_failure(
     let target = format!("{}/{}", selected.connection_id(), selected.tool().name());
     let restart = restart_authorization(selected);
     let message = format!(
-        "{error} The credential exchange may or may not have completed. MCP tool `{target}` was not dispatched and was not retried. Call `extension_manage` with exactly {restart} before calling the MCP tool again."
+        "{error} The credential exchange may or may not have completed. MCP tool `{target}` was not dispatched and was not retried. Call `plugin_manage` with exactly {restart} before calling the MCP tool again."
     );
     ToolOutput {
         content: vec![ContentBlock::text(message.clone())],
@@ -245,7 +245,7 @@ fn remote_failure_message(
         "required_scope": scope,
     });
     format!(
-        "MCP tool `{target}` needs additional OAuth permission. Renoa did not retry the tool. Call `extension_manage` with exactly {authorize}. After authorization succeeds, explicitly retry this tool once."
+        "MCP tool `{target}` needs additional OAuth permission. Renoa did not retry the tool. Call `plugin_manage` with exactly {authorize}. After authorization succeeds, explicitly retry this tool once."
     )
 }
 

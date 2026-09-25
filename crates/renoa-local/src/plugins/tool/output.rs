@@ -12,7 +12,7 @@ use crate::{
     output::MAX_TOOL_OUTPUT_BYTES,
 };
 
-pub(super) fn json_output(value: &impl Serialize) -> Result<ToolOutput, ToolError> {
+pub(crate) fn json_output(value: &impl Serialize) -> Result<ToolOutput, ToolError> {
     encoded_output(value, None, false)
 }
 
@@ -22,11 +22,11 @@ fn encoded_output(
     is_error: bool,
 ) -> Result<ToolOutput, ToolError> {
     let content = serde_json::to_string(value).map_err(|error| {
-        ToolError::internal(format!("extension result could not be encoded: {error}"))
+        ToolError::internal(format!("plugin result could not be encoded: {error}"))
     })?;
     if content.len() > MAX_TOOL_OUTPUT_BYTES {
         return Err(ToolError::output_limit(format!(
-            "extension result exceeds the {MAX_TOOL_OUTPUT_BYTES}-byte tool output boundary"
+            "plugin result exceeds the {MAX_TOOL_OUTPUT_BYTES}-byte tool output boundary"
         )));
     }
     Ok(ToolOutput {
@@ -41,7 +41,7 @@ pub(super) fn remote_mcp_error_output(remote: &McpRemoteFailure) -> Result<ToolO
     encoded_output(&model, Some(details), true)
 }
 
-pub(super) fn registry_error_output(error: RegistryError) -> Result<ToolOutput, ToolError> {
+pub(crate) fn registry_error_output(error: RegistryError) -> Result<ToolOutput, ToolError> {
     let internal = error.to_string();
     let (code, message, retryable, next_action, diagnostic) = match error {
         RegistryError::Remote(failure) => {
@@ -120,7 +120,7 @@ pub(super) fn registry_error_output(error: RegistryError) -> Result<ToolOutput, 
         | RegistryError::Encode(_)
         | RegistryError::Reader(_) => (
             "mcp_registry_adapter_failure".to_owned(),
-            "Official MCP Registry discovery failed at the Host adapter boundary; no extension was installed.".to_owned(),
+            "Official MCP Registry discovery failed at the Host adapter boundary; no plugin was installed.".to_owned(),
             false,
             "Do not guess or retry repeatedly. Report the adapter failure to the user.",
             json!({"kind": "adapter", "detail": internal}),
@@ -221,7 +221,7 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
     let next_action = if registration_required {
         "Renoa could not establish an OAuth client using the methods advertised by this endpoint. Do not retry unchanged, choose another registration mode, invent an issuer, or create a credential label. Tell the user the exact error; the connection was not saved."
     } else if insufficient_scope && remote.required_oauth_scope().is_some() {
-        "Copy required_scope exactly. For an existing connection, call extension_manage authorize with connection and required_scope. If the failed connect was not published, repeat connect with the same package, server, connection, and credential plus required_scope. After authorization succeeds, explicitly retry the original operation once. Do not guess or widen scopes, and do not silently retry a write."
+        "Copy required_scope exactly. For an existing connection, call plugin_manage authorize with connection and required_scope. If the failed connect was not published, repeat connect with the same package, server, connection, and credential plus required_scope. After authorization succeeds, explicitly retry the original operation once. Do not guess or widen scopes, and do not silently retry a write."
     } else if insufficient_scope {
         "The server did not return a usable required_scope. Do not invent one. Check the service's official documentation and report the malformed OAuth challenge."
     } else {
@@ -229,7 +229,7 @@ fn remote_mcp_error_values(remote: &McpRemoteFailure) -> (serde_json::Value, ser
             McpFailureKind::Timeout | McpFailureKind::Unavailable | McpFailureKind::Transport => {
                 "Check that the endpoint is reachable, then retry once."
             }
-            McpFailureKind::Cancelled => "Retry only if the user still wants this extension.",
+            McpFailureKind::Cancelled => "Retry only if the user still wants this plugin.",
             McpFailureKind::Internal => {
                 "Stop guessing and report this adapter failure to the user."
             }
@@ -282,7 +282,7 @@ fn attach_installation(
 ) -> Result<(), ToolError> {
     let Some(object) = value.as_object_mut() else {
         return Err(ToolError::internal(
-            "extension connection failure was not encoded as an object",
+            "plugin connection failure was not encoded as an object",
         ));
     };
     object.insert(
@@ -312,19 +312,19 @@ fn attach_installation(
     object.insert(
         "notices".to_owned(),
         serde_json::to_value(context.notices).map_err(|error| {
-            ToolError::internal(format!("extension notices could not be encoded: {error}"))
+            ToolError::internal(format!("plugin notices could not be encoded: {error}"))
         })?,
     );
     object.insert(
         "skills".to_owned(),
         serde_json::to_value(context.skills).map_err(|error| {
-            ToolError::internal(format!("extension skills could not be encoded: {error}"))
+            ToolError::internal(format!("plugin skills could not be encoded: {error}"))
         })?,
     );
     Ok(())
 }
 
-pub(super) fn plugin_error(error: PluginError, partial_changes_possible: bool) -> ToolError {
+pub(crate) fn plugin_error(error: PluginError, partial_changes_possible: bool) -> ToolError {
     let message = error.to_string();
     match error {
         PluginError::Invalid(_)

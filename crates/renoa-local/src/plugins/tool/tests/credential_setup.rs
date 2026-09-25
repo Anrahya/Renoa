@@ -104,7 +104,7 @@ async fn run_credential_setup(
         authorizations,
         test_skill_store(&database, directory.path()),
     )
-    .expect("initialize extension manager");
+    .expect("initialize plugin manager");
     let tool = ManageTool::for_session(
         test_agent_id(1),
         manager,

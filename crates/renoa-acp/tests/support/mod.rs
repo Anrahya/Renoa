@@ -14,7 +14,7 @@ use uuid::Uuid;
 /// One stable provisioning operation per ACP test data root makes every spawn
 /// resolve to the same durable agent.
 const TEST_AGENT_OPERATION_ID: &str = "0f1e2d3c-4b5a-4978-8897-a6b5c4d3e2f1";
-const TEST_AGENT_PRESET_ID: &str = "renoa.coding.alpha.v1";
+const TEST_AGENT_PRESET_ID: &str = "renoa.coding.alpha.v2";
 
 pub(crate) struct AcpProcess {
     child: Child,

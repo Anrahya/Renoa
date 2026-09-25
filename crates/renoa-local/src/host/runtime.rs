@@ -9,7 +9,7 @@ use super::{HostConfig, LocalHostError};
 use crate::{
     LocalRuntimeConfig, LocalWorkspace, ModelChoice, ReasoningLevel,
     mcp::agent_registry_bindings,
-    plugins::agent_plugin_binding,
+    plugins::{agent_plugin_binding, agent_plugin_search_binding},
     runtime::build_composed_local_runtime,
     skills::{agent_skill_bindings, runtime_context},
 };
@@ -122,14 +122,23 @@ fn offered_tool_bindings(
     command_id: Option<CommandId>,
 ) -> Vec<AgentToolBinding> {
     let agent = definition.agent_id();
-    let mut offered = agent_registry_bindings(
+    let can_manage_plugins = definition
+        .selected_tools()
+        .tools
+        .contains(crate::capabilities::PLUGIN_MANAGE);
+    let mut offered = vec![agent_plugin_search_binding(
+        agent,
+        host.plugins.clone(),
+        can_manage_plugins,
+    )];
+    offered.extend(agent_registry_bindings(
         agent,
         host.mcp_catalog.clone(),
         host.mcp_adapter.clone(),
         host.mcp_authorizations.clone(),
         session_id,
         command_id,
-    );
+    ));
     if let Some(binding) = definition.document_binding() {
         offered.push(binding);
     }
@@ -238,12 +247,11 @@ mod tests {
             "runtime tool names must be unique"
         );
         let expected: BTreeSet<&str> = [
-            "extension_manage",
+            "plugin_manage",
             "agent_manage",
             "routine_manage",
             "routine_results",
-            "tool_search",
-            "tool_load",
+            "plugin_search",
             "tool_execute",
             "skill_search",
             "skill_load",
@@ -255,12 +263,12 @@ mod tests {
         let selection = BTreeSet::from([
             "code_mode".to_owned(),
             "tool_execute".to_owned(),
-            "tool_search".to_owned(),
+            "plugin_search".to_owned(),
         ]);
         let (visible, hidden) =
             partition_selected_tools(offered, &selection).expect("partition selected tools");
         assert_eq!(visible.len(), 1);
-        assert_eq!(visible[0].tool_name(), "tool_search");
+        assert_eq!(visible[0].tool_name(), "plugin_search");
         assert_eq!(
             hidden.expect("hidden MCP executor").tool_name(),
             "tool_execute"

@@ -6,7 +6,7 @@ use tempfile::{TempDir, tempdir};
 use super::SkillStore;
 use crate::{host::catalog, skills::SkillError};
 
-const PROFILE: &str = "renoa.coding.alpha.v1";
+const PROFILE: &str = "renoa.coding.alpha.v2";
 
 struct Fixture {
     _directory: TempDir,

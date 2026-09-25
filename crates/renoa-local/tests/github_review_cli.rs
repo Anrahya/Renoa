@@ -64,7 +64,7 @@ fn fixture(root: &Path) -> AgentId {
         root,
         &json!({
             "operationId": operator_operation,
-            "presetId": "renoa.personal.arcee.v1",
+            "presetId": "renoa.personal.arcee.v2",
             "name": "Arcee"
         }),
     );
@@ -77,7 +77,7 @@ fn fixture(root: &Path) -> AgentId {
     let specialist_operation = Uuid::new_v4();
     let mut document = json!({
         "operationId": specialist_operation,
-        "presetId": "renoa.specialist.v1",
+        "presetId": "renoa.specialist.v2",
         "name": "Soundwave",
         "instructions": SPECIALIST_INSTRUCTIONS
     });

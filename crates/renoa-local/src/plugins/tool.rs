@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 mod actions;
 mod contract;
 mod inventory;
-mod output;
+pub(super) mod output;
 #[cfg(test)]
 mod tests;
 
@@ -18,11 +18,11 @@ use crate::mcp::oauth_operation_id;
 use actions::{ConnectRequest, ExtensionInvocation};
 use contract::{AddSourceInput, CredentialInput, ManageInput, manage_tool_spec, resolve_source};
 use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
-use output::{json_output, plugin_error, registry_error_output};
+use output::{json_output, plugin_error};
 use renoa_kernel::AgentId;
 
-const TOOL_NAME: &str = crate::capabilities::EXTENSION_MANAGE;
-const BINDING_REVISION: &str = "renoa-extension-manager-v18";
+const TOOL_NAME: &str = crate::capabilities::PLUGIN_MANAGE;
+const BINDING_REVISION: &str = "renoa-plugin-manager-v1";
 
 pub(crate) fn agent_plugin_binding(
     agent_id: AgentId,
@@ -119,14 +119,6 @@ impl ManageTool {
         updates: ToolUpdates,
     ) -> Result<ToolOutput, ToolError> {
         match input {
-            ManageInput::Search { query } => self.search_registry(&query, cancellation).await,
-            ManageInput::Lookup {
-                registry_name,
-                registry_version,
-            } => {
-                self.lookup_registry(&registry_name, &registry_version, cancellation)
-                    .await
-            }
             ManageInput::Add {
                 source,
                 server,
@@ -238,21 +230,6 @@ impl ManageTool {
         .await
     }
 
-    async fn search_registry(
-        &self,
-        query: &str,
-        cancellation: CancellationToken,
-    ) -> Result<ToolOutput, ToolError> {
-        match self.manager.search_registry(query, cancellation).await {
-            Ok(result) => json_output(&RegistryActionOutput {
-                action: "search",
-                installed: false,
-                result: &result,
-            }),
-            Err(error) => registry_error_output(error),
-        }
-    }
-
     async fn list(&self, cursor: Option<&str>, limit: usize) -> Result<ToolOutput, ToolError> {
         if !(1..=MAX_LIST_LIMIT).contains(&limit) {
             return Err(ToolError::invalid_input(format!(
@@ -303,26 +280,6 @@ impl ManageTool {
             catalog_retained: true,
             enabled_for_agent: true,
         })
-    }
-
-    async fn lookup_registry(
-        &self,
-        registry_name: &str,
-        registry_version: &str,
-        cancellation: CancellationToken,
-    ) -> Result<ToolOutput, ToolError> {
-        match self
-            .manager
-            .lookup_registry(registry_name, registry_version, cancellation)
-            .await
-        {
-            Ok(result) => json_output(&RegistryActionOutput {
-                action: "lookup",
-                installed: false,
-                result: &result,
-            }),
-            Err(error) => registry_error_output(error),
-        }
     }
 }
 
@@ -387,18 +344,10 @@ struct EnabledOutput {
     enabled_for_agent: bool,
 }
 
-#[derive(Serialize)]
-struct RegistryActionOutput<'a, T> {
-    action: &'static str,
-    installed: bool,
-    #[serde(flatten)]
-    result: &'a T,
-}
-
 fn require_active(cancellation: &CancellationToken) -> Result<(), ToolError> {
     if cancellation.is_cancelled() {
         Err(ToolError::cancelled(
-            "extension management was cancelled",
+            "plugin management was cancelled",
             false,
         ))
     } else {

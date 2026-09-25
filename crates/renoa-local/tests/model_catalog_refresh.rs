@@ -7,8 +7,8 @@ use renoa_local::{
 use tempfile::tempdir;
 use uuid::Uuid;
 
-const ALPHA_PRESET: &str = "renoa.coding.alpha.v1";
-const ARCEE_PRESET: &str = "renoa.personal.arcee.v1";
+const ALPHA_PRESET: &str = "renoa.coding.alpha.v2";
+const ARCEE_PRESET: &str = "renoa.personal.arcee.v2";
 
 async fn provision_agent(host: &LocalHost, preset: &str, name: &str) -> renoa_kernel::AgentId {
     host.create_agent(

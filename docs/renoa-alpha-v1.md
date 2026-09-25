@@ -3,7 +3,7 @@
 ## Purpose
 
 Alpha is Renoa's first local coding agent. Its stable creation preset identity is
-`renoa.coding.alpha.v1`.
+`renoa.coding.alpha.v2`.
 
 Alpha is not a loop, model, session store, or surface. It is the code-owned
 creation preset whose stored definition supplies coding behavior and project
@@ -50,7 +50,7 @@ surface requirements, not Alpha's internal design.
    Host registry tools may read newly committed catalog state, but an exact
    catalog reference can never change underneath an invocation.
 6. The first coding agent's stored selection has all nine local workspace
-   tools, `tool_search`, `tool_load`, `tool_execute`, `extension_manage`,
+   tools, `plugin_search`, `tool_execute`, `plugin_manage`,
    `skill_search`, and `skill_load`.
    External schemas, installed-package metadata, and skill bodies are loaded
    into history only when Alpha requests them; their quantity never expands the
@@ -104,15 +104,16 @@ survive compaction and Host restart; historical full load results become short
 model-facing receipts so the body is not duplicated. A skill supplies
 instructions and files only. It cannot add a tool or permission.
 
-## Extension management
+## Plugin management
 
-Alpha receives one fixed `extension_manage` tool rather than one management
-schema per package. It can search compact publisher metadata in the official
-MCP Registry and lookup one exact published version. Those actions are
+Alpha receives fixed `plugin_search` and `plugin_manage` tools. Search first
+returns compact cards for installed plugins, then lets Alpha inspect one plugin
+and browse the tools in an enabled MCP connection. Its explicit official
+Registry source searches publisher metadata and looks up one exact version. Those actions are
 read-only: namespace verification is not provider endorsement or installation
 truth, and Registry records cannot be passed to `add`. Alpha must verify the
 endpoint and authentication against the provider's official HTTPS
-documentation. It can then add that independently researched MCP definition or
+documentation. `plugin_manage` can then add that independently researched MCP definition or
 one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local
 package; install exact content; list installed revisions; connect a supported
 package MCP server; and authorize or explicitly restart a registered OAuth
@@ -123,7 +124,7 @@ pages of package, connection, and plugin skill facts with an opaque continuation
 cursor. Every add source becomes the same immutable package. Supported skills
 hot-load first, then Renoa validates the real endpoint through MCP discovery
 before publishing tools.
-Registry results are research hints within this Host tool, not accepted
+Registry results are research hints, not accepted
 installation inputs. Other discovery sources remain replaceable. Alpha v1's
 deliberate full-access policy permits those
 actions; the tool does not create a second approval system or expand the
@@ -139,7 +140,7 @@ kind of secret or remote failure text is returned to Alpha through that receipt
 or stored in Renoa SQLite. Browser consent is
 service authentication under Alpha's existing full-access scope, not a second
 Renoa approval system. A successful connection
-is visible to the next `tool_search` call without restarting Alpha or its
+is visible to the next `plugin_search` call without restarting Alpha or its
 surface. A connection failure remains model-visible and preserves the installed
 package and any successfully loaded skills. A package-provided skill is visible
 to the next `skill_search` call without restart.
@@ -151,9 +152,9 @@ A normal Alpha request contains only:
 1. the Alpha base prompt and applicable project instructions;
 2. the exact Host-pinned active skill instructions;
 3. the durable, context-projected conversation; and
-4. the nine local workspace tool definitions, three fixed MCP-registry
-   definitions, one fixed extension-manager definition, and two fixed
-   skill-registry definitions in the model API's tool field.
+4. the nine local workspace tool definitions, `plugin_search`,
+   `plugin_manage`, `tool_execute`, and two fixed skill-registry
+   definitions in the model API's tool field.
 
 Kernel command IDs, effect identities, recovery declarations, runtime
 manifests, and configuration digests are not prompt content.
@@ -178,8 +179,8 @@ The real headless product path must prove that:
 3. one durable agent session continues after changing model and reasoning level;
 4. each operation freezes the exact selected model and reasoning revision;
 5. the Alpha configuration digest remains stable across that selection change;
-6. a 1,000-tool external catalog adds no model API schema, search returns only
-   compact matches, and load returns only explicitly requested schemas;
+6. a 1,000-tool external catalog adds no model API schema, broad search stays
+   compact, and targeted search returns at most three complete small schemas;
 7. exact external references fail stale instead of changing after refresh;
 8. a skill added during a live session is discoverable without restart;
 9. activated exact skill revisions survive compaction and Host restart without
@@ -188,7 +189,7 @@ The real headless product path must prove that:
     its public header and a just-in-time bearer through the real MCP boundary,
     becomes searchable without restart, and never stores the key or adds an
     external schema to the normal model request; and
-11. an OAuth package connection completes through the same `extension_manage`
+11. an OAuth package connection completes through the same `plugin_manage`
     surface, survives callback cancellation and Host restart safely, refreshes
     once across concurrent sessions, replays a settled management call without
     a second browser or OAuth POST, and never exposes credential state to the
@@ -201,5 +202,5 @@ The real headless product path must prove that:
 13. a disabled connection re-enables from its retained catalog without restart
     or network access, generic Secret Service headers stay out of model context,
     invalid tool arguments fail against the frozen schema before dispatch, and
-    a changed extension inventory invalidates an earlier list cursor instead of
+    a changed plugin inventory invalidates an earlier list cursor instead of
     skipping or duplicating facts.

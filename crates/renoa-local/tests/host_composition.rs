@@ -66,7 +66,7 @@ async fn the_host_composes_the_coding_runtime_from_the_stored_definition() {
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::new(
                 uuid::Uuid::new_v4(),
-                AgentPresetId::new("renoa.coding.alpha.v1").expect("preset id"),
+                AgentPresetId::new("renoa.coding.alpha.v2").expect("preset id"),
                 "Local",
             ),
             tokio_util::sync::CancellationToken::new(),
