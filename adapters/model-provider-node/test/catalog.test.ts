@@ -19,7 +19,9 @@ import { oauthCredential, tempDir } from "./helpers.js";
 import { SqliteCredentialStore } from "../src/credentials.js";
 
 test("xAI catalog binding ids match SHA-256 of the advertised model spec JSON", () => {
-  for (const entry of loadPinnedCatalog("xai")) {
+  const entries = loadPinnedCatalog("xai");
+  assert.equal(new Set(entries.map((entry) => entry.id)).size, entries.length);
+  for (const entry of entries) {
     assert.equal(modelBindingId(entry.model), sha256(JSON.stringify(entry.model)));
     assert.equal(entry.model.provider, "xai");
     assert.ok(entry.reasoning_levels.length > 0);

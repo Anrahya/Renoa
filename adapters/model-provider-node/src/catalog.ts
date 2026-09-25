@@ -9,7 +9,7 @@ import {
   opencodeGoTransport,
   type OpenCodeTransport,
 } from "./providers/opencode-go.js";
-import { XAI_BASE_URL } from "./providers/xai.js";
+import { XAI_BASE_URL, XAI_CATALOG_ADDITIONS } from "./providers/xai.js";
 import { getSupportedThinkingLevels } from "./upstream/thinking.js";
 import type { Api, Model } from "./upstream/types.js";
 
@@ -30,7 +30,7 @@ export function loadPinnedCatalog(provider: ProviderId): readonly CatalogEntry[]
           ...pinned,
           ...OPENCODE_GO_CATALOG_ADDITIONS.filter((entry) => !pinnedIds.has(entry.id)),
         ]
-      : pinned;
+      : [...pinned, ...XAI_CATALOG_ADDITIONS];
   const discovered = source
     .map((entry) => (provider === "opencode-go" ? applyOpenCodeOfficialTransport(entry) : entry))
     .filter((entry): entry is Record<string, unknown> => entry !== undefined)

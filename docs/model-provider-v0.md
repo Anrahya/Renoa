@@ -58,7 +58,7 @@ renoa-model-provider-node/v1/{provider}/{model}/{binding}/reasoning-{level}
 An unfinished `pi/...` operation cannot execute through this adapter. There is
 no compatibility mapping; the kernel fail-closes with a runtime mismatch.
 
-Grok 4.6 advertises `low`, `medium`, `high`, and `xhigh` only. Those values are
+Grok 4.6 and 4.7 advertise `low`, `medium`, `high`, and `xhigh` only. Those values are
 sent as Chat Completions `reasoning_effort`. The adapter does not advertise
 `off` or `minimal`.
 

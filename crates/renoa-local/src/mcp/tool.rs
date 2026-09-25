@@ -1,6 +1,7 @@
 use std::{collections::HashSet, path::PathBuf, str::FromStr as _, sync::Arc};
 
 mod execute;
+mod search;
 
 #[cfg(test)]
 mod tests;
@@ -16,19 +17,20 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpAuthorizationResolver, McpCatalogStore,
-    McpHostError, McpToolReference, SEARCH_RESULT_LIMIT,
+    McpHostError, McpToolReference,
     call::{CALL_BOUNDARY_REVISION, call_tool},
-    oauth_operation_id, rank_tools,
+    oauth_operation_id,
 };
 use execute::{authorization_failure, definite_boundary_error, execution_details, map_failure};
 use renoa_kernel::AgentId;
+use search::SearchTool;
 
 pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 
 const SEARCH_TOOL: &str = crate::capabilities::TOOL_SEARCH;
 const LOAD_TOOL: &str = crate::capabilities::TOOL_LOAD;
 const EXECUTE_TOOL: &str = crate::capabilities::TOOL_EXECUTE;
-const SEARCH_REVISION: &str = "renoa-mcp-registry-v4/search";
+const SEARCH_REVISION: &str = "renoa-mcp-registry-v6/search";
 const LOAD_REVISION: &str = "renoa-mcp-registry-v2/load";
 const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
 
@@ -64,82 +66,6 @@ pub(crate) fn agent_registry_bindings(
             EffectRecovery::NeverReplay,
         ),
     ]
-}
-
-struct SearchTool {
-    agent_id: AgentId,
-    store: McpCatalogStore,
-    spec: ToolSpec,
-}
-
-impl SearchTool {
-    fn new(agent_id: AgentId, store: McpCatalogStore) -> Self {
-        Self {
-            agent_id,
-            store,
-            spec: ToolSpec {
-                name: SEARCH_TOOL.to_owned(),
-                description: format!(
-                    "Find tools enabled for this agent without loading their schemas. Returns at most {SEARCH_RESULT_LIMIT} compact matches and exact references. Call tool_load before executing a reference. Use query `*` to browse."
-                ),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Capability, service, or tool to find; use * to browse."
-                        }
-                    },
-                    "required": ["query"],
-                    "additionalProperties": false
-                }),
-            },
-        }
-    }
-}
-
-impl Tool for SearchTool {
-    fn spec(&self) -> &ToolSpec {
-        &self.spec
-    }
-
-    fn execute(
-        &self,
-        call: ToolCall,
-        cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(async move {
-            let input: SearchInput = decode_call(&call, SEARCH_TOOL)?;
-            require_active(&cancellation)?;
-            let store = self.store.clone();
-            let agent_id = self.agent_id;
-            let tools = tokio::task::spawn_blocking(move || {
-                store.agent_tool_summaries(&agent_id.to_string())
-            })
-            .await
-            .map_err(|error| background_error(&error))?
-            .map_err(host_error)?;
-            require_active(&cancellation)?;
-            let ranked = rank_tools(tools, &input.query).map_err(host_error)?;
-            let matches = ranked
-                .matches
-                .into_iter()
-                .map(|tool| {
-                    Ok(SearchMatch {
-                        reference: tool.reference()?.to_string(),
-                        name: tool.name,
-                        description: tool.description,
-                    })
-                })
-                .collect::<Result<Vec<_>, McpHostError>>()
-                .map_err(host_error)?;
-            json_output(&SearchOutput {
-                matches,
-                total_matches: ranked.total_matches,
-            })
-        })
-    }
 }
 
 struct LoadTool {
@@ -355,12 +281,6 @@ impl Tool for ExecuteTool {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SearchInput {
-    query: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct LoadInput {
     references: Vec<String>,
 }
@@ -370,19 +290,6 @@ struct LoadInput {
 struct ExecuteInput {
     reference: String,
     arguments: Value,
-}
-
-#[derive(Serialize)]
-struct SearchOutput {
-    matches: Vec<SearchMatch>,
-    total_matches: usize,
-}
-
-#[derive(Serialize)]
-struct SearchMatch {
-    reference: String,
-    name: String,
-    description: String,
 }
 
 #[derive(Serialize)]
@@ -437,17 +344,6 @@ fn require_active(cancellation: &CancellationToken) -> Result<(), ToolError> {
     } else {
         Ok(())
     }
-}
-
-fn json_output(output: &impl Serialize) -> Result<ToolOutput, ToolError> {
-    let content = serde_json::to_string(output).map_err(|error| {
-        ToolError::internal(format!("tool result could not be encoded: {error}"))
-    })?;
-    Ok(ToolOutput {
-        content: vec![ContentBlock::text(content)],
-        details: None,
-        is_error: false,
-    })
 }
 
 fn background_error(error: &tokio::task::JoinError) -> ToolError {
