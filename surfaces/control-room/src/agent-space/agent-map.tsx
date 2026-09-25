@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Background, ReactFlow, ReactFlowProvider, ViewportPortal, useReactFlow, useStore, type Node } from "@xyflow/react";
-import { ArrowsOutSimple, Cube, MagnifyingGlass, Minus, Pause, Play, Plus, X } from "@phosphor-icons/react";
+import { ArrowRight, ArrowsOutSimple, Cube, MagnifyingGlass, Minus, Pause, Play, Plus, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -12,7 +12,7 @@ import type { HostSnapshot } from "../host-contract";
 import { agentHref, displayName, isEarlier } from "../host-presentation";
 import { directorySummary } from "../host-agent-directory-model";
 import { agentCount } from "../host-design-preview/shared";
-import { createScene, pluginMembers, previewManager, regionPath, type AgentScene } from "./scene";
+import { createScene, emptyCounts, pluginMembers, previewManager, regionPath, stateLabel, type AgentScene, type AgentState, type PlacedAgent } from "./scene";
 import { isDistant, spaceNodeTypes, type PortraitNode, type RegionNode } from "./map-nodes";
 import "@xyflow/react/dist/style.css";
 import "../styles/agent-space.css";
@@ -45,16 +45,74 @@ export function AgentSpacePreview({ host, missingAgent }: { host: HostSnapshot; 
   });
   const scene = createScene(source, expanded, compact ? 2 : 4);
   const earlier = host.agents.filter(isEarlier);
+  const counts = useMemo(() => {
+    const tally = emptyCounts();
+    for (const agent of scene.agents) tally[agent.state] += 1;
+    return tally;
+  }, [scene]);
+  const waiting = scene.agents.filter(agent => agent.state === "needs-you");
+  const failed = scene.agents.filter(agent => agent.state === "failed");
   return <main id="host-main" className="agent-space-page">
-    <div className="space-heading"><div><h1>Agents <span>{scene.agents.length}</span></h1><p>Your agents, how they’re organized, and what they share.</p></div>
+    <div className="space-heading"><div><h1>Agents <span>{scene.agents.length}</span></h1>
+      <p>{[
+        waiting.length ? `${waiting.length} waiting on you` : "Nothing waiting on you",
+        failed.length ? `${failed.length} failed` : null,
+      ].filter(Boolean).join(" · ")}</p></div>
       <NativeSelect aria-label="Example scene" value={expanded ? "50" : "host"} onChange={event => setExpanded(event.target.value === "50")}>
         <NativeSelectOption value="host">Your agents · preview</NativeSelectOption><NativeSelectOption value="50">50-agent example</NativeSelectOption>
       </NativeSelect>
     </div>
     {missingAgent && <Alert><AlertDescription>That agent is not in this Host snapshot. Choose an available agent below.</AlertDescription></Alert>}
+    <AttentionRail waiting={waiting} failed={failed} />
     <ReactFlowProvider key={`${expanded}-${compact}`}><AgentMap scene={scene} ui={mapUi} setUi={setMapUi} /></ReactFlowProvider>
+    <StateLegend counts={counts} />
     {earlier.length > 0 && <details className="space-earlier"><summary>Earlier identities <span>{earlier.length}</span></summary><ul>{earlier.map(agent => <li key={agent.id}><a href={agentHref(agent.id)}>{agent.name}</a></li>)}</ul></details>}
   </main>;
+}
+
+// The one thing the owner can act on, above everything else. Two lanes, never
+// merged: an agent waiting on a decision is gold because it is a question, and
+// an agent that broke is coral because it is a fault. Collapsing them is what
+// made every attention record look like an error.
+function AttentionRail({ waiting, failed }: { waiting: PlacedAgent[]; failed: PlacedAgent[] }) {
+  const [open, setOpen] = useState(true);
+  if (waiting.length === 0 && failed.length === 0) {
+    return <div className="space-clear" role="status">
+      <span className="space-clear-mark" aria-hidden="true" />
+      <p><strong>Nothing needs you.</strong> Work continues on its own; anything that needs a decision appears here.</p>
+    </div>;
+  }
+  return <section className="space-waiting" aria-labelledby="waiting-heading" data-open={open}>
+    <button className="space-waiting-toggle" aria-expanded={open} aria-controls="waiting-list" onClick={() => setOpen(value => !value)}>
+      <h2 id="waiting-heading">Needs you <span>{waiting.length}</span></h2>
+      {failed.length > 0 && <span className="space-waiting-failed" data-state="failed">Failed <span>{failed.length}</span></span>}
+      <span className="space-waiting-hint">{open ? "Hide" : "Show"}</span>
+    </button>
+    {open && <ul id="waiting-list" className="space-waiting-list">
+      {[...waiting, ...failed].map(agent => <li key={agent.id} data-state={agent.state}>
+        <a href={agent.summary?.workHref ?? agentHref(agent.id, "activity")}>
+          <span className="space-waiting-body">
+            <strong>{agent.summary?.title ?? (agent.state === "failed" ? "Work stopped before it finished" : "Open work needs a decision")}</strong>
+            <small>{agent.summary?.detail ?? "Inspect the retained record and diagnostics."}</small>
+          </span>
+          <span className="space-waiting-agent">{agent.name}</span>
+          <ArrowRight className="space-waiting-arrow" aria-hidden="true" />
+        </a>
+      </li>)}
+    </ul>}
+  </section>;
+}
+
+// One legend, one owner: the four states the map tints by, with the counts that
+// produced them. A space on the map is only meaningful if the colours are named.
+function StateLegend({ counts }: { counts: Record<AgentState, number> }) {
+  const states: AgentState[] = ["needs-you", "failed", "running", "idle"];
+  return <div className="space-legend" aria-label="Agent states">
+    <span className="space-legend-title">State</span>
+    <ul>{states.map(state => <li key={state} data-state={state}>
+      <i aria-hidden="true" />{stateLabel[state]}<b>{counts[state]}</b>
+    </li>)}</ul>
+  </div>;
 }
 
 function AgentMap({ scene, ui, setUi }: { scene: AgentScene; ui: MapUi; setUi: Dispatch<SetStateAction<MapUi>> }) {
@@ -147,7 +205,7 @@ function AgentMap({ scene, ui, setUi }: { scene: AgentScene; ui: MapUi; setUi: D
       {scene.agents.length ? <ReactFlow nodes={nodes} nodeTypes={spaceNodeTypes} fitView fitViewOptions={initialFit} colorMode="dark"
         minZoom={.12} maxZoom={1.7} nodesDraggable={false} nodesConnectable={false} nodesFocusable={false} edgesFocusable={false} elementsSelectable={false}
         deleteKeyCode={null} selectionKeyCode={null} zoomOnDoubleClick={false} zoomOnScroll zoomOnPinch preventScrolling
-        attributionPosition="bottom-left" aria-label="Explore agent spaces" onMoveStart={event => { if (event) markUserView(); }} onPaneClick={() => setUi(current => ({ ...current, query: "", pluginId: "" }))}>
+        proOptions={{ hideAttribution: true }} aria-label="Explore agent spaces" onMoveStart={event => { if (event) markUserView(); }} onPaneClick={() => setUi(current => ({ ...current, query: "", pluginId: "" }))}>
         <Background gap={28} size={.7} color="#ffffff19" />
         {pluginId && members.length > 0 && <ViewportPortal><svg className="space-shared-field" aria-hidden="true"><path d={regionPath(members.map(agent => agent.position), 128)} /></svg>
           <div className="space-capability-label" style={{ left: members.reduce((sum, agent) => sum + agent.position.x, 0) / members.length, top: Math.min(...members.map(agent => agent.position.y)) - 90 }}><Cube size={18} /><span>{capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}<small>{agentCount(members.length)} · shared access</small></span></div>

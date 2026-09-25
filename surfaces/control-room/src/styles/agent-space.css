@@ -1,9 +1,44 @@
-.agent-space-page { width: 100%; margin-inline: auto; padding: 32px; --space-access: #91c8b5; }
+.agent-space-page {
+  width: 100%; margin-inline: auto; padding: 32px;
+  --space-access: #8fae86;
+  --state-needs-you: #d3b66f; --state-failed: #e08a72; --state-running: #8fae86; --state-idle: #8c8371;
+}
 .space-heading, .space-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.space-heading { margin-bottom: 24px; }
+.space-heading { margin-bottom: 20px; }
 .space-heading h1 { display: flex; gap: 12px; align-items: center; font-size: 26px; font-weight: 600; letter-spacing: -.035em; }
 .space-heading h1 > span { font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--muted-foreground); border: 1px solid var(--border); padding: 1px 7px; border-radius: 6px; }
 .space-heading p { margin-top: 6px; color: var(--muted-foreground); font-size: 14px; }
+
+/* Needs you: the one lane the owner can act on, so it sits above the map and
+   wears the action gold. With nothing to do it collapses to a quiet line. */
+.space-clear { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 13px 16px; margin-bottom: 14px; background: var(--card); }
+.space-clear-mark { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--state-running); box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-running) 18%, transparent); }
+.space-clear p { margin: 0; font-size: 14px; color: var(--muted-foreground); }
+.space-clear strong { color: var(--foreground); font-weight: 600; }
+
+.space-waiting { margin-bottom: 16px; border: 1px solid var(--gold-line); border-radius: 12px; background: linear-gradient(180deg, var(--state-needs-you-wash), transparent 70%); overflow: hidden; }
+.space-waiting-toggle { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: none; padding: 13px 16px; text-align: left; }
+.space-waiting-toggle h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--state-needs-you); }
+.space-waiting-toggle h2 > span { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--state-needs-you); color: #181714; font-size: 12px; font-weight: 700; letter-spacing: 0; }
+.space-waiting-hint { margin-left: auto; font-size: 12px; color: var(--muted-foreground); }
+.space-waiting-failed { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--state-failed); }
+.space-waiting-failed > span { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--state-failed); color: #181714; font-size: 12px; font-weight: 700; letter-spacing: 0; }
+.space-waiting-toggle:hover .space-waiting-hint { color: var(--foreground); }
+.space-waiting-list { list-style: none; margin: 0; padding: 0 0 6px; }
+.space-waiting-list li + li { border-top: 1px solid var(--border); }
+.space-waiting-list a { display: flex; align-items: center; gap: 18px; padding: 12px 16px; border-radius: 8px; }
+.space-waiting-list a:hover { background: color-mix(in srgb, var(--state-needs-you) 9%, transparent); }
+.space-waiting-list li[data-state=failed] a:hover { background: color-mix(in srgb, var(--state-failed) 10%, transparent); }
+.space-waiting-list li[data-state=failed] .space-waiting-arrow { color: var(--state-failed); }
+.space-waiting-list li[data-state=failed] .space-waiting-arrow:hover { color: var(--state-failed); }
+.space-waiting-list li[data-state=failed] .space-waiting-body strong { color: var(--state-failed); }
+.space-waiting-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.space-waiting-body strong { font-size: 14px; font-weight: 600; }
+.space-waiting-body small { font-size: 13px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-waiting-agent { flex-shrink: 0; font-size: 12px; color: var(--muted-foreground); padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; }
+.space-waiting-arrow { flex-shrink: 0; color: var(--muted-foreground); transition: transform 200ms cubic-bezier(.16, 1, .3, 1), color 200ms; }
+.space-waiting-list a:hover .space-waiting-arrow { transform: translateX(3px); color: var(--state-needs-you); }
+
 .space-search { width: 290px; max-width: 100%; position: relative; z-index: 6; }
 .space-search-results { position: absolute; top: calc(100% + 8px); width: 100%; max-height: 280px; overflow: auto; background: var(--popover); border: 1px solid var(--border); border-radius: 10px; padding: 6px; box-shadow: 0 12px 32px #0006; }
 .space-search-results p { padding: 8px; font-size: 12px; color: var(--muted-foreground); }
@@ -11,7 +46,10 @@
 .space-search-results button:hover { background: var(--accent); }
 .space-search-results button > span { font-size: 12px; color: var(--muted-foreground); }
 .space-view-controls { display: flex; align-items: center; gap: 8px; }
-.space-map { height: max(480px, calc(100svh - 320px)); position: relative; margin-top: 10px; isolation: isolate; }
+/* The landing screen is meant to read whole: header, needs-you rail, toolbar,
+   map and legend share one viewport budget, so the map yields when the rail
+   grows rather than pushing the legend below the fold. */
+.space-map { height: clamp(360px, calc(100svh - 452px), 760px); position: relative; margin-top: 10px; isolation: isolate; }
 .space-map .react-flow { background: transparent; }
 .space-map .react-flow__background { background: transparent; }
 .space-map .react-flow__node { border: 0; padding: 0; background: none; box-shadow: none; }
@@ -19,8 +57,21 @@
 .space-map .react-flow__attribution { font-size: 9px; background: transparent; opacity: .55; }
 .space-region { position: relative; pointer-events: none; }
 .space-contours { width: 100%; height: 100%; overflow: visible; color: var(--region-color); animation: space-float 9s ease-in-out infinite alternate; animation-play-state: paused; }
-.space-region-fill { fill: currentColor; fill-opacity: .09; stroke: currentColor; stroke-opacity: .55; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.space-contour { fill: none; stroke: currentColor; stroke-opacity: .24; stroke-width: .8; transform-origin: center; transform-box: fill-box; vector-effect: non-scaling-stroke; animation-play-state: paused; }
+/* The light keeps moving inside each contour, as the owner asked, but it is a
+   hint of volume rather than a wash: the region's state has to stay readable
+   through the outline, and a space with nothing wrong should barely glow. */
+.space-region-light { opacity: .5; }
+.space-region[data-state=failed] .space-region-light { opacity: .62; }
+.space-region[data-state=running] .space-region-light { opacity: .38; }
+.space-region[data-state=idle] .space-region-light { opacity: .2; }
+.space-region-fill { fill: currentColor; fill-opacity: .022; stroke: currentColor; stroke-opacity: .5; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
+/* State is carried by a crisp region outline and the portrait ring, not by a
+   wash of colour: a map where every space needs you would otherwise read as one
+   amber mass. An all-idle space recedes further still. */
+.space-region[data-state=failed] .space-region-fill { stroke-opacity: .58; }
+.space-region[data-state=running] .space-region-fill { stroke-opacity: .42; }
+.space-region[data-state=idle] .space-region-fill { fill-opacity: .014; stroke-opacity: .28; }
+.space-contour { fill: none; stroke: currentColor; stroke-opacity: .16; stroke-width: .8; transform-origin: center; transform-box: fill-box; vector-effect: non-scaling-stroke; animation-play-state: paused; }
 .space-contour-outer { transform: scale(1.06, 1.035) rotate(-2deg); }
 .space-contour-inner { transform: scale(.95, .94) rotate(2deg); }
 .space-contour-outer { animation: space-drift 9s ease-in-out infinite alternate paused; }
@@ -32,18 +83,24 @@
 .space-region-label[data-distant=true] { top: 40%; z-index: 4; border-radius: 12px; background: var(--background); font-size: 13px; text-align: left; min-width: 125px; }
 .space-region-label > span { display: flex; flex-direction: column; gap: 3px; color: var(--muted-foreground); font-size: 11px; }
 .space-region-label[data-far=true] { min-width: 96px; max-width: 96px; padding: 5px 7px; font-size: 11px; white-space: normal; }
-.space-region-label em { color: var(--destructive); font-style: normal; }
+.space-region-label em { font-style: normal; color: var(--region-color); }
 .space-agent { pointer-events: auto; width: 180px; height: 180px; display: flex; flex-direction: column; align-items: center; border-radius: 18px; background: none; transition: opacity 200ms; }
 .space-agent[data-dimmed=true] { opacity: .24; }
 .space-portrait { display: block; position: relative; flex-shrink: 0; width: 126px; height: 126px; padding: 5px; border: 1px solid #ffffff24; border-radius: 50%; background: #151719; box-shadow: 0 0 0 6px #ffffff04; transition: border-color 160ms, box-shadow 160ms; }
 .space-portrait img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; pointer-events: none; }
 .space-agent:hover .space-portrait { border-color: #ffffff80; }
-.space-agent[data-selected=true] .space-portrait { border-color: var(--foreground); box-shadow: 0 0 0 3px #ffffff16, 0 0 35px #ffffff09; }
+.space-agent[data-selected=true] .space-portrait { border-color: var(--gold); box-shadow: 0 0 0 3px #d3b66f26, 0 0 35px #d3b66f14; }
+/* A state ring lets a blocked or broken agent read from across the map without
+   zooming in. Idle agents keep the neutral ring and say nothing. */
+.space-agent[data-state="needs-you"] .space-portrait { border-color: var(--state-needs-you); box-shadow: 0 0 0 5px color-mix(in srgb, var(--state-needs-you) 13%, transparent); }
+.space-agent[data-state=failed] .space-portrait { border-color: var(--state-failed); box-shadow: 0 0 0 5px color-mix(in srgb, var(--state-failed) 13%, transparent); }
+.space-agent[data-state=running] .space-portrait { border-color: color-mix(in srgb, var(--state-running) 62%, transparent); }
 .space-agent strong { flex-shrink: 0; max-width: calc(180px * var(--label-scale)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 13px; font-weight: 550; font-size: calc(19px * var(--label-scale)); line-height: 1.25; letter-spacing: -.02em; }
 .space-agent-state { flex-shrink: 0; font-size: calc(13px * var(--label-scale)); margin-top: 5px; color: var(--muted-foreground); white-space: nowrap; }
-.space-agent-state[data-tone=interrupted] { color: var(--destructive); }
-.space-agent-state[data-tone=waiting] { color: #d7be83; }
-.space-attention { position: absolute; bottom: -1px; right: 0; display: grid; place-items: center; width: 27px; height: 27px; border: 3px solid var(--background); border-radius: 50%; background: var(--background); color: var(--destructive); }
+.space-agent-state[data-state="needs-you"] { color: var(--state-needs-you); }
+.space-agent-state[data-state=failed] { color: var(--state-failed); }
+.space-attention { position: absolute; bottom: -1px; right: 0; display: grid; place-items: center; width: 27px; height: 27px; border: 3px solid var(--background); border-radius: 50%; background: var(--background); color: var(--state-needs-you); }
+.space-agent[data-state=failed] .space-attention { color: var(--state-failed); }
 .space-attention svg { width: 21px; height: 21px; }
 .space-agent[data-distant=true] { opacity: .38; }
 .space-agent[data-distant=true] strong, .space-agent[data-distant=true] .space-agent-state { visibility: hidden; }
@@ -51,7 +108,7 @@
 .space-agent[data-compact=true] .space-agent-state { display: none; }
 .space-shared-field { position: absolute; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .space-shared-field path { fill: var(--space-access); fill-opacity: .065; stroke: var(--space-access); stroke-width: 1.5; stroke-dasharray: 5 7; stroke-opacity: .65; vector-effect: non-scaling-stroke; }
-.space-capability-label { position: absolute; display: flex; align-items: center; gap: 10px; transform: translateX(-50%); color: var(--space-access); background: var(--background); border: 1px solid #91c8b560; border-radius: 24px; padding: 10px 18px; font-size: 14px; white-space: nowrap; pointer-events: none; }
+.space-capability-label { position: absolute; display: flex; align-items: center; gap: 10px; transform: translateX(-50%); color: var(--space-access); background: var(--background); border: 1px solid color-mix(in srgb, var(--space-access) 38%, transparent); border-radius: 24px; padding: 10px 18px; font-size: 14px; white-space: nowrap; pointer-events: none; }
 .space-capability-label small { display: block; font-size: 11px; color: var(--muted-foreground); }
 .space-zoom-controls { position: absolute; right: 8px; bottom: 16px; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 10px; padding: 3px; background: var(--background); z-index: 5; }
 .space-zoom-controls output { min-width: 42px; font-size: 12px; color: var(--muted-foreground); text-align: center; font-variant-numeric: tabular-nums; }
@@ -61,7 +118,19 @@
 .space-plugin { display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; min-height: 34px; padding: 5px 11px; transition: border-color 160ms, background 160ms; }
 .space-plugin > i { width: 5px; height: 5px; border-radius: 50%; background: var(--space-access); }
 .space-plugin > span { margin-left: 3px; color: var(--muted-foreground); }
-.space-plugin:hover, .space-plugin[data-active=true] { border-color: var(--space-access); background: #91c8b510; }
+.space-plugin:hover, .space-plugin[data-active=true] { border-color: var(--space-access); background: color-mix(in srgb, var(--space-access) 8%, transparent); }
+
+/* One legend for the four states the map tints by, with the counts that produced
+   them. A colour on the map is only meaningful once it is named here. */
+.space-legend { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding-block: 16px; border-top: 1px solid var(--border); }
+.space-legend-title { font-size: 12px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+.space-legend ul { display: flex; flex-wrap: wrap; gap: 22px; list-style: none; margin: 0; padding: 0; }
+.space-legend li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); }
+.space-legend li > i { width: 8px; height: 8px; border-radius: 50%; background: var(--state-idle); }
+.space-legend li[data-state="needs-you"] > i { background: var(--state-needs-you); box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-needs-you) 20%, transparent); }
+.space-legend li[data-state=failed] > i { background: var(--state-failed); }
+.space-legend li[data-state=running] > i { background: var(--state-running); }
+.space-legend li > b { font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
 .space-caption { display: flex; justify-content: space-between; gap: 16px; padding-block: 12px 22px; font-size: 12px; color: var(--muted-foreground); }
 .space-caption > span:last-child { flex-shrink: 0; }
 .space-caption a { text-decoration: underline; text-underline-offset: 3px; margin-left: 6px; }
@@ -80,6 +149,12 @@
   .agent-space-page { padding: 22px 16px; }
   .space-heading { align-items: flex-start; flex-direction: column; gap: 16px; margin-bottom: 18px; }
   .space-heading h1 { font-size: 24px; }
+  .space-waiting-list a { flex-wrap: wrap; gap: 6px 14px; padding: 12px 14px; }
+  .space-waiting-body { flex-basis: 100%; }
+  .space-waiting-body small { white-space: normal; }
+  .space-waiting-agent { order: 3; }
+  .space-legend { gap: 10px 18px; padding-block: 14px; }
+  .space-legend ul { gap: 8px 16px; }
   .space-toolbar { gap: 8px; }
   .space-search { min-width: 0; flex: 1; }
   .space-view-controls { gap: 2px; }
