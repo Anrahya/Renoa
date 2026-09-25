@@ -11,7 +11,7 @@ mod store;
 mod tool;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::path::{Path, PathBuf};
 

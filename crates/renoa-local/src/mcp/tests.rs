@@ -107,7 +107,7 @@ fn a_supported_legacy_protocol_is_preserved_in_the_catalog() {
     assert_eq!(snapshot.protocol_version(), "2025-11-25");
 }
 
-fn snapshot(connection_id: &str, endpoint: &str, names: &[&str]) -> McpCatalogSnapshot {
+pub(crate) fn snapshot(connection_id: &str, endpoint: &str, names: &[&str]) -> McpCatalogSnapshot {
     McpCatalogSnapshot::from_adapter(
         connection_id,
         AdapterCatalog {

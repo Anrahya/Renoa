@@ -15,13 +15,15 @@ use super::{
 };
 use crate::{
     mcp::{
-        McpConnectionStatus, McpToolReference, SCHEMA_LOOKUP_OUTPUT_BYTES, SEARCH_RESULT_LIMIT,
-        rank_tools,
+        McpConnectionStatus, McpHostError, McpToolReference, SCHEMA_LOOKUP_OUTPUT_BYTES,
+        SEARCH_RESULT_LIMIT, rank_tools,
     },
     output::MAX_TOOL_OUTPUT_BYTES,
 };
 
 mod local;
+#[cfg(test)]
+mod tests;
 
 const TOOL_NAME: &str = crate::capabilities::PLUGIN_SEARCH;
 const BINDING_REVISION: &str = "renoa-plugin-search-v2";
@@ -247,8 +249,13 @@ impl PluginSearchTool {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let previews = self.describe_tools(references, true).await?;
-            for (item, preview) in matches.iter_mut().zip(previews) {
-                item.input_schema = preview.input_schema;
+            for preview in previews {
+                if let Some(item) = matches
+                    .iter_mut()
+                    .find(|item| item.reference == preview.reference)
+                {
+                    item.input_schema = preview.input_schema;
+                }
             }
         }
         json_output(&local::Page::new(
@@ -355,21 +362,37 @@ impl PluginSearchTool {
         }
         let store = self.manager.mcp_catalog();
         let agent_id = self.agent_id;
-        let lookup = references.clone();
+        let expected = references.len();
         let resolved = tokio::task::spawn_blocking(move || {
-            store.resolve_agent_tools(&agent_id.to_string(), &lookup)
+            let mut resolved = Vec::with_capacity(references.len());
+            for reference in references {
+                match store
+                    .resolve_agent_tools(&agent_id.to_string(), std::slice::from_ref(&reference))
+                {
+                    Ok(mut tools) if tools.len() == 1 => {
+                        resolved.push((reference, tools.remove(0)));
+                    }
+                    Ok(_) => {
+                        return Err(McpHostError::Invalid(
+                            "Host catalog returned the wrong number of MCP tools".to_owned(),
+                        ));
+                    }
+                    Err(McpHostError::Conflict(_) | McpHostError::NotFound(_)) if preview => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(resolved)
         })
         .await
         .map_err(|error| ToolError::internal(format!("Host catalog task failed: {error}")))?
         .map_err(|error| plugin_error(PluginError::Mcp(error), false))?;
-        if resolved.len() != references.len() {
+        if !preview && resolved.len() != expected {
             return Err(ToolError::internal(
                 "Host catalog returned the wrong number of MCP tools",
             ));
         }
-        references
+        resolved
             .into_iter()
-            .zip(resolved)
             .map(|(reference, resolved)| {
                 let schema = resolved.tool().model_input_schema();
                 let include_schema = !preview
