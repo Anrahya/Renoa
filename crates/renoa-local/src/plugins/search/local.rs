@@ -111,6 +111,15 @@ impl<T: Clone + Serialize> Page<T> {
             items.pop();
         }
     }
+
+    pub(super) fn shorten(&mut self, offset: usize) -> bool {
+        if self.items.len() <= 1 {
+            return false;
+        }
+        self.items.pop();
+        self.next_offset = Some(offset + self.items.len());
+        true
+    }
 }
 
 impl Inventory {
@@ -315,6 +324,10 @@ impl Inventory {
 
     pub(super) fn shared_refresh_unavailable(&self) -> bool {
         self.shared_refresh_unavailable
+    }
+
+    pub(super) fn all_tools(&self) -> Vec<McpToolSummary> {
+        self.tools.clone()
     }
 
     pub(super) fn search(&self, query: &str, offset: usize) -> Result<Page<PluginCard>, ToolError> {

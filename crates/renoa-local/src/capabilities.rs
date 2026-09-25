@@ -48,7 +48,6 @@ define_built_in_capabilities! {
     RoutineManage => "routine_manage",
     RoutineResults => "routine_results",
     PluginSearch => "plugin_search",
-    ToolLoad => "tool_load",
     ToolExecute => "tool_execute",
     CodeMode => "code_mode",
     SkillSearch => "skill_search",
@@ -61,7 +60,6 @@ pub(crate) const AGENT_MANAGE: &str = BuiltInCapability::AgentManage.name();
 pub(crate) const ROUTINE_MANAGE: &str = BuiltInCapability::RoutineManage.name();
 pub(crate) const ROUTINE_RESULTS: &str = BuiltInCapability::RoutineResults.name();
 pub(crate) const PLUGIN_SEARCH: &str = BuiltInCapability::PluginSearch.name();
-pub(crate) const TOOL_LOAD: &str = BuiltInCapability::ToolLoad.name();
 pub(crate) const TOOL_EXECUTE: &str = BuiltInCapability::ToolExecute.name();
 pub(crate) const CODE_MODE: &str = BuiltInCapability::CodeMode.name();
 pub(crate) const SKILL_SEARCH: &str = BuiltInCapability::SkillSearch.name();
@@ -136,7 +134,6 @@ mod tests {
         expected(BuiltInCapability::RoutineManage, "routine_manage"),
         expected(BuiltInCapability::RoutineResults, "routine_results"),
         expected(BuiltInCapability::PluginSearch, "plugin_search"),
-        expected(BuiltInCapability::ToolLoad, "tool_load"),
         expected(BuiltInCapability::ToolExecute, "tool_execute"),
         expected(BuiltInCapability::CodeMode, "code_mode"),
         expected(BuiltInCapability::SkillSearch, "skill_search"),

@@ -3,7 +3,7 @@
 ## Purpose
 
 Alpha is Renoa's first local coding agent. Its stable creation preset identity is
-`renoa.coding.alpha.v1`.
+`renoa.coding.alpha.v2`.
 
 Alpha is not a loop, model, session store, or surface. It is the code-owned
 creation preset whose stored definition supplies coding behavior and project
@@ -50,7 +50,7 @@ surface requirements, not Alpha's internal design.
    Host registry tools may read newly committed catalog state, but an exact
    catalog reference can never change underneath an invocation.
 6. The first coding agent's stored selection has all nine local workspace
-   tools, `plugin_search`, `tool_load`, `tool_execute`, `plugin_manage`,
+   tools, `plugin_search`, `tool_execute`, `plugin_manage`,
    `skill_search`, and `skill_load`.
    External schemas, installed-package metadata, and skill bodies are loaded
    into history only when Alpha requests them; their quantity never expands the
@@ -153,7 +153,7 @@ A normal Alpha request contains only:
 2. the exact Host-pinned active skill instructions;
 3. the durable, context-projected conversation; and
 4. the nine local workspace tool definitions, `plugin_search`,
-   `plugin_manage`, `tool_load`, `tool_execute`, and two fixed skill-registry
+   `plugin_manage`, `tool_execute`, and two fixed skill-registry
    definitions in the model API's tool field.
 
 Kernel command IDs, effect identities, recovery declarations, runtime
@@ -179,8 +179,8 @@ The real headless product path must prove that:
 3. one durable agent session continues after changing model and reasoning level;
 4. each operation freezes the exact selected model and reasoning revision;
 5. the Alpha configuration digest remains stable across that selection change;
-6. a 1,000-tool external catalog adds no model API schema, search returns only
-   compact matches, and load returns only explicitly requested schemas;
+6. a 1,000-tool external catalog adds no model API schema, broad search stays
+   compact, and targeted search returns at most three complete small schemas;
 7. exact external references fail stale instead of changing after refresh;
 8. a skill added during a live session is discoverable without restart;
 9. activated exact skill revisions survive compaction and Host restart without

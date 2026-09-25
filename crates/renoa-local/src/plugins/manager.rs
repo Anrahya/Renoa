@@ -42,6 +42,10 @@ pub(crate) struct PluginManager {
 }
 
 impl PluginManager {
+    pub(crate) fn mcp_catalog(&self) -> McpCatalogStore {
+        self.mcp_catalog.clone()
+    }
+
     #[cfg(test)]
     pub(crate) fn initialize(
         database: PathBuf,

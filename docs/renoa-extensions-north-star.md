@@ -410,7 +410,7 @@ operation, the model receives only:
    content;
 2. the durable context projection; and
 3. the Host-selected local tools, `plugin_search`, `plugin_manage`,
-   `tool_load`, `tool_execute`, and two fixed skill-registry definitions.
+   `tool_execute`, and two fixed skill-registry definitions.
 
 Package manifests, marketplace descriptions, setup instructions, connection
 state, OAuth scopes, environment variables, secret references, process
@@ -644,13 +644,13 @@ model context, and the real endpoint catalog refresh succeeds.
 
 ### 6. Deferred registry and hot loading
 
-Replace per-tool model advertisement with three fixed Host tools: bounded
-search without schemas, exact schema loading, and exact-reference execution.
+Replace per-tool model advertisement with two fixed Host tools: bounded
+plugin search with targeted schema previews and exact-reference execution.
 Attach whole connections to profiles, migrate existing per-tool selections,
 and read committed Host state on each registry call.
 
-Proof gate: 1,000 catalog entries still produce only three model API schemas;
-load returns only requested exact schemas; stale catalog references fail before
+Proof gate: 1,000 catalog entries still produce only two model API schemas;
+exact-reference search returns only the requested full schema; stale catalog references fail before
 dispatch; a live registry object sees a newly committed attachment; and the
 real MCP result, error, uncertainty, restart, and secret boundaries remain
 unchanged.

@@ -30,7 +30,7 @@ fn provision(root: &Path) {
         &document,
         serde_json::to_vec(&json!({
             "operationId": uuid::Uuid::new_v4(),
-            "presetId": "renoa.coding.alpha.v1",
+            "presetId": "renoa.coding.alpha.v2",
             "name": "Alpha"
         }))
         .expect("document"),

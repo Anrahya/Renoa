@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use support::{AcpProcess, BRIDGE};
 
-const PRESET_ID: &str = "renoa.coding.alpha.v1";
+const PRESET_ID: &str = "renoa.coding.alpha.v2";
 const TURN_ID: &str = "7d33a1c0-5b52-4a44-9ed3-cb6e8a9f02f4";
 
 #[test]

@@ -314,7 +314,7 @@ Confirm restoration.` }]);
 const workspaceTools = [
   "read_file", "edit_file", "write_file", "bash", "grep", "find",
   "git_changes", "git_diff", "git_show",
-  "plugin_search", "tool_load", "tool_execute", "plugin_manage"
+  "plugin_search", "tool_execute", "plugin_manage"
 ];
 const expectedTools = request.system_prompt.startsWith("You are a test agent.")
   ? [...workspaceTools, "routine_results", "routine_manage", "skill_search", "skill_load"]

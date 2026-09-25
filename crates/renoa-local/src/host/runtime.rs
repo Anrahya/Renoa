@@ -252,7 +252,6 @@ mod tests {
             "routine_manage",
             "routine_results",
             "plugin_search",
-            "tool_load",
             "tool_execute",
             "skill_search",
             "skill_load",

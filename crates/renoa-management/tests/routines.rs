@@ -48,7 +48,7 @@ async fn seed(host: &LocalHost) -> RoutineRecord {
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::new(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v1").expect("Arcee preset id"),
+                AgentPresetId::new("renoa.personal.arcee.v2").expect("Arcee preset id"),
                 "Arcee",
             ),
             CancellationToken::new(),
@@ -64,7 +64,7 @@ async fn seed(host: &LocalHost) -> RoutineRecord {
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::new(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.specialist.v1").expect("specialist preset id"),
+                AgentPresetId::new("renoa.specialist.v2").expect("specialist preset id"),
                 "News",
             )
             .with_instructions("Read news")

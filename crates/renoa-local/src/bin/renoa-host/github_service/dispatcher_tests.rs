@@ -6,8 +6,8 @@ use renoa_local::{
 };
 use std::collections::BTreeSet;
 
-const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v1";
-const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v1";
+const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v2";
+const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
 
 async fn provision(
     host: &LocalHost,

@@ -289,7 +289,6 @@ mod tests {
                 "routine_manage",
                 "routine_results",
                 "plugin_search",
-                "tool_load",
                 "tool_execute",
                 "code_mode",
                 "skill_search",

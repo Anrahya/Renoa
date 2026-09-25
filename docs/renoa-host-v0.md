@@ -32,10 +32,10 @@ described below; browser, CLI, and model-facing adapters share domain semantics.
 
 The first concrete coding preset is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable creation preset identity is
-`renoa.coding.alpha.v1`. Alpha is one code-owned creation preset, not a special
+`renoa.coding.alpha.v2`. Alpha is one code-owned creation preset, not a special
 Host execution type. Arcee is the first personal-operator preset, with stable
-identity `renoa.personal.arcee.v1`; Telegram is only its first surface. A
-caller-defined specialist is created from `renoa.specialist.v1`. Every agent is
+identity `renoa.personal.arcee.v2`; Telegram is only its first surface. A
+caller-defined specialist is created from `renoa.specialist.v2`. Every agent is
 one durable, provider-neutral `AgentDefinition`: identity and creation provenance,
 an optional creation preset id, the complete core operational document, the exact
 tool selection, and the exact selected Host connection ids. Creation snapshots
@@ -444,7 +444,7 @@ assembly consume the same selection. Active reviews retain their frozen selectio
 new runs use the updated one. This operation is not exposed as a self-granting
 model tool or an unauthenticated remote endpoint.
 This selection does not add an OS sandbox or a permission system. External catalogs are
-reached through three fixed registry tools so catalog size does not become
+reached through two fixed registry tools so catalog size does not become
 model context. The current top-level set is:
 
 ```text
@@ -462,7 +462,6 @@ agent_manage
 routine_manage
 routine_results
 plugin_search
-tool_load
 tool_execute
 code_mode
 skill_search
@@ -474,9 +473,9 @@ Capability names are exact: there is no wildcard and no revision-0 fallback. An
 agent binds exactly the capabilities its stored selection names, so a name that
 is absent is absent from both the model request and the execution boundary.
 The Alpha preset seeds all nine workspace tools plus `plugin_manage`, the
-three registry tools, and the two skill tools. The Arcee preset seeds
+two registry tools, and the two skill tools. The Arcee preset seeds
 `plugin_manage`, `agent_manage`, `routine_manage`,
-`routine_results`, the three registry tools, the two skill tools, and
+`routine_results`, the two registry tools, the two skill tools, and
 `agent_documents` on top of the workspace tools. A caller-defined specialist
 seeds `routine_manage`, `routine_results`, the registry and skill tools, and
 receives `agent_manage` or `plugin_manage` only when its creation selection
@@ -595,13 +594,12 @@ offline.
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
-The Host offers `plugin_search`, `tool_load`, and `tool_execute` when the
-stored selection names them. Search returns compact plugin cards first, then
-pages the selected plugin's facts or one enabled connection's tools, each with
-at most 200 items and a 50 KiB output bound. A targeted query comes before `*`.
-Load returns
-only one through three explicitly requested model-facing schemas. Execute
-resolves one exact reference
+The Host offers `plugin_search` and `tool_execute` when the stored selection
+names them. A targeted search returns compact plugin cards and up to three
+matching MCP tools. Each small preview schema is complete; when it is absent,
+an exact reference request returns the full model-facing schema within 64 KiB.
+Search also pages plugin facts and enabled connection tools at up to 200 items
+and 50 KiB per page. Use a targeted query before `*`. Execute resolves one exact reference
 containing the current catalog digest, then reuses the proven MCP credential,
 adapter, result, and `NeverReplay` boundary. A missing adapter fails execution
 visibly; it does not prevent an Agent from starting or hide searchable catalog
@@ -612,7 +610,7 @@ registry tool. When selected, the Host requires a configured exact-pinned
 Monty worker and MCP adapter, removes `tool_execute` from the model-visible
 bindings, and binds that same executor behind the Code Mode loop. This holds
 even if a preset's stored selection also names `tool_execute`.
-`plugin_search` and `tool_load` remain visible only when individually selected.
+`plugin_search` remains visible only when individually selected.
 The evaluator pool is shared by this Host process, starts with no idle worker,
 and is capped at two subprocesses; an agent without `code_mode` starts without
 the worker. The Host validates the configured worker's binary hash before
@@ -753,7 +751,7 @@ Host resolves the agent's stored definition before resolving these inputs:
 - reasoning configuration;
 - the agent's stored instructions, optional bounded workspace `AGENTS.md`, and
   exact active skill instructions; and
-- the nine workspace tools, `plugin_search`, `plugin_manage`, `tool_load`,
+- the nine workspace tools, `plugin_search`, `plugin_manage`,
   `tool_execute`, the fixed agent manager, the routine tools, and the fixed
   skill registry tools, filtered to the exact stored capability selection.
 
@@ -816,7 +814,7 @@ The remaining commands assemble the ordinary Host from the same launch
 configuration a running service uses. `provision` is the trusted creation path
 for a `System`/`Provisioning` caller: the first agent on an empty Host is created
 by it. Its document is the canonical creation request in camelCase JSON, for
-example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v1","name":"Alpha"}`,
+example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v2","name":"Alpha"}`,
 with optional `instructions`, `tools`, `connections`, and `routine`. `agent-tools`
 applies one revision-checked capability edit. `rename-agent` applies one
 expected-current-name-checked display-name edit with an explicit operation id. `reset` is the
@@ -1889,15 +1887,15 @@ The first extension path is also complete. `LocalHost` registers direct no-auth
 or exact `gh`-referenced MCP connections, runs the replaceable Node adapter for
 bounded discovery and invocation, atomically publishes catalogs and tool
 attachments, and restores them after process restart. Every assembled agent
-runtime is offered three fixed registry tools regardless of catalog size, and
-the stored selection decides whether they bind. Search and load are bounded
-`SafeToReplay` reads; execute carries an exact catalog reference through the
+runtime is offered two fixed registry tools regardless of catalog size, and
+the stored selection decides whether they bind. Search is a bounded
+`SafeToReplay` read; execute carries an exact catalog reference through the
 normal loop and kernel as a `NeverReplay` effect. Exact registration retries
 converge, identity changes conflict, failed refresh publication preserves the
 previous snapshot, stale references fail closed, structured details stay
 outside model context, unknown calls are not replayed, and schemas v1 and v2
 migrate to v3 without losing catalog state. A live registry object observes a
-newly committed attachment, and searching 1,000 tools exposes no schema. No
+newly committed attachment, and broad browsing of 1,000 tools exposes no schema. No
 kernel type or table changed.
 
 The first OAuth connection path is also complete. One `plugin_manage`

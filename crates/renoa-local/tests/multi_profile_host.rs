@@ -11,7 +11,7 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v1";
+const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
 const RELAY_PROMPT: &str = "You are Relay, a concise messaging agent.";
 
 async fn provision_specialist(

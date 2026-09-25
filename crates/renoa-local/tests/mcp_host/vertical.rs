@@ -126,7 +126,7 @@ async fn deferred_mcp_tool_runs_through_alpha_and_is_not_replayed_after_restart(
         .expect("replay settled command from durable history");
 
     assert_eq!(replayed, outcome);
-    assert_eq!(read_json_lines(&model_requests).len(), 18);
+    assert_eq!(read_json_lines(&model_requests).len(), 9);
     assert_durable_tool_result(&restored.history().expect("reload durable history"));
 }
 
@@ -189,7 +189,7 @@ fn new_vertical_host(
 
 fn assert_model_context(path: &Path, configured_endpoint: &str) {
     let requests = read_json_lines(path);
-    assert_eq!(requests.len(), 18);
+    assert_eq!(requests.len(), 9);
     for request in &requests {
         let tools = request["tools"].as_array().expect("model tools array");
         assert_eq!(
@@ -208,7 +208,6 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
                 "git_diff",
                 "git_show",
                 "plugin_search",
-                "tool_load",
                 "tool_execute",
                 "plugin_manage",
                 "skill_search",
@@ -245,25 +244,21 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
             .iter()
             .all(|message| !message.to_string().contains("Echo one string."))
     );
-    let grouped_messages = requests[1]["messages"].to_string();
-    assert!(grouped_messages.contains("direct:fixture"));
-    assert!(!grouped_messages.contains("Echo one string."));
-    let searched_messages = requests[3]["messages"].to_string();
+    let searched_messages = requests[1]["messages"].to_string();
+    assert!(searched_messages.contains("direct:fixture"));
     assert!(searched_messages.contains("Echo one string."));
-    assert!(!searched_messages.contains("\\\"input_schema\\\""));
-    let loaded_messages = requests[4]["messages"].to_string();
-    assert!(loaded_messages.contains("\\\"input_schema\\\""));
-    assert!(loaded_messages.contains("\\\"tenant\\\""));
+    assert!(searched_messages.contains("\\\"input_schema\\\""));
+    assert!(searched_messages.contains("\\\"tenant\\\""));
 }
 
 fn assert_durable_tool_result(history: &[renoa_local::LocalHistoryEntry]) {
     assert_eq!(
         history.len(),
-        36,
+        18,
         "durable replay must not duplicate history"
     );
-    let Message::Tool { result } = &history[10].message else {
-        panic!("seventh durable message must be the MCP result")
+    let Message::Tool { result } = &history[4].message else {
+        panic!("fifth durable message must be the MCP result")
     };
     assert_eq!(result.name, "tool_execute");
     assert_eq!(result.call_id, "mcp-execute-ok");
@@ -274,8 +269,8 @@ fn assert_durable_tool_result(history: &[renoa_local::LocalHistoryEntry]) {
         json!({"echoed": "hello"})
     );
     assert!(!result.is_error);
-    let Message::Tool { result } = &history[22].message else {
-        panic!("fifteenth durable message must be the MCP error result")
+    let Message::Tool { result } = &history[10].message else {
+        panic!("eleventh durable message must be the MCP error result")
     };
     assert_eq!(result.name, "tool_execute");
     assert_eq!(result.call_id, "mcp-execute-denied");
@@ -295,7 +290,7 @@ fn assert_durable_tool_result(history: &[renoa_local::LocalHistoryEntry]) {
         401
     );
     assert!(result.is_error);
-    let Message::Tool { result } = &history[34].message else {
+    let Message::Tool { result } = &history[16].message else {
         panic!("unknown MCP outcome must leave balanced durable tool history")
     };
     assert_eq!(result.name, "tool_execute");
@@ -343,7 +338,7 @@ fn assert_frozen_mcp_binding(data: &Path, session_uuid: Uuid) {
             .contains_key("renoa.agent.tool/plugin_search")
     );
     assert!(
-        manifest
+        !manifest
             .effect_bindings
             .contains_key("renoa.agent.tool/tool_load")
     );

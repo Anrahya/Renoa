@@ -11,7 +11,7 @@ pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 
-const SCHEMA_VERSION: u32 = 29;
+const SCHEMA_VERSION: u32 = 30;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -250,13 +250,13 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             verify(connection)
         }
-        28 => {
+        28 | 29 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
                 |row| row.get::<_, u32>(0),
             )?;
-            if metadata != 28 {
+            if metadata != version {
                 return Err(HostCatalogError::Invalid(
                     "Host schema version and metadata disagree".to_owned(),
                 ));
@@ -313,16 +313,19 @@ fn migrate_selected_plugin_tool_names(
                 "stored tool selection for agent {agent} is malformed: {error}"
             ))
         })?;
-        let changed = tools.contains("extension_manage") || tools.contains("tool_search");
+        let changed = tools.contains("extension_manage")
+            || tools.contains("tool_search")
+            || tools.contains("tool_load");
         if !changed {
             continue;
         }
         let renamed = tools
             .into_iter()
-            .map(|name| match name.as_str() {
-                "extension_manage" => "plugin_manage".to_owned(),
-                "tool_search" => "plugin_search".to_owned(),
-                _ => name,
+            .filter_map(|name| match name.as_str() {
+                "extension_manage" => Some("plugin_manage".to_owned()),
+                "tool_search" => Some("plugin_search".to_owned()),
+                "tool_load" => None,
+                _ => Some(name),
             })
             .collect::<BTreeSet<_>>();
         let next_revision = revision.checked_add(1).ok_or_else(|| {
@@ -375,7 +378,8 @@ fn migrate_tool_names_in_receipts(
                 ))
             })?;
         let mut changed = false;
-        for tool in tools {
+        let mut migrated = Vec::with_capacity(tools.len());
+        for tool in tools.iter() {
             let name = tool.as_str().ok_or_else(|| {
                 HostCatalogError::Invalid(format!(
                     "{table} receipt {operation} has a malformed tool name"
@@ -384,14 +388,21 @@ fn migrate_tool_names_in_receipts(
             let replacement = match name {
                 "extension_manage" => Some("plugin_manage"),
                 "tool_search" => Some("plugin_search"),
+                "tool_load" => {
+                    changed = true;
+                    continue;
+                }
                 _ => None,
             };
             if let Some(replacement) = replacement {
-                *tool = serde_json::Value::String(replacement.to_owned());
+                migrated.push(serde_json::Value::String(replacement.to_owned()));
                 changed = true;
+            } else {
+                migrated.push(tool.clone());
             }
         }
         if changed {
+            *tools = migrated;
             transaction.execute(
                 &format!("UPDATE {table} SET result_json=?2 WHERE operation_id=?1"),
                 rusqlite::params![
@@ -451,6 +462,40 @@ mod tests {
     use super::{HostCatalogError, cutover, initialize, open_verified};
 
     #[test]
+    fn schema_29_removes_retired_mcp_loader_from_stored_selection() {
+        let directory = tempfile::tempdir().expect("temporary Host catalog");
+        let database = directory.path().join("host.sqlite3");
+        initialize(&database).expect("initialize current catalog");
+        {
+            let connection = open_verified(&database).expect("open current catalog");
+            connection
+                .execute_batch(
+                    "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                    preset_id, operational_json, creator_kind, creator_component)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 'Fixture', 1,
+                    'provisioning', NULL, '{}', 'system', 'migration-test');
+                 INSERT INTO host_agent_tool_selections(agent_id, revision, tools_json)
+                 VALUES ('00000000-0000-0000-0000-000000000001', 1,
+                    '[\"plugin_search\",\"tool_load\",\"tool_execute\"]');
+                 UPDATE host_metadata SET schema_version = 29 WHERE singleton = 1;
+                 PRAGMA user_version = 29;",
+                )
+                .expect("construct schema-29 selection");
+        }
+        initialize(&database).expect("migrate schema-29 selection");
+        let connection = open_verified(&database).expect("open migrated catalog");
+        let (revision, tools): (i64, String) = connection
+            .query_row(
+                "SELECT revision, tools_json FROM host_agent_tool_selections WHERE agent_id = ?1",
+                ["00000000-0000-0000-0000-000000000001"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated selection");
+        assert_eq!(revision, 2);
+        assert_eq!(tools, r#"["plugin_search","tool_execute"]"#);
+    }
+
+    #[test]
     fn schema_28_selections_migrate_exact_plugin_tool_names_once() {
         let directory = tempfile::tempdir().expect("temporary Host catalog");
         let database = directory.path().join("host.sqlite3");
@@ -465,19 +510,19 @@ mod tests {
                     'provisioning', NULL, '{}', 'system', 'migration-test');
                  INSERT INTO host_agent_tool_selections(agent_id, revision, tools_json)
                  VALUES ('00000000-0000-0000-0000-000000000001', 4,
-                    '[\"extension_manage\",\"tool_search\",\"bash\"]');
+                    '[\"extension_manage\",\"tool_search\",\"tool_load\",\"bash\"]');
                  INSERT INTO host_agent_creations(operation_id, agent_id, request_json, result_json)
                  VALUES ('00000000-0000-0000-0000-000000000002',
                     '00000000-0000-0000-0000-000000000001', '{}',
-                    '{\"tool_selection\":{\"revision\":1,\"tools\":[\"extension_manage\",\"tool_search\"]}}');
+                    '{\"tool_selection\":{\"revision\":1,\"tools\":[\"extension_manage\",\"tool_search\",\"tool_load\"]}}');
                  INSERT INTO host_agent_renames(operation_id, agent_id, actor_agent_id, request_json, result_json)
                  VALUES ('00000000-0000-0000-0000-000000000003',
                     '00000000-0000-0000-0000-000000000001',
                     '00000000-0000-0000-0000-000000000001', '{}',
-                    '{\"tool_selection\":{\"revision\":2,\"tools\":[\"extension_manage\"]}}');
+                    '{\"tool_selection\":{\"revision\":2,\"tools\":[\"extension_manage\",\"tool_load\"]}}');
                  INSERT INTO host_agent_tool_selection_operations(operation_id, request_json, result_json)
                  VALUES ('00000000-0000-0000-0000-000000000004', '{}',
-                    '{\"revision\":3,\"tools\":[\"tool_search\"]}');
+                    '{\"revision\":3,\"tools\":[\"tool_search\",\"tool_load\"]}');
                  UPDATE host_metadata SET schema_version = 28 WHERE singleton = 1;
                  PRAGMA user_version = 28;",
                 )

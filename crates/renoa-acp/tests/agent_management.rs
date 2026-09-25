@@ -12,7 +12,7 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const PRESET_ID: &str = "renoa.coding.alpha.v1";
+const PRESET_ID: &str = "renoa.coding.alpha.v2";
 
 fn run(data: &Path, configured_agent: &str, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_renoa-agent"))

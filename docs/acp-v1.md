@@ -123,7 +123,7 @@ current process default. Authentication remains local to the provider adapter,
 and every explicitly enabled provider must have a usable credential.
 The adapter resolves the agent named by `RENOA_AGENT_ID` and uses its stored
 definition, instructions included. An agent created from the
-`renoa.coding.alpha.v1` preset carries Alpha's curated base prompt; another
+`renoa.coding.alpha.v2` preset carries Alpha's curated base prompt; another
 preset carries the instructions it was created with. The process environment
 selects the model and the agent identity, not the agent's instructions. When
 the agent's stored behavior loads project instructions, the Host reads the

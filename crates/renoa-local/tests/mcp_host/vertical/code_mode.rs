@@ -116,7 +116,7 @@ async fn code_mode_gathers_real_mcp_calls_into_one_durable_model_result() {
         .expect("replay settled Code Mode command");
     assert_eq!(replayed, outcome);
     assert_eq!(restored.history().expect("reloaded history"), history);
-    assert_eq!(read_json_lines(&model_requests).len(), 4);
+    assert_eq!(read_json_lines(&model_requests).len(), 3);
     drop(restored);
     drop(reopened);
     assert_code_mode_effects(&data, session_id);
@@ -143,7 +143,7 @@ fn assert_mcp_traffic(methods: &[String], calls: &[String]) {
 }
 
 fn assert_code_mode_history(history: &[renoa_local::LocalHistoryEntry]) {
-    assert_eq!(history.len(), 12);
+    assert_eq!(history.len(), 6);
     let results = history
         .iter()
         .filter_map(|entry| match &entry.message {
@@ -156,15 +156,9 @@ fn assert_code_mode_history(history: &[renoa_local::LocalHistoryEntry]) {
             .iter()
             .map(|result| result.name.as_str())
             .collect::<Vec<_>>(),
-        [
-            "plugin_search",
-            "plugin_search",
-            "plugin_search",
-            "tool_load",
-            "code_mode"
-        ]
+        ["plugin_search", "code_mode"]
     );
-    let outer = results[4];
+    let outer = results[1];
     assert_eq!(outer.call_id, "code-mode-outer");
     assert!(!outer.is_error);
     assert_eq!(outer.details, None);
@@ -179,7 +173,7 @@ fn assert_code_mode_history(history: &[renoa_local::LocalHistoryEntry]) {
 
 fn assert_model_context(path: &Path, endpoint: &str) {
     let requests = read_json_lines(path);
-    assert_eq!(requests.len(), 6);
+    assert_eq!(requests.len(), 3);
     for request in &requests {
         let names = request["tools"]
             .as_array()
@@ -188,28 +182,19 @@ fn assert_model_context(path: &Path, endpoint: &str) {
             .map(|tool| tool["name"].as_str().expect("tool name"))
             .collect::<Vec<_>>();
         assert!(names.contains(&"plugin_search"));
-        assert!(names.contains(&"tool_load"));
+        assert!(!names.contains(&"tool_load"));
         assert!(names.contains(&"code_mode"));
         assert!(!names.contains(&"tool_execute"));
         assert!(!request.to_string().contains(endpoint));
     }
-    let tool_results = requests[5]["messages"]
+    let tool_results = requests[2]["messages"]
         .as_array()
         .expect("final model history")
         .iter()
         .filter(|message| message["role"] == "tool")
         .map(|message| message["result"]["name"].as_str().expect("result name"))
         .collect::<Vec<_>>();
-    assert_eq!(
-        tool_results,
-        [
-            "plugin_search",
-            "plugin_search",
-            "plugin_search",
-            "tool_load",
-            "code_mode"
-        ]
-    );
+    assert_eq!(tool_results, ["plugin_search", "code_mode"]);
 }
 
 fn assert_code_mode_effects(data: &Path, session_uuid: Uuid) {

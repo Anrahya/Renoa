@@ -47,7 +47,7 @@ async fn a_mention_runs_the_provisioned_agent_and_posts_one_reply() {
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::new(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v1").expect("preset"),
+                AgentPresetId::new("renoa.personal.arcee.v2").expect("preset"),
                 "Arcee",
             ),
             CancellationToken::new(),

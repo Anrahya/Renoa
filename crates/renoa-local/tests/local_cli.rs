@@ -31,7 +31,7 @@ fn provision_alpha(data: &Path, bridge: &Path, auth: &Path) -> AgentId {
                 AgentCreationOrigin::Provisioning,
                 AgentCreateRequest::new(
                     Uuid::new_v4(),
-                    AgentPresetId::new("renoa.coding.alpha.v1").expect("preset id"),
+                    AgentPresetId::new("renoa.coding.alpha.v2").expect("preset id"),
                     "Alpha",
                 ),
                 tokio_util::sync::CancellationToken::new(),
@@ -321,7 +321,7 @@ const toolNames = request.tools.map((tool) => tool.name);
 if (JSON.stringify(toolNames) !== JSON.stringify([
   "read_file", "edit_file", "write_file", "bash", "grep", "find",
   "git_changes", "git_diff", "git_show",
-  "plugin_search", "tool_load", "tool_execute", "plugin_manage", "skill_search", "skill_load"
+  "plugin_search", "tool_execute", "plugin_manage", "skill_search", "skill_load"
 ])) {
   throw new Error(`unexpected Alpha tools: ${JSON.stringify(toolNames)}`);
 }

@@ -3,8 +3,7 @@ use std::{cmp::Reverse, collections::HashSet, fmt, str::FromStr};
 use super::{McpHostError, validate_identity};
 
 pub(crate) const SEARCH_RESULT_LIMIT: usize = 200;
-pub(crate) const LOAD_REFERENCE_LIMIT: usize = 3;
-pub(crate) const LOAD_OUTPUT_BYTES: usize = 64 * 1_024;
+pub(crate) const SCHEMA_LOOKUP_OUTPUT_BYTES: usize = 64 * 1_024;
 const QUERY_BYTES: usize = 256;
 const QUERY_TOKENS: usize = 12;
 const DESCRIPTION_SUMMARY_CHARS: usize = 320;

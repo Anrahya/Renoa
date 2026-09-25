@@ -79,7 +79,7 @@ Slack, or Discord JSON configuration; use `adapters.codeModeWorker` in the
 RCP node JSON, or `RENOA_CODE_MODE_WORKER` for ACP, Telegram, and the local CLI.
 Also configure the normal MCP adapter. Merely installing the worker does not
 change an existing agent: select `code_mode` in its capability set, preferably
-with `plugin_search` and `tool_load`. When selected, direct `tool_execute` is
+with `plugin_search`. When selected, direct `tool_execute` is
 hidden from the model and used only behind the durable Code Mode boundary.
 Drain active work before upgrading the worker, and retain only the immediately
 previous release's consolidated backup as described above.
@@ -312,7 +312,7 @@ model settings must match `node.json`'s `model` block:
 ```json
 {
   "operationId": "<fresh-uuid>",
-  "presetId": "renoa.coding.alpha.v1",
+  "presetId": "renoa.coding.alpha.v2",
   "name": "Alpha"
 }
 ```

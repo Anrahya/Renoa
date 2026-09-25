@@ -124,7 +124,6 @@ fn assert_trace(path: &std::path::Path) {
             "git_diff",
             "git_show",
             "plugin_search",
-            "tool_load",
             "tool_execute",
             "plugin_manage",
             "skill_search",

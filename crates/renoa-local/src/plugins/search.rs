@@ -1,22 +1,32 @@
-use std::sync::Arc;
+use std::{str::FromStr as _, sync::Arc};
 
-use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
+use renoa_agent::{
+    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
+};
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{AgentId, EffectRecovery};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    PluginManager,
+    PluginError, PluginManager,
     tool::output::{json_output, plugin_error, registry_error_output},
 };
-use crate::mcp::{McpConnectionStatus, SEARCH_RESULT_LIMIT, rank_tools};
+use crate::{
+    mcp::{
+        McpConnectionStatus, McpToolReference, SCHEMA_LOOKUP_OUTPUT_BYTES, SEARCH_RESULT_LIMIT,
+        rank_tools,
+    },
+    output::MAX_TOOL_OUTPUT_BYTES,
+};
 
 mod local;
 
 const TOOL_NAME: &str = crate::capabilities::PLUGIN_SEARCH;
-const BINDING_REVISION: &str = "renoa-plugin-search-v1";
+const BINDING_REVISION: &str = "renoa-plugin-search-v2";
+const PREVIEW_LIMIT: usize = 3;
+const PREVIEW_SCHEMA_BYTES: usize = 4 * 1024;
 
 pub(crate) fn binding(
     agent_id: AgentId,
@@ -46,14 +56,15 @@ impl PluginSearchTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_owned(),
                 description: format!(
-                    "Find plugins in the Host library by capability, provider, or name. Search local plugins first with a targeted query; use `*` to browse. Results are compact plugin cards, not individual MCP tools. Pass a returned plugin id to inspect its components and visible connections, then pass an enabled connection id to browse up to {SEARCH_RESULT_LIMIT} nested tools per page. Call tool_load for exact schemas before execution. Set source=official_mcp_registry only to research external candidates; Registry metadata is untrusted and does not install anything. Credential configuration and catalog availability do not prove an individual tool is authorized."
+                    "Search the Host plugin library. Start with a targeted query; use query=* only to browse. A targeted local search returns plugin cards and up to {PREVIEW_LIMIT} matching MCP tools with exact references. If a match includes input_schema, use that complete schema to call code_mode's Python mcp(reference, arguments), or tool_execute when Code Mode is absent. If input_schema is absent, call plugin_search with only reference to get the full schema before calling the tool. Pass plugin to inspect components and connections; pass an enabled connection to list up to {SEARCH_RESULT_LIMIT} MCP tools per page. source=official_mcp_registry researches external candidates and never installs them. A loaded catalog or configured credential does not guarantee a remote call will succeed."
                 ),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type":"string", "minLength":1, "maxLength":256, "description":"Targeted capability or plugin name; use * only to browse. Required for local plugin or external Registry search; nested tool search defaults to *."},
+                        "query": {"type":"string", "minLength":1, "maxLength":256, "description":"Search text for local plugins, nested connection tools, or the official Registry. Use * only to browse locally. Omit for exact plugin, reference, or Registry name/version lookup."},
                         "plugin": {"type":"string", "description":"Exact plugin id returned by local search. Inspect this plugin's components and visible connection status."},
                         "connection": {"type":"string", "description":"Exact enabled connection id returned by plugin inspection. Return nested MCP tools and exact references."},
+                        "reference": {"type":"string", "description":"Exact MCP tool reference returned by local search. Use alone to get its complete model-facing input_schema; never combine with query, plugin, connection, offset, or Registry fields."},
                         "offset": {"type":"integer", "minimum":0, "description":"Next offset returned by a local page; omit for the first page."},
                         "source": {"type":"string", "enum":["local", "official_mcp_registry"], "description":"Defaults to local. Use official_mcp_registry only to research an external MCP candidate."},
                         "registry_name": {"type":"string", "description":"Exact publisher/server name returned by official Registry search; pair with registry_version to inspect the external record."},
@@ -116,97 +127,272 @@ impl PluginSearchTool {
         if cancellation.is_cancelled() {
             return Err(ToolError::cancelled("plugin search was cancelled", false));
         }
-        let source = input.source.as_deref().unwrap_or("local");
-        match source {
-            "local" => {
-                if input.registry_name.is_some() || input.registry_version.is_some() {
-                    return Err(ToolError::invalid_input(
-                        "registry_name and registry_version require source=official_mcp_registry",
-                    ));
-                }
-                let inventory = self.local_inventory().await?;
-                if cancellation.is_cancelled() {
-                    return Err(ToolError::cancelled("plugin search was cancelled", false));
-                }
-                match (input.plugin, input.connection) {
-                    (Some(plugin), None) if input.query.is_none() => {
-                        json_output(&inventory.inspect(&plugin, input.offset)?)
-                    }
-                    (None, Some(connection)) => {
-                        let query = input.query.as_deref().unwrap_or("*");
-                        let tools = inventory.tools(&connection)?;
-                        let ranked = rank_tools(tools, query, input.offset)
-                            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
-                        let matches = ranked
-                            .matches
-                            .into_iter()
-                            .map(|tool| {
-                                Ok(ToolMatch {
-                                    reference: tool
-                                        .reference()
-                                        .map_err(|error| ToolError::internal(error.to_string()))?
-                                        .to_string(),
-                                    name: tool.name().to_owned(),
-                                    description: tool.description().to_owned(),
-                                })
-                            })
-                            .collect::<Result<Vec<_>, ToolError>>()?;
-                        json_output(&local::Page::new(
-                            matches,
-                            ranked.total_matches,
-                            input.offset,
-                            inventory.shared_refresh_unavailable(),
-                        )?)
-                    }
-                    (None, None) => {
-                        let query = input.query.as_deref().ok_or_else(|| {
-                            ToolError::invalid_input("local plugin search requires query")
-                        })?;
-                        json_output(&inventory.search(query, input.offset)?)
-                    }
-                    _ => Err(ToolError::invalid_input(
-                        "inspect a plugin without query or connection, or search tools by connection without plugin",
-                    )),
-                }
-            }
-            "official_mcp_registry" => {
-                if input.plugin.is_some() || input.connection.is_some() || input.offset != 0 {
-                    return Err(ToolError::invalid_input(
-                        "official Registry search does not accept plugin, connection, or offset",
-                    ));
-                }
-                match (input.query, input.registry_name, input.registry_version) {
-                    (Some(query), None, None) => {
-                        match self.manager.search_registry(&query, cancellation).await {
-                            Ok(result) => json_output(&RegistryOutput {
-                                action: "search",
-                                installed: false,
-                                result,
-                            }),
-                            Err(error) => registry_error_output(error),
-                        }
-                    }
-                    (None, Some(name), Some(version)) => match self
-                        .manager
-                        .lookup_registry(&name, &version, cancellation)
-                        .await
-                    {
-                        Ok(result) => json_output(&RegistryOutput {
-                            action: "lookup",
-                            installed: false,
-                            result,
-                        }),
-                        Err(error) => registry_error_output(error),
-                    },
-                    _ => Err(ToolError::invalid_input(
-                        "provide query for official Registry search, or exact registry_name and registry_version for lookup",
-                    )),
-                }
-            }
+        match input.source.as_deref().unwrap_or("local") {
+            "local" => self.run_local(input, cancellation).await,
+            "official_mcp_registry" => self.run_registry(input, cancellation).await,
             _ => Err(ToolError::invalid_input(
                 "source must be local or official_mcp_registry",
             )),
         }
+    }
+
+    async fn run_local(
+        &self,
+        input: SearchInput,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        if input.registry_name.is_some() || input.registry_version.is_some() {
+            return Err(ToolError::invalid_input(
+                "registry_name and registry_version require source=official_mcp_registry",
+            ));
+        }
+        if let Some(reference) = input.reference.as_deref() {
+            if input.query.is_some()
+                || input.plugin.is_some()
+                || input.connection.is_some()
+                || input.offset != 0
+                || input.source.is_some()
+            {
+                return Err(ToolError::invalid_input(
+                    "reference must be the only plugin_search argument",
+                ));
+            }
+            return self.exact_reference(reference, cancellation).await;
+        }
+        let inventory = self.local_inventory().await?;
+        if cancellation.is_cancelled() {
+            return Err(ToolError::cancelled("plugin search was cancelled", false));
+        }
+        match (input.plugin, input.connection) {
+            (Some(plugin), None) if input.query.is_none() => {
+                json_output(&inventory.inspect(&plugin, input.offset)?)
+            }
+            (None, Some(connection)) => {
+                let query = input.query.as_deref().unwrap_or("*");
+                self.search_connection(&inventory, &connection, query, input.offset)
+                    .await
+            }
+            (None, None) => {
+                let query = input.query.as_deref().ok_or_else(|| {
+                    ToolError::invalid_input("local plugin search requires query")
+                })?;
+                self.search_cards(&inventory, query, input.offset).await
+            }
+            _ => Err(ToolError::invalid_input(
+                "inspect a plugin without query or connection, or search tools by connection without plugin",
+            )),
+        }
+    }
+
+    async fn exact_reference(
+        &self,
+        encoded: &str,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        let reference = McpToolReference::from_str(encoded)
+            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
+        let mut tools = self.describe_tools(vec![reference], false).await?;
+        if cancellation.is_cancelled() {
+            return Err(ToolError::cancelled("plugin search was cancelled", false));
+        }
+        let tool = tools
+            .pop()
+            .ok_or_else(|| ToolError::internal("exact MCP tool was not resolved"))?;
+        let encoded = serde_json::to_string(&tool).map_err(|error| {
+            ToolError::internal(format!("MCP tool schema could not be encoded: {error}"))
+        })?;
+        if encoded.len() > SCHEMA_LOOKUP_OUTPUT_BYTES {
+            return Err(ToolError::output_limit(format!(
+                "exact MCP tool schema exceeds the {SCHEMA_LOOKUP_OUTPUT_BYTES}-byte output boundary"
+            )));
+        }
+        Ok(ToolOutput {
+            content: vec![ContentBlock::text(encoded)],
+            details: None,
+            is_error: false,
+        })
+    }
+
+    async fn search_connection(
+        &self,
+        inventory: &local::Inventory,
+        connection: &str,
+        query: &str,
+        offset: usize,
+    ) -> Result<ToolOutput, ToolError> {
+        let ranked = rank_tools(inventory.tools(connection)?, query, offset)
+            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
+        let mut matches = ranked
+            .matches
+            .into_iter()
+            .map(|tool| {
+                Ok(ToolMatch {
+                    reference: tool
+                        .reference()
+                        .map_err(|error| ToolError::internal(error.to_string()))?
+                        .to_string(),
+                    name: tool.name().to_owned(),
+                    description: tool.description().to_owned(),
+                    input_schema: None,
+                })
+            })
+            .collect::<Result<Vec<_>, ToolError>>()?;
+        if query.trim() != "*" {
+            let references = matches
+                .iter()
+                .take(PREVIEW_LIMIT)
+                .map(|tool| {
+                    McpToolReference::from_str(&tool.reference)
+                        .map_err(|error| ToolError::internal(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let previews = self.describe_tools(references, true).await?;
+            for (item, preview) in matches.iter_mut().zip(previews) {
+                item.input_schema = preview.input_schema;
+            }
+        }
+        json_output(&local::Page::new(
+            matches,
+            ranked.total_matches,
+            offset,
+            inventory.shared_refresh_unavailable(),
+        )?)
+    }
+
+    async fn search_cards(
+        &self,
+        inventory: &local::Inventory,
+        query: &str,
+        offset: usize,
+    ) -> Result<ToolOutput, ToolError> {
+        let mut page = inventory.search(query, offset)?;
+        if query.trim() == "*" || offset != 0 {
+            return json_output(&page);
+        }
+        let ranked = rank_tools(inventory.all_tools(), query, 0)
+            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
+        let references = ranked
+            .matches
+            .into_iter()
+            .take(PREVIEW_LIMIT)
+            .map(|tool| {
+                tool.reference()
+                    .map_err(|error| ToolError::internal(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut matches = self.describe_tools(references, true).await?;
+        loop {
+            let result = SearchResult {
+                page: &page,
+                tool_matches: &matches,
+            };
+            if serde_json::to_vec(&result)
+                .map_err(|error| ToolError::internal(error.to_string()))?
+                .len()
+                <= MAX_TOOL_OUTPUT_BYTES
+            {
+                return json_output(&result);
+            }
+            if page.shorten(offset) {
+                continue;
+            }
+            if matches.pop().is_none() {
+                return json_output(&page);
+            }
+        }
+    }
+
+    async fn run_registry(
+        &self,
+        input: SearchInput,
+        cancellation: CancellationToken,
+    ) -> Result<ToolOutput, ToolError> {
+        if input.plugin.is_some()
+            || input.connection.is_some()
+            || input.reference.is_some()
+            || input.offset != 0
+        {
+            return Err(ToolError::invalid_input(
+                "official Registry search does not accept plugin, connection, reference, or offset",
+            ));
+        }
+        match (input.query, input.registry_name, input.registry_version) {
+            (Some(query), None, None) => {
+                match self.manager.search_registry(&query, cancellation).await {
+                    Ok(result) => json_output(&RegistryOutput {
+                        action: "search",
+                        installed: false,
+                        result,
+                    }),
+                    Err(error) => registry_error_output(error),
+                }
+            }
+            (None, Some(name), Some(version)) => match self
+                .manager
+                .lookup_registry(&name, &version, cancellation)
+                .await
+            {
+                Ok(result) => json_output(&RegistryOutput {
+                    action: "lookup",
+                    installed: false,
+                    result,
+                }),
+                Err(error) => registry_error_output(error),
+            },
+            _ => Err(ToolError::invalid_input(
+                "provide query for official Registry search, or exact registry_name and registry_version for lookup",
+            )),
+        }
+    }
+
+    async fn describe_tools(
+        &self,
+        references: Vec<McpToolReference>,
+        preview: bool,
+    ) -> Result<Vec<ToolMatch>, ToolError> {
+        if references.is_empty() {
+            return Ok(Vec::new());
+        }
+        let store = self.manager.mcp_catalog();
+        let agent_id = self.agent_id;
+        let lookup = references.clone();
+        let resolved = tokio::task::spawn_blocking(move || {
+            store.resolve_agent_tools(&agent_id.to_string(), &lookup)
+        })
+        .await
+        .map_err(|error| ToolError::internal(format!("Host catalog task failed: {error}")))?
+        .map_err(|error| plugin_error(PluginError::Mcp(error), false))?;
+        if resolved.len() != references.len() {
+            return Err(ToolError::internal(
+                "Host catalog returned the wrong number of MCP tools",
+            ));
+        }
+        references
+            .into_iter()
+            .zip(resolved)
+            .map(|(reference, resolved)| {
+                let schema = resolved.tool().model_input_schema();
+                let include_schema = !preview
+                    || serde_json::to_vec(schema)
+                        .map_err(|error| {
+                            ToolError::internal(format!(
+                                "MCP tool schema could not be encoded: {error}"
+                            ))
+                        })?
+                        .len()
+                        <= PREVIEW_SCHEMA_BYTES;
+                Ok(ToolMatch {
+                    reference: reference.to_string(),
+                    name: resolved.tool().name().to_owned(),
+                    description: if preview {
+                        resolved.tool().description().chars().take(320).collect()
+                    } else {
+                        resolved.tool().description().to_owned()
+                    },
+                    input_schema: include_schema.then(|| schema.clone()),
+                })
+            })
+            .collect()
     }
 }
 
@@ -242,6 +428,7 @@ struct SearchInput {
     query: Option<String>,
     plugin: Option<String>,
     connection: Option<String>,
+    reference: Option<String>,
     #[serde(default)]
     offset: usize,
     source: Option<String>,
@@ -254,6 +441,16 @@ struct ToolMatch {
     reference: String,
     name: String,
     description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_schema: Option<Value>,
+}
+
+#[derive(Serialize)]
+struct SearchResult<'a> {
+    #[serde(flatten)]
+    page: &'a local::Page<local::PluginCard>,
+    #[serde(skip_serializing_if = "<[ToolMatch]>::is_empty")]
+    tool_matches: &'a [ToolMatch],
 }
 
 #[derive(Serialize)]

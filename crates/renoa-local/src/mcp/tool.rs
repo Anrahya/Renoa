@@ -1,24 +1,19 @@
-use std::{collections::HashSet, path::PathBuf, str::FromStr as _, sync::Arc};
+use std::{path::PathBuf, str::FromStr as _, sync::Arc};
 
 mod execute;
 
 #[cfg(test)]
 mod plugin_search_tests;
-#[cfg(test)]
-mod tests;
 
-use renoa_agent::{
-    BoxFuture, ContentBlock, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates,
-};
+use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{CommandId, EffectRecovery, SessionId};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    LOAD_OUTPUT_BYTES, LOAD_REFERENCE_LIMIT, McpAuthorizationResolver, McpCatalogStore,
-    McpHostError, McpToolReference,
+    McpAuthorizationResolver, McpCatalogStore, McpHostError, McpToolReference,
     call::{CALL_BOUNDARY_REVISION, call_tool},
     oauth_operation_id,
 };
@@ -27,9 +22,7 @@ use renoa_kernel::AgentId;
 
 pub(crate) use execute::definite_boundary_error as adapter_tool_error;
 
-const LOAD_TOOL: &str = crate::capabilities::TOOL_LOAD;
 const EXECUTE_TOOL: &str = crate::capabilities::TOOL_EXECUTE;
-const LOAD_REVISION: &str = "renoa-mcp-registry-v2/load";
 const EXECUTE_REVISION: &str = "renoa-mcp-registry-v2/execute";
 
 pub(crate) fn agent_registry_bindings(
@@ -40,116 +33,18 @@ pub(crate) fn agent_registry_bindings(
     session_id: SessionId,
     command_id: Option<CommandId>,
 ) -> Vec<AgentToolBinding> {
-    vec![
-        AgentToolBinding::new(
-            LOAD_REVISION,
-            Arc::new(LoadTool::new(agent_id, store.clone())),
-            EffectRecovery::SafeToReplay,
-        ),
-        AgentToolBinding::new(
-            format!("{EXECUTE_REVISION}/{CALL_BOUNDARY_REVISION}"),
-            Arc::new(ExecuteTool::new(
-                agent_id,
-                store,
-                adapter,
-                authorizations,
-                session_id,
-                command_id,
-            )),
-            EffectRecovery::NeverReplay,
-        ),
-    ]
-}
-
-struct LoadTool {
-    agent_id: AgentId,
-    store: McpCatalogStore,
-    spec: ToolSpec,
-}
-
-impl LoadTool {
-    fn new(agent_id: AgentId, store: McpCatalogStore) -> Self {
-        Self {
+    vec![AgentToolBinding::new(
+        format!("{EXECUTE_REVISION}/{CALL_BOUNDARY_REVISION}"),
+        Arc::new(ExecuteTool::new(
             agent_id,
             store,
-            spec: ToolSpec {
-                name: LOAD_TOOL.to_owned(),
-                description: format!(
-                    "Load exact descriptions and input schemas for 1-{LOAD_REFERENCE_LIMIT} references returned by plugin_search. Load only tools you are about to call, then pass each unchanged reference to code_mode's Python mcp(reference, arguments), or to tool_execute when Code Mode is not selected."
-                ),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "references": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                            "maxItems": LOAD_REFERENCE_LIMIT
-                        }
-                    },
-                    "required": ["references"],
-                    "additionalProperties": false
-                }),
-            },
-        }
-    }
-}
-
-impl Tool for LoadTool {
-    fn spec(&self) -> &ToolSpec {
-        &self.spec
-    }
-
-    fn execute(
-        &self,
-        call: ToolCall,
-        cancellation: CancellationToken,
-        _updates: ToolUpdates,
-    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
-        Box::pin(async move {
-            let input: LoadInput = decode_call(&call, LOAD_TOOL)?;
-            let references = parse_references(input.references)?;
-            require_active(&cancellation)?;
-            let store = self.store.clone();
-            let agent_id = self.agent_id;
-            let lookup = references.clone();
-            let resolved = tokio::task::spawn_blocking(move || {
-                store.resolve_agent_tools(&agent_id.to_string(), &lookup)
-            })
-            .await
-            .map_err(|error| background_error(&error))?
-            .map_err(host_error)?;
-            require_active(&cancellation)?;
-            if resolved.len() != references.len() {
-                return Err(ToolError::internal(
-                    "Host catalog returned the wrong number of loaded tools",
-                ));
-            }
-            let tools = references
-                .into_iter()
-                .zip(resolved)
-                .map(|(reference, tool)| LoadedTool {
-                    reference: reference.to_string(),
-                    name: tool.tool().name().to_owned(),
-                    description: tool.tool().description().to_owned(),
-                    input_schema: tool.tool().model_input_schema().clone(),
-                })
-                .collect();
-            let encoded = serde_json::to_string(&LoadOutput { tools }).map_err(|error| {
-                ToolError::internal(format!("tool schemas could not be encoded: {error}"))
-            })?;
-            if encoded.len() > LOAD_OUTPUT_BYTES {
-                return Err(ToolError::output_limit(format!(
-                    "loaded tool schemas exceed {LOAD_OUTPUT_BYTES} bytes; load fewer or smaller tools"
-                )));
-            }
-            Ok(ToolOutput {
-                content: vec![ContentBlock::text(encoded)],
-                details: None,
-                is_error: false,
-            })
-        })
-    }
+            adapter,
+            authorizations,
+            session_id,
+            command_id,
+        )),
+        EffectRecovery::NeverReplay,
+    )]
 }
 
 struct ExecuteTool {
@@ -180,7 +75,7 @@ impl ExecuteTool {
             command_id,
             spec: ToolSpec {
                 name: EXECUTE_TOOL.to_owned(),
-                description: "Execute one plugin MCP tool using an unchanged reference from plugin_search after reading its schema with tool_load. Arguments must match that loaded schema. Stale references fail and must be searched again.".to_owned(),
+                description: "Execute one plugin MCP tool. Use an unchanged reference returned by plugin_search, and pass an arguments object matching that result's complete input_schema. If input_schema was absent, first call plugin_search with only reference. A stale reference fails; search again.".to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -274,49 +169,9 @@ impl Tool for ExecuteTool {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LoadInput {
-    references: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExecuteInput {
     reference: String,
     arguments: Value,
-}
-
-#[derive(Serialize)]
-struct LoadOutput {
-    tools: Vec<LoadedTool>,
-}
-
-#[derive(Serialize)]
-struct LoadedTool {
-    reference: String,
-    name: String,
-    description: String,
-    input_schema: Value,
-}
-
-fn parse_references(encoded: Vec<String>) -> Result<Vec<McpToolReference>, ToolError> {
-    if encoded.is_empty() || encoded.len() > LOAD_REFERENCE_LIMIT {
-        return Err(ToolError::invalid_input(format!(
-            "tool_load requires 1-{LOAD_REFERENCE_LIMIT} references"
-        )));
-    }
-    let mut observed = HashSet::with_capacity(encoded.len());
-    encoded
-        .into_iter()
-        .map(|encoded| {
-            let reference = McpToolReference::from_str(&encoded).map_err(host_error)?;
-            if !observed.insert(reference.clone()) {
-                return Err(ToolError::invalid_input(format!(
-                    "tool_load repeats reference `{reference}`"
-                )));
-            }
-            Ok(reference)
-        })
-        .collect()
 }
 
 fn decode_call<T: DeserializeOwned>(call: &ToolCall, expected: &str) -> Result<T, ToolError> {
