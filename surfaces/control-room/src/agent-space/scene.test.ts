@@ -46,8 +46,20 @@ describe("Agent-space preview boundaries", () => {
     const independentLabelTop = phone.regions[1]!.bounds.y + phone.regions[1]!.bounds.height * .04;
     expect(independentLabelTop - managedContentBottom).toBeGreaterThanOrEqual(32);
   });
+  it("shares one day axis across every agent, so their strips are comparable", () => {
+    const first = 1_000_000, second = 4_000_000;
+    const marked: SpaceAgent[] = [
+      { ...source[0]!, summary: { day: [{ at: first, state: "idle" }] } as never },
+      { ...source[1]!, summary: { day: [{ at: second, state: "needs-you" }] } as never },
+    ];
+    const scene = createScene(marked, false);
+    // One axis spanning the whole scene, not one per agent, so an early mark and
+    // a late mark land at opposite ends of every strip.
+    expect(scene.axis).toEqual({ start: first - 60_000, end: second + 60_000 });
+    expect(createScene(source, false).axis).toBeNull();
+    expect(createScene([], false)).toEqual({ agents: [], regions: [], axis: null });
+  });
   it("handles empty scenes and produces finite closed contours for every crowded group", () => {
-    expect(createScene([], false)).toEqual({ agents: [], regions: [] });
     expect(regionPath([])).toBe("");
     for (const region of createScene(source, true).regions) {
       const path = regionPath(region.members.map(agent => agent.position));

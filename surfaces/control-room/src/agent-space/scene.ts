@@ -1,5 +1,6 @@
 import type { Agent } from "../host-contract";
 import type { DirectorySummary } from "../host-agent-directory-model";
+import { emptyCounts, stateRank, toneState, type AgentState } from "../host-state";
 import { capabilityPlugins, pluginCapabilities } from "../agent-work-preview/configuration-model";
 
 export type Point = { x: number; y: number };
@@ -13,31 +14,21 @@ export type AgentRegion = {
   counts: Record<AgentState, number>;
   bounds: { x: number; y: number; width: number; height: number };
 };
-export type AgentScene = { agents: PlacedAgent[]; regions: AgentRegion[] };
+/** One shared time axis for the scene, so every agent's strip is comparable. */
+export type DayAxis = { start: number; end: number } | null;
+export type AgentScene = { agents: PlacedAgent[]; regions: AgentRegion[]; axis: DayAxis };
 
-// The four states the whole control room reports, ordered by what the owner can
-// do about them. An agent waiting on the owner is the healthy, actionable case
-// and wears gold; only work that actually broke wears red.
-export type AgentState = "needs-you" | "failed" | "running" | "idle";
-export const stateRank: Record<AgentState, number> = { "needs-you": 0, failed: 1, running: 2, idle: 3 };
-export const stateLabel: Record<AgentState, string> = {
-  "needs-you": "Needs you", failed: "Failed", running: "Running", idle: "Idle",
-};
-export const emptyCounts = (): Record<AgentState, number> => ({ "needs-you": 0, failed: 0, running: 0, idle: 0 });
+export const agentState = (agent: SpaceAgent): AgentState => toneState(agent.summary?.tone, agent.synthetic);
 
-// A record waiting on the owner is a question, not a fault. A record that was
-// interrupted is work that broke, and the two must never share a colour.
-// Note the live and example summary paths currently reach "interrupted" from
-// different facts, so this is the one place the two states are separated.
-export function agentState(agent: SpaceAgent): AgentState {
-  if (agent.synthetic) return "idle";
-  switch (agent.summary?.tone) {
-    case "waiting": return "needs-you";
-    case "interrupted": return "failed";
-    case "pending": return "running";
-    default: return "idle";
-  }
+/** The span covering every recorded mark, so two agents' strips line up. */
+export function dayAxis(agents: PlacedAgent[]): DayAxis {
+  const times = agents.flatMap(agent => agent.summary?.day ?? []).map(mark => mark.at);
+  if (!times.length) return null;
+  const start = Math.min(...times) - 60_000;
+  const end = Math.max(...times) + 60_000;
+  return { start, end: Math.max(start + 1, end) };
 }
+
 
 // Explicit design fixtures, not authority inferred from creation provenance.
 const exampleManagement = new Map([
@@ -85,7 +76,8 @@ export function createScene(source: SpaceAgent[], expanded: boolean, columns = 4
     return { id: root.id, name: root.name, members: placed, color: stateColors[state], state, counts,
       bounds: { x: Math.min(...xs) - 150, y: Math.min(...ys) - 150, width: Math.max(...xs) - Math.min(...xs) + 300, height: Math.max(...ys) - Math.min(...ys) + 320 } };
   });
-  return { regions, agents: regions.flatMap(region => region.members) };
+  const placed = regions.flatMap(region => region.members);
+  return { regions, agents: placed, axis: dayAxis(placed) };
 }
 
 export function pluginMembers(agents: PlacedAgent[], pluginId: string): PlacedAgent[] {

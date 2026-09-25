@@ -9,6 +9,37 @@
 .space-heading h1 > span { font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--muted-foreground); border: 1px solid var(--border); padding: 1px 7px; border-radius: 6px; }
 .space-heading p { margin-top: 6px; color: var(--muted-foreground); font-size: 14px; }
 
+/* A day axis: one tick per recorded event, placed by time on a shared scale,
+   coloured by state. The same encoding appears on the system band, on a
+   region, and under a portrait, so a tick always means the same thing. */
+.space-agent-day, .space-region-day, .space-today-track { position: relative; display: block; background: var(--border); }
+.space-agent-day, .space-region-day { flex-shrink: 0; width: calc(120px * var(--label-scale)); height: 1px; margin-top: 11px; }
+.space-agent-day > i, .space-region-day > i, .space-today-track > i {
+  position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px;
+  background: var(--state-idle);
+}
+.space-agent-day > i[data-state="needs-you"], .space-region-day > i[data-state="needs-you"], .space-today-track > i[data-state="needs-you"] { background: var(--state-needs-you); width: 3px; }
+.space-agent-day > i[data-state=failed], .space-region-day > i[data-state=failed], .space-today-track > i[data-state=failed] { background: var(--state-failed); width: 3px; }
+.space-agent-day > i[data-state=running], .space-region-day > i[data-state=running], .space-today-track > i[data-state=running] { background: var(--state-running); }
+
+/* Today, across the whole system. Answers "what has been happening" so the
+   landing screen does not make the owner open the map or Work to find out. */
+.space-today { display: flex; align-items: stretch; gap: 16px; border: 1px solid var(--border); border-radius: 12px; padding: 9px 16px; margin-bottom: 12px; background: var(--card); }
+.space-today-head { flex-shrink: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 46px; }
+.space-today-head > b { font-size: 19px; font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.space-today-label { font-size: 12px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+.space-today-rows { display: flex; flex-direction: column; justify-content: center; gap: 7px; flex: 1; min-width: 0; }
+.space-today-row { display: flex; align-items: center; gap: 12px; }
+.space-today-name { width: 78px; flex-shrink: 0; font-size: 12px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A hairline axis with ticks on it, not a progress bar: the ticks are the
+   data, the line only says where the day runs. */
+.space-today-track { flex: 1; height: 1px; }
+.space-today-count { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; min-width: 14px; text-align: right; }
+.space-today-total { flex-shrink: 0; align-self: center; font-size: 12px; color: var(--muted-foreground); }
+.space-today-scale { flex-shrink: 0; display: flex; flex-direction: column; justify-content: space-between; align-self: stretch; padding-block: 1px; font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; opacity: .75; }
+.space-today-empty { display: flex; align-items: center; gap: 14px; }
+.space-today-empty p { margin: 0; font-size: 13px; color: var(--muted-foreground); }
+
 /* Needs you: the one lane the owner can act on, so it sits above the map and
    wears the action gold. With nothing to do it collapses to a quiet line. */
 .space-clear { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 13px 16px; margin-bottom: 14px; background: var(--card); }
@@ -26,7 +57,8 @@
 .space-waiting-toggle:hover .space-waiting-hint { color: var(--foreground); }
 .space-waiting-list { list-style: none; margin: 0; padding: 0 0 6px; }
 .space-waiting-list li + li { border-top: 1px solid var(--border); }
-.space-waiting-list a { display: flex; align-items: center; gap: 18px; padding: 12px 16px; border-radius: 8px; }
+.space-waiting-list a { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 8px; }
+.space-waiting-avatar { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); }
 .space-waiting-list a:hover { background: color-mix(in srgb, var(--state-needs-you) 9%, transparent); }
 .space-waiting-list li[data-state=failed] a:hover { background: color-mix(in srgb, var(--state-failed) 10%, transparent); }
 .space-waiting-list li[data-state=failed] .space-waiting-arrow { color: var(--state-failed); }
@@ -35,7 +67,9 @@
 .space-waiting-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .space-waiting-body strong { font-size: 14px; font-weight: 600; }
 .space-waiting-body small { font-size: 13px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.space-waiting-agent { flex-shrink: 0; font-size: 12px; color: var(--muted-foreground); padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; }
+.space-waiting-agent { flex-shrink: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; }
+.space-waiting-agent > em { font-style: normal; font-variant-numeric: tabular-nums; opacity: .8; }
+.space-waiting-agent > em::before { content: "·"; margin-right: 8px; opacity: .5; }
 .space-waiting-arrow { flex-shrink: 0; color: var(--muted-foreground); transition: transform 200ms cubic-bezier(.16, 1, .3, 1), color 200ms; }
 .space-waiting-list a:hover .space-waiting-arrow { transform: translateX(3px); color: var(--state-needs-you); }
 
@@ -49,7 +83,7 @@
 /* The landing screen is meant to read whole: header, needs-you rail, toolbar,
    map and legend share one viewport budget, so the map yields when the rail
    grows rather than pushing the legend below the fold. */
-.space-map { height: clamp(360px, calc(100svh - 452px), 760px); position: relative; margin-top: 10px; isolation: isolate; }
+.space-map { height: clamp(400px, calc(100svh - 470px), 780px); position: relative; margin-top: 10px; isolation: isolate; }
 .space-map .react-flow { background: transparent; }
 .space-map .react-flow__background { background: transparent; }
 .space-map .react-flow__node { border: 0; padding: 0; background: none; box-shadow: none; }
@@ -60,10 +94,10 @@
 /* The light keeps moving inside each contour, as the owner asked, but it is a
    hint of volume rather than a wash: the region's state has to stay readable
    through the outline, and a space with nothing wrong should barely glow. */
-.space-region-light { opacity: .5; }
-.space-region[data-state=failed] .space-region-light { opacity: .62; }
-.space-region[data-state=running] .space-region-light { opacity: .38; }
-.space-region[data-state=idle] .space-region-light { opacity: .2; }
+.space-region-light { opacity: .38; }
+.space-region[data-state=failed] .space-region-light { opacity: .5; }
+.space-region[data-state=running] .space-region-light { opacity: .3; }
+.space-region[data-state=idle] .space-region-light { opacity: .12; }
 .space-region-fill { fill: currentColor; fill-opacity: .022; stroke: currentColor; stroke-opacity: .5; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
 /* State is carried by a crisp region outline and the portrait ring, not by a
    wash of colour: a map where every space needs you would otherwise read as one
@@ -78,10 +112,11 @@
 .space-contour-inner { animation: space-drift 12s ease-in-out -6s infinite alternate-reverse paused; }
 .space-current { fill: none; stroke: currentColor; stroke-opacity: .65; stroke-width: 1.5; stroke-dasharray: 65 950; vector-effect: non-scaling-stroke; animation: space-current 16s linear infinite paused; }
 .space-map[data-motion=true] :is(.space-contours, .space-contour, .space-current) { animation-play-state: running; }
-.space-region-label { pointer-events: auto; position: absolute; top: 4%; left: 50%; transform: translateX(-50%); border-radius: 999px; border: 1px solid color-mix(in srgb, var(--region-color) 32%, transparent); background: color-mix(in srgb, var(--region-color) 7%, var(--background)); color: var(--region-color); padding: 6px 13px; font-size: 13px; white-space: nowrap; }
+.space-region-label { pointer-events: auto; position: absolute; top: 3%; left: 5%; display: flex; flex-direction: column; gap: 5px; align-items: flex-start; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--region-color) 32%, transparent); background: color-mix(in srgb, var(--region-color) 7%, var(--background)); color: var(--region-color); padding: 7px 13px; font-size: 13px; white-space: nowrap; }
 .space-region-label:hover { border-color: var(--region-color); }
 .space-region-label[data-distant=true] { top: 40%; z-index: 4; border-radius: 12px; background: var(--background); font-size: 13px; text-align: left; min-width: 125px; }
-.space-region-label > span { display: flex; flex-direction: column; gap: 3px; color: var(--muted-foreground); font-size: 11px; }
+.space-region-name { font-weight: 600; }
+.space-region-meta { display: flex; flex-direction: column; gap: 3px; color: var(--muted-foreground); font-size: 11px; }
 .space-region-label[data-far=true] { min-width: 96px; max-width: 96px; padding: 5px 7px; font-size: 11px; white-space: normal; }
 .space-region-label em { font-style: normal; color: var(--region-color); }
 .space-agent { pointer-events: auto; width: 180px; height: 180px; display: flex; flex-direction: column; align-items: center; border-radius: 18px; background: none; transition: opacity 200ms; }
@@ -131,7 +166,7 @@
 .space-legend li[data-state=failed] > i { background: var(--state-failed); }
 .space-legend li[data-state=running] > i { background: var(--state-running); }
 .space-legend li > b { font-weight: 600; color: var(--foreground); font-variant-numeric: tabular-nums; }
-.space-caption { display: flex; justify-content: space-between; gap: 16px; padding-block: 12px 22px; font-size: 12px; color: var(--muted-foreground); }
+.space-caption { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-block: 10px 12px; font-size: 12px; color: var(--muted-foreground); }
 .space-caption > span:last-child { flex-shrink: 0; }
 .space-caption a { text-decoration: underline; text-underline-offset: 3px; margin-left: 6px; }
 .space-earlier { margin-top: 28px; font-size: 13px; color: var(--muted-foreground); }
@@ -160,7 +195,7 @@
   .space-view-controls { gap: 2px; }
   .space-view-controls > button { min-height: 40px; }
   .space-map { height: max(480px, calc(100svh - 350px)); margin-inline: -8px; }
-  .space-region-label[data-independent=true][data-distant=false] { left: 20%; }
+  .space-region-label[data-independent=true][data-distant=false] { left: 8%; }
   .space-capability-label { display: none; }
   .space-caption { font-size: 11px; flex-direction: column; gap: 5px; }
   .space-plugin { min-height: 40px; }
