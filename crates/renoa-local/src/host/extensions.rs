@@ -84,3 +84,26 @@ impl LocalHost {
             .await?)
     }
 }
+
+impl LocalHost {
+    /// Executes the canonical plugin API for one exact agent. The caller supplies
+    /// its workspace and a stable operation identity for resumable authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, source, authorization, catalog, or storage failures.
+    pub async fn manage_plugin(
+        &self,
+        agent_id: &AgentId,
+        workspace: &Path,
+        request: crate::PluginRequest,
+        invocation: crate::PluginInvocation<'_>,
+    ) -> Result<crate::PluginOutcome, LocalHostError> {
+        self.require_agent(*agent_id).await?;
+        Ok(self
+            .config
+            .plugins
+            .invoke(agent_id, workspace, request, invocation)
+            .await?)
+    }
+}

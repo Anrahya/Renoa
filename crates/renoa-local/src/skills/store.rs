@@ -26,7 +26,7 @@ pub(crate) struct SkillStore {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct SkillComponentReport {
+pub struct SkillComponentReport {
     accepted: Vec<String>,
     rejected: Vec<SkillComponentRejection>,
 }
@@ -36,17 +36,19 @@ impl SkillComponentReport {
         Self { accepted, rejected }
     }
 
-    pub(crate) fn accepted(&self) -> &[String] {
+    #[must_use]
+    pub fn accepted(&self) -> &[String] {
         &self.accepted
     }
 
-    pub(crate) fn rejected(&self) -> &[SkillComponentRejection] {
+    #[must_use]
+    pub fn rejected(&self) -> &[SkillComponentRejection] {
         &self.rejected
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct SkillComponentRejection {
+pub struct SkillComponentRejection {
     entry: String,
     reason: String,
 }
@@ -77,11 +79,13 @@ impl SkillComponentRejection {
         Self { entry, reason }
     }
 
-    pub(crate) fn entry(&self) -> &str {
+    #[must_use]
+    pub fn entry(&self) -> &str {
         &self.entry
     }
 
-    pub(crate) fn reason(&self) -> &str {
+    #[must_use]
+    pub fn reason(&self) -> &str {
         &self.reason
     }
 }

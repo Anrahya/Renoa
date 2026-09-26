@@ -46,6 +46,37 @@ async fn gh_reference_resolves_only_for_adapter_stdin_and_never_enters_host_stat
     )
     .await
     .expect("register gh reference");
+    let packages = host
+        .installed_plugins()
+        .await
+        .expect("Host MCP shares the plugin library");
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].metadata().name(), "github");
+    assert_eq!(
+        packages[0].mcp_servers()[0].endpoint(),
+        "https://example.com/mcp"
+    );
+    host.register_gh_cli_mcp_connection(
+        "github",
+        "github",
+        "https://example.com/mcp",
+        "github.com",
+        "Anrahya",
+    )
+    .await
+    .expect("idempotent bootstrap");
+    assert!(
+        host.register_direct_mcp_connection("different", "github", "https://example.com/other")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        host.installed_plugins()
+            .await
+            .expect("rejection leaves no new package")
+            .len(),
+        1
+    );
 
     let snapshot = host
         .refresh_mcp_catalog("github")

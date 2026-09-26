@@ -698,13 +698,15 @@ without restarting the session or surface. Disconnect is idempotent and the
 next search stops exposing its tools while the verified catalog remains
 available for recovery or later reattachment. Package skills enter the same
 skill registry under a lower-priority plugin scope; workspace overrides global, and
-global overrides plugin. A newer revision of the same plugin replaces its
-bindings, while a second plugin with the same skill name is visibly rejected.
+global overrides plugin. Plugin skill sources are currently keyed by package
+name: an equal-named package replaces those bindings, while a differently named
+plugin with the same skill name is rejected. Explicit plugin identity and
+revision replacement remain open lifecycle decisions.
 The next `skill_search` sees a committed package skill without restarting the
 session or surface. Model-facing management results use the same 50 KiB
 tool-output boundary as local tools and fail instead of silently truncating
 package facts. List keeps aggregate state below that boundary by returning at
-most 32 compact package, server, notice, connection, and skill facts per page.
+most 200 compact package, server, notice, connection, and skill facts per page.
 Its opaque cursor is bound to the complete inventory revision, so concurrent
 changes produce a visible conflict and a fresh first-page requirement rather
 than offset drift. Package integrity, durable connection state, agent
@@ -1941,8 +1943,13 @@ storage or protocol path.
 The first portable package path is complete. The Host validates Agent Plugins
 1.0 manifests locally, isolates invalid or unsupported MCP entries, denies
 symlinked fixed components, and publishes exact full trees under a verified
-content digest. One fixed `plugin_manage` schema drives the same manager as
-the public `LocalHost` methods. Schema v6 stores package metadata, public MCP
+content digest. The public `LocalHost::manage_plugin` API and fixed
+`plugin_manage` tool consume
+one canonical typed request dispatcher. Complete and model-facing schemas are
+derived from that contract. Local packages, standalone skills, pinned public
+GitHub sources, researched MCP endpoints, and installed revisions converge on
+one immutable library. Host bootstrap MCP registration also creates a package.
+Schema v6 stores package metadata, public MCP
 headers, and only named Secret Service references. Schema v7 preserves plugin
 homepage metadata and imports package skills without changing existing source
 bindings. An Exa-shaped package is
@@ -1965,8 +1972,9 @@ substrings, so an unrelated publisher such as `trycloudflare` is not treated as
 Cloudflare. Every management action has an exact schema that rejects fields
 from another action. Generic Secret Service headers, idempotent re-enable, and
 separate package/connection/skill-source status remain Host behavior, and no
-kernel, ACP, Waku, or RCP type changed. List uses bounded revision-bound cursor
-pages and rejects a stale cursor if that Host inventory changes.
+kernel, ACP, Waku, or RCP type changed. List uses typed, bounded revision-bound
+cursor pages of at most 200 facts and rejects a stale cursor if that Host
+inventory changes.
 
 The current MCP adapter is revision v0.8 on process wire 8. Discovery compiles
 each external tool's input schema with the pinned SDK validator and isolates an
@@ -1991,3 +1999,7 @@ This synchronization path changes the frozen `plugin_manage` implementation
 from revision 9 to revision 10. An unfinished revision-9 operation fails closed
 after upgrade instead of acquiring network synchronization under its old
 manifest.
+
+The canonical plugin API binding is `renoa-plugin-api-v1`; source-contract
+changes cannot replay under an older frozen management manifest. The full
+source and lifecycle contract is in `renoa-extensions-north-star.md`.

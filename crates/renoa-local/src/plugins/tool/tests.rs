@@ -64,7 +64,7 @@ async fn extension_inventory_is_bounded_and_complete() {
     let fixture = ResearchedMcpFixture::new().await;
     let invalid_limit = fixture
         .tool
-        .list(None, super::inventory::MAX_LIST_LIMIT + 1)
+        .list(None, crate::plugins::api::MAX_PLUGIN_PAGE + 1)
         .await
         .expect_err("the runtime must enforce the schema's page bound");
     assert_eq!(invalid_limit.code(), ToolErrorCode::InvalidInput);

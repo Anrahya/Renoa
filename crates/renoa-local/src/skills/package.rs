@@ -41,19 +41,19 @@ pub(super) struct RejectedSkill {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SkillMetadata {
-    pub(super) name: String,
-    pub(super) description: String,
-    pub(super) license: Option<String>,
-    pub(super) compatibility: Option<String>,
+pub(crate) struct SkillMetadata {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) license: Option<String>,
+    pub(crate) compatibility: Option<String>,
 }
 
 #[derive(Debug)]
-pub(super) struct CapturedSkill {
-    pub(super) digest: String,
-    pub(super) metadata: SkillMetadata,
-    pub(super) body: String,
-    pub(super) files: Vec<CapturedFile>,
+pub(crate) struct CapturedSkill {
+    pub(crate) digest: String,
+    pub(crate) metadata: SkillMetadata,
+    pub(crate) body: String,
+    pub(crate) files: Vec<CapturedFile>,
 }
 
 #[derive(Debug)]
@@ -198,7 +198,10 @@ pub(super) fn load_owned(store: &Path, expected_digest: &str) -> Result<OwnedSki
     })
 }
 
-fn capture(root: &Path, expected_name: Option<&str>) -> Result<CapturedSkill, SkillError> {
+pub(crate) fn capture(
+    root: &Path,
+    expected_name: Option<&str>,
+) -> Result<CapturedSkill, SkillError> {
     let tree =
         package_tree::capture(root, SKILL_DIGEST_DOMAIN, SKILL_TREE_LIMITS).map_err(tree_error)?;
     if !tree.files.iter().any(|file| file.relative == "SKILL.md") {

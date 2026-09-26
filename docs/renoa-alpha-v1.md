@@ -114,15 +114,17 @@ read-only: namespace verification is not provider endorsement or installation
 truth, and Registry records cannot be passed to `add`. Alpha must verify the
 endpoint and authentication against the provider's official HTTPS
 documentation. `plugin_manage` can then add that independently researched MCP definition or
-one inspected, digest-bound Agent Plugins 1.0 directory; inspect a local
-package; install exact content; list installed revisions; connect a supported
+one inspected, digest-bound Agent Plugins 1.0 directory, standalone skill, or
+public GitHub directory pinned to a full commit SHA; inspect a source; install
+exact content; list installed revisions; connect a supported
 package MCP server; and authorize or explicitly restart a registered OAuth
 connection. It can also disconnect a connection from Alpha without deleting
 the Host's durable package, registration, or catalog, then re-enable the
 retained complete catalog without contacting the service. List reports compact
-pages of package, connection, and plugin skill facts with an opaque continuation
-cursor. Every add source becomes the same immutable package. Supported skills
-hot-load first, then Renoa validates the real endpoint through MCP discovery
+pages of at most 200 package, connection, and plugin skill facts with an opaque
+continuation cursor. Every add source becomes the same immutable package. After
+source and known connection validation, supported skills hot-load, then Renoa
+validates the real endpoint through MCP discovery
 before publishing tools.
 Registry results are research hints, not accepted
 installation inputs. Other discovery sources remain replaceable. Alpha v1's

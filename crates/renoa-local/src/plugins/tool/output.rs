@@ -327,6 +327,8 @@ fn attach_installation(
 pub(crate) fn plugin_error(error: PluginError, partial_changes_possible: bool) -> ToolError {
     let message = error.to_string();
     match error {
+        PluginError::Cancelled => ToolError::cancelled(message, partial_changes_possible),
+        PluginError::OutputLimit(_) => ToolError::output_limit(message),
         PluginError::Invalid(_)
         | PluginError::Mcp(McpHostError::Invalid(_))
         | PluginError::Skill(crate::skills::SkillError::Invalid(_)) => {

@@ -8,7 +8,7 @@ use crate::mcp::McpRequestHeaders;
 pub(super) struct GeneratedMcpPlugin {
     name: String,
     description: String,
-    homepage: String,
+    homepage: Option<String>,
     server: String,
     endpoint: String,
     public_headers: BTreeMap<String, String>,
@@ -33,24 +33,33 @@ impl GeneratedMcpPlugin {
         Ok(Self {
             name: source.name,
             description: source.description,
-            homepage: documentation.to_string(),
+            homepage: Some(documentation.to_string()),
             server: source.server,
             endpoint: source.endpoint,
             public_headers: headers.values().clone(),
         })
     }
 
-    pub(super) fn server(&self) -> &str {
-        &self.server
+    pub(super) fn from_host(name: &str, endpoint: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            description: format!("Host-configured {name} MCP."),
+            homepage: None,
+            server: "default".to_owned(),
+            endpoint: endpoint.to_owned(),
+            public_headers: BTreeMap::new(),
+        }
     }
 
     pub(super) fn write(&self, root: &Path) -> Result<(), PluginError> {
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "$schema": inspect::PLUGIN_SCHEMA,
             "name": self.name,
             "description": self.description,
-            "homepage": self.homepage,
         });
+        if let Some(homepage) = &self.homepage {
+            manifest["homepage"] = homepage.clone().into();
+        }
         let mcp = serde_json::json!({
             "$schema": inspect::MCP_SCHEMA,
             "mcpServers": {

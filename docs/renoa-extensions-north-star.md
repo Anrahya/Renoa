@@ -156,7 +156,7 @@ for GitHub Apps and Actions, not an MCP catalog. It may become a replaceable
 research source when Renoa supports those component types, but it does not feed
 the implemented MCP Registry adapter or bypass package and connection checks.
 
-The implemented management tool exposes read-only `search` and exact `lookup`
+The implemented `plugin_search` exposes read-only `search` and exact `lookup`
 through a replaceable official MCP Registry adapter. Renoa is the downstream
 normalization layer the Registry expects: it normalizes a short human query,
 requests latest versions with bounded cursor pagination, filters broad fallback
@@ -170,18 +170,84 @@ publisher namespace. It does not verify provider endorsement, metadata
 accuracy, server safety, or endpoint behavior. Publisher descriptions remain
 explicitly named publisher data. Registry package declarations are reported as
 unsupported rather than executed, legacy SSE and endpoint templates are
-blocked, and secret header values are never copied. The management tool accepts
+blocked, and secret header values are never copied. Plugin management accepts
 no Registry record as an `add` source. After lookup, the agent verifies the
 endpoint and authentication against the provider's official HTTPS
 documentation, then submits one independently researched typed MCP definition.
-The other `add` source is a local Agent Plugins directory bound to the digest
-returned by `inspect`. Both converge on the same immutable package store and
-component loaders. The digest requirement prevents a crash replay from
-observing different bytes at the same mutable path. Package installation and
-skill loading happen before any MCP connection attempt. A missing credential,
-authorization failure, unsupported server choice, or unreachable endpoint
-therefore leaves the package installed and returns that exact partial state; it
-never makes the package disappear or fabricates a successful connection.
+Other sources are local Agent Plugins directories, standalone standard skills,
+public GitHub repositories pinned to a full commit SHA, and verified installed
+revisions. They converge on the same immutable package store and component
+loaders. Mutable sources require the digest returned by inspection; a retry
+verifies and reuses the published revision even if its old source disappears.
+Connection selectors, static credential references, and known catalog conflicts
+are checked before publication. After package admission, a credential,
+authorization, or discovery failure reports the retained installation separately
+from the failed connection.
+
+### Canonical Host plugin API
+
+`PluginRequest`, `PluginSource`, and `PluginAuthentication` in
+`crates/renoa-local/src/plugins/api.rs` own the lifecycle input contract.
+`LocalHost::manage_plugin` binds it to an exact agent, workspace, stable operation
+identity, cancellation token, and progress channel. The `plugin_manage` tool
+calls that same dispatcher. Typed `PluginOutcome` results distinguish inspection,
+installation, skill binding, catalog discovery, and connection failure. Host
+inventory pages expose typed items and an opaque continuation cursor.
+
+The complete API JSON Schema is derived from these types. The model receives a
+flat projection with generated action/source selector instructions listing each
+variant's required and allowed fields. Runtime decoding rejects foreign fields;
+this projection does not weaken the closed API. Its frozen binding identity is
+`renoa-plugin-api-v1`. Native tool grants are absent from the contract.
+
+| Source kind | Meaning | Admission |
+| --- | --- | --- |
+| `package` | Agent Plugins 1.0 directory | Inspect, then copy digest into the request's `expected_digest` |
+| `skill` | One standard `SKILL.md` directory | Inspect and wrap its unchanged files as one portable plugin |
+| `github` | Public `https://github.com/owner/repo`, full 40-character commit, optional relative directory | Download from GitHub codeload without redirects; inspect, then add/install exact digest |
+| `mcp` | Endpoint, public headers, name, description, verified documentation URL | Generate one portable MCP plugin; add also attempts a connection |
+| `installed` | Exact installed package digest | Add enables its skills; connect or enable handles MCP access separately |
+
+For example, this inspects a standalone local skill:
+
+```json
+{"action":"inspect","source":{"kind":"skill","source_path":".agents/skills/review"}}
+```
+
+The subsequent `add` passes that same source and the returned digest as the
+root-level `expected_digest`. `install` publishes library content without
+binding its skills. GitHub directories containing `plugin.json` use the package
+loader; otherwise they must be one valid standard skill directory. Skill license
+and other original metadata remain unchanged in `SKILL.md`. Import never runs
+repository code, skill scripts, or package install hooks.
+
+GitHub intake bounds compressed download bytes, decompressed bytes including
+GNU/PAX metadata, entry count, depth, and file sizes. It rejects traversal,
+duplicate archive paths, and symlinks or special files in the selected subtree;
+unrelated links outside a selected directory are not extracted. Failed or
+cancelled intake drops its owned staging directory. Local package inspection
+reports denied entries, while installation rejects symlinks, special files, and
+a directory at the fixed `mcp.json` location before publication.
+
+Host-configured no-auth and `gh` credential-reference MCP registration also
+creates a portable revision. Discovery and agent activation remain separate;
+credentials are stored outside the package. Existing direct test registrations
+are not adopted by this API.
+
+`PluginProgress` owns authorization and encrypted credential setup event shapes.
+Telegram and Slack consume those types; the existing relay still permits
+approval on another device. Discord currently discards progress events and has
+no account setup action delivery. That delivery path is tracked in
+[issue #47](https://github.com/Anrahya/Renoa/issues/47).
+
+The API currently disconnects/enables MCP connections. Skill-only disable and
+explicit same-name plugin replacement policy remain open. Plugin skill bindings
+still use plugin names as source identities, so callers must not treat unrelated
+same-named packages as distinct activation namespaces. Provider coherence for
+multi-server imported packages also remains open; an imported manifest is not
+proof that its servers belong to one provider. Activation and identity are
+tracked in [issue #48](https://github.com/Anrahya/Renoa/issues/48); provider
+coherence is tracked in [issue #41](https://github.com/Anrahya/Renoa/issues/41).
 
 ## Vocabulary
 
@@ -217,7 +283,7 @@ merely because it may teach an agent how to use tools.
 ### Integration
 
 A service or capability definition such as Google Drive, GitHub, or one MCP
-endpoint. A direct MCP definition may exist without a surrounding package.
+endpoint. New Host and agent MCP intake creates a surrounding package.
 
 ### Connection
 
@@ -322,7 +388,7 @@ refreshes never become active.
 A profile chooses components or connections by stable identity. The Host
 applies current scope and future policy. Small static capabilities become
 ordinary resolved bindings for the next operation. Large MCP catalogs attach
-to a fixed search/load/execute registry; only an exact loaded schema enters
+to fixed search and execution tools; only an exact requested schema enters
 history, and execution resolves its catalog-bound reference. These are two
 composition strategies, not two execution paths through the kernel.
 
@@ -344,7 +410,7 @@ identity. The symmetric enable operation reattaches only a retained complete
 catalog and performs no remote request. The management list reports package
 integrity, registration, catalog presence, authentication kind, Alpha
 attachment, and plugin skill binding results separately rather than collapsing
-them into one enabled flag. It returns at most 32 compact facts per page. The
+them into one enabled flag. It returns at most 200 compact facts per page. The
 opaque cursor binds the next page to the exact inventory revision; if packages,
 connections, or skill bindings change between pages, the Host requires a fresh
 first page rather than allowing offset drift to skip or duplicate facts.
@@ -425,9 +491,11 @@ Alpha's first skill path searches compact name/description metadata through
 `skill_search` and activates one selected name through `skill_load`. Search
 returns at most 200 matches and nothing per match beyond name and short
 description. A workspace skill explicitly overrides a same-named global skill,
-and a global skill overrides a package-provided skill. A newer revision of the
-same plugin replaces that plugin's bindings. Two different plugins with the
-same skill name do not get an arbitrary digest-based winner: the first binding
+and a global skill overrides a package-provided skill. An equal-named plugin
+currently replaces that package name's bindings; unrelated equal-named plugins
+need the explicit identity and replacement policy described above. Two
+differently named plugins with the same skill name do not get an arbitrary
+digest-based winner: the first binding
 remains available and the other plugin receives a visible component rejection.
 Neither the complete catalog nor any skill body is injected up front. A load
 resolves and persists one exact revision internally before returning its

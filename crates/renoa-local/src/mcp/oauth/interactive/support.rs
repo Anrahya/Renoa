@@ -1,20 +1,9 @@
+use crate::{PluginAuthorizationRequired, PluginProgress};
 use renoa_agent::{ContentBlock, ToolOutput, ToolUpdates};
-use serde::Serialize;
 use serde_json::Value;
 use url::Url;
 
 use crate::mcp::{McpHostError, McpOAuthError, hex_sha256};
-
-#[derive(Serialize)]
-struct RedirectUpdate<'a> {
-    status: &'static str,
-    connection: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    display_name: Option<&'a str>,
-    authorization_url: &'a str,
-    expires_at_ms: Option<i64>,
-    message: &'static str,
-}
 
 pub(super) async fn emit_redirect(
     updates: Option<&ToolUpdates>,
@@ -26,14 +15,14 @@ pub(super) async fn emit_redirect(
     let Some(updates) = updates else {
         return;
     };
-    let update = RedirectUpdate {
-        status: "authorization_required",
-        connection: connection_id,
-        display_name,
-        authorization_url,
+    let update = PluginProgress::AuthorizationRequired(PluginAuthorizationRequired {
+        connection: connection_id.to_owned(),
+        display_name: display_name.map(str::to_owned),
+        authorization_url: authorization_url.to_owned(),
         expires_at_ms,
-        message: "Open the authorization link in a browser. Renoa is waiting for the callback.",
-    };
+        message: "Open the authorization link in a browser. Renoa is waiting for the callback."
+            .to_owned(),
+    });
     if let Ok(encoded) = serde_json::to_string(&update) {
         updates
             .emit(ToolOutput {

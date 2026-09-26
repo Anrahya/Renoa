@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     CapturedPlugin, InstalledPlugin, PluginError, PluginListRejection, PluginListReport,
-    PluginMcpServer, PluginMetadata, generated::GeneratedMcpPlugin, inspect,
+    PluginMcpServer, PluginMetadata, inspect,
 };
 use crate::{
     mcp::McpRequestHeaders,
@@ -48,12 +48,19 @@ impl PluginStore {
         self.install_captured(&captured)
     }
 
-    pub(super) fn install_current(&self, source: &Path) -> Result<InstalledPlugin, PluginError> {
-        let captured = inspect::inspect(source)?;
-        self.install_captured(&captured)
-    }
-
-    fn install_captured(&self, captured: &CapturedPlugin) -> Result<InstalledPlugin, PluginError> {
+    pub(crate) fn install_captured(
+        &self,
+        captured: &CapturedPlugin,
+    ) -> Result<InstalledPlugin, PluginError> {
+        if !captured.tree.skipped_entries.is_empty()
+            || captured
+                .tree
+                .directories
+                .iter()
+                .any(|directory| directory == "mcp.json")
+        {
+            return Err(PluginError::Invalid("plugin source contains a denied symlink, special file, or mcp.json directory; remove it before installation".to_owned()));
+        }
         let expected_digest = captured.inspection.digest.clone();
         if load_stored(&self.connection()?, &expected_digest)?.is_some() {
             return self.load(&expected_digest);
@@ -73,34 +80,12 @@ impl PluginStore {
         Ok(installed)
     }
 
-    pub(super) fn install_generated(
-        &self,
-        generated: &GeneratedMcpPlugin,
-    ) -> Result<InstalledPlugin, PluginError> {
-        let staging = tempfile::Builder::new()
-            .prefix(".generated-source-")
-            .tempdir_in(&self.packages)
-            .map_err(|source| PluginError::Io {
-                action: "create generated package staging directory",
-                path: self.packages.clone(),
-                source,
-            })?;
-        let staging_path = staging.path().to_path_buf();
-        let result = generated
-            .write(&staging_path)
-            .and_then(|()| self.install_current(&staging_path));
-        let cleanup = staging.close().map_err(|source| PluginError::Io {
-            action: "remove generated package staging directory",
-            path: staging_path,
-            source,
-        });
-        match (result, cleanup) {
-            (Ok(installed), Ok(())) => Ok(installed),
-            (Err(error), Ok(())) => Err(error),
-            (Ok(_), Err(cleanup)) => Err(cleanup),
-            (Err(error), Err(cleanup)) => Err(PluginError::Conflict(format!(
-                "{error}; generated package staging cleanup also failed: {cleanup}"
-            ))),
+    pub(crate) fn load_or_recover(&self, digest: &str) -> Result<InstalledPlugin, PluginError> {
+        match self.load(digest) {
+            Err(PluginError::NotFound(_)) => self.recover_published(digest)?.ok_or_else(|| {
+                PluginError::NotFound(format!("package digest '{digest}' is not installed"))
+            }),
+            result => result,
         }
     }
 
@@ -232,7 +217,13 @@ fn require_no_denied_installed_entries(
     captured: &CapturedPlugin,
     digest: &str,
 ) -> Result<(), PluginError> {
-    if captured.tree.skipped_entries.is_empty() {
+    if captured.tree.skipped_entries.is_empty()
+        && !captured
+            .tree
+            .directories
+            .iter()
+            .any(|directory| directory == "mcp.json")
+    {
         Ok(())
     } else {
         Err(PluginError::Conflict(format!(
@@ -407,7 +398,7 @@ fn repair_legacy_homepage(
     Ok(())
 }
 
-fn validate_digest(digest: &str) -> Result<(), PluginError> {
+pub(crate) fn validate_digest(digest: &str) -> Result<(), PluginError> {
     if digest.len() == 64
         && digest
             .bytes()

@@ -1,31 +1,20 @@
+use crate::{PluginCredentialKind, PluginCredentialRequired, PluginProgress};
 use renoa_agent::{ContentBlock, ToolOutput, ToolUpdates};
-use serde::Serialize;
-
-#[derive(Serialize)]
-struct CredentialUpdate<'a> {
-    status: &'static str,
-    credential: &'a str,
-    credential_kind: &'static str,
-    setup_url: &'a str,
-    expires_at_ms: i64,
-    message: &'static str,
-}
 
 pub(super) async fn emit_required(
     updates: &ToolUpdates,
     credential_id: &str,
-    kind: &'static str,
+    credential_kind: PluginCredentialKind,
     setup_url: &str,
     expires_at_ms: i64,
 ) {
-    let update = CredentialUpdate {
-        status: "credential_required",
-        credential: credential_id,
-        credential_kind: kind,
-        setup_url,
+    let update = PluginProgress::CredentialRequired(PluginCredentialRequired {
+        credential: credential_id.to_owned(),
+        credential_kind,
+        setup_url: setup_url.to_owned(),
         expires_at_ms,
-        message: "Open the secure setup link. The credential is encrypted in the browser and saved only by the requesting Host.",
-    };
+        message: "Open the secure setup link. The credential is encrypted in the browser and saved only by the requesting Host.".to_owned(),
+    });
     if let Ok(encoded) = serde_json::to_string(&update) {
         updates
             .emit(ToolOutput {

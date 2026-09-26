@@ -1,9 +1,9 @@
 mod error;
-mod package;
+pub(crate) mod package;
 mod projector;
 mod registry;
 mod render;
-mod store;
+pub(crate) mod store;
 mod tool;
 
 use std::{

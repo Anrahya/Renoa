@@ -1,34 +1,10 @@
 use renoa_agent::{ContentBlock, ToolOutput};
-use serde::Deserialize;
+use renoa_local::{PluginCredentialKind, PluginProgress};
 use url::Url;
 
 use crate::actions::ActionLink;
 
 const MAX_AUTHORIZATION_URL_BYTES: usize = 16 * 1024;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AuthorizationUpdate {
-    status: String,
-    connection: String,
-    #[serde(default)]
-    display_name: Option<String>,
-    authorization_url: String,
-    #[serde(default)]
-    expires_at_ms: Option<i64>,
-    message: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CredentialUpdate {
-    status: String,
-    credential: String,
-    credential_kind: String,
-    setup_url: String,
-    expires_at_ms: i64,
-    message: String,
-}
 
 pub(super) fn extension_progress(tool: &str, update: &ToolOutput) -> Option<String> {
     if let Some(parsed) = parse_authorization(tool, update) {
@@ -84,9 +60,10 @@ struct ParsedCredential {
 
 fn parse_authorization(tool: &str, update: &ToolOutput) -> Option<ParsedAuthorization> {
     let text = extension_text(tool, update)?;
-    let parsed = serde_json::from_str::<AuthorizationUpdate>(text).ok()?;
-    if parsed.status != "authorization_required"
-        || parsed.connection.is_empty()
+    let PluginProgress::AuthorizationRequired(parsed) = serde_json::from_str(text).ok()? else {
+        return None;
+    };
+    if parsed.connection.is_empty()
         || parsed.connection.len() > 128
         || parsed
             .connection
@@ -148,18 +125,15 @@ fn humanize_name(name: &str) -> String {
 
 fn parse_credential(tool: &str, update: &ToolOutput) -> Option<ParsedCredential> {
     let text = extension_text(tool, update)?;
-    let parsed = serde_json::from_str::<CredentialUpdate>(text).ok()?;
-    if parsed.status != "credential_required"
-        || parsed.credential.is_empty()
+    let PluginProgress::CredentialRequired(parsed) = serde_json::from_str(text).ok()? else {
+        return None;
+    };
+    if parsed.credential.is_empty()
         || parsed.credential.len() > 128
         || parsed
             .credential
             .bytes()
             .any(|byte| byte.is_ascii_control())
-        || !matches!(
-            parsed.credential_kind.as_str(),
-            "api_token" | "oauth_client"
-        )
         || parsed.message.is_empty()
         || parsed.expires_at_ms <= 0
     {
@@ -172,7 +146,9 @@ fn parse_credential(tool: &str, update: &ToolOutput) -> Option<ParsedCredential>
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
-        || !url.fragment().is_some_and(valid_setup_fragment)
+        || !url
+            .fragment()
+            .is_some_and(|fragment| valid_setup_fragment(fragment, parsed.credential_kind))
     {
         return None;
     }
@@ -193,15 +169,17 @@ fn extension_text<'a>(tool: &str, update: &'a ToolOutput) -> Option<&'a str> {
     Some(text)
 }
 
-fn valid_setup_fragment(fragment: &str) -> bool {
+fn valid_setup_fragment(fragment: &str, kind: PluginCredentialKind) -> bool {
     let mut version = None;
     let mut key = None;
     let mut token = None;
+    let mut issuer = None;
     for (name, value) in url::form_urlencoded::parse(fragment.as_bytes()) {
         let slot = match name.as_ref() {
             "v" => &mut version,
             "key" => &mut key,
             "token" => &mut token,
+            "issuer" => &mut issuer,
             _ => return false,
         };
         if slot.replace(value.into_owned()).is_some() {
@@ -211,6 +189,19 @@ fn valid_setup_fragment(fragment: &str) -> bool {
     version.as_deref() == Some("1")
         && key.as_deref().is_some_and(valid_secret_hex)
         && token.as_deref().is_some_and(valid_secret_hex)
+        && match kind {
+            PluginCredentialKind::ApiToken => issuer.is_none(),
+            PluginCredentialKind::OAuthClient => issuer.as_deref().is_some_and(|issuer| {
+                Url::parse(issuer).is_ok_and(|issuer| {
+                    issuer.scheme() == "https"
+                        && issuer.host_str().is_some()
+                        && issuer.username().is_empty()
+                        && issuer.password().is_none()
+                        && issuer.query().is_none()
+                        && issuer.fragment().is_none()
+                })
+            }),
+        }
 }
 
 fn valid_secret_hex(value: &str) -> bool {
@@ -264,6 +255,36 @@ mod tests {
             .expect("valid credential update becomes a secure action");
         assert_eq!(action.id, "request/call/credential");
         assert!(action.sensitive_fragment);
+    }
+
+    #[test]
+    fn oauth_client_setup_preserves_the_discovered_issuer_in_the_private_link() {
+        let secret = "a".repeat(64);
+        let event = renoa_local::PluginProgress::CredentialRequired(
+            renoa_local::PluginCredentialRequired {
+                credential: "provider.client".to_owned(),
+                credential_kind: renoa_local::PluginCredentialKind::OAuthClient,
+                setup_url: format!(
+                    "https://renoa.example/setup#v=1&key={secret}&token={secret}&issuer=https%3A%2F%2Faccounts.example"
+                ),
+                expires_at_ms: i64::MAX,
+                message: "Open secure setup".to_owned(),
+            },
+        );
+        let update = output(
+            &serde_json::to_string(&event).expect("canonical event"),
+            false,
+        );
+        let action = extension_action("request/call", "plugin_manage", &update)
+            .expect("OAuth app setup action");
+        assert!(action.sensitive_fragment);
+        assert!(
+            action
+                .url
+                .fragment()
+                .expect("private fragment")
+                .contains("issuer=")
+        );
     }
 
     #[test]

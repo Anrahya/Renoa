@@ -10,7 +10,7 @@ async fn installed_reuse_rejects_connection_fields_before_any_agent_mutation() {
     let digest = fixture.digest().await;
     call(
         &fixture.tool,
-        json!({"action":"install","source_path":"source","expected_digest":digest}),
+        json!({"action":"install","source":{"kind":"package","source_path":"source"},"expected_digest":digest}),
     )
     .await;
     let agent_id = fixture.agent_id;

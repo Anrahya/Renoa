@@ -3,17 +3,17 @@ use std::path::PathBuf;
 use renoa_agent::ToolUpdates;
 use tokio_util::sync::CancellationToken;
 
+mod bootstrap;
 mod connect;
 mod credential;
 mod identity;
+mod preflight;
 mod shared;
 mod status;
 
 use super::{
-    ExtensionAddRequest, ExtensionConnectionRequest, ExtensionSource, InstalledPlugin,
-    OfficialRegistry, PluginCredential, PluginError,
+    InstalledPlugin, OfficialRegistry, PluginConnectionRequest, PluginCredential, PluginError,
     discovery::{RegistryError, RegistryLookupResult, RegistrySearchResult},
-    generated::GeneratedMcpPlugin,
     store::PluginStore,
 };
 #[cfg(test)]
@@ -32,13 +32,14 @@ pub(crate) use connect::{ProfileAuthorizationRequest, ProfileConnectionRequest};
 
 #[derive(Clone)]
 pub(crate) struct PluginManager {
-    store: PluginStore,
+    pub(super) store: PluginStore,
     mcp_catalog: McpCatalogStore,
     mcp_adapter: Option<PathBuf>,
     registry: Option<OfficialRegistry>,
     authorizations: McpAuthorizationResolver,
     skills: SkillStore,
     shared_registry: Option<SharedPluginRegistry>,
+    pub(super) github_source: super::intake::GithubSourceClient,
 }
 
 impl PluginManager {
@@ -86,6 +87,7 @@ impl PluginManager {
             authorizations,
             skills,
             shared_registry: None,
+            github_source: super::intake::GithubSourceClient::default(),
         })
     }
 
@@ -130,68 +132,101 @@ impl PluginManager {
 
     pub(crate) async fn add_to_profile(
         &self,
-        agent_id: &AgentId,
-        request: ExtensionAddRequest,
-        operation_id: &str,
-        updates: Option<&ToolUpdates>,
+        context: AddOperationContext<'_>,
+        source: super::api::PluginSource,
+        expected: Option<String>,
+        connection_request: Option<PluginConnectionRequest>,
         cancellation: CancellationToken,
-    ) -> Result<ExtensionAddOutcome, PluginError> {
-        let connection_request = request.connection;
-        let prepared = match request.source {
-            ExtensionSource::Installed { package_digest } => {
-                if connection_request.is_some() {
-                    return Err(PluginError::Invalid(
-                        "installed package reuse only enables skills; omit server, connection, credential, and replace, then use enable for an existing connection or connect for a new one".to_owned(),
-                    ));
-                }
-                let store = self.store.clone();
-                let installed =
-                    tokio::task::spawn_blocking(move || store.load(&package_digest)).await??;
-                PreparedExtension {
-                    installed,
-                    source: ExtensionSourceReceipt::Installed,
-                    generated_server: None,
-                    connect_by_default: false,
-                }
-            }
-            ExtensionSource::Mcp(source) => {
-                let generated = GeneratedMcpPlugin::from_researched(source)?;
-                let server = generated.server().to_owned();
-                let store = self.store.clone();
-                let installed =
-                    tokio::task::spawn_blocking(move || store.install_generated(&generated))
-                        .await??;
-                self.synchronize_installed(&installed).await?;
-                PreparedExtension {
-                    installed,
-                    source: ExtensionSourceReceipt::Mcp,
-                    generated_server: Some(server),
-                    connect_by_default: true,
-                }
-            }
-            ExtensionSource::Package {
-                path,
-                expected_digest,
-            } => {
-                let installed = self.install(path, expected_digest).await?;
-                PreparedExtension {
-                    installed,
-                    source: ExtensionSourceReceipt::Package,
-                    generated_server: None,
-                    connect_by_default: false,
-                }
-            }
+    ) -> Result<PluginAddOutcome, PluginError> {
+        super::intake::require_active(&cancellation)?;
+        if matches!(source, super::api::PluginSource::Installed { .. })
+            && connection_request.is_some()
+        {
+            return Err(PluginError::Invalid("installed package reuse only enables skills; omit server, connection, credential, and replace, then use enable for an existing connection or connect for a new one".to_owned()));
+        }
+        let connect_by_default = matches!(source, super::api::PluginSource::Mcp { .. });
+        let generated_server = match &source {
+            super::api::PluginSource::Mcp { server, .. } => Some(server.clone()),
+            _ => None,
         };
-        let skills = self.sync_skills(agent_id, &prepared.installed).await?;
+        let receipt = super::intake::receipt(&source);
+        match &source {
+            super::api::PluginSource::Installed {..} | super::api::PluginSource::Mcp {..} if expected.is_some() => return Err(PluginError::Invalid("installed and MCP sources do not accept expected_digest in add".to_owned())),
+            super::api::PluginSource::Package {..} | super::api::PluginSource::Skill {..} | super::api::PluginSource::Github {..} if expected.is_none() => return Err(PluginError::Invalid("add requires expected_digest from inspect for package, skill, and GitHub sources".to_owned())),
+            _ => (),
+        }
+        let existing = if let super::api::PluginSource::Installed { package_digest } = &source {
+            Some(self.load_available(package_digest).await?)
+        } else if let Some(expected) = &expected {
+            super::store::validate_digest(expected)?;
+            match self.load_local(expected).await {
+                Ok(installed) => Some(installed),
+                Err(PluginError::NotFound(_)) => None,
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        let captured = if existing.is_none() {
+            Some(
+                self.capture_source(source, context.workspace, cancellation.clone())
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let (digest, servers) = if let Some(existing) = &existing {
+            (existing.digest(), existing.mcp_servers())
+        } else {
+            let captured = captured.as_ref().expect("new source was captured");
+            (
+                captured.inspection.digest(),
+                captured.inspection.mcp_servers(),
+            )
+        };
+        if let Some(expected) = &expected
+            && expected != digest
+        {
+            return Err(PluginError::Conflict(format!(
+                "plugin source changed after inspection: expected {expected}, found {digest}"
+            )));
+        }
+        let catalog = self.mcp_catalog.clone();
+        let digest = digest.to_owned();
+        let servers = servers.to_vec();
+        let preflight_request = connection_request.clone();
+        let default_server = generated_server.clone();
+        tokio::task::spawn_blocking(move || {
+            preflight::add_connection(
+                &catalog,
+                &digest,
+                &servers,
+                preflight_request.as_ref(),
+                connect_by_default,
+                default_server.as_deref(),
+            )
+        })
+        .await??;
+        super::intake::require_active(&cancellation)?;
+        let installed = if let Some(installed) = existing {
+            installed
+        } else {
+            let store = self.store.clone();
+            let captured = captured.expect("new source was captured");
+            tokio::task::spawn_blocking(move || store.install_captured(&captured)).await??
+        };
+        self.synchronize_installed(&installed).await?;
+        let skills = self.sync_skills(context.agent_id, &installed).await?;
         self.connect_prepared(
-            prepared,
+            PreparedExtension {
+                installed,
+                source: receipt,
+                generated_server,
+                connect_by_default,
+            },
             skills,
             connection_request,
-            AddOperationContext {
-                agent_id,
-                operation_id,
-                updates,
-            },
+            context,
             cancellation,
         )
         .await
@@ -220,25 +255,25 @@ impl PluginManager {
         &self,
         prepared: PreparedExtension,
         skills: SkillComponentReport,
-        request: Option<ExtensionConnectionRequest>,
+        request: Option<PluginConnectionRequest>,
         context: AddOperationContext<'_>,
         cancellation: CancellationToken,
-    ) -> Result<ExtensionAddOutcome, PluginError> {
+    ) -> Result<PluginAddOutcome, PluginError> {
         if request.is_none() && !prepared.connect_by_default {
-            return Ok(ExtensionAddOutcome {
+            return Ok(PluginAddOutcome {
                 installed: prepared.installed,
                 source: prepared.source,
                 skills,
-                connection: ExtensionConnectionOutcome::NotRequested,
+                connection: PluginConnectionOutcome::NotRequested,
             });
         }
-        let ExtensionConnectionRequest {
+        let PluginConnectionRequest {
             id,
             server,
             credential,
             replace,
         } = request.unwrap_or_else(|| {
-            ExtensionConnectionRequest::new(None, None, PluginCredential::None, false)
+            PluginConnectionRequest::new(None, None, PluginCredential::None, false)
         });
         let server = match server.or(prepared.generated_server) {
             Some(server) => server,
@@ -246,11 +281,11 @@ impl PluginManager {
                 prepared.installed.mcp_servers()[0].id().to_owned()
             }
             None => {
-                return Ok(ExtensionAddOutcome {
+                return Ok(PluginAddOutcome {
                     installed: prepared.installed,
                     source: prepared.source,
                     skills,
-                    connection: ExtensionConnectionOutcome::Failed {
+                    connection: PluginConnectionOutcome::Failed {
                         id,
                         server: None,
                         error: PluginError::Invalid(
@@ -281,18 +316,18 @@ impl PluginManager {
             )
             .await
         {
-            Ok(snapshot) => ExtensionConnectionOutcome::Connected {
+            Ok(snapshot) => PluginConnectionOutcome::Connected {
                 id: connection,
                 server,
                 snapshot,
             },
-            Err(error) => ExtensionConnectionOutcome::Failed {
+            Err(error) => PluginConnectionOutcome::Failed {
                 id: Some(connection),
                 server: Some(server),
                 error,
             },
         };
-        Ok(ExtensionAddOutcome {
+        Ok(PluginAddOutcome {
             installed: prepared.installed,
             source: prepared.source,
             skills,
@@ -301,33 +336,36 @@ impl PluginManager {
     }
 }
 
-struct AddOperationContext<'a> {
-    agent_id: &'a AgentId,
-    operation_id: &'a str,
-    updates: Option<&'a ToolUpdates>,
+pub(crate) struct AddOperationContext<'a> {
+    pub(crate) workspace: &'a std::path::Path,
+    pub(crate) agent_id: &'a AgentId,
+    pub(crate) operation_id: &'a str,
+    pub(crate) updates: Option<&'a ToolUpdates>,
 }
 
 struct PreparedExtension {
     installed: InstalledPlugin,
-    source: ExtensionSourceReceipt,
+    source: PluginSourceReceipt,
     generated_server: Option<String>,
     connect_by_default: bool,
 }
 
-pub(crate) struct ExtensionAddOutcome {
-    pub(crate) installed: InstalledPlugin,
-    pub(crate) source: ExtensionSourceReceipt,
-    pub(crate) skills: SkillComponentReport,
-    pub(crate) connection: ExtensionConnectionOutcome,
+pub struct PluginAddOutcome {
+    pub installed: InstalledPlugin,
+    pub source: PluginSourceReceipt,
+    pub skills: SkillComponentReport,
+    pub connection: PluginConnectionOutcome,
 }
 
-pub(crate) enum ExtensionSourceReceipt {
+pub enum PluginSourceReceipt {
     Mcp,
     Package,
     Installed,
+    Skill,
+    Github,
 }
 
-pub(crate) enum ExtensionConnectionOutcome {
+pub enum PluginConnectionOutcome {
     NotRequested,
     Connected {
         id: String,

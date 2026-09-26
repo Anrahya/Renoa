@@ -301,7 +301,7 @@ impl McpConnectionAuthKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct McpConnectionStatus {
+pub struct McpConnectionStatus {
     connection: String,
     integration: String,
     auth: McpConnectionAuthKind,
@@ -313,27 +313,33 @@ pub(crate) struct McpConnectionStatus {
 }
 
 impl McpConnectionStatus {
-    pub(crate) fn connection(&self) -> &str {
+    #[must_use]
+    pub fn connection(&self) -> &str {
         &self.connection
     }
 
-    pub(crate) fn integration(&self) -> &str {
+    #[must_use]
+    pub fn integration(&self) -> &str {
         &self.integration
     }
 
-    pub(crate) fn enabled_for_agent(&self) -> bool {
+    #[must_use]
+    pub fn enabled_for_agent(&self) -> bool {
         self.enabled_for_agent
     }
 
-    pub(crate) fn catalog_loaded(&self) -> bool {
+    #[must_use]
+    pub fn catalog_loaded(&self) -> bool {
         self.catalog_loaded
     }
 
-    pub(crate) fn tool_count(&self) -> usize {
+    #[must_use]
+    pub fn tool_count(&self) -> usize {
         self.tools
     }
 
-    pub(crate) fn credential_configured(&self) -> bool {
+    #[must_use]
+    pub fn credential_configured(&self) -> bool {
         self.auth != McpConnectionAuthKind::None
     }
 }

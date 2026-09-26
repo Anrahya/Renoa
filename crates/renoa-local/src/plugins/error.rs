@@ -13,6 +13,10 @@ pub enum PluginError {
     NotFound(String),
     #[error("Agent Plugin operation is unavailable: {0}")]
     Unavailable(String),
+    #[error("Agent Plugin operation was cancelled")]
+    Cancelled,
+    #[error("Agent Plugin output exceeds its boundary: {0}")]
+    OutputLimit(String),
     #[error("Agent Plugin storage failed while {action} `{path}`: {source}")]
     Io {
         action: &'static str,

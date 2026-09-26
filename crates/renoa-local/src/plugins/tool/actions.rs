@@ -1,169 +1,62 @@
-use renoa_agent::{ToolError, ToolOutput, ToolUpdates};
-use tokio_util::sync::CancellationToken;
-
 use super::{
-    AuthorizedOutput, ConnectedOutput, ConnectionOutput, InstalledOutput, ManageTool,
-    output::{
-        InstalledConnectionFailure, installed_connection_failure_output, json_output, plugin_error,
-        remote_mcp_error_output,
-    },
+    AuthorizedOutput, ConnectedOutput, ConnectionOutput, DisconnectedOutput, EnabledOutput,
+    InstalledOutput,
+    output::{InstalledConnectionFailure, installed_connection_failure_output, json_output},
 };
-use crate::{
-    mcp::{McpAdapterError, McpCatalogSnapshot, McpHostError},
-    plugins::{
-        ExtensionAddRequest, InstalledPlugin, PluginCredential, PluginError,
-        manager::{
-            ExtensionAddOutcome, ExtensionConnectionOutcome, ExtensionSourceReceipt,
-            ProfileAuthorizationRequest, ProfileConnectionRequest,
-        },
-    },
-    skills::SkillComponentReport,
+use crate::mcp::McpCatalogSnapshot;
+use crate::plugins::{
+    InstalledPlugin, PluginAddOutcome, PluginConnectionOutcome, PluginError, PluginSourceReceipt,
+    api::PluginOutcome,
 };
+use crate::skills::SkillComponentReport;
+use renoa_agent::{ToolError, ToolOutput};
 
-pub(super) struct ExtensionInvocation<'a> {
-    operation_id: &'a str,
-    cancellation: CancellationToken,
-    updates: &'a ToolUpdates,
-}
-
-impl<'a> ExtensionInvocation<'a> {
-    pub(super) const fn new(
-        operation_id: &'a str,
-        cancellation: CancellationToken,
-        updates: &'a ToolUpdates,
-    ) -> Self {
-        Self {
-            operation_id,
-            cancellation,
-            updates,
-        }
+pub(super) fn render(outcome: PluginOutcome) -> Result<ToolOutput, ToolError> {
+    match outcome {
+        PluginOutcome::Inspected(inspection) => json_output(&inspection),
+        PluginOutcome::Installed(installed) => json_output(&installed),
+        PluginOutcome::Listed(page) => json_output(&page),
+        PluginOutcome::Added(added) => render_added(*added),
+        PluginOutcome::Connected {
+            package_digest,
+            server,
+            connection,
+            snapshot,
+        } => json_output(&ConnectionOutput {
+            status: "catalog_loaded",
+            package_digest,
+            server,
+            connection,
+            catalog_digest: snapshot.digest().to_owned(),
+            tools: snapshot.tools().len(),
+            rejected_tools: snapshot.rejected_tools().len(),
+        }),
+        PluginOutcome::Authorized {
+            connection,
+            snapshot,
+        } => json_output(&AuthorizedOutput {
+            status: "authorized",
+            connection,
+            catalog_digest: snapshot.digest().to_owned(),
+            tools: snapshot.tools().len(),
+            rejected_tools: snapshot.rejected_tools().len(),
+        }),
+        PluginOutcome::Disconnected {
+            connection,
+            catalog_retained,
+        } => json_output(&DisconnectedOutput {
+            status: "disconnected",
+            connection,
+            catalog_retained,
+            enabled_for_agent: false,
+        }),
+        PluginOutcome::Enabled { connection } => json_output(&EnabledOutput {
+            status: "enabled",
+            connection,
+            catalog_retained: true,
+            enabled_for_agent: true,
+        }),
     }
-}
-
-pub(super) struct ConnectRequest {
-    pub(super) package_digest: String,
-    pub(super) server: String,
-    pub(super) connection: String,
-    pub(super) credential: PluginCredential,
-    pub(super) replace: bool,
-    pub(super) restart: bool,
-    pub(super) required_scope: Option<String>,
-}
-
-pub(super) async fn connect(
-    tool: &ManageTool,
-    request: ConnectRequest,
-    invocation: ExtensionInvocation<'_>,
-) -> Result<ToolOutput, ToolError> {
-    let (snapshot, status) = match tool
-        .manager
-        .connect_profile_operation(
-            ProfileConnectionRequest {
-                agent_id: &tool.agent_id,
-                package_digest: &request.package_digest,
-                server_id: &request.server,
-                connection_id: &request.connection,
-                credential: request.credential,
-                replace: request.replace,
-                restart: request.restart,
-                requested_scope: request.required_scope.as_deref(),
-                operation_id: invocation.operation_id,
-                updates: Some(invocation.updates),
-            },
-            invocation.cancellation.clone(),
-        )
-        .await
-    {
-        Ok(snapshot) => (snapshot, "catalog_loaded"),
-        Err(PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote)))) => {
-            return remote_mcp_error_output(&remote);
-        }
-        Err(error) => return Err(plugin_error(error, true)),
-    };
-    json_output(&ConnectionOutput {
-        status,
-        package_digest: request.package_digest,
-        server: request.server,
-        connection: request.connection,
-        catalog_digest: snapshot.digest().to_owned(),
-        tools: snapshot.tools().len(),
-        rejected_tools: snapshot.rejected_tools().len(),
-    })
-}
-
-pub(super) async fn authorize(
-    tool: &ManageTool,
-    connection: String,
-    restart: bool,
-    required_scope: Option<String>,
-    invocation: ExtensionInvocation<'_>,
-) -> Result<ToolOutput, ToolError> {
-    let snapshot = match authorize_snapshot(
-        tool,
-        &connection,
-        restart,
-        required_scope.as_deref(),
-        invocation,
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(PluginError::Mcp(McpHostError::Adapter(McpAdapterError::Remote(remote)))) => {
-            return remote_mcp_error_output(&remote);
-        }
-        Err(error) => return Err(plugin_error(error, true)),
-    };
-    json_output(&AuthorizedOutput {
-        status: "authorized",
-        connection,
-        catalog_digest: snapshot.digest().to_owned(),
-        tools: snapshot.tools().len(),
-        rejected_tools: snapshot.rejected_tools().len(),
-    })
-}
-
-async fn authorize_snapshot(
-    tool: &ManageTool,
-    connection: &str,
-    restart: bool,
-    required_scope: Option<&str>,
-    invocation: ExtensionInvocation<'_>,
-) -> Result<McpCatalogSnapshot, PluginError> {
-    tool.manager
-        .authorize_profile(
-            ProfileAuthorizationRequest {
-                agent_id: &tool.agent_id,
-                connection_id: connection,
-                operation_id: invocation.operation_id,
-                restart,
-                requested_scope: required_scope,
-                updates: Some(invocation.updates),
-            },
-            invocation.cancellation,
-        )
-        .await
-}
-
-pub(super) async fn add(
-    tool: &ManageTool,
-    request: ExtensionAddRequest,
-    invocation: ExtensionInvocation<'_>,
-) -> Result<ToolOutput, ToolError> {
-    let added = match tool
-        .manager
-        .add_to_profile(
-            &tool.agent_id,
-            request,
-            invocation.operation_id,
-            Some(invocation.updates),
-            invocation.cancellation.clone(),
-        )
-        .await
-    {
-        Ok(added) => added,
-        Err(error) => return Err(plugin_error(error, true)),
-    };
-    render_added(added)
 }
 
 struct AddedExtensionView<'a> {
@@ -172,7 +65,7 @@ struct AddedExtensionView<'a> {
     skills: &'a SkillComponentReport,
 }
 
-fn render_added(added: ExtensionAddOutcome) -> Result<ToolOutput, ToolError> {
+fn render_added(added: PluginAddOutcome) -> Result<ToolOutput, ToolError> {
     let source = source_output(&added.source);
     let output = AddedExtensionView {
         source,
@@ -180,13 +73,13 @@ fn render_added(added: ExtensionAddOutcome) -> Result<ToolOutput, ToolError> {
         skills: &added.skills,
     };
     match added.connection {
-        ExtensionConnectionOutcome::NotRequested => installed_output(&output),
-        ExtensionConnectionOutcome::Connected {
+        PluginConnectionOutcome::NotRequested => installed_output(&output),
+        PluginConnectionOutcome::Connected {
             id,
             server,
             snapshot,
         } => connected_output(&output, &id, &server, &snapshot, "catalog_loaded"),
-        ExtensionConnectionOutcome::Failed { id, server, error } => {
+        PluginConnectionOutcome::Failed { id, server, error } => {
             failed_output(&output, id.as_deref(), server.as_deref(), error)
         }
     }
@@ -253,10 +146,12 @@ fn installed_failure(
     )
 }
 
-fn source_output(receipt: &ExtensionSourceReceipt) -> &'static str {
+fn source_output(receipt: &PluginSourceReceipt) -> &'static str {
     match receipt {
-        ExtensionSourceReceipt::Mcp => "mcp",
-        ExtensionSourceReceipt::Package => "package",
-        ExtensionSourceReceipt::Installed => "installed",
+        PluginSourceReceipt::Mcp => "mcp",
+        PluginSourceReceipt::Package => "package",
+        PluginSourceReceipt::Installed => "installed",
+        PluginSourceReceipt::Skill => "skill",
+        PluginSourceReceipt::Github => "github",
     }
 }

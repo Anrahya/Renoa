@@ -9,11 +9,115 @@ use uuid::Uuid;
 use super::{HostInitialization, LocalHost};
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalTurnOutcome,
-    ModelProvider,
+    ModelProvider, PluginInvocation, PluginOutcome, PluginRequest, PluginSource,
     mcp::{McpAuthorizationResolver, McpCredentialResolver},
 };
 
 const TOKEN: &str = "fixture-shared-host-secret";
+
+#[tokio::test]
+async fn canonical_plugin_api_binds_one_existing_agent_and_reuses_shared_content() {
+    let directory = tempdir().expect("fixture");
+    let root = directory.path();
+    prepare_fixture(root);
+    let host = host(root);
+    let first = create_agent(&host, "First").await;
+    let second = create_agent(&host, "Second").await;
+    let source = root.join("workspace/review");
+    fs::create_dir(&source).expect("standalone skill");
+    fs::write(
+        source.join("SKILL.md"),
+        "---\nname: review\ndescription: Review the source.\n---\nRead code first.\n",
+    )
+    .expect("skill instructions");
+    let invocation = || PluginInvocation {
+        operation_id: "host-plugin-fixture",
+        updates: None,
+        cancellation: CancellationToken::new(),
+    };
+    let workspace = root.join("workspace");
+    let source = PluginSource::Skill {
+        source_path: "review".into(),
+    };
+    let PluginOutcome::Inspected(inspected) = host
+        .manage_plugin(
+            &first,
+            &workspace,
+            PluginRequest::Inspect {
+                source: source.clone(),
+            },
+            invocation(),
+        )
+        .await
+        .expect("inspect through Host API")
+    else {
+        panic!("inspection outcome")
+    };
+    let install = || PluginRequest::Install {
+        source: source.clone(),
+        expected_digest: inspected.digest().to_owned(),
+    };
+    let unknown = crate::derived_agent_id(Uuid::new_v4());
+    assert!(matches!(
+        host.manage_plugin(&unknown, &workspace, install(), invocation())
+            .await,
+        Err(super::LocalHostError::AgentNotFound(id)) if id == unknown
+    ));
+    assert!(
+        host.installed_plugins()
+            .await
+            .expect("no residue")
+            .is_empty()
+    );
+    host.manage_plugin(&first, &workspace, install(), invocation())
+        .await
+        .expect("install into shared library");
+    fs::remove_dir_all(workspace.join("review")).expect("remove mutable source");
+    host.manage_plugin(&second, &workspace, install(), invocation())
+        .await
+        .expect("another agent can reuse exact content without original source");
+    assert!(
+        host.config
+            .skill_store
+            .summaries(&first.to_string(), &workspace)
+            .expect("install does not enable skills")
+            .is_empty()
+    );
+    host.manage_plugin(
+        &second,
+        &workspace,
+        PluginRequest::Add {
+            source: PluginSource::Installed {
+                package_digest: inspected.digest().to_owned(),
+            },
+            expected_digest: None,
+            server: None,
+            connection: None,
+            credential: None,
+            replace: false,
+        },
+        invocation(),
+    )
+    .await
+    .expect("enable skills only for the second agent");
+    for (agent, expected) in [(first, 0), (second, 1)] {
+        assert_eq!(
+            host.config
+                .skill_store
+                .summaries(&agent.to_string(), &workspace)
+                .expect("exact agent selection")
+                .len(),
+            expected
+        );
+    }
+    assert_eq!(
+        host.installed_plugins()
+            .await
+            .expect("shared library")
+            .len(),
+        1
+    );
+}
 
 #[tokio::test]
 async fn live_host_clients_reuse_credentials_packages_and_skills_across_agents_and_restart() {
@@ -93,7 +197,7 @@ async fn live_host_clients_reuse_credentials_packages_and_skills_across_agents_a
             .await
             .expect("same package library")
             .len(),
-        1
+        2
     );
     for path in [
         root.join("data/host.sqlite3"),
