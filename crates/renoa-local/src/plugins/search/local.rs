@@ -1,11 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use renoa_agent::ToolError;
 use serde::Serialize;
 
+use super::page::Page;
+
 use crate::{
     mcp::{McpConnectionStatus, McpToolSummary, SEARCH_RESULT_LIMIT},
-    output::MAX_TOOL_OUTPUT_BYTES,
     plugins::{PluginListReport, PluginMcpServer, manager::integration_id},
     skills::SkillSourceReport,
 };
@@ -67,66 +68,6 @@ pub(super) enum PluginFact {
         entry: Option<String>,
         reason: String,
     },
-}
-
-#[derive(Serialize)]
-pub(super) struct Page<T> {
-    items: Vec<T>,
-    total: usize,
-    next_offset: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    library_refresh: Option<&'static str>,
-}
-
-impl<T: Clone + Serialize> Page<T> {
-    pub(super) fn new(
-        matches: Vec<T>,
-        total: usize,
-        offset: usize,
-        shared_refresh_unavailable: bool,
-    ) -> Result<Self, ToolError> {
-        if offset > total {
-            return Err(ToolError::invalid_input(
-                "offset is beyond the available results; restart at 0",
-            ));
-        }
-        let mut items = matches
-            .into_iter()
-            .take(SEARCH_RESULT_LIMIT)
-            .collect::<Vec<_>>();
-        loop {
-            let next = offset.saturating_add(items.len());
-            let page = Self {
-                items,
-                total,
-                next_offset: (next < total).then_some(next),
-                library_refresh: shared_refresh_unavailable
-                    .then_some("shared library unavailable; showing local snapshot"),
-            };
-            let bytes = serde_json::to_vec(&page).map_err(|error| {
-                ToolError::internal(format!("plugin search page could not be encoded: {error}"))
-            })?;
-            if bytes.len() <= MAX_TOOL_OUTPUT_BYTES {
-                return Ok(page);
-            }
-            if page.items.len() <= 1 {
-                return Err(ToolError::output_limit(format!(
-                    "one plugin search result exceeds the {MAX_TOOL_OUTPUT_BYTES}-byte output boundary"
-                )));
-            }
-            items = page.items;
-            items.pop();
-        }
-    }
-
-    pub(super) fn shorten(&mut self, offset: usize) -> bool {
-        if self.items.len() <= 1 {
-            return false;
-        }
-        self.items.pop();
-        self.next_offset = Some(offset + self.items.len());
-        true
-    }
 }
 
 impl Inventory {
@@ -268,7 +209,7 @@ impl Inventory {
         package_integrations: &HashSet<String>,
     ) -> Vec<CardRecord> {
         let mut records = Vec::new();
-        let mut direct = HashMap::<&str, Vec<&McpConnectionStatus>>::new();
+        let mut direct = BTreeMap::<&str, Vec<&McpConnectionStatus>>::new();
         for status in connections {
             if !package_integrations.contains(status.integration()) {
                 direct.entry(status.integration()).or_default().push(status);
@@ -330,6 +271,47 @@ impl Inventory {
         records
     }
 
+    pub(super) fn add_host_plugins(
+        &mut self,
+        plugins: &crate::plugins::host::HostPlugins,
+    ) -> Result<(), ToolError> {
+        for (plugin, tools) in plugins.components() {
+            let enabled = plugins.enabled(plugin)?;
+            let search_text = format!(
+                "{} {} {}",
+                plugin.id(),
+                plugin.description(),
+                tools
+                    .iter()
+                    .map(|tool| format!("{} {}", tool.name, tool.description))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+            .to_lowercase();
+            self.records.push(CardRecord {
+                card: PluginCard {
+                    id: plugin.id().to_owned(),
+                    source: "host_plugin",
+                    name: plugin.id().to_owned(),
+                    description: Some(plugin.description().to_owned()),
+                    version: None,
+                    mcp_servers: 0,
+                    connections: 0,
+                    enabled_connections: 0,
+                    catalog_loaded_connections: 0,
+                    catalog_tool_count: tools.len(),
+                    credential_configured_connections: 0,
+                    active_skills: 0,
+                    plugin_id: Some(plugin.id().to_owned()),
+                    enabled_for_agent: enabled,
+                },
+                facts: Vec::new(),
+                search_text,
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn shared_refresh_unavailable(&self) -> bool {
         self.shared_refresh_unavailable
     }
@@ -372,7 +354,9 @@ impl Inventory {
                     3
                 };
                 Some((
-                    record.card.enabled_connections == 0 && record.card.active_skills == 0,
+                    !record.card.enabled_for_agent
+                        && record.card.enabled_connections == 0
+                        && record.card.active_skills == 0,
                     score,
                     &record.card,
                 ))
@@ -443,7 +427,7 @@ impl Inventory {
     }
 }
 
-fn validate_query(query: &str) -> Result<String, ToolError> {
+pub(super) fn validate_query(query: &str) -> Result<String, ToolError> {
     let trimmed = query.trim();
     if trimmed.is_empty() || trimmed.len() > 256 {
         return Err(ToolError::invalid_input(

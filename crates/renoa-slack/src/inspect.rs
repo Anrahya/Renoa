@@ -9,7 +9,9 @@ use crate::{Config, SlackError};
 /// Returns missing, incompatible, or unreadable surface storage.
 pub fn inspect(config: &Config) -> Result<Value, SlackError> {
     let connection = Connection::open_with_flags(
-        config.data_directory.join("slack.sqlite3"),
+        config
+            .data_directory
+            .join("state/surfaces/slack/slack.sqlite3"),
         OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;

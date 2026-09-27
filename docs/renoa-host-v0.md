@@ -32,10 +32,10 @@ described below; browser, CLI, and model-facing adapters share domain semantics.
 
 The first concrete coding preset is Renoa Alpha v1, specified in
 [`renoa-alpha-v1.md`](renoa-alpha-v1.md). Its stable creation preset identity is
-`renoa.coding.alpha.v2`. Alpha is one code-owned creation preset, not a special
+`renoa.coding.alpha.v3`. Alpha is one code-owned creation preset, not a special
 Host execution type. Arcee is the first personal-operator preset, with stable
-identity `renoa.personal.arcee.v2`; Telegram is only its first surface. A
-caller-defined specialist is created from `renoa.specialist.v2`. Every agent is
+identity `renoa.personal.arcee.v3`; Telegram is only its first surface. A
+caller-defined agent uses the explicit creation schema; `renoa.general.v1` is an optional general template. Every agent is
 one durable, provider-neutral `AgentDefinition`: identity and creation provenance,
 an optional creation preset id, the complete core operational document, the exact
 tool selection, and the exact selected Host connection ids. Creation snapshots
@@ -426,27 +426,16 @@ adapters; they do not become agents merely because they deliver messages. A
 GitHub-review or daily-assistant agent definition may be used
 from any compatible surface.
 
-## Full-access first slice
+## Capability composition
 
-Permission semantics are deliberately open. V0 does not introduce roles,
-levels, grants, approval records, or a permission trait.
+Every agent receives `plugin_search`, `plugin_manage`, and one invocation tool:
+`code_mode` when the Host configures the pinned Monty worker, otherwise
+`tool_execute`. These are platform capabilities and cannot be removed through
+machine-tool selections. Targeted discovery comes before `*` browsing. Plugin
+cards and nested tools retain the 200-item limit; exact references return the
+full model-facing input schema.
 
-Agents run with full access through the capabilities selected for them. The
-creation preset seeds an exact selection; a revision-checked capability edit
-changes an agent's effective tools without rewriting its creation receipt, and
-the exact stored names are the whole rule. `set_agent_tools` is a trusted
-owner-management operation, also available as
-`renoa-host <config.json> agent-tools <edit.json>`.
-The edit contains `operation_id`, `id`, `expected_revision` (positive; the
-creation selection is revision 1), and `tools`. Its transaction persists the
-edit and replay receipt together;
-stale revisions and conflicting retries fail. Ordinary agents and review
-assembly consume the same selection. Active reviews retain their frozen selection;
-new runs use the updated one. This operation is not exposed as a self-granting
-model tool or an unauthenticated remote endpoint.
-This selection does not add an OS sandbox or a permission system. External catalogs are
-reached through two fixed registry tools so catalog size does not become
-model context. The current top-level set is:
+The exact machine-tool selection contains only:
 
 ```text
 read_file
@@ -455,32 +444,35 @@ write_file
 bash
 grep
 find
-git_changes
-git_diff
-git_show
-plugin_manage
-agent_manage
-routine_manage
-routine_results
-plugin_search
-tool_execute
-code_mode
-skill_search
-skill_load
-agent_documents
 ```
 
-Capability names are exact: there is no wildcard and no revision-0 fallback. An
-agent binds exactly the capabilities its stored selection names, so a name that
-is absent is absent from both the model request and the execution boundary.
-The Alpha preset seeds all nine workspace tools plus `plugin_manage`, the
-two registry tools, and the two skill tools. The Arcee preset seeds
-`plugin_manage`, `agent_manage`, `routine_manage`,
-`routine_results`, the two registry tools, the two skill tools, and
-`agent_documents` on top of the workspace tools. A caller-defined specialist
-seeds `routine_manage`, `routine_results`, the registry and skill tools, and
-receives `agent_manage` or `plugin_manage` only when its creation selection
-or a later capability edit names it.
+An explicit creation selection replaces the optional template's tools, including
+`tools: []`. Without a template or a selection, a new agent has no machine tools.
+Alpha and Arcee templates default to all six. Every agent still has discovery,
+plugin management, and invocation. The agent creation plugin may select any
+machine tools for a child; it exposes no operation to grant tools to its caller.
+`set_agent_tools` and `renoa-host <config.json> agent-tools <edit.json>` are trusted
+owner operations. Their revision-checked receipts remain independent of the
+original creation receipt. Active operations retain their frozen grants.
+
+Five compiled Host plugins use the same discovery, exact-schema lookup, and
+invocation boundary as external MCP tools:
+
+| Plugin | Capabilities |
+| --- | --- |
+| `renoa.agents` | Create, list, rename agents |
+| `renoa.routines` | Manage schedules and read retained results |
+| `renoa.documents` | Read and edit this agent's enabled SOUL/USER files |
+| `renoa.skills` | Discover skills and activate exact instruction revisions |
+| `renoa.git` | Inspect local changes, diffs, and commits |
+
+These plugins start enabled; document tools exist only for definitions that enable
+documents. `plugin_manage` can enable or deactivate a compiled plugin for its
+caller. Stored state is checked again on discovery and dispatch. Imported
+manifests cannot register native implementations or change machine grants.
+References bind the real schema and implementation revision; stale references
+fail and require a fresh search. External packages continue to use immutable
+content identities and Host-reviewed provider families.
 
 Existing tool invariants remain in force. File tools stay within the configured
 workspace. Bash starts in that workspace but is unrestricted and is not a
@@ -543,7 +535,7 @@ and authoritative data integrity. It cannot execute or recover a turn; callers
 drop the handle and use normal executable loading after repairing dependencies.
 ACP uses this path when normal session loading is unavailable.
 
-`host.sqlite3` schema v28 keeps Host identity, the canonical agent definition
+`state/host.sqlite3` schema v32 keeps Host identity, the canonical agent definition
 tables (`host_agents`, `host_agent_tool_selections`, `host_agent_mcp_connections`,
 `host_agent_creations`, `host_agent_tool_selection_operations`,
 `host_agent_renames`), installed package metadata, supported package MCP entries,
@@ -595,30 +587,21 @@ offline.
 catalog, durable model selection, and active-turn coordination. ACP sees these
 Host types; it does not construct a kernel `Runtime` or persist Host state.
 
-The Host offers `plugin_search` and `tool_execute` when the stored selection
-names them. A targeted search returns compact plugin cards and up to three
-matching MCP tools. Each small preview schema is complete; when it is absent,
-an exact reference request returns the full model-facing schema within 64 KiB.
-Search also pages plugin facts and enabled connection tools at up to 200 items
-and 50 KiB per page. Use a targeted query before `*`. Execute resolves one exact reference
-containing the current catalog digest, then reuses the proven MCP credential,
-adapter, result, and `NeverReplay` boundary. A missing adapter fails execution
-visibly; it does not prevent an Agent from starting or hide searchable catalog
-state.
+The Host always offers the plugin protocol described above. Targeted search
+returns compact plugin cards and up to three matching Host or MCP tools. A small
+preview schema is complete; otherwise an exact reference request returns the
+full schema within 64 KiB. Plugin cards and nested tool pages return at most
+200 items within 50 KiB. A missing MCP adapter fails remote execution visibly;
+it does not prevent Host plugins from running.
 
-`code_mode` is a separate selectable Host capability, not an implicit MCP
-registry tool. When selected, the Host requires a configured exact-pinned
-Monty worker and MCP adapter, removes `tool_execute` from the model-visible
-bindings, and binds that same executor behind the Code Mode loop. This holds
-even if a preset's stored selection also names `tool_execute`.
-`plugin_search` remains visible only when individually selected.
-The evaluator pool is shared by this Host process, starts with no idle worker,
-and is capped at two subprocesses; an agent without `code_mode` starts without
-the worker. The Host validates the configured worker's binary hash before
-opening mutable Host state. This release's pinned binary is Linux x86-64 only.
-A wrong configured worker refuses Host startup, and a missing worker refuses a
-Code Mode agent's runtime; neither case falls back to system Python or direct
-MCP execution.
+A configured exact-pinned Monty worker automatically replaces the visible
+`tool_execute` with `code_mode`, retaining the same executor as a hidden durable
+binding. Python uses `await plugin(reference, arguments)` for either Host or
+MCP tools. No MCP adapter is required to invoke a Host plugin. Every nested
+invocation remains independently durable; the model sees the final Python value.
+The evaluator pool starts empty and is capped at two subprocesses. Worker hash
+validation happens before mutable Host state is opened. This release's worker
+is Linux x86-64 only; an invalid configured worker refuses startup.
 
 The discovery and MCP tools open current `host.sqlite3` state for each call. A committed
 connection attachment or catalog refresh is therefore visible on the next
@@ -629,7 +612,7 @@ silently changing a selected invocation.
 The Host offers one fixed `plugin_manage` tool. Its model-facing schema is
 flat and uses only the broadly supported JSON Schema subset needed by
 OpenAI-compatible providers. The Host still decodes one exact, closed variant
-for each of eight typed actions and rejects missing or cross-action fields:
+for each typed action and rejects missing or cross-action fields:
 add one MCP definition independently
 verified against the provider's official documentation or one content-bound
 local Agent Plugins 1.0 directory; inspect a local package; install the exact
@@ -754,9 +737,8 @@ Host resolves the agent's stored definition before resolving these inputs:
 - reasoning configuration;
 - the agent's stored instructions, optional bounded workspace `AGENTS.md`, and
   exact active skill instructions; and
-- the nine workspace tools, `plugin_search`, `plugin_manage`,
-  `tool_execute`, the fixed agent manager, the routine tools, and the fixed
-  skill registry tools, filtered to the exact stored capability selection.
+- exactly the six possible machine grants plus the fixed plugin protocol;
+  management, documents, skills, and Git inspection are discovered plugin tools.
 
 `build_local_runtime` resolves that definition with a `LocalWorkspace`:
 
@@ -817,7 +799,7 @@ The remaining commands assemble the ordinary Host from the same launch
 configuration a running service uses. `provision` is the trusted creation path
 for a `System`/`Provisioning` caller: the first agent on an empty Host is created
 by it. Its document is the canonical creation request in camelCase JSON, for
-example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v2","name":"Alpha"}`,
+example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v3","name":"Alpha"}`,
 with optional `instructions`, `tools`, `connections`, and `routine`. `agent-tools`
 applies one revision-checked capability edit. `rename-agent` applies one
 expected-current-name-checked display-name edit with an explicit operation id. `reset` is the
@@ -827,7 +809,7 @@ executable model bridge.
 The ACP adapter's `renoa-agent agents list`, `renoa-agent agents show AGENT_UUID`,
 and `renoa-agent agents session AGENT_UUID SESSION_UUID /absolute/workspace`
 commands remain optional adapters over the same reads and session binding. They
-use `RENOA_DATA_DIR`, `RENOA_AGENT_ID`, and the provider launch settings. Listing
+use `RENOA_HOME`, `RENOA_AGENT_ID`, and the provider launch settings. Listing
 and lookup need no executable model bridge; session creation resolves the stored
 definition and model normally, and the returned Session ID can be reopened
 through the existing ACP load path. Host and Agent identity, creation retries,
@@ -931,27 +913,46 @@ never invents an uncertain result, and a safe-to-replay effect's live unknown
 report from its first durable dispatch is replayed once before that outcome
 becomes durable, unless a cancellation is already recorded for the operation.
 
-Local Host state has one intentionally visible layout:
+Local Host state uses one installation home. Resolution is an explicit launch
+`home`, then `RENOA_HOME`, then `~/.renoa`. All launchers use the same layout;
+service installations may supply an absolute home. Managed roots and agent
+workspace ancestors reject symbolic links. Newly created directories are private
+on Unix. Explicit credential files, authenticated CLI stores, binaries, package
+sources, and surface workspaces may be owner-supplied external references.
 
 ```text
-<data-root>/
-  host.sqlite3                  agent definitions, package metadata, MCP state,
-                                credential references, and skill/session bindings
-  agents/<agent-id>/            published SOUL.md and USER.md documents
-  agent-workspaces/<agent-id>/  Host-owned workspace for scheduled and headless runs
-  oauth-locks/<sha256>.lock     process-crash-safe per-connection OAuth lock
-  oauth-secrets/<sha256>.json   headless-only owner-protected credentials
-  credential-relay-state/      owner-only pending encrypted-intake identities
-  plugins/<sha256>/             immutable Agent Plugin directory
-  shared-registry/              owner-only transient package transfers
-  skills/<sha256>/              immutable imported Agent Skill directory
+~/.renoa/
+  config/                         launch configuration
+  credentials/
+    models.sqlite3                default model credential-store location
+    oauth-secrets/<sha256>.json    private remote OAuth/API-key secrets
+  plugins/<sha256>/                immutable external plugin packages
+  agents/<agent-id>/
+    SOUL.md, USER.md                enabled identity and user documents
+    workspace/                     scheduled/headless agent workspace
+  state/
+    host.sqlite3                   definitions, plugins, connections, receipts
+    skills/<sha256>/               imported immutable skill revisions
+    oauth-locks/                   process-safe per-connection locks
+    credential-relay-state/        private pending encrypted-intake identities
+    shared-registry/               transient package transfers
+    surfaces/<surface>/            surface-owned queues and delivery state
+    node.sqlite3                   node continuity state
+    coordinator.sqlite3            coordinator state
+    registry/                      private package-registry state
+    review-sessions/                review kernel journals and traces
+    review-workspaces/              frozen inspection checkouts
+    github-executions/              GitHub execution records
   sessions/<session-uuid>/
-    session.json                durable identity and workspace/agent binding
-    runtime.jsonl               acknowledged provider/model/reasoning selections
-    kernel.sqlite3              authoritative execution and recovery truth
-    trace.sqlite3               ordered Host/model/tool diagnostics plus exact
-                                Agent and Session identity
+    session.json                   agent/workspace binding
+    runtime.jsonl                  provider/model/reasoning selections
+    kernel.sqlite3                 execution and recovery truth
+    trace.sqlite3                  diagnostics
+  runtime/                         owner-installed runtime assets
 ```
+
+A component creates only its own stores. Directory initialization does not
+configure accounts, install binaries, or create an authenticated model store.
 
 Usage, cache counts, execution timings, provider payloads, streamed chunks, and
 tool diagnostics belong in `trace.sqlite3`, never `runtime.jsonl` or model
@@ -968,16 +969,17 @@ session UUID and syncs the parent directory. Initialization failure removes the
 staging directory, so a loadable session is never partially published. On Unix,
 the published session directory is owner-only because trace and history contain
 prompts, source text, and tool data.
-The global `host.sqlite3`, `plugins/`, and `skills/` stores are owner-only on Unix.
+The global `state/host.sqlite3`, `plugins/`, and `state/skills/` stores are owner-only on Unix.
 `runtime.jsonl` recovery truncates an incomplete crash tail before any later
 append; future valid records can never be joined onto torn JSON.
 
 ## Clean-break deployment and reset
 
-The canonical agent definition replaces the earlier profile and bot records
-rather than reading both shapes. The cutover is explicit and bounded: an earlier
-data root fails closed at startup with the required command in the error, so no
-runtime ever discards a live agent roster silently, and ordinary startup never
+Renoa opens only the canonical home layout. Root-level legacy catalogs and
+previous directory layouts are not imported or opened; launch files use `home`.
+An incompatible catalog found at `state/host.sqlite3` fails closed with an
+explicit reset instruction. The canonical agent definition replaces the earlier
+profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
 1. Stop every writer: the routine service (`renoa-host <config.json>`), every
@@ -989,7 +991,7 @@ deletes broad filesystem state.
    directory, and refuses a backup inside the data root. The copy completes
    before the cutover touches the root.
 3. Apply the bounded reset, which performs the schema cutover. An earlier data
-   root (any catalog version below 28) is refused at startup until this runs, so
+   catalog at the canonical path (any version below 28) is refused until this runs, so
    the reset is the only path that changes those tables. It drops the retired
    agent-owned tables (`host_agents` in its old shape, `host_bots*`,
    `profile_mcp_connections`, `profile_mcp_tools`, `profile_skill_bindings`,
@@ -999,8 +1001,8 @@ deletes broad filesystem state.
    migration ladder first for the shared domains it still owns.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
    agent-owned rows, the session, review-session and review-inspection
-   directories, and the document roots of both layouts — the canonical
-   `agents/<agent-id>/` and the predecessor `profiles/<preset-id>/` — and it
+   directories, enabled SOUL/USER files, and predecessor document roots. It preserves
+   canonical `agents/<agent-id>/workspace` directories and
    never deletes workspace files or the Host's shared state. One transaction
    deletes the whole row set with foreign keys deferred, so the order it is
    written in cannot break a reset, and a test that classifies every catalog
@@ -1030,16 +1032,16 @@ deletes broad filesystem state.
    archives, snapshots, and unused versioned binaries.
 
 The stores are separate databases with no cross-store transaction. The Host
-reset is one idempotent step over `host.sqlite3` and the Host session
+reset is one idempotent step over `state/host.sqlite3` and the Host session
 directories. The node ledger is a separate idempotent step over
 `host_node_metadata`, `host_node_tasks`, `host_node_executions`, and
 `host_node_events`; this release renames the task's agent column and refuses an
 earlier ledger by name. Stop the node service, take the consolidated backup,
-delete only `<state-directory>/node.sqlite`, and apply the canonical Host reset
-to `<state-directory>/host`, using a fresh subdirectory inside that consolidated
+delete only `<renoa-home>/state/node.sqlite3`, and apply the canonical Host reset
+to `<renoa-home>`, using a fresh subdirectory inside that consolidated
 backup. The private Host's plugins, MCP state, skills and shared registry are
 mutable shared state, not derivable node configuration. Keep
-`<state-directory>/model-auth.sqlite`, re-provision the bootstrap agent, then
+`<renoa-home>/credentials/models.sqlite3`, re-provision the bootstrap agent, then
 start the daemon again. Each surface store is its own step: the Slack store owns
 `identity`, `sessions`, `conversations`, `requests`, `messages`, `receipts`,
 `deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
@@ -1079,45 +1081,43 @@ wait for a new operation and never mutate an active manifest.
 The kernel and the trusted Host enforcement path are outside agent-managed
 modification.
 
-### Persistent specialist agents
+### Persistent agents
 
-Arcee now creates persistent specialists through the `agent_manage` tool, backed
-by the one typed Host creation operation. The Host atomically stores an agent's
-identity, typed creation provenance, complete operational document, exact tool
-selection, and selected connections in one root row plus its normalized
-children. Every named connection
-must have a complete discovered catalog. Creation derives a stable identity
-from the operation id (which the tool derives from the kernel tool-call
-identity); identical replay returns the existing agent,
-while conflicting data fails. Cancellation is checked before document
-publication and again under the write lock before committing, so abandoned
-creation does not publish an agent.
+The `renoa.agents` plugin exposes the canonical agent creation operation. The
+primary schema accepts a name, standing instructions, exact machine tools,
+provider/model/reasoning defaults, behavior, documents, and existing connections.
+The preset id is optional. Caller values override template defaults; an explicit
+empty tool selection removes every template machine grant. Fresh sessions consume
+the stored model preference, while saved conversation selections remain separate.
+Creation validates the requested model against the enabled provider catalog before
+writing agent state. Receipt replay returns the original definition without
+requiring another provider catalog lookup.
 
-Already-running Host processes resolve these stored definitions without a
-restart. Each definition is self-contained: its stored instructions are the
-whole standing prompt and its stored selection is the actual advertised
-tool set. Registry and skill
-execution retain the existing Host capability path; selecting `plugin_manage`
-allows reuse of installed packages and existing connections without repeating
-OAuth. Selecting `agent_manage` allows a specialist to create descendants. These
-are capability choices, not a permission or OS isolation guarantee.
+Identity, typed provenance, operational settings, exact machine selection, and
+connections are persisted in one root row and normalized children. Each named
+connection must have a complete catalog. Stable operation identities make identical
+retries return the same child. Model tool-call identity determines the operation
+id. Every child receives plugin management, discovery, and invocation by default.
+An agent can select any machine grants for a child, but cannot change its own
+grants through this plugin. Definition and document resolution happens again at
+the next admitted turn; an active kernel operation retains its frozen manifest.
 
 `agent_manage list` returns compact pages of 20 definitions with identity,
 name, preset id, tools, and connections plus a continuation cursor. Exact
-definition lookup is separate. Agent inventory includes persisted specialists.
+definition lookup is separate. Agent inventory includes persisted agents.
 `agent_manage rename` edits the Host display name with an expected-current-name
 check and a durable operation receipt; an agent may rename itself, and renaming
-another agent requires the actor's stored selection to contain `agent_manage`.
+another agent requires the actor's enabled `renoa.agents` plugin.
 Replay returns the original rename result; replaying a creation operation
 returns the definition that operation committed, and later edits (rename,
 capability changes) are not reflected. Agent identity, sessions, workspace,
 tools, and connections remain intact.
 Names should be short job labels, such as X Desk, News, or Research. Slack
 projects display-name changes onto the existing channel by its retained ID.
-Slack projects the Host specialist inventory into dedicated private channels and
+Slack projects the Host agent inventory into dedicated private channels and
 invites the operator. Its own catalog records provisioning state and conversation
 bindings; creation recovery and external channel IDs remain surface concerns.
-Plain messages in a dedicated channel route to that specialist. The adapter
+Plain messages in a dedicated channel route to that agent. The adapter
 also persists a concise interface-capability snapshot with each admitted prompt,
 so the model can distinguish automatic surface behavior from connected MCP
 capabilities. This remains surface-owned input, not Slack policy in the Host or
@@ -1125,33 +1125,33 @@ kernel. Shared agent memory must not determine the active message surface. Slack
 supports optional `!agent <id>` routing in DMs and ordinary threads: admission persists the
 target Agent alongside a fresh Session before acknowledging the command. Earlier
 queued requests retain their targets. `!new` keeps the selected Agent; `!agent arcee` returns to the operator in a fresh conversation. A separate channel
-thread can keep another conversation open. Specialist working directories live
-under the Host's `agent-workspaces/<agent-id>` directory.
+thread can keep another conversation open. Agent working directories live
+under the Host's `agents/<agent-id>/workspace` directory.
 
 The following behavior describes the remaining product direction. Definition edits and structured generated-artifact management remain open. Host-owned
 routines and Slack result delivery are implemented below.
 
 For example, the user asks Arcee to create a news-digest agent with selected
 sources, research tools, and a document-generation capability. Arcee uses Host
-management operations to create the specialist's definition and durable Agent
+management operations to create the agent's definition and durable Agent
 Instance, select available capabilities and account connections, and request a
 Slack conversation binding. If a needed capability is missing, existing
 plugin management supplies the installation/authentication path; mentioning
 a tool in instructions never makes that tool available.
 
-The specialist is independently addressable and retains its own conversations,
+The agent is independently addressable and retains its own conversations,
 working preferences, and output references. It can answer a direct message or
 run a standing digest task on a schedule. It remains present when Arcee's
 creating turn finishes, when either agent is idle, and across Host restarts.
 A temporary delegated run may reuse agent execution primitives, but completing
-that run and deleting a persistent specialist are different lifecycle actions.
+that run and deleting a persistent agent are different lifecycle actions.
 
 The Host must retain distinct relationships:
 
-- the definition describes the specialist's instructions and selected components;
-- the Agent Instance identifies the persistent specialist;
-- the creating-agent relationship supports the operator/specialist hierarchy
-  without making the creator's current session own the specialist's lifetime;
+- the definition describes the agent's instructions and selected components;
+- the Agent Instance identifies the persistent agent;
+- the creating-agent relationship supports the operator/agent hierarchy
+  without making the creator's current session own the agent's lifetime;
 - a surface binding maps an external conversation to the intended agent and
   session; the Slack channel is not the Agent identity;
 - a routine supplies a standing request, schedule, timezone, and delivery
@@ -1160,14 +1160,14 @@ The Host must retain distinct relationships:
   Slack attachment or notification.
 
 The personal Renoa installation owns these records. A Slack application may
-route several specialists through separate channels or threads; creating a
-specialist does not require creating another Slack application or bot token.
-The control panel may group agents by surface and nest specialists beneath
+route several agents through separate channels or threads; creating a
+agent does not require creating another Slack application or bot token.
+The control panel may group agents by surface and nest agents beneath
 their creator, while the underlying identities remain independent of that
 presentation and can acquire another surface binding later.
 
 Human controls and model-facing management tools must invoke the same typed
-Host operations. Arcee can create and configure the specialist; the specialist
+Host operations. Arcee can create and configure the agent; the agent
 can update its own routine in response to the user's instruction. Changing
 "daily at 16:00" to "daily at 14:00" updates the existing routine with an
 explicit timezone and reports the next occurrence. It must not silently add a
@@ -1175,7 +1175,7 @@ second routine or mutate an already executing occurrence. A scheduled request
 and an interactive request use the same session-admission and ordering rules.
 
 Creation spans local durable records and external surface actions. Retrying an
-interrupted creation must resolve the same specialist and routine, reconcile
+interrupted creation must resolve the same agent and routine, reconcile
 surface provisioning, and expose partial failure without claiming a usable
 channel exists before its binding is confirmed. A routine update needs a
 durable identity and revision check so concurrent edits cannot overwrite one
@@ -1183,7 +1183,7 @@ another unnoticed. These guarantees must be tested through actual Host
 management callers rather than implemented only in an operator's prompt.
 
 The first complete Slack milestone must prove: Arcee creates one news
-specialist; the user talks to it directly; a manual and a scheduled digest use
+agent; the user talks to it directly; a manual and a scheduled digest use
 its configured capabilities; a generated document remains retrievable; the
 user changes the schedule through conversation; and restart preserves the
 agent, its relationships, and the updated routine without duplicate creation
@@ -1200,10 +1200,9 @@ introduced only with a consuming execution path or invariant test.
 
 `routine_manage` and `LocalHost::manage_routine` share typed creation, revision-checked
 replacement, and manual-run operations. An agent manages its own routines; managing
-or reading another agent's routines requires the actor's stored selection to contain
-`agent_manage`. The Arcee and specialist presets seed routine management for the
-agent itself; Alpha seeds neither routine capability. This is
-Host management policy; selecting workspace tools
+or reading another agent's routines requires its enabled `renoa.agents` plugin.
+Every agent discovers routine tools through `renoa.routines`. This is Host
+management policy; selecting machine tools
 and account connections remains independent. List returns bounded pages with exact
 routine IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
 complete routine for inspection or editing.
@@ -1220,7 +1219,7 @@ Host schema 16 introduced routines, management receipts, and occurrence records.
 operation derives its stable identity from the session, command, and tool call.
 Replaying a management operation returns its original result even after a later edit;
 conflicting input and stale revisions fail. Creation targets an existing Host
-specialist, not a Slack channel. No surface identifiers or credentials appear in
+agent, not a Slack channel. No surface identifiers or credentials appear in
 routine records. Results belong to the agent's durable Host inbox.
 
 The `renoa-host <config.json>` process owns one scheduler lease per Host directory.
@@ -1286,7 +1285,7 @@ Host result API with their own delivery cursors. This slice delivers text and du
 workspace file references; binary artifact upload and general workflow graphs remain
 separate work. An agent's files remain retrievable through that agent's configured file tools.
 
-The daemon launch JSON contains `data_directory`, `model_bridge`, `providers`,
+The daemon launch JSON contains optional `home`, `model_bridge`, `providers`,
 `provider`, `model`, `model_auth_store`, and optional `reasoning`, `mcp_adapter`,
 `code_mode_worker`, `mcp_registry_adapter`, `shared_plugin_registry`,
 `plugin_provider_families` (Host-reviewed family and exact-origin arrays), and `oauth_relay` (origin and private
@@ -1301,7 +1300,7 @@ Schema 18 admits the one-time schedule variant; older readers cannot decode it.
 Schema 19 adds routine deletion markers consumed by listing, lookup, and admission.
 At that migration, all processes sharing the Host had to support schema 19 before
 restarting. The current schema and later migrations are summarized in the
-GitHub-review section below. The integration tests exercise model-driven creation, specialist
+GitHub-review section below. The integration tests exercise model-driven creation, agent
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt
 without repeating the kernel's completed file operation.
 
@@ -1320,7 +1319,7 @@ RCP wire boundaries.
 
 `LocalHost::manage_github_review` is the trusted local management boundary.
 `SetRepository` binds a stable GitHub repository ID and installation ID to an
-existing Host specialist, an informational `owner/repository` name, enabled
+existing Host agent, an informational `owner/repository` name, enabled
 state, selected triggers, and draft handling. Creation uses no expected
 revision; updates require the exact current revision. A stable operation UUID
 and its exact result are committed together. Reusing an operation UUID with
@@ -1382,7 +1381,7 @@ renoa-host /absolute/host.json github-webhook /absolute/envelope.json
 ```
 
 A provision file is the canonical creation request in camelCase JSON:
-`operationId`, `presetId`, `name`, and optional `instructions`, `tools`,
+`operationId`, `name`, `instructions`, and optional `presetId`, `tools`, `model`, `behavior`, `documents`,
 `connections`, and `routine`. `provision` calls the same durable creation
 operation as `agent_manage` with a `System`/`Provisioning` actor and starts no
 model or surface. Repeating the same request is idempotent;
@@ -1463,7 +1462,7 @@ Provider retry semantics remain unchanged. Prefixes and provider session identit
 remain stable. Recorded token usage includes summary responses; incomplete
 accounting remains unknown.
 
-Each stage is a durable command in `review-sessions/<request-id>/kernel.sqlite`.
+Each stage is a durable command in `state/review-sessions/<request-id>/kernel.sqlite3`.
 If a normally completed response violates the report schema, the Host returns
 the parser error as a new durable correction turn in the same session. It keeps
 the investigation and uses stable correction identities, so recovery replays
@@ -1603,7 +1602,7 @@ evidence that Renoa has reached equivalent review quality.
 | [Git diff](https://git-scm.com/docs/git-diff) | Immutable commit comparison, rename detection, and explicit external-diff/textconv controls. | Reuse one pinned Git inspection capability across agents, with lossless continuation. |
 | [CodeRabbit review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Repository context, incremental reviews on subsequent commits, severity categories, and discussion of findings. | Keep per-PR review history; inspect surrounding code; publish concise findings that remain discussable. |
 | [Cursor: Building a better Bugbot](https://cursor.com/blog/building-bugbot) | Describes an early multi-pass/validator pipeline, then a move to agentic context gathering; measures findings resolved and evaluates on annotated diffs. | Use agentic investigation and a validation stage. Evaluate actual defects and false positives before multiplying model passes. |
-| [Qodo review architecture](https://docs.qodo.ai/code-review) | Specialist review agents with a judge that merges and filters findings; repository history and persistent reviews. | Make investigation and validation replaceable. Retain the evidence and disposition of findings between runs. |
+| [Qodo review architecture](https://docs.qodo.ai/code-review) | Agent review agents with a judge that merges and filters findings; repository history and persistent reviews. | Make investigation and validation replaceable. Retain the evidence and disposition of findings between runs. |
 | [Greptile scoped configuration](https://www.greptile.com/docs/code-review/greptile-config) | Directory-scoped rules and explicit context files, with visible configuration precedence. | Apply relevant repository instructions and architecture documents, and show which sources governed a run. |
 | [GitHub Copilot code review](https://docs.github.com/en/copilot/concepts/agents/code-review) | Project context gathering, configurable triggers and effort, and handoff of findings to a coding agent. | Keep review effort explicit and make structured results reusable by later fix workflows. |
 | [PR-Agent](https://github.com/The-PR-Agent/pr-agent) | A separate community-maintained open-source reviewer with configurable providers and deployment methods; it is not the current hosted Qodo implementation. | A useful inspectable reference, not a replacement Host or proof of parity with Qodo. |
@@ -1702,21 +1701,26 @@ with a one-hour lifetime and optional repository/permission restrictions. App
 registration and installation remain deployment prerequisites; the existing
 interactive GitHub MCP connection is not proof that a review App is installed.
 
-The review composer reuses the shared loop and compaction while supplying
-only the sandbox's inspection tools; it intersects them with the review agent's
-stored selection and does not inherit interactive management capabilities. This
-is tool composition, not a new popup permission system.
+The review composer reuses the shared loop and compaction. Machine tools come
+from the sandbox and the review agent's stored grants. The same plugin management,
+discovery, and invocation protocol is available during reviews; the Git plugin
+uses the pinned inspection sandbox. GitHub MCP supplies online repository context
+when its package and account connection are enabled. Publication remains a Host
+operation.
 
 The review composer selects the optional `renoa-code-review` skill from the
 Host's existing shared skill catalog. It pins the content-addressed revision and
 renders it into the durable review snapshot before inference. PR checkouts are
 never searched for this trusted skill. Changes to the shared skill affect new
-reviews; replay and compaction keep the frozen instructions. The inspection
-tools accept `include_hidden` for configuration and CI paths while retaining
+reviews; replay and compaction keep the frozen instructions. Additional skills
+loaded through the plugin protocol bind to the admitted stage command, then
+reattach on the next stage. The context projector replaces exact duplicate skill
+results with receipts while keeping their durable output. A skill already embedded
+in the frozen system prompt is not appended again. The inspection tools accept `include_hidden` for configuration and CI paths while retaining
 workspace containment checks.
 
 Each investigation and validation stage also uses the existing Host trace store
-in `review-sessions/<request-id>/trace.sqlite3`. This records model/tool latency,
+in `state/review-sessions/<request-id>/trace.sqlite3`. This records model/tool latency,
 first output, reported token/cache usage and provider retries independently of
 kernel recovery state. Progress facts must be ordinary assistant text so the
 shared compactor can retain them. Responses encrypted reasoning is replayed
@@ -2009,6 +2013,6 @@ plugin selections require the explicit Host reset; unselected library revisions
 migrate with verified MCP ownership and require explicit current admission
 through install or activate before their retained accounts can be selected.
 
-The canonical plugin API binding is `renoa-plugin-api-v2`; source-contract
+The canonical plugin API binding is `renoa-plugin-api-v3`; source-contract
 changes cannot replay under an older frozen management manifest. The full
 source and lifecycle contract is in `renoa-extensions-north-star.md`.

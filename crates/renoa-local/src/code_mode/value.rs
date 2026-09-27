@@ -1,34 +1,36 @@
 use std::collections::HashSet;
 
 use monty_types::{CallArgs, MontyObject, ObjectRef};
-use renoa_agent_loop::{CodeMcpCall, MAX_CODE_MCP_ARGUMENT_BYTES, MAX_CODE_MCP_REFERENCE_BYTES};
+use renoa_agent_loop::{
+    CodePluginCall, MAX_CODE_PLUGIN_ARGUMENT_BYTES, MAX_CODE_PLUGIN_REFERENCE_BYTES,
+};
 use serde_json::{Map, Number, Value};
 
 const MAX_VALUE_DEPTH: usize = 16;
 
-pub(super) fn mcp_call(call_id: u32, args: &CallArgs) -> Result<CodeMcpCall, String> {
+pub(super) fn plugin_call(call_id: u32, args: &CallArgs) -> Result<CodePluginCall, String> {
     if args.kwargs().len() != 0 || args.args().len() != 2 {
         return Err(
-            "mcp(reference, arguments) requires exactly two positional arguments".to_owned(),
+            "plugin(reference, arguments) requires exactly two positional arguments".to_owned(),
         );
     }
     let mut positional = args.args();
     let reference = positional
         .next()
         .and_then(|value| value.as_str().map(str::to_owned))
-        .ok_or_else(|| "MCP reference must be a string".to_owned())?;
-    if reference.is_empty() || reference.len() > MAX_CODE_MCP_REFERENCE_BYTES {
-        return Err("MCP reference is empty or too long".to_owned());
+        .ok_or_else(|| "plugin reference must be a string".to_owned())?;
+    if reference.is_empty() || reference.len() > MAX_CODE_PLUGIN_REFERENCE_BYTES {
+        return Err("plugin reference is empty or too long".to_owned());
     }
     let arguments = to_json(positional.next().expect("checked argument count"), 0)?;
     if !arguments.is_object() {
-        return Err("MCP arguments must be a dictionary".to_owned());
+        return Err("plugin arguments must be a dictionary".to_owned());
     }
     let encoded = serde_json::to_vec(&arguments).map_err(|error| error.to_string())?;
-    if encoded.len() > MAX_CODE_MCP_ARGUMENT_BYTES {
-        return Err("MCP arguments exceed 256 KiB".to_owned());
+    if encoded.len() > MAX_CODE_PLUGIN_ARGUMENT_BYTES {
+        return Err("plugin arguments exceed 256 KiB".to_owned());
     }
-    Ok(CodeMcpCall {
+    Ok(CodePluginCall {
         call_id,
         reference,
         arguments,
@@ -93,7 +95,7 @@ pub(super) fn to_json(value: ObjectRef<'_>, depth: usize) -> Result<Value, Strin
 
 pub(super) fn from_json(value: &Value, depth: usize) -> Result<MontyObject, String> {
     if depth > MAX_VALUE_DEPTH {
-        return Err("MCP result nesting exceeds Code Mode's limit".to_owned());
+        return Err("plugin result nesting exceeds Code Mode's limit".to_owned());
     }
     match value {
         Value::Null => Ok(MontyObject::none()),
@@ -102,12 +104,15 @@ pub(super) fn from_json(value: &Value, depth: usize) -> Result<MontyObject, Stri
             if let Some(value) = value.as_i64() {
                 Ok(MontyObject::int(value))
             } else if value.is_u64() {
-                Err("MCP result integer exceeds Python boundary's signed 64-bit limit".to_owned())
+                Err(
+                    "plugin result integer exceeds Python boundary's signed 64-bit limit"
+                        .to_owned(),
+                )
             } else {
                 value
                     .as_f64()
                     .map(MontyObject::float)
-                    .ok_or_else(|| "MCP result has an unsupported number".to_owned())
+                    .ok_or_else(|| "plugin result has an unsupported number".to_owned())
             }
         }
         Value::String(value) => Ok(MontyObject::string(value.clone())),

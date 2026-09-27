@@ -264,8 +264,8 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
     .await;
     assert_eq!(installed["digest"], digest);
     let listed = call(&tool, json!({"action": "list"})).await;
-    assert_eq!(listed["total"], 1);
-    assert_eq!(listed["returned"], 1);
+    assert_eq!(listed["total"], 6);
+    assert_eq!(listed["returned"], 6);
     assert_eq!(super::inventory_items(&listed)[0]["kind"], "package");
     assert_eq!(super::inventory_items(&listed)[0]["name"], "fixture");
 }

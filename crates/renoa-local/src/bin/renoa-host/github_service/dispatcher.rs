@@ -221,7 +221,7 @@ async fn launch(
     // dispatch may have left create_new credential files behind; replace them
     // only after that ownership check, and retain the original job deadline.
     remove_launch(data, id).await?;
-    let root = data.join("github-executions").join(id.to_string());
+    let root = data.join("state/github-executions").join(id.to_string());
     tokio::fs::create_dir_all(&root).await?;
     let jwt = root.join("app.jwt");
     private_write(&jwt, auth.jwt()?.as_bytes()).await?;
@@ -284,7 +284,8 @@ async fn private_write(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> 
 }
 
 async fn remove_launch(data: &Path, id: Uuid) -> Result<(), std::io::Error> {
-    match tokio::fs::remove_dir_all(data.join("github-executions").join(id.to_string())).await {
+    match tokio::fs::remove_dir_all(data.join("state/github-executions").join(id.to_string())).await
+    {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e),

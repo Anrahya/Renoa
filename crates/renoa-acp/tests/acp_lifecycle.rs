@@ -301,7 +301,7 @@ fn model_catalog_probe_is_read_only_and_marks_runtime_defaults() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
         .args(["models", "--json"])
-        .env("RENOA_DATA_DIR", &data)
+        .env("RENOA_HOME", &data)
         .env("RENOA_MODEL_BRIDGE", &bridge)
         .env("RENOA_MODEL_PROVIDERS", "xai,opencode-go")
         .env("RENOA_MODEL_PROVIDER", "opencode-go")

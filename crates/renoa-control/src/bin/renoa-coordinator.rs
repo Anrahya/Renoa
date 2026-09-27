@@ -18,13 +18,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const USAGE: &str = "usage:
-  renoa-coordinator serve <database-path> <port> <passkey-rp-id> <passkey-origin>
-  renoa-coordinator bootstrap-passkey <database-path> <principal-id>
-  renoa-coordinator pair-browser <database-path> <principal-id>
-  renoa-coordinator revoke-browser-logins <database-path> <principal-id>
-  renoa-coordinator enroll-surface <database-path> <principal-id> <surface>
-  renoa-coordinator enroll-node <database-path> <node-id>
-  renoa-coordinator create-task <database-path> <task-id> <principal-id> <node-id> <target>";
+  renoa-coordinator serve <renoa-home> <port> <passkey-rp-id> <passkey-origin>
+  renoa-coordinator bootstrap-passkey <renoa-home> <principal-id>
+  renoa-coordinator pair-browser <renoa-home> <principal-id>
+  renoa-coordinator revoke-browser-logins <renoa-home> <principal-id>
+  renoa-coordinator enroll-surface <renoa-home> <principal-id> <surface>
+  renoa-coordinator enroll-node <renoa-home> <node-id>
+  renoa-coordinator create-task <renoa-home> <task-id> <principal-id> <node-id> <target>";
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
 const BROWSER_SETUP_LIFETIME: Duration = Duration::from_mins(30);
 
@@ -70,6 +70,8 @@ impl Operation {
             .next()
             .map(PathBuf::from)
             .ok_or_else(|| USAGE.to_owned())?;
+        let home = renoa_home::RenoaHome::at(database).map_err(|error| error.to_string())?;
+        let database = home.coordinator_database();
 
         match operation.to_str() {
             Some("pair-browser") => {
@@ -217,7 +219,24 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), String> {
-    match Operation::parse(env::args_os())? {
+    let operation = Operation::parse(env::args_os())?;
+    let database = match &operation {
+        Operation::PairBrowser { database, .. }
+        | Operation::RevokeBrowserLogins { database, .. }
+        | Operation::Serve { database, .. }
+        | Operation::BootstrapPasskey { database, .. }
+        | Operation::EnrollSurface { database, .. }
+        | Operation::EnrollNode { database, .. }
+        | Operation::CreateTask { database, .. } => database,
+    };
+    let root = database
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or_else(|| "coordinator database has no home".to_owned())?;
+    renoa_home::RenoaHome::at(root)
+        .and_then(|home| home.initialize())
+        .map_err(|error| error.to_string())?;
+    match operation {
         Operation::PairBrowser {
             database,
             principal_id,

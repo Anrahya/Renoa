@@ -131,9 +131,9 @@ pub(super) async fn news_agent(fixture: &Fixture) -> AgentDefinition {
                 agent_id: fixture.worker.agent_id,
             },
             renoa_local::AgentCreationOrigin::AgentTool,
-            renoa_local::AgentCreateRequest::new(
+            renoa_local::AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                renoa_local::AgentPresetId::new("renoa.specialist.v2").expect("specialist preset"),
+                renoa_local::AgentPresetId::new("renoa.general.v1").expect("specialist preset"),
                 "News",
             )
             .with_instructions("News specialist.")

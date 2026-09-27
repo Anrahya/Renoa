@@ -169,7 +169,7 @@ fn create_passkey_bootstrap(database: &Path) -> PasskeyBootstrapCreated {
 #[tokio::test]
 async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let database = directory.path().join("control.db");
+    let database = directory.path().join("home");
     let surface_token = create_surface_enrollment(&database);
     let node_token = create_node_enrollment(&database);
     create_task(&database);
@@ -236,8 +236,10 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
 #[test]
 fn coordinator_executable_stops_cleanly_on_termination() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let database = directory.path().join("control.db");
-    Coordinator::open(&database).expect("open coordinator database");
+    let database = directory.path().join("home");
+    let home = renoa_home::RenoaHome::at(&database).unwrap();
+    home.initialize().unwrap();
+    Coordinator::open(home.coordinator_database()).expect("open coordinator database");
 
     let mut process = CoordinatorProcess::start(&database);
     process.read_ready();

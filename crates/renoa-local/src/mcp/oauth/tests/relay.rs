@@ -111,6 +111,7 @@ impl RemoteFixture {
             McpCredentialResolver::default(),
             &public_origin,
             &credential_file,
+            &directory.path().join("credentials"),
         )
         .expect("configure remote OAuth callback");
 

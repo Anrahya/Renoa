@@ -18,8 +18,8 @@ use tempfile::tempdir;
 #[path = "mcp_host/vertical.rs"]
 mod vertical;
 
-const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v2";
-const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
+const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v3";
+const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 const SECOND_AGENT_INSTRUCTIONS: &str = "You are a test agent.";
 
 async fn provision_agent(
@@ -28,7 +28,7 @@ async fn provision_agent(
     name: &str,
     instructions: Option<&str>,
 ) -> AgentId {
-    let mut request = AgentCreateRequest::new(
+    let mut request = AgentCreateRequest::from_preset(
         uuid::Uuid::new_v4(),
         AgentPresetId::new(preset).expect("preset id"),
         name,
@@ -63,7 +63,7 @@ async fn host_discovers_enables_and_restores_one_real_mcp_connection() {
     let alpha = provision_agent(&host, ALPHA_PRESET_ID, "Alpha", None).await;
     let second = provision_agent(
         &host,
-        SPECIALIST_PRESET_ID,
+        GENERAL_PRESET_ID,
         "Second",
         Some(SECOND_AGENT_INSTRUCTIONS),
     )
@@ -115,7 +115,7 @@ async fn host_discovers_enables_and_restores_one_real_mcp_connection() {
         .expect("share the same Host connection with a second agent");
     drop(host);
 
-    assert!(data.join("host.sqlite3").is_file());
+    assert!(data.join("state/host.sqlite3").is_file());
     assert!(data.join("sessions").is_dir());
     let reopened = new_host(&data, Some(&adapter));
     assert_eq!(

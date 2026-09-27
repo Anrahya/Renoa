@@ -85,7 +85,7 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
         let fixture = HostFixture::install(&system).await;
         let config = system.files.path().join("node.json");
         let credentials = system.files.path().join("device.json");
-        let state = system.files.path().to_path_buf();
+        let state = fixture.data.clone();
         let model_bridge = system.files.path().join("model-bridge.mjs");
         let model_credentials = system.files.path().join("credentials.sqlite3");
         write_private(

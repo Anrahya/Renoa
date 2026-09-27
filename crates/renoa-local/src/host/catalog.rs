@@ -11,8 +11,8 @@ pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 
-const SCHEMA_VERSION: u32 = 31;
-pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
+const SCHEMA_VERSION: u32 = 32;
+pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -252,7 +252,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=30 => {
+        28..=31 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],

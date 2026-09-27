@@ -107,6 +107,7 @@ impl<'a> LocalHostAdapters<'a> {
 
 pub(crate) struct HostConfig {
     pub(crate) database: PathBuf,
+    pub(crate) home: crate::RenoaHome,
     pub(crate) sessions: PathBuf,
     pub(crate) bridge: PathBuf,
     pub(crate) providers: Vec<ModelProvider>,
@@ -315,8 +316,10 @@ impl LocalHost {
                 "default {initial_provider} provider is not enabled"
             )));
         }
-        std::fs::create_dir_all(&data_directory)?;
-        let data_directory = std::fs::canonicalize(data_directory)?;
+        let home = crate::RenoaHome::at(data_directory)
+            .map_err(|error| LocalHostError::Configuration(error.to_string()))?;
+        home.initialize()?;
+        let data_directory = home.path().to_path_buf();
         let sessions = session_root(&data_directory)?;
         let host_database = data_directory.join(catalog::HOST_DATABASE);
         catalog::initialize(&host_database)?;
@@ -329,6 +332,7 @@ impl LocalHost {
                 mcp_credentials,
                 &origin,
                 &relay_credentials,
+                &home.path().join("credentials"),
             )?,
             None => {
                 McpAuthorizationResolver::new(&mcp_catalog, mcp_adapter.clone(), mcp_credentials)
@@ -362,6 +366,7 @@ impl LocalHost {
         Ok(Self {
             config: Arc::new(HostConfig {
                 database: host_database,
+                home,
                 sessions,
                 bridge,
                 providers,
@@ -463,7 +468,7 @@ mod tests {
             panic!("a symlinked sessions root is refused");
         };
         assert!(
-            matches!(&error, LocalHostError::Configuration(message) if message.contains("sessions root")),
+            matches!(&error, LocalHostError::Configuration(message) if message.contains("symbolic link")),
             "unexpected error: {error}"
         );
         assert!(
@@ -474,7 +479,7 @@ mod tests {
             "assembly must not write through the link"
         );
         assert!(
-            !directory.path().join("data/host.sqlite3").exists(),
+            !directory.path().join("data/state/host.sqlite3").exists(),
             "a refused assembly must leave no catalog behind"
         );
     }
@@ -489,7 +494,7 @@ mod tests {
             panic!("a symlinked sessions root is refused before it can host an agent");
         };
         assert!(
-            error.to_string().contains("sessions root"),
+            error.to_string().contains("symbolic link"),
             "unexpected error: {error}"
         );
         assert!(

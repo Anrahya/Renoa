@@ -61,22 +61,28 @@ struct Manage {
     spec: ToolSpec,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Input {
     List {
+        #[schemars(with = "Option<String>")]
         cursor: Option<AgentId>,
     },
     Create {
-        preset_id: AgentPresetId,
+        #[schemars(with = "Option<String>")]
+        preset_id: Option<AgentPresetId>,
         name: String,
         instructions: Option<String>,
         #[serde(default)]
-        tools: BTreeSet<String>,
+        tools: Option<BTreeSet<String>>,
+        model: Option<crate::AgentModelSelection>,
+        behavior: Option<crate::AgentBehavior>,
+        documents: Option<crate::AgentDocuments>,
         #[serde(default)]
         connections: BTreeSet<String>,
     },
     Rename {
+        #[schemars(with = "String")]
         id: AgentId,
         expected_name: String,
         name: String,
@@ -143,15 +149,24 @@ impl Tool for Manage {
                     name,
                     instructions,
                     tools,
+                    model,
+                    behavior,
+                    documents,
                     connections,
                 } => {
                     let operation = self.operation(CREATE_OPERATION_DOMAIN, &call.id);
-                    let mut request = AgentCreateRequest::new(operation, preset_id, name)
-                        .with_tools(tools)
-                        .with_connections(connections);
-                    if let Some(instructions) = instructions {
-                        request = request.with_instructions(instructions);
-                    }
+                    let request = AgentCreateRequest {
+                        operation_id: operation,
+                        preset_id,
+                        name,
+                        instructions,
+                        tools,
+                        connections,
+                        model,
+                        behavior,
+                        documents,
+                        routine: None,
+                    };
                     let definition = self
                         .host
                         .create_agent(
@@ -230,75 +245,28 @@ fn tool_error(error: crate::LocalHostError) -> ToolError {
 
 fn description() -> String {
     let mut description = String::from(
-        "Create, list, or rename durable agents on this Host. Create only when the user asks for an agent with its own job or instructions. Presets:\n",
+        "Create, list, or rename durable agents on this Host. Create only when the user asks. Supply name and instructions directly; optionally select a preset for defaults:\n",
     );
     for preset in presets::catalog() {
         writeln!(description, "- {}: {}", preset.id(), preset.description())
             .expect("writing to a String cannot fail");
     }
     description.push_str(
-        "Use the user's chosen name; otherwise choose a short job name of 1-3 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Select only the capabilities the job needs, and reuse exact connection ids from plugin_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use routine_manage.",
+        "Use the user's chosen name; otherwise choose a short job name of 1-2 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Every agent receives plugin management and discovery. tools selects machine access only; you cannot grant machine tools to yourself. Explicit settings replace template defaults. Select only the machine tools the job needs, and reuse exact connection ids from plugin_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use routine_manage.",
     );
     description
 }
 
 fn input_schema() -> serde_json::Value {
-    let preset_ids: Vec<&str> = presets::catalog()
-        .map(|preset| preset.id().as_str())
-        .collect();
-    let selectable = capabilities::selectable_names();
-    json!({"type":"object","properties":{
-        "action":{"enum":["list","create","rename"]},
-        "cursor":{"type":["string","null"],"format":"uuid","description":"For list only: exact next_cursor from the preceding page, or omit for the first page."},
-        "preset_id":{"enum":preset_ids,"description":"For create only: the creation preset whose job matches the request."},
-        "name":{"type":"string","minLength":1,"maxLength":512},
-        "instructions":{"type":"string","minLength":1,"maxLength":32768,"description":"For create only, and required by presets that take caller instructions: the agent's own standing instructions."},
-        "tools":{"type":"array","uniqueItems":true,"items":{"enum":selectable},"description":"For create or later capability edits: exact capability names. Omit to accept the preset's own baseline."},
-        "connections":{"type":"array","maxItems":64,"uniqueItems":true,"items":{"type":"string","maxLength":256},"description":"For create only: exact existing Host connection ids this agent may use."},
-        "id":{"type":"string","format":"uuid"},
-        "expected_name":{"type":"string","description":"For rename only: the agent's exact current name."}
-    },"required":["action"],"additionalProperties":false,"oneOf":[
-        {"properties":{"action":{"const":"list"},"preset_id":false,"name":false,"instructions":false,"tools":false,"connections":false,"id":false,"expected_name":false}},
-        {"properties":{"action":{"const":"create"},"cursor":false,"id":false,"expected_name":false},"required":["preset_id","name"]},
-        {"properties":{"action":{"const":"rename"},"cursor":false,"preset_id":false,"instructions":false,"tools":false,"connections":false},"required":["id","expected_name","name"]}
-    ]})
-}
-
-#[cfg(test)]
-mod tests {
-    use super::input_schema;
-
-    #[test]
-    fn creation_schema_presents_the_exact_native_capability_catalog() {
-        let schema = input_schema();
-        let tools = &schema["properties"]["tools"];
-        assert_eq!(
-            tools["items"]["enum"],
-            serde_json::json!([
-                "read_file",
-                "edit_file",
-                "write_file",
-                "bash",
-                "grep",
-                "find",
-                "git_changes",
-                "git_diff",
-                "git_show",
-                "plugin_manage",
-                "agent_manage",
-                "routine_manage",
-                "routine_results",
-                "plugin_search",
-                "tool_execute",
-                "code_mode",
-                "skill_search",
-                "skill_load",
-                "agent_documents",
-            ])
-        );
-        assert_eq!(
-            tools["description"],
-            "For create or later capability edits: exact capability names. Omit to accept the preset's own baseline."
-        );
-    }
+    let settings = schemars::generate::SchemaSettings::draft2020_12()
+        .with(|settings| settings.inline_subschemas = true);
+    let mut schema = crate::plugins::model_schema(
+        settings
+            .into_generator()
+            .into_root_schema_for::<Input>()
+            .to_value(),
+    );
+    schema["properties"]["tools"] = json!({"type":"array", "uniqueItems":true, "items":{"enum":capabilities::selectable_names()},
+        "description":"For create: replace the template's machine grants exactly. [] grants no machine tools. Every agent still receives plugin management, discovery, and invocation."});
+    schema
 }

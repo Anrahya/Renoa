@@ -47,17 +47,14 @@ lower kernel command boundary also used by the headless diagnostic runner.
 Live ACP updates come from a presentation-only event observer in the model and
 tool adapters; the kernel remains the sole durable execution owner.
 
-The Host data root contains `host.sqlite3` for the canonical agent definitions,
-MCP catalog and per-agent attachment state, non-secret OAuth phases and terminal
-receipts, and `oauth-locks/` for per-connection refresh coordination, plus
-`sessions/<session-id>/`, `agents/<agent-id>/` for the agents that keep SOUL.md
-and USER.md, and `agent-workspaces/<agent-id>/` for headless and scheduled work. OAuth credential bundles live in
-the desktop Secret Service, not this data root; the current desktop flow
-requires `secret-tool` and `xdg-open`. Each session uses `session.json` for
-identity, `runtime.jsonl` for acknowledged provider/model/reasoning choices,
-`kernel.sqlite3` for recovery truth, and `trace.sqlite3` for the ordered
-diagnostic timeline. Token/cache usage, exact provider payloads, stream chunks,
-durations, and tool diagnostics live only in the trace database.
+The installation home is `~/.renoa` by default; `RENOA_HOME` or an explicit
+launch `home` overrides it. `state/host.sqlite3` owns definitions, plugins, MCP
+catalogs, and receipts. Immutable packages live in `plugins/<digest>/`, imported
+skills in `state/skills/<digest>/`, private remote credentials in `credentials/`,
+and agent documents and workspaces in `agents/<id>/`. Each session lives under
+`sessions/<id>/`, containing `session.json`, `runtime.jsonl`, `kernel.sqlite3`,
+and `trace.sqlite3`. Diagnostics never become model context. See the canonical
+Host document for the complete layout and externally supplied credential inputs.
 
 Build the model-provider adapter first:
 

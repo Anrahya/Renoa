@@ -13,17 +13,17 @@ continuing conversation. In a channel where Arcee has been invited, mention her
 to start a thread, then continue in that thread without another mention. Each
 channel thread has an isolated session; replies threaded inside a DM retain the
 DM session. Conversations initially belong to the configured Arcee Agent and
-can select a persisted specialist. Each Host specialist also gets its own private
+can select a persisted agent. Each Host agent also gets its own private
 channel, with the operator invited automatically. Plain messages in that channel
 need no mention or `!agent` command. All messages there, including Slack thread
 replies, share its continuing conversation; `!new` starts a fresh one.
 
 Commands are ordinary messages (not Slack slash commands):
 
-- `!agent`: list the first 20 specialists, IDs, and channel setup statuses.
+- `!agent`: list the first 20 agents, IDs, and channel setup statuses.
 - `!agent <id>`: optional manual routing in a DM or ordinary channel thread.
 - `!agent arcee`: return to Arcee in a DM or ordinary channel thread.
-  Dedicated specialist channels retain their assigned agent.
+  Dedicated agent channels retain their assigned agent.
 - `!new`: start a fresh session for the currently selected agent.
 - `!status`: inspect session, model, and context usage.
 - `!model [id]`: list models or select one.
@@ -37,13 +37,13 @@ stored capability selection and workspace. One worker serializes requests across
 this surface and holds at most one live session handle. Arcee's `agent_manage`
 tool creates durable agents with their own creation preset, instructions, exact
 capability selection, and existing Host connections. An agent uses a working
-directory at `<Host data>/agent-workspaces/<agent-id>`. Instructions are
+directory at `<home>/agents/<agent-id>/workspace`. Instructions are
 immutable in this slice; schedules and cross-machine execution migration
 remain future work. It uses normal Slack messaging and does not require Slack
 AI or paid workflow features.
 
 Each new prompt carries a concise adapter-owned context block identifying Slack
-and describing automatic specialist-channel provisioning, the distinction from
+and describing automatic agent-channel provisioning, the distinction from
 Slack MCP, and current limitations. Schema 4 snapshots that block in the same
 admission transaction as the user's request. Execution and cancellation consume
 the stored content; restarted work never picks up a different prompt template.
@@ -51,9 +51,9 @@ Legacy requests retain their original content. This block is appended to the
 user turn, so later turns preserve earlier prompt prefixes. Shared user memory
 is not authoritative for the currently active interface.
 
-## Private specialist channels
+## Private agent channels
 
-A supervised Slack provisioning task discovers Host specialists at startup,
+A supervised Slack provisioning task discovers Host agents at startup,
 after Slack turns, and once per minute. This is a surface projection of the Host
 inventory, including agents created through another surface. It never makes
 Slack channel IDs part of the stored agent definition. Ready channels use short job names, such as
@@ -134,7 +134,7 @@ schema changes.
 
 Save the launch JSON as a root-owned `0600` file at `/etc/renoa/slack.json` with:
 
-- `data_directory`: `/var/lib/renoa-telegram`
+- `home`: `/var/lib/renoa-telegram`
 - `workspace`: `/srv/renoa/arcee`
 - model/MCP adapter and auth-store paths from the existing VPS installation
 - `shared_plugin_registry`: the existing registry origin, if configured
@@ -254,16 +254,16 @@ The adapter uses existing Rust HTTP, WebSocket, and SQLite dependencies.
 ## Routine result delivery
 
 The separate `renoa-host` service owns routine scheduling and execution. Slack only
-projects completed Host results into the specialist's ready channel. Schema 6 adds
+projects completed Host results into the agent's ready channel. Schema 6 adds
 a delivery cursor and durable outbox: admission and cursor advancement commit
 together, posting intent precedes the Slack call, and unreceipted posts remain
 unknown after restart. `inspect` exposes recent routine delivery states. A missing
 channel binding leaves that bot's result waiting without blocking other bots;
 reconnecting Slack drains retained Host results.
-Specialists support one-time dates, daily schedules, and hourly intervals through
-`routine_manage`, including revision-checked deletion. Ask the specialist to delete
+Agents support one-time dates, daily schedules, and hourly intervals through
+`routine_manage`, including revision-checked deletion. Ask the agent to delete
 an automation to remove it and stop future runs; past results remain readable and
-already-admitted runs finish. For example, ask a specialist to run a task once tomorrow at
+already-admitted runs finish. For example, ask an agent to run a task once tomorrow at
 2 pm in your timezone. One-time schedules disarm when durably queued; an offline
 Host catches up once after restart. Results use the same delivery path.
 Schema 8 freezes delivered routine excerpts into the next admitted chat prompt,

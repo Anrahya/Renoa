@@ -12,7 +12,7 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-const USAGE: &str = "usage: renoa-registry serve <state-directory> <port>";
+const USAGE: &str = "usage: renoa-registry serve <renoa-home> <port>";
 
 #[derive(Serialize)]
 struct Ready {
@@ -32,7 +32,10 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), String> {
     let (state, port) = parse(env::args_os())?;
-    let registry = Registry::open(state).map_err(|error| error.to_string())?;
+    let home = renoa_home::RenoaHome::at(state).map_err(|error| error.to_string())?;
+    home.initialize().map_err(|error| error.to_string())?;
+    let registry =
+        Registry::open(home.path().join("state/registry")).map_err(|error| error.to_string())?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .await
         .map_err(|error| format!("failed to bind loopback port {port}: {error}"))?;

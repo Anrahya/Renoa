@@ -1,6 +1,7 @@
 //! First local Host for composable Renoa agent runtimes.
 
 mod agent_definition;
+mod agent_model;
 mod agent_session;
 mod agent_trace;
 mod atomic_file;
@@ -51,6 +52,7 @@ pub use agent_definition::{
     AgentDocuments, AgentOperationalDefinition, AgentPresetId, AgentToolSelection,
     AutomaticCompaction, TurnTiming, WorkspaceInstructions,
 };
+pub use agent_model::AgentModelSelection;
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use code_mode::validate_code_mode_worker;
 pub use credential_file::credential_file_is_private;
@@ -80,10 +82,10 @@ pub use mcp::{
 pub use model_bridge::{BridgeModel, ModelBridgeError};
 pub use model_catalog::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
 pub use plugins::api::{
-    MAX_PLUGIN_PAGE, PLUGIN_API_REVISION, PluginAuthentication, PluginAuthorizationRequired,
-    PluginCredentialKind, PluginCredentialRequired, PluginHeader, PluginInventoryItem,
-    PluginInventoryPage, PluginInvocation, PluginOutcome, PluginProgress, PluginRequest,
-    PluginSource, plugin_api_schema,
+    HostPluginActivation, MAX_PLUGIN_PAGE, PLUGIN_API_REVISION, PluginAuthentication,
+    PluginAuthorizationRequired, PluginCredentialKind, PluginCredentialRequired, PluginHeader,
+    PluginInventoryItem, PluginInventoryPage, PluginInvocation, PluginOutcome, PluginProgress,
+    PluginRequest, PluginSource, plugin_api_schema,
 };
 pub use plugins::{
     InstalledPlugin, PluginActivation, PluginAddOutcome, PluginConnectionOutcome, PluginCredential,
@@ -114,3 +116,5 @@ pub use host::reviews::{
     GitHubReviewWebhook, GitHubReviewWork, REVIEW_LIFETIME_MS, ReviewCheck, ReviewContext,
     ReviewFile, ReviewPriority, ReviewSource,
 };
+
+pub use renoa_home::RenoaHome;

@@ -30,7 +30,18 @@ fn cut_over(directory: &Path) -> McpCatalogStore {
         "an earlier data root must be refused until it is reset: {:?}",
         refused.as_ref().err()
     );
+    std::fs::create_dir_all(directory.join("state")).expect("layout");
+    std::fs::rename(
+        directory.join("host.sqlite3"),
+        directory.join("state/host.sqlite3"),
+    )
+    .expect("place fixture in installation");
     crate::reset_host_data_root(directory).expect("cutover reset");
+    std::fs::rename(
+        directory.join("state/host.sqlite3"),
+        directory.join("host.sqlite3"),
+    )
+    .expect("return explicit catalog fixture");
     McpCatalogStore::initialize(directory.join("host.sqlite3")).expect("open after the cutover")
 }
 

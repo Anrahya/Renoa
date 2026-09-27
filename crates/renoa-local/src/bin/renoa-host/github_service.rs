@@ -98,8 +98,8 @@ async fn verify_worker_host(data: &Path, config: &Path) -> Result<(), Box<dyn Er
     if !worker.data_directory.is_absolute() {
         return Err("worker Host data directory must be absolute".into());
     }
-    let supervisor = tokio::fs::canonicalize(data.join("host.sqlite3")).await?;
-    let worker = tokio::fs::canonicalize(worker.data_directory.join("host.sqlite3")).await?;
+    let supervisor = tokio::fs::canonicalize(data.join("state/host.sqlite3")).await?;
+    let worker = tokio::fs::canonicalize(worker.data_directory.join("state/host.sqlite3")).await?;
     if supervisor != worker {
         return Err("worker Host database differs from the supervising Host database".into());
     }

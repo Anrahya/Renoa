@@ -103,7 +103,10 @@ impl Channel {
             || !self.is_private
             || self.is_archived
         {
-            return Err(ApiError::Unknown("created channel identity or privacy does not match the requested specialist channel".to_owned()));
+            return Err(ApiError::Unknown(
+                "created channel identity or privacy does not match the requested agent channel"
+                    .to_owned(),
+            ));
         }
         Ok(())
     }

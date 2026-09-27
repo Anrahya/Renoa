@@ -26,6 +26,7 @@ pub(crate) struct Config {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaunchFile {
+    #[serde(default, rename = "home")]
     data_directory: PathBuf,
     guild_id: String,
     operator_user_id: String,
@@ -33,6 +34,7 @@ struct LaunchFile {
     bot_token_file: PathBuf,
     workspace: PathBuf,
     model_bridge: PathBuf,
+    #[serde(default)]
     model_auth_store: PathBuf,
     model: String,
     provider: ModelProvider,
@@ -52,10 +54,15 @@ impl Config {
     /// Returns malformed settings, a relative path, an invalid snowflake or
     /// agent id, or a token file that is missing, empty, or readable by other users.
     pub(crate) fn read(path: &std::path::Path) -> Result<Self, DiscordError> {
-        let file: LaunchFile = serde_json::from_slice(&fs::read(path)?)?;
+        let mut file: LaunchFile = serde_json::from_slice(&fs::read(path)?)?;
+        let home = renoa_local::RenoaHome::resolve(Some(file.data_directory.clone()))?;
+        file.data_directory = home.path().to_path_buf();
+        if file.model_auth_store.as_os_str().is_empty() {
+            file.model_auth_store = home.model_credentials();
+        }
         if !file.data_directory.is_absolute() || !file.bot_token_file.is_absolute() {
             return Err(DiscordError::Invalid(
-                "data_directory and bot_token_file must be absolute paths".to_owned(),
+                "home and bot_token_file must be absolute paths".to_owned(),
             ));
         }
         let guild_id = Snowflake::parse(&file.guild_id)?;

@@ -72,6 +72,7 @@ pub(crate) fn initialize_lifecycle(
         tx.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS plugin_mcp_integration_identity ON plugin_mcp_servers(integration_id);")?;
     }
     initialize(tx)?;
+    crate::plugins::host::state::initialize(tx)?;
     crate::plugins::coherence::initialize(tx)?;
     Ok(())
 }

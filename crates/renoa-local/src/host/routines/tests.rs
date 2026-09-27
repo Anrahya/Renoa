@@ -85,13 +85,12 @@ async fn provisioned(h: &LocalHost) -> (AgentId, AgentId) {
         .create_agent(
             creator.clone(),
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
                 "Operator",
             )
-            .with_instructions("Manage routines.")
-            .with_tools([crate::capabilities::AGENT_MANAGE.to_owned()]),
+            .with_instructions("Manage routines."),
             CancellationToken::new(),
         )
         .await
@@ -101,9 +100,9 @@ async fn provisioned(h: &LocalHost) -> (AgentId, AgentId) {
         .create_agent(
             creator,
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
                 "Digest",
             )
             .with_instructions("Write a digest.")
@@ -117,29 +116,46 @@ async fn provisioned(h: &LocalHost) -> (AgentId, AgentId) {
 }
 async fn fixture() -> (tempfile::TempDir, LocalHost, AgentId, AgentId) {
     let d = tempfile::tempdir().expect("directory");
-    fs::write(d.path().join("model.mjs"), include_str!("test_model.mjs")).expect("model");
+    fs::write(
+        d.path().join("model.mjs"),
+        concat!(
+            include_str!("../../../tests/support/plugin_driver.mjs"),
+            include_str!("test_model.mjs")
+        ),
+    )
+    .expect("model");
     fs::write(d.path().join("auth.sqlite"), "").expect("auth boundary");
     let h = host(d.path());
     let (parent, child) = provisioned(&h).await;
     (d, h, parent, child)
 }
 async fn outsider(h: &LocalHost) -> AgentId {
-    h.create_agent(
-        AgentCreator::System {
-            component: "routine-fixture".to_owned(),
-        },
-        AgentCreationOrigin::Provisioning,
-        AgentCreateRequest::new(
-            Uuid::new_v4(),
-            AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
-            "Outsider",
+    let agent = h
+        .create_agent(
+            AgentCreator::System {
+                component: "routine-fixture".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
+                "Outsider",
+            )
+            .with_instructions("Do unrelated work."),
+            CancellationToken::new(),
         )
-        .with_instructions("Do unrelated work."),
-        CancellationToken::new(),
+        .await
+        .expect("outsider")
+        .id;
+    crate::plugins::host::state::change(
+        &h.config.database,
+        agent,
+        crate::plugins::host::HostPluginId::Agents,
+        false,
+        "disable-agent-management",
     )
-    .await
-    .expect("outsider")
-    .id
+    .expect("disable outsider agent management");
+    agent
 }
 fn spec(agent_id: AgentId) -> RoutineSpec {
     RoutineSpec {
@@ -522,6 +538,14 @@ async fn paused_routines_allow_one_idempotent_manual_run_and_intervals_keep_thei
 #[tokio::test]
 async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
     let (_d, h, parent, child) = fixture().await;
+    crate::plugins::host::state::change(
+        &h.config.database,
+        child,
+        crate::plugins::host::HostPluginId::Agents,
+        false,
+        "own-routines-only",
+    )
+    .expect("restrict management");
     let own = h
         .manage_routine(
             parent,
@@ -559,7 +583,7 @@ async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
     )
     .await;
     assert!(
-        denied.contains("agent_manage") && !denied.contains("Digest"),
+        denied.contains("renoa.agents") && !denied.contains("Digest"),
         "a specialist must not list another agent's routines: {denied}"
     );
     let denied = turn(
@@ -569,7 +593,7 @@ async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
     )
     .await;
     assert!(
-        denied.contains("agent_manage") && !denied.contains("scheduled digest"),
+        denied.contains("renoa.agents") && !denied.contains("scheduled digest"),
         "a specialist must not read another agent's standing task: {denied}"
     );
     let own_list = turn(&specialist, "own routine list".to_owned(), "own list").await;

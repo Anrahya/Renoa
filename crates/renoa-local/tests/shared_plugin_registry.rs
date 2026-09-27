@@ -273,7 +273,8 @@ async fn receiving_host_applies_its_own_provider_rules_and_retries_the_same_revi
                 .join(inspected.digest())
                 .exists()
         );
-        let connection = rusqlite::Connection::open(consumer_data.join("host.sqlite3")).unwrap();
+        let connection =
+            rusqlite::Connection::open(consumer_data.join("state/host.sqlite3")).unwrap();
         assert_eq!(
             connection
                 .query_row(
@@ -308,7 +309,7 @@ async fn receiving_host_applies_its_own_provider_rules_and_retries_the_same_revi
         .await
         .expect("same registry revision remains available for retry");
     assert_eq!(consumer.installed_plugins().await.unwrap().len(), 1);
-    let connection = rusqlite::Connection::open(consumer_data.join("host.sqlite3")).unwrap();
+    let connection = rusqlite::Connection::open(consumer_data.join("state/host.sqlite3")).unwrap();
     assert_eq!(
         connection
             .query_row(

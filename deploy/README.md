@@ -77,10 +77,10 @@ app-owned immutable path; do not replace that executable in place while work
 is active. Set `code_mode_worker` to the installed absolute path in a Host,
 Slack, or Discord JSON configuration; use `adapters.codeModeWorker` in the
 RCP node JSON, or `RENOA_CODE_MODE_WORKER` for ACP, Telegram, and the local CLI.
-Also configure the normal MCP adapter. Merely installing the worker does not
-change an existing agent: select `code_mode` in its capability set, preferably
-with `plugin_search`. When selected, direct `tool_execute` is
-hidden from the model and used only behind the durable Code Mode boundary.
+Configuring the worker enables Code Mode for every agent and hides direct
+`tool_execute` behind its durable invocation boundary. An MCP adapter is required
+for remote MCP calls; Host plugin calls work without it. Without a worker, agents
+use direct `tool_execute`.
 Drain active work before upgrading the worker, and retain only the immediately
 previous release's consolidated backup as described above.
 
@@ -225,7 +225,7 @@ expired or deleted cookie requires another pairing code or a passkey sign-in. Th
 credentials are independent and require no new enrollment for this panel.
 
 To revoke all remembered browser sessions and existing pairing codes for the owner
-through trusted local administration, run `renoa-coordinator revoke-browser-logins <database-path>
+through trusted local administration, run `renoa-coordinator revoke-browser-logins <renoa-home>
 <principal-uuid>` as the identity store's OS owner using the same systemd wrapper
 as enrollment. Revocation includes unused codes and commits atomically with
 session removal; fresh codes can be issued afterward. Other owners are unaffected.
@@ -295,12 +295,12 @@ Create `/etc/renoa/node-host.json` and `/etc/renoa/node-bootstrap-agent.json`
 as root with mode `0640` and group `renoa-node`; neither document holds a
 secret, and the provision command runs as the `renoa-node` account so the
 private data root is created with the service account's ownership.
-`data_directory` must be exactly the node's private Host data root, and the
+`home` must be exactly the node's Renoa home, and the
 model settings must match `node.json`'s `model` block:
 
 ```json
 {
-  "data_directory": "/var/lib/renoa-node/host",
+  "home": "/var/lib/renoa-node/host",
   "model_bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
   "providers": ["opencode-go"],
   "provider": "opencode-go",
@@ -312,7 +312,7 @@ model settings must match `node.json`'s `model` block:
 ```json
 {
   "operationId": "<fresh-uuid>",
-  "presetId": "renoa.coding.alpha.v2",
+  "presetId": "renoa.coding.alpha.v3",
   "name": "Alpha"
 }
 ```
@@ -342,7 +342,7 @@ systemd-run --quiet --wait --pipe --collect \
   --property=StateDirectoryMode=0700 \
   --property=UMask=0077 \
   /usr/local/bin/renoa-coordinator enroll-node \
-  /var/lib/renoa/control.sqlite <node-uuid> > node-enrollment.json
+  /var/lib/renoa <node-uuid> > node-enrollment.json
 ```
 
 Move that short-lived file to the execution Host over an authenticated private
@@ -446,7 +446,7 @@ systemd-run --quiet --wait --pipe --collect \
   --property=StateDirectoryMode=0700 \
   --property=UMask=0077 \
   /usr/local/bin/renoa-coordinator enroll-node \
-  /var/lib/renoa/control.sqlite <oauth-relay-node-uuid> \
+  /var/lib/renoa <oauth-relay-node-uuid> \
   > /run/renoa/arcee-oauth-relay-enrollment.json
 /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
@@ -576,7 +576,7 @@ systemd-run --quiet --wait --pipe --collect \
   --property=StateDirectoryMode=0700 \
   --property=UMask=0077 \
   /usr/local/bin/renoa-coordinator enroll-surface \
-  /var/lib/renoa/control.sqlite <principal-uuid> <surface-name>
+  /var/lib/renoa <principal-uuid> <surface-name>
 ```
 
 Its JSON output contains a single-use secret that expires after five minutes.
@@ -589,7 +589,7 @@ systemd-run --quiet --wait --pipe --collect \
   --property=StateDirectoryMode=0700 \
   --property=UMask=0077 \
   /usr/local/bin/renoa-coordinator bootstrap-passkey \
-  /var/lib/renoa/control.sqlite <principal-uuid>
+  /var/lib/renoa <principal-uuid>
 ```
 
 The browser bootstrap has a 30-minute window for first-time setup and is consumed
@@ -612,7 +612,7 @@ systemd-run --quiet --wait --pipe --collect \
   --property=StateDirectoryMode=0700 \
   --property=UMask=0077 \
   /usr/local/bin/renoa-coordinator enroll-node \
-  /var/lib/renoa/control.sqlite <node-uuid>
+  /var/lib/renoa <node-uuid>
 
 systemd-run --quiet --wait --pipe --collect \
   --property=DynamicUser=yes \
@@ -620,7 +620,7 @@ systemd-run --quiet --wait --pipe --collect \
   --property=StateDirectoryMode=0700 \
   --property=UMask=0077 \
   /usr/local/bin/renoa-coordinator create-task \
-  /var/lib/renoa/control.sqlite \
+  /var/lib/renoa \
   <task-uuid> <principal-uuid> <node-uuid> <target>
 ```
 
@@ -815,7 +815,7 @@ so it needs the Host data root, the provider settings, and the provisioned
 agent id alongside the registry origin:
 
 ```sh
-export RENOA_DATA_DIR=/var/lib/renoa-telegram
+export RENOA_HOME=/var/lib/renoa-telegram
 export RENOA_MODEL_BRIDGE=/opt/renoa/adapters/model-provider-node/dist/src/main.js
 export RENOA_MODEL_AUTH_STORE=/var/lib/renoa-telegram/model-auth.sqlite
 export RENOA_MODEL_PROVIDER=opencode-go

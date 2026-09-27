@@ -53,6 +53,10 @@ impl ResolvedAgentDefinition {
         self.definition.operational.behavior.automatic_compaction
     }
 
+    pub(crate) fn model(&self) -> Option<&crate::AgentModelSelection> {
+        self.definition.operational.model.as_ref()
+    }
+
     /// Composes the system prompt for one workspace.
     ///
     /// # Errors

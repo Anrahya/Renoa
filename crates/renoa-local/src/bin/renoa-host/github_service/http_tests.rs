@@ -83,7 +83,7 @@ async fn real_http_receiver_authenticates_raw_bytes_and_replays_durable_receipts
     );
     stop.cancel();
     server.await.expect("joined");
-    let db = rusqlite::Connection::open(root.path().join("host.sqlite3")).expect("database");
+    let db = rusqlite::Connection::open(root.path().join("state/host.sqlite3")).expect("database");
     assert_eq!(
         db.query_row("SELECT count(*) FROM host_review_deliveries", [], |row| row
             .get::<_, i64>(0))

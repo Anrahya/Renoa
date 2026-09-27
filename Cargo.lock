@@ -2341,6 +2341,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "renoa-credential-relay-protocol",
+ "renoa-home",
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
  "reqwest",
@@ -2403,6 +2404,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "renoa-home"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "renoa-kernel"
 version = "0.1.0"
 dependencies = [
@@ -2435,6 +2444,7 @@ dependencies = [
  "renoa-agent-loop",
  "renoa-control",
  "renoa-credential-relay-protocol",
+ "renoa-home",
  "renoa-kernel",
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
@@ -2526,6 +2536,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
+ "renoa-home",
  "renoa-registry-protocol",
  "reqwest",
  "rusqlite",

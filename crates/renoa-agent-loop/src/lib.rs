@@ -11,8 +11,8 @@ mod pending_tools;
 mod turn_timing;
 
 pub use code_mode::{
-    CodeMcpCall, CodeStep, CodeStepOutput, CodeStepRequest, MAX_CODE_CALLS_PER_WAVE,
-    MAX_CODE_MCP_ARGUMENT_BYTES, MAX_CODE_MCP_REFERENCE_BYTES, MAX_CODE_RESULT_BYTES,
+    CodePluginCall, CodeStep, CodeStepOutput, CodeStepRequest, MAX_CODE_CALLS_PER_WAVE,
+    MAX_CODE_PLUGIN_ARGUMENT_BYTES, MAX_CODE_PLUGIN_REFERENCE_BYTES, MAX_CODE_RESULT_BYTES,
     MAX_CODE_SNAPSHOT_BYTES,
 };
 pub use compaction::{

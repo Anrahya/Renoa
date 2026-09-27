@@ -1,6 +1,55 @@
 use super::*;
 
 #[tokio::test]
+async fn a_git_review_loads_another_skill_through_plugins_and_reattaches_it_once_for_validation() {
+    let (directory, host, id, api) = prepared("git-skills").await;
+    fs::write(
+        directory.path().join("git_model.mjs"),
+        include_str!("../git_model.mjs"),
+    )
+    .unwrap();
+    for (name, guidance) in [
+        ("renoa-code-review", "Frozen review guidance"),
+        ("extra-review", "Extra pinned review guidance"),
+    ] {
+        let skill = directory.path().join("skills").join(name);
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Review guidance\n---\n{guidance}\n"),
+        )
+        .unwrap();
+    }
+    let (repo, _, base, head) = crate::git_repository::tests::fixture();
+    api.state.lock().unwrap().commits = Some((base, head));
+    let result = host
+        .execute_git_at(id, repo.path(), api.origin.clone())
+        .await
+        .unwrap();
+    if let GitHubReviewRun::Finished {
+        outcome: GitHubReviewOutcome::Incomplete { reason },
+        ..
+    } = &result
+    {
+        panic!(
+            "{reason}: {}",
+            fs::read_to_string(directory.path().join("auth.sqlite.error")).unwrap_or_default()
+        );
+    }
+    assert!(
+        matches!(
+            result,
+            GitHubReviewRun::Finished {
+                outcome: GitHubReviewOutcome::Reviewed { .. },
+                ..
+            }
+        ),
+        "review must complete"
+    );
+    api.stop().await;
+}
+
+#[tokio::test]
 async fn review_freezes_a_shared_skill_and_records_both_stages_without_retracing_replay() {
     let (directory, first, id, api) = prepared("").await;
     let skill = directory.path().join("skills/renoa-code-review");
@@ -19,7 +68,7 @@ async fn review_freezes_a_shared_skill_and_records_both_stages_without_retracing
     assert!(snapshot.system_prompt.contains("skill:renoa-code-review:"));
     let trace_path = directory
         .path()
-        .join("data/review-sessions")
+        .join("data/state/review-sessions")
         .join(id.to_string())
         .join(crate::trace::TRACE_DATABASE);
     let trace = rusqlite::Connection::open(&trace_path).expect("trace");

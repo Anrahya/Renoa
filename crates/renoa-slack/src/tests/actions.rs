@@ -129,8 +129,9 @@ async fn setup_steps_are_separate_posts_deduplicated_and_survive_final_delivery(
         })
         .await
         .expect("durable receipts");
+    let surface = fixture.directory.path().join("state/surfaces/slack");
     for file in ["slack.sqlite3", "slack.sqlite3-wal"] {
-        let bytes = std::fs::read(fixture.directory.path().join(file)).expect("database file");
+        let bytes = std::fs::read(surface.join(file)).expect("database file");
         for secret in ["secret-browser-key", "private-oauth-state"] {
             assert!(
                 !bytes

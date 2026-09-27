@@ -16,7 +16,7 @@ fn fixture(root: &Path) {
     fs::write(
         root.join("host.json"),
         serde_json::to_vec(&json!({
-            "data_directory":data,"model_bridge":bridge,"providers":["xai"],"provider":"xai",
+            "home":data,"model_bridge":bridge,"providers":["xai"],"provider":"xai",
             "model":"fixture","model_auth_store":auth
         }))
         .expect("config"),
@@ -30,7 +30,7 @@ fn provision(root: &Path) {
         &document,
         serde_json::to_vec(&json!({
             "operationId": uuid::Uuid::new_v4(),
-            "presetId": "renoa.coding.alpha.v2",
+            "presetId": "renoa.coding.alpha.v3",
             "name": "Alpha"
         }))
         .expect("document"),
@@ -92,7 +92,7 @@ async fn reset_scenario() {
     let report: renoa_local::HostResetReport =
         serde_json::from_slice(&output.stdout).expect("typed reset report");
     assert!(report.total_rows() >= 2, "{report:?}");
-    assert!(backup.join("host.sqlite3").is_file());
+    assert!(backup.join("state/host.sqlite3").is_file());
     assert_eq!(
         fs::read_to_string(workspace.join("kept.txt")).expect("preserved workspace file"),
         "kept\n"

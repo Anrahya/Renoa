@@ -196,9 +196,7 @@ fn require_stored_definition(definition: &AgentDefinition) -> Result<(), HostCat
         ))
     })?;
     for name in &definition.tool_selection.tools {
-        if !crate::capabilities::is_selectable(name)
-            || !crate::capabilities::is_consumable(name, definition.operational.documents)
-        {
+        if !crate::capabilities::is_selectable(name) {
             return Err(HostCatalogError::Invalid(format!(
                 "stored agent definition for `{}` names an unusable capability: {name}",
                 definition.id

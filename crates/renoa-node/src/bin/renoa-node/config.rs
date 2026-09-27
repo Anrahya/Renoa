@@ -110,7 +110,7 @@ pub(crate) fn load(
     let state_directory = prepare_state_directory(state_directory)?;
 
     let host = Arc::new(LocalHost::new(
-        state_directory.join("host"),
+        &state_directory,
         LocalModelConfiguration::new(
             &config.model.bridge,
             config.model.providers,
@@ -190,29 +190,11 @@ fn decode_credentials(path: &Path) -> Result<DeviceCredentials, ServiceError> {
 }
 
 fn prepare_state_directory(path: &Path) -> Result<PathBuf, ServiceError> {
-    require_absolute(path, "state directory")?;
-    std::fs::create_dir_all(path).map_err(|error| ServiceError::file("create", path, error))?;
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|error| ServiceError::file("inspect", path, error))?;
-    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-        return Err(ServiceError::Configuration(
-            "state directory must name a real directory, not a symbolic link".to_owned(),
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-            .map_err(|error| ServiceError::file("protect", path, error))?;
-    }
-    let path =
-        std::fs::canonicalize(path).map_err(|error| ServiceError::file("resolve", path, error))?;
-    if !path.is_dir() {
-        return Err(ServiceError::Configuration(
-            "state directory must name a directory".to_owned(),
-        ));
-    }
-    Ok(path)
+    let home = renoa_local::RenoaHome::at(path)
+        .map_err(|error| ServiceError::Configuration(error.to_string()))?;
+    home.initialize()
+        .map_err(|error| ServiceError::file("initialize", path, error))?;
+    Ok(home.path().to_path_buf())
 }
 
 fn validate_target_uniqueness(targets: &[TargetDocument]) -> Result<(), ServiceError> {
@@ -385,7 +367,7 @@ mod tests {
             },
             "targets": [{
                 "target": "workspace:example",
-                "profile": "renoa.coding.alpha.v2",
+                "profile": "renoa.coding.alpha.v3",
                 "sessionId": Uuid::new_v4(),
                 "workspace": "/srv/renoa/node-workspaces/example"
             }]

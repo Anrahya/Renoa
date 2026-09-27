@@ -41,7 +41,7 @@ async fn skills_hot_load_and_survive_compaction_and_host_restart() {
                 component: "skill-fixture".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
                 AgentPresetId::new(crate::presets::ALPHA_PRESET_ID).expect("preset"),
                 "Alpha",
@@ -148,9 +148,9 @@ async fn a_non_alpha_agent_uses_its_own_skill_registry_binding() {
                 component: "skill-fixture".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
                 "Second",
             )
             .with_instructions("You are a test agent.")
@@ -162,10 +162,6 @@ async fn a_non_alpha_agent_uses_its_own_skill_registry_binding() {
                     "bash",
                     "grep",
                     "find",
-                    "git_changes",
-                    "git_diff",
-                    "git_show",
-                    "plugin_manage",
                 ]
                 .map(str::to_owned),
             ),
@@ -229,7 +225,15 @@ fn assert_durable_full_results(history: &[crate::LocalHistoryEntry]) {
     let loaded = history
         .iter()
         .filter_map(|entry| match &entry.message {
-            Message::Tool { result } if result.name == "skill_load" => Some(result),
+            Message::Tool { result }
+                if result.name == "tool_execute"
+                    && result
+                        .details
+                        .as_ref()
+                        .is_some_and(|details| details["kind"] == "renoa.skill.activation.v1") =>
+            {
+                Some(result)
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -253,7 +257,9 @@ impl AgentEventSink for NoopEvents {
     }
 }
 
-const MODEL_BRIDGE: &str = r#"
+const MODEL_BRIDGE: &str = concat!(
+    include_str!("../../tests/support/plugin_driver.mjs"),
+    r#"
 import { createHash as hash } from "node:crypto";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
@@ -280,7 +286,7 @@ if (action === "describe") {
   process.exit(0);
 }
 if (action !== "stream") process.exit(2);
-const request = JSON.parse(input);
+const request = preparePluginFixture(JSON.parse(input));
 const fail = message => { process.stderr.write(message); process.exit(3); };
 const complete = (content, stopReason = "stop") => {
   process.stdout.write(JSON.stringify({
@@ -311,24 +317,8 @@ Two skills are active.
 Confirm restoration.` }]);
   process.exit(0);
 }
-const workspaceTools = [
-  "read_file", "edit_file", "write_file", "bash", "grep", "find",
-  "git_changes", "git_diff", "git_show",
-  "plugin_search", "tool_execute", "plugin_manage"
-];
-const expectedTools = request.system_prompt.startsWith("You are a test agent.")
-  ? [...workspaceTools, "routine_results", "routine_manage", "skill_search", "skill_load"]
-  : [...workspaceTools, "skill_search", "skill_load"];
-if (request.tools.map(tool => tool.name).join(",") !== expectedTools.join(",")) {
-  fail("unexpected model-visible tool set");
-}
-const skillLoad = request.tools.find(tool => tool.name === "skill_load");
-if (
-  !skillLoad ||
-  Object.keys(skillLoad.input_schema.properties).join(",") !== "name" ||
-  skillLoad.input_schema.required.join(",") !== "name" ||
-  skillLoad.input_schema.additionalProperties !== false
-) fail("skill_load does not advertise its name-only input");
+const expectedTools = ["read_file", "edit_file", "write_file", "bash", "grep", "find", "plugin_search", "plugin_manage", "tool_execute"];
+if (request.tools.map(tool=>tool.name).sort().join(",") !== expectedTools.sort().join(",")) fail("unexpected model-visible tool set");
 const promptIndex = request.messages.findLastIndex(message => message.role === "user");
 const prompt = request.messages[promptIndex].content[0].text;
 const results = request.messages.slice(promptIndex + 1).filter(message => message.role === "tool");
@@ -387,4 +377,5 @@ if (prompt === "Activate the project workflow.") {
 } else {
   fail("unexpected prompt");
 }
-"#;
+"#
+);

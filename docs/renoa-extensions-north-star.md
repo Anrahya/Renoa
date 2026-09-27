@@ -198,7 +198,7 @@ The complete API JSON Schema is derived from these types. The model receives a
 flat projection with generated action/source selector instructions listing each
 variant's required and allowed fields. Runtime decoding rejects foreign fields;
 this projection does not weaken the closed API. Its frozen binding identity is
-`renoa-plugin-api-v2`. Native tool grants are absent from the contract.
+`renoa-plugin-api-v3`. Native tool grants are absent from the contract.
 
 | Source kind | Meaning | Admission |
 | --- | --- | --- |
@@ -535,8 +535,9 @@ operation, the model receives only:
 1. the profile's instructions and only deliberately activated full skill
    content;
 2. the durable context projection; and
-3. the Host-selected local tools, `plugin_search`, `plugin_manage`,
-   `tool_execute`, and two fixed skill-registry definitions.
+3. the selected machine tools, `plugin_search`, `plugin_manage`, and either
+   `code_mode` or `tool_execute`. Compiled Host capabilities and MCP schemas are
+   discovered through this protocol; they are not injected up front.
 
 Package manifests, marketplace descriptions, setup instructions, connection
 state, OAuth scopes, environment variables, secret references, process
@@ -547,7 +548,7 @@ trace data. Inventory reads shrink a cursor page at whole-fact boundaries to
 fit the local 50 KiB output limit. Every other management result fails rather
 than truncating if one complete result exceeds that boundary.
 
-Alpha's first skill path searches compact name/description metadata through
+The `renoa.skills` plugin searches compact name/description metadata through
 `skill_search` and activates one selected name through `skill_load`. Search
 returns at most 200 matches and nothing per match beyond name and short
 description. A workspace skill explicitly overrides a same-named global skill,
@@ -564,9 +565,22 @@ unfinished command reconstructs its original frozen binding instead of
 silently gaining the new revision. One session cannot activate two revisions
 of the same skill name.
 
+## Compiled Host plugins
+
+The same protocol also discovers compiled `renoa.agents`, `renoa.routines`,
+`renoa.documents`, `renoa.skills`, and `renoa.git` plugins. Their implementations
+are registered by the Host and cannot be loaded from an imported package.
+`plugin_manage` enables or deactivates them for its caller using durable receipts;
+discovery and invocation read current state. Host references bind a real tool's
+schema and revision. Machine grants remain owner-controlled and cannot be added
+to the caller by plugin management. Every created agent receives the plugin
+protocol regardless of its machine selection. Schema 32 owns these activation
+records alongside external plugin lifecycle state.
+
 ## Physical ownership
 
-The intended physical separation is:
+Installed state resolves to one `~/.renoa` home by default, with `RENOA_HOME`
+or an explicit launch `home` overriding it. The physical separation is:
 
 ```text
 Renoa repository
@@ -578,11 +592,13 @@ renoa-plugins repository
   third_party/<plugin>/        packages for external services
 
 Renoa data directory
-  skills/<digest>/             immutable imported Agent Skill revisions
+  state/skills/<digest>/       immutable imported Agent Skill revisions
   plugins/<digest>/            immutable Agent Plugin packages
-  Host catalog                 installations, integrations, connections,
+  state/host.sqlite3          installations, integrations, connections,
                                skill revisions, source/profile bindings,
                                session activations, and other components
+  agents/<agent>/workspace/    Host-owned agent workspaces
+  credentials/                 private local credential material
   sessions/<session>/          existing kernel and trace truth
 
 private shared registry

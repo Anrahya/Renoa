@@ -34,7 +34,7 @@ Build the model and optional MCP adapters as described in
 [`renoa-local`](../renoa-local/README.md), then set:
 
 ```sh
-export RENOA_DATA_DIR='/absolute/path/to/private/renoa-data'
+export RENOA_HOME='/absolute/path/to/private/renoa-data'
 export RENOA_TELEGRAM_WORKSPACE='/absolute/path/to/arcee-workspace'
 export RENOA_TELEGRAM_AGENT_ID='<agent uuid provisioned on this Host>'
 export RENOA_TELEGRAM_ALLOWED_USER_ID='123456789'
@@ -62,10 +62,10 @@ provider and model come from the launch settings above. The model adapter
 remains a replaceable Host component shared with other agents; Telegram
 contains no provider-specific request code. Discord uses the same Host model
 configuration without moving model state into its surface.
-`RENOA_CODE_MODE_WORKER` is optional, but required if this agent selects
-`code_mode`; it must name the exact-pinned executable documented in
-[`deploy/README.md`](../../deploy/README.md). Selecting Code Mode also requires
-`RENOA_MCP_ADAPTER`.
+`RENOA_CODE_MODE_WORKER` is optional. When configured it enables Code Mode for
+every agent and must name the exact-pinned executable documented in
+[`deploy/README.md`](../../deploy/README.md). Remote MCP calls require
+`RENOA_MCP_ADAPTER`; compiled Host plugins do not.
 
 The two OAuth relay settings are atomic: set both or neither. With them, Arcee
 shows a provider authorization link in Telegram instead of trying to open a

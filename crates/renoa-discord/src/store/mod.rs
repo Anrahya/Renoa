@@ -35,7 +35,7 @@ pub enum Admission {
 
 impl SurfaceStore {
     pub(crate) fn open(data_directory: &std::path::Path) -> Result<Self, DiscordError> {
-        let surface_directory = data_directory.join("surfaces").join("discord");
+        let surface_directory = data_directory.join("state/surfaces").join("discord");
         std::fs::create_dir_all(&surface_directory)?;
         schema::restrict_directory(&surface_directory)?;
         let lease = schema::acquire_lease(&surface_directory)?;

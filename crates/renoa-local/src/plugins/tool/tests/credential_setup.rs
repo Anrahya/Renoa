@@ -93,6 +93,7 @@ async fn run_credential_setup(
         McpCredentialResolver::default(),
         &relay.origin,
         &relay.credential_file,
+        &directory.path().join("credentials"),
     )
     .expect("configure credential relay");
     let manager = PluginManager::initialize_with_authorizations(

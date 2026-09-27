@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use support::{AcpProcess, BRIDGE};
 
-const PRESET_ID: &str = "renoa.coding.alpha.v2";
+const PRESET_ID: &str = "renoa.coding.alpha.v3";
 const TURN_ID: &str = "7d33a1c0-5b52-4a44-9ed3-cb6e8a9f02f4";
 
 #[test]
@@ -287,7 +287,7 @@ fn provision(data: &Path, bridge: &Path, auth: &Path, name: &str) -> String {
                 component: "agent-boundary-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
                 AgentPresetId::new(PRESET_ID).expect("alpha preset id"),
                 name,

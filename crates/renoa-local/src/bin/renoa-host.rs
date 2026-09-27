@@ -15,12 +15,14 @@ mod github_service;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    #[serde(default, rename = "home")]
     data_directory: PathBuf,
     model_bridge: PathBuf,
     providers: Vec<ModelProvider>,
     provider: ModelProvider,
     model: String,
     reasoning: Option<ReasoningLevel>,
+    #[serde(default)]
     model_auth_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
     code_mode_worker: Option<PathBuf>,
@@ -42,14 +44,17 @@ struct Relay {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProvisionDocument {
     operation_id: uuid::Uuid,
-    preset_id: AgentPresetId,
+    preset_id: Option<AgentPresetId>,
     name: String,
     instructions: Option<String>,
     #[serde(default)]
-    tools: BTreeSet<String>,
+    tools: Option<BTreeSet<String>>,
     #[serde(default)]
     connections: BTreeSet<String>,
     routine: Option<AgentRoutine>,
+    model: Option<renoa_local::AgentModelSelection>,
+    behavior: Option<renoa_local::AgentBehavior>,
+    documents: Option<renoa_local::AgentDocuments>,
 }
 
 impl ProvisionDocument {
@@ -62,7 +67,33 @@ impl ProvisionDocument {
             tools: self.tools,
             connections: self.connections,
             routine: self.routine,
+            model: self.model,
+            behavior: self.behavior,
+            documents: self.documents,
         }
+    }
+}
+
+impl Config {
+    fn read(path: &std::path::Path) -> Result<Self, Box<dyn Error>> {
+        let mut c: Self = serde_json::from_slice(&std::fs::read(path)?)?;
+        let home = renoa_local::RenoaHome::resolve(Some(c.data_directory.clone()))?;
+        c.data_directory = home.path().to_path_buf();
+        if c.model_auth_store.as_os_str().is_empty() {
+            c.model_auth_store = home.model_credentials();
+        }
+        for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
+            .into_iter()
+            .chain(c.mcp_adapter.iter())
+            .chain(c.code_mode_worker.iter())
+            .chain(c.mcp_registry_adapter.iter())
+            .chain(c.oauth_relay.iter().map(|r| &r.device_credential_file))
+        {
+            if !path.is_absolute() {
+                return Err(std::io::Error::other("Host launch paths must be absolute").into());
+            }
+        }
+        Ok(c)
     }
 }
 
@@ -97,18 +128,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     {
         return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
     }
-    let c: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
-    for path in [&c.data_directory, &c.model_bridge, &c.model_auth_store]
-        .into_iter()
-        .chain(c.mcp_adapter.iter())
-        .chain(c.code_mode_worker.iter())
-        .chain(c.mcp_registry_adapter.iter())
-        .chain(c.oauth_relay.iter().map(|r| &r.device_credential_file))
-    {
-        if !path.is_absolute() {
-            return Err(std::io::Error::other("Host launch paths must be absolute").into());
-        }
-    }
+    let c = Config::read(std::path::Path::new(&args[0]))?;
     // A reset owns its own cutover, so it must run before the Host opens: an
     // earlier data root fails closed until an operator has backed it up.
     if args.len() == 3 && args[1] == "reset" {

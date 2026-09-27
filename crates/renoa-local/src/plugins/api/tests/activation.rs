@@ -190,7 +190,7 @@ async fn explicit_replacement_and_disable_preserve_pins_and_other_agents_across_
     assert_eq!(result.plugin_id, first);
     assert_eq!(result.package_digest, next);
     assert!(
-        crate::skills::runtime_context(&skills, session, None)
+        crate::skills::runtime_context(&skills, session, None, "")
             .unwrap()
             .unwrap()
             .instructions
@@ -217,7 +217,7 @@ async fn explicit_replacement_and_disable_preserve_pins_and_other_agents_across_
     );
     assert!(load_skill(&skills, agent, root.path(), SessionId::new()).is_empty());
     assert!(
-        crate::skills::runtime_context(&skills, session, None)
+        crate::skills::runtime_context(&skills, session, None, "")
             .unwrap()
             .unwrap()
             .instructions

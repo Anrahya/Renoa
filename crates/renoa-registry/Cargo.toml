@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+renoa-home = { path = "../renoa-home", version = "0.1.0" }
 axum = { workspace = true, features = ["http1", "json", "query", "tokio"] }
 futures-util.workspace = true
 renoa-registry-protocol = { path = "../renoa-registry-protocol", version = "0.1.0" }

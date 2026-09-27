@@ -107,7 +107,8 @@ impl ProviderSettings {
             providers: enabled_providers(default_provider)?,
             default_provider,
             model: required("RENOA_MODEL")?,
-            credential_store: required_path("RENOA_MODEL_AUTH_STORE")?,
+            credential_store: optional_path("RENOA_MODEL_AUTH_STORE")
+                .unwrap_or(renoa_local::RenoaHome::resolve(None)?.model_credentials()),
         })
     }
 }
@@ -308,41 +309,7 @@ fn optional(name: &str) -> Result<Option<String>, ServerError> {
 }
 
 fn data_directory() -> Result<PathBuf, ServerError> {
-    if let Some(path) = env::var_os("RENOA_DATA_DIR").filter(|path| !path.is_empty()) {
-        return absolute(PathBuf::from(path));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        home_directory().map(|home| home.join("Library/Application Support/Renoa"))
-    }
-    #[cfg(target_os = "windows")]
-    {
-        return env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .map(|path| path.join("Renoa"))
-            .ok_or_else(|| ServerError::Configuration("LOCALAPPDATA must be set".to_owned()));
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Some(path) = env::var_os("XDG_DATA_HOME").filter(|path| !path.is_empty()) {
-            return absolute(PathBuf::from(path).join("renoa"));
-        }
-        home_directory().map(|home| home.join(".local/share/renoa"))
-    }
-}
-
-fn home_directory() -> Result<PathBuf, ServerError> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| ServerError::Configuration("HOME must be set".to_owned()))
-}
-
-fn absolute(path: PathBuf) -> Result<PathBuf, ServerError> {
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(env::current_dir()?.join(path))
-    }
+    Ok(renoa_local::RenoaHome::resolve(None)?.path().to_path_buf())
 }
 
 #[cfg(test)]

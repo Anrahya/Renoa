@@ -89,7 +89,7 @@ async fn gh_reference_resolves_only_for_adapter_stdin_and_never_enters_host_stat
         fs::read_to_string(arguments).expect("read exact gh arguments"),
         "auth\ntoken\n--hostname\ngithub.com\n--user\nAnrahya"
     );
-    let database = fs::read(data.join("host.sqlite3")).expect("read Host database");
+    let database = fs::read(data.join("state/host.sqlite3")).expect("read Host database");
     assert!(
         !database
             .windows(TOKEN.len())

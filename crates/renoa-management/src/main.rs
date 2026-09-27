@@ -10,6 +10,7 @@ use uuid::Uuid;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    #[serde(default, rename = "home")]
     data_directory: PathBuf,
     assets_directory: PathBuf,
     host_id: Uuid,
@@ -32,7 +33,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() != 1 {
         return Err("usage: renoa-management <config.json>".into());
     }
-    let config: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
+    let mut config: Config = serde_json::from_slice(&std::fs::read(&args[0])?)?;
+    let home = renoa_local::RenoaHome::resolve(Some(config.data_directory.clone()))?;
+    config.data_directory = home.path().to_path_buf();
     if !config.data_directory.is_absolute() || !config.assets_directory.is_absolute() {
         return Err("management storage and asset paths must be absolute".into());
     }

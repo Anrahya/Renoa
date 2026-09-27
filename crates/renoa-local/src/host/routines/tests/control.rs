@@ -12,7 +12,7 @@ fn command(revision: i64, enabled: bool) -> RoutineEnablement {
 async fn controls(h: &LocalHost) -> (HostRoutineControl, Uuid) {
     let owner = Uuid::new_v4();
     let control = HostRoutineControl::open(
-        h.config.database.parent().expect("root"),
+        h.config.home.path(),
         h.host_id().await.expect("Host"),
         owner,
     )
@@ -100,7 +100,8 @@ async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_ag
     assert!(resumed.spec.enabled);
     assert_eq!(resumed.spec.prompt, "new standing instructions");
     assert_eq!(resumed.next_due_ms, 343_200_000);
-    let db = catalog::open_verified(&d.path().join("data/host.sqlite3")).expect("shared catalog");
+    let db =
+        catalog::open_verified(&d.path().join("data/state/host.sqlite3")).expect("shared catalog");
     assert_eq!(store::get(&db, routine.id).expect("latest"), resumed);
 }
 

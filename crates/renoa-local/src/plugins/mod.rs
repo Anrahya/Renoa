@@ -4,6 +4,7 @@ pub(crate) mod coherence;
 mod discovery;
 mod error;
 mod generated;
+pub(crate) mod host;
 pub(crate) mod inspect;
 mod intake;
 mod json;
@@ -26,6 +27,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 pub use activation::PluginActivation;
+pub(crate) use api::model_schema;
 pub use coherence::PluginProviderFamily;
 pub(crate) use discovery::OfficialRegistry;
 pub use error::PluginError;
@@ -33,7 +35,7 @@ pub(crate) use manager::PluginManager;
 pub use manager::{PluginAddOutcome, PluginConnectionOutcome, PluginSourceReceipt};
 #[cfg(test)]
 pub(crate) use search::PluginSearchTool;
-pub(crate) use search::binding as agent_plugin_search_binding;
+pub(crate) use search::binding_with_host as search_binding_with_host;
 pub(crate) use tool::agent_plugin_binding;
 
 pub(crate) const PLUGIN_STORE_DIRECTORY: &str = "plugins";

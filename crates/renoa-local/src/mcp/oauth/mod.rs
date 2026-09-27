@@ -101,6 +101,7 @@ impl McpAuthorizationResolver {
         credentials: McpCredentialResolver,
         relay_origin: &str,
         relay_credentials: &std::path::Path,
+        credentials_directory: &std::path::Path,
     ) -> Result<Self, McpHostError> {
         let data_root = catalog
             .path()
@@ -112,7 +113,8 @@ impl McpAuthorizationResolver {
             .join("/v1/oauth/client-metadata.json")
             .map_err(|_| McpOAuthError::Invalid("OAuth client metadata URL is invalid".to_owned()))?
             .to_string();
-        let private_secrets = PrivateSecretStore::initialize(data_root.join("oauth-secrets"))?;
+        let private_secrets =
+            PrivateSecretStore::initialize(credentials_directory.join("oauth-secrets"))?;
         let credentials = credentials.with_private_store(private_secrets.clone());
         let credential_setup = CredentialSetupCoordinator::new(
             relay_origin,

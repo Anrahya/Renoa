@@ -12,7 +12,8 @@ use uuid::Uuid;
 
 use super::{LocalHost, LocalHostError, catalog};
 use crate::{
-    AgentDefinition, AgentPresetId, AgentToolSelection, capabilities, stable_id::stable_id,
+    AgentBehavior, AgentDefinition, AgentDocuments, AgentModelSelection, AgentPresetId,
+    AgentToolSelection, capabilities, stable_id::stable_id,
 };
 
 mod create;
@@ -48,43 +49,80 @@ pub struct AgentRoutine {
 #[serde(deny_unknown_fields)]
 pub struct AgentCreateRequest {
     pub operation_id: Uuid,
-    pub preset_id: AgentPresetId,
+    pub preset_id: Option<AgentPresetId>,
     pub name: String,
-    /// Required by presets that take caller instructions, rejected by fixed ones.
+    /// Standing instructions; omission uses the optional template default.
     pub instructions: Option<String>,
     /// Exact caller-selected capability names.
-    pub tools: BTreeSet<String>,
+    pub tools: Option<BTreeSet<String>>,
     /// Exact caller-selected existing Host connection ids.
+    #[serde(default)]
     pub connections: BTreeSet<String>,
     pub routine: Option<AgentRoutine>,
+    pub model: Option<AgentModelSelection>,
+    pub behavior: Option<AgentBehavior>,
+    pub documents: Option<AgentDocuments>,
 }
 
 impl AgentCreateRequest {
-    /// Starts a request for one preset.
+    /// Creates an explicit agent definition without a template.
     #[must_use]
-    pub fn new(operation_id: Uuid, preset_id: AgentPresetId, name: impl Into<String>) -> Self {
+    pub fn new(
+        operation_id: Uuid,
+        name: impl Into<String>,
+        instructions: impl Into<String>,
+    ) -> Self {
         Self {
             operation_id,
-            preset_id,
+            preset_id: None,
             name: name.into(),
-            instructions: None,
-            tools: BTreeSet::new(),
+            instructions: Some(instructions.into()),
+            tools: None,
             connections: BTreeSet::new(),
             routine: None,
+            model: None,
+            behavior: None,
+            documents: None,
+        }
+    }
+    /// Starts a request for one preset.
+    #[must_use]
+    pub fn from_preset(
+        operation_id: Uuid,
+        preset_id: AgentPresetId,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation_id,
+            preset_id: Some(preset_id),
+            name: name.into(),
+            instructions: None,
+            tools: None,
+            connections: BTreeSet::new(),
+            routine: None,
+            model: None,
+            behavior: None,
+            documents: None,
         }
     }
 
-    /// Supplies instructions for presets that accept them.
+    /// Supplies standing instructions, replacing any template default.
     #[must_use]
     pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.instructions = Some(instructions.into());
         self
     }
 
-    /// Adds exact capability names to the caller selection.
+    /// Replaces the template's machine tools with the exact caller selection.
     #[must_use]
     pub fn with_tools(mut self, tools: impl IntoIterator<Item = String>) -> Self {
-        self.tools.extend(tools);
+        self.tools = Some(tools.into_iter().collect());
+        self
+    }
+
+    #[must_use]
+    pub fn with_model(mut self, model: AgentModelSelection) -> Self {
+        self.model = Some(model);
         self
     }
 
@@ -231,9 +269,6 @@ impl LocalHost {
             }
             let definition = store::read(&transaction, update.id)?
                 .ok_or(LocalHostError::AgentNotFound(update.id))?;
-            for name in &update.tools {
-                require_consumable(name, definition.operational.documents)?;
-            }
             if definition.tool_selection.revision != update.expected_revision {
                 return Err(LocalHostError::AgentConflict(update.id));
             }
@@ -330,8 +365,7 @@ impl LocalHost {
         Ok(())
     }
 
-    /// Renames one agent. An agent may rename itself, and an agent whose
-    /// selection contains the management capability may rename another agent.
+    /// Renames one agent through the actor's enabled renoa.agents plugin.
     ///
     /// # Errors
     /// Rejects unauthorized actors, stale names, conflicting replays, and
@@ -377,19 +411,19 @@ impl LocalHost {
             if definition.name != edit.expected_name {
                 return Err(LocalHostError::AgentConflict(edit.id));
             }
-            if actor != edit.id {
-                let actor = store::read(&transaction, actor)?
-                    .ok_or(LocalHostError::AgentNotFound(actor))?;
-                if !actor
-                    .tool_selection
-                    .tools
-                    .contains(capabilities::AGENT_MANAGE)
-                {
-                    return Err(LocalHostError::InvalidRequest(format!(
-                        "agent `{actor:?}` has no `{}` capability",
-                        capabilities::AGENT_MANAGE
-                    )));
-                }
+            if !store::exists(&transaction, actor)? {
+                return Err(LocalHostError::AgentNotFound(actor));
+            }
+            if !crate::plugins::host::state::enabled_in(
+                &transaction,
+                actor,
+                crate::plugins::host::HostPluginId::Agents,
+            )
+            .map_err(catalog_error)?
+            {
+                return Err(LocalHostError::InvalidRequest(
+                    "renoa.agents plugin is disabled".to_owned(),
+                ));
             }
             check_cancellation(&cancellation)?;
             definition.name.clone_from(&edit.name);
@@ -417,21 +451,6 @@ pub(in crate::host) fn require_selectable(name: &str) -> Result<(), LocalHostErr
     } else {
         Err(LocalHostError::InvalidRequest(format!(
             "`{name}` is not a Host capability"
-        )))
-    }
-}
-
-/// Rejects a capability the definition cannot exercise, so a stored selection
-/// never names something the runtime silently drops.
-pub(in crate::host) fn require_consumable(
-    name: &str,
-    documents: Option<crate::AgentDocuments>,
-) -> Result<(), LocalHostError> {
-    if capabilities::is_consumable(name, documents) {
-        Ok(())
-    } else {
-        Err(LocalHostError::InvalidRequest(format!(
-            "capability `{name}` requires an agent definition that keeps documents"
         )))
     }
 }

@@ -37,6 +37,8 @@ const AGENT_OWNED_TABLES: &[&str] = &[
     "host_plugin_activation_operations",
     "host_agent_plugin_revisions",
     "host_agent_plugins",
+    "host_builtin_plugin_operations",
+    "host_agent_builtin_plugins",
     "host_agent_tool_selections",
     "host_agent_mcp_connections",
     "host_agent_creations",
@@ -50,8 +52,8 @@ const AGENT_OWNED_TABLES: &[&str] = &[
 
 // Managed roots a reset clears, grouped by the report field that counts them.
 // Every root named here is preflighted before the catalog is touched.
-const SESSION_ROOTS: [&str; 2] = ["sessions", "review-sessions"];
-const REVIEW_ROOTS: [&str; 2] = ["review-workspaces", "github-executions"];
+const SESSION_ROOTS: [&str; 2] = ["sessions", "state/review-sessions"];
+const REVIEW_ROOTS: [&str; 2] = ["state/review-workspaces", "state/github-executions"];
 const DOCUMENT_ROOTS: [&str; 2] = ["agents", "profiles"];
 
 /// What one reset removed. Rows, session directories, review inspection
@@ -67,8 +69,7 @@ pub struct HostResetReport {
     /// execution records keyed by the request ids the reset deletes, which
     /// nothing else can reap afterwards.
     pub removed_review_directories: u64,
-    /// Agent document directories removed, under the canonical `agents/` root
-    /// and the predecessor `profiles/` root alike.
+    /// Agent document sets removed. Agent directories containing workspaces remain.
     pub removed_document_roots: u64,
     /// Workspace directories left untouched, by name.
     pub preserved_workspaces: Vec<String>,
@@ -99,11 +100,12 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
     // Every managed root is inspected before the catalog is touched, so a
     // refusal here leaves the rows and the state they describe in place.
     require_managed_roots(data_directory)?;
-    let database = data_directory.join(catalog::HOST_DATABASE);
+    let home = crate::RenoaHome::at(data_directory)?;
+    let database = home.host_database();
     let removed_rows = if database.exists() {
         catalog::cutover_and_clear(&database, AGENT_OWNED_TABLES)?
     } else {
-        std::fs::create_dir_all(data_directory)?;
+        home.initialize()?;
         catalog::initialize(&database)?;
         AGENT_OWNED_TABLES
             .iter()
@@ -112,7 +114,7 @@ pub fn reset_host_data_root(data_directory: &Path) -> Result<HostResetReport, Lo
     };
     let removed_sessions = clear_roots(data_directory, &SESSION_ROOTS)?;
     let removed_review_directories = clear_roots(data_directory, &REVIEW_ROOTS)?;
-    let removed_document_roots = clear_roots(data_directory, &DOCUMENT_ROOTS)?;
+    let removed_document_roots = clear_documents(data_directory)?;
     Ok(HostResetReport {
         removed_rows,
         removed_sessions,
@@ -128,6 +130,27 @@ fn require_managed_roots(data_directory: &Path) -> Result<(), LocalHostError> {
     for roots in [SESSION_ROOTS, REVIEW_ROOTS, DOCUMENT_ROOTS] {
         for name in roots {
             require_managed_directory(&data_directory.join(name))?;
+        }
+    }
+    let agents = data_directory.join("agents");
+    if agents.exists() {
+        for entry in std::fs::read_dir(agents)? {
+            let directory = entry?.path();
+            require_managed_directory(&directory)?;
+            for name in ["SOUL.md", "USER.md"] {
+                let path = directory.join(name);
+                match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.is_file() => (),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(error.into()),
+                    Ok(_) => {
+                        return Err(LocalHostError::InvalidRequest(format!(
+                            "refusing to clear `{}`: an agent document must be a regular file",
+                            path.display()
+                        )));
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -182,7 +205,30 @@ fn clear_directory(path: &Path) -> Result<u64, LocalHostError> {
     Ok(removed)
 }
 
-/// Names the workspace directories a reset leaves in place.
+fn clear_documents(root: &Path) -> Result<u64, LocalHostError> {
+    let mut removed = clear_directory(&root.join("profiles"))?;
+    let agents = root.join("agents");
+    if !agents.exists() {
+        return Ok(removed);
+    }
+    for entry in std::fs::read_dir(agents)? {
+        let directory = entry?.path();
+        let mut changed = false;
+        for name in ["SOUL.md", "USER.md"] {
+            match std::fs::remove_file(directory.join(name)) {
+                Ok(()) => changed = true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        removed += u64::from(changed);
+        if std::fs::read_dir(&directory)?.next().is_none() {
+            std::fs::remove_dir(directory)?;
+        }
+    }
+    Ok(removed)
+}
+
 fn preserved_workspaces(data_directory: &Path) -> Vec<String> {
     let mut preserved = Vec::new();
     for name in ["agent-workspaces", "bot-workspaces"] {
@@ -191,6 +237,18 @@ fn preserved_workspaces(data_directory: &Path) -> Vec<String> {
             preserved.push(name.to_owned());
         }
     }
+    if let Ok(entries) = std::fs::read_dir(data_directory.join("agents")) {
+        for entry in entries.flatten() {
+            let workspace = entry.path().join("workspace");
+            if std::fs::symlink_metadata(&workspace).is_ok_and(|metadata| metadata.is_dir()) {
+                preserved.push(format!(
+                    "agents/{}/workspace",
+                    entry.file_name().to_string_lossy()
+                ));
+            }
+        }
+    }
+    preserved.sort();
     preserved
 }
 

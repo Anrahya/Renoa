@@ -142,6 +142,16 @@ impl AgentToolBinding {
         }
     }
 
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    #[must_use]
+    pub fn tool(&self) -> Arc<dyn Tool> {
+        Arc::clone(&self.tool)
+    }
+
     /// Returns the model-visible name of the bound tool.
     #[must_use]
     pub fn tool_name(&self) -> &str {
@@ -187,12 +197,12 @@ pub fn build_runtime_with_events(
 }
 
 /// Builds a runtime with a single model-visible Code Mode capability and a
-/// hidden, independently durable MCP execution binding.
+/// hidden, independently durable plugin execution binding.
 ///
 /// # Errors
 ///
 /// Rejects an invalid evaluator identity or a nested binding that is not the
-/// Host's MCP executor.
+/// Host's plugin executor.
 pub fn build_runtime_with_code_mode(
     config: AgentLoopConfig,
     context: ContextBinding,

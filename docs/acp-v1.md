@@ -73,29 +73,27 @@ The process reads:
 - optional `RENOA_MODEL_PROVIDERS`
 - `RENOA_MODEL_PROVIDER`
 - `RENOA_MODEL`
-- `RENOA_MODEL_AUTH_STORE`
+- optional `RENOA_MODEL_AUTH_STORE` (defaults to `<home>/credentials/models.sqlite3`)
 - `RENOA_AGENT_ID`, the id of an agent provisioned on this Host. `renoa-agent
   acp`, `renoa-agent mcp github install`, and `renoa-agent plugins sync` build
   the full configuration and require it; `renoa-agent models --json` does not.
-- optional `RENOA_DATA_DIR`
+- optional `RENOA_HOME`
 - optional `RENOA_MCP_ADAPTER`
 - optional `RENOA_CODE_MODE_WORKER`
 - optional `RENOA_MCP_REGISTRY_ADAPTER`
 - optional `RENOA_SHARED_PLUGIN_REGISTRY`
 
-Without `RENOA_DATA_DIR`, Host state uses Renoa's platform data directory.
+Without `RENOA_HOME`, Host state uses `~/.renoa`.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
 enables Host catalog refresh and invocation. A tool reaches the configured agent
 only after a per-agent attachment such as the GitHub command above. A committed
 change is visible on the next registry call without restarting ACP or the
 surface.
 `RENOA_CODE_MODE_WORKER` is the absolute path to the exact-pinned Monty binary.
-It is used only when the agent's selected capabilities include `code_mode`,
-which exposes Python MCP execution while hiding direct `tool_execute` from the
-model. If configured, a missing or different binary is refused before the Host
-opens its data root. An agent selecting `code_mode` without a configured worker
-is refused when its runtime is assembled. Installing the worker alone does not
-change an agent's selection.
+When configured, it exposes Python plugin execution and hides direct
+`tool_execute` from the model for every agent. Host plugin calls require no MCP
+adapter. A missing or different configured binary is refused before mutable
+Host state is opened. Without this setting, agents use direct `tool_execute`.
 `RENOA_MCP_REGISTRY_ADAPTER` is the absolute path to the built read-only
 official MCP Registry adapter. It enables external `plugin_search` queries and
 exact name/version lookups. Registry metadata remains publisher-supplied research
@@ -123,7 +121,7 @@ current process default. Authentication remains local to the provider adapter,
 and every explicitly enabled provider must have a usable credential.
 The adapter resolves the agent named by `RENOA_AGENT_ID` and uses its stored
 definition, instructions included. An agent created from the
-`renoa.coding.alpha.v2` preset carries Alpha's curated base prompt; another
+`renoa.coding.alpha.v3` preset carries Alpha's curated base prompt; another
 preset carries the instructions it was created with. The process environment
 selects the model and the agent identity, not the agent's instructions. When
 the agent's stored behavior loads project instructions, the Host reads the

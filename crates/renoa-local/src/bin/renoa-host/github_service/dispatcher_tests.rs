@@ -6,8 +6,8 @@ use renoa_local::{
 };
 use std::collections::BTreeSet;
 
-const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v2";
-const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
+const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v3";
+const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 
 async fn provision(
     host: &LocalHost,
@@ -15,7 +15,7 @@ async fn provision(
     name: &str,
     instructions: Option<&str>,
 ) -> AgentId {
-    let mut request = AgentCreateRequest::new(
+    let mut request = AgentCreateRequest::from_preset(
         Uuid::new_v4(),
         AgentPresetId::new(preset).expect("preset id"),
         name,
@@ -54,9 +54,9 @@ async fn host(root: &Path) -> LocalHost {
         .create_agent(
             AgentCreator::Agent { agent_id: operator },
             AgentCreationOrigin::AgentTool,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
                 "Reviewer",
             )
             .with_instructions("Review"),
@@ -111,7 +111,7 @@ async fn failed_cleanup_defers_one_job_but_preserves_global_ownership_checks() {
             .await
             .expect("worker entry");
     }
-    let checkouts = root.path().join("review-workspaces");
+    let checkouts = root.path().join("state/review-workspaces");
     std::fs::create_dir_all(&checkouts).expect("checkouts");
     // A regular file where a directory is expected deterministically fails
     // remove_dir_all even when the test runs as root.
@@ -169,7 +169,7 @@ async fn failed_cleanup_defers_one_job_but_preserves_global_ownership_checks() {
         .write(true)
         .create(true)
         .truncate(false)
-        .open(root.path().join(".reviews.lock"))
+        .open(root.path().join("state/.reviews.lock"))
         .expect("lease");
     lease.try_lock().expect("active owner");
     assert!(
@@ -189,7 +189,10 @@ async fn failed_cleanup_defers_one_job_but_preserves_global_ownership_checks() {
 async fn stopped_launch_cleanup_allows_fresh_create_new_credentials() {
     let data = tempfile::tempdir().expect("data");
     let id = Uuid::new_v4();
-    let root = data.path().join("github-executions").join(id.to_string());
+    let root = data
+        .path()
+        .join("state/github-executions")
+        .join(id.to_string());
     tokio::fs::create_dir_all(&root).await.expect("launch");
     private_write(&root.join("app.jwt"), b"expired credential")
         .await

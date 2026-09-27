@@ -29,7 +29,7 @@ pub(crate) struct SurfaceStore {
 
 impl SurfaceStore {
     pub(crate) fn open(data_directory: &Path) -> Result<Self, StoreError> {
-        let surface_directory = data_directory.join("surfaces").join("telegram");
+        let surface_directory = data_directory.join("state/surfaces").join("telegram");
         std::fs::create_dir_all(&surface_directory)?;
         restrict_directory(&surface_directory)?;
         let lease = schema::acquire_lease(&surface_directory)?;

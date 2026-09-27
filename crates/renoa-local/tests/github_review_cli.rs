@@ -53,7 +53,7 @@ fn fixture(root: &Path) -> AgentId {
     fs::write(
         root.join("host.json"),
         serde_json::to_vec(&json!({
-            "data_directory":data,"model_bridge":bridge,"providers":["xai"],"provider":"xai",
+            "home":data,"model_bridge":bridge,"providers":["xai"],"provider":"xai",
             "model":"fixture","model_auth_store":auth
         }))
         .expect("config"),
@@ -64,7 +64,7 @@ fn fixture(root: &Path) -> AgentId {
         root,
         &json!({
             "operationId": operator_operation,
-            "presetId": "renoa.personal.arcee.v2",
+            "presetId": "renoa.personal.arcee.v3",
             "name": "Arcee"
         }),
     );
@@ -77,7 +77,7 @@ fn fixture(root: &Path) -> AgentId {
     let specialist_operation = Uuid::new_v4();
     let mut document = json!({
         "operationId": specialist_operation,
-        "presetId": "renoa.specialist.v2",
+        "presetId": "renoa.general.v1",
         "name": "Soundwave",
         "instructions": SPECIALIST_INSTRUCTIONS
     });
@@ -207,7 +207,7 @@ fn github_service_rejects_a_different_worker_host_before_loading_credentials() {
     let mut same: serde_json::Value =
         serde_json::from_slice(&fs::read(supervisor.path().join("host.json")).expect("config"))
             .expect("json");
-    same["data_directory"] = serde_json::to_value(alias).expect("path");
+    same["home"] = serde_json::to_value(alias).expect("path");
     same["model"] = "another-model".into();
     let path = supervisor.path().join("worker.json");
     fs::write(&path, serde_json::to_vec(&same).expect("json")).expect("worker config");

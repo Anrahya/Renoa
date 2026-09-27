@@ -2,6 +2,10 @@ use super::*;
 use crate::RenameAgent;
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one rename lifecycle proves rejection, replay, stale edits, and live re-enabling"
+)]
 async fn rename_requires_the_management_capability_and_replays() {
     let (_directory, host) = fixture();
     let (creator, origin) = system("test");
@@ -9,8 +13,7 @@ async fn rename_requires_the_management_capability_and_replays() {
         .create_agent(
             creator.clone(),
             origin,
-            specialist(Uuid::new_v4(), "Capable")
-                .with_tools([crate::capabilities::AGENT_MANAGE.to_owned()]),
+            specialist(Uuid::new_v4(), "Capable"),
             CancellationToken::new(),
         )
         .await
@@ -34,6 +37,14 @@ async fn rename_requires_the_management_capability_and_replays() {
         .await
         .expect("target agent");
 
+    crate::plugins::host::state::change(
+        &host.config.database,
+        plain.id,
+        crate::plugins::host::HostPluginId::Agents,
+        false,
+        "disable-plain",
+    )
+    .expect("disable plugin");
     let operation = Uuid::new_v4();
     let edit = RenameAgent {
         id: target.id,
@@ -80,7 +91,15 @@ async fn rename_requires_the_management_capability_and_replays() {
         Err(LocalHostError::AgentConflict(_))
     ));
 
-    // An agent may always rename itself.
+    crate::plugins::host::state::change(
+        &host.config.database,
+        plain.id,
+        crate::plugins::host::HostPluginId::Agents,
+        true,
+        "enable-plain",
+    )
+    .expect("enable plugin");
+    // The enabled plugin can rename its caller.
     let self_renamed = host
         .rename_agent(
             plain.id,

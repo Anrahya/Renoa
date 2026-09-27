@@ -41,11 +41,11 @@ async fn exact_worker_suspends_parallel_calls_and_restores_into_a_fresh_pool() {
     let start = first.evaluate(CodeStepRequest {
         run_id: "test-parallel".to_owned(),
         step: CodeStep::Start {
-            source: "import asyncio\nresults = await asyncio.gather(mcp('mcp:first', {'n': 1}), mcp('mcp:second', {'n': 2}))\nresults".to_owned(),
+            source: "import asyncio\nresults = await asyncio.gather(plugin('mcp:first', {'n': 1}), plugin('mcp:second', {'n': 2}))\nresults".to_owned(),
         },
     }).await.expect("evaluate start");
     let CodeStepOutput::Suspended { snapshot, calls } = start else {
-        panic!("parallel MCP calls did not suspend")
+        panic!("parallel plugin calls did not suspend")
     };
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0].reference, "mcp:first");
@@ -76,7 +76,7 @@ async fn exact_worker_resumes_dependent_mcp_waves_across_fresh_pools() {
     let Some(worker) = std::env::var_os("RENOA_TEST_MONTY_WORKER").map(PathBuf::from) else {
         return;
     };
-    let source = "first = await mcp('mcp:first', {'seed': 1})\nsecond = await mcp('mcp:second', {'from': first['value']})\nsecond";
+    let source = "first = await plugin('mcp:first', {'seed': 1})\nsecond = await plugin('mcp:second', {'from': first['value']})\nsecond";
     let first = MontyEvaluator::new(&worker).expect("verify exact worker");
     let start = first
         .evaluate(CodeStepRequest {
@@ -92,7 +92,7 @@ async fn exact_worker_resumes_dependent_mcp_waves_across_fresh_pools() {
         calls: first_calls,
     } = start
     else {
-        panic!("first MCP call did not suspend")
+        panic!("first plugin call did not suspend")
     };
     assert_eq!(first_calls.len(), 1);
     assert_eq!(first_calls[0].reference, "mcp:first");
@@ -116,7 +116,7 @@ async fn exact_worker_resumes_dependent_mcp_waves_across_fresh_pools() {
         calls: second_calls,
     } = next
     else {
-        panic!("dependent MCP call did not suspend")
+        panic!("dependent plugin call did not suspend")
     };
     assert_eq!(second_calls.len(), 1);
     assert_eq!(second_calls[0].reference, "mcp:second");
@@ -155,7 +155,7 @@ async fn exact_worker_resolves_separately_awaited_futures() {
         .evaluate(CodeStepRequest {
             run_id: "test-separate-awaits".to_owned(),
             step: CodeStep::Start {
-                source: "first = mcp('mcp:first', {})\nsecond = mcp('mcp:second', {})\na = await first\nb = await second\n[a, b]".to_owned(),
+                source: "first = plugin('mcp:first', {})\nsecond = plugin('mcp:second', {})\na = await first\nb = await second\n[a, b]".to_owned(),
             },
         })
         .await
@@ -176,7 +176,7 @@ async fn exact_worker_does_not_silently_drop_unawaited_mcp_calls() {
         .evaluate(CodeStepRequest {
             run_id: "test-unawaited".to_owned(),
             step: CodeStep::Start {
-                source: "mcp('mcp:orphan', {})\n'finished'".to_owned(),
+                source: "plugin('mcp:orphan', {})\n'finished'".to_owned(),
             },
         })
         .await;
@@ -198,7 +198,7 @@ async fn exact_worker_runs_parallel_mcp_effects_through_the_kernel() {
     kernel
         .create_session(session, agent)
         .expect("create session");
-    let source = "import asyncio\nresults = await asyncio.gather(mcp('mcp:first', {'n': 1}), mcp('mcp:second', {'n': 2}))\n[results[0]['content'][0]['text'], results[1]['content'][0]['text']]";
+    let source = "import asyncio\nresults = await asyncio.gather(plugin('mcp:first', {'n': 1}), plugin('mcp:second', {'n': 2}))\n[results[0]['content'][0]['text'], results[1]['content'][0]['text']]";
     let model = Arc::new(EndToEndModel {
         responses: Mutex::new(VecDeque::from([
             ModelResponse {
@@ -246,7 +246,8 @@ async fn exact_worker_runs_parallel_mcp_effects_through_the_kernel() {
             session,
             Command::new(
                 CommandId::new(),
-                serde_json::to_value(AgentCommand::text("Use both MCP tools.")).expect("command"),
+                serde_json::to_value(AgentCommand::text("Use both plugin tools."))
+                    .expect("command"),
             ),
         )
         .expect("submit")
@@ -308,7 +309,7 @@ impl Tool for EndToEndMcpTool {
         static SPEC: std::sync::OnceLock<ToolSpec> = std::sync::OnceLock::new();
         SPEC.get_or_init(|| ToolSpec {
             name: "tool_execute".to_owned(),
-            description: "MCP fixture".to_owned(),
+            description: "plugin fixture".to_owned(),
             input_schema: json!({"type": "object"}),
         })
     }
@@ -320,7 +321,9 @@ impl Tool for EndToEndMcpTool {
         _updates: ToolUpdates,
     ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
         Box::pin(async move {
-            let reference = call.arguments["reference"].as_str().expect("MCP reference");
+            let reference = call.arguments["reference"]
+                .as_str()
+                .expect("plugin reference");
             Ok(ToolOutput {
                 content: vec![ContentBlock::text(reference)],
                 details: None,

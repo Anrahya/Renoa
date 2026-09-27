@@ -12,7 +12,7 @@ use crate::{
     AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, LocalHostError, ModelProvider,
     host::HostInitialization,
     host::routines::RoutineSchedule,
-    presets::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, SPECIALIST_PRESET_ID},
+    presets::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID},
 };
 
 const VECTOR_OPERATION: Uuid = Uuid::from_u128(0x0001_0203_0405_0607_0809_0a0b_0c0d_0e0f);
@@ -47,9 +47,9 @@ fn fixture() -> (tempfile::TempDir, LocalHost) {
 }
 
 fn specialist(operation: Uuid, name: &str) -> AgentCreateRequest {
-    AgentCreateRequest::new(
+    AgentCreateRequest::from_preset(
         operation,
-        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
         name,
     )
     .with_instructions("Do the assigned job.")
@@ -83,17 +83,9 @@ async fn preset_capability_baselines_keep_the_existing_exact_runtime_selections(
             capabilities: &[
                 "bash",
                 "edit_file",
-                "plugin_manage",
                 "find",
-                "git_changes",
-                "git_diff",
-                "git_show",
                 "grep",
                 "read_file",
-                "skill_load",
-                "skill_search",
-                "tool_execute",
-                "plugin_search",
                 "write_file",
             ],
         },
@@ -102,42 +94,23 @@ async fn preset_capability_baselines_keep_the_existing_exact_runtime_selections(
             agent_name: "Arcee",
             instructions: None,
             capabilities: &[
-                "agent_documents",
-                "agent_manage",
                 "bash",
                 "edit_file",
-                "plugin_manage",
                 "find",
-                "git_changes",
-                "git_diff",
-                "git_show",
                 "grep",
                 "read_file",
-                "routine_manage",
-                "routine_results",
-                "skill_load",
-                "skill_search",
-                "tool_execute",
-                "plugin_search",
                 "write_file",
             ],
         },
         PresetExpectation {
-            preset_id: SPECIALIST_PRESET_ID,
-            agent_name: "Specialist",
-            instructions: Some("Do the assigned job."),
-            capabilities: &[
-                "routine_manage",
-                "routine_results",
-                "skill_load",
-                "skill_search",
-                "tool_execute",
-                "plugin_search",
-            ],
+            preset_id: GENERAL_PRESET_ID,
+            agent_name: "General",
+            instructions: None,
+            capabilities: &[],
         },
     ];
     for case in cases {
-        let mut request = AgentCreateRequest::new(
+        let mut request = AgentCreateRequest::from_preset(
             Uuid::new_v4(),
             AgentPresetId::new(case.preset_id).expect("preset id"),
             case.agent_name,
@@ -182,16 +155,17 @@ async fn creation_writes_one_canonical_definition_and_exact_selection() {
     assert_eq!(definition.created_via, AgentCreationOrigin::Provisioning);
     assert_eq!(
         definition.preset_id,
-        Some(AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"))
+        Some(AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"))
     );
     assert_eq!(definition.tool_selection.revision, 1);
     assert!(definition.tool_selection.tools.contains("read_file"));
     assert!(
-        definition
-            .tool_selection
-            .tools
-            .contains(crate::capabilities::ROUTINE_MANAGE),
-        "the specialist baseline keeps routine management"
+        crate::plugins::host::state::enabled(
+            &host.config.database,
+            definition.id,
+            crate::plugins::host::HostPluginId::Routines
+        )
+        .expect("default plugin access")
     );
     assert_eq!(definition.operational.instructions, "Do the assigned job.");
     assert_eq!(definition.operational.provider_restriction, None);
@@ -347,7 +321,7 @@ async fn creation_replays_exactly_and_conflicts_on_any_changed_field() {
 async fn a_selection_cannot_name_a_capability_the_definition_cannot_consume() {
     let (_directory, host) = fixture();
     let (creator, origin) = system("test");
-    let rejection = "keeps documents";
+    let rejection = "not a Host capability";
     let rejected = host
         .create_agent(
             creator.clone(),
@@ -390,19 +364,23 @@ async fn a_selection_cannot_name_a_capability_the_definition_cannot_consume() {
         .create_agent(
             creator,
             origin,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
                 AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
                 "With documents",
             )
-            .with_tools(["agent_documents".to_owned()]),
+            .with_tools([]),
             CancellationToken::new(),
         )
         .await
-        .expect("a document-enabled agent keeps the document capability");
+        .expect("documents are a plugin, independent of machine grants");
+    assert!(enabled.tool_selection.tools.is_empty());
     assert!(
-        enabled.tool_selection.tools.contains("agent_documents"),
-        "the document capability belongs to the stored selection"
+        host.resolve_definition(enabled.id)
+            .await
+            .expect("resolved agent")
+            .document_binding()
+            .is_some()
     );
 }
 /// A stored selection naming a capability the definition cannot use must fail
@@ -420,8 +398,9 @@ async fn a_stored_selection_the_definition_cannot_use_is_refused() {
         )
         .await
         .expect("create");
-    let database = crate::host::catalog::open_verified(&directory.path().join("data/host.sqlite3"))
-        .expect("open the Host catalog");
+    let database =
+        crate::host::catalog::open_verified(&directory.path().join("data/state/host.sqlite3"))
+            .expect("open the Host catalog");
     for tools in [r#"["agent_documents"]"#, r#"["renoa.bot.manage"]"#] {
         database
             .execute(
@@ -458,7 +437,7 @@ async fn a_creation_receipt_that_describes_another_agent_is_refused() {
     .expect("create");
     {
         let database =
-            crate::host::catalog::open_verified(&directory.path().join("data/host.sqlite3"))
+            crate::host::catalog::open_verified(&directory.path().join("data/state/host.sqlite3"))
                 .expect("open the Host catalog");
         database
             .execute(
@@ -495,7 +474,7 @@ async fn a_stored_definition_that_fails_validation_is_refused() {
         .expect("create");
     {
         let database =
-            crate::host::catalog::open_verified(&directory.path().join("data/host.sqlite3"))
+            crate::host::catalog::open_verified(&directory.path().join("data/state/host.sqlite3"))
                 .expect("open the Host catalog");
         database
             .execute(
@@ -556,7 +535,7 @@ async fn validation_rejects_untrusted_pairs_unknown_names_and_preset_mismatches(
     ));
 
     // An unregistered preset is rejected.
-    let unknown = AgentCreateRequest::new(
+    let unknown = AgentCreateRequest::from_preset(
         Uuid::new_v4(),
         AgentPresetId::new("renoa.unknown.v1").expect("preset id"),
         "Unknown preset",
@@ -568,25 +547,7 @@ async fn validation_rejects_untrusted_pairs_unknown_names_and_preset_mismatches(
         Err(LocalHostError::Definition(_))
     ));
 
-    // A fixed-instruction preset rejects caller instructions.
-    let fixed = AgentCreateRequest::new(
-        Uuid::new_v4(),
-        AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
-        "Operator",
-    )
-    .with_instructions("Replace the curated prompt.");
-    assert!(matches!(
-        host.create_agent(creator.clone(), origin, fixed, CancellationToken::new())
-            .await,
-        Err(LocalHostError::Definition(_))
-    ));
-
-    // A caller-instruction preset requires them.
-    let missing = AgentCreateRequest::new(
-        Uuid::new_v4(),
-        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
-        "No instructions",
-    );
+    let missing = AgentCreateRequest::new(Uuid::new_v4(), "No instructions", "");
     assert!(matches!(
         host.create_agent(creator, origin, missing, CancellationToken::new())
             .await,
@@ -642,7 +603,7 @@ async fn a_creation_that_fails_validation_publishes_no_documents() {
     let (directory, host) = fixture();
     let (creator, origin) = system("test");
     let operation = Uuid::new_v4();
-    let request = AgentCreateRequest::new(
+    let request = AgentCreateRequest::from_preset(
         operation,
         AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
         "Unusable connection",

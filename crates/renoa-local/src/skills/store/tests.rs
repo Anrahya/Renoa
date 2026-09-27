@@ -22,8 +22,8 @@ impl Fixture {
         let directory = tempdir().expect("temporary skill Host");
         let workspace = directory.path().join("workspace");
         let global = directory.path().join("global");
-        let packages = directory.path().join("data/skills");
-        let database = directory.path().join("data/host.sqlite3");
+        let packages = directory.path().join("data/state/skills");
+        let database = directory.path().join("data/state/host.sqlite3");
         fs::create_dir_all(&workspace).expect("create workspace");
         fs::create_dir_all(&global).expect("create global source");
         fs::create_dir_all(database.parent().expect("database parent"))
