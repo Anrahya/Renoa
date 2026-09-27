@@ -345,7 +345,7 @@ async fn check_outage_and_revocation(
         StatusCode::OK
     );
     // The same configured root must not silently become another Host after startup.
-    rusqlite::Connection::open(root.join("host.sqlite3"))
+    rusqlite::Connection::open(root.join("state/host.sqlite3"))
         .expect("Host catalog")
         .execute(
             "UPDATE host_identity SET host_id=?1",

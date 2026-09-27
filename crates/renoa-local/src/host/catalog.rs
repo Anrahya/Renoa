@@ -6,13 +6,14 @@ use thiserror::Error;
 mod agents;
 mod cutover;
 mod migrations;
+mod selection_migration;
 
 pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 
-const SCHEMA_VERSION: u32 = 31;
-pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
+const SCHEMA_VERSION: u32 = 32;
+pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -252,7 +253,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=30 => {
+        28..=31 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -263,7 +264,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
                     "Host schema version and metadata disagree".to_owned(),
                 ));
             }
-            migrate_selected_plugin_tool_names(&transaction)?;
+            selection_migration::migrate(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
@@ -295,131 +296,6 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             "schema {found} is unsupported; expected {SCHEMA_VERSION}"
         ))),
     }
-}
-
-fn migrate_selected_plugin_tool_names(
-    transaction: &rusqlite::Transaction<'_>,
-) -> Result<(), HostCatalogError> {
-    use std::collections::BTreeSet;
-
-    let mut statement = transaction
-        .prepare("SELECT agent_id, revision, tools_json FROM host_agent_tool_selections")?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
-    let selections = rows.collect::<Result<Vec<_>, _>>()?;
-    drop(statement);
-    for (agent, revision, encoded) in selections {
-        let tools: BTreeSet<String> = serde_json::from_str(&encoded).map_err(|error| {
-            HostCatalogError::Invalid(format!(
-                "stored tool selection for agent {agent} is malformed: {error}"
-            ))
-        })?;
-        let changed = tools.contains("extension_manage")
-            || tools.contains("tool_search")
-            || tools.contains("tool_load");
-        if !changed {
-            continue;
-        }
-        let renamed = tools
-            .into_iter()
-            .filter_map(|name| match name.as_str() {
-                "extension_manage" => Some("plugin_manage".to_owned()),
-                "tool_search" => Some("plugin_search".to_owned()),
-                "tool_load" => None,
-                _ => Some(name),
-            })
-            .collect::<BTreeSet<_>>();
-        let next_revision = revision.checked_add(1).ok_or_else(|| {
-            HostCatalogError::Invalid(format!(
-                "tool selection revision overflow for agent {agent}"
-            ))
-        })?;
-        transaction.execute(
-            "UPDATE host_agent_tool_selections SET revision=?2, tools_json=?3 WHERE agent_id=?1",
-            rusqlite::params![
-                agent,
-                next_revision,
-                serde_json::to_string(&renamed)
-                    .map_err(|error| HostCatalogError::Invalid(error.to_string()))?
-            ],
-        )?;
-    }
-    migrate_tool_names_in_receipts(transaction, "host_agent_creations", "/tool_selection/tools")?;
-    migrate_tool_names_in_receipts(transaction, "host_agent_renames", "/tool_selection/tools")?;
-    migrate_tool_names_in_receipts(
-        transaction,
-        "host_agent_tool_selection_operations",
-        "/tools",
-    )?;
-    Ok(())
-}
-
-fn migrate_tool_names_in_receipts(
-    transaction: &rusqlite::Transaction<'_>,
-    table: &str,
-    pointer: &str,
-) -> Result<(), HostCatalogError> {
-    let mut statement =
-        transaction.prepare(&format!("SELECT operation_id, result_json FROM {table}"))?;
-    let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-    let receipts = rows.collect::<Result<Vec<_>, _>>()?;
-    drop(statement);
-    for (operation, encoded) in receipts {
-        let mut result: serde_json::Value = serde_json::from_str(&encoded).map_err(|error| {
-            HostCatalogError::Invalid(format!("{table} receipt {operation} is malformed: {error}"))
-        })?;
-        let tools = result
-            .pointer_mut(pointer)
-            .and_then(serde_json::Value::as_array_mut)
-            .ok_or_else(|| {
-                HostCatalogError::Invalid(format!(
-                    "{table} receipt {operation} has no selected tools"
-                ))
-            })?;
-        let mut changed = false;
-        let mut migrated = Vec::with_capacity(tools.len());
-        for tool in tools.iter() {
-            let name = tool.as_str().ok_or_else(|| {
-                HostCatalogError::Invalid(format!(
-                    "{table} receipt {operation} has a malformed tool name"
-                ))
-            })?;
-            let replacement = match name {
-                "extension_manage" => Some("plugin_manage"),
-                "tool_search" => Some("plugin_search"),
-                "tool_load" => {
-                    changed = true;
-                    continue;
-                }
-                _ => None,
-            };
-            if let Some(replacement) = replacement {
-                migrated.push(serde_json::Value::String(replacement.to_owned()));
-                changed = true;
-            } else {
-                migrated.push(tool.clone());
-            }
-        }
-        if changed {
-            *tools = migrated;
-            transaction.execute(
-                &format!("UPDATE {table} SET result_json=?2 WHERE operation_id=?1"),
-                rusqlite::params![
-                    operation,
-                    serde_json::to_string(&result)
-                        .map_err(|error| HostCatalogError::Invalid(error.to_string()))?
-                ],
-            )?;
-        }
-    }
-    Ok(())
 }
 
 fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
@@ -499,11 +375,11 @@ mod tests {
             )
             .expect("read migrated selection");
         assert_eq!(revision, 2);
-        assert_eq!(tools, r#"["plugin_search","tool_execute"]"#);
+        assert_eq!(tools, "[]");
     }
 
     #[test]
-    fn schema_28_selections_migrate_exact_plugin_tool_names_once() {
+    fn schema_28_selections_remove_retired_host_tool_names_once() {
         let directory = tempfile::tempdir().expect("temporary Host catalog");
         let database = directory.path().join("host.sqlite3");
         initialize(&database).expect("initialize current catalog");
@@ -546,17 +422,11 @@ mod tests {
             )
             .expect("read migrated selection");
         assert_eq!(revision, 5);
-        assert_eq!(encoded, r#"["bash","plugin_manage","plugin_search"]"#);
+        assert_eq!(encoded, r#"["bash"]"#);
         for (table, expected) in [
-            (
-                "host_agent_creations",
-                r#"["plugin_manage","plugin_search"]"#,
-            ),
-            ("host_agent_renames", r#"["plugin_manage"]"#),
-            (
-                "host_agent_tool_selection_operations",
-                r#"["plugin_search"]"#,
-            ),
+            ("host_agent_creations", "[]"),
+            ("host_agent_renames", "[]"),
+            ("host_agent_tool_selection_operations", "[]"),
         ] {
             let path = if table == "host_agent_tool_selection_operations" {
                 "$.tools"
@@ -572,7 +442,7 @@ mod tests {
                 .expect("read migrated receipt");
             assert_eq!(
                 selected, expected,
-                "{table} receipt must use the new tool names"
+                "{table} receipt must contain only machine grants"
             );
         }
     }

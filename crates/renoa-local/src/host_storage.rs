@@ -114,10 +114,6 @@ pub(crate) fn open_session_storage(
     open_session_storage_with_hook(sessions, expected_agent, session_id, workspace, || {})
 }
 
-pub(crate) async fn read_manifest(path: PathBuf) -> Result<SessionManifest, LocalHostError> {
-    tokio::task::spawn_blocking(move || read_manifest_file(&path)).await?
-}
-
 fn open_session_storage_with_hook(
     sessions: &Path,
     expected_agent: AgentId,

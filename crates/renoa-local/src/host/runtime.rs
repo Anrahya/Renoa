@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use renoa_agent::AgentEventSink;
 use renoa_agent_loop::{AgentToolBinding, CodeModeBinding};
@@ -9,7 +9,7 @@ use super::{HostConfig, LocalHostError};
 use crate::{
     LocalRuntimeConfig, LocalWorkspace, ModelChoice, ReasoningLevel,
     mcp::agent_registry_bindings,
-    plugins::{agent_plugin_binding, agent_plugin_search_binding},
+    plugins::agent_plugin_binding,
     runtime::build_composed_local_runtime,
     skills::{agent_skill_bindings, runtime_context},
 };
@@ -26,9 +26,8 @@ pub(crate) struct RuntimeRequest<'a> {
 
 /// Resolves one agent's runtime from its stored definition.
 ///
-/// Every capability the Host can bind is offered here and the agent's exact
-/// stored selection decides which bindings are kept. No policy is inferred from
-/// an identity, a prefix, or a preset.
+/// Machine tools follow the exact stored grants. Every agent receives the plugin
+/// protocol; enabled Host and external plugins are discovered through it.
 pub(crate) async fn resolve_runtime(
     host: &Arc<HostConfig>,
     request: RuntimeRequest<'_>,
@@ -42,36 +41,11 @@ pub(crate) async fn resolve_runtime(
         workspace,
         events,
     } = request;
-    let offered = offered_tool_bindings(host, definition, workspace, session_id, command_id);
-    let selection = &definition.selected_tools().tools;
-    let code_selected = selection.contains(crate::capabilities::CODE_MODE);
-    let (extension_tools, hidden_executor) = partition_selected_tools(offered, selection)?;
-    let code_mode = if code_selected {
-        let evaluator = host.code_mode.as_ref().ok_or_else(|| {
-            LocalHostError::Configuration(
-                "code_mode is selected, but no exact-pinned Monty worker is configured".to_owned(),
-            )
-        })?;
-        if host.mcp_adapter.is_none() {
-            return Err(LocalHostError::Configuration(
-                "code_mode requires an MCP adapter".to_owned(),
-            ));
-        }
-        let execute = hidden_executor.ok_or_else(|| {
-            LocalHostError::Configuration("MCP executor binding is unavailable".to_owned())
-        })?;
-        let adapter: Arc<dyn EffectAdapter> = Arc::clone(evaluator) as Arc<dyn EffectAdapter>;
-        Some(CodeModeBinding::new(
-            crate::code_mode::MontyEvaluator::revision(),
-            adapter,
-            execute,
-        ))
-    } else {
-        None
-    };
+    let offered = offered_tool_bindings(host, definition, workspace, session_id, command_id)?;
+    let (extension_tools, code_mode) = bind_code_mode(host, offered)?;
     let skills = host.skill_store.clone();
     let skill_context =
-        tokio::task::spawn_blocking(move || runtime_context(&skills, session_id, command_id))
+        tokio::task::spawn_blocking(move || runtime_context(&skills, session_id, command_id, ""))
             .await??;
     let mut config = LocalRuntimeConfig::for_definition(
         host.bridge.clone(),
@@ -93,21 +67,47 @@ pub(crate) async fn resolve_runtime(
     Ok(build_composed_local_runtime(config, workspace, extension_tools, events).await?)
 }
 
+pub(crate) fn bind_code_mode(
+    host: &HostConfig,
+    offered: Vec<AgentToolBinding>,
+) -> Result<(Vec<AgentToolBinding>, Option<CodeModeBinding>), LocalHostError> {
+    let code_selected = host.code_mode.is_some();
+    let (extension_tools, hidden_executor) = partition_selected_tools(offered, code_selected)?;
+    let code_mode = if code_selected {
+        let evaluator = host.code_mode.as_ref().ok_or_else(|| {
+            LocalHostError::Configuration(
+                "code_mode is selected, but no exact-pinned Monty worker is configured".to_owned(),
+            )
+        })?;
+        let execute = hidden_executor.ok_or_else(|| {
+            LocalHostError::Configuration("Plugin executor binding is unavailable".to_owned())
+        })?;
+        let adapter: Arc<dyn EffectAdapter> = Arc::clone(evaluator) as Arc<dyn EffectAdapter>;
+        Some(CodeModeBinding::new(
+            crate::code_mode::MontyEvaluator::revision(),
+            adapter,
+            execute,
+        ))
+    } else {
+        None
+    };
+    Ok((extension_tools, code_mode))
+}
+
 fn partition_selected_tools(
     offered: Vec<AgentToolBinding>,
-    selection: &BTreeSet<String>,
+    code_selected: bool,
 ) -> Result<(Vec<AgentToolBinding>, Option<AgentToolBinding>), LocalHostError> {
-    let code_selected = selection.contains(crate::capabilities::CODE_MODE);
     let mut visible = Vec::new();
     let mut hidden_executor = None;
     for binding in offered {
         if code_selected && binding.tool_name() == crate::capabilities::TOOL_EXECUTE {
             if hidden_executor.replace(binding).is_some() {
                 return Err(LocalHostError::Configuration(
-                    "MCP executor binding is configured twice".to_owned(),
+                    "Plugin executor binding is configured twice".to_owned(),
                 ));
             }
-        } else if selection.contains(binding.tool_name()) {
+        } else {
             visible.push(binding);
         }
     }
@@ -120,59 +120,88 @@ fn offered_tool_bindings(
     workspace: &LocalWorkspace,
     session_id: SessionId,
     command_id: Option<CommandId>,
-) -> Vec<AgentToolBinding> {
+) -> Result<Vec<AgentToolBinding>, LocalHostError> {
+    protocol_bindings(
+        host,
+        definition,
+        workspace.root(),
+        session_id,
+        command_id,
+        workspace
+            .kernel_tool_bindings()
+            .into_iter()
+            .filter(|binding| binding.tool_name().starts_with("git_"))
+            .collect(),
+    )
+}
+
+pub(crate) fn protocol_bindings(
+    host: &Arc<HostConfig>,
+    definition: &ResolvedAgentDefinition,
+    workspace: &std::path::Path,
+    session_id: SessionId,
+    command_id: Option<CommandId>,
+    git: Vec<AgentToolBinding>,
+) -> Result<Vec<AgentToolBinding>, LocalHostError> {
     let agent = definition.agent_id();
-    let can_manage_plugins = definition
-        .selected_tools()
-        .tools
-        .contains(crate::capabilities::PLUGIN_MANAGE);
-    let mut offered = vec![agent_plugin_search_binding(
+    let mut controls = Vec::new();
+    if let Some(binding) = definition.document_binding() {
+        controls.push(binding);
+    }
+    controls.push(agent_manage_binding(
+        Arc::clone(host),
         agent,
-        host.plugins.clone(),
-        can_manage_plugins,
-    )];
-    offered.extend(agent_registry_bindings(
+        session_id,
+        command_id,
+    ));
+    controls.push(super::routines::result_tool::binding(
+        Arc::clone(host),
+        agent,
+    ));
+    controls.push(super::routines::tool::binding(
+        Arc::clone(host),
+        agent,
+        session_id,
+        command_id,
+    ));
+    controls.extend(agent_skill_bindings(
+        agent,
+        host.skill_store.clone(),
+        workspace.to_path_buf(),
+        session_id,
+        command_id,
+    ));
+    controls.extend(git);
+    let plugins = Arc::new(
+        crate::plugins::host::HostPlugins::new(host.database.clone(), agent, controls)
+            .map_err(|error| LocalHostError::Configuration(error.to_string()))?,
+    );
+    let executor = agent_registry_bindings(
         agent,
         host.mcp_catalog.clone(),
         host.mcp_adapter.clone(),
         host.mcp_authorizations.clone(),
         session_id,
         command_id,
-    ));
-    if let Some(binding) = definition.document_binding() {
-        offered.push(binding);
-    }
-    offered.push(agent_plugin_binding(
-        agent,
-        host.plugins.clone(),
-        workspace.root().to_path_buf(),
-        session_id,
-        command_id,
-    ));
-    offered.push(agent_manage_binding(
-        Arc::clone(host),
-        agent,
-        session_id,
-        command_id,
-    ));
-    offered.push(super::routines::result_tool::binding(
-        Arc::clone(host),
-        session_id,
-    ));
-    offered.push(super::routines::tool::binding(
-        Arc::clone(host),
-        session_id,
-        command_id,
-    ));
-    offered.extend(agent_skill_bindings(
-        agent,
-        host.skill_store.clone(),
-        workspace.root().to_path_buf(),
-        session_id,
-        command_id,
-    ));
-    offered
+    )
+    .pop()
+    .ok_or_else(|| LocalHostError::Configuration("MCP executor is unavailable".to_owned()))?;
+    Ok(vec![
+        crate::plugins::search_binding_with_host(agent, host.plugins.clone(), Arc::clone(&plugins)),
+        agent_plugin_binding(
+            agent,
+            host.plugins.clone(),
+            workspace.to_path_buf(),
+            session_id,
+            command_id,
+        ),
+        crate::plugins::host::executor::binding(plugins, &executor)
+            .map_err(|error| LocalHostError::Configuration(error.to_string()))?,
+    ])
 }
+
+#[cfg(test)]
+mod execution_tests;
 
 #[cfg(test)]
 mod tests {
@@ -219,7 +248,7 @@ mod tests {
                     component: "catalog-test".to_owned(),
                 },
                 AgentCreationOrigin::Provisioning,
-                AgentCreateRequest::new(
+                AgentCreateRequest::from_preset(
                     Uuid::new_v4(),
                     AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
                     "Catalog",
@@ -239,35 +268,19 @@ mod tests {
             &workspace,
             renoa_kernel::SessionId::from_uuid(Uuid::new_v4()),
             None,
-        );
+        )
+        .expect("plugin runtime");
         let actual: BTreeSet<&str> = offered.iter().map(AgentToolBinding::tool_name).collect();
         assert_eq!(
             actual.len(),
             offered.len(),
             "runtime tool names must be unique"
         );
-        let expected: BTreeSet<&str> = [
-            "plugin_manage",
-            "agent_manage",
-            "routine_manage",
-            "routine_results",
-            "plugin_search",
-            "tool_execute",
-            "skill_search",
-            "skill_load",
-            "agent_documents",
-        ]
-        .into_iter()
-        .collect();
+        let expected = BTreeSet::from(["plugin_manage", "plugin_search", "tool_execute"]);
         assert_eq!(actual, expected);
-        let selection = BTreeSet::from([
-            "code_mode".to_owned(),
-            "tool_execute".to_owned(),
-            "plugin_search".to_owned(),
-        ]);
         let (visible, hidden) =
-            partition_selected_tools(offered, &selection).expect("partition selected tools");
-        assert_eq!(visible.len(), 1);
+            partition_selected_tools(offered, true).expect("partition selected tools");
+        assert_eq!(visible.len(), 2);
         assert_eq!(visible[0].tool_name(), "plugin_search");
         assert_eq!(
             hidden.expect("hidden MCP executor").tool_name(),

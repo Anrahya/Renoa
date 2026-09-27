@@ -9,7 +9,7 @@ if (toolResults.length === 0) {
   const search = JSON.parse(toolResults[0].result.content[0].text);
   if (search.total !== 1 || search.items[0].source !== "installed_plugin" || search.items[0].name !== "fixture" || !/^[a-f0-9]{64}$/.test(search.items[0].id) || search.tool_matches.length !== 1 || search.tool_matches[0].name !== "echo" || "x-mcp-header" in search.tool_matches[0].input_schema.properties.tenant) process.exit(3);
   const reference = JSON.stringify(search.tool_matches[0].reference);
-  const source = `import asyncio\nresults = await asyncio.gather(mcp(${reference}, {'tenant': 'alpha', 'text': 'hello'}), mcp(${reference}, {'tenant': 'alpha', 'text': 'denied'}))\n[results[0]['content'][0]['text'], results[1]['is_error'], results[1]['content'][0]['text']]`;
+  const source = `import asyncio\nresults = await asyncio.gather(plugin(${reference}, {'tenant': 'alpha', 'text': 'hello'}), plugin(${reference}, {'tenant': 'alpha', 'text': 'denied'}))\n[results[0]['content'][0]['text'], results[1]['is_error'], results[1]['content'][0]['text']]`;
   content = [{ type: "tool_call", id: "code-mode-outer", name: "code_mode", arguments: { source } }];
   stopReason = "tool_use";
 } else if (toolResults.length === 2 && toolResults[1].result.name === "code_mode") {

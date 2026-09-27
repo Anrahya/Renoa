@@ -306,9 +306,9 @@ async fn provision_alpha(
             component: "node-test".to_owned(),
         },
         AgentCreationOrigin::Provisioning,
-        AgentCreateRequest::new(
+        AgentCreateRequest::from_preset(
             Uuid::new_v4(),
-            AgentPresetId::new("renoa.coding.alpha.v2").expect("alpha preset id"),
+            AgentPresetId::new("renoa.coding.alpha.v3").expect("alpha preset id"),
             "Alpha",
         ),
         CancellationToken::new(),

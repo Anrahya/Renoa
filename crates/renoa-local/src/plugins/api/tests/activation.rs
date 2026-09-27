@@ -87,10 +87,100 @@ async fn search(
     )
     .await
     .expect("search");
+    assert!(!output.is_error, "search failed: {:?}", output.content);
     let ContentBlock::Text { text } = &output.content[0] else {
         panic!("text output");
     };
     serde_json::from_str(text).expect("search JSON")
+}
+
+#[tokio::test]
+async fn plugin_queries_page_enabled_accounts_without_leaking_other_connections() {
+    let root = tempfile::tempdir().expect("fixture");
+    let (manager, _) = manager(root.path());
+    let endpoint = "http://127.0.0.1:43127/mcp";
+    package(
+        &root.path().join("source"),
+        "review",
+        "Review files",
+        Some(endpoint),
+    );
+    let digest = install(&manager, root.path(), "source").await;
+    let agent = test_agent_id(1);
+    act(
+        &manager,
+        root.path(),
+        agent,
+        "activate-query-fixture",
+        PluginRequest::Activate {
+            package_digest: digest.clone(),
+        },
+    )
+    .await
+    .expect("activate package");
+    let mcp = manager.mcp_catalog();
+    let names = (0..110)
+        .map(|index| format!("scan_item_{index:03}"))
+        .collect::<Vec<_>>();
+    let names = names.iter().map(String::as_str).collect::<Vec<_>>();
+    for connection in ["alpha", "beta", "disabled", "unrelated"] {
+        let integration = if connection == "unrelated" {
+            "unrelated".to_owned()
+        } else {
+            crate::plugins::manager::integration_id(&digest, "main")
+        };
+        mcp.register_direct_connection(&integration, connection, endpoint)
+            .expect("register fixture account");
+        mcp.publish_catalog(&crate::mcp::tests::snapshot(connection, endpoint, &names))
+            .expect("publish account tools");
+        if connection != "disabled" {
+            mcp.enable_agent_connection(&agent.to_string(), connection)
+                .expect("enable selected account");
+        }
+    }
+    let first = search(
+        &manager,
+        agent,
+        json!({"plugin":digest,"query":"scan_item"}),
+    )
+    .await;
+    assert_eq!(first["total"], 220);
+    let first_items = first["items"].as_array().expect("tool page");
+    assert_eq!(first_items.len(), 200);
+    assert_eq!(first["next_offset"], 200);
+    assert!(first_items[0]["input_schema"].is_object());
+    let second = search(
+        &manager,
+        agent,
+        json!({"plugin":digest,"query":"scan_item","offset":200}),
+    )
+    .await;
+    assert_eq!(second["items"].as_array().unwrap().len(), 20);
+    assert!(second["next_offset"].is_null());
+    for item in first_items
+        .iter()
+        .chain(second["items"].as_array().unwrap())
+    {
+        let reference: crate::mcp::McpToolReference =
+            item["reference"].as_str().unwrap().parse().unwrap();
+        assert!(matches!(reference.connection_id(), "alpha" | "beta"));
+    }
+    mcp.disable_agent_connection(&agent.to_string(), "alpha")
+        .expect("disable account");
+    let current = search(
+        &manager,
+        agent,
+        json!({"plugin":digest,"query":"scan_item"}),
+    )
+    .await;
+    assert_eq!(current["total"], 110);
+    let foreign = search(
+        &manager,
+        test_agent_id(2),
+        json!({"plugin":digest,"query":"scan_item"}),
+    )
+    .await;
+    assert_eq!(foreign["total"], 0);
 }
 
 #[tokio::test]
@@ -190,7 +280,7 @@ async fn explicit_replacement_and_disable_preserve_pins_and_other_agents_across_
     assert_eq!(result.plugin_id, first);
     assert_eq!(result.package_digest, next);
     assert!(
-        crate::skills::runtime_context(&skills, session, None)
+        crate::skills::runtime_context(&skills, session, None, "")
             .unwrap()
             .unwrap()
             .instructions
@@ -217,7 +307,7 @@ async fn explicit_replacement_and_disable_preserve_pins_and_other_agents_across_
     );
     assert!(load_skill(&skills, agent, root.path(), SessionId::new()).is_empty());
     assert!(
-        crate::skills::runtime_context(&skills, session, None)
+        crate::skills::runtime_context(&skills, session, None, "")
             .unwrap()
             .unwrap()
             .instructions

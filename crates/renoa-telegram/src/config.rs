@@ -35,7 +35,7 @@ impl Config {
     ///
     /// Rejects missing, ambiguous, relative, or unusable service settings.
     pub async fn from_environment() -> Result<Self, TelegramServiceError> {
-        let data_directory = canonical_directory("RENOA_DATA_DIR", true)?;
+        let data_directory = renoa_local::RenoaHome::resolve(None)?.path().to_path_buf();
         let workspace = canonical_directory("RENOA_TELEGRAM_WORKSPACE", false)?;
         let agent_id = required_agent_id("RENOA_TELEGRAM_AGENT_ID")?;
         let allowed_user_id = required("RENOA_TELEGRAM_ALLOWED_USER_ID")?
@@ -109,7 +109,8 @@ impl ProviderSettings {
             default_provider,
             model: required("RENOA_MODEL")?,
             initial_reasoning: optional_reasoning("RENOA_MODEL_REASONING")?,
-            credential_store: required_path("RENOA_MODEL_AUTH_STORE")?,
+            credential_store: optional_path("RENOA_MODEL_AUTH_STORE")
+                .unwrap_or(renoa_local::RenoaHome::resolve(None)?.model_credentials()),
         })
     }
 }

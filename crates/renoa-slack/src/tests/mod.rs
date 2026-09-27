@@ -151,9 +151,9 @@ async fn provision_operator(host: &LocalHost) -> AgentId {
             component: "slack-test".to_owned(),
         },
         AgentCreationOrigin::Provisioning,
-        AgentCreateRequest::new(
+        AgentCreateRequest::from_preset(
             Uuid::new_v4(),
-            AgentPresetId::new("renoa.personal.arcee.v2").expect("Arcee preset id"),
+            AgentPresetId::new("renoa.personal.arcee.v3").expect("Arcee preset id"),
             "Arcee",
         ),
         CancellationToken::new(),

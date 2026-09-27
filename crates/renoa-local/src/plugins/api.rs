@@ -16,10 +16,11 @@ pub use progress::{
     PluginAuthorizationRequired, PluginCredentialKind, PluginCredentialRequired, PluginProgress,
 };
 
+pub use super::host::state::HostPluginActivation;
 pub use dispatch::{PluginInvocation, PluginOutcome};
-pub(crate) use schema::manage_tool_spec;
+pub(crate) use schema::{manage_tool_spec, model_schema};
 
-pub const PLUGIN_API_REVISION: &str = "renoa-plugin-api-v2";
+pub const PLUGIN_API_REVISION: &str = "renoa-plugin-api-v3";
 pub const MAX_PLUGIN_PAGE: usize = 200;
 
 /// One operation on the shared library or on the caller's agent bindings.
@@ -94,14 +95,20 @@ pub enum PluginRequest {
     },
     /// Stop future discovery and MCP resolution for this plugin. Loaded session skills remain pinned.
     Deactivate {
-        /// Stable 64-character `plugin_id` from activation or `plugin_search`; not the display name.
-        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        /// Exact `plugin_id`, a 64-character external identity or a renoa.* Host plugin identity from activation or `plugin_search`; not the display name.
+        #[schemars(
+            length(min = 1, max = 64),
+            regex(pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|routines|documents|skills|git))$")
+        )]
         plugin_id: String,
     },
     /// Restore a previously selected plugin, including its retained account selections.
     EnablePlugin {
-        /// Stable 64-character `plugin_id` from activation or `plugin_search`; not the display name.
-        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        /// Exact `plugin_id`, a 64-character external identity or a renoa.* Host plugin identity from activation or `plugin_search`; not the display name.
+        #[schemars(
+            length(min = 1, max = 64),
+            regex(pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|routines|documents|skills|git))$")
+        )]
         plugin_id: String,
     },
     /// Replace exactly this agent's selected revision. Retains plugin identity, requires the

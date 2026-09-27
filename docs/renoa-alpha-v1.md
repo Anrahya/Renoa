@@ -3,7 +3,7 @@
 ## Purpose
 
 Alpha is Renoa's first local coding agent. Its stable creation preset identity is
-`renoa.coding.alpha.v2`.
+`renoa.coding.alpha.v3`.
 
 Alpha is not a loop, model, session store, or surface. It is the code-owned
 creation preset whose stored definition supplies coding behavior and project
@@ -49,9 +49,9 @@ surface requirements, not Alpha's internal design.
    prompt, context, and tool revisions remain frozen by the kernel. The fixed
    Host registry tools may read newly committed catalog state, but an exact
    catalog reference can never change underneath an invocation.
-6. The first coding agent's stored selection has all nine local workspace
-   tools, `plugin_search`, `tool_execute`, `plugin_manage`,
-   `skill_search`, and `skill_load`.
+6. The Alpha template selects six machine tools. Every agent also receives
+   `plugin_search`, `plugin_manage`, and `code_mode` when Monty is configured,
+   otherwise `tool_execute`. Git inspection and skills are discovered Host plugins.
    External schemas, installed-package metadata, and skill bodies are loaded
    into history only when Alpha requests them; their quantity never expands the
    model API tool list. Existing workspace boundaries and unrestricted Bash
@@ -154,9 +154,8 @@ A normal Alpha request contains only:
 1. the Alpha base prompt and applicable project instructions;
 2. the exact Host-pinned active skill instructions;
 3. the durable, context-projected conversation; and
-4. the nine local workspace tool definitions, `plugin_search`,
-   `plugin_manage`, `tool_execute`, and two fixed skill-registry
-   definitions in the model API's tool field.
+4. the selected machine tools and the fixed plugin protocol in the model API's
+   tool field; full plugin schemas are discovered on demand.
 
 Kernel command IDs, effect identities, recovery declarations, runtime
 manifests, and configuration digests are not prompt content.

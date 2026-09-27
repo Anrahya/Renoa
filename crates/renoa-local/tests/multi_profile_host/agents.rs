@@ -44,9 +44,9 @@ async fn durable_roster_and_creator_relationship_survive_restart_without_model_d
         agent_id: parent.id,
     };
     let child_operation = Uuid::new_v4();
-    let child_request = AgentCreateRequest::new(
+    let child_request = AgentCreateRequest::from_preset(
         child_operation,
-        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
         "News",
     )
     .with_instructions("Report the news.");
@@ -72,9 +72,9 @@ async fn durable_roster_and_creator_relationship_survive_restart_without_model_d
         .expect("retry creation"),
         child
     );
-    let changed = AgentCreateRequest::new(
+    let changed = AgentCreateRequest::from_preset(
         child_operation,
-        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
         "Other",
     )
     .with_instructions("Report the news.");
@@ -127,15 +127,15 @@ async fn competing_hosts_admit_only_one_creation_for_an_agent_identity() {
     let creator = AgentCreator::System {
         component: "competing-hosts".to_owned(),
     };
-    let one = AgentCreateRequest::new(
+    let one = AgentCreateRequest::from_preset(
         operation,
-        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
         "First",
     )
     .with_instructions("Do the work.");
-    let two = AgentCreateRequest::new(
+    let two = AgentCreateRequest::from_preset(
         operation,
-        AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+        AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
         "Second",
     )
     .with_instructions("Do the work.");
@@ -170,9 +170,9 @@ async fn creation_rejects_untrusted_pairs_and_unknown_presets() {
         host.create_agent(
             creator.clone(),
             AgentCreationOrigin::AgentTool,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
                 "Untrusted"
             )
             .with_instructions("Do the work."),
@@ -185,9 +185,9 @@ async fn creation_rejects_untrusted_pairs_and_unknown_presets() {
         host.create_agent(
             creator.clone(),
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::nil(),
-                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
                 "Nil"
             )
             .with_instructions("Do the work."),
@@ -200,7 +200,7 @@ async fn creation_rejects_untrusted_pairs_and_unknown_presets() {
         host.create_agent(
             creator.clone(),
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
                 AgentPresetId::new("renoa.unknown.v1").expect("preset id"),
                 "Unknown"
@@ -215,11 +215,7 @@ async fn creation_rejects_untrusted_pairs_and_unknown_presets() {
         host.create_agent(
             creator.clone(),
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
-                Uuid::new_v4(),
-                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
-                "Without instructions"
-            ),
+            AgentCreateRequest::new(Uuid::new_v4(), "Without instructions", ""),
             CancellationToken::new()
         )
         .await,
@@ -229,9 +225,9 @@ async fn creation_rejects_untrusted_pairs_and_unknown_presets() {
         host.create_agent(
             creator.clone(),
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
                 "  "
             )
             .with_instructions("Do the work."),

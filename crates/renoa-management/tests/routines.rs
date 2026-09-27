@@ -46,9 +46,9 @@ async fn seed(host: &LocalHost) -> RoutineRecord {
                 component: "management-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v2").expect("Arcee preset id"),
+                AgentPresetId::new("renoa.personal.arcee.v3").expect("Arcee preset id"),
                 "Arcee",
             ),
             CancellationToken::new(),
@@ -62,9 +62,9 @@ async fn seed(host: &LocalHost) -> RoutineRecord {
                 component: "management-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.specialist.v2").expect("specialist preset id"),
+                AgentPresetId::new("renoa.general.v1").expect("specialist preset id"),
                 "News",
             )
             .with_instructions("Read news")
@@ -394,7 +394,7 @@ async fn http_receipt_survives_restart_and_stale_edits_leave_the_shared_record_i
     assert_eq!(snapshot["routines"][0]["revision"], 3);
     assert!(!f.files.path().join("host/absent-model").exists());
     assert!(!f.files.path().join("host/absent-credentials").exists());
-    rusqlite::Connection::open(f.files.path().join("host/host.sqlite3"))
+    rusqlite::Connection::open(f.files.path().join("host/state/host.sqlite3"))
         .expect("catalog")
         .execute(
             "UPDATE host_identity SET host_id=?1",

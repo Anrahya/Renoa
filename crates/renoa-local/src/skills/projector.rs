@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 
 use renoa_agent::{ContentBlock, Message};
 use renoa_agent_loop::{ContextProjector, ContextStrategyError};
@@ -7,12 +7,12 @@ use serde_json::Value;
 use super::tool::{ACTIVATION_DETAIL_KIND, SKILL_LOAD_TOOL};
 
 pub(crate) struct ActivatedSkillProjector {
-    references: HashSet<String>,
+    bodies: BTreeMap<String, String>,
 }
 
 impl ActivatedSkillProjector {
-    pub(crate) fn new(references: HashSet<String>) -> Self {
-        Self { references }
+    pub(crate) fn new(bodies: BTreeMap<String, String>) -> Self {
+        Self { bodies }
     }
 }
 
@@ -22,13 +22,29 @@ impl ContextProjector for ActivatedSkillProjector {
             let Message::Tool { result } = message else {
                 continue;
             };
-            if result.name != SKILL_LOAD_TOOL || result.is_error {
+            if result.name == "code_mode" && !result.is_error {
+                for content in &mut result.content {
+                    if let ContentBlock::Text { text } = content
+                        && let Ok(mut value) = serde_json::from_str::<Value>(text)
+                        && project_code_result(&mut value, &self.bodies)
+                    {
+                        *text = serde_json::to_string(&value)
+                            .map_err(|error| ContextStrategyError::new(error.to_string()))?;
+                    }
+                }
+                continue;
+            }
+            if !matches!(
+                result.name.as_str(),
+                SKILL_LOAD_TOOL | crate::capabilities::TOOL_EXECUTE
+            ) || result.is_error
+            {
                 continue;
             }
             let Some(reference) = activation_reference(result.details.as_ref()) else {
                 continue;
             };
-            if !self.references.contains(reference) {
+            if !self.bodies.contains_key(reference) {
                 continue;
             }
             result.content = vec![ContentBlock::text(format!(
@@ -36,6 +52,37 @@ impl ContextProjector for ActivatedSkillProjector {
             ))];
         }
         Ok(messages)
+    }
+}
+
+fn project_code_result(value: &mut Value, bodies: &BTreeMap<String, String>) -> bool {
+    if let Some(reference) = activation_reference(value.get("details"))
+        && value["is_error"] == false
+        && let Some(body) = bodies.get(reference)
+        && value["content"] == serde_json::json!([{"type":"text", "text":body}])
+    {
+        let receipt = format!(
+            "Skill {reference} remains active; its exact instructions are reattached above."
+        );
+        value["content"] = serde_json::json!([{"type":"text", "text":receipt}]);
+        return true;
+    }
+    match value {
+        Value::Array(values) => {
+            let mut changed = false;
+            for value in values {
+                changed |= project_code_result(value, bodies);
+            }
+            changed
+        }
+        Value::Object(fields) => {
+            let mut changed = false;
+            for value in fields.values_mut() {
+                changed |= project_code_result(value, bodies);
+            }
+            changed
+        }
+        _ => false,
     }
 }
 
@@ -60,7 +107,9 @@ mod tests {
         let active =
             "skill:review:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let new = "skill:test:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        let projector = ActivatedSkillProjector::new([active.to_owned()].into());
+        let projector = ActivatedSkillProjector::new(
+            [(active.to_owned(), "full instructions".to_owned())].into(),
+        );
         let messages = vec![result("one", active), result("two", new)];
 
         let projected = projector.project(messages).expect("project context");
@@ -78,6 +127,53 @@ mod tests {
             panic!("second message is not a tool result");
         };
         assert_eq!(second.content, [ContentBlock::text("full instructions")]);
+    }
+
+    #[test]
+    fn code_mode_projection_preserves_errors_and_nonmatching_output() {
+        let active =
+            "skill:review:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let projector = ActivatedSkillProjector::new(
+            [(active.to_owned(), "full instructions".to_owned())].into(),
+        );
+        let Message::Tool { result: loaded } = result("loaded", active) else {
+            unreachable!()
+        };
+        let loaded = serde_json::to_value(loaded).unwrap();
+        let mut error = loaded.clone();
+        error["is_error"] = json!(true);
+        let mut different = loaded.clone();
+        different["content"][0]["text"] = json!("Other output that must survive.");
+        let mut unpinned = loaded.clone();
+        unpinned["details"]["reference"] = json!("skill:unknown:unactivated");
+        let output = json!([loaded.clone(), error, different, unpinned, {"nested": loaded}]);
+        let projected = projector
+            .project(vec![Message::Tool {
+                result: ToolResult {
+                    call_id: "code".to_owned(),
+                    name: "code_mode".to_owned(),
+                    content: vec![ContentBlock::text(output.to_string())],
+                    details: None,
+                    is_error: false,
+                },
+            }])
+            .unwrap();
+        let Message::Tool { result } = &projected[0] else {
+            unreachable!()
+        };
+        let ContentBlock::Text { text } = &result.content[0] else {
+            unreachable!()
+        };
+        let actual: serde_json::Value = serde_json::from_str(text).unwrap();
+        let receipt = json!([{
+            "type": "text",
+            "text": format!("Skill {active} remains active; its exact instructions are reattached above.")
+        }]);
+        assert_eq!(actual[0]["content"], receipt);
+        assert_eq!(actual[4]["nested"]["content"], receipt);
+        for index in [1, 2, 3] {
+            assert_eq!(actual[index], output[index]);
+        }
     }
 
     fn result(call_id: &str, reference: &str) -> Message {

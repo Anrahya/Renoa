@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use crate::model_bridge::{ModelBridgeConfig, ModelBridgeError, decode_response, run_bridge};
 
 /// A model provider supported by Renoa's native process adapter.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq, Hash)]
 pub enum ModelProvider {
     #[serde(rename = "xai")]
     Xai,
@@ -48,7 +48,7 @@ impl std::fmt::Display for ModelProvider {
 }
 
 /// A reasoning level understood by the provider-neutral model API.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningLevel {
     Off,

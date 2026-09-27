@@ -9,10 +9,15 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   let input="";for await (const part of process.stdin) input+=part;
   const request=JSON.parse(input);
   const mode=readFileSync(process.env.RENOA_MODEL_AUTH_STORE,"utf8");
-  if(mode==="git") {
+  if(mode==="git" || mode==="git-skills") {
     appendFileSync(process.env.RENOA_MODEL_AUTH_STORE+".calls",process.env.RENOA_MODEL_SESSION_ID+"\n");
     const {run}=await import("./git_model.mjs");
-    run(request,(content,stop_reason="stop")=>console.log(JSON.stringify({event:"completed",response:{content,stop_reason,usage:{input:10,output:2,cache_read:5,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}})));
+    try {
+      run(request,(content,stop_reason="stop")=>console.log(JSON.stringify({event:"completed",response:{content,stop_reason,usage:{input:10,output:2,cache_read:5,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}})), mode);
+    } catch (error) {
+      writeFileSync(process.env.RENOA_MODEL_AUTH_STORE+".error", error.stack);
+      throw error;
+    }
     process.exit(0);
   }
   if(mode==="compactions" && request.tools.length===0) {

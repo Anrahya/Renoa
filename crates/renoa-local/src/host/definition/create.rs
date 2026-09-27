@@ -1,7 +1,7 @@
 //! The one canonical agent creation operation.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio_util::sync::CancellationToken;
@@ -9,13 +9,13 @@ use uuid::Uuid;
 
 use super::{
     AgentCreateRequest, LocalHost, LocalHostError, catalog_error, check_cancellation,
-    require_consumable, require_selectable, store,
+    require_selectable, store,
 };
 use crate::{
     AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDocuments, AgentOperationalDefinition,
     AgentToolSelection, capabilities,
     documents::DocumentDefaults,
-    host::{HostConfig, catalog, routines},
+    host::{catalog, routines},
     presets,
     stable_id::stable_id,
 };
@@ -41,26 +41,48 @@ impl LocalHost {
         cancellation: CancellationToken,
     ) -> Result<AgentDefinition, LocalHostError> {
         validate_actor(&creator, origin)?;
-        let preset = presets::preset(&request.preset_id)?;
+        let database = self.config.database.clone();
+        let operation = request.operation_id;
+        let request_json = serde_json::to_string(&request)?;
+        let saved_request = request_json.clone();
+        let saved_creator = creator.clone();
+        if let Some(definition) = tokio::task::spawn_blocking(move || {
+            let db = catalog::open_verified(&database)?;
+            replay(&db, operation, &saved_request, &saved_creator, origin)
+        })
+        .await??
+        {
+            return Ok(definition);
+        }
+        let preset = request
+            .preset_id
+            .as_ref()
+            .map(presets::preset)
+            .transpose()?;
+        let documents = request
+            .documents
+            .or_else(|| preset.and_then(presets::AgentPreset::documents));
+        if let Some(model) = &request.model {
+            model.validate()?;
+            let models =
+                super::super::discover_models_for(&self.config, Some(model.provider)).await?;
+            let selected =
+                super::super::require_model(&models, model.provider, &model.model, "agent")?;
+            super::super::initial_reasoning(selected, model.reasoning)?;
+        }
         let definition = AgentDefinition {
             id: super::derived_agent_id(request.operation_id),
             name: request.name.clone(),
             created_at_ms: host_now_ms()?,
             creator,
             created_via: origin,
-            preset_id: Some(preset.id().clone()),
-            operational: AgentOperationalDefinition {
-                instructions: preset.instructions(request.instructions.as_deref())?,
-                behavior: preset.behavior(),
-                documents: preset.documents(),
-                provider_restriction: preset.provider_restriction(),
-            },
+            preset_id: request.preset_id.clone(),
+            operational: operational_definition(&request, preset, documents)?,
             tool_selection: AgentToolSelection {
                 revision: 1,
                 tools: resolve_selection(
-                    preset.capability_baseline(),
-                    preset.documents(),
-                    &request.tools,
+                    preset.map_or(&[], presets::AgentPreset::capability_baseline),
+                    request.tools.as_ref(),
                 )?,
             },
             connections: request.connections.clone(),
@@ -71,7 +93,6 @@ impl LocalHost {
                 "agent creation requires a non-nil operation id".to_owned(),
             ));
         }
-        let request_json = serde_json::to_string(&request)?;
         let result_json = serde_json::to_string(&definition)?;
         let routine = request.routine.map(|routine| {
             (
@@ -87,17 +108,57 @@ impl LocalHost {
         });
         let commit = CreateCommit {
             database: self.config.database.clone(),
-            data_directory: data_directory(&self.config)?,
+            data_directory: self.config.home.path().to_path_buf(),
             definition,
             operation_id: request.operation_id,
             request_json,
             result_json,
-            document_defaults: preset.documents().zip(preset.document_defaults()),
+            document_defaults: documents.map(|enabled| {
+                (
+                    enabled,
+                    preset
+                        .and_then(presets::AgentPreset::document_defaults)
+                        .unwrap_or(DocumentDefaults { soul: "", user: "" }),
+                )
+            }),
             routine,
             cancellation,
         };
         tokio::task::spawn_blocking(move || create_blocking(&commit)).await?
     }
+}
+
+fn operational_definition(
+    request: &AgentCreateRequest,
+    preset: Option<&presets::AgentPreset>,
+    documents: Option<AgentDocuments>,
+) -> Result<AgentOperationalDefinition, LocalHostError> {
+    Ok(AgentOperationalDefinition {
+        instructions: match preset {
+            Some(preset) => preset.instructions(request.instructions.as_deref()),
+            None => request
+                .instructions
+                .clone()
+                .ok_or(crate::AgentDefinitionError::EmptyInstructions)?,
+        },
+        behavior: request.behavior.unwrap_or_else(|| {
+            preset.map_or(
+                crate::AgentBehavior {
+                    turn_timing: crate::TurnTiming::HostClock,
+                    workspace_instructions: crate::WorkspaceInstructions::Off,
+                    automatic_compaction: None,
+                },
+                presets::AgentPreset::behavior,
+            )
+        }),
+        documents,
+        provider_restriction: if request.model.is_some() {
+            None
+        } else {
+            preset.and_then(presets::AgentPreset::provider_restriction)
+        },
+        model: request.model.clone(),
+    })
 }
 
 /// Everything the blocking creation unit needs, named so the two adjacent
@@ -127,7 +188,13 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         cancellation,
     } = commit;
     let mut connection = catalog::open_verified(database)?;
-    if let Some(existing) = replay(&connection, commit)? {
+    if let Some(existing) = replay(
+        &connection,
+        *operation_id,
+        request_json,
+        &definition.creator,
+        definition.created_via,
+    )? {
         return Ok(existing);
     }
     check_cancellation(cancellation)?;
@@ -136,7 +203,13 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         .map_err(catalog_error)?;
     // The write lock is held: a concurrent create with the same operation id
     // has either committed or not yet started, so this read is authoritative.
-    if let Some(existing) = replay(&transaction, commit)? {
+    if let Some(existing) = replay(
+        &transaction,
+        *operation_id,
+        request_json,
+        &definition.creator,
+        definition.created_via,
+    )? {
         return Ok(existing);
     }
     // A declared connection is only usable when its catalog is complete, so a
@@ -181,40 +254,35 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
 /// different actor or request.
 fn replay(
     connection: &rusqlite::Connection,
-    commit: &CreateCommit,
+    operation: Uuid,
+    request_json: &str,
+    creator: &AgentCreator,
+    origin: AgentCreationOrigin,
 ) -> Result<Option<AgentDefinition>, LocalHostError> {
-    let Some(receipt) = store::creation_receipt(connection, commit.operation_id)? else {
+    let Some(receipt) = store::creation_receipt(connection, operation)? else {
         return Ok(None);
     };
     if !store::exists(connection, receipt.agent_id)? {
         return Err(LocalHostError::InvalidRequest(format!(
-            "creation receipt for operation `{}` has no agent row",
-            commit.operation_id
+            "creation receipt for operation `{operation}` has no agent row"
         )));
     }
     let stored: AgentDefinition = serde_json::from_str(&receipt.result_json)?;
     stored.validate()?;
-    if stored.id != receipt.agent_id || stored.id != commit.definition.id {
+    if stored.id != receipt.agent_id || stored.id != super::derived_agent_id(operation) {
         return Err(catalog::HostCatalogError::Invalid(format!(
-            "creation receipt for operation `{}` describes agent {}, not `{}`",
-            commit.operation_id, stored.id, receipt.agent_id
+            "creation receipt for operation `{operation}` describes agent {}, not `{}`",
+            stored.id, receipt.agent_id
         ))
         .into());
     }
-    if receipts_conflict(commit, &receipt, &stored) {
+    if receipt.request_json != request_json
+        || stored.creator != *creator
+        || stored.created_via != origin
+    {
         return Err(LocalHostError::AgentConflict(receipt.agent_id));
     }
     Ok(Some(stored))
-}
-
-fn receipts_conflict(
-    commit: &CreateCommit,
-    receipt: &store::CreationReceipt,
-    stored: &AgentDefinition,
-) -> bool {
-    receipt.request_json != commit.request_json
-        || stored.creator != commit.definition.creator
-        || stored.created_via != commit.definition.created_via
 }
 
 fn validate_actor(
@@ -244,23 +312,18 @@ fn validate_actor(
 
 fn resolve_selection(
     baseline: &[capabilities::BuiltInCapability],
-    documents: Option<AgentDocuments>,
-    caller: &BTreeSet<String>,
+    caller: Option<&BTreeSet<String>>,
 ) -> Result<BTreeSet<String>, LocalHostError> {
-    let tools = capabilities::baseline_selection(baseline, caller);
+    let tools = caller.cloned().unwrap_or_else(|| {
+        baseline
+            .iter()
+            .map(|capability| capability.name().to_owned())
+            .collect()
+    });
     for name in &tools {
         require_selectable(name)?;
-        require_consumable(name, documents)?;
     }
     Ok(tools)
-}
-
-fn data_directory(config: &HostConfig) -> Result<PathBuf, LocalHostError> {
-    config
-        .sessions
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| LocalHostError::InvalidRequest("Host sessions have no data root".to_owned()))
 }
 
 fn host_now_ms() -> Result<i64, LocalHostError> {

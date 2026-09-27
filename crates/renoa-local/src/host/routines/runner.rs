@@ -73,10 +73,10 @@ impl LocalHost {
             .await?;
         let output = match outcome {
             LocalTurnOutcome::Completed { output, .. } => output,
-            LocalTurnOutcome::Cancelled => "Scheduled run stopped. If account setup is needed, resolve it interactively with this specialist before running again.".to_owned(),
+            LocalTurnOutcome::Cancelled => "Scheduled run stopped. If account setup is needed, resolve it interactively with this agent before running again.".to_owned(),
             LocalTurnOutcome::Failed { reason } => format!("Scheduled run failed: {reason}"),
             LocalTurnOutcome::WaitingForInput => {
-                "Scheduled run needs input. Continue with the specialist to resolve it.".to_owned()
+                "Scheduled run needs input. Continue with the agent to resolve it.".to_owned()
             }
             _ => {
                 return Err(LocalHostError::InvalidRequest(

@@ -185,9 +185,9 @@ async fn an_unprovisioned_configured_agent_refuses_startup_before_any_effect() {
                 component: "telegram-preflight-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v2").expect("Arcee preset id"),
+                AgentPresetId::new("renoa.personal.arcee.v3").expect("Arcee preset id"),
                 "Arcee",
             ),
             CancellationToken::new(),
@@ -242,9 +242,9 @@ async fn service_fixture() -> ServiceFixture {
                 component: "telegram-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v2").expect("Arcee preset id"),
+                AgentPresetId::new("renoa.personal.arcee.v3").expect("Arcee preset id"),
                 "Arcee",
             ),
             CancellationToken::new(),
@@ -404,7 +404,7 @@ if (!request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.
   process.stderr.write("Telegram surface selected the wrong agent definition");
   process.exit(3);
 }
-if (!request.tools.some((tool) => tool.name === "agent_documents")) {
+if (!request.tools.some((tool) => tool.name === "plugin_search")) {
   process.stderr.write("Arcee agent-document tool was not assembled");
   process.exit(4);
 }

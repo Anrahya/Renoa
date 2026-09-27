@@ -51,7 +51,12 @@ async fn targeted_search_keeps_valid_previews_when_inventory_references_go_stale
     assert!(cards["tool_matches"][0]["input_schema"].is_object());
 
     let connection = search
-        .search_connection(&inventory, "stale", "find_item", 0)
+        .search_tools(
+            &inventory,
+            inventory.tools("stale").expect("enabled connection"),
+            "find_item",
+            0,
+        )
         .await
         .expect("connection page should survive a refreshed catalog");
     let connection = decode(&connection);

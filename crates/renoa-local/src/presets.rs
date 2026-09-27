@@ -14,11 +14,11 @@ use crate::{
 };
 
 /// Renoa's built-in coding agent seed.
-pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v2";
+pub(crate) const ALPHA_PRESET_ID: &str = "renoa.coding.alpha.v3";
 /// Renoa's personal operator agent seed.
-pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v2";
-/// The seed every caller-defined specialist agent is created from.
-pub(crate) const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
+pub(crate) const ARCEE_PRESET_ID: &str = "renoa.personal.arcee.v3";
+/// The seed general purpose agents can use.
+pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
@@ -35,14 +35,6 @@ const ALPHA_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::Bash,
     BuiltInCapability::Grep,
     BuiltInCapability::Find,
-    BuiltInCapability::GitChanges,
-    BuiltInCapability::GitDiff,
-    BuiltInCapability::GitShow,
-    BuiltInCapability::PluginManage,
-    BuiltInCapability::PluginSearch,
-    BuiltInCapability::ToolExecute,
-    BuiltInCapability::SkillSearch,
-    BuiltInCapability::SkillLoad,
 ];
 
 const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
@@ -52,43 +44,15 @@ const ARCEE_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
     BuiltInCapability::Bash,
     BuiltInCapability::Grep,
     BuiltInCapability::Find,
-    BuiltInCapability::GitChanges,
-    BuiltInCapability::GitDiff,
-    BuiltInCapability::GitShow,
-    BuiltInCapability::PluginManage,
-    BuiltInCapability::PluginSearch,
-    BuiltInCapability::ToolExecute,
-    BuiltInCapability::SkillSearch,
-    BuiltInCapability::SkillLoad,
-    BuiltInCapability::AgentManage,
-    BuiltInCapability::AgentDocuments,
-    BuiltInCapability::RoutineManage,
-    BuiltInCapability::RoutineResults,
 ];
 
-const SPECIALIST_CAPABILITY_BASELINE: &[BuiltInCapability] = &[
-    BuiltInCapability::PluginSearch,
-    BuiltInCapability::ToolExecute,
-    BuiltInCapability::SkillSearch,
-    BuiltInCapability::SkillLoad,
-    BuiltInCapability::RoutineManage,
-    BuiltInCapability::RoutineResults,
-];
-
-/// Where a preset's instructions come from.
-#[derive(Clone, Copy)]
-pub(crate) enum PresetInstructions {
-    /// The preset owns the instructions and rejects caller overrides.
-    Fixed(&'static str),
-    /// The caller supplies the instructions.
-    CallerSupplied,
-}
+const GENERAL_CAPABILITY_BASELINE: &[BuiltInCapability] = &[];
 
 /// One immutable creation seed.
 pub(crate) struct AgentPreset {
     id: AgentPresetId,
     description: &'static str,
-    instructions: PresetInstructions,
+    instructions: &'static str,
     behavior: AgentBehavior,
     documents: Option<AgentDocuments>,
     document_defaults: Option<DocumentDefaults>,
@@ -133,28 +97,8 @@ impl AgentPreset {
         self.capability_baseline
     }
 
-    /// Resolves the instructions this preset stores for a new agent.
-    ///
-    /// # Errors
-    ///
-    /// Rejects a missing caller value or a caller override of a fixed preset.
-    pub(crate) fn instructions(
-        &self,
-        supplied: Option<&str>,
-    ) -> Result<String, AgentDefinitionError> {
-        match self.instructions {
-            PresetInstructions::Fixed(text) => match supplied {
-                Some(_) => Err(AgentDefinitionError::InstructionsNotAllowed {
-                    preset: self.id.as_str().to_owned(),
-                }),
-                None => Ok(text.to_owned()),
-            },
-            PresetInstructions::CallerSupplied => supplied.map(str::to_owned).ok_or_else(|| {
-                AgentDefinitionError::InstructionsRequired {
-                    preset: self.id.as_str().to_owned(),
-                }
-            }),
-        }
+    pub(crate) fn instructions(&self, supplied: Option<&str>) -> String {
+        supplied.unwrap_or(self.instructions).to_owned()
     }
 }
 
@@ -165,7 +109,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             // cannot fail at runtime.
             id: preset_id(ALPHA_PRESET_ID),
             description: "Renoa's coding agent for this workspace: curated coding instructions, project instructions, and the Host workspace tools.",
-            instructions: PresetInstructions::Fixed(ALPHA_INSTRUCTIONS),
+            instructions: ALPHA_INSTRUCTIONS,
             behavior: AgentBehavior {
                 turn_timing: TurnTiming::Off,
                 workspace_instructions: WorkspaceInstructions::ProjectAgentsFile,
@@ -179,7 +123,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
         AgentPreset {
             id: preset_id(ARCEE_PRESET_ID),
             description: "Renoa's personal operator: curation-owned instructions with SOUL and USER documents, Host turn timing, automatic compaction, and the OpenCode Go provider.",
-            instructions: PresetInstructions::Fixed(ARCEE_INSTRUCTIONS),
+            instructions: ARCEE_INSTRUCTIONS,
             behavior: AgentBehavior {
                 turn_timing: TurnTiming::HostClock,
                 workspace_instructions: WorkspaceInstructions::ProjectAgentsFile,
@@ -200,9 +144,9 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             capability_baseline: ARCEE_CAPABILITY_BASELINE,
         },
         AgentPreset {
-            id: preset_id(SPECIALIST_PRESET_ID),
-            description: "A caller-defined specialist: you supply its instructions, and it starts with only the capabilities you select.",
-            instructions: PresetInstructions::CallerSupplied,
+            id: preset_id(GENERAL_PRESET_ID),
+            description: "A general purpose agent with helpful assistant instructions and no machine tools. Explicit settings replace template defaults.",
+            instructions: "You are a helpful assistant. Complete the assigned task and report the result clearly.",
             behavior: AgentBehavior {
                 turn_timing: TurnTiming::HostClock,
                 workspace_instructions: WorkspaceInstructions::Off,
@@ -211,7 +155,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             documents: None,
             document_defaults: None,
             provider_restriction: None,
-            capability_baseline: SPECIALIST_CAPABILITY_BASELINE,
+            capability_baseline: GENERAL_CAPABILITY_BASELINE,
         },
     ];
     presets
@@ -248,12 +192,12 @@ fn preset_id(value: &str) -> AgentPresetId {
 
 #[cfg(test)]
 mod tests {
-    use super::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, SPECIALIST_PRESET_ID, preset};
+    use super::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID, preset};
     use crate::{AgentDefinitionError, AgentPresetId};
 
     #[test]
     fn every_static_preset_id_resolves() {
-        for id in [ALPHA_PRESET_ID, ARCEE_PRESET_ID, SPECIALIST_PRESET_ID] {
+        for id in [ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID] {
             let id = AgentPresetId::new(id).expect("portable preset id");
             let preset = preset(&id).expect("registered preset");
             assert_eq!(preset.id(), &id);
@@ -266,27 +210,12 @@ mod tests {
     }
 
     #[test]
-    fn fixed_instruction_presets_reject_overrides_and_caller_presets_require_them() {
-        let alpha = AgentPresetId::new(ALPHA_PRESET_ID).expect("portable preset id");
-        let alpha = preset(&alpha).expect("registered preset");
-        assert!(alpha.instructions(None).is_ok());
-        assert!(matches!(
-            alpha.instructions(Some("replace the curated prompt")),
-            Err(AgentDefinitionError::InstructionsNotAllowed { .. })
-        ));
-
-        let specialist = AgentPresetId::new(SPECIALIST_PRESET_ID).expect("portable preset id");
-        let specialist = preset(&specialist).expect("registered preset");
-        assert_eq!(
-            specialist
-                .instructions(Some("Do the job."))
-                .expect("caller text"),
-            "Do the job."
-        );
-        assert!(matches!(
-            specialist.instructions(None),
-            Err(AgentDefinitionError::InstructionsRequired { .. })
-        ));
+    fn templates_supply_defaults_and_accept_explicit_instructions() {
+        for id in [ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID] {
+            let template = preset(&AgentPresetId::new(id).expect("id")).expect("template");
+            assert!(!template.instructions(None).is_empty());
+            assert_eq!(template.instructions(Some("Do the job.")), "Do the job.");
+        }
     }
 
     #[test]
@@ -307,8 +236,8 @@ mod tests {
     }
 
     #[test]
-    fn the_specialist_preset_defers_instructions_to_the_caller() {
-        let id = AgentPresetId::new(SPECIALIST_PRESET_ID).expect("portable preset id");
+    fn the_general_template_has_no_machine_access() {
+        let id = AgentPresetId::new(GENERAL_PRESET_ID).expect("portable preset id");
         let preset = preset(&id).expect("registered preset");
         assert!(preset.behavior().uses_turn_timing());
         assert!(!preset.behavior().loads_project_instructions());

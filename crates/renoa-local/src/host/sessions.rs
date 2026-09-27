@@ -63,16 +63,19 @@ impl LocalHost {
         let workspace = LocalWorkspace::open(cwd)?;
         let workspace_path = std::fs::canonicalize(cwd)?;
         let models = discover_models_for(&self.config, definition.provider_restriction()).await?;
-        let initial_provider = definition
-            .provider_restriction()
+        let preference = definition.model();
+        let initial_provider = preference
+            .map(|model| model.provider)
+            .or(definition.provider_restriction())
             .unwrap_or(self.config.initial_provider);
-        let model = require_model(
-            &models,
-            initial_provider,
-            &self.config.initial_model,
-            "configured",
+        let model_id = preference.map_or(self.config.initial_model.as_str(), |model| {
+            model.model.as_str()
+        });
+        let model = require_model(&models, initial_provider, model_id, "agent")?;
+        let reasoning = initial_reasoning(
+            model,
+            preference.map_or(self.config.initial_reasoning, |model| model.reasoning),
         )?;
-        let reasoning = initial_reasoning(model, self.config.initial_reasoning)?;
         resolve_runtime(
             &self.config,
             RuntimeRequest {
@@ -88,7 +91,7 @@ impl LocalHost {
         .await?;
         let selection = RuntimeSelection {
             provider: initial_provider,
-            model: self.config.initial_model.clone(),
+            model: model.id().to_owned(),
             reasoning,
         };
         let sessions = self.config.sessions.clone();

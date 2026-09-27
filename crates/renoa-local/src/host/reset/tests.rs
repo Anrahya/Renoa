@@ -10,7 +10,7 @@ use super::super::{HostInitialization, reset_host_data_root};
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, ModelProvider,
     RoutineMutation, RoutineSchedule, RoutineSpec,
-    presets::{ARCEE_PRESET_ID, SPECIALIST_PRESET_ID},
+    presets::{ARCEE_PRESET_ID, GENERAL_PRESET_ID},
 };
 
 const RETAINED_INTEGRATION: &str = "retained.integration";
@@ -81,6 +81,28 @@ async fn a_managed_root_that_is_not_a_directory_is_refused() {
 }
 
 #[tokio::test]
+async fn a_malformed_agent_document_is_refused_before_rows_or_files_are_removed() {
+    let (directory, host) = fixture();
+    let agent = seed_agent(&host).await;
+    let root = directory.path().join("data");
+    let documents = root.join("agents").join(agent.to_string());
+    fs::remove_file(documents.join("SOUL.md")).unwrap();
+    fs::create_dir(documents.join("SOUL.md")).unwrap();
+    let user_before = fs::read(documents.join("USER.md")).unwrap();
+    drop(host);
+
+    let error = reset_host_data_root(&root).expect_err("document preflight");
+    assert_eq!(count(&database(directory.path()), "host_agents"), 1);
+    assert!(
+        error
+            .to_string()
+            .contains("agent document must be a regular file")
+    );
+    assert_eq!(fs::read(documents.join("USER.md")).unwrap(), user_before);
+    assert!(documents.join("SOUL.md").is_dir());
+}
+
+#[tokio::test]
 async fn a_catalog_failure_rolls_back_cutover_and_agent_row_clearing() {
     let (directory, host) = fixture();
     let root = directory.path();
@@ -138,7 +160,7 @@ async fn seed_agent(host: &LocalHost) -> crate::AgentId {
             component: "reset-refusal-test".to_owned(),
         },
         AgentCreationOrigin::Provisioning,
-        AgentCreateRequest::new(
+        AgentCreateRequest::from_preset(
             Uuid::new_v4(),
             AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
             "Operator",
@@ -199,7 +221,7 @@ fn count(path: &Path, table: &str) -> i64 {
 }
 
 fn database(root: &Path) -> std::path::PathBuf {
-    root.join("data").join("host.sqlite3")
+    root.join("data").join("state/host.sqlite3")
 }
 
 /// Writes one review binding chain for an agent, so the reset's delete set
@@ -230,7 +252,7 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
                 component: "reset-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
                 AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
                 "Operator",
@@ -257,10 +279,10 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     .await
     .expect("routine");
     seed_review_records(&database(root), agent.id);
-    let review_workspace = root.join("data/review-workspaces").join(REQUEST_ID);
+    let review_workspace = root.join("data/state/review-workspaces").join(REQUEST_ID);
     fs::create_dir_all(&review_workspace).expect("review workspace");
     fs::write(review_workspace.join("checkout.txt"), "discarded\n").expect("checkout file");
-    let execution = root.join("data/github-executions").join(REQUEST_ID);
+    let execution = root.join("data/state/github-executions").join(REQUEST_ID);
     fs::create_dir_all(&execution).expect("execution directory");
     fs::write(execution.join("app.jwt"), "discarded\n").expect("execution file");
     let workspace = host.agent_workspace(agent.id).await.expect("workspace");
@@ -275,8 +297,17 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     assert_eq!(report.removed_sessions, 1);
     assert_eq!(report.removed_review_directories, 2);
     assert_eq!(report.removed_document_roots, 1);
-    assert_eq!(report.preserved_workspaces, ["agent-workspaces"]);
-    assert!(!root.join("data/agents").join(agent.id.to_string()).exists());
+    assert_eq!(
+        report.preserved_workspaces,
+        [format!("agents/{}/workspace", agent.id)]
+    );
+    assert!(
+        !root
+            .join("data/agents")
+            .join(agent.id.to_string())
+            .join("SOUL.md")
+            .exists()
+    );
     assert!(!review_workspace.exists());
     assert!(!execution.exists());
     let path = database(root);
@@ -386,9 +417,9 @@ async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables(
                 component: "post-migration".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(SPECIALIST_PRESET_ID).expect("preset id"),
+                AgentPresetId::new(GENERAL_PRESET_ID).expect("preset id"),
                 "Fresh",
             )
             .with_instructions("Run after the cutover."),

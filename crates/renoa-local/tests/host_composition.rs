@@ -16,9 +16,6 @@ fn assert_workspace_bindings(manifest: &RuntimeManifest) {
         "bash",
         "grep",
         "find",
-        "git_changes",
-        "git_diff",
-        "git_show",
     ] {
         assert!(
             manifest
@@ -64,9 +61,9 @@ async fn the_host_composes_the_coding_runtime_from_the_stored_definition() {
                 component: "composition-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 uuid::Uuid::new_v4(),
-                AgentPresetId::new("renoa.coding.alpha.v2").expect("preset id"),
+                AgentPresetId::new("renoa.coding.alpha.v3").expect("preset id"),
                 "Local",
             ),
             tokio_util::sync::CancellationToken::new(),

@@ -349,7 +349,7 @@ async fn identity_binding_rejects_a_different_bot_owner_workspace_or_agent() {
         .expect("rebind the same identity");
 
     let stale = tempdir().expect("temporary stale store root");
-    let surface = stale.path().join("surfaces").join("telegram");
+    let surface = stale.path().join("state/surfaces").join("telegram");
     std::fs::create_dir_all(&surface).expect("create stale surface directory");
     let connection =
         rusqlite::Connection::open(surface.join(DATABASE_FILE)).expect("open stale store fixture");

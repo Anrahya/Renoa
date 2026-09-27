@@ -11,7 +11,7 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const SPECIALIST_PRESET_ID: &str = "renoa.specialist.v2";
+const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 const RELAY_PROMPT: &str = "You are Relay, a concise messaging agent.";
 
 async fn provision_specialist(
@@ -25,9 +25,9 @@ async fn provision_specialist(
             component: "multi-agent-test".to_owned(),
         },
         AgentCreationOrigin::Provisioning,
-        AgentCreateRequest::new(
+        AgentCreateRequest::from_preset(
             operation,
-            AgentPresetId::new(SPECIALIST_PRESET_ID).expect("valid specialist preset id"),
+            AgentPresetId::new(GENERAL_PRESET_ID).expect("valid specialist preset id"),
             name,
         )
         .with_instructions(instructions),
@@ -84,7 +84,7 @@ async fn host_assembles_and_restores_an_exact_non_alpha_agent() {
     assert_eq!(restored.agent_id(), agent_id);
     drop(restored);
 
-    let catalog = Connection::open(data.join("host.sqlite3")).expect("open catalog");
+    let catalog = Connection::open(data.join("state/host.sqlite3")).expect("open catalog");
     catalog
         .execute_batch("PRAGMA foreign_keys = OFF;")
         .expect("detach the corruption fixture from dependent rows");

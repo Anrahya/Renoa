@@ -5,8 +5,6 @@
 //! Agent definitions persist the resolved names consumed by the runtime and
 //! frozen by the kernel.
 
-use std::collections::BTreeSet;
-
 // One declaration generates both the closed type and its complete iterable
 // catalog, so a new variant cannot become an unlisted selectable capability.
 macro_rules! define_built_in_capabilities {
@@ -20,7 +18,7 @@ macro_rules! define_built_in_capabilities {
         impl BuiltInCapability {
             /// Exact identity stored in an agent definition and bound at runtime.
             #[must_use]
-            const fn name(self) -> &'static str {
+            pub(crate) const fn name(self) -> &'static str {
                 match self {
                     $(Self::$variant => $name),+
                 }
@@ -40,31 +38,17 @@ define_built_in_capabilities! {
     Bash => "bash",
     Grep => "grep",
     Find => "find",
-    GitChanges => "git_changes",
-    GitDiff => "git_diff",
-    GitShow => "git_show",
-    PluginManage => "plugin_manage",
-    AgentManage => "agent_manage",
-    RoutineManage => "routine_manage",
-    RoutineResults => "routine_results",
-    PluginSearch => "plugin_search",
-    ToolExecute => "tool_execute",
-    CodeMode => "code_mode",
-    SkillSearch => "skill_search",
-    SkillLoad => "skill_load",
-    AgentDocuments => "agent_documents",
 }
 
-pub(crate) const PLUGIN_MANAGE: &str = BuiltInCapability::PluginManage.name();
-pub(crate) const AGENT_MANAGE: &str = BuiltInCapability::AgentManage.name();
-pub(crate) const ROUTINE_MANAGE: &str = BuiltInCapability::RoutineManage.name();
-pub(crate) const ROUTINE_RESULTS: &str = BuiltInCapability::RoutineResults.name();
-pub(crate) const PLUGIN_SEARCH: &str = BuiltInCapability::PluginSearch.name();
-pub(crate) const TOOL_EXECUTE: &str = BuiltInCapability::ToolExecute.name();
-pub(crate) const CODE_MODE: &str = BuiltInCapability::CodeMode.name();
-pub(crate) const SKILL_SEARCH: &str = BuiltInCapability::SkillSearch.name();
-pub(crate) const SKILL_LOAD: &str = BuiltInCapability::SkillLoad.name();
-pub(crate) const AGENT_DOCUMENTS: &str = BuiltInCapability::AgentDocuments.name();
+pub(crate) const PLUGIN_MANAGE: &str = "plugin_manage";
+pub(crate) const AGENT_MANAGE: &str = "agent_manage";
+pub(crate) const ROUTINE_MANAGE: &str = "routine_manage";
+pub(crate) const ROUTINE_RESULTS: &str = "routine_results";
+pub(crate) const PLUGIN_SEARCH: &str = "plugin_search";
+pub(crate) const TOOL_EXECUTE: &str = "tool_execute";
+pub(crate) const SKILL_SEARCH: &str = "skill_search";
+pub(crate) const SKILL_LOAD: &str = "skill_load";
+pub(crate) const AGENT_DOCUMENTS: &str = "agent_documents";
 
 fn catalog() -> impl Iterator<Item = BuiltInCapability> {
     BUILT_IN_CAPABILITIES.iter().copied()
@@ -76,42 +60,17 @@ pub(crate) fn is_selectable(name: &str) -> bool {
     catalog().any(|capability| capability.name() == name)
 }
 
-/// Whether one definition can exercise a selectable capability.
-///
-/// The document capability edits the agent's own prompt files, so a definition
-/// without documents cannot consume it: the runtime would drop the binding
-/// without a trace while the stored selection still named it.
-#[must_use]
-pub(crate) fn is_consumable(name: &str, documents: Option<crate::AgentDocuments>) -> bool {
-    name != AGENT_DOCUMENTS || documents.is_some()
-}
-
 /// Every selectable capability name, in catalog order.
 #[must_use]
 pub(crate) fn selectable_names() -> Vec<&'static str> {
     catalog().map(BuiltInCapability::name).collect()
 }
 
-/// Expands a preset's pinned components and caller selection into runtime names.
-#[must_use]
-pub(crate) fn baseline_selection(
-    baseline: &[BuiltInCapability],
-    caller: &BTreeSet<String>,
-) -> BTreeSet<String> {
-    let mut selection = caller.clone();
-    selection.extend(
-        baseline
-            .iter()
-            .map(|capability| capability.name().to_owned()),
-    );
-    selection
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{AGENT_MANAGE, BuiltInCapability, ROUTINE_MANAGE, catalog, is_selectable};
+    use super::{BuiltInCapability, catalog, is_selectable};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct ExpectedCapability {
@@ -126,19 +85,6 @@ mod tests {
         expected(BuiltInCapability::Bash, "bash"),
         expected(BuiltInCapability::Grep, "grep"),
         expected(BuiltInCapability::Find, "find"),
-        expected(BuiltInCapability::GitChanges, "git_changes"),
-        expected(BuiltInCapability::GitDiff, "git_diff"),
-        expected(BuiltInCapability::GitShow, "git_show"),
-        expected(BuiltInCapability::PluginManage, "plugin_manage"),
-        expected(BuiltInCapability::AgentManage, "agent_manage"),
-        expected(BuiltInCapability::RoutineManage, "routine_manage"),
-        expected(BuiltInCapability::RoutineResults, "routine_results"),
-        expected(BuiltInCapability::PluginSearch, "plugin_search"),
-        expected(BuiltInCapability::ToolExecute, "tool_execute"),
-        expected(BuiltInCapability::CodeMode, "code_mode"),
-        expected(BuiltInCapability::SkillSearch, "skill_search"),
-        expected(BuiltInCapability::SkillLoad, "skill_load"),
-        expected(BuiltInCapability::AgentDocuments, "agent_documents"),
     ];
 
     const fn expected(capability: BuiltInCapability, name: &'static str) -> ExpectedCapability {
@@ -173,8 +119,8 @@ mod tests {
 
     #[test]
     fn selection_accepts_known_names_and_rejects_names_outside_the_catalog() {
-        assert!(is_selectable(AGENT_MANAGE));
-        assert!(is_selectable(ROUTINE_MANAGE));
+        assert!(!is_selectable(super::AGENT_MANAGE));
+        assert!(!is_selectable(super::ROUTINE_MANAGE));
         assert!(is_selectable("bash"));
         assert!(!is_selectable("renoa.bot.manage"));
         assert!(!is_selectable("all"));

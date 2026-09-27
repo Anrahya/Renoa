@@ -118,7 +118,7 @@ impl LocalHost {
             .await?;
         let events: Arc<dyn AgentEventSink> = trace.clone();
         let result = async {
-            let runtime = reviewer::runtime(&self.config, snapshot, tools, events).await?;
+            let runtime = reviewer::runtime(&self.config, snapshot, tools, command, events).await?;
             Ok(session
                 .execute_turn(command, content, &runtime, cancel.child_token())
                 .await?)

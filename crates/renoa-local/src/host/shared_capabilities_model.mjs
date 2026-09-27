@@ -18,7 +18,7 @@ if (process.env.RENOA_MODEL_ACTION === "describe") {
 let input = "";
 appendFileSync(new URL("./model-sessions", import.meta.url), `${process.env.RENOA_MODEL_SESSION_ID}\n`);
 for await (const chunk of process.stdin) input += chunk;
-const request = JSON.parse(input);
+const request = preparePluginFixture(JSON.parse(input));
 const fail = message => { throw new Error(message); };
 if (input.includes("fixture-shared-host-secret")) fail("credential reached the model");
 const index = request.messages.findLastIndex(message => message.role === "user");

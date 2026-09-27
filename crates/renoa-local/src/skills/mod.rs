@@ -47,13 +47,18 @@ pub(crate) fn runtime_context(
     store: &SkillStore,
     session_id: SessionId,
     current_command_id: Option<CommandId>,
+    embedded_instructions: &str,
 ) -> Result<Option<SkillRuntimeContext>, SkillError> {
-    let Some(active) = render::active(&store.active(session_id, current_command_id)?)? else {
+    let Some(active) = render::active(
+        &store.active(session_id, current_command_id)?,
+        embedded_instructions,
+    )?
+    else {
         return Ok(None);
     };
     Ok(Some(SkillRuntimeContext {
         instructions: active.instructions,
-        projector: Arc::new(projector::ActivatedSkillProjector::new(active.references)),
+        projector: Arc::new(projector::ActivatedSkillProjector::new(active.bodies)),
         revision: active.revision,
     }))
 }
@@ -71,5 +76,5 @@ fn home_directory() -> Option<PathBuf> {
 }
 
 pub(crate) fn store_path(data_directory: &Path) -> PathBuf {
-    data_directory.join("skills")
+    data_directory.join("state/skills")
 }

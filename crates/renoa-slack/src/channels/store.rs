@@ -97,7 +97,7 @@ impl Store {
         self.run(move |db| {
             let tx = db.transaction()?;
             let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM conversations WHERE channel=?1)",[&channel],|r|r.get(0))?;
-            if exists { return Err(SlackError::Invalid("specialist channel already has a conversation binding".to_owned())); }
+            if exists { return Err(SlackError::Invalid("agent channel already has a conversation binding".to_owned())); }
             let session = Uuid::new_v4().to_string();
             tx.execute("INSERT INTO sessions(session_id,channel,thread,agent_id) VALUES (?1,?2,'',?3)",params![session,channel,agent])?;
             tx.execute("INSERT INTO conversations VALUES (?1,'',?2)",params![channel,session])?;

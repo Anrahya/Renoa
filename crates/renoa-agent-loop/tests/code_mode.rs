@@ -12,8 +12,8 @@ use renoa_agent::{
     ToolError, ToolOutput, ToolSpec, ToolUpdates,
 };
 use renoa_agent_loop::{
-    AgentCommand, AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CodeMcpCall,
-    CodeModeBinding, CodeStep, CodeStepOutput, CodeStepRequest, ContextBinding, ModelBinding,
+    AgentCommand, AgentLoopBuildError, AgentLoopConfig, AgentToolBinding, CodeModeBinding,
+    CodePluginCall, CodeStep, CodeStepOutput, CodeStepRequest, ContextBinding, ModelBinding,
     build_runtime_with_code_mode,
 };
 use renoa_kernel::{
@@ -69,13 +69,14 @@ async fn parallel_mcp_calls_are_durable_and_only_one_code_result_enters_model_co
     let requests = Arc::new(Mutex::new(Vec::new()));
     let dispatched = Arc::new(Mutex::new(Vec::new()));
     let runtime = scripted_runtime(&requests, &dispatched);
-    let command = serde_json::to_value(AgentCommand::text("Do two MCP calls.")).expect("command");
+    let command =
+        serde_json::to_value(AgentCommand::text("Do two plugin calls.")).expect("command");
     let admission = kernel
         .submit(session, Command::new(CommandId::new(), command))
         .expect("submit");
     let result = tokio::time::timeout(Duration::from_secs(3), kernel.drive(session, &runtime))
         .await
-        .expect("MCP calls must run concurrently")
+        .expect("plugin calls must run concurrently")
         .expect("drive");
     assert_eq!(
         result,
@@ -114,7 +115,7 @@ async fn parallel_mcp_calls_are_durable_and_only_one_code_result_enters_model_co
     assert_eq!(
         messages.len(),
         4,
-        "nested MCP calls must not enter semantic history"
+        "nested plugin calls must not enter semantic history"
     );
     assert!(
         matches!(&messages[2], Message::Tool { result } if result.call_id == "outer" && result.name == "code_mode" && !result.is_error)
@@ -177,7 +178,7 @@ async fn one_unknown_mcp_child_survives_restart_and_abandonment_balances_outer_c
     assert_eq!(children[0].status, EffectStatus::Settled);
     assert_eq!(children[1].status, EffectStatus::OutcomeUnknown);
     drop(kernel);
-    let kernel = Kernel::open(&database).expect("reopen kernel after unknown MCP call");
+    let kernel = Kernel::open(&database).expect("reopen kernel after unknown plugin call");
     assert!(matches!(
         kernel
             .abandon_unknown_effect(session, operation, &runtime)
@@ -248,7 +249,7 @@ async fn cancellation_during_nested_mcp_calls_balances_outer_calls() {
     let drive = tokio::spawn(async move { runner.drive(session, running_runtime.as_ref()).await });
     tokio::time::timeout(Duration::from_secs(3), arrival.wait())
         .await
-        .expect("both MCP children must enter the adapter");
+        .expect("both plugin children must enter the adapter");
     kernel
         .request_cancellation(session, operation, CancellationId::new())
         .expect("request cancellation");
@@ -397,7 +398,7 @@ async fn oversized_nested_results_are_not_sent_back_into_python() {
             session,
             Command::new(
                 CommandId::new(),
-                serde_json::to_value(AgentCommand::text("Read MCP data.")).expect("command"),
+                serde_json::to_value(AgentCommand::text("Read plugin data.")).expect("command"),
             ),
         )
         .expect("submit")
@@ -448,7 +449,7 @@ fn scripted_runtime(
     let tool = Arc::new(ConcurrentMcpTool {
         spec: ToolSpec {
             name: "tool_execute".to_owned(),
-            description: "Hidden MCP executor".to_owned(),
+            description: "Hidden plugin executor".to_owned(),
             input_schema: json!({"type": "object"}),
         },
         barrier: Arc::new(Barrier::new(2)),
@@ -484,7 +485,7 @@ fn code_call(id: &str) -> ToolCall {
     ToolCall {
         id: id.to_owned(),
         name: "code_mode".to_owned(),
-        arguments: json!({"source": "await mcp('first', {})"}),
+        arguments: json!({"source": "await plugin('first', {})"}),
         thought_signature: None,
         namespace: None,
     }
@@ -536,16 +537,16 @@ impl EffectAdapter for FakeEvaluator {
                 serde_json::from_value(invocation.request).expect("step request");
             let output = match request.step {
                 CodeStep::Start { source } => {
-                    assert_eq!(source, "await mcp('first', {})");
+                    assert_eq!(source, "await plugin('first', {})");
                     CodeStepOutput::Suspended {
                         snapshot: "opaque-snapshot".to_owned(),
                         calls: vec![
-                            CodeMcpCall {
+                            CodePluginCall {
                                 call_id: 9,
                                 reference: "mcp:first".to_owned(),
                                 arguments: json!({"n": 1}),
                             },
-                            CodeMcpCall {
+                            CodePluginCall {
                                 call_id: 3,
                                 reference: "mcp:second".to_owned(),
                                 arguments: json!({"n": 2}),
@@ -580,7 +581,7 @@ impl EffectAdapter for FakeEvaluator {
 fn result_text(result: &Value) -> &str {
     result["content"][0]["text"]
         .as_str()
-        .expect("MCP result text")
+        .expect("plugin result text")
 }
 
 struct ConcurrentMcpTool {
@@ -623,7 +624,7 @@ impl Tool for UnknownMcpTool {
         static SPEC: std::sync::OnceLock<ToolSpec> = std::sync::OnceLock::new();
         SPEC.get_or_init(|| ToolSpec {
             name: "tool_execute".to_owned(),
-            description: "Mock MCP executor".to_owned(),
+            description: "Mock plugin executor".to_owned(),
             input_schema: json!({"type": "object"}),
         })
     }
@@ -637,7 +638,7 @@ impl Tool for UnknownMcpTool {
         Box::pin(async move {
             let reference = call.arguments["reference"].as_str().expect("reference");
             if reference == "mcp:second" {
-                Err(ToolError::outcome_unknown("MCP response was lost"))
+                Err(ToolError::outcome_unknown("plugin response was lost"))
             } else {
                 Ok(ToolOutput {
                     content: vec![ContentBlock::text(reference)],
@@ -660,7 +661,7 @@ impl Tool for OversizedMcpTool {
         static SPEC: std::sync::OnceLock<ToolSpec> = std::sync::OnceLock::new();
         SPEC.get_or_init(|| ToolSpec {
             name: "tool_execute".to_owned(),
-            description: "Large MCP fixture".to_owned(),
+            description: "Large plugin fixture".to_owned(),
             input_schema: json!({"type": "object"}),
         })
     }

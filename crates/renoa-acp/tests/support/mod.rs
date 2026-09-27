@@ -14,7 +14,7 @@ use uuid::Uuid;
 /// One stable provisioning operation per ACP test data root makes every spawn
 /// resolve to the same durable agent.
 const TEST_AGENT_OPERATION_ID: &str = "0f1e2d3c-4b5a-4978-8897-a6b5c4d3e2f1";
-const TEST_AGENT_PRESET_ID: &str = "renoa.coding.alpha.v2";
+const TEST_AGENT_PRESET_ID: &str = "renoa.coding.alpha.v3";
 
 pub(crate) struct AcpProcess {
     child: Child,
@@ -92,7 +92,7 @@ impl AcpProcess {
         let mut child = Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
             .arg("acp")
             .current_dir(workspace)
-            .env("RENOA_DATA_DIR", data)
+            .env("RENOA_HOME", data)
             .env("RENOA_AGENT_ID", agent_id)
             .env("RENOA_MODEL_BRIDGE", bridge)
             .env("RENOA_MODEL_PROVIDERS", providers)
@@ -335,7 +335,7 @@ fn provision_agent(
                 component: "acp-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::parse_str(TEST_AGENT_OPERATION_ID).expect("static test operation id"),
                 AgentPresetId::new(TEST_AGENT_PRESET_ID).expect("alpha preset id"),
                 "Alpha",

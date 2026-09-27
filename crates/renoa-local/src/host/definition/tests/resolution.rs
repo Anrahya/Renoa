@@ -5,7 +5,7 @@ use crate::host::definition::resolve_definition;
 async fn a_document_preset_publishes_files_and_records_provenance() {
     let (directory, host) = fixture();
     let (creator, origin) = system("test");
-    let request = AgentCreateRequest::new(
+    let request = AgentCreateRequest::from_preset(
         Uuid::new_v4(),
         AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
         "Operator",
@@ -80,7 +80,7 @@ async fn resolution_composes_the_stored_definition_with_workspace_rules() {
         .create_agent(
             system("test").0,
             system("test").1,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
                 AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
                 "Operator",

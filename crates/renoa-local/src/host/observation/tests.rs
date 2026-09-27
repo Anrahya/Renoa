@@ -32,7 +32,7 @@ async fn agent(host: &LocalHost) -> AgentId {
             component: "observation-fixture".to_owned(),
         },
         AgentCreationOrigin::Provisioning,
-        AgentCreateRequest::new(
+        AgentCreateRequest::from_preset(
             Uuid::new_v4(),
             AgentPresetId::new(crate::presets::ALPHA_PRESET_ID).expect("preset"),
             "Operator",
@@ -132,9 +132,9 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
         .create_agent(
             AgentCreator::Agent { agent_id: creator },
             AgentCreationOrigin::AgentTool,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
                 "X Desk",
             )
             .with_instructions("PRIVATE INSTRUCTIONS")
@@ -280,9 +280,9 @@ async fn review_inventory_distinguishes_queued_and_incomplete_without_hydrating_
         .create_agent(
             AgentCreator::Agent { agent_id: agent },
             AgentCreationOrigin::AgentTool,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
                 "Soundwave",
             )
             .with_instructions("Review code"),

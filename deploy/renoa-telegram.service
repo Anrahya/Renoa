@@ -11,7 +11,7 @@ StateDirectory=renoa-telegram
 StateDirectoryMode=0700
 WorkingDirectory=/srv/renoa/arcee
 Environment=HOME=/var/lib/renoa-telegram
-Environment=RENOA_DATA_DIR=/var/lib/renoa-telegram
+Environment=RENOA_HOME=/var/lib/renoa-telegram
 Environment=RENOA_TELEGRAM_WORKSPACE=/srv/renoa/arcee
 Environment=RENOA_TELEGRAM_BOT_TOKEN_FILE=%d/telegram-bot-token
 Environment=RENOA_TELEGRAM_IPV4_ONLY=1

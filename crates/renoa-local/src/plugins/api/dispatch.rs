@@ -27,6 +27,7 @@ pub enum PluginOutcome {
     Added(Box<PluginAddOutcome>),
     Listed(PluginInventoryPage),
     Activation(crate::plugins::PluginActivation),
+    HostActivation(crate::plugins::host::state::HostPluginActivation),
     Connected {
         package_digest: String,
         server: String,
@@ -65,6 +66,23 @@ impl PluginManager {
         {
             return Err(PluginError::Invalid(
                 "operation_id must be a nonempty bounded stable identity".to_owned(),
+            ));
+        }
+        if let PluginRequest::Deactivate { plugin_id } | PluginRequest::EnablePlugin { plugin_id } =
+            &request
+            && let Some(plugin) = crate::plugins::host::HostPluginId::parse(plugin_id)
+        {
+            let enabled = matches!(request, PluginRequest::EnablePlugin { .. });
+            let database = self.mcp_catalog().path().to_path_buf();
+            let agent = *agent_id;
+            let operation = invocation.operation_id.to_owned();
+            return Ok(PluginOutcome::HostActivation(
+                tokio::task::spawn_blocking(move || {
+                    crate::plugins::host::state::change(
+                        &database, agent, plugin, enabled, &operation,
+                    )
+                })
+                .await??,
             ));
         }
         match request {
@@ -153,6 +171,19 @@ impl PluginManager {
                     &snapshot.connections,
                     &snapshot.skills,
                     &snapshot.activations,
+                    &crate::plugins::host::HostPluginId::ALL
+                        .into_iter()
+                        .map(|plugin| {
+                            Ok(crate::plugins::host::state::HostPluginActivation {
+                                plugin_id: plugin.id().to_owned(),
+                                enabled: crate::plugins::host::state::enabled(
+                                    self.mcp_catalog().path(),
+                                    *agent_id,
+                                    plugin,
+                                )?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, PluginError>>()?,
                     cursor.as_deref(),
                     limit,
                 )?))

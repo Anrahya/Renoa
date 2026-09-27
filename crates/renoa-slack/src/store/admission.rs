@@ -57,7 +57,7 @@ impl Store {
                 return Ok(Admission { queued: false, cancel_target: None });
             }
             let selection = if dedicated && matches!(Command::parse(&input.text), Command::Agent(Some(_))) {
-                super::AgentSelection::Rejected("This channel belongs to its specialist. Use Arcee's DM to switch agents; !new starts a fresh conversation here.".to_owned())
+                super::AgentSelection::Rejected("This channel belongs to its agent. Use Arcee's DM to switch agents; !new starts a fresh conversation here.".to_owned())
             } else { selection };
             let (command, selected) = match selection {
                 super::AgentSelection::Unchanged => (Command::parse(&input.text), None),

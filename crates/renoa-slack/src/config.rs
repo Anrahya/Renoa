@@ -13,6 +13,7 @@ use crate::SlackError;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default, rename = "home")]
     pub(crate) data_directory: PathBuf,
     pub(crate) workspace: PathBuf,
     pub(crate) agent_id: Uuid,
@@ -24,6 +25,7 @@ pub struct Config {
     provider: ModelProvider,
     model: String,
     reasoning: Option<ReasoningLevel>,
+    #[serde(default)]
     model_auth_store: PathBuf,
     mcp_adapter: Option<PathBuf>,
     code_mode_worker: Option<PathBuf>,
@@ -46,6 +48,11 @@ impl Config {
     /// Returns malformed settings or filesystem failures.
     pub fn read(path: &Path) -> Result<Self, SlackError> {
         let mut config: Self = serde_json::from_slice(&std::fs::read(path)?)?;
+        let home = renoa_local::RenoaHome::resolve(Some(config.data_directory.clone()))?;
+        config.data_directory = home.path().to_path_buf();
+        if config.model_auth_store.as_os_str().is_empty() {
+            config.model_auth_store = home.model_credentials();
+        }
         for path in [
             &config.data_directory,
             &config.workspace,
@@ -79,8 +86,7 @@ impl Config {
                 "workspace must be a directory".to_owned(),
             ));
         }
-        std::fs::create_dir_all(&config.data_directory)?;
-        config.data_directory = std::fs::canonicalize(&config.data_directory)?;
+        home.initialize()?;
         Ok(config)
     }
 
@@ -183,7 +189,7 @@ mod tests {
         std::fs::write(
             &config_path,
             serde_json::to_vec(&serde_json::json!({
-                "data_directory": data_directory,
+                "home": data_directory,
                 "workspace": directory.path(),
                 "agent_id": Uuid::nil(),
                 "allowed_user_id": "U3",
@@ -219,7 +225,7 @@ mod tests {
         std::fs::write(&auth, "").expect("auth");
         let config_path = directory.path().join("slack.json");
         std::fs::write(&config_path,serde_json::json!({
-            "data_directory":directory.path(),"workspace":directory.path(),"agent_id":Uuid::nil(),
+            "home":directory.path(),"workspace":directory.path(),"agent_id":Uuid::nil(),
             "allowed_user_id":"U3","bot_token_file":directory.path().join("bot"),"app_token_file":directory.path().join("app"),
             "model_bridge":bridge,"providers":["opencode-go"],"provider":"opencode-go","model":"fixture","model_auth_store":auth
         }).to_string()).expect("config");

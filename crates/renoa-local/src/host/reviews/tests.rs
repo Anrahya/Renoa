@@ -42,23 +42,13 @@ async fn reviewer_policy(host: &LocalHost) -> GitHubReviewPolicy {
                 component: "review-fixture".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::SPECIALIST_PRESET_ID).expect("preset"),
+                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
                 "Review Desk",
             )
             .with_instructions("Investigate code defects")
-            .with_tools(
-                [
-                    "read_file",
-                    "grep",
-                    "find",
-                    "git_changes",
-                    "git_diff",
-                    "git_show",
-                ]
-                .map(str::to_owned),
-            ),
+            .with_tools(["read_file", "grep", "find"].map(str::to_owned)),
             CancellationToken::new(),
         )
         .await

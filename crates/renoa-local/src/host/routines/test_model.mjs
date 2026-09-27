@@ -6,7 +6,7 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   console.log(JSON.stringify({ok:true,response:{context_window_tokens:500000,max_output_tokens:32768,model_spec:spec,model_binding_id:createHash("sha256").update(spec).digest("hex"),reasoning_level:"high"}}));
 } else {
   let input="";for await (const part of process.stdin) input+=part;
-  const request=JSON.parse(input);
+  const request=preparePluginFixture(JSON.parse(input));
   const complete=(content,stop_reason="stop")=>console.log(JSON.stringify({event:"completed",response:{content,stop_reason,usage:{input:10,output:1,cache_read:0,cache_write:0},metadata:{api:"fixture",provider:"xai",model:"fixture"}}}));
   const text=text=>[{type:"text",text}];
   const index=request.messages.findLastIndex(message=>message.role==="user");

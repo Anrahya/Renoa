@@ -178,7 +178,7 @@ async fn agent_loss_after_startup_terminates_as_failed_without_a_turn() {
 /// Removes one provisioned agent directly from the Host catalog, simulating a
 /// data-root cutover that happens beneath a running node.
 async fn remove_agent_definition(data: &std::path::Path, agent_id: AgentId) {
-    let database = data.join("host.sqlite3");
+    let database = data.join("state/host.sqlite3");
     tokio::task::spawn_blocking(move || {
         let connection = rusqlite::Connection::open(&database).expect("open agent catalog");
         connection

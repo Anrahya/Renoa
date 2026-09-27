@@ -458,8 +458,7 @@ isolated catalog-entry failure.
 Host identity is the tuple of connection identity and exact MCP tool name.
 Self-reported `serverInfo.name` is never identity.
 
-MCP names never become top-level model tool names. A direct-MCP agent can
-select two small, provider-neutral Host tools:
+MCP names never become top-level model tool names. Every agent receives the small, provider-neutral Host plugin protocol:
 
 - `plugin_search` returns compact plugin cards and up to three matching MCP
   tools for a targeted query. A small tool schema is included in full. If a
@@ -476,16 +475,16 @@ Each search page reads the current catalog snapshot. A catalog refresh between
 pages can change ranking; a reference from an older snapshot fails on lookup or
 execute instead of selecting a different tool.
 
-When an agent selects `code_mode`, `tool_execute` is hidden from its model
-request even if a pinned preset also selected it. `plugin_search` remains
-individually selectable, and one `code_mode` schema replaces direct MCP
-execution. Python calls `await mcp(reference, arguments)` with the exact
+When the Host configures the pinned Monty worker, `tool_execute` is hidden
+from model requests and the visible `code_mode` schema invokes enabled Host and
+MCP plugins through the same executor. `plugin_search` is always visible.
+Python calls `await plugin(reference, arguments)` with the exact
 searched reference and a JSON-compatible argument dictionary; independent calls
 may run under `asyncio.gather`. The Python evaluator cannot dispatch MCP
 directly. It returns a durable batch of nested `tool_execute` effects, then
 resumes only after those children settle. The model sees the final Python value
-as one outer tool result, not a transcript of nested MCP calls. Other native
-capabilities are not callable from Code Mode Python. Every `mcp` await returns
+as one outer tool result, not a transcript of nested MCP calls. Compiled Host plugins are callable through this same boundary. Machine tools
+are not callable from Code Mode Python. Every `plugin` await returns
 a JSON dictionary with `content`, `details`, and `is_error` from the settled
 `tool_execute` result; Python must inspect `is_error` when a remote MCP reports
 an error. The 2 MiB per-wave result budget prevents a large remote result from

@@ -1,5 +1,5 @@
 {
-  "data_directory": "/var/lib/renoa-telegram",
+  "home": "/var/lib/renoa-telegram",
   "host_id": "00000000-0000-0000-0000-000000000001",
   "owner_principal_id": "00000000-0000-0000-0000-000000000002",
   "identity_address": "127.0.0.1:7818",

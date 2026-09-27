@@ -159,6 +159,8 @@ qualification is presentation identity only: the Host persists provider and
 raw model separately and resolves that exact pair on every later turn and
 session reload. The headless `renoa-local` command continues to use the single
 provider selected by `RENOA_MODEL_PROVIDER`.
+It accepts `RENOA_MCP_ADAPTER`, `RENOA_CODE_MODE_WORKER`, and
+`RENOA_MCP_REGISTRY_ADAPTER` for plugin invocation and discovery.
 
 A replacement adapter must implement `catalog`, `describe`, and `stream` over
 newline JSON on stdout, consume the same `RENOA_MODEL_*` environment, and

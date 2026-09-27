@@ -119,7 +119,7 @@ impl AgentCreationOrigin {
 }
 
 /// Whether a turn carries durable Host time and elapsed-message context.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnTiming {
     Off,
@@ -127,7 +127,7 @@ pub enum TurnTiming {
 }
 
 /// Whether the workspace-root project instruction file joins the prompt.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceInstructions {
     Off,
@@ -135,7 +135,7 @@ pub enum WorkspaceInstructions {
 }
 
 /// Exact model-input boundaries for automatic context compaction.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AutomaticCompaction {
     pub trigger_input_tokens: NonZeroU64,
@@ -143,7 +143,7 @@ pub struct AutomaticCompaction {
 }
 
 /// The operational behavior a Host runtime composes from one definition.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentBehavior {
     pub turn_timing: TurnTiming,
@@ -167,7 +167,7 @@ impl AgentBehavior {
 }
 
 /// Which owner-editable prompt documents this agent keeps.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDocuments {
     pub soul: bool,
@@ -189,6 +189,8 @@ pub struct AgentOperationalDefinition {
     pub behavior: AgentBehavior,
     pub documents: Option<AgentDocuments>,
     pub provider_restriction: Option<ModelProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::AgentModelSelection>,
 }
 
 impl AgentOperationalDefinition {
@@ -198,6 +200,16 @@ impl AgentOperationalDefinition {
     ///
     /// Returns an error for blank or oversized instructions.
     pub fn validate(&self) -> Result<(), AgentDefinitionError> {
+        if let Some(model) = &self.model {
+            model.validate()?;
+        }
+        if self
+            .behavior
+            .automatic_compaction
+            .is_some_and(|policy| policy.target_input_tokens >= policy.trigger_input_tokens)
+        {
+            return Err(AgentDefinitionError::InvalidCompaction);
+        }
         if self.instructions.trim().is_empty() {
             return Err(AgentDefinitionError::EmptyInstructions);
         }
@@ -295,12 +307,12 @@ pub enum AgentDefinitionError {
     InstructionsTooLarge { bytes: usize },
     #[error("agent creator must carry a non-empty actor identifier")]
     InvalidActor,
+    #[error("agent model must contain 1-512 bytes without control characters")]
+    InvalidModel,
+    #[error("compaction target must be smaller than its trigger")]
+    InvalidCompaction,
     #[error("agent preset `{preset}` is not registered with this Host")]
     UnknownPreset { preset: String },
-    #[error("agent preset `{preset}` supplies its own instructions and rejects overrides")]
-    InstructionsNotAllowed { preset: String },
-    #[error("agent preset `{preset}` requires caller-supplied instructions")]
-    InstructionsRequired { preset: String },
     #[error("agent tool selection revision must be positive")]
     InvalidToolSelectionRevision,
     #[error("agent has more than {MAX_CONNECTIONS} connections: {count}")]

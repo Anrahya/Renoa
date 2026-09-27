@@ -45,9 +45,9 @@ async fn a_mention_runs_the_provisioned_agent_and_posts_one_reply() {
                 component: "discord-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v2").expect("preset"),
+                AgentPresetId::new("renoa.personal.arcee.v3").expect("preset"),
                 "Arcee",
             ),
             CancellationToken::new(),

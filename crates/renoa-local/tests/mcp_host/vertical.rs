@@ -204,14 +204,9 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
                 "bash",
                 "grep",
                 "find",
-                "git_changes",
-                "git_diff",
-                "git_show",
                 "plugin_search",
-                "tool_execute",
                 "plugin_manage",
-                "skill_search",
-                "skill_load",
+                "tool_execute",
             ]
         );
         let encoded_tools = serde_json::to_string(tools).expect("encode model-visible tools");
@@ -331,7 +326,10 @@ fn assert_frozen_mcp_binding(data: &Path, session_uuid: Uuid) {
         .effect_bindings
         .get("renoa.agent.tool/tool_execute")
         .expect("frozen MCP execution binding");
-    assert!(revision.starts_with("renoa-mcp-registry-v2/execute/"));
+    assert!(
+        revision.starts_with("renoa-plugin-executor-v1/")
+            && revision.contains("renoa-mcp-registry-v2/execute/")
+    );
     assert!(
         manifest
             .effect_bindings

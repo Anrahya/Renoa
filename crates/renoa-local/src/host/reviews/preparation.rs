@@ -64,12 +64,23 @@ impl LocalHost {
             ))?;
         let models =
             discover_models_for(&self.config, definition.operational.provider_restriction).await?;
-        let provider = definition
-            .operational
-            .provider_restriction
+        let preference = definition.operational.model.as_ref();
+        let provider = preference
+            .map(|model| model.provider)
+            .or(definition.operational.provider_restriction)
             .unwrap_or(self.config.initial_provider);
-        let model = require_model(&models, provider, &self.config.initial_model, "review")?;
-        let reasoning = initial_reasoning(model, self.config.initial_reasoning)?;
+        let model = require_model(
+            &models,
+            provider,
+            preference.map_or(self.config.initial_model.as_str(), |model| {
+                model.model.as_str()
+            }),
+            "review",
+        )?;
+        let reasoning = initial_reasoning(
+            model,
+            preference.map_or(self.config.initial_reasoning, |model| model.reasoning),
+        )?;
         let skills = self.config.skill_store.clone();
         let workspace = self.config.database.with_file_name("review-sessions");
         let skill_agent = definition.id.to_string();
@@ -86,7 +97,15 @@ impl LocalHost {
         })
         .await??;
         let tools = if context.source == context::ReviewSource::GitCommits {
-            Some(self.agent_tool_selection(definition.id).await?.tools)
+            let mut tools = self.agent_tool_selection(definition.id).await?.tools;
+            if crate::plugins::host::state::enabled(
+                &self.config.database,
+                definition.id,
+                crate::plugins::host::HostPluginId::Git,
+            )? {
+                tools.extend(["git_changes", "git_diff", "git_show"].map(str::to_owned));
+            }
+            Some(tools)
         } else {
             None
         };

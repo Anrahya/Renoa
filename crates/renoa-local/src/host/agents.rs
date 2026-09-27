@@ -56,20 +56,9 @@ impl LocalHost {
     /// Returns an unknown agent or filesystem error.
     pub async fn agent_workspace(&self, id: AgentId) -> Result<PathBuf, LocalHostError> {
         self.require_agent(id).await?;
-        let root = self
-            .config
-            .sessions
-            .parent()
-            .ok_or_else(|| {
-                LocalHostError::InvalidRequest("Host sessions have no data root".to_owned())
-            })?
-            .join("agent-workspaces");
-        tokio::task::spawn_blocking(move || {
-            let path = root.join(id.to_string());
-            std::fs::create_dir_all(&path)?;
-            Ok(std::fs::canonicalize(path)?)
-        })
-        .await?
+        let home = self.config.home.clone();
+        tokio::task::spawn_blocking(move || Ok(home.initialize_agent_workspace(&id.to_string())?))
+            .await?
     }
 }
 

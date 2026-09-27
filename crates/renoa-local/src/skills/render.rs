@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 
 use sha2::{Digest as _, Sha256};
 
@@ -12,7 +12,7 @@ const FILE_SAMPLE_LIMIT: usize = 20;
 
 pub(crate) struct ActiveSkillContext {
     pub(crate) instructions: String,
-    pub(crate) references: HashSet<String>,
+    pub(crate) bodies: BTreeMap<String, String>,
     pub(crate) revision: String,
 }
 
@@ -57,29 +57,37 @@ pub(super) fn one(skill: &OwnedSkill) -> Result<String, SkillError> {
     Ok(output)
 }
 
-pub(crate) fn active(skills: &[OwnedSkill]) -> Result<Option<ActiveSkillContext>, SkillError> {
+pub(crate) fn active(
+    skills: &[OwnedSkill],
+    embedded_instructions: &str,
+) -> Result<Option<ActiveSkillContext>, SkillError> {
     if skills.is_empty() {
         return Ok(None);
     }
-    let mut instructions = String::from(
-        "<active_skills>\nThese exact skill revisions are active for this session. Follow their instructions when relevant.\n\n",
-    );
-    let mut references = HashSet::with_capacity(skills.len());
+    let mut instructions = String::new();
+    let mut bodies = BTreeMap::new();
     let mut hasher = Sha256::new();
     hasher.update(b"renoa.active-skills.v1\0");
     for skill in skills {
         let reference = reference(skill)?;
         hasher.update((reference.len() as u64).to_be_bytes());
         hasher.update(reference.as_bytes());
-        references.insert(reference);
         let rendered = one(skill)?;
-        instructions.push_str(&rendered);
-        instructions.push_str("\n\n");
+        if !embedded_instructions.contains(&rendered) {
+            if instructions.is_empty() {
+                instructions.push_str("<active_skills>\nThese exact skill revisions are active for this session. Follow their instructions when relevant.\n\n");
+            }
+            instructions.push_str(&rendered);
+            instructions.push_str("\n\n");
+        }
+        bodies.insert(reference, rendered);
     }
-    instructions.push_str("</active_skills>");
+    if !instructions.is_empty() {
+        instructions.push_str("</active_skills>");
+    }
     Ok(Some(ActiveSkillContext {
         instructions,
-        references,
+        bodies,
         revision: hex(hasher.finalize().as_slice()),
     }))
 }

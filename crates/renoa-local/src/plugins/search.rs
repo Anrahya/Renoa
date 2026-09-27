@@ -10,43 +10,34 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    PluginError, PluginManager,
+    PluginManager,
     tool::output::{json_output, plugin_error, registry_error_output},
 };
 use crate::{
     mcp::{
-        McpConnectionStatus, McpHostError, McpToolReference, SCHEMA_LOOKUP_OUTPUT_BYTES,
-        SEARCH_RESULT_LIMIT, rank_tools,
+        McpConnectionStatus, McpToolReference, SCHEMA_LOOKUP_OUTPUT_BYTES, SEARCH_RESULT_LIMIT,
+        rank_tools,
     },
     output::MAX_TOOL_OUTPUT_BYTES,
 };
 
 mod local;
+mod page;
 #[cfg(test)]
 mod tests;
+mod tools;
 
 const TOOL_NAME: &str = crate::capabilities::PLUGIN_SEARCH;
-const BINDING_REVISION: &str = "renoa-plugin-search-v2";
+const BINDING_REVISION: &str = "renoa-plugin-search-v4";
 const PREVIEW_LIMIT: usize = 3;
 const PREVIEW_SCHEMA_BYTES: usize = 4 * 1024;
-
-pub(crate) fn binding(
-    agent_id: AgentId,
-    manager: PluginManager,
-    can_manage: bool,
-) -> AgentToolBinding {
-    AgentToolBinding::new(
-        BINDING_REVISION,
-        Arc::new(PluginSearchTool::new(agent_id, manager, can_manage)),
-        EffectRecovery::SafeToReplay,
-    )
-}
 
 pub(crate) struct PluginSearchTool {
     agent_id: AgentId,
     manager: PluginManager,
     can_manage: bool,
     spec: ToolSpec,
+    host_plugins: Option<Arc<super::host::HostPlugins>>,
 }
 
 impl PluginSearchTool {
@@ -55,18 +46,19 @@ impl PluginSearchTool {
             agent_id,
             manager,
             can_manage,
+            host_plugins: None,
             spec: ToolSpec {
                 name: TOOL_NAME.to_owned(),
                 description: format!(
-                    "Search the Host plugin library. Start with a targeted query; use query=* only to browse. A targeted local search returns plugin cards and up to {PREVIEW_LIMIT} matching MCP tools with exact references. If a match includes input_schema, use that complete schema to call code_mode's Python mcp(reference, arguments), or tool_execute when Code Mode is absent. If input_schema is absent, call plugin_search with only reference to get the full schema before calling the tool. Pass plugin to inspect components and connections; pass an enabled connection to list up to {SEARCH_RESULT_LIMIT} MCP tools per page. source=official_mcp_registry researches external candidates and never installs them. A loaded catalog or configured credential does not guarantee a remote call will succeed."
+                    "Search the Host plugin library. Start with a targeted query; use query=* only to browse. A targeted local search returns plugin cards and up to {PREVIEW_LIMIT} matching plugin tools with exact references. If a match includes input_schema, use that complete schema to call code_mode's Python plugin(reference, arguments), or tool_execute when Code Mode is absent. If input_schema is absent, call plugin_search with only reference to get the full schema before calling the tool. Pass plugin and query to search that plugin's enabled tools. An external plugin may span several enabled connections; each tool reference identifies its connection. Pass connection and query to search one account or endpoint. Pass an external plugin id without query to inspect its components and connection status. Tool pages contain up to {SEARCH_RESULT_LIMIT} items. source=official_mcp_registry researches external candidates and never installs them. A loaded catalog or configured credential does not guarantee a remote call will succeed."
                 ),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type":"string", "minLength":1, "maxLength":256, "description":"Search text for local plugins, nested connection tools, or the official Registry. Use * only to browse locally. Omit for exact plugin, reference, or Registry name/version lookup."},
-                        "plugin": {"type":"string", "description":"Exact plugin id returned by local search. Inspect this plugin's components and visible connection status."},
-                        "connection": {"type":"string", "description":"Exact enabled connection id returned by plugin inspection. Return nested MCP tools and exact references."},
-                        "reference": {"type":"string", "description":"Exact MCP tool reference returned by local search. Use alone to get its complete model-facing input_schema; never combine with query, plugin, connection, offset, or Registry fields."},
+                        "query": {"type":"string", "minLength":1, "maxLength":256, "description":"Search text for local plugins, a selected plugin's tools, one connection's tools, or the official Registry. Use * only to browse locally. Omit when inspecting an external plugin's components, an exact reference, or a Registry name/version."},
+                        "plugin": {"type":"string", "description":"Exact plugin id returned by local search. Pair with query to search its enabled tools. For an external plugin, omit query to inspect components and connection status. Do not combine with connection or reference."},
+                        "connection": {"type":"string", "description":"Exact enabled connection id returned by add, connect, or plugin inspection. Pair with query to search its MCP tools and exact references; omit plugin and reference."},
+                        "reference": {"type":"string", "description":"Exact plugin tool reference returned by local search. Use alone to get its complete model-facing input_schema; never combine with query, plugin, connection, offset, or Registry fields."},
                         "offset": {"type":"integer", "minimum":0, "description":"Next offset returned by a local page; omit for the first page."},
                         "source": {"type":"string", "enum":["local", "official_mcp_registry"], "description":"Defaults to local. Use official_mcp_registry only to research an external MCP candidate."},
                         "registry_name": {"type":"string", "description":"Exact publisher/server name returned by official Registry search; pair with registry_version to inspect the external record."},
@@ -76,6 +68,11 @@ impl PluginSearchTool {
                 }),
             },
         }
+    }
+
+    fn with_host_plugins(mut self, plugins: Arc<super::host::HostPlugins>) -> Self {
+        self.host_plugins = Some(plugins);
+        self
     }
 
     async fn local_inventory(&self) -> Result<local::Inventory, ToolError> {
@@ -103,14 +100,18 @@ impl PluginSearchTool {
                 .filter(McpConnectionStatus::enabled_for_agent)
                 .collect()
         };
-        Ok(local::Inventory::new(
+        let mut inventory = local::Inventory::new(
             &packages,
             &connections,
             &snapshot.skills,
             &snapshot.activations,
             snapshot.tools,
             shared_refresh_unavailable,
-        ))
+        );
+        if let Some(plugins) = &self.host_plugins {
+            inventory.add_host_plugins(plugins)?;
+        }
+        Ok(inventory)
     }
 
     async fn run(
@@ -132,9 +133,12 @@ impl PluginSearchTool {
 
     async fn run_local(
         &self,
-        input: SearchInput,
+        mut input: SearchInput,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
+        if let Some(query) = &input.query {
+            input.query = Some(local::validate_query(query)?);
+        }
         if input.registry_name.is_some() || input.registry_version.is_some() {
             return Err(ToolError::invalid_input(
                 "registry_name and registry_version require source=official_mcp_registry",
@@ -153,6 +157,28 @@ impl PluginSearchTool {
             }
             return self.exact_reference(reference, cancellation).await;
         }
+        if let Some(plugin) = input.plugin.as_deref()
+            && super::host::HostPluginId::parse(plugin).is_some()
+        {
+            if input.connection.is_some() {
+                return Err(ToolError::invalid_input(
+                    "Host plugins have no MCP connection",
+                ));
+            }
+            let plugins = self
+                .host_plugins
+                .as_ref()
+                .ok_or_else(|| ToolError::not_found("Host plugins unavailable"))?;
+            let matches =
+                plugins.matches(Some(plugin), input.query.as_deref().unwrap_or("*"), false)?;
+            let total = matches.len();
+            return json_output(&page::Page::new(
+                matches.into_iter().skip(input.offset).collect(),
+                total,
+                input.offset,
+                false,
+            )?);
+        }
         let inventory = self.local_inventory().await?;
         if cancellation.is_cancelled() {
             return Err(ToolError::cancelled("plugin search was cancelled", false));
@@ -161,10 +187,27 @@ impl PluginSearchTool {
             (Some(plugin), None) if input.query.is_none() => {
                 json_output(&inventory.inspect(&plugin, input.offset)?)
             }
+            (Some(plugin), None) => {
+                self.search_tools(
+                    &inventory,
+                    inventory.plugin_tools(&plugin)?,
+                    input
+                        .query
+                        .as_deref()
+                        .expect("inspection without query handled above"),
+                    input.offset,
+                )
+                .await
+            }
             (None, Some(connection)) => {
                 let query = input.query.as_deref().unwrap_or("*");
-                self.search_connection(&inventory, &connection, query, input.offset)
-                    .await
+                self.search_tools(
+                    &inventory,
+                    inventory.tools(&connection)?,
+                    query,
+                    input.offset,
+                )
+                .await
             }
             (None, None) => {
                 let query = input.query.as_deref().ok_or_else(|| {
@@ -173,7 +216,7 @@ impl PluginSearchTool {
                 self.search_cards(&inventory, query, input.offset).await
             }
             _ => Err(ToolError::invalid_input(
-                "inspect a plugin without query or connection, or search tools by connection without plugin",
+                "choose either plugin or connection; they cannot be combined",
             )),
         }
     }
@@ -183,6 +226,25 @@ impl PluginSearchTool {
         encoded: &str,
         cancellation: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
+        if encoded.starts_with("host:") {
+            let plugins = self
+                .host_plugins
+                .as_ref()
+                .ok_or_else(|| ToolError::not_found("Host plugins unavailable"))?;
+            let description = plugins.exact(encoded)?;
+            let encoded = serde_json::to_string(&description)
+                .map_err(|error| ToolError::internal(error.to_string()))?;
+            if encoded.len() > SCHEMA_LOOKUP_OUTPUT_BYTES {
+                return Err(ToolError::output_limit(
+                    "Host tool schema exceeds exact lookup boundary",
+                ));
+            }
+            return Ok(ToolOutput {
+                content: vec![ContentBlock::text(encoded)],
+                details: None,
+                is_error: false,
+            });
+        }
         let reference = McpToolReference::from_str(encoded)
             .map_err(|error| ToolError::invalid_input(error.to_string()))?;
         let mut tools = self.describe_tools(vec![reference], false).await?;
@@ -207,57 +269,6 @@ impl PluginSearchTool {
         })
     }
 
-    async fn search_connection(
-        &self,
-        inventory: &local::Inventory,
-        connection: &str,
-        query: &str,
-        offset: usize,
-    ) -> Result<ToolOutput, ToolError> {
-        let ranked = rank_tools(inventory.tools(connection)?, query, offset)
-            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
-        let mut matches = ranked
-            .matches
-            .into_iter()
-            .map(|tool| {
-                Ok(ToolMatch {
-                    reference: tool
-                        .reference()
-                        .map_err(|error| ToolError::internal(error.to_string()))?
-                        .to_string(),
-                    name: tool.name().to_owned(),
-                    description: tool.description().to_owned(),
-                    input_schema: None,
-                })
-            })
-            .collect::<Result<Vec<_>, ToolError>>()?;
-        if query.trim() != "*" {
-            let references = matches
-                .iter()
-                .take(PREVIEW_LIMIT)
-                .map(|tool| {
-                    McpToolReference::from_str(&tool.reference)
-                        .map_err(|error| ToolError::internal(error.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let previews = self.describe_tools(references, true).await?;
-            for preview in previews {
-                if let Some(item) = matches
-                    .iter_mut()
-                    .find(|item| item.reference == preview.reference)
-                {
-                    item.input_schema = preview.input_schema;
-                }
-            }
-        }
-        json_output(&local::Page::new(
-            matches,
-            ranked.total_matches,
-            offset,
-            inventory.shared_refresh_unavailable(),
-        )?)
-    }
-
     async fn search_cards(
         &self,
         inventory: &local::Inventory,
@@ -280,6 +291,27 @@ impl PluginSearchTool {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut matches = self.describe_tools(references, true).await?;
+        if let Some(plugins) = &self.host_plugins {
+            for description in plugins.matches(None, query, true)? {
+                let include_schema = description.input_schema.as_ref().is_some_and(|schema| {
+                    serde_json::to_vec(schema)
+                        .is_ok_and(|bytes| bytes.len() <= PREVIEW_SCHEMA_BYTES)
+                });
+                matches.push(ToolMatch {
+                    reference: description.reference,
+                    name: description.name,
+                    description: description.description.chars().take(320).collect(),
+                    input_schema: if include_schema {
+                        description.input_schema
+                    } else {
+                        None
+                    },
+                });
+            }
+        }
+        let exact_name = query.trim().to_lowercase();
+        matches.sort_by_key(|tool| tool.name.to_lowercase() != exact_name);
+        matches.truncate(PREVIEW_LIMIT);
         loop {
             let result = SearchResult {
                 page: &page,
@@ -343,72 +375,6 @@ impl PluginSearchTool {
             )),
         }
     }
-
-    async fn describe_tools(
-        &self,
-        references: Vec<McpToolReference>,
-        preview: bool,
-    ) -> Result<Vec<ToolMatch>, ToolError> {
-        if references.is_empty() {
-            return Ok(Vec::new());
-        }
-        let store = self.manager.mcp_catalog();
-        let agent_id = self.agent_id;
-        let expected = references.len();
-        let resolved = tokio::task::spawn_blocking(move || {
-            let mut resolved = Vec::with_capacity(references.len());
-            for reference in references {
-                match store
-                    .resolve_agent_tools(&agent_id.to_string(), std::slice::from_ref(&reference))
-                {
-                    Ok(mut tools) if tools.len() == 1 => {
-                        resolved.push((reference, tools.remove(0)));
-                    }
-                    Ok(_) => {
-                        return Err(McpHostError::Invalid(
-                            "Host catalog returned the wrong number of MCP tools".to_owned(),
-                        ));
-                    }
-                    Err(McpHostError::Conflict(_) | McpHostError::NotFound(_)) if preview => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            Ok(resolved)
-        })
-        .await
-        .map_err(|error| ToolError::internal(format!("Host catalog task failed: {error}")))?
-        .map_err(|error| plugin_error(PluginError::Mcp(error), false))?;
-        if !preview && resolved.len() != expected {
-            return Err(ToolError::internal(
-                "Host catalog returned the wrong number of MCP tools",
-            ));
-        }
-        resolved
-            .into_iter()
-            .map(|(reference, resolved)| {
-                let schema = resolved.tool().model_input_schema();
-                let include_schema = !preview
-                    || serde_json::to_vec(schema)
-                        .map_err(|error| {
-                            ToolError::internal(format!(
-                                "MCP tool schema could not be encoded: {error}"
-                            ))
-                        })?
-                        .len()
-                        <= PREVIEW_SCHEMA_BYTES;
-                Ok(ToolMatch {
-                    reference: reference.to_string(),
-                    name: resolved.tool().name().to_owned(),
-                    description: if preview {
-                        resolved.tool().description().chars().take(320).collect()
-                    } else {
-                        resolved.tool().description().to_owned()
-                    },
-                    input_schema: include_schema.then(|| schema.clone()),
-                })
-            })
-            .collect()
-    }
 }
 
 impl Tool for PluginSearchTool {
@@ -463,7 +429,7 @@ struct ToolMatch {
 #[derive(Serialize)]
 struct SearchResult<'a> {
     #[serde(flatten)]
-    page: &'a local::Page<local::PluginCard>,
+    page: &'a page::Page<local::PluginCard>,
     #[serde(skip_serializing_if = "<[ToolMatch]>::is_empty")]
     tool_matches: &'a [ToolMatch],
 }
@@ -474,4 +440,16 @@ struct RegistryOutput<T> {
     installed: bool,
     #[serde(flatten)]
     result: T,
+}
+
+pub(crate) fn binding_with_host(
+    agent: AgentId,
+    manager: PluginManager,
+    plugins: Arc<super::host::HostPlugins>,
+) -> AgentToolBinding {
+    AgentToolBinding::new(
+        BINDING_REVISION,
+        Arc::new(PluginSearchTool::new(agent, manager, true).with_host_plugins(plugins)),
+        EffectRecovery::SafeToReplay,
+    )
 }

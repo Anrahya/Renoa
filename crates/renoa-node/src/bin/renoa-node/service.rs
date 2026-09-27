@@ -16,7 +16,9 @@ pub(crate) async fn serve(
     let node = RenoaNode::open(
         config.endpoint,
         config.credentials,
-        config.state_directory.join("node.sqlite"),
+        renoa_local::RenoaHome::at(&config.state_directory)
+            .map_err(|error| ServiceError::Configuration(error.to_string()))?
+            .node_database(),
         config.host,
         config.targets,
     )

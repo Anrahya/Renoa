@@ -21,6 +21,7 @@ pub(crate) fn insert_agent(path: &Path, agent: &str) {
         },
         documents: None,
         provider_restriction: None,
+        model: None,
     };
     let connection = Connection::open(path).expect("open Host catalog");
     connection
@@ -32,7 +33,7 @@ pub(crate) fn insert_agent(path: &Path, agent: &str) {
             rusqlite::params![
                 agent,
                 serde_json::to_string(&operational).expect("operational document"),
-                crate::presets::SPECIALIST_PRESET_ID,
+                crate::presets::GENERAL_PRESET_ID,
             ],
         )
         .expect("agent row");

@@ -35,7 +35,7 @@ pub enum RoutineSchedule {
     },
 }
 
-/// A standing task for a persistent specialist. Results belong to the agent's Host inbox.
+/// A standing task for a persistent agent. Results belong to the agent's Host inbox.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutineSpec {

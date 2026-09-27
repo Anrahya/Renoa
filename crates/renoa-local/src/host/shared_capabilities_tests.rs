@@ -202,7 +202,7 @@ async fn live_host_clients_reuse_credentials_packages_and_skills_across_agents_a
         2
     );
     for path in [
-        root.join("data/host.sqlite3"),
+        root.join("data/state/host.sqlite3"),
         root.join(format!("data/sessions/{session_id}/kernel.sqlite3")),
     ] {
         let bytes = fs::read(path).expect("durable database");
@@ -246,7 +246,7 @@ async fn create_agent(host: &LocalHost, name: &str) -> crate::AgentId {
             component: "shared-capabilities".to_owned(),
         },
         AgentCreationOrigin::Provisioning,
-        AgentCreateRequest::new(
+        AgentCreateRequest::from_preset(
             Uuid::new_v4(),
             AgentPresetId::new(crate::presets::ALPHA_PRESET_ID).expect("preset"),
             name,
@@ -271,7 +271,10 @@ fn prepare_fixture(root: &Path) {
     fs::write(root.join("model-auth.sqlite"), "").expect("model credentials boundary");
     fs::write(
         root.join("model.mjs"),
-        include_str!("shared_capabilities_model.mjs"),
+        concat!(
+            include_str!("../../tests/support/plugin_driver.mjs"),
+            include_str!("shared_capabilities_model.mjs")
+        ),
     )
     .expect("model boundary");
     fs::write(

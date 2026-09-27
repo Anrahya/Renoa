@@ -1,24 +1,20 @@
 use super::LocalHost;
-use crate::{
-    capabilities,
-    host::HostConfig,
-    host_storage::{MANIFEST_FILE, read_manifest},
-};
+use crate::{capabilities, host::HostConfig};
 use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
 use renoa_agent_loop::AgentToolBinding;
-use renoa_kernel::{AgentId, EffectRecovery, SessionId};
+use renoa_kernel::{AgentId, EffectRecovery};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub(crate) fn binding(host: Arc<HostConfig>, session: SessionId) -> AgentToolBinding {
+pub(crate) fn binding(host: Arc<HostConfig>, actor: AgentId) -> AgentToolBinding {
     AgentToolBinding::new("renoa-routine-results-v2", Arc::new(Results {
-        host:LocalHost {config:host}, session,
+        host:LocalHost {config:host}, actor,
         spec:ToolSpec {
             name:capabilities::ROUTINE_RESULTS.to_owned(),
-            description:"Read results from this Host's scheduled or manually triggered routine runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task, output and execution session. An agent reads only its own results; reading another agent's results needs the agent_manage capability and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
+            description:"Read results from this Host's scheduled or manually triggered routine runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task, output and execution session. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
             input_schema:input_schema(),
         },
     }), EffectRecovery::SafeToReplay)
@@ -43,7 +39,7 @@ pub(super) fn input_schema() -> Value {
 }
 struct Results {
     host: LocalHost,
-    session: SessionId,
+    actor: AgentId,
     spec: ToolSpec,
 }
 #[derive(Deserialize)]
@@ -77,16 +73,7 @@ impl Tool for Results {
             }
             let input: Input = serde_json::from_value(call.arguments)
                 .map_err(|e| ToolError::invalid_input(e.to_string()))?;
-            let manifest = read_manifest(
-                self.host
-                    .config
-                    .sessions
-                    .join(self.session.to_string())
-                    .join(MANIFEST_FILE),
-            )
-            .await
-            .map_err(|e| ToolError::invalid_input(e.to_string()))?;
-            let actor = manifest.agent_id;
+            let actor = self.actor;
             let result = match input {
                 Input::List { agent_id, before } => {
                     let runs = self

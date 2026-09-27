@@ -11,8 +11,8 @@ pub(crate) const CODE_MODE_TOOL: &str = "code_mode";
 pub(crate) const CODE_STEP_EFFECT_BINDING: &str = "renoa.agent.code-mode.step";
 pub(crate) const MAX_CODE_BYTES: usize = 64 * 1024;
 pub const MAX_CODE_CALLS_PER_WAVE: usize = 32;
-pub const MAX_CODE_MCP_ARGUMENT_BYTES: usize = 256 * 1024;
-pub const MAX_CODE_MCP_REFERENCE_BYTES: usize = 1024;
+pub const MAX_CODE_PLUGIN_ARGUMENT_BYTES: usize = 256 * 1024;
+pub const MAX_CODE_PLUGIN_REFERENCE_BYTES: usize = 1024;
 pub(crate) const MAX_CODE_CALLS_PER_RUN: u32 = 128;
 pub(crate) const MAX_CODE_WAVES: u32 = 32;
 pub const MAX_CODE_SNAPSHOT_BYTES: usize = 2 * 1024 * 1024;
@@ -29,7 +29,7 @@ pub(crate) struct CodeModeInput {
 pub(crate) fn spec() -> ToolSpec {
     ToolSpec {
         name: CODE_MODE_TOOL.to_owned(),
-        description: "Run Python for MCP work. Search for MCP tools with plugin_search. Use a returned input_schema to form arguments; if it is absent, call plugin_search with only reference to get the complete schema first. In Python, call await mcp(reference, arguments), or use asyncio.gather for independent calls. Each mcp result is a dictionary with content, details, and is_error. Only the final Python value is returned; each MCP call is durably recorded before dispatch."
+        description: "Run Python for plugin work. Search for plugin tools with plugin_search. Use a returned input_schema to form arguments; if it is absent, call plugin_search with only reference to get the complete schema first. In Python, call await plugin(reference, arguments), or use asyncio.gather for independent calls. Each plugin result is a dictionary with content, details, and is_error. Check is_error and preserve failure details in your returned value. Use supported pagination and field filters to fetch only needed data. For JSON text payloads, import json and parse json.loads(block['text']) before selecting fields; copying content or details unchanged returns the full payload. Return only fields needed for the task. Only the final Python value enters the model context; each plugin call is durably recorded before dispatch."
             .to_owned(),
         input_schema: json!({
             "type": "object",
@@ -68,13 +68,13 @@ pub enum CodeStepOutput {
     },
     Suspended {
         snapshot: String,
-        calls: Vec<CodeMcpCall>,
+        calls: Vec<CodePluginCall>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CodeMcpCall {
+pub struct CodePluginCall {
     pub call_id: u32,
     pub reference: String,
     pub arguments: Value,
@@ -115,7 +115,7 @@ impl CodeRun {
     pub(crate) fn add_wave(&mut self, calls: usize) -> Result<(), LoopError> {
         if calls == 0 || calls > MAX_CODE_CALLS_PER_WAVE {
             return Err(LoopError::new(
-                "Code Mode produced an invalid number of MCP calls",
+                "Code Mode produced an invalid number of plugin calls",
             ));
         }
         let wave = self
@@ -130,7 +130,7 @@ impl CodeRun {
             )
             .ok_or_else(|| LoopError::new("Code Mode call counter overflowed"))?;
         if wave > MAX_CODE_WAVES || total_calls > MAX_CODE_CALLS_PER_RUN {
-            return Err(LoopError::new("Code Mode exceeded its MCP call budget"));
+            return Err(LoopError::new("Code Mode exceeded its plugin call budget"));
         }
         self.wave = wave;
         self.total_calls = total_calls;
@@ -204,11 +204,11 @@ impl CodeRun {
 #[serde(deny_unknown_fields)]
 pub(crate) struct CodeCallBatch {
     order: VecDeque<u32>,
-    calls: BTreeMap<String, CodeMcpCall>,
+    calls: BTreeMap<String, CodePluginCall>,
 }
 
 impl CodeCallBatch {
-    pub(crate) fn new(calls: Vec<CodeMcpCall>) -> Result<Self, LoopError> {
+    pub(crate) fn new(calls: Vec<CodePluginCall>) -> Result<Self, LoopError> {
         let mut order = VecDeque::with_capacity(calls.len());
         let mut indexed = BTreeMap::new();
         for call in calls {
@@ -227,7 +227,7 @@ impl CodeCallBatch {
 
     pub(crate) fn validate(&self) -> Result<(), LoopError> {
         if self.order.is_empty() || self.order.len() > MAX_CODE_CALLS_PER_WAVE {
-            return Err(LoopError::new("Code Mode has an invalid MCP call wave"));
+            return Err(LoopError::new("Code Mode has an invalid plugin call wave"));
         }
         if self.order.len() != self.calls.len() {
             return Err(LoopError::new(
@@ -245,16 +245,16 @@ impl CodeCallBatch {
                 .ok_or_else(|| LoopError::new("Code Mode call order has a missing identity"))?;
             if call.call_id != *call_id
                 || call.reference.is_empty()
-                || call.reference.len() > MAX_CODE_MCP_REFERENCE_BYTES
+                || call.reference.len() > MAX_CODE_PLUGIN_REFERENCE_BYTES
                 || !call.arguments.is_object()
                 || serde_json::to_vec(&call.arguments)
                     .map_err(|error| {
-                        LoopError::new(format!("Code Mode MCP arguments are invalid: {error}"))
+                        LoopError::new(format!("Code Mode plugin arguments are invalid: {error}"))
                     })?
                     .len()
-                    > MAX_CODE_MCP_ARGUMENT_BYTES
+                    > MAX_CODE_PLUGIN_ARGUMENT_BYTES
             {
-                return Err(LoopError::new("Code Mode has an invalid MCP call"));
+                return Err(LoopError::new("Code Mode has an invalid plugin call"));
             }
         }
         Ok(())
@@ -264,7 +264,7 @@ impl CodeCallBatch {
         self.order.len()
     }
 
-    pub(crate) fn ordered(&self) -> impl Iterator<Item = &CodeMcpCall> {
+    pub(crate) fn ordered(&self) -> impl Iterator<Item = &CodePluginCall> {
         self.order.iter().map(|id| {
             self.calls
                 .get(&id.to_string())
@@ -273,7 +273,7 @@ impl CodeCallBatch {
     }
 }
 
-pub(crate) fn nested_tool_call(run: &CodeRun, call: &CodeMcpCall, name: &str) -> ToolCall {
+pub(crate) fn nested_tool_call(run: &CodeRun, call: &CodePluginCall, name: &str) -> ToolCall {
     ToolCall {
         id: run.call_id(call.call_id),
         name: name.to_owned(),

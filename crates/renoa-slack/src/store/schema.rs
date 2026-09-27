@@ -10,6 +10,8 @@ use super::Binding;
 use crate::SlackError;
 
 pub(super) fn open(directory: &Path) -> Result<(File, Connection), SlackError> {
+    let directory = directory.join("state/surfaces/slack");
+    std::fs::create_dir_all(&directory)?;
     let lease = OpenOptions::new()
         .read(true)
         .write(true)

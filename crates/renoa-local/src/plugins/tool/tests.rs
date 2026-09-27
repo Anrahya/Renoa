@@ -71,25 +71,35 @@ async fn extension_inventory_is_bounded_and_complete() {
 
     let listed = call(&fixture.tool, json!({"action": "list", "limit": 2})).await;
     assert_eq!(listed["returned"], 2);
-    assert_eq!(listed["total"], 4);
+    assert_eq!(listed["total"], 9);
     let cursor = listed["next_cursor"]
         .as_str()
         .expect("a partial inventory page has a cursor");
     assert_eq!(inventory_items(&listed)[0]["kind"], "package");
     assert_eq!(inventory_items(&listed)[1]["kind"], "package_mcp_server");
 
-    let listed = call(
+    let mut listed = call(
         &fixture.tool,
         json!({"action": "list", "cursor": cursor, "limit": 2}),
     )
     .await;
     assert_eq!(listed["returned"], 2);
-    assert!(listed.get("next_cursor").is_none());
     let connection = inventory_item(&listed, "connection");
     assert_eq!(connection["connection"], fixture.connection);
     assert_eq!(connection["registered"], true);
     assert_eq!(connection["catalog_loaded"], true);
     assert_eq!(connection["enabled_for_agent"], true);
+    let mut returned = 4;
+    while let Some(cursor) = listed["next_cursor"].as_str().map(str::to_owned) {
+        listed = call(
+            &fixture.tool,
+            json!({"action":"list", "cursor":cursor, "limit":2}),
+        )
+        .await;
+        assert!(listed["returned"].as_u64().expect("count") <= 2);
+        returned += listed["returned"].as_u64().expect("count");
+    }
+    assert_eq!(returned, 9);
 }
 
 #[tokio::test]

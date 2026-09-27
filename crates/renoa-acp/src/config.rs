@@ -10,11 +10,6 @@ use uuid::Uuid;
 
 use crate::ServerError;
 
-const GITHUB_INTEGRATION_ID: &str = "github";
-const GITHUB_CONNECTION_ID: &str = "github";
-const GITHUB_ENDPOINT: &str = "https://api.githubcopilot.com/mcp/readonly";
-const GITHUB_HOSTNAME: &str = "github.com";
-
 /// Process configuration for the local ACP adapter.
 pub struct Config {
     host: LocalHost,
@@ -25,14 +20,6 @@ pub struct Config {
 #[serde(rename_all = "camelCase")]
 pub struct ModelCatalog {
     models: Vec<CatalogModel>,
-}
-
-#[derive(Serialize)]
-pub struct GitHubMcpInstallation {
-    connection_id: &'static str,
-    endpoint: &'static str,
-    account: String,
-    tool_count: usize,
 }
 
 #[derive(Serialize)]
@@ -107,7 +94,8 @@ impl ProviderSettings {
             providers: enabled_providers(default_provider)?,
             default_provider,
             model: required("RENOA_MODEL")?,
-            credential_store: required_path("RENOA_MODEL_AUTH_STORE")?,
+            credential_store: optional_path("RENOA_MODEL_AUTH_STORE")
+                .unwrap_or(renoa_local::RenoaHome::resolve(None)?.model_credentials()),
         })
     }
 }
@@ -177,42 +165,6 @@ pub async fn configured_model_catalog() -> Result<ModelCatalog, ServerError> {
         );
     }
     ModelCatalog::from_models(models, settings.default_provider, &settings.model)
-}
-
-/// Registers, authenticates, discovers, and enables Renoa's GitHub MCP connection.
-///
-/// The Host persists only the exact `gh` hostname and account reference. The
-/// credential itself crosses only the MCP adapter's standard input.
-///
-/// # Errors
-///
-/// Returns configuration, credential, discovery, catalog, or selection failures.
-pub async fn install_github_mcp(account: &str) -> Result<GitHubMcpInstallation, ServerError> {
-    let config = Config::from_environment()?;
-    config
-        .host
-        .register_gh_cli_mcp_connection(
-            GITHUB_INTEGRATION_ID,
-            GITHUB_CONNECTION_ID,
-            GITHUB_ENDPOINT,
-            GITHUB_HOSTNAME,
-            account,
-        )
-        .await?;
-    let catalog = config
-        .host
-        .refresh_mcp_catalog(GITHUB_CONNECTION_ID)
-        .await?;
-    config
-        .host
-        .enable_agent_connection(config.agent_id(), GITHUB_CONNECTION_ID)
-        .await?;
-    Ok(GitHubMcpInstallation {
-        connection_id: GITHUB_CONNECTION_ID,
-        endpoint: GITHUB_ENDPOINT,
-        account: account.to_owned(),
-        tool_count: catalog.tools().len(),
-    })
 }
 
 /// Reconciles this device's Host plugin library with its private shared registry.
@@ -308,41 +260,7 @@ fn optional(name: &str) -> Result<Option<String>, ServerError> {
 }
 
 fn data_directory() -> Result<PathBuf, ServerError> {
-    if let Some(path) = env::var_os("RENOA_DATA_DIR").filter(|path| !path.is_empty()) {
-        return absolute(PathBuf::from(path));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        home_directory().map(|home| home.join("Library/Application Support/Renoa"))
-    }
-    #[cfg(target_os = "windows")]
-    {
-        return env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .map(|path| path.join("Renoa"))
-            .ok_or_else(|| ServerError::Configuration("LOCALAPPDATA must be set".to_owned()));
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Some(path) = env::var_os("XDG_DATA_HOME").filter(|path| !path.is_empty()) {
-            return absolute(PathBuf::from(path).join("renoa"));
-        }
-        home_directory().map(|home| home.join(".local/share/renoa"))
-    }
-}
-
-fn home_directory() -> Result<PathBuf, ServerError> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| ServerError::Configuration("HOME must be set".to_owned()))
-}
-
-fn absolute(path: PathBuf) -> Result<PathBuf, ServerError> {
-    if path.is_absolute() {
-        Ok(path)
-    } else {
-        Ok(env::current_dir()?.join(path))
-    }
+    Ok(renoa_local::RenoaHome::resolve(None)?.path().to_path_buf())
 }
 
 #[cfg(test)]

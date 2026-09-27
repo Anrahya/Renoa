@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+renoa-home = { path = "../renoa-home", version = "0.1.0" }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
 base64.workspace = true
 monty-pool.workspace = true

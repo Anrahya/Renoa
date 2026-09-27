@@ -50,12 +50,11 @@ async fn code_mode_gathers_real_mcp_calls_into_one_durable_model_result() {
     let endpoint = format!("http://127.0.0.1:{}/mcp", address.port());
     let server = thread::spawn(move || serve_code_mode_mcp(&listener));
     let host = new_vertical_host(&data, &bridge, &credentials, &adapter, Some(&worker));
-    let request = AgentCreateRequest::new(
+    let request = AgentCreateRequest::from_preset(
         Uuid::new_v4(),
         AgentPresetId::new(ALPHA_PRESET_ID).expect("Alpha preset"),
         "Alpha",
-    )
-    .with_tools(["code_mode".to_owned()]);
+    );
     let alpha = host
         .create_agent(
             AgentCreator::System {
@@ -75,8 +74,8 @@ async fn code_mode_gathers_real_mcp_calls_into_one_durable_model_result() {
         .expect("Alpha exists")
         .tool_selection
         .tools;
-    assert!(selection.contains("code_mode"));
-    assert!(selection.contains("tool_execute"));
+    assert!(!selection.contains("code_mode"));
+    assert!(!selection.contains("tool_execute"));
     configure_echo_mcp(&host, &endpoint, alpha).await;
 
     let session = host

@@ -180,23 +180,17 @@ pub(super) fn authorize(
     if actor == target {
         return Ok(());
     }
-    let manages_agents: bool = db.query_row(
-        "SELECT EXISTS(
-            SELECT 1
-            FROM host_agent_tool_selections AS selection
-            JOIN json_each(selection.tools_json) AS capability
-              ON capability.value = ?2
-            WHERE selection.agent_id = ?1
-        )",
-        params![actor.to_string(), crate::capabilities::AGENT_MANAGE],
-        |row| row.get(0),
+    let manages_agents = crate::plugins::host::state::enabled_in(
+        db,
+        actor,
+        crate::plugins::host::HostPluginId::Agents,
     )?;
     if manages_agents {
         Ok(())
     } else {
         Err(RoutineError::Invalid(format!(
-            "an agent needs the `{}` capability to manage another agent's routines",
-            crate::capabilities::AGENT_MANAGE
+            "an agent needs the enabled `{}` plugin to manage another agent's routines",
+            "renoa.agents"
         )))
     }
 }

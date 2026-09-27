@@ -1,9 +1,5 @@
 use super::{LocalHost, RoutineMutation, RoutineSpec};
-use crate::{
-    capabilities,
-    host::HostConfig,
-    host_storage::{MANIFEST_FILE, read_manifest},
-};
+use crate::{capabilities, host::HostConfig};
 use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
 use renoa_agent_loop::AgentToolBinding;
 use renoa_kernel::{AgentId, CommandId, EffectRecovery, SessionId};
@@ -15,12 +11,13 @@ use uuid::Uuid;
 
 pub(crate) fn binding(
     host: Arc<HostConfig>,
+    actor: AgentId,
     session: SessionId,
     command: Option<CommandId>,
 ) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-routine-manage-v4",Arc::new(Manage{host:LocalHost{config:host},session,command,spec:ToolSpec{
+    AgentToolBinding::new("renoa-routine-manage-v4",Arc::new(Manage{host:LocalHost{config:host},actor,session,command,spec:ToolSpec{
         name:capabilities::ROUTINE_MANAGE.to_owned(),
-        description:"Manage Host-owned scheduled tasks. List first for compact routine summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own routines; managing another agent's routines needs the agent_manage capability. Create only when the user requests scheduled work. Update the existing routine using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from routine listings and prevents future scheduling or manual runs; past results remain available through routine_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces to one catch-up. Results are durable in the agent's Host inbox; connected surfaces deliver them. Scheduled runs have their own persistent session, separate from interactive chat. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
+        description:"Manage Host-owned scheduled tasks. List first for compact routine summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own routines; managing another agent's routines needs the enabled renoa.agents plugin. Create only when the user requests scheduled work. Update the existing routine using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from routine listings and prevents future scheduling or manual runs; past results remain available through routine_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces to one catch-up. Results are durable in the agent's Host inbox; connected surfaces deliver them. Scheduled runs have their own persistent session, separate from interactive chat. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
         input_schema:input_schema()
     }}),EffectRecovery::SafeToReplay)
 }
@@ -70,6 +67,7 @@ pub(super) fn input_schema() -> Value {
 }
 struct Manage {
     host: LocalHost,
+    actor: AgentId,
     session: SessionId,
     command: Option<CommandId>,
     spec: ToolSpec,
@@ -120,16 +118,7 @@ impl Tool for Manage {
             }
             let input: Input = serde_json::from_value(call.arguments)
                 .map_err(|e| ToolError::invalid_input(e.to_string()))?;
-            let manifest = read_manifest(
-                self.host
-                    .config
-                    .sessions
-                    .join(self.session.to_string())
-                    .join(MANIFEST_FILE),
-            )
-            .await
-            .map_err(|e| ToolError::invalid_input(e.to_string()))?;
-            let actor = manifest.agent_id;
+            let actor = self.actor;
             let result = if let Input::List { agent_id, cursor } = input {
                 let records = self
                     .host

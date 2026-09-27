@@ -12,13 +12,13 @@ use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const PRESET_ID: &str = "renoa.coding.alpha.v2";
+const PRESET_ID: &str = "renoa.coding.alpha.v3";
 
 fn run(data: &Path, configured_agent: &str, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_renoa-agent"))
         .env_clear()
         .env("PATH", std::env::var_os("PATH").expect("test PATH"))
-        .env("RENOA_DATA_DIR", data)
+        .env("RENOA_HOME", data)
         .env("RENOA_AGENT_ID", configured_agent)
         .env("RENOA_MODEL_BRIDGE", data.join("model.mjs"))
         .env("RENOA_MODEL_PROVIDER", "xai")
@@ -63,7 +63,7 @@ fn provision(data: &Path, name: &str) -> String {
                 component: "management-test".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::new(
+            AgentCreateRequest::from_preset(
                 Uuid::new_v4(),
                 AgentPresetId::new(PRESET_ID).expect("alpha preset id"),
                 name,

@@ -133,7 +133,7 @@ mod launch_tests {
         fs::write(
             path,
             serde_json::to_vec(&serde_json::json!({
-                "data_directory": data,
+                "home": data,
                 "guild_id": guild,
                 "operator_user_id": "20",
                 "agent_id": agent,
