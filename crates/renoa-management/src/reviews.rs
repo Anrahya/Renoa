@@ -21,7 +21,7 @@ pub(crate) async fn update_policy(
     }
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let request = match request {
         Ok(Json(request)) => request,

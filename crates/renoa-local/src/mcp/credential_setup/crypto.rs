@@ -123,7 +123,7 @@ fn decode(value: &str) -> Result<Vec<u8>, McpHostError> {
         return Err(McpCredentialError::SetupInvalid.into());
     }
     let mut bytes = Vec::with_capacity(value.len() / 2);
-    for pair in value.as_bytes().chunks_exact(2) {
+    for pair in value.as_bytes().as_chunks::<2>().0 {
         let high = digit(pair[0]).ok_or(McpCredentialError::SetupInvalid)?;
         let low = digit(pair[1]).ok_or(McpCredentialError::SetupInvalid)?;
         bytes.push((high << 4) | low);

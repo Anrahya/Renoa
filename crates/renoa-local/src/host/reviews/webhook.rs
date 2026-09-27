@@ -70,7 +70,7 @@ pub(super) fn authenticate(
         return Err(GitHubReviewError::Authentication);
     }
     let mut bytes = [0_u8; 32];
-    for (index, pair) in signature.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in signature.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let digit = |byte: u8| {
             char::from(byte)
                 .to_digit(16)

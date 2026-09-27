@@ -37,7 +37,7 @@ pub(super) async fn definition(
 ) -> Response {
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(host) = &state.agents else {
         return unavailable();
@@ -66,7 +66,7 @@ pub(super) async fn options(
 ) -> Response {
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(host) = &state.agents else {
         return unavailable();
@@ -110,7 +110,7 @@ pub(super) async fn create(
     }
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(host) = &state.agents else {
         return unavailable();
