@@ -65,12 +65,17 @@ async fn an_oversized_application_message_is_rejected() {
         .expect("connect oversized-message peer");
     let oversized = "x".repeat(MAX_APPLICATION_MESSAGE_BYTES + 1);
 
-    socket
-        .send(Message::Text(oversized.into()))
-        .await
-        .expect("send oversized message");
-
-    expect_closed(&mut socket).await;
+    // Where the socket send buffer is smaller than the frame (macOS), the
+    // coordinator's close arrives while the frame is still being written.
+    match socket.send(Message::Text(oversized.into())).await {
+        Ok(()) => expect_closed(&mut socket).await,
+        Err(WebSocketError::Io(error))
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
+            ) => {}
+        Err(error) => panic!("send oversized message: {error}"),
+    }
     server.stop().await;
 }
 

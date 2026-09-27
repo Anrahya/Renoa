@@ -271,7 +271,9 @@ fn hidden_gnu_metadata_is_bounded_before_tar_allocates_it() {
     ));
     let mut header = tar::Header::new_gnu();
     header.set_entry_type(tar::EntryType::GNULongName);
-    let nested = std::iter::repeat_n("a".repeat(180), 6)
+    // Long enough to cross the 1024-byte bound inside the metadata entry, and
+    // short enough for the valid extraction to fit macOS's 1024-byte PATH_MAX.
+    let nested = std::iter::repeat_n("a".repeat(180), 3)
         .collect::<Vec<_>>()
         .join("/");
     let name = format!("repo-{COMMIT}/{nested}/SKILL.md");

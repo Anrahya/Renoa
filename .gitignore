@@ -27,3 +27,6 @@ node_modules/
 /grok-build/
 /pi/
 .wrangler/
+
+# macOS Finder metadata.
+.DS_Store

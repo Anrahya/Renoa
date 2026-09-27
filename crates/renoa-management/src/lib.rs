@@ -223,7 +223,7 @@ async fn access(State(state): State<Arc<ManagementState>>) -> Response {
 async fn observe(State(state): State<Arc<ManagementState>>, headers: HeaderMap) -> Response {
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match state.observer.snapshot().await {
         Ok(snapshot) => {
@@ -251,7 +251,7 @@ async fn review_detail(
 ) -> Response {
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match state.observer.review_detail(request).await {
         Ok(Some(detail)) => {
@@ -280,26 +280,26 @@ async fn review_detail(
 async fn authorize(
     state: &ManagementState,
     headers: &HeaderMap,
-) -> Result<identity::Authenticated, Response> {
+) -> Result<identity::Authenticated, Box<Response>> {
     match state.identity.authenticate(headers).await {
         Ok(Some(session)) if session.principal == state.owner => Ok(session),
-        Ok(Some(_)) => Err(failure(
+        Ok(Some(_)) => Err(Box::new(failure(
             StatusCode::FORBIDDEN,
             "wrong_owner",
             "This login does not own the configured Host.",
-        )),
-        Ok(None) => Err(failure(
+        ))),
+        Ok(None) => Err(Box::new(failure(
             StatusCode::UNAUTHORIZED,
             "sign_in_required",
             "Sign in to your Host.",
-        )),
+        ))),
         Err(error) => {
             eprintln!("Host management identity storage failed: {error}");
-            Err(failure(
+            Err(Box::new(failure(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "identity_unavailable",
                 "Login storage is temporarily unavailable. Your browser will reconnect.",
-            ))
+            )))
         }
     }
 }

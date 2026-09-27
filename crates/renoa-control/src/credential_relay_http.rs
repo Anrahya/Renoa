@@ -55,11 +55,11 @@ pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
 async fn create_relay(State(state): State<Arc<CoordinatorState>>, request: Request) -> Response {
     let device_id = match authenticate_node(&state, request.headers()).await {
         Ok(device_id) => device_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let request = match json_request::<CreateCredentialRelayRequest>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if request.version != CREDENTIAL_RELAY_VERSION {
         return invalid_request();
@@ -111,7 +111,7 @@ async fn relay_status(
 ) -> Response {
     let device_id = match authenticate_node(&state, &headers).await {
         Ok(device_id) => device_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Ok(relay_id) = CredentialRelayId::from_str(&relay_id) else {
         return invalid_request();
@@ -136,7 +136,7 @@ async fn submit_relay(
     };
     let request = match json_request::<SubmitCredentialRelayRequest>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if request.version != CREDENTIAL_RELAY_VERSION {
         return invalid_request();
@@ -168,14 +168,14 @@ async fn acknowledge_relay(
 ) -> Response {
     let device_id = match authenticate_node(&state, request.headers()).await {
         Ok(device_id) => device_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Ok(relay_id) = CredentialRelayId::from_str(&relay_id) else {
         return invalid_request();
     };
     let request = match json_request::<AcknowledgeCredentialRelayRequest>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if request.version != CREDENTIAL_RELAY_VERSION {
         return invalid_request();

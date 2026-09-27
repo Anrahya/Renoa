@@ -57,7 +57,8 @@ upstream [commit `64662cc`](https://github.com/pydantic/monty/commit/64662cc567c
 `monty` executable SHA-256 is
 `f596526655da1026bfbd928e4fa26bdbbe461e3130a351cea77208acd2bae140`.
 The Host verifies the executable hash before opening mutable Host state and
-refuses a different worker. Rust 1.96 or newer is needed to build this release.
+refuses a different worker. `rust-toolchain.toml` pins the build to Rust 1.98.1;
+rustup installs it on the first `cargo` command in the checkout.
 
 Stage and verify the worker before setting a Host configuration field:
 

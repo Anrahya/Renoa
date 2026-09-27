@@ -51,7 +51,8 @@ test("OpenCode Go enrollment rejects malformed input without storing it", async 
 });
 
 function enroll(storePath: string, input: string) {
-  return spawnSync(process.execPath, [executable], {
+  // Node's own runtime warning for node:sqlite is not program output.
+  return spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", executable], {
     encoding: "utf8",
     env: { ...process.env, RENOA_MODEL_AUTH_STORE: storePath },
     input,

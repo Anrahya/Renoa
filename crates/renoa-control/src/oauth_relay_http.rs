@@ -76,11 +76,11 @@ async fn client_metadata(State(state): State<Arc<CoordinatorState>>) -> Response
 async fn create_relay(State(state): State<Arc<CoordinatorState>>, request: Request) -> Response {
     let device_id = match authenticate_node(&state, request.headers()).await {
         Ok(device_id) => device_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let request = match json_request::<CreateOAuthRelayRequest>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if request.version != OAUTH_RELAY_VERSION || !valid_digest(&request.state_digest) {
         return invalid_request();
@@ -123,7 +123,7 @@ async fn relay_status(
 ) -> Response {
     let device_id = match authenticate_node(&state, &headers).await {
         Ok(device_id) => device_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Ok(relay_id) = OAuthRelayId::from_str(&relay_id) else {
         return invalid_request();
@@ -141,14 +141,14 @@ async fn acknowledge_relay(
 ) -> Response {
     let device_id = match authenticate_node(&state, request.headers()).await {
         Ok(device_id) => device_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Ok(relay_id) = OAuthRelayId::from_str(&relay_id) else {
         return invalid_request();
     };
     let request = match json_request::<AcknowledgeOAuthRelayRequest>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     if request.version != OAUTH_RELAY_VERSION {
         return invalid_request();
@@ -259,18 +259,18 @@ fn parse_callback(query: &str) -> Option<ProviderCallback> {
 pub(crate) async fn authenticate_node(
     state: &CoordinatorState,
     headers: &HeaderMap,
-) -> Result<DeviceId, Response> {
+) -> Result<DeviceId, Box<Response>> {
     let Some(device_id) = exact_header(headers, DEVICE_ID_HEADER)
         .and_then(|value| value.parse().ok())
         .map(DeviceId::from_uuid)
     else {
-        return Err(authentication_failed());
+        return Err(Box::new(authentication_failed()));
     };
     let Some(credential) = exact_header(headers, header::AUTHORIZATION.as_str())
         .and_then(parse_bearer)
         .and_then(|value| DeviceCredential::from_encoded(value.to_owned()))
     else {
-        return Err(authentication_failed());
+        return Err(Box::new(authentication_failed()));
     };
     match state
         .store
@@ -283,7 +283,7 @@ pub(crate) async fn authenticate_node(
         Ok(authenticated) if matches!(authenticated.peer, PeerIdentity::Node { .. }) => {
             Ok(authenticated.device_id)
         }
-        Ok(_) | Err(_) => Err(authentication_failed()),
+        Ok(_) | Err(_) => Err(Box::new(authentication_failed())),
     }
 }
 
@@ -304,11 +304,11 @@ fn parse_bearer(value: &str) -> Option<&str> {
 pub(crate) async fn json_request<T: serde::de::DeserializeOwned>(
     request: Request,
     state: &Arc<CoordinatorState>,
-) -> Result<T, Response> {
+) -> Result<T, Box<Response>> {
     Json::<T>::from_request(request, state)
         .await
         .map(|Json(value)| value)
-        .map_err(|_error: JsonRejection| invalid_request())
+        .map_err(|_error: JsonRejection| Box::new(invalid_request()))
 }
 
 fn valid_state(value: &str) -> bool {

@@ -90,7 +90,7 @@ async fn registration_options(
 ) -> Response {
     let request = match json_request::<RegistrationOptionsRequest>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let surface = match parse_surface(request.surface) {
         Ok(surface) => surface,
@@ -115,7 +115,7 @@ async fn registration_verify(
     let request =
         match json_request::<VerifyRequest<RegisterPublicKeyCredential>>(request, &state).await {
             Ok(request) => request,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
     let Some(identity) = &state.browser_identity else {
         return unavailable_response();
@@ -135,7 +135,7 @@ async fn authentication_options(
 ) -> Response {
     let request = match json_request::<AuthenticationOptionsRequest>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let surface = match parse_surface(request.surface) {
         Ok(surface) => surface,
@@ -159,7 +159,7 @@ async fn authentication_verify(
 ) -> Response {
     let request = match json_request::<VerifyRequest<PublicKeyCredential>>(request, &state).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(identity) = &state.browser_identity else {
         return unavailable_response();
@@ -176,7 +176,7 @@ async fn authentication_verify(
 async fn json_request<T: DeserializeOwned>(
     request: Request,
     state: &Arc<CoordinatorState>,
-) -> Result<T, Response> {
+) -> Result<T, Box<Response>> {
     // Existing native clients need not send Origin. Browser requests with an
     // Origin must match the passkey relying party before a cookie can be issued.
     if let Some(origin) = request.headers().get(header::ORIGIN)
@@ -185,12 +185,14 @@ async fn json_request<T: DeserializeOwned>(
             .as_ref()
             .is_none_or(|identity| origin != identity.origin())
     {
-        return Err(error_response(&ControlError::authentication_failed()));
+        return Err(Box::new(error_response(
+            &ControlError::authentication_failed(),
+        )));
     }
     Json::<T>::from_request(request, state)
         .await
         .map(|Json(value)| value)
-        .map_err(|_error: JsonRejection| invalid_request_response())
+        .map_err(|_error: JsonRejection| Box::new(invalid_request_response()))
 }
 
 fn options_response<T: Serialize>(options: CeremonyOptions<T>) -> Response {

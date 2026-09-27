@@ -30,7 +30,7 @@ pub(super) async fn status(
 ) -> Response {
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let mut response = reply(
         state.discord.status(),
@@ -46,7 +46,7 @@ pub(super) async fn channels(
 ) -> Response {
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let mut response = reply(
         state.discord.channels().await,
@@ -67,7 +67,7 @@ pub(super) async fn inspect(
     }
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let mut response = match request {
         Ok(Json(request)) => reply(
@@ -90,7 +90,7 @@ pub(super) async fn connect(
     }
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(host) = &state.agents else {
         return unavailable();
@@ -120,7 +120,7 @@ pub(super) async fn bind(
     }
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let Some(host) = &state.agents else {
         return unavailable();

@@ -432,7 +432,7 @@ send({
 
 fn decode<const N: usize>(value: &str) -> [u8; N] {
     let mut output = [0_u8; N];
-    for (slot, pair) in output.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+    for (slot, pair) in output.iter_mut().zip(value.as_bytes().as_chunks::<2>().0) {
         *slot = (digit(pair[0]) << 4) | digit(pair[1]);
     }
     output

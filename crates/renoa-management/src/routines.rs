@@ -49,7 +49,7 @@ pub(super) async fn set_enabled(
     }
     let session = match authorize(&state, &headers).await {
         Ok(session) => session,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let request = match request {
         Ok(Json(request)) => request,
