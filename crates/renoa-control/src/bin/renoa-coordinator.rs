@@ -23,7 +23,7 @@ const USAGE: &str = "usage:
   renoa-coordinator pair-browser <renoa-home> <principal-id>
   renoa-coordinator revoke-browser-logins <renoa-home> <principal-id>
   renoa-coordinator enroll-surface <renoa-home> <principal-id> <surface>
-  renoa-coordinator enroll-node <renoa-home> <node-id>
+  renoa-coordinator enroll-node <renoa-home> <node-id> <owner-principal-id>
   renoa-coordinator create-task <renoa-home> <task-id> <principal-id> <node-id> <target>";
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
 const BROWSER_SETUP_LIFETIME: Duration = Duration::from_mins(30);
@@ -55,6 +55,7 @@ enum Operation {
     EnrollNode {
         database: PathBuf,
         node_id: NodeId,
+        owner: PrincipalId,
     },
     CreateTask {
         database: PathBuf,
@@ -135,32 +136,42 @@ impl Operation {
             }
             Some("enroll-node") => {
                 let node_id = NodeId::from_uuid(uuid_argument(&mut arguments, "node id")?);
+                let owner =
+                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "owner principal id")?);
                 no_more_arguments(arguments)?;
-                Ok(Self::EnrollNode { database, node_id })
-            }
-            Some("create-task") => {
-                let task_id = TaskId::from_uuid(uuid_argument(&mut arguments, "task id")?);
-                let principal_id =
-                    PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
-                let node_id = NodeId::from_uuid(uuid_argument(&mut arguments, "node id")?);
-                let target = arguments
-                    .next()
-                    .and_then(|value| value.into_string().ok())
-                    .map(TargetRef::new)
-                    .ok_or_else(|| USAGE.to_owned())?;
-                no_more_arguments(arguments)?;
-                Ok(Self::CreateTask {
+                Ok(Self::EnrollNode {
                     database,
-                    task: TaskSpec {
-                        task_id,
-                        principal_id,
-                        node_id,
-                        target,
-                    },
+                    node_id,
+                    owner,
                 })
             }
+            Some("create-task") => Self::parse_create_task(database, arguments),
             _ => Err(USAGE.to_owned()),
         }
+    }
+
+    fn parse_create_task(
+        database: PathBuf,
+        mut arguments: impl Iterator<Item = OsString>,
+    ) -> Result<Self, String> {
+        let task_id = TaskId::from_uuid(uuid_argument(&mut arguments, "task id")?);
+        let principal_id = PrincipalId::from_uuid(uuid_argument(&mut arguments, "principal id")?);
+        let node_id = NodeId::from_uuid(uuid_argument(&mut arguments, "node id")?);
+        let target = arguments
+            .next()
+            .and_then(|value| value.into_string().ok())
+            .map(TargetRef::new)
+            .ok_or_else(|| USAGE.to_owned())?;
+        no_more_arguments(arguments)?;
+        Ok(Self::CreateTask {
+            database,
+            task: TaskSpec {
+                task_id,
+                principal_id,
+                node_id,
+                target,
+            },
+        })
     }
 }
 
@@ -291,9 +302,11 @@ async fn run() -> Result<(), String> {
             )
             .await
         }
-        Operation::EnrollNode { database, node_id } => {
-            create_enrollment(database, PeerIdentity::Node { node_id }).await
-        }
+        Operation::EnrollNode {
+            database,
+            node_id,
+            owner,
+        } => create_node_enrollment(database, node_id, owner).await,
         Operation::CreateTask { database, task } => create_task(database, task).await,
     }
 }
@@ -359,6 +372,19 @@ async fn create_enrollment(database: PathBuf, peer: PeerIdentity) -> Result<(), 
     let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
     let token = coordinator
         .create_enrollment(peer, SystemTime::now() + ENROLLMENT_LIFETIME)
+        .await
+        .map_err(|error| error.to_string())?;
+    write_json(&EnrollmentCreated { token })
+}
+
+async fn create_node_enrollment(
+    database: PathBuf,
+    node_id: NodeId,
+    owner: PrincipalId,
+) -> Result<(), String> {
+    let coordinator = Coordinator::open(database).map_err(|error| error.to_string())?;
+    let token = coordinator
+        .create_node_enrollment(node_id, owner, SystemTime::now() + ENROLLMENT_LIFETIME)
         .await
         .map_err(|error| error.to_string())?;
     write_json(&EnrollmentCreated { token })

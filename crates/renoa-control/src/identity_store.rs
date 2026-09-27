@@ -19,23 +19,11 @@ impl ControlStore {
         peer: PeerIdentity,
         expires_at: SystemTime,
     ) -> Result<EnrollmentToken, ControlError> {
-        let token = EnrollmentToken::generate()?;
-        let token_hash = token
-            .digest()
-            .ok_or_else(|| ControlError::store("generated an invalid enrollment token"))?;
-        let expires_at_ms = timestamp_millis(expires_at)?;
-        let peer_json = serde_json::to_string(&peer).map_err(json_error)?;
+        let (token, enrollment) = PendingEnrollment::new(&peer, expires_at)?;
         let path = Arc::clone(&self.path);
         blocking(move || {
             let connection = crate::control_schema::open_connection(&path)?;
-            connection
-                .execute(
-                    "INSERT INTO enrollments (token_hash, peer_json, expires_at_ms)
-                     VALUES (?1, ?2, ?3)",
-                    params![token_hash.as_slice(), peer_json, expires_at_ms],
-                )
-                .map_err(sqlite_error)?;
-            Ok(())
+            enrollment.insert(&connection)
         })
         .await?;
         Ok(token)
@@ -161,6 +149,49 @@ impl ControlStore {
                 .map_err(sqlite_error)
         })
         .await
+    }
+}
+
+/// One single-use enrollment prepared outside the database transaction that
+/// stores it.
+pub(crate) struct PendingEnrollment {
+    token_hash: [u8; 32],
+    peer_json: String,
+    expires_at_ms: i64,
+}
+
+impl PendingEnrollment {
+    pub(crate) fn new(
+        peer: &PeerIdentity,
+        expires_at: SystemTime,
+    ) -> Result<(EnrollmentToken, Self), ControlError> {
+        let token = EnrollmentToken::generate()?;
+        let token_hash = token
+            .digest()
+            .ok_or_else(|| ControlError::store("generated an invalid enrollment token"))?;
+        Ok((
+            token,
+            Self {
+                token_hash,
+                peer_json: serde_json::to_string(peer).map_err(json_error)?,
+                expires_at_ms: timestamp_millis(expires_at)?,
+            },
+        ))
+    }
+
+    pub(crate) fn insert(&self, connection: &rusqlite::Connection) -> Result<(), ControlError> {
+        connection
+            .execute(
+                "INSERT INTO enrollments (token_hash, peer_json, expires_at_ms)
+                 VALUES (?1, ?2, ?3)",
+                params![
+                    self.token_hash.as_slice(),
+                    self.peer_json,
+                    self.expires_at_ms
+                ],
+            )
+            .map_err(sqlite_error)?;
+        Ok(())
     }
 }
 

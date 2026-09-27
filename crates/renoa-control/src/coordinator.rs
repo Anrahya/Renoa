@@ -193,6 +193,25 @@ impl Coordinator {
         self.state.store.create_enrollment(peer, expires_at).await
     }
 
+    /// Records `owner` as the node's owner and creates its single-use
+    /// enrollment. Only the owner may open new tasks on the node.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflict when the node already belongs to another principal,
+    /// or an error when the enrollment cannot be persisted.
+    pub async fn create_node_enrollment(
+        &self,
+        node_id: NodeId,
+        owner: PrincipalId,
+        expires_at: SystemTime,
+    ) -> Result<crate::EnrollmentToken, ControlError> {
+        self.state
+            .store
+            .create_node_enrollment(node_id, owner, expires_at)
+            .await
+    }
+
     /// Creates a local, single-use bootstrap for registering a passkey to one principal.
     ///
     /// # Errors

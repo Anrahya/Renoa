@@ -21,6 +21,7 @@ mod identity_store;
 mod ids;
 mod json_ws;
 mod node_messages;
+mod node_ownership;
 mod oauth_relay_http;
 mod oauth_relay_store;
 mod operations;

@@ -252,9 +252,12 @@ snapshot in the single previous-release backup described above. Browser login
 storage is separate and does not need to be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
-the new coordinator binary. It upgrades the identity database to schema 11 and
-keeps passkeys and hashed remembered sessions there. A pre-upgrade binary cannot
-open schema 11; any owner-requested recovery requires the matching identity
+the new coordinator binary. It upgrades the identity database to schema 12 and
+keeps passkeys and hashed remembered sessions there. Schema 12 records each
+node's owning principal: the upgrade adopts the owner of a node whose existing
+tasks all belong to one principal, and a node shared by several principals keeps
+serving its tasks without an owner. A pre-upgrade binary cannot open schema 12;
+any owner-requested recovery requires the matching identity
 snapshot and binary from that same backup. Install `renoa-management.service`, then reload systemd, restart the
 coordinator and enable the management service. The example runs as the existing
 Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
@@ -395,13 +398,14 @@ document converges on the same agent instead of creating a second one. A
 configured agent that is missing from the private Host refuses node startup
 before any command is admitted, naming this command in the error.
 
-On the coordinator host, create the node identity and capture its five-minute
+On the coordinator host, create the node identity for its owning principal, the
+only principal that may open new tasks on the node, and capture its five-minute
 enrollment token directly into an owner-only file:
 
 ```sh
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <node-uuid> > node-enrollment.json
+  /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > node-enrollment.json
 ```
 
 Move that short-lived file to the execution Host over an authenticated private
@@ -500,7 +504,7 @@ and consume the short-lived enrollment without printing either secret:
 install -d -m 0700 -o root -g root /run/renoa
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <oauth-relay-node-uuid> \
+  /home/renoa/.renoa <oauth-relay-node-uuid> <owner-principal-uuid> \
   > /run/renoa/arcee-oauth-relay-enrollment.json
 /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
@@ -650,7 +654,7 @@ Use the same OS account to enroll the execution node and create its task binding
 
 ```sh
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <node-uuid>
+  /home/renoa/.renoa <node-uuid> <owner-principal-uuid>
 
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator create-task \
   /home/renoa/.renoa \
