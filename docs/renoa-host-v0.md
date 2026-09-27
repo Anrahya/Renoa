@@ -916,11 +916,16 @@ report from its first durable dispatch is replayed once before that outcome
 becomes durable, unless a cancellation is already recorded for the operation.
 
 Local Host state uses one installation home. Resolution is an explicit launch
-`home`, then `RENOA_HOME`, then `~/.renoa`. All launchers use the same layout;
-service installations may supply an absolute home. Managed roots and agent
-workspace ancestors reject symbolic links. Newly created directories are private
+`home`, then `RENOA_HOME`, then `~/.renoa`; empty overrides are skipped. All
+launchers use the same layout; service installations may supply an absolute
+home. Managed roots and agent workspace ancestors reject symbolic links.
+Newly created directories are private
 on Unix. Explicit credential files, authenticated CLI stores, binaries, package
 sources, and surface workspaces may be owner-supplied external references.
+If directory creation fails, initialization attempts every newly created
+directory in reverse order. A cleanup failure preserves the creation error as
+the cause and reports the directories it could not remove; it never deletes
+another writer's files to empty a directory.
 
 ```text
 ~/.renoa/
@@ -983,6 +988,14 @@ An incompatible catalog found at `state/host.sqlite3` fails closed with an
 explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
+
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 32
+by retaining exact machine grants and removing former Host and plugin protocol
+tool selections. Live selections and creation, rename, and selection receipt
+results advance one revision when their grants change. Agent identities and
+operational definitions stay intact; Host plugins use their activation state.
+Unknown tool names or revision overflow during conversion reject the transaction with reset
+guidance. Reopening the upgraded catalog does not repeat the conversion.
 
 1. Stop every writer: the routine service (`renoa-host <config.json>`), every
    surface, every review worker, and every node daemon that owns the data root.

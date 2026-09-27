@@ -51,7 +51,7 @@ impl HostPluginId {
             }
         }
     }
-    fn owner(tool: &str) -> Option<Self> {
+    pub(crate) fn owner(tool: &str) -> Option<Self> {
         match tool {
             "agent_manage" => Some(Self::Agents),
             "routine_manage" | "routine_results" => Some(Self::Routines),

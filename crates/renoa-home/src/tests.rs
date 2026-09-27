@@ -1,5 +1,8 @@
 use super::*;
 
+mod initialization_failures;
+pub(super) use initialization_failures::{before_create, before_remove};
+
 #[test]
 fn an_installation_has_one_owner_for_state_plugins_documents_and_workspaces() {
     let temp = tempfile::tempdir().expect("fixture");
@@ -63,10 +66,18 @@ fn home_resolution_uses_the_default_environment_and_explicit_precedence() {
         );
     };
     probe(None, None, &directory.path().join(".renoa"));
+    probe(None, Some(Path::new("")), &directory.path().join(".renoa"));
+    probe(Some(Path::new("")), None, &directory.path().join(".renoa"));
+    probe(
+        Some(Path::new("")),
+        Some(Path::new("")),
+        &directory.path().join(".renoa"),
+    );
     let service = directory.path().join("service");
     probe(Some(&service), None, &service);
     let explicit = directory.path().join("explicit");
     probe(Some(&service), Some(&explicit), &explicit);
+    probe(Some(Path::new("")), Some(&explicit), &explicit);
     assert_eq!(
         fs::read_dir(directory.path()).unwrap().count(),
         0,

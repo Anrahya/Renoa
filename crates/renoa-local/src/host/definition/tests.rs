@@ -703,4 +703,5 @@ async fn agents_from_one_preset_own_independent_selections() {
 }
 
 mod management;
+mod migrations;
 mod resolution;
