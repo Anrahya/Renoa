@@ -110,3 +110,29 @@ fn a_heartbeat_ack_is_not_another_heartbeat() {
     assert!(matches!(step, Step::Ack));
     assert_eq!(state.sequence, Some(3));
 }
+
+#[tokio::test]
+async fn secure_gateway_urls_reach_a_tls_handshake() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let port = listener.local_addr().expect("port").port();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            drop(stream);
+        }
+    });
+    let Err(error) = tokio_tungstenite::connect_async(format!("wss://localhost:{port}")).await
+    else {
+        panic!("the listener closes every connection");
+    };
+    assert!(
+        !matches!(
+            error,
+            tokio_tungstenite::tungstenite::Error::Url(
+                tokio_tungstenite::tungstenite::error::UrlError::TlsFeatureNotEnabled
+            )
+        ),
+        "Discord's gateway is wss-only: {error}"
+    );
+}
