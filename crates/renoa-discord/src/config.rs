@@ -4,7 +4,9 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{DiscordError, snowflake::Snowflake};
-use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
+use renoa_local::{
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
+};
 
 const TOKEN_LIMIT: u64 = 4096;
 
@@ -19,8 +21,19 @@ pub(crate) struct Config {
     pub(crate) model_auth_store: PathBuf,
     pub(crate) model: String,
     pub(crate) provider: ModelProvider,
+    pub(crate) providers: Vec<ModelProvider>,
+    pub(crate) reasoning: Option<ReasoningLevel>,
     pub(crate) mcp_adapter: Option<PathBuf>,
     pub(crate) code_mode_worker: Option<PathBuf>,
+    pub(crate) mcp_registry_adapter: Option<PathBuf>,
+    pub(crate) oauth_relay: Option<OAuthRelay>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OAuthRelay {
+    pub(crate) origin: String,
+    pub(crate) credentials: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -38,8 +51,13 @@ struct LaunchFile {
     model_auth_store: PathBuf,
     model: String,
     provider: ModelProvider,
+    #[serde(default)]
+    providers: Vec<ModelProvider>,
+    reasoning: Option<ReasoningLevel>,
     mcp_adapter: Option<PathBuf>,
     code_mode_worker: Option<PathBuf>,
+    mcp_registry_adapter: Option<PathBuf>,
+    oauth_relay: Option<OAuthRelay>,
 }
 
 impl Config {
@@ -74,15 +92,26 @@ impl Config {
             .into_iter()
             .chain(file.mcp_adapter.iter())
             .chain(file.code_mode_worker.iter())
+            .chain(file.mcp_registry_adapter.iter())
+            .chain(file.oauth_relay.iter().map(|relay| &relay.credentials))
         {
             if !path.is_absolute() {
                 return Err(DiscordError::Invalid(
-                    "workspace, model_bridge, model_auth_store, mcp_adapter, and code_mode_worker must be absolute paths".to_owned(),
+                    "Discord workspace, adapter, credential, and worker paths must be absolute"
+                        .to_owned(),
                 ));
             }
         }
         if file.model.is_empty() {
             return Err(DiscordError::Invalid("model must not be empty".to_owned()));
+        }
+        if file.providers.is_empty() {
+            file.providers.push(file.provider);
+        }
+        if !file.providers.contains(&file.provider) {
+            return Err(DiscordError::Invalid(
+                "Default model provider must be enabled".into(),
+            ));
         }
         let token = validate_token_file(&file.bot_token_file)?;
         Ok(Self {
@@ -96,8 +125,12 @@ impl Config {
             model_auth_store: file.model_auth_store,
             model: file.model,
             provider: file.provider,
+            providers: file.providers,
+            reasoning: file.reasoning,
             mcp_adapter: file.mcp_adapter,
             code_mode_worker: file.code_mode_worker,
+            mcp_registry_adapter: file.mcp_registry_adapter,
+            oauth_relay: file.oauth_relay,
         })
     }
 
@@ -111,19 +144,23 @@ impl Config {
                     .to_owned(),
             ));
         }
-        LocalHost::new(
-            &self.data_directory,
-            LocalModelConfiguration::new(
-                &self.model_bridge,
-                vec![self.provider],
-                self.provider,
-                &self.model,
-                &self.model_auth_store,
-            ),
-            LocalHostAdapters::new(self.mcp_adapter.as_deref())
-                .with_code_mode_worker(self.code_mode_worker.as_deref()),
-        )
-        .map_err(DiscordError::from)
+        let mut adapters = LocalHostAdapters::new(self.mcp_adapter.as_deref())
+            .with_code_mode_worker(self.code_mode_worker.as_deref())
+            .with_mcp_registry(self.mcp_registry_adapter.as_deref());
+        if let Some(relay) = &self.oauth_relay {
+            adapters = adapters.with_oauth_relay(&relay.origin, &relay.credentials);
+        }
+        let mut models = LocalModelConfiguration::new(
+            &self.model_bridge,
+            self.providers.clone(),
+            self.provider,
+            &self.model,
+            &self.model_auth_store,
+        );
+        if let Some(reasoning) = self.reasoning {
+            models = models.with_initial_reasoning(reasoning);
+        }
+        LocalHost::new(&self.data_directory, models, adapters).map_err(DiscordError::from)
     }
 }
 

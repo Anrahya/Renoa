@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
+use renoa_agent::ContentBlock;
 use renoa_kernel::AgentId;
 use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome, TurnObservation};
 use tokio::sync::Notify;
@@ -15,14 +15,6 @@ use crate::{
     snowflake::Snowflake,
     store::{Outbound, QueuedTurn, SurfaceStore},
 };
-
-struct Quiet;
-
-impl AgentEventSink for Quiet {
-    fn emit(&self, _: AgentEvent) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
-}
 
 pub(crate) struct Surface {
     pub(crate) host: LocalHost,
@@ -55,7 +47,6 @@ pub(crate) async fn run(
     store.recover()?;
     let store = Arc::new(store);
     let wake = Arc::new(Notify::new());
-    let host = Arc::new(surface.host);
     let api = Arc::new(api);
     let mut tasks = tokio::task::JoinSet::new();
     let gateway_store = Arc::clone(&store);
@@ -81,12 +72,9 @@ pub(crate) async fn run(
     let worker_wake = Arc::clone(&wake);
     let worker_shutdown = shutdown.clone();
     let worker_api = Arc::clone(&api);
-    let workspace = surface.workspace.clone();
     tasks.spawn(async move {
         worker(
-            host,
-            agent_id,
-            workspace,
+            surface,
             worker_api,
             worker_store,
             worker_wake,
@@ -118,9 +106,7 @@ pub(crate) async fn run(
 }
 
 async fn worker(
-    host: Arc<LocalHost>,
-    agent_id: AgentId,
-    workspace: std::path::PathBuf,
+    surface: Surface,
     api: Arc<DiscordApi>,
     store: Arc<SurfaceStore>,
     wake: Arc<Notify>,
@@ -136,9 +122,30 @@ async fn worker(
             continue;
         }
         if let Some(turn) = store.next_queued()? {
-            let held =
-                session_for(&host, agent_id, &workspace, &mut session, turn.session_id).await?;
-            execute(&store, &held, &turn, &shutdown).await?;
+            let agent_id = AgentId::from_uuid(turn.agent_id);
+            let workspace = if turn.agent_id == surface.agent_id {
+                surface.workspace.clone()
+            } else {
+                surface.host.agent_workspace(agent_id).await?
+            };
+            let held = session_for(
+                &surface.host,
+                agent_id,
+                &workspace,
+                &mut session,
+                turn.session_id,
+            )
+            .await?;
+            let cancellation = shutdown.child_token();
+            let progress = Arc::new(crate::actions::Progress {
+                api: Arc::clone(&api),
+                store: Arc::clone(&store),
+                operator: surface.operator_user_id.clone(),
+                message: turn.message_id.clone(),
+                cancellation: cancellation.clone(),
+                error: tokio::sync::Mutex::new(None),
+            });
+            execute(&store, &held, &turn, progress, &cancellation).await?;
             continue;
         }
         tokio::select! {
@@ -171,6 +178,7 @@ async fn execute(
     store: &SurfaceStore,
     session: &AgentSession,
     turn: &QueuedTurn,
+    progress: Arc<crate::actions::Progress>,
     shutdown: &CancellationToken,
 ) -> Result<(), DiscordError> {
     store.mark_running(&turn.message_id)?;
@@ -186,13 +194,17 @@ async fn execute(
             turn.request_id,
             vec![ContentBlock::text(turn.prompt.clone())],
             observation,
-            Arc::new(Quiet),
+            progress.clone(),
             shutdown.clone(),
         )
         .await;
-    let text = match outcome {
-        Ok(outcome) => reply_text(outcome),
-        Err(error) => format!("The agent could not complete this turn: {error}"),
+    let text = if let Some(error) = progress.error.lock().await.take() {
+        error
+    } else {
+        match outcome {
+            Ok(outcome) => reply_text(outcome),
+            Err(error) => format!("The agent could not complete this turn: {error}"),
+        }
     };
     let reply_pages = pages(&text);
     store.mark_ready(&turn.message_id, &text, &reply_pages)?;

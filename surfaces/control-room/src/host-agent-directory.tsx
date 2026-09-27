@@ -12,11 +12,13 @@ import type { Agent, HostSnapshot } from "./host-contract";
 import { agentHref, displayName, isEarlier } from "./host-presentation";
 import { portraitForAgent } from "./host-identity";
 import { directorySummary, type DirectorySummary } from "./host-agent-directory-model";
+import { CreateAgent } from "./host-agent-create";
+import type { Controls } from "./host-controls";
 
 type Filter = "all" | "attention" | "automated";
 const needsAttention = (summary: DirectorySummary) => summary.tone === "interrupted" || summary.tone === "waiting";
 
-export function HostAgentDirectory({ host, missingAgent = false }: { host: HostSnapshot; missingAgent?: boolean }) {
+export function HostAgentDirectory({ host, missingAgent = false, controls }: { host: HostSnapshot; missingAgent?: boolean; controls?: Controls }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [earlierOpen, setEarlierOpen] = useState(false);
@@ -37,6 +39,7 @@ export function HostAgentDirectory({ host, missingAgent = false }: { host: HostS
       <div className="flex flex-col gap-2"><div className="flex items-center gap-3"><h1 className="text-2xl font-semibold tracking-tight">Agents</h1><Badge variant="secondary">{summaries.length}</Badge></div>
         <p className="text-sm text-muted-foreground">See what needs you and what happens next.</p></div>
     </div>
+    {controls && <CreateAgent controls={controls} />}
     {missingAgent && <Alert><AlertDescription>That agent is not in this Host snapshot. Choose an available agent below.</AlertDescription></Alert>}
     <Tabs value={filter} onValueChange={value => setFilter(value as Filter)} className="gap-2">
       <div className="flex flex-col-reverse justify-between gap-4 pb-4 lg:flex-row lg:items-center">

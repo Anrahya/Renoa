@@ -8,6 +8,8 @@ rust-version.workspace = true
 [dependencies]
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
 renoa-local = { path = "../renoa-local", version = "0.1.0" }
+renoa-discord = { path = "../renoa-discord", version = "0.1.0" }
+renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
 reqwest = { workspace = true, features = ["json"] }
 serde.workspace = true
@@ -19,7 +21,7 @@ tower-http = { workspace = true, features = ["fs"] }
 uuid.workspace = true
 
 [dev-dependencies]
-renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
+renoa-agent = { path = "../renoa-agent", version = "0.1.0" }
 renoa-control = { path = "../renoa-control", version = "0.1.0" }
 rusqlite.workspace = true
 tempfile.workspace = true

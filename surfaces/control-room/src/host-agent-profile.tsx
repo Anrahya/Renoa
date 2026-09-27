@@ -75,7 +75,7 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
       {pages.filter(() => !designPreview).map(({ value }) => <TabsContent key={value} value={value} forceMount hidden={inspecting || page !== value}>
         {(page === value || visited.includes(value)) && <>
           {value === "overview" && <ProfileOverview {...{ host, agent, navigate }} />}
-          {value === "configure" && <ProfileConfigure {...{ host, agent }} />}
+          {value === "configure" && <ProfileConfigure {...{ host, agent, controls }} />}
           {value === "automations" && <ProfileAutomations {...{ data, controls }} />}
           {value === "activity" && <ProfileActivity data={data} preview={controls.preview} active={page === value} />}
         </>}

@@ -6,9 +6,13 @@ use uuid::Uuid;
 
 use crate::{DiscordError, snowflake::Snowflake};
 
+mod actions;
+mod bindings;
 mod schema;
 mod turns;
 
+#[cfg(test)]
+mod routing_tests;
 #[cfg(test)]
 mod tests;
 
@@ -17,7 +21,7 @@ pub(crate) use turns::{Enqueue, GatewayCursor, Outbound, QueuedTurn};
 #[derive(Debug)]
 pub(crate) struct SurfaceStore {
     database: PathBuf,
-    _lease: File,
+    _lease: Option<File>,
 }
 
 pub(crate) struct IncomingMessage {
@@ -44,7 +48,20 @@ impl SurfaceStore {
         schema::restrict_database(&database)?;
         Ok(Self {
             database,
-            _lease: lease,
+            _lease: Some(lease),
+        })
+    }
+
+    pub(crate) fn control(data_directory: &std::path::Path) -> Result<Self, DiscordError> {
+        let surface_directory = data_directory.join("state/surfaces/discord");
+        std::fs::create_dir_all(&surface_directory)?;
+        schema::restrict_directory(&surface_directory)?;
+        let database = surface_directory.join(schema::DATABASE_FILE);
+        drop(schema::open(&database)?);
+        schema::restrict_database(&database)?;
+        Ok(Self {
+            database,
+            _lease: None,
         })
     }
 

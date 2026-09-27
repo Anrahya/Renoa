@@ -2,11 +2,14 @@
 //!
 //! Discord surface for an existing Host agent.
 //!
-//! Guild members address the bot by mentioning it. The bound operator can also
-//! send a direct message. The surface does not create agents.
+//! Bound guild channels route ordinary messages to their selected Host agent.
+//! Other guild messages require a mention/reply; the operator can send a DM.
+//! The surface does not create agents.
 
+mod actions;
 mod api;
 mod config;
+mod control;
 mod error;
 mod gateway;
 mod ingress;
@@ -16,6 +19,7 @@ mod service;
 mod snowflake;
 mod store;
 
+pub use control::{DiscordBinding, DiscordBindingRequest, DiscordControl};
 pub use error::DiscordError;
 pub use store::Admission;
 
@@ -71,7 +75,7 @@ pub fn admit(
     store.admit(message)
 }
 
-/// Connects to Discord and serves mentions and operator direct messages.
+/// Serves bound channels, mentions, replies, and operator direct messages.
 ///
 /// The process uses the agent id already stored for this surface. It does not
 /// create an agent. A missing agent fails before the Discord database is opened.
@@ -101,12 +105,23 @@ pub async fn run(config_path: &Path) -> Result<(), DiscordError> {
     tokio::pin!(service);
     tokio::select! {
         result = &mut service => result,
-        result = tokio::signal::ctrl_c() => {
+        result = stop_signal() => {
             result?;
             shutdown.cancel();
             service.await
         }
     }
+}
+
+async fn stop_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut termination =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! { result = tokio::signal::ctrl_c() => result, _ = termination.recv() => Ok(()) }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await
 }
 
 fn open_bound(config: &Config) -> Result<store::SurfaceStore, DiscordError> {

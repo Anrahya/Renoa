@@ -1,9 +1,20 @@
 {
-  "home": "/var/lib/renoa-telegram",
+  "home": "/home/renoa/.renoa",
   "host_id": "00000000-0000-0000-0000-000000000001",
   "owner_principal_id": "00000000-0000-0000-0000-000000000002",
   "identity_address": "127.0.0.1:7818",
   "public_origin": "https://renoa.live",
   "listen": "127.0.0.1:7819",
-  "assets_directory": "/opt/renoa/control-room"
+  "assets_directory": "/opt/renoa/control-room",
+  "models": {
+    "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+    "providers": [
+      "opencode-go"
+    ],
+    "initial_provider": "opencode-go",
+    "initial_model": "your-model-id",
+    "initial_reasoning": "high",
+    "credential_store": "/home/renoa/.renoa/credentials/models.sqlite3"
+  },
+  "discord_config": null
 }

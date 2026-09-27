@@ -400,14 +400,15 @@ fn accept_message(drive: &Drive<'_>, payload: &[u8]) -> Result<(), DiscordError>
         Some(message_id) => drive.store.has_reply(message_id)?,
         None => false,
     };
-    let open_thread = route.in_thread && drive.store.has_conversation(&route.channel_id)?;
+    let active_conversation = drive.store.channel_binding(&route.channel_id)?.is_some()
+        || (route.in_thread && drive.store.has_conversation(&route.channel_id)?);
     let addressed = match ingress::addressed(
         payload,
         &Snowflake::parse(bot_user_id)?,
         drive.guild_id,
         drive.operator_user_id,
         replies_to_bot,
-        open_thread,
+        active_conversation,
     ) {
         Ok(addressed) => addressed,
         Err(error) => {

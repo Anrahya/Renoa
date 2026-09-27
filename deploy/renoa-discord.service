@@ -1,18 +1,21 @@
 [Unit]
-Description=Renoa RCP coordinator
-After=network-online.target
+Description=Renoa Discord surface
+After=network-online.target renoa-coordinator.service
 Wants=network-online.target
+ConditionPathExists=/home/renoa/.renoa/config/discord.json
 
 [Service]
 Type=simple
 User=renoa-arcee
 Group=renoa-arcee
 Environment=HOME=/home/renoa
-UMask=0077
-ExecStart=/usr/local/bin/renoa-coordinator serve /home/renoa/.renoa 7818 renoa.live https://renoa.live
+WorkingDirectory=/home/renoa/.renoa
+LoadCredential=config:/home/renoa/.renoa/config/discord.json
+ExecStart=/usr/local/bin/renoa-discord %d/config
 Restart=on-failure
-RestartSec=2s
-TimeoutStopSec=15s
+RestartSec=5s
+TimeoutStopSec=40s
+UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

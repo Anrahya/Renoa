@@ -7,6 +7,15 @@ use crate::DiscordError;
 
 const API: &str = "https://discord.com/api/v10";
 
+#[derive(Deserialize)]
+pub(crate) struct Channel {
+    pub(crate) id: String,
+    pub(crate) guild_id: Option<String>,
+    pub(crate) name: Option<String>,
+    #[serde(rename = "type")]
+    pub(crate) kind: u8,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
     #[error("Discord rate limited the request")]
@@ -71,6 +80,21 @@ impl DiscordApi {
         Ok(created.id)
     }
 
+    pub(crate) async fn direct_channel(&self, user: &str) -> Result<String, ApiError> {
+        #[derive(Deserialize)]
+        struct Channel {
+            id: String,
+        }
+        let channel: Channel = self
+            .post("/users/@me/channels", &json!({"recipient_id": user}))
+            .await?;
+        Ok(channel.id)
+    }
+
+    pub(crate) async fn channel(&self, channel: &str) -> Result<Channel, ApiError> {
+        self.get(&format!("/channels/{channel}")).await
+    }
+
     async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, ApiError> {
         self.send(self.client.get(format!("{}{path}", self.origin)))
             .await
@@ -107,6 +131,7 @@ impl DiscordApi {
                 .get("retry-after")
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<f64>().ok())
+                .filter(|seconds| seconds.is_finite())
                 .map_or(Duration::from_secs(1), |seconds| {
                     Duration::from_secs_f64(seconds.clamp(0.0, 60.0))
                 });
@@ -136,6 +161,7 @@ pub(crate) fn message_body(content: &str, reply_to: Option<&str>) -> serde_json:
     let mut body = json!({
         "content": content,
         "allowed_mentions": { "parse": [] },
+        "flags": 4,
     });
     if let Some(message_id) = reply_to {
         body["message_reference"] = json!({ "message_id": message_id });
@@ -184,6 +210,18 @@ mod tests {
             .await
             .expect_err("unreadable receipt");
         assert!(matches!(error, ApiError::Unknown(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_retry_after_uses_the_safe_default_without_panicking() {
+        let api = responding("429 Too Many Requests\r\nretry-after: NaN", "{}").await;
+        let error = api
+            .create_message("202", "hello", None)
+            .await
+            .expect_err("rate limit");
+        assert!(
+            matches!(error, ApiError::RateLimited(delay) if delay == std::time::Duration::from_secs(1))
+        );
     }
 
     async fn responding(status: &'static str, body: &'static str) -> DiscordApi {

@@ -12,6 +12,7 @@ pub(crate) enum Enqueue {
 
 #[derive(Debug)]
 pub(crate) struct QueuedTurn {
+    pub(crate) agent_id: Uuid,
     pub(crate) message_id: String,
     pub(crate) session_id: Uuid,
     pub(crate) request_id: Uuid,
@@ -112,7 +113,10 @@ impl SurfaceStore {
                 transaction.commit()?;
                 return Ok(Enqueue::Duplicate);
             }
-            let session_id = conversation_session(&transaction, &channel_id)?;
+            let agent_id: String = transaction.query_row(
+                "SELECT COALESCE((SELECT agent_id FROM channel_bindings WHERE channel_id = ?1), agent_id) FROM identity WHERE singleton = 1", [&channel_id], |row| row.get(0),
+            )?;
+            let session_id = conversation_session(&transaction, &channel_id, &agent_id)?;
             let request_id = Uuid::new_v4().to_string();
             let now = schema::now_ms()?;
             transaction.execute(
@@ -122,9 +126,9 @@ impl SurfaceStore {
                 params![message_id, channel_id, author_id, canonical, now],
             )?;
             transaction.execute(
-                "INSERT INTO turns(message_id, session_id, request_id, prompt, state)
-                 VALUES (?1, ?2, ?3, ?4, 'queued')",
-                params![message_id, session_id, request_id, prompt],
+                "INSERT INTO turns(message_id, session_id, request_id, prompt, state, agent_id)
+                 VALUES (?1, ?2, ?3, ?4, 'queued', ?5)",
+                params![message_id, session_id, request_id, prompt, agent_id],
             )?;
             transaction.commit()?;
             Ok(Enqueue::Fresh)
@@ -142,6 +146,10 @@ impl SurfaceStore {
                 "UPDATE deliveries SET state = 'unknown' WHERE state = 'sending'",
                 [],
             )?;
+            transaction.execute(
+                "UPDATE actions SET state = 'unknown' WHERE state = 'sending'",
+                [],
+            )?;
             strand_blocked_pages(&transaction)?;
             transaction.commit()?;
             Ok(())
@@ -153,7 +161,7 @@ impl SurfaceStore {
             connection
                 .query_row(
                     "SELECT turns.message_id, turns.session_id, turns.request_id, turns.prompt,
-                            messages.created_at_ms
+                            messages.created_at_ms, turns.agent_id
                      FROM turns JOIN messages ON messages.message_id = turns.message_id
                      WHERE turns.state = 'queued'
                      ORDER BY length(turns.message_id), turns.message_id LIMIT 1",
@@ -165,6 +173,7 @@ impl SurfaceStore {
                             request_id: parse_uuid(&row.get::<_, String>(2)?)?,
                             prompt: row.get(3)?,
                             observed_at_ms: row.get(4)?,
+                            agent_id: parse_uuid(&row.get::<_, String>(5)?)?,
                         })
                     },
                 )
@@ -410,11 +419,12 @@ impl SurfaceStore {
 fn conversation_session(
     connection: &rusqlite::Connection,
     channel_id: &str,
+    agent_id: &str,
 ) -> Result<String, DiscordError> {
     if let Some(session_id) = connection
         .query_row(
-            "SELECT session_id FROM conversations WHERE channel_id = ?1",
-            [channel_id],
+            "SELECT session_id FROM conversations WHERE channel_id = ?1 AND agent_id = ?2",
+            params![channel_id, agent_id],
             |row| row.get::<_, String>(0),
         )
         .optional()?
@@ -423,8 +433,9 @@ fn conversation_session(
     }
     let session_id = Uuid::new_v4().to_string();
     connection.execute(
-        "INSERT INTO conversations(channel_id, session_id) VALUES (?1, ?2)",
-        params![channel_id, session_id],
+        "INSERT INTO conversations(channel_id, session_id, agent_id) VALUES (?1, ?2, ?3)
+         ON CONFLICT(channel_id) DO UPDATE SET session_id = excluded.session_id, agent_id = excluded.agent_id",
+        params![channel_id, session_id, agent_id],
     )?;
     Ok(session_id)
 }

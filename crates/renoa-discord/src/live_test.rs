@@ -19,6 +19,15 @@ use crate::{
 
 #[tokio::test]
 async fn a_mention_runs_the_provisioned_agent_and_posts_one_reply() {
+    run_agent(false).await;
+}
+
+#[tokio::test]
+async fn a_bound_channel_runs_the_owner_created_child_without_a_mention() {
+    run_agent(true).await;
+}
+
+async fn run_agent(bound: bool) {
     let root = tempfile::tempdir().expect("temp root");
     let data = root.path().join("data");
     let workspace = root.path().join("workspace");
@@ -39,22 +48,7 @@ async fn a_mention_runs_the_provisioned_agent_and_posts_one_reply() {
         LocalHostAdapters::default(),
     )
     .expect("host");
-    let agent_id = host
-        .create_agent(
-            AgentCreator::System {
-                component: "discord-test".to_owned(),
-            },
-            AgentCreationOrigin::Provisioning,
-            AgentCreateRequest::from_preset(
-                Uuid::new_v4(),
-                AgentPresetId::new("renoa.personal.arcee.v3").expect("preset"),
-                "Arcee",
-            ),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("provision")
-        .id;
+    let agent_id = seed_agents(&host, &data, bound).await;
 
     let posted = Arc::new(Mutex::new(Vec::new()));
     let gateway = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -67,7 +61,7 @@ async fn a_mention_runs_the_provisioned_agent_and_posts_one_reply() {
     let http_addr = http.local_addr().expect("http port");
     let posted_http = Arc::clone(&posted);
     tokio::spawn(async move { serve_http(http, gateway_port, posted_http).await });
-    tokio::spawn(async move { serve_gateway(gateway).await });
+    tokio::spawn(async move { serve_gateway(gateway, bound).await });
 
     let shutdown = CancellationToken::new();
     let task_shutdown = shutdown.clone();
@@ -103,12 +97,79 @@ async fn a_mention_runs_the_provisioned_agent_and_posts_one_reply() {
     let bodies = posted.lock().expect("posted").clone();
     assert_eq!(bodies.len(), 1, "{bodies:?}");
     assert!(
-        bodies[0].contains("Arcee completed the real path."),
+        bodies[0].contains(if bound {
+            "Desk completed the real path."
+        } else {
+            "Arcee completed the real path."
+        }),
         "{}",
         bodies[0]
     );
     shutdown.cancel();
     task.await.expect("service task").expect("service");
+}
+
+async fn seed_agents(
+    host: &LocalHost,
+    data: &std::path::Path,
+    bound: bool,
+) -> renoa_kernel::AgentId {
+    let agent_id = host
+        .create_agent(
+            AgentCreator::System {
+                component: "discord-test".to_owned(),
+            },
+            AgentCreationOrigin::Provisioning,
+            AgentCreateRequest::from_preset(
+                Uuid::new_v4(),
+                AgentPresetId::new("renoa.personal.arcee.v3").expect("preset"),
+                "Arcee",
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("provision")
+        .id;
+    if bound {
+        let child = host
+            .create_agent(
+                AgentCreator::Principal {
+                    host_id: host.host_id().await.unwrap(),
+                    principal_id: "owner".into(),
+                },
+                AgentCreationOrigin::Management,
+                AgentCreateRequest::new(
+                    Uuid::new_v4(),
+                    "Desk",
+                    "You are the owner-created Desk agent.",
+                )
+                .with_tools([]),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let store = crate::store::SurfaceStore::control(data).unwrap();
+        store
+            .bind_identity(
+                &Snowflake::parse("10").unwrap(),
+                &Snowflake::parse("20").unwrap(),
+                Uuid::parse_str(&agent_id.to_string()).unwrap(),
+            )
+            .unwrap();
+        store
+            .bind_channel(
+                &crate::DiscordBindingRequest {
+                    operation_id: Uuid::new_v4(),
+                    channel_id: "202".into(),
+                    agent_id: Uuid::parse_str(&child.id.to_string()).unwrap(),
+                    expected_revision: 0,
+                },
+                "desk",
+            )
+            .unwrap();
+    }
+
+    agent_id
 }
 
 async fn serve_http(
@@ -139,7 +200,7 @@ async fn serve_http(
     }
 }
 
-async fn serve_gateway(listener: tokio::net::TcpListener) {
+async fn serve_gateway(listener: tokio::net::TcpListener, bound: bool) {
     use futures_util::{SinkExt as _, StreamExt as _};
     use tokio_tungstenite::tungstenite::Message;
 
@@ -162,7 +223,11 @@ async fn serve_gateway(listener: tokio::net::TcpListener) {
         ))
         .await
         .expect("ready");
-    let message = r#"{"op":0,"s":2,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> Do the real task.","author":{"id":"99"},"mentions":[{"id":"50"}]}}"#;
+    let message = if bound {
+        r#"{"op":0,"s":2,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"Do the real task.","author":{"id":"99"},"mentions":[]}}"#
+    } else {
+        r#"{"op":0,"s":2,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> Do the real task.","author":{"id":"99"},"mentions":[{"id":"50"}]}}"#
+    };
     socket
         .send(Message::Text(message.into()))
         .await
@@ -175,7 +240,7 @@ async fn serve_gateway(listener: tokio::net::TcpListener) {
     let _ = socket.next().await;
 }
 
-const MODEL_BRIDGE: &str = r#"
+pub(crate) const MODEL_BRIDGE: &str = r#"
 import { createHash } from "node:crypto";
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
@@ -204,13 +269,15 @@ if (action === "describe") {
 }
 if (action !== "stream") process.exit(2);
 const request = JSON.parse(input);
-if (!request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) process.exit(3);
+const desk = request.system_prompt.startsWith("You are the owner-created Desk agent.");
+if (!desk && !request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) process.exit(3);
+if (desk && request.tools.some(tool => ['bash','read_file','write_file','edit_file','grep','find'].includes(tool.name))) process.exit(7);
 const user = request.messages.at(-1);
 if (user?.role !== "user" || !JSON.stringify(user.content).includes("Do the real task.")) process.exit(6);
 process.stdout.write(JSON.stringify({
   event: "completed",
   response: {
-    content: [{ type: "text", text: "Arcee completed the real path." }],
+    content: [{ type: "text", text: desk ? "Desk completed the real path." : "Arcee completed the real path." }],
     stop_reason: "stop",
     usage: { input: 8, output: 4, cache_read: 0, cache_write: 0 },
     metadata: { api: "test", provider: process.env.RENOA_MODEL_PROVIDER, model: JSON.parse(modelSpec).id }

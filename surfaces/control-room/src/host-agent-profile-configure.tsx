@@ -8,8 +8,11 @@ import { Separator } from "@/components/ui/separator";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import type { Agent, HostSnapshot } from "./host-contract";
 import { agentHref, connectionName, displayName, isEarlier } from "./host-presentation";
+import { DiscordConnection } from "./host-discord-binding";
+import type { Controls } from "./host-controls";
+import { SavedAgentDefinition } from "./host-agent-definition";
 
-export function ProfileConfigure({ host, agent }: { host: HostSnapshot; agent: Agent }) {
+export function ProfileConfigure({ host, agent, controls }: { host: HostSnapshot; agent: Agent; controls?: Controls }) {
   const [query, setQuery] = useState("");
   const searchId = useId();
   const creator = host.agents.find(item => item.id === agent.created_by);
@@ -20,9 +23,10 @@ export function ProfileConfigure({ host, agent }: { host: HostSnapshot; agent: A
     <div className="flex flex-col gap-2"><h2 className="text-xl font-medium">Configure</h2><p className="text-muted-foreground">The creation preset and capabilities this agent uses.</p></div>
     <section className="profile-settings-section" aria-labelledby="profile-foundation"><div><h3 id="profile-foundation" className="font-medium">Identity</h3><p className="mt-1 text-muted-foreground">Identity and core setup</p></div><div className="flex min-w-0 flex-col gap-5">
       <dl className="grid grid-cols-2 gap-5"><div><dt className="text-xs text-muted-foreground">Name</dt><dd className="mt-1 break-words">{displayName(agent.name)}</dd></div><div><dt className="text-xs text-muted-foreground">Creation preset</dt><dd className="mt-1 break-words">{agent.preset_id ?? "None"}</dd></div></dl>
-      <div className="flex flex-col gap-2"><h4 className="text-sm font-medium">Model & instructions</h4><p className="text-sm text-muted-foreground">The Host does not report this agent’s model or instructions. These settings cannot be edited here yet.</p></div>
+      <div className="flex flex-col gap-2"><h4 className="text-sm font-medium">Model & instructions</h4>{controls && !controls.preview ? <SavedAgentDefinition agentId={agent.id} controls={controls} /> : <p className="text-sm text-muted-foreground">Open the live Host to read the saved model, instructions, and machine access.</p>}</div>
     </div></section>
     <Separator />
+    {controls && <><DiscordConnection agentId={agent.id} controls={controls} /><Separator /></>}
     <section className="profile-settings-section" aria-labelledby="profile-connections"><div><h3 id="profile-connections" tabIndex={-1} className="scroll-mt-20 font-medium">Tools & connections</h3><p className="mt-1 text-muted-foreground">Selected from the shared library</p><Badge variant="secondary" className="mt-3">{selected.length} selected</Badge></div><div className="flex min-w-0 flex-col gap-4">
       <p className="text-sm text-muted-foreground">Selections belong to this agent. Selection editing is not available yet; existing work may use an earlier configuration.</p>
       {host.connections.length > 0 && <FieldGroup><Field><FieldLabel htmlFor={searchId} className="sr-only">Find a connection</FieldLabel><Input id={searchId} type="search" placeholder="Find a connection…" value={query} onChange={event => setQuery(event.target.value)} /></Field></FieldGroup>}

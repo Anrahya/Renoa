@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::ManagementError;
 
 /// Calls the configured local identity service; never reads its private database.
+#[derive(Clone)]
 pub(super) struct IdentityClient {
     client: reqwest::Client,
     endpoint: String,

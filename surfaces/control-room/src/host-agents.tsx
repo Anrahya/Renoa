@@ -11,5 +11,5 @@ export function AgentsView({ host, route, controls }: { host: HostSnapshot; rout
   const agent = host.agents.find(a => a.id === route.agent);
   if (agent) return <HostAgentProfile key={agent.id} {...{ host, agent, controls }} section={route.section} execution={route.execution} />;
   if (AgentSpacePreview && workDesignPreview(controls.preview)) return <AgentSpacePreview host={host} missingAgent={!!route.agent} />;
-  return <HostAgentDirectory host={host} missingAgent={!!route.agent} />;
+  return <HostAgentDirectory host={host} missingAgent={!!route.agent} controls={controls} />;
 }

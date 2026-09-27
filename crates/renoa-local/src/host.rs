@@ -140,11 +140,14 @@ struct HostInitialization {
 }
 
 /// Model-provider settings shared by every agent assembled by one Host.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalModelConfiguration {
     bridge: PathBuf,
     providers: Vec<ModelProvider>,
     initial_provider: ModelProvider,
     initial_model: String,
+    #[serde(default)]
     initial_reasoning: Option<ReasoningLevel>,
     credential_store: PathBuf,
 }
