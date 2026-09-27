@@ -1,44 +1,40 @@
 import { useState } from "react";
-import type { Connection, HostSnapshot } from "./host-contract";
-import { agentHref, connectionName, displayName, isEarlier } from "./host-presentation";
+import { CaretRight, Cube, Key, MagnifyingGlass } from "@phosphor-icons/react";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { NoResults, PageHeading, agentCount } from "./host-desk";
+import { portraitForAgent } from "./host-identity";
+import "./styles/host-connections-preview.css";
+import type { HostSnapshot } from "./host-contract";
+import { agentHref, connectionName, displayName } from "./host-presentation";
 
-export function ConnectionList({ host, connections }: { host: HostSnapshot; connections: Connection[] }) {
-  return <div className="host-connection-list">
-    {connections.map(connection => {
-      const selected = host.agents.filter(a => connection.selected_by_agents.includes(a.id));
-      const named = selected.filter(a => !isEarlier(a));
-      const earlier = selected.filter(isEarlier);
-      return <details className="host-record" key={connection.id}>
-        <summary><span>{connectionName(host, connection)}<small className="host-record-meta">{named.map(a => a.name).join(" · ") || "No named agent selects this connection"}</small></span>
-          <span className={`host-record-state ${connection.catalog_available ? "" : "host-error"}`}>{connection.catalog_available ? `${connection.tool_count} tools` : "Catalog unavailable"}{" "}<small>Stored catalog</small></span></summary>
-        <div className="host-record-body"><p className="host-caption">Tool catalog saved by the Host. Connection health has not been checked by this view.</p>
-          <p>Selected by {connection.selected_by_agents.length} agents</p>
-          <div className="host-inline-links">{named.map(agent => <a key={agent.id} className="host-link" href={agentHref(agent.id, "connections")}>{displayName(agent.name)}</a>)}</div>
-          {!!earlier.length && <details className="host-details"><summary>{earlier.length} earlier agent identities</summary>
-            <div className="host-inline-links">{earlier.map(agent => <a key={agent.id} className="host-link" href={agentHref(agent.id, "connections")}>{displayName(agent.name)} <code>{agent.id.slice(0, 8)}</code></a>)}</div></details>}
-          <p className="host-caption">Connection <code>{connection.id}</code></p>
-          <details className="host-details"><summary>Selected agent identities</summary>{connection.selected_by_agents.map(agentId => <p key={agentId}><code>{agentId}</code></p>)}</details>
-        </div>
-      </details>;
-    })}
-    {!connections.length && <p className="host-empty">No connections selected here.</p>}
-  </div>;
-}
-export function ConnectionsView({ host }: { host: HostSnapshot }) {
-  const [section, setSection] = useState("connections");
-  return <main id="host-main" className="host-content"><h1>Shared library</h1>
-    <p className="host-intro">Installed connections, plugins, and skills. Open a connection to see which agents use it.</p>
-    <nav className="host-subnav" aria-label="Library sections">{[{ id: "connections", label: "Connections", count: host.connections.length },
-      { id: "plugins", label: "Plugins", count: host.plugins.length }, { id: "skills", label: "Skills", count: host.skills.length }].map(item =>
-        <button key={item.id} aria-pressed={section === item.id} onClick={() => setSection(item.id)}>{item.label}<span>{item.count}</span></button>)}</nav>
-    {section === "connections" && <><h2 className="sr-only">Connections</h2><ConnectionList host={host} connections={host.connections} /></>}
-    {section === "plugins" && <><h2>Installed plugin revisions</h2><p className="host-intro">Packages recorded on this Host. Revisions keep their own identity.</p>
-      {host.plugins.map(plugin => <details className="host-record" key={plugin.digest}><summary><span>{plugin.name}</span><span className="host-record-state">{plugin.version ?? "Stored revision"}</span></summary>
-        <div className="host-record-body"><code>{plugin.digest}</code></div></details>)}
-      {!host.plugins.length && <p className="host-empty">No plugins installed.</p>}</>}
-    {section === "skills" && <><h2>Recorded skills</h2><p className="host-intro">Stored instructions. A recorded revision is not necessarily loaded in a session.</p>
-      {host.skills.map(skill => <details className="host-record" key={skill.digest}><summary><span>{skill.name}</span><span className="host-record-state">Stored revision</span></summary>
-        <div className="host-record-body"><code>{skill.digest}</code></div></details>)}
-      {!host.skills.length && <p className="host-empty">No recorded skills.</p>}</>}
+export function ConnectionsView({ host, tab = "plugins" }: { host: HostSnapshot; tab?: string }) {
+  const [query, setQuery] = useState("");
+  const section = tab === "accounts" ? "accounts" : "plugins";
+  const term = query.trim().toLocaleLowerCase();
+  const plugins = host.plugins.filter(plugin => `${plugin.name} ${plugin.version ?? ""}`.toLocaleLowerCase().includes(term));
+  const skills = host.skills.filter(skill => skill.name.toLocaleLowerCase().includes(term));
+  const connections = host.connections.filter(connection => `${connectionName(host, connection)} ${connection.id}`.toLocaleLowerCase().includes(term));
+  return <main id="host-main" className="host-desk">
+    <PageHeading title="Connections" description="The capabilities your agents share, and the access they use." />
+    <Tabs value={section} onValueChange={value => { setQuery(""); window.location.hash = `#library/${value}`; }} className="gap-6">
+      <div className="desk-toolbar"><TabsList variant="line" aria-label="Connections sections"><TabsTrigger value="plugins">Plugins <Badge variant="secondary">{host.plugins.length}</Badge></TabsTrigger><TabsTrigger value="accounts">Accounts <Badge variant="secondary">{host.connections.length}</Badge></TabsTrigger></TabsList>
+        <div className="desk-search"><InputGroup><InputGroupAddon><MagnifyingGlass /></InputGroupAddon><InputGroupInput type="search" aria-label={`Search ${section}`} placeholder={section === "plugins" ? "Find a plugin or skill…" : "Find a connection…"} value={query} onChange={event => setQuery(event.target.value)} /></InputGroup></div>
+      </div>
+      <TabsContent value="plugins">
+        <div className="library-explainer"><Cube size={20} /><p><strong>Your shared capability library</strong><span>Installed plugin revisions and skills. Agent selections and account access stay separate.</span></p></div>
+        {plugins.map(plugin => <details className="desk-disclosure" key={plugin.digest}><summary><span className="desk-icon"><Cube /></span><span className="desk-disclosure-title"><strong>{plugin.name}</strong><small>{plugin.version ?? "Stored revision"}</small></span><span className="desk-status">Installed</span><CaretRight size={17} /></summary><div className="desk-disclosure-body"><p className="desk-note">This snapshot contains plugin metadata. Its nested capabilities and agent activations are not reported here.</p><code className="break-all text-xs">{plugin.digest}</code></div></details>)}
+        {!plugins.length && <NoResults title={term ? "No matching plugins" : "No plugins installed"} clear={term ? () => setQuery("") : undefined} />}
+        {(host.skills.length > 0 || !term) && <section className="mt-8"><div className="desk-section-heading"><h2>Recorded skills</h2><span className="desk-note">Stored instructions · assignment is not reported</span></div>{skills.map(skill => <details className="desk-disclosure" key={skill.digest}><summary><span className="desk-disclosure-title"><strong>{skill.name}</strong><small>Stored revision</small></span><CaretRight size={17} /></summary><div className="desk-disclosure-body"><code className="break-all text-xs">{skill.digest}</code></div></details>)}{!skills.length && <p className="desk-note">{term ? "No matching skills." : "No skills recorded yet."}</p>}</section>}
+      </TabsContent>
+      <TabsContent value="accounts"><p className="desk-note mb-4">Stored MCP catalogs and agent selections. Connection health has not been checked; account authorization is not reported.</p>
+        {connections.map(connection => {
+          const users = host.agents.filter(agent => connection.selected_by_agents.includes(agent.id));
+          return <details className="desk-disclosure" key={connection.id}><summary><span className="desk-icon"><Key /></span><span className="desk-disclosure-title"><strong>{connectionName(host, connection)}</strong><small>{connection.catalog_available ? `${connection.tool_count} tools in stored catalog` : "Catalog unavailable"}</small></span><span className="library-member-count">{agentCount(connection.selected_by_agents.length)}</span><span className="desk-status">Authorization unknown</span><CaretRight size={17} /></summary><div className="desk-disclosure-body"><dl className="desk-facts"><div><dt>Catalog</dt><dd>{connection.catalog_available ? "Saved" : "Unavailable"}</dd></div><div><dt>Authorization</dt><dd>Not reported</dd></div><div><dt>Selected by</dt><dd>{agentCount(connection.selected_by_agents.length)}</dd></div></dl><div className="desk-agent-links">{users.map(agent => <a key={agent.id} className="desk-agent-link" href={agentHref(agent.id, "connections")}><img src={portraitForAgent(agent.id, agent.name)} alt="" />{displayName(agent.name)}</a>)}</div><code className="break-all text-xs">{connection.id}</code></div></details>;
+        })}
+        {!connections.length && <NoResults title={term ? "No matching connections" : "No connections installed"} clear={term ? () => setQuery("") : undefined} />}
+      </TabsContent>
+    </Tabs>
   </main>;
 }

@@ -14,7 +14,7 @@ pub(crate) struct Addressed {
 
 /// Decides whether one `MESSAGE_CREATE` payload is a turn.
 ///
-/// Guild members address the bot by mentioning it. A direct message is a turn
+/// Guild members use a bound channel, mention, reply, or active thread. A DM is a turn
 /// only for the bound operator. Discord may add fields; those are ignored
 /// because the payload is an external event stream.
 ///
@@ -43,11 +43,11 @@ pub(crate) fn addressed(
         .referenced_message
         .as_ref()
         .is_some_and(|referenced| referenced.author.id == bot_user_id.as_str());
-    let in_open_thread = in_guild && message.position.is_some() && open_thread;
+    let in_active_conversation = in_guild && open_thread;
     let speak = (direct && message.author.id == operator_user_id.as_str())
         || (in_guild && mentioned)
         || (in_guild && (replies_to_bot || referenced_bot))
-        || in_open_thread;
+        || in_active_conversation;
     if !speak {
         return Ok(None);
     }

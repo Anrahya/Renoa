@@ -10,6 +10,12 @@ const rcpBrowserEntry = fileURLToPath(
 export default defineConfig({
   build: {
     outDir: "dist/client",
+    rollupOptions: {
+      output: {
+        // The map dependency is shared by live and preview pages and caches independently.
+        manualChunks(id) { if (id.includes("/node_modules/@xyflow/")) return "agent-map"; },
+      },
+    },
   },
   optimizeDeps: {
     include: ["react", "react-dom/client"],

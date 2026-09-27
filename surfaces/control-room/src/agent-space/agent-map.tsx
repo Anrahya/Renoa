@@ -1,21 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import { Background, ReactFlow, ReactFlowProvider, ViewportPortal, useReactFlow, useStore, type Node } from "@xyflow/react";
 import { ArrowRight, ArrowsOutSimple, Cube, MagnifyingGlass, Minus, Pause, Play, Plus, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { capabilityPlugins } from "../agent-work-preview/configuration-model";
-import { useSavedPreviewConfiguration } from "../agent-work-preview/configuration-state";
-import { usePreviewWork } from "../agent-work-preview/work-state";
-import { time } from "../agent-work-preview/data";
-import type { HostSnapshot } from "../host-contract";
-import { agentHref, displayName, isEarlier } from "../host-presentation";
+import { agentHref, timestamp } from "../host-presentation";
 import { portraitForAgent } from "../host-identity";
-import { directorySummary } from "../host-agent-directory-model";
-import { agentCount } from "../host-design-preview/shared";
+import { agentCount } from "../host-desk";
 import { agentStates, emptyCounts, stateLabel, type AgentState } from "../host-state";
-import { createScene, pluginMembers, previewManager, regionPath, type AgentScene, type DayAxis, type PlacedAgent } from "./scene";
+import { createScene, pluginMembers, regionPath, type AgentScene, type DayAxis, type PlacedAgent, type SpaceAgent, type SpacePlugin } from "./scene";
 import { DayTrack, isDistant, spaceNodeTypes, type PortraitNode, type RegionNode } from "./map-nodes";
 import "@xyflow/react/dist/style.css";
 import "../styles/agent-space.css";
@@ -28,10 +21,9 @@ const initialFit = { padding: .12, maxZoom: 1.15 };
 type MapUi = { selected: string | undefined; pluginId: string; query: string; paused: boolean };
 const initialMapUi: MapUi = { selected: undefined, pluginId: "", query: "", paused: false };
 
-export function AgentSpacePreview({ host, missingAgent }: { host: HostSnapshot; missingAgent: boolean }) {
-  const savedConfiguration = useSavedPreviewConfiguration();
-  const { exampleFor } = usePreviewWork();
-  const [expanded, setExpanded] = useState(false);
+export function AgentSpace({ source, plugins, missingAgent, children, selector }: {
+  source: SpaceAgent[]; plugins: SpacePlugin[]; missingAgent: boolean; children?: ReactNode; selector?: ReactNode;
+}) {
   const [compact, setCompact] = useState(false);
   const [mapUi, setMapUi] = useState<MapUi>(initialMapUi);
   useEffect(() => {
@@ -40,14 +32,7 @@ export function AgentSpacePreview({ host, missingAgent }: { host: HostSnapshot; 
     update(); media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  const agents = host.agents.filter(agent => !isEarlier(agent));
-  const source = agents.map(agent => {
-    const configuration = savedConfiguration(agent.id, displayName(agent.name));
-    return { id: agent.id, name: configuration.name, originalName: agent.name, capabilityIds: configuration.capabilities,
-      managerId: previewManager(agent, agents), summary: directorySummary(host, agent, exampleFor(agent.id)) };
-  });
-  const scene = createScene(source, expanded, compact ? 2 : 4);
-  const earlier = host.agents.filter(isEarlier);
+  const scene = createScene(source, compact ? 2 : 4);
   const counts = useMemo(() => {
     const tally = emptyCounts();
     for (const agent of scene.agents) tally[agent.state] += 1;
@@ -61,16 +46,14 @@ export function AgentSpacePreview({ host, missingAgent }: { host: HostSnapshot; 
         waiting.length ? `${waiting.length} waiting on you` : "Nothing waiting on you",
         failed.length ? `${failed.length} failed` : null,
       ].filter(Boolean).join(" · ")}</p></div>
-      <NativeSelect aria-label="Example scene" value={expanded ? "50" : "host"} onChange={event => setExpanded(event.target.value === "50")}>
-        <NativeSelectOption value="host">Your agents · preview</NativeSelectOption><NativeSelectOption value="50">50-agent example</NativeSelectOption>
-      </NativeSelect>
+      {selector}
     </div>
+    <div className="space-create">{children}</div>
     <TodayBand agents={scene.agents} axis={scene.axis} />
     {missingAgent && <Alert><AlertDescription>That agent is not in this Host snapshot. Choose an available agent below.</AlertDescription></Alert>}
     <AttentionRail agents={[...waiting, ...failed]} />
-    <ReactFlowProvider key={`${expanded}-${compact}`}><AgentMap scene={scene} ui={mapUi} setUi={setMapUi} /></ReactFlowProvider>
+    <ReactFlowProvider key={String(compact)}><AgentMap scene={scene} plugins={plugins} ui={mapUi} setUi={setMapUi} /></ReactFlowProvider>
     <StateLegend counts={counts} />
-    {earlier.length > 0 && <details className="space-earlier"><summary>Earlier identities <span>{earlier.length}</span></summary><ul>{earlier.map(agent => <li key={agent.id}><a href={agentHref(agent.id)}>{agent.name}</a></li>)}</ul></details>}
   </main>;
 }
 
@@ -117,7 +100,7 @@ function AttentionRail({ agents }: { agents: PlacedAgent[] }) {
   if (agents.length === 0) {
     return <div className="space-clear" role="status">
       <span className="space-clear-mark" aria-hidden="true" />
-      <p><strong>Nothing needs you.</strong> Work continues on its own; anything that needs a decision appears here.</p>
+      <p><strong>Nothing needs you.</strong> There are no attention flags in the retained records.</p>
     </div>;
   }
   return <section className="space-waiting" aria-labelledby="waiting-heading" data-open={open}>
@@ -134,7 +117,7 @@ function AttentionRail({ agents }: { agents: PlacedAgent[] }) {
             <strong>{agent.summary?.title ?? (agent.state === "failed" ? "Work stopped before it finished" : "Open work needs a decision")}</strong>
             <small>{agent.summary?.detail ?? "Inspect the retained record and diagnostics."}</small>
           </span>
-          <span className="space-waiting-agent">{agent.name}{agent.summary?.lastAt != null && <em>{time(agent.summary.lastAt)}</em>}</span>
+          <span className="space-waiting-agent">{agent.name}{agent.summary?.lastAt != null && <em>{timestamp(agent.summary.lastAt)}</em>}</span>
           <ArrowRight className="space-waiting-arrow" aria-hidden="true" />
         </a>
       </li>)}
@@ -153,10 +136,12 @@ function StateLegend({ counts }: { counts: Record<AgentState, number> }) {
   </div>;
 }
 
-function AgentMap({ scene, ui, setUi }: { scene: AgentScene; ui: MapUi; setUi: Dispatch<SetStateAction<MapUi>> }) {
+function AgentMap({ scene, plugins, ui, setUi }: { scene: AgentScene; plugins: SpacePlugin[]; ui: MapUi; setUi: Dispatch<SetStateAction<MapUi>> }) {
   const flow = useReactFlow();
   const distant = useStore(isDistant);
-  const { selected, pluginId, query, paused } = ui;
+  const { selected, pluginId: savedPluginId, query, paused } = ui;
+  const selectedPlugin = plugins.find(plugin => plugin.id === savedPluginId);
+  const pluginId = selectedPlugin?.id ?? "";
   // A viewport the user moved keeps its zoom and pan when the width changes.
   const userView = useRef(false);
   const markUserView = useCallback(() => { userView.current = true; }, []);
@@ -203,7 +188,7 @@ function AgentMap({ scene, ui, setUi }: { scene: AgentScene; ui: MapUi; setUi: D
     setUi(current => ({ ...current, selected: id, pluginId: "", query: "" }));
     void flow.setCenter(agent.position.x, agent.position.y + 20, { zoom: 1, duration });
   };
-  const members = pluginMembers(scene.agents, pluginId);
+  const members = pluginMembers(scene.agents, plugins.find(plugin => plugin.id === pluginId));
   const memberIds = new Set(members.map(agent => agent.id));
   const term = query.trim().toLocaleLowerCase();
   const matches = scene.agents.filter(agent => `${agent.name} ${agent.id}`.toLocaleLowerCase().includes(term));
@@ -246,16 +231,16 @@ function AgentMap({ scene, ui, setUi }: { scene: AgentScene; ui: MapUi; setUi: D
         attributionPosition="bottom-left" aria-label="Explore agent spaces" onMoveStart={event => { if (event) markUserView(); }} onPaneClick={() => setUi(current => ({ ...current, query: "", pluginId: "" }))}>
         <Background gap={28} size={.7} color="#ffffff19" />
         {pluginId && members.length > 0 && <ViewportPortal><svg className="space-shared-field" aria-hidden="true"><path d={regionPath(members.map(agent => agent.position), 128)} /></svg>
-          <div className="space-capability-label" style={{ left: members.reduce((sum, agent) => sum + agent.position.x, 0) / members.length, top: Math.min(...members.map(agent => agent.position.y)) - 90 }}><Cube size={18} /><span>{capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}<small>{agentCount(members.length)} · shared access</small></span></div>
+          <div className="space-capability-label" style={{ left: members.reduce((sum, agent) => sum + agent.position.x, 0) / members.length, top: Math.min(...members.map(agent => agent.position.y)) - 90 }}><Cube size={18} /><span>{selectedPlugin?.name}<small>{agentCount(members.length)} · saved selection</small></span></div>
         </ViewportPortal>}
         <ZoomControls onAdjust={markUserView} />
       </ReactFlow> : <div className="space-map-empty">No agents yet. Agents will appear here when registered on this Host.</div>}
     </div>
-    <div className="space-plugins" aria-label="Shared capabilities"><span><Cube size={16} />Shared capabilities</span><div>{capabilityPlugins.map(plugin => {
-      const count = pluginMembers(scene.agents, plugin.id).length;
+    <div className="space-plugins" aria-label="Shared connections"><span><Cube size={16} />Shared connections</span><div>{plugins.map(plugin => {
+      const count = pluginMembers(scene.agents, plugin).length;
       return <button key={plugin.id} className="space-plugin" data-active={pluginId === plugin.id} aria-pressed={pluginId === plugin.id} aria-label={`${plugin.name}, ${agentCount(count)}`} onClick={() => selectPlugin(plugin.id)}><i aria-hidden="true" />{plugin.name}<span>{count}</span></button>;
     })}</div></div>
-    <div className="space-caption"><span>{pluginId ? `${agentCount(members.length)} ${members.length === 1 ? "shares" : "share"} access to ${capabilityPlugins.find(plugin => plugin.id === pluginId)!.name}. Each keeps its own capabilities.` : "Open an agent from its portrait. Select a plugin to reveal shared access."} <a href="#library">Manage capabilities</a></span><span>Drag to pan · Scroll or pinch to zoom</span></div>
+    <div className="space-caption"><span>{pluginId ? `${agentCount(members.length)} select ${selectedPlugin?.name} in their saved configuration.` : plugins.length ? "Open an agent from its portrait. Select a connection to reveal saved selections." : "Open an agent from its portrait. No shared connections are recorded yet."} <a href="#library">Manage capabilities</a></span><span>Drag to pan · Scroll or pinch to zoom</span></div>
   </>;
 }
 

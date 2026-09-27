@@ -54,13 +54,15 @@ describe("Host navigation and rendered controls", () => {
     vi.stubGlobal("window", { location: { hash, search } });
     return renderToStaticMarkup(<HostPanelView preview={preview} host={{ snapshot, status: "connected", receivedAt: null, error: null, refresh() {}, lock() {} }} />);
   }
-  it("shows directory example telemetry only in the explicit development preview", () => {
-    expect(render("#agents", host, true, "?preview")).toContain("Agent relationship map");
-    expect(render("#agents", host, false, "?preview")).not.toContain("Agent relationship map");
-    expect(render("#agents", host, true)).not.toContain("Agent relationship map");
+  it("uses the map for live records and limits synthetic scenes to the explicit development preview", () => {
+    expect(render("#agents", host, true, "?preview")).toContain("50-agent example");
+    expect(render("#agents", host, false, "?preview")).toContain("Agent relationship map");
+    expect(render("#agents", host, false, "?preview")).not.toContain("50-agent example");
+    expect(render("#agents", host, true)).toContain("Agent relationship map");
+    expect(render("#agents", host, true)).not.toContain("50-agent example");
   });
   it("isolates new workspace fixtures from live and saved Host observations", () => {
-    for (const [route, marker] of [["#work", "Today across your agents"], ["#library", "One plugin. Any mix of capabilities."], ["#overview", "Example system condition"]]) {
+    for (const [route, marker] of [["#work", "row-reviewer/run-107"], ["#library", "One plugin. Any mix of capabilities."], ["#overview", "Example system condition"]]) {
       expect(render(route!, host, true, "?preview")).toContain(marker);
       expect(render(route!, host, false, "?preview")).not.toContain(marker);
       expect(render(route!, host, true)).not.toContain(marker);
@@ -181,7 +183,7 @@ describe("Host navigation and rendered controls", () => {
     expect(render("#agent/reviewer/configure", host, true)).not.toContain("Save preview");
   });
   it("keeps stored catalogs distinct from connection health", () => {
-    const html = render("#library", { ...host, connections: [{ id: "mail", catalog_available: true, tool_count: 8, selected_by_agents: ["reviewer"] }] });
+    const html = render("#library/accounts", { ...host, connections: [{ id: "mail", catalog_available: true, tool_count: 8, selected_by_agents: ["reviewer"] }] });
     expect(html).toContain("Connection health has not been checked");
     expect(html).toContain('href="#agent/reviewer/connections"');
     expect(html).toContain("Read-only preview");

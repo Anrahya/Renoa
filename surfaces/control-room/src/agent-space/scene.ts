@@ -1,7 +1,5 @@
-import type { Agent } from "../host-contract";
 import type { DirectorySummary } from "../host-agent-directory-model";
 import { emptyCounts, stateRank, toneState, type AgentState } from "../host-state";
-import { capabilityPlugins, pluginCapabilities } from "../agent-work-preview/configuration-model";
 
 export type Point = { x: number; y: number };
 export type SpaceAgent = {
@@ -30,16 +28,6 @@ export function dayAxis(agents: PlacedAgent[]): DayAxis {
 }
 
 
-// Explicit design fixtures, not authority inferred from creation provenance.
-const exampleManagement = new Map([
-  ["42357f5e-ae1f-0802-5218-d7f65a043086", "20340f86-7f10-4c52-8757-c3124d9af0e1"],
-  ["00000000-0000-0000-0000-000000000003", "00000000-0000-0000-0000-000000000002"],
-]);
-export function previewManager(agent: Agent, agents: Agent[]): string | undefined {
-  const manager = exampleManagement.get(agent.id);
-  return agents.some(candidate => candidate.id === manager) ? manager : undefined;
-}
-
 // Region tint reports the most urgent state among its members, so a failing or
 // blocked space is legible from across the room without reading a label. An
 // all-idle space stays a quiet neutral instead of a decorative colour, which is
@@ -47,23 +35,12 @@ export function previewManager(agent: Agent, agents: Agent[]): string | undefine
 const stateColors: Record<AgentState, string> = {
   "needs-you": "#d3b66f", failed: "#e08a72", running: "#8fae86", idle: "#7d7466",
 };
-const groupNames = ["Atlas", "Beacon", "Orbit", "Relay", "Scout", "Cedar"];
-
-export function createScene(source: SpaceAgent[], expanded: boolean, columns = 4): AgentScene {
+export function createScene(source: SpaceAgent[], columns = 4): AgentScene {
   const agents = source.map(agent => ({ ...agent, state: agentState(agent) }));
-  if (expanded) {
-    const count = Math.max(0, 50 - agents.length);
-    for (let i = 0; i < count; i++) {
-      const group = Math.floor(i / 8);
-      agents.push({ id: `space-example-${i}`, name: i % 8 === 0 ? groupNames[group % groupNames.length]! : `${groupNames[group % groupNames.length]} ${i % 8}`,
-        originalName: "Example agent", synthetic: true, state: "idle" as AgentState, managerId: i % 8 === 0 ? undefined : `space-example-${group * 8}`,
-        capabilityIds: i % 3 === 0 ? ["read", "search", "mail-read"] : i % 3 === 1 ? ["read", "web", "research"] : ["web", "research", "writing"] });
-    }
-  }
   const roots = agents.filter(agent => !agent.managerId || !agents.some(parent => parent.id === agent.managerId));
   const regions = roots.map((root, group): AgentRegion => {
     const members = [root, ...agents.filter(agent => agent.managerId === root.id)];
-    const small = !expanded && agents.length <= 6;
+    const small = agents.length <= 6;
     const origin = small ? { x: group === 0 ? 0 : 780 + (group - 1) * 390, y: 0 } : { x: group % columns * (columns === 2 ? 950 : 760), y: Math.floor(group / columns) * 760 };
     const placed = members.map((agent, i): PlacedAgent => ({ ...agent, position: small
       ? columns === 2 ? { x: group === 0 ? 120 + i * 225 : 220, y: group === 0 ? 145 + i * 115 : 600 + (group - 1) * 380 }
@@ -80,10 +57,10 @@ export function createScene(source: SpaceAgent[], expanded: boolean, columns = 4
   return { regions, agents: placed, axis: dayAxis(placed) };
 }
 
-export function pluginMembers(agents: PlacedAgent[], pluginId: string): PlacedAgent[] {
-  const plugin = capabilityPlugins.find(item => item.id === pluginId);
+export type SpacePlugin = { id: string; name: string; capabilityIds: string[] };
+export function pluginMembers(agents: PlacedAgent[], plugin: SpacePlugin | undefined): PlacedAgent[] {
   if (!plugin) return [];
-  const ids = new Set(pluginCapabilities(plugin).map(item => item.id));
+  const ids = new Set(plugin.capabilityIds);
   return agents.filter(agent => agent.capabilityIds.some(id => ids.has(id)));
 }
 

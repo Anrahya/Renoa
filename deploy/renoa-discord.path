@@ -1,0 +1,9 @@
+[Unit]
+Description=Start the Renoa Discord surface once the owner connects a bot
+
+[Path]
+PathExists=/home/renoa/.renoa/credentials/discord.json
+Unit=renoa-discord.service
+
+[Install]
+WantedBy=multi-user.target

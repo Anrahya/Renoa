@@ -20,6 +20,8 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+mod agents;
+mod discord;
 mod identity;
 mod reviews;
 mod routines;
@@ -59,6 +61,8 @@ pub enum ManagementError {
         "public_origin must be an HTTPS origin (or HTTP localhost), without a path or credentials"
     )]
     InvalidOrigin,
+    #[error(transparent)]
+    Discord(#[from] renoa_discord::DiscordError),
 }
 
 #[derive(Clone)]
@@ -67,6 +71,7 @@ pub struct ManagementApi {
     assets: Option<PathBuf>,
 }
 
+#[derive(Clone)]
 struct ManagementState {
     observer: HostObserver,
     identity: identity::IdentityClient,
@@ -74,6 +79,8 @@ struct ManagementState {
     routines: HostRoutineControl,
     reviews: HostReviewControl,
     origin: String,
+    agents: Option<renoa_local::LocalHost>,
+    discord: renoa_discord::DiscordControl,
 }
 
 impl ManagementApi {
@@ -103,8 +110,24 @@ impl ManagementApi {
                 routines: HostRoutineControl::open(root, host_id, owner.as_uuid())?,
                 reviews: HostReviewControl::open(root, host_id, owner.as_uuid())?,
                 origin,
+                agents: None,
+                discord: renoa_discord::DiscordControl::open(root)?,
             }),
         })
+    }
+
+    /// Enables canonical owner creation on this exact observed Host.
+    /// # Errors
+    /// Rejects an execution Host with a different durable identity.
+    pub async fn with_agent_creation(
+        mut self,
+        host: renoa_local::LocalHost,
+    ) -> Result<Self, ManagementError> {
+        if host.host_id().await? != self.state.observer.host_id() {
+            return Err(ManagementError::HostMismatch);
+        }
+        Arc::make_mut(&mut self.state).agents = Some(host);
+        Ok(self)
     }
 
     /// Serves a built control panel from a dedicated public asset directory.
@@ -131,6 +154,26 @@ impl ManagementApi {
         let mut app = Router::new()
             .route("/v1/host/access", get(access))
             .route("/v1/host", get(observe))
+            .route("/v1/host/agents/options", get(agents::options))
+            .route("/v1/host/agents/{id}", get(agents::definition))
+            .route(
+                "/v1/host/agents",
+                axum::routing::post(agents::create).layer(DefaultBodyLimit::max(64 * 1024)),
+            )
+            .route("/v1/host/discord", get(discord::status))
+            .route(
+                "/v1/host/discord/inspection",
+                axum::routing::post(discord::inspect),
+            )
+            .route(
+                "/v1/host/discord/connection",
+                axum::routing::post(discord::connect),
+            )
+            .route("/v1/host/discord/channels", get(discord::channels))
+            .route(
+                "/v1/host/discord/bindings",
+                axum::routing::post(discord::bind),
+            )
             .route("/v1/host/reviews/{request_id}", get(review_detail))
             .route(
                 "/v1/host/repositories/{repository_id}/policy",

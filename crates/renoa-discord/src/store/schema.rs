@@ -6,7 +6,7 @@ use crate::DiscordError;
 
 pub(super) const DATABASE_FILE: &str = "discord.sqlite3";
 const LEASE_FILE: &str = ".discord.lock";
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 3;
 
 pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
     let connection = Connection::open(path)?;
@@ -20,6 +20,7 @@ pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
     match version {
         0 => initialize(&connection)?,
+        1 => migrate(&connection)?,
         SCHEMA_VERSION => {}
         other => {
             return Err(DiscordError::Invalid(format!(
@@ -108,7 +109,8 @@ fn initialize(connection: &Connection) -> Result<(), DiscordError> {
             created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)
          ) STRICT;
 
-         {CONVERSATION_SCHEMA}",
+         {CONVERSATION_SCHEMA}
+         {CONTROL_SCHEMA}",
     ))?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -122,13 +124,15 @@ CREATE TABLE conversations (
         AND channel_id NOT GLOB '*[^0-9]*'
         AND channel_id NOT GLOB '0*'
     ),
-    session_id TEXT NOT NULL CHECK (length(session_id) = 36)
+    session_id TEXT NOT NULL CHECK (length(session_id) = 36),
+    agent_id TEXT NOT NULL CHECK (length(agent_id) = 36)
 ) STRICT;
 
 CREATE TABLE turns (
     message_id TEXT PRIMARY KEY REFERENCES messages(message_id),
     session_id TEXT NOT NULL CHECK (length(session_id) = 36),
     request_id TEXT NOT NULL CHECK (length(request_id) = 36),
+    agent_id TEXT NOT NULL CHECK (length(agent_id) = 36),
     prompt TEXT NOT NULL,
     result TEXT,
     state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'ready')),
@@ -165,6 +169,39 @@ CREATE TABLE gateway (
 CREATE INDEX turns_ready ON turns(message_id) WHERE state = 'ready';
 CREATE INDEX turns_queued ON turns(message_id) WHERE state = 'queued';
 ";
+
+const CONTROL_SCHEMA: &str = "
+CREATE TABLE actions (
+    message_id TEXT NOT NULL REFERENCES turns(message_id),
+    call_id TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN ('authorization', 'credentials')),
+    digest BLOB NOT NULL CHECK (length(digest) = 32),
+    state TEXT NOT NULL CHECK (state IN ('sending', 'sent', 'unknown', 'failed')),
+    PRIMARY KEY (message_id, call_id, stage)
+) STRICT;
+CREATE TABLE channel_bindings (
+    channel_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL CHECK (length(agent_id) = 36),
+    channel_name TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0)
+) STRICT;
+CREATE TABLE binding_receipts (
+    operation_id TEXT PRIMARY KEY,
+    request TEXT NOT NULL,
+    result TEXT NOT NULL
+) STRICT;";
+
+fn migrate(connection: &Connection) -> Result<(), DiscordError> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch("ALTER TABLE conversations ADD COLUMN agent_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' CHECK (length(agent_id) = 36);
+        ALTER TABLE turns ADD COLUMN agent_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' CHECK (length(agent_id) = 36);
+        UPDATE conversations SET agent_id = (SELECT agent_id FROM identity WHERE singleton = 1);
+        UPDATE turns SET agent_id = (SELECT agent_id FROM identity WHERE singleton = 1);")?;
+    transaction.execute_batch(CONTROL_SCHEMA)?;
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
+}
 
 pub(super) fn restrict_database(path: &Path) -> Result<(), DiscordError> {
     let file = OpenOptions::new().read(true).write(true).open(path)?;

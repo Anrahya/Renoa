@@ -7,6 +7,29 @@ use super::{LocalHost, LocalHostError, catalog, definition::MAX_AGENT_PAGE};
 use crate::AgentDefinition;
 
 impl LocalHost {
+    /// Lists enabled provider models for owner-controlled agent creation.
+    /// # Errors
+    /// Returns provider discovery failures without changing agent state.
+    pub async fn agent_creation_models(&self) -> Result<Vec<crate::ModelChoice>, LocalHostError> {
+        super::models::discover_models_for(&self.config, None).await
+    }
+
+    /// Exact machine capabilities accepted by canonical agent creation.
+    #[must_use]
+    pub fn selectable_native_tools(&self) -> Vec<&'static str> {
+        crate::capabilities::selectable_names()
+    }
+
+    /// The configured default copied into an owner-created agent's request.
+    #[must_use]
+    pub fn default_agent_model(&self) -> crate::AgentModelSelection {
+        crate::AgentModelSelection {
+            provider: self.config.initial_provider,
+            model: self.config.initial_model.clone(),
+            reasoning: self.config.initial_reasoning,
+        }
+    }
+
     /// Returns the durable identity of this Host data root.
     ///
     /// # Errors

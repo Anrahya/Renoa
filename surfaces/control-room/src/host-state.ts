@@ -11,7 +11,7 @@ export type AgentState = "needs-you" | "failed" | "running" | "idle";
 export const agentStates: AgentState[] = ["needs-you", "failed", "running", "idle"];
 export const stateRank: Record<AgentState, number> = { "needs-you": 0, failed: 1, running: 2, idle: 3 };
 export const stateLabel: Record<AgentState, string> = {
-  "needs-you": "Needs you", failed: "Failed", running: "Running", idle: "Idle",
+  "needs-you": "Needs you", failed: "Failed", running: "Unfinished", idle: "No unfinished work",
 };
 export const emptyCounts = (): Record<AgentState, number> => ({ "needs-you": 0, failed: 0, running: 0, idle: 0 });
 
@@ -30,9 +30,9 @@ export function toneState(tone: string | undefined, synthetic = false): AgentSta
 }
 
 // A published review is finished work, not a state. An incomplete or
-// worker-errored one is a failure; a queued or prepared one is still moving.
+// worker-errored one is a failure; queued and prepared records are unfinished.
 export function reviewState(review: Review): AgentState {
-  if (needsAttention(review)) return "failed";
+  if (needsAttention(review)) return review.state === "incomplete" || review.worker_error ? "failed" : "needs-you";
   if (["queued", "prepared"].includes(review.state)) return "running";
   return "idle";
 }

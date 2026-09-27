@@ -184,7 +184,8 @@ pub(crate) async fn maintain(
                         "Discord refused the bot token".to_owned(),
                     ));
                 }
-                Err(_) => {
+                Err(error) => {
+                    eprintln!("renoa-discord: gateway lookup failed; retrying: {error}");
                     pause(shutdown).await;
                     continue;
                 }
@@ -246,8 +247,16 @@ async fn connect(shutdown: &CancellationToken, url: &str, drive: &mut Drive<'_>)
         connect_async_with_config(url, Some(config), false),
     )
     .await;
-    let Ok(Ok((mut socket, _))) = connected else {
-        return End::Reconnect { fresh: false };
+    let mut socket = match connected {
+        Ok(Ok((socket, _))) => socket,
+        Ok(Err(error)) => {
+            eprintln!("renoa-discord: gateway connection failed; retrying: {error}");
+            return End::Reconnect { fresh: false };
+        }
+        Err(_) => {
+            eprintln!("renoa-discord: gateway connection timed out; retrying");
+            return End::Reconnect { fresh: false };
+        }
     };
     let mut next_heartbeat = None;
     let mut awaiting_ack = false;
@@ -400,14 +409,15 @@ fn accept_message(drive: &Drive<'_>, payload: &[u8]) -> Result<(), DiscordError>
         Some(message_id) => drive.store.has_reply(message_id)?,
         None => false,
     };
-    let open_thread = route.in_thread && drive.store.has_conversation(&route.channel_id)?;
+    let active_conversation = drive.store.channel_binding(&route.channel_id)?.is_some()
+        || (route.in_thread && drive.store.has_conversation(&route.channel_id)?);
     let addressed = match ingress::addressed(
         payload,
         &Snowflake::parse(bot_user_id)?,
         drive.guild_id,
         drive.operator_user_id,
         replies_to_bot,
-        open_thread,
+        active_conversation,
     ) {
         Ok(addressed) => addressed,
         Err(error) => {

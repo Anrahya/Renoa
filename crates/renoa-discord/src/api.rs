@@ -3,9 +3,40 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::DiscordError;
+use crate::{
+    DiscordError,
+    discovery::{Application, DiscordGuild, User},
+    snowflake::Snowflake,
+};
 
-const API: &str = "https://discord.com/api/v10";
+pub(crate) const API: &str = "https://discord.com/api/v10";
+
+#[derive(Deserialize)]
+pub(crate) struct Channel {
+    pub(crate) id: Snowflake,
+    pub(crate) guild_id: Option<Snowflake>,
+    name: Option<String>,
+    #[serde(rename = "type")]
+    kind: u8,
+    #[serde(default)]
+    pub(crate) position: i64,
+    pub(crate) parent_id: Option<Snowflake>,
+}
+
+impl Channel {
+    /// Text and announcement channels carry ordinary chat.
+    pub(crate) fn is_text(&self) -> bool {
+        matches!(self.kind, 0 | 5)
+    }
+
+    pub(crate) fn is_category(&self) -> bool {
+        self.kind == 4
+    }
+
+    pub(crate) fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or("Discord channel")
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
@@ -71,6 +102,60 @@ impl DiscordApi {
         Ok(created.id)
     }
 
+    pub(crate) async fn direct_channel(&self, user: &str) -> Result<String, ApiError> {
+        #[derive(Deserialize)]
+        struct Channel {
+            id: String,
+        }
+        let channel: Channel = self
+            .post("/users/@me/channels", &json!({"recipient_id": user}))
+            .await?;
+        Ok(channel.id)
+    }
+
+    pub(crate) async fn channel(&self, channel: &str) -> Result<Channel, ApiError> {
+        self.get(&format!("/channels/{channel}")).await
+    }
+
+    pub(crate) async fn application(&self) -> Result<Application, ApiError> {
+        self.get("/applications/@me").await
+    }
+
+    pub(crate) async fn user(&self) -> Result<User, ApiError> {
+        self.get("/users/@me").await
+    }
+
+    /// Every server the bot belongs to, following Discord's ascending pages.
+    pub(crate) async fn guilds(&self) -> Result<Vec<DiscordGuild>, ApiError> {
+        const PAGE: usize = 200;
+        let mut guilds: Vec<DiscordGuild> = Vec::new();
+        loop {
+            let after = guilds.last().map_or("0", |guild| guild.id.as_str());
+            let page: Vec<DiscordGuild> = self
+                .get(&format!("/users/@me/guilds?limit={PAGE}&after={after}"))
+                .await?;
+            let ascending = guilds
+                .last()
+                .into_iter()
+                .chain(&page)
+                .is_sorted_by(|left, right| left.id < right.id);
+            if !ascending {
+                return Err(ApiError::Unknown(
+                    "Discord server pages were not in ascending order".into(),
+                ));
+            }
+            let count = page.len();
+            guilds.extend(page);
+            if count < PAGE {
+                return Ok(guilds);
+            }
+        }
+    }
+
+    pub(crate) async fn channels(&self, guild: &str) -> Result<Vec<Channel>, ApiError> {
+        self.get(&format!("/guilds/{guild}/channels")).await
+    }
+
     async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, ApiError> {
         self.send(self.client.get(format!("{}{path}", self.origin)))
             .await
@@ -107,6 +192,7 @@ impl DiscordApi {
                 .get("retry-after")
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.parse::<f64>().ok())
+                .filter(|seconds| seconds.is_finite())
                 .map_or(Duration::from_secs(1), |seconds| {
                     Duration::from_secs_f64(seconds.clamp(0.0, 60.0))
                 });
@@ -136,6 +222,7 @@ pub(crate) fn message_body(content: &str, reply_to: Option<&str>) -> serde_json:
     let mut body = json!({
         "content": content,
         "allowed_mentions": { "parse": [] },
+        "flags": 4,
     });
     if let Some(message_id) = reply_to {
         body["message_reference"] = json!({ "message_id": message_id });
@@ -184,6 +271,18 @@ mod tests {
             .await
             .expect_err("unreadable receipt");
         assert!(matches!(error, ApiError::Unknown(_)), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_retry_after_uses_the_safe_default_without_panicking() {
+        let api = responding("429 Too Many Requests\r\nretry-after: NaN", "{}").await;
+        let error = api
+            .create_message("202", "hello", None)
+            .await
+            .expect_err("rate limit");
+        assert!(
+            matches!(error, ApiError::RateLimited(delay) if delay == std::time::Duration::from_secs(1))
+        );
     }
 
     async fn responding(status: &'static str, body: &'static str) -> DiscordApi {

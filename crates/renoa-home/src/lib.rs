@@ -120,6 +120,10 @@ impl RenoaHome {
         self.root.join("credentials/models.sqlite3")
     }
     #[must_use]
+    pub fn discord_connection(&self) -> PathBuf {
+        self.root.join("credentials/discord.json")
+    }
+    #[must_use]
     pub fn node_database(&self) -> PathBuf {
         self.root.join("state/node.sqlite3")
     }

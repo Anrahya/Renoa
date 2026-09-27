@@ -59,12 +59,11 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
   const controls = { hostId: host.snapshot?.host_id ?? "", refresh: host.refresh, available: host.status === "connected", preview };
   if (host.snapshot && host.status !== "locked" && host.status !== "forbidden") {
     const designPreview = workDesignPreview(preview);
-    const redesigned = route.view === "agents" || designPreview;
     const page = <>
-      {route.view === "overview" && (designPreview && SystemPreview ? <SystemPreview host={host.snapshot} /> : <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} />)}
+      {route.view === "overview" && (designPreview && SystemPreview ? <SystemPreview host={host.snapshot} /> : <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} refresh={host.refresh} preview={preview} />)}
       {route.view === "work" && (designPreview && WorkPreview ? <WorkPreview host={host.snapshot} route={route} /> : <WorkView host={host.snapshot} controls={controls} />)}
       {route.view === "agents" && <AgentsView host={host.snapshot} route={route} controls={controls} />}
-      {route.view === "library" && (designPreview && ConnectionsPreview ? <ConnectionsPreview host={host.snapshot} tab={route.tab ?? "plugins"} /> : <ConnectionsView host={host.snapshot} />)}
+      {route.view === "library" && (designPreview && ConnectionsPreview ? <ConnectionsPreview host={host.snapshot} tab={route.tab ?? "plugins"} /> : <ConnectionsView host={host.snapshot} tab={route.tab ?? "plugins"} />)}
     </>;
     return <PreviewConfigurationProvider key={host.snapshot.host_id}><PreviewWorkProvider><PreviewConnectionProvider><HostShell {...{ route, preview, designPreview }} snapshot={host.snapshot} status={host.status} receivedAt={host.receivedAt} refresh={host.refresh} logout={() => void logout()}>
       {preview && <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:px-6">
@@ -76,7 +75,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
         <AlertDescription>{logoutError ?? host.error}{host.receivedAt && ` Showing records from ${timestamp(host.receivedAt)}.`}</AlertDescription>
         <Button variant="outline" size="sm" className="mt-2 w-fit" onClick={logoutError ? () => void logout() : host.refresh}>{logoutError ? "Retry sign-out" : "Retry now"}</Button>
       </Alert>}
-      {redesigned ? page : <div className="host-app host-legacy-page">{page}{preview && previewAction && <div className="host-content">{previewAction}</div>}</div>}
+      {page}{preview && previewAction && <div className="px-4 py-4 md:px-8">{previewAction}</div>}
     </HostShell></PreviewConnectionProvider></PreviewWorkProvider></PreviewConfigurationProvider>;
   }
   return <div className="host-app"><a className="host-skip" href="#host-main" onClick={event => {

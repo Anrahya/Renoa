@@ -23,7 +23,9 @@ export function directorySummary(host: HostSnapshot, agent: Agent, example?: Age
   const latest = data.latestAdmission;
   const next = data.scheduled[0];
   const listeners = data.repositories.filter(item => item.policy.enabled).length;
-  const tone = data.activity.tone === "attention" ? "interrupted" : data.activity.tone === "pending" ? "pending" : "quiet";
+  const failed = attentionReviews(data.reviews).some(review => review.state === "incomplete" || review.worker_error) ||
+    data.sessions.some(session => session.observation === "available" && (session.active_operation ?? session.latest_operation)?.state === "failed");
+  const tone = data.activity.tone === "attention" ? failed ? "interrupted" : "waiting" : data.activity.tone === "pending" ? "pending" : "quiet";
   // Only recorded admissions carry a time, so only those reach the day axis.
   const midnight = startOfToday();
   const day = data.reviews
@@ -31,7 +33,7 @@ export function directorySummary(host: HostSnapshot, agent: Agent, example?: Age
     .map(review => ({ at: review.admitted_at_ms, state: reviewState(review) }))
     .sort((a, b) => a.at - b.at);
   return {
-    tone, status: tone === "interrupted" ? "Needs attention" : tone === "pending" ? "Unfinished work" : "No unfinished work",
+    tone, status: tone === "interrupted" || tone === "waiting" ? "Needs attention" : tone === "pending" ? "Unfinished work" : "No unfinished work",
     title: attention ? `${attention.repository} #${attention.pull_number}` : tone !== "quiet" ? data.activity.label : latest ? `${latest.repository} #${latest.pull_number}` : data.activity.label,
     detail: attention ? `${attention.state} · ${data.activity.label}` : tone !== "quiet" ? "Open activity to inspect the retained work and diagnostics." : latest ? `Last review admitted ${timestamp(latest.admitted_at_ms)} · ${latest.state}` : "Based on the Host’s retained records.",
     workHref: agentHref(agent.id, "activity"),

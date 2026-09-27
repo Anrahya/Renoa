@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=renoa-arcee
 Group=renoa-arcee
-LoadCredential=config:/etc/renoa/management.json
+LoadCredential=config:/home/renoa/.renoa/config/management.json
 ExecStart=/usr/local/bin/renoa-management %d/config
 Restart=on-failure
 RestartSec=2s
@@ -16,10 +16,10 @@ UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=yes
-# Observation opens databases read-only; owner routine operations write the
-# canonical Host catalog and their receipts through the routine domain.
-ReadWritePaths=/var/lib/renoa-telegram
+ProtectHome=read-only
+# Owner creation, schedules, and Discord bindings use the canonical Host home.
+Environment=HOME=/home/renoa
+ReadWritePaths=/home/renoa/.renoa
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

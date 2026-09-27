@@ -1,0 +1,21 @@
+{
+  "home": "/home/renoa/.renoa",
+  "models": {
+    "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+    "providers": [
+      "opencode-go"
+    ],
+    "initial_provider": "opencode-go",
+    "initial_model": "your-model-id",
+    "initial_reasoning": "high",
+    "credential_store": "/home/renoa/.renoa/credentials/models.sqlite3"
+  },
+  "mcp_adapter": "/opt/renoa/adapters/mcp-client-node/dist/src/main.js",
+  "code_mode_worker": null,
+  "mcp_registry_adapter": "/opt/renoa/adapters/mcp-registry-node/dist/src/main.js",
+  "shared_plugin_registry": "http://127.0.0.1:7820/",
+  "oauth_relay": {
+    "origin": "https://renoa.live",
+    "credentials": "/home/renoa/.renoa/credentials/oauth-relay-device"
+  }
+}

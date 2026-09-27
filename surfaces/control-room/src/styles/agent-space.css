@@ -201,3 +201,6 @@
   .space-plugin { min-height: 40px; }
 }
 @media (prefers-reduced-motion: reduce) { .space-map :is(.space-contours, .space-contour, .space-current) { animation: none !important; } }
+
+.space-create:not(:empty) { margin-bottom: 20px; }
+.space-create:empty { display: none; }

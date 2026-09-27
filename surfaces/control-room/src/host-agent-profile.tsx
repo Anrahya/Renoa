@@ -8,6 +8,7 @@ import type { Agent, HostSnapshot } from "./host-contract";
 import { agentPage, type AgentPage, type AgentSection } from "./host-navigation";
 import type { Controls } from "./host-controls";
 import { agentHref, displayName } from "./host-presentation";
+import { directorySummary } from "./host-agent-directory-model";
 import { agentOverview } from "./host-agent-overview";
 import { portraitForAgent } from "./host-identity";
 import { ProfileOverview } from "./host-agent-profile-overview";
@@ -36,7 +37,9 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
   const root = useRef<HTMLElement>(null);
   const previous = useRef(section);
   const data = agentOverview(host, agent);
-  const attention = designPreview && example ? example.executions.some(run => run.status !== "completed") : data.activity.tone === "attention";
+  const tone = directorySummary(host, agent).tone;
+  const attention = designPreview && example ? example.executions.some(run => run.status === "waiting") : tone === "waiting";
+  const failed = designPreview && example ? example.executions.some(run => run.status === "interrupted") : tone === "interrupted";
   function navigate(next: AgentSection) { window.location.hash = agentHref(agent.id, next); }
   useEffect(() => {
     setVisited(values => values.includes(page) ? values : [...values, page]);
@@ -62,6 +65,7 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
           {/* A question waiting on the owner is gold, not red. Red is reserved
               for work that broke, and is reported as Failed. */}
           {attention && <Badge className="border-[var(--gold-line)] bg-[var(--state-needs-you-wash)] text-[var(--state-needs-you)]">Needs you</Badge>}
+          {failed && <Badge variant="destructive">Failed</Badge>}
           {!designPreview && data.activity.tone === "pending" && <Badge variant="secondary">Unfinished work</Badge>}
         </div>
       </div>
@@ -75,8 +79,8 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
       {pages.filter(() => !designPreview).map(({ value }) => <TabsContent key={value} value={value} forceMount hidden={inspecting || page !== value}>
         {(page === value || visited.includes(value)) && <>
           {value === "overview" && <ProfileOverview {...{ host, agent, navigate }} />}
-          {value === "configure" && <ProfileConfigure {...{ host, agent }} />}
-          {value === "automations" && <ProfileAutomations {...{ data, controls }} />}
+          {value === "configure" && <ProfileConfigure {...{ host, agent, controls }} />}
+          {value === "automations" && <ProfileAutomations {...{ data, controls, host }} />}
           {value === "activity" && <ProfileActivity data={data} preview={controls.preview} active={page === value} />}
         </>}
       </TabsContent>)}

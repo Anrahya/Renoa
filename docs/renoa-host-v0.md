@@ -212,7 +212,8 @@ effective runtime tools, and other details need their own evidence before displa
 
 `renoa-management` serves the built panel and the metadata API independently of
 execution workers. Its configured loopback identity service validates the browser
-cookie; the adapter does not read the identity database or start a model bridge.
+cookie; the adapter does not read the identity database or execute agent turns.
+With model configuration it starts catalog/describe requests to validate creation.
 `GET /v1/host/access` reveals only the public owner login identifier. `GET /v1/host`
 and `GET /v1/host/reviews/{request_id}` require that authenticated owner. Review
 detail selects the outcome, findings and model configuration without loading the
@@ -257,8 +258,60 @@ returns 422 and needs a new future date through the existing agent editing path.
 Deleted routines return 404; replaying an older receipt cannot restore them.
 Host identity is checked inside the mutation transaction, including on replay.
 Owner receipts remain distinct from agent receipts and cannot grant agent tools
-owner authority. Agent creation, definition editors, and delegation remain separate
-work; this operation does not require them.
+owner authority. Definition editing and delegation remain separate from this operation.
+
+### Owner creation and Discord channels
+
+`GET /v1/host/agents/options` returns enabled provider models, reasoning choices,
+Host defaults, and selectable native tools. `POST /v1/host/agents` accepts the
+canonical `AgentCreateRequest` (snake_case JSON, 64 KiB transport ceiling). The
+adapter supplies `Principal` provenance and `Management` origin from the verified
+owner; the body cannot supply them. Creation validates before writing and replays
+its stable operation receipt after restart without another provider lookup.
+`GET /v1/host/agents/{id}` returns the owner's saved definition. The browser keeps
+uncertain requests in tab storage and retries their exact operation ID and fields.
+Native grants start empty; plugin discovery, management, and invocation are universal.
+
+`GET /v1/host/discord` reports `setup_required` until the owner connects a bot,
+then `connected` with the bot and server names, the default agent, and saved
+bindings. Connection is not worker liveness. `POST /v1/host/discord/inspection`
+checks a pasted token without saving it: the token must be a bot whose application
+has Message Content Intent; it returns the bot name, an Administrator invite link
+and the bot's servers, each marked with whether its roles grant Administrator.
+`POST /v1/host/discord/connection` accepts `operation_id`, `bot_token`, `guild_id`
+and `agent_id`. The adapter verifies the Host agent, then re-reads Discord and
+requires Administrator in the chosen server before committing one owner-only
+`credentials/discord.json` by hard link. The record holds the token, server,
+application owner (the operator) and default agent; HTTP responses never return
+the token. An exact retry returns the committed connection before contacting
+Discord; any other request is rejected, so the connection is set once. The
+browser keeps the token in memory only. `GET /v1/host/discord/channels` lists the
+connected server's text and announcement channels in sidebar order.
+`POST /v1/host/discord/bindings` accepts `operation_id`, `channel_id`,
+`agent_id`, and `expected_revision`. The adapter verifies the existing Host agent
+and Discord text/announcement channel in the connected guild before storage.
+It does not probe send permission. Revision checks, binding and receipt commit
+in one SQLite transaction; stale edits and reused operation IDs return 409.
+An exact retry returns its original receipt before contacting Discord again.
+Every write requires the owner cookie and exact Origin.
+
+Discord owns `state/surfaces/discord/discord.sqlite3` (schema 3). Its channel
+routing, conversation session, and target agent are persisted when a message is
+admitted. Reassignment starts a fresh conversation for subsequent messages;
+already admitted work retains its original agent. Unbound channels still require
+a mention, reply, or active thread, and only the operator (the application owner)
+can use DMs.
+The worker uses each selected agent's canonical workspace. Its launch file holds
+only the home, models and adapters; the guild, operator, default agent and token
+come from the committed connection, which the surface database then pins.
+
+The Discord event sink consumes structured `plugin_manage` progress. OAuth and
+credential setup links are delivered only to the operator's DM, with
+mentions and embeds disabled. SQLite stores a digest and delivery state, never the
+link. Confirmed rate limits may retry; an unknown send outcome cancels that setup
+turn and requires checking the DM before restarting. Recovery never blindly
+repeats an uncertain link. The Discord Host can compose the MCP registry and
+callback relay adapters and must enable the same providers offered for creation.
 
 ### Consistent management
 
@@ -932,6 +985,7 @@ another writer's files to empty a directory.
   config/                         launch configuration
   credentials/
     models.sqlite3                default model credential-store location
+    discord.json                  owner-only Discord bot connection, set once
     oauth-secrets/<sha256>.json    private remote OAuth/API-key secrets
   plugins/<sha256>/                immutable external plugin packages
   agents/<agent-id>/

@@ -18,6 +18,7 @@ struct Config {
     owner_principal_id: PrincipalId,
     public_origin: String,
     listen: SocketAddr,
+    models: Option<renoa_local::LocalModelConfiguration>,
 }
 
 #[tokio::main]
@@ -39,14 +40,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !config.data_directory.is_absolute() || !config.assets_directory.is_absolute() {
         return Err("management storage and asset paths must be absolute".into());
     }
-    let api = ManagementApi::open(
+    let mut api = ManagementApi::open(
         &config.data_directory,
         config.host_id,
         config.identity_address,
         config.owner_principal_id,
         &config.public_origin,
-    )?
-    .with_assets(&config.assets_directory)?;
+    )?;
+    if let Some(models) = config.models {
+        let host = renoa_local::LocalHost::new(
+            &config.data_directory,
+            models,
+            renoa_local::LocalHostAdapters::default(),
+        )?;
+        api = api.with_agent_creation(host).await?;
+    }
+    let api = api.with_assets(&config.assets_directory)?;
     let listener = TcpListener::bind(config.listen).await?;
     let shutdown = CancellationToken::new();
     let serving = api.serve(listener, shutdown.clone());

@@ -1,12 +1,16 @@
-//! Discord surface mail log.
+//! Discord surface for existing Host agents.
 //!
-//! Discord surface for an existing Host agent.
-//!
-//! Guild members address the bot by mentioning it. The bound operator can also
-//! send a direct message. The surface does not create agents.
+//! The owner connects one bot from the Control Room. Bound guild channels route
+//! ordinary messages to their selected Host agent. Other guild messages require
+//! a mention or reply; the operator can send a DM. The surface does not create
+//! agents.
 
+mod actions;
 mod api;
 mod config;
+mod connection;
+mod control;
+mod discovery;
 mod error;
 mod gateway;
 mod ingress;
@@ -16,6 +20,10 @@ mod service;
 mod snowflake;
 mod store;
 
+pub use control::{
+    DiscordBinding, DiscordBindingRequest, DiscordConnectRequest, DiscordControl, DiscordStatus,
+};
+pub use discovery::{DiscordChannel, DiscordGuild, DiscordInspection};
 pub use error::DiscordError;
 pub use store::Admission;
 
@@ -23,12 +31,13 @@ use std::path::Path;
 
 use config::Config;
 
-/// Opens the Discord surface store and binds the guild, operator, and existing agent.
+/// Opens the Discord surface store and binds the connected guild, operator,
+/// and default agent.
 ///
 /// # Errors
 ///
 /// Returns configuration, filesystem, or database failures. A stored guild,
-/// operator, or agent that differs from the launch file is rejected and left
+/// operator, or agent that differs from the connection is rejected and left
 /// unchanged.
 pub fn bind(config_path: &Path) -> Result<(), DiscordError> {
     let config = Config::read(config_path)?;
@@ -71,7 +80,7 @@ pub fn admit(
     store.admit(message)
 }
 
-/// Connects to Discord and serves mentions and operator direct messages.
+/// Serves bound channels, mentions, replies, and operator direct messages.
 ///
 /// The process uses the agent id already stored for this surface. It does not
 /// create an agent. A missing agent fails before the Discord database is opened.
@@ -81,19 +90,22 @@ pub fn admit(
 /// Returns configuration, Discord, Host, or database failures. Ctrl-C shuts the
 /// connection down.
 pub async fn run(config_path: &Path) -> Result<(), DiscordError> {
-    let config = Config::read(config_path)?;
-    let host = config.open_host()?;
-    let api = api::DiscordApi::new(config.token.clone())?;
+    let Config {
+        home,
+        connection,
+        runtime,
+    } = Config::read(config_path)?;
+    let host = runtime.open_host(&home)?;
+    let api = api::DiscordApi::new(connection.bot_token.clone())?;
     let shutdown = tokio_util::sync::CancellationToken::new();
     let service = service::run(
         service::Surface {
             host,
-            agent_id: config.agent_id,
-            workspace: config.workspace.clone(),
-            guild_id: config.guild_id.clone(),
-            operator_user_id: config.operator_user_id.clone(),
-            token: config.token,
-            data_directory: config.data_directory,
+            agent_id: connection.agent_id,
+            guild_id: connection.guild_id,
+            operator_user_id: connection.operator_user_id,
+            token: connection.bot_token,
+            data_directory: home.path().to_owned(),
         },
         api,
         shutdown.clone(),
@@ -101,7 +113,7 @@ pub async fn run(config_path: &Path) -> Result<(), DiscordError> {
     tokio::pin!(service);
     tokio::select! {
         result = &mut service => result,
-        result = tokio::signal::ctrl_c() => {
+        result = stop_signal() => {
             result?;
             shutdown.cancel();
             service.await
@@ -109,9 +121,25 @@ pub async fn run(config_path: &Path) -> Result<(), DiscordError> {
     }
 }
 
+async fn stop_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut termination =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! { result = tokio::signal::ctrl_c() => result, _ = termination.recv() => Ok(()) }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await
+}
+
 fn open_bound(config: &Config) -> Result<store::SurfaceStore, DiscordError> {
-    let store = store::SurfaceStore::open(&config.data_directory)?;
-    store.bind_identity(&config.guild_id, &config.operator_user_id, config.agent_id)?;
+    let store = store::SurfaceStore::open(config.home.path())?;
+    let connection = &config.connection;
+    store.bind_identity(
+        &connection.guild_id,
+        &connection.operator_user_id,
+        connection.agent_id,
+    )?;
     Ok(store)
 }
 
@@ -119,97 +147,120 @@ fn open_bound(config: &Config) -> Result<store::SurfaceStore, DiscordError> {
 mod launch_tests {
     use std::{fs, os::unix::fs::PermissionsExt as _, path::Path};
 
-    use super::{admit, bind};
+    use renoa_local::RenoaHome;
+    use uuid::Uuid;
+
+    use super::{DiscordConnectRequest, admit, bind, connection::Connection};
 
     const AGENT: &str = "11111111-1111-4111-8111-111111111111";
 
-    fn write_config(path: &Path, data: &Path, token: &Path, guild: &str, agent: &str) {
-        let workspace = path.parent().expect("config directory").join("workspace");
-        let bridge = path.parent().expect("config directory").join("bridge");
-        let auth = path.parent().expect("config directory").join("auth");
-        fs::create_dir_all(&workspace).expect("workspace");
-        fs::write(&bridge, "").expect("bridge");
-        fs::write(&auth, "").expect("auth");
+    fn write_runtime(path: &Path, home: &Path) {
         fs::write(
             path,
             serde_json::to_vec(&serde_json::json!({
-                "home": data,
-                "guild_id": guild,
-                "operator_user_id": "20",
-                "agent_id": agent,
-                "bot_token_file": token,
-                "workspace": workspace,
-                "model_bridge": bridge,
-                "model_auth_store": auth,
-                "model": "fixture-model",
-                "provider": "opencode-go",
+                "home": home,
+                "models": {
+                    "bridge": home.join("bridge"),
+                    "providers": ["opencode-go"],
+                    "initial_provider": "opencode-go",
+                    "initial_model": "fixture-model",
+                    "credential_store": home.join("credentials/models.sqlite3"),
+                },
             }))
-            .expect("config json"),
+            .expect("runtime json"),
         )
-        .expect("config");
+        .expect("runtime");
     }
 
-    fn private_token(path: &Path) {
-        fs::write(path, "discord-token\n").expect("token");
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).expect("mode");
+    fn connect(home: &Path, agent: &str) {
+        let home = RenoaHome::at(home).expect("home");
+        home.initialize().expect("layout");
+        let request = DiscordConnectRequest {
+            operation_id: Uuid::new_v4(),
+            bot_token: "discord.token".to_owned(),
+            guild_id: "10".to_owned(),
+            agent_id: Uuid::parse_str(agent).expect("agent"),
+        };
+        Connection {
+            operation_id: request.operation_id,
+            bot_name: "Renoa".to_owned(),
+            guild_id: crate::snowflake::Snowflake::parse("10").expect("guild"),
+            guild_name: "Home".to_owned(),
+            operator_user_id: crate::snowflake::Snowflake::parse("20").expect("operator"),
+            agent_id: request.agent_id,
+            bot_token: request.bot_token.clone(),
+        }
+        .publish(&home, &request)
+        .expect("connection");
     }
 
     #[test]
-    fn launch_binds_one_existing_agent() {
+    fn launch_binds_the_connected_agent_and_a_manual_reconnect_cannot_retarget_it() {
         let root = tempfile::tempdir().expect("temp directory");
-        let token = root.path().join("token");
-        private_token(&token);
-        let data = root.path().join("data");
+        let home = root.path().join("home");
         let config = root.path().join("discord.json");
-        write_config(&config, &data, &token, "10", AGENT);
+        connect(&home, AGENT);
+        write_runtime(&config, &home);
 
         bind(&config).expect("first launch");
         bind(&config).expect("same launch");
 
-        let changed = root.path().join("changed.json");
-        write_config(
-            &changed,
-            &data,
-            &token,
-            "10",
-            "22222222-2222-4222-8222-222222222222",
-        );
-        let error = bind(&changed).expect_err("agent change");
+        fs::remove_file(home.join("credentials/discord.json")).expect("manual reset");
+        connect(&home, "22222222-2222-4222-8222-222222222222");
+        let error = bind(&config).expect_err("agent change");
         assert!(error.to_string().contains("differs"), "{error}");
+    }
+
+    #[test]
+    fn launch_requires_a_connection() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let home = root.path().join("home");
+        RenoaHome::at(&home)
+            .expect("home")
+            .initialize()
+            .expect("layout");
+        let config = root.path().join("discord.json");
+        write_runtime(&config, &home);
+
+        let error = bind(&config).expect_err("unconnected");
+        assert!(error.to_string().contains("Control Room"), "{error}");
+        assert!(!home.join("state/surfaces/discord").exists());
     }
 
     #[test]
     fn a_bad_message_is_rejected_before_the_store_exists() {
         let root = tempfile::tempdir().expect("temp directory");
-        let token = root.path().join("token");
-        private_token(&token);
-        let data = root.path().join("data");
+        let home = root.path().join("home");
         let config = root.path().join("discord.json");
-        write_config(&config, &data, &token, "10", AGENT);
+        connect(&home, AGENT);
+        write_runtime(&config, &home);
 
         let error = admit(&config, "0", "202", "20", b"hello").expect_err("bad message id");
         assert!(error.to_string().contains("snowflake"), "{error}");
         assert!(
-            !data.exists(),
-            "a rejected message must not create the data directory"
+            !home.join("state/surfaces/discord").exists(),
+            "a rejected message must not create the surface store"
         );
     }
 
     #[test]
-    fn a_shared_token_file_is_rejected_before_the_store_exists() {
+    fn a_shared_connection_is_rejected_before_the_store_exists() {
         let root = tempfile::tempdir().expect("temp directory");
-        let token = root.path().join("token");
-        fs::write(&token, "discord-token\n").expect("token");
-        fs::set_permissions(&token, fs::Permissions::from_mode(0o644)).expect("mode");
-        let data = root.path().join("data");
+        let home = root.path().join("home");
         let config = root.path().join("discord.json");
-        write_config(&config, &data, &token, "10", AGENT);
+        connect(&home, AGENT);
+        write_runtime(&config, &home);
+        fs::set_permissions(
+            home.join("credentials/discord.json"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .expect("mode");
 
-        let error = bind(&config).expect_err("shared token");
+        let error = bind(&config).expect_err("shared connection");
         assert!(error.to_string().contains("group or other"), "{error}");
         assert!(
-            !data.exists(),
-            "a rejected launch must not create the data directory"
+            !home.join("state/surfaces/discord").exists(),
+            "a rejected launch must not create the surface store"
         );
     }
 }

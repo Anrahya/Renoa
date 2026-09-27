@@ -2386,6 +2386,7 @@ dependencies = [
 name = "renoa-discord"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "futures-util",
  "renoa-agent",
  "renoa-kernel",
@@ -2394,6 +2395,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -2473,7 +2475,9 @@ name = "renoa-management"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "renoa-agent",
  "renoa-control",
+ "renoa-discord",
  "renoa-kernel",
  "renoa-local",
  "renoa-protocol",

@@ -97,22 +97,20 @@ describe("System hierarchy and destinations", () => {
     return renderToStaticMarkup(<HostPanelView preview host={{ status: "connected", snapshot: host,
       receivedAt: 0, error: null, refresh() {}, lock() {} }} />);
   }
-  it("shows created agents as Host peers and schedules under their target", () => {
+  it("shows infrastructure separately from the agent map and reports health as unknown", () => {
     const html = render("#overview");
-    const rows = html.split('<li class="system-agent">').slice(1);
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain('data-agent-anchor="rc"');
-    expect(rows[0]).toContain('aria-label="Recap: 01:01"');
-    expect(rows[1]).toContain('data-agent-anchor="sound"');
-    expect(rows[1]).not.toContain("Recap");
-    expect(html).not.toContain("Shared library");
-    expect(html).not.toContain("Review history");
+    expect(html).toContain('aria-label="System components"');
+    expect(html).toContain("RCP coordinator");
+    expect(html).toContain("Execution node");
+    expect(html).toContain("Health unknown");
+    expect(html).not.toContain('class="system-agent"');
     expect(html).not.toContain("Created by");
+    expect(html).not.toContain("Core services available");
   });
   it("moves the work ledger into a separate destination", () => {
     expect(hostRoute("#work").view).toBe("work");
     const html = render("#work");
-    expect(html).toContain("<h1>Work</h1>");
+    expect(html).toMatch(/<h1[^>]*>Work<\/h1>/);
     expect(html).not.toContain('aria-label="Host system"');
     expect(html).toContain('href="#overview"');
   });
