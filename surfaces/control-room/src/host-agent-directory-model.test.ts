@@ -18,7 +18,7 @@ describe("agent directory observations", () => {
       sessions: [{ id: "session", agent_id: agent.id, observation: "unavailable", reason: "Storage unavailable" }],
       reviews: [{ request_id: "review", agent_id: agent.id, repository: "owner/repo", pull_number: 1, admitted_at_ms: 1, reported_head_sha: "abc", reviewed_head_sha: "abc", publication: "published", worker_error: false, retry_after_ms: null, state: "reviewed" }],
     }, agent);
-    expect(summary.tone).toBe("interrupted");
+    expect(summary.tone).toBe("waiting");
     expect(summary.title).toBe("1 record needs attention");
   });
   it("keeps the interruption visible when another run completes in its hour", () => {

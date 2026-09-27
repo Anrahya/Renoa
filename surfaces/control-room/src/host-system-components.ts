@@ -1,0 +1,6 @@
+import { Browser, Cpu, HardDrives } from "@phosphor-icons/react";
+export const systemComponents = [
+  { id: "surface", title: "Control panel", subtitle: "Observe & control", Icon: Browser, description: "This browser presents durable work and sends authorized commands. Closing it does not stop an agent.", facts: [["Connection", "RCP over WebSocket"], ["Identity", "Remembered browser"], ["On reconnect", "Replay from saved position"]] },
+  { id: "coordinator", title: "RCP coordinator", subtitle: "Admit, order & replay", Icon: HardDrives, description: "The coordinator admits commands and retains the task journal. Acknowledged work survives a dropped connection; admission is separate from execution.", facts: [["Owns", "Task identity & admission"], ["Journal", "Durable, ordered records"], ["Retries", "Stable command identities"]] },
+  { id: "kernel", title: "Execution node", subtitle: "Host + Renoa kernel", Icon: Cpu, description: "The node owns the workspace, tools and model access. The Host resolves each runtime; the non-replaceable kernel preserves execution truth.", facts: [["Runtime", "LocalHost + kernel"], ["Environment", "Cloud workspace"], ["Owns", "Model and tool execution"]] },
+];

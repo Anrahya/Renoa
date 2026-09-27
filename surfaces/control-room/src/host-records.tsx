@@ -1,23 +1,9 @@
 import { useState } from "react";
 import { ArrowUpRight } from "@phosphor-icons/react";
-import type { HostSnapshot, Review, Routine, Session } from "./host-contract";
+import type { HostSnapshot, Review, Session } from "./host-contract";
 import { ReviewEvidence } from "./host-review";
-import { RoutineControl, type Controls } from "./host-controls";
-import { agentHref, agentName, needsAttention, scheduleText, sessionNeedsAttention, timestamp } from "./host-presentation";
+import { agentHref, agentName, needsAttention, sessionNeedsAttention, timestamp } from "./host-presentation";
 
-export function RoutineRow({ routine, controls }: { routine: Routine; controls: Controls }) {
-  return <article className="host-routine">
-    <div className="host-row-heading"><h3>{routine.name}</h3><span className={`host-state ${routine.enabled ? "" : "host-state-muted"}`}>{routine.enabled ? "Scheduled" : "Paused"}</span></div>
-    <p>{scheduleText(routine)}</p>
-    <p className="host-caption">{routine.enabled ? `Next scheduled occurrence · ${timestamp(routine.next_due_ms)}` : "Schedule inactive"}
-      {routine.pending_runs > 0 && ` · ${routine.pending_runs} admitted ${routine.pending_runs === 1 ? "run" : "runs"}`}</p>
-    <RoutineControl {...{ routine, controls }} />
-    <details className="host-details"><summary>Schedule details</summary><div>
-      <p>Revision {routine.revision} · {routine.completed_runs} completed runs</p>
-      <p>Scheduling belongs to this Host. Pausing does not cancel work already admitted.</p><code>{routine.id}</code>
-    </div></details>
-  </article>;
-}
 export function SessionRow({ session, host }: { session: Session; host: HostSnapshot }) {
   const operation = session.observation === "available" ? session.active_operation ?? session.latest_operation : null;
   const state = session.observation === "unavailable" ? "Records unavailable" : operation?.state.replaceAll("_", " ") ?? "No recorded operation";

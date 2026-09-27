@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader,
   SidebarInset, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem,
   SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { portraitForAgent } from "./host-identity";
 import type { HostRoute } from "./host-navigation";
 import type { HostSnapshot } from "./host-contract";
 import { agentHref, displayName, isEarlier, timestamp } from "./host-presentation";
@@ -87,7 +88,7 @@ function HostSidebar({ route, snapshot, status, preview, designPreview, received
         <SidebarGroupLabel>Agents</SidebarGroupLabel>
         <SidebarMenu>{agents.map(agent => <SidebarMenuItem key={agent.id}>
           <SidebarMenuButton asChild tooltip={nameFor(agent.id, agent.name)} isActive={route.agent === agent.id}>
-            <a href={agentHref(agent.id)} onClick={() => setOpenMobile(false)}><CirclesThree /><span>{nameFor(agent.id, agent.name)}</span></a>
+            <a href={agentHref(agent.id)} onClick={() => setOpenMobile(false)}><img className="size-5 rounded-full object-contain" src={portraitForAgent(agent.id, agent.name)} alt="" /><span>{nameFor(agent.id, agent.name)}</span></a>
           </SidebarMenuButton>
         </SidebarMenuItem>)}</SidebarMenu>
       </SidebarGroup>}

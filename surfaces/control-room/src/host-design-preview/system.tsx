@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowsLeftRight, ArrowRight, ArrowClockwise, Browser, Database, Cpu, HardDrives, WarningCircle } from "@phosphor-icons/react";
+import { ArrowsLeftRight, ArrowRight, ArrowClockwise, Database, WarningCircle } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -15,11 +15,7 @@ import { PageHeading, agentCount, useDesignAgents, NoResults } from "./shared";
 import "../styles/host-system-preview.css";
 
 type Condition = "ready" | "kernel" | "offline";
-const components = [
-  { id: "surface", title: "Control panel", subtitle: "Observe & control", Icon: Browser, description: "This browser presents durable work and sends authorized commands. Closing it does not stop an agent.", facts: [["Connection", "RCP over WebSocket"], ["Identity", "Remembered browser"], ["On reconnect", "Replay from saved position"]] },
-  { id: "coordinator", title: "RCP coordinator", subtitle: "Admit, order & replay", Icon: HardDrives, description: "The coordinator admits commands and retains the task journal. Acknowledged work survives a dropped connection; admission is separate from execution.", facts: [["Owns", "Task identity & admission"], ["Journal", "Durable, ordered records"], ["Retries", "Stable command identities"]] },
-  { id: "kernel", title: "Execution node", subtitle: "Host + Renoa kernel", Icon: Cpu, description: "The node owns the workspace, tools and model access. The Host resolves each runtime; the non-replaceable kernel preserves execution truth.", facts: [["Runtime", "LocalHost + kernel"], ["Environment", "Cloud workspace"], ["Owns", "Model and tool execution"]] },
-];
+import { systemComponents as components } from "../host-system-components";
 const resources = [
   { name: "CPU", value: "22%", detail: "of 2 virtual CPUs", unit: "%", values: [12,14,13,18,26,21,35,32,28,24,20,22], max: 100 },
   { name: "Memory", value: "1.2 GB", detail: "of 4 GB", unit: "GB", values: [.8,.8,.9,1,1.1,1.3,1.2,1.2,1.3,1.2,1.2,1.2], max: 4 },
@@ -79,5 +75,5 @@ export function SystemPreview({ host }: { host: HostSnapshot }) {
 function Resource({ resource }: { resource: typeof resources[number] }) {
   const { values, max } = resource;
   const points = values.map((value, index) => `${index / (values.length - 1) * 240},${65 - value / max * 55}`).join(" ");
-  return <div className="system-resource"><h3>{resource.name}</h3><p><strong>{resource.value}</strong><span>{resource.detail}</span></p><svg viewBox="0 0 240 72" role="img" aria-label={`${resource.name} over the example half-hour. Current ${resource.value}.`}><line x1="0" y1="65" x2="240" y2="65" /><polyline points={points} />{values.map((value,index) => <circle key={index} cx={index / (values.length - 1) * 240} cy={65 - value / max * 55} r="3"><title>{value} {resource.unit}</title></circle>)}</svg></div>;
+  return <div className="system-resource"><h3>{resource.name}</h3><p><strong>{resource.value}</strong><span>{resource.detail}</span></p><svg viewBox="0 0 240 72" role="img" aria-label={`${resource.name} over the example half-hour. Current ${resource.value}.`}><line x1="0" y1="65" x2="240" y2="65" /><polyline points={points} />{values.map((value,index) => <circle key={index} cx={index / (values.length - 1) * 240} cy={65 - value / max * 55} r="3"><title>{`${value} ${resource.unit}`}</title></circle>)}</svg></div>;
 }

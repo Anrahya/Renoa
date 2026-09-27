@@ -2,20 +2,19 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { RoutineTimeline } from "./host-routine-timeline";
+import type { HostSnapshot } from "./host-contract";
 import type { Controls } from "./host-controls";
 import type { agentOverview } from "./host-agent-overview";
-import { ProfileReviewPolicy, ProfileRoutine } from "./host-agent-profile-settings";
+import { ProfileReviewPolicy } from "./host-agent-profile-settings";
 import { ProfileReviewRecord, ProfileSessionRecord } from "./host-agent-profile-records";
 
 type Overview = ReturnType<typeof agentOverview>;
 
-export function ProfileAutomations({ data, controls }: { data: Overview; controls: Controls }) {
+export function ProfileAutomations({ data, controls, host }: { data: Overview; controls: Controls; host: HostSnapshot }) {
   return <div className="flex max-w-4xl flex-col gap-8">
-    <div className="flex flex-col gap-2"><h2 className="text-xl font-medium">Automations</h2><p className="text-muted-foreground">When this agent runs, and what starts its work.</p></div>
     {controls.preview && <Alert><AlertDescription>Saved preview · Schedule changes and policy saves are disabled. You can explore a policy draft.</AlertDescription></Alert>}
-    <section className="profile-settings-section" aria-labelledby="profile-schedules"><div><h3 id="profile-schedules" className="font-medium">Schedules</h3><p className="mt-1 text-sm text-muted-foreground">Timers and recurring work</p></div><div className="flex min-w-0 flex-col gap-5">
-      {data.routines.length ? data.routines.map(routine => <ProfileRoutine key={routine.id} {...{ routine, controls }} />) : <p className="text-sm text-muted-foreground">No schedules assigned to this agent.</p>}
-    </div></section>
+    <RoutineTimeline routines={data.routines} host={host} controls={controls} />
     <Separator />
     <section className="profile-settings-section" aria-labelledby="profile-policy"><div><h3 id="profile-policy" tabIndex={-1} className="scroll-mt-20 font-medium">Repository triggers</h3><p className="mt-1 text-sm text-muted-foreground">Events that start a review</p></div><div className="flex min-w-0 flex-col gap-6">
       {data.repositories.length ? data.repositories.map(repository => <ProfileReviewPolicy key={repository.policy.repository_id} {...{ repository, controls }} />) : <p className="text-sm text-muted-foreground">No repository review policy targets this agent.</p>}

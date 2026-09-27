@@ -43,3 +43,10 @@
   .desk-search { width: 100%; }
 }
 @media(prefers-reduced-motion: reduce) { .host-desk *, .host-desk *::before { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+.renoa-ui { --host-ink: var(--foreground); --host-muted: var(--muted-foreground); --host-rule: var(--border); --host-accent: var(--primary); }
+.renoa-ui .host-record-body { background: var(--muted); border-radius: 10px; }
+.renoa-ui .host-error { color: var(--destructive); }
+.renoa-ui .host-empty, .renoa-ui .host-caption { color: var(--muted-foreground); font-size: 13px; line-height: 1.7; }
+.renoa-ui .host-link { color: var(--foreground); text-decoration: underline; text-underline-offset: 4px; }
+@media(max-width:700px) { .renoa-ui .host-record > summary { flex-wrap: wrap; gap: 10px; } .renoa-ui .host-record-state { margin-left: 0; text-align: left; flex-basis: 100%; } }

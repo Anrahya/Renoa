@@ -120,3 +120,6 @@
 @media (prefers-reduced-motion: reduce) {
   .work-mark, .work-lane { transition: none; transform: none !important; }
 }
+
+.routine-timeline .work-axis, .routine-timeline .work-lane { grid-template-columns: 205px minmax(0, 1fr) 68px; }
+@media(max-width:700px) { .routine-timeline .work-axis, .routine-timeline .work-lane { grid-template-columns: 145px minmax(0, 1fr) 54px; } }

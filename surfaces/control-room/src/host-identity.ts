@@ -1,3 +1,5 @@
+import assignments from "./agent-portraits.json";
+
 // A fixed display palette: assignment survives agent renames and list reordering.
 export const botPortraits = ["relay", "scout", "scribe", "beacon", "courier", "orbit",
   "forge", "patch", "vault", "lens", "signal", "tally"] as const;
@@ -15,5 +17,5 @@ const personalPortraits = new Map([
 ]);
 
 export function portraitForAgent(agentId: string, name: string): string {
-  return personalPortraits.get(name.trim().toLocaleLowerCase()) ?? genericPortrait(agentId);
+  return (assignments as Record<string, string>)[agentId] ?? personalPortraits.get(name.trim().toLocaleLowerCase()) ?? genericPortrait(agentId);
 }
