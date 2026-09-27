@@ -80,18 +80,27 @@ pub(crate) async fn wait_for_process_group_raw(pid: u32) -> Result<(), ProcessGr
     loop {
         match killpg(pid, None) {
             Err(nix::errno::Errno::ESRCH) => return Ok(()),
-            Ok(()) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            Ok(()) => return Err(ProcessGroupError::ExitTimeout),
+            Ok(()) => {}
+            // Darwin: unreaped zombie members remain; see `signal_process_group`.
+            #[cfg(target_os = "macos")]
+            Err(nix::errno::Errno::EPERM) => {}
             Err(source) => return Err(ProcessGroupError::Inspect(source)),
         }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(ProcessGroupError::ExitTimeout);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
 fn signal_process_group(pid: u32, signal: Signal) -> Result<(), ProcessGroupError> {
     match killpg(process_group_id(pid)?, signal) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        // Darwin reports EPERM for a group whose remaining members are all
+        // unreaped zombies, which no signal can affect. Every signal is
+        // followed by the exit wait, which still fails if the group persists.
+        #[cfg(target_os = "macos")]
+        Err(nix::errno::Errno::EPERM) => Ok(()),
         Err(source) => Err(ProcessGroupError::Signal(source)),
     }
 }
