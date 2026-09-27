@@ -3,6 +3,7 @@ Description=Renoa Discord surface
 After=network-online.target renoa-coordinator.service
 Wants=network-online.target
 ConditionPathExists=/home/renoa/.renoa/config/discord.json
+ConditionPathExists=/home/renoa/.renoa/credentials/discord.json
 
 [Service]
 Type=simple

@@ -19,7 +19,6 @@ use crate::{
 pub(crate) struct Surface {
     pub(crate) host: LocalHost,
     pub(crate) agent_id: Uuid,
-    pub(crate) workspace: std::path::PathBuf,
     pub(crate) guild_id: Snowflake,
     pub(crate) operator_user_id: Snowflake,
     pub(crate) token: String,
@@ -123,11 +122,7 @@ async fn worker(
         }
         if let Some(turn) = store.next_queued()? {
             let agent_id = AgentId::from_uuid(turn.agent_id);
-            let workspace = if turn.agent_id == surface.agent_id {
-                surface.workspace.clone()
-            } else {
-                surface.host.agent_workspace(agent_id).await?
-            };
+            let workspace = surface.host.agent_workspace(agent_id).await?;
             let held = session_for(
                 &surface.host,
                 agent_id,

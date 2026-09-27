@@ -96,7 +96,7 @@ impl SurfaceStore {
                         && stored_agent == agent_id => {}
                 Some(_) => {
                     return Err(DiscordError::Invalid(
-                        "stored Discord guild, operator, or agent differs from this launch configuration"
+                        "stored Discord guild, operator, or agent differs from the Discord connection"
                             .to_owned(),
                     ));
                 }

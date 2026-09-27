@@ -1,19 +1,19 @@
 {
   "home": "/home/renoa/.renoa",
-  "guild_id": "123456789012345678",
-  "operator_user_id": "123456789012345679",
-  "agent_id": "00000000-0000-0000-0000-000000000001",
-  "bot_token_file": "/home/renoa/.renoa/credentials/discord-bot-token",
-  "workspace": "/home/renoa/.renoa/agents/00000000-0000-0000-0000-000000000001/workspace",
-  "model_bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
-  "model_auth_store": "/home/renoa/.renoa/credentials/models.sqlite3",
-  "provider": "opencode-go",
-  "providers": ["opencode-go"],
-  "model": "your-model-id",
-  "reasoning": "high",
+  "models": {
+    "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+    "providers": [
+      "opencode-go"
+    ],
+    "initial_provider": "opencode-go",
+    "initial_model": "your-model-id",
+    "initial_reasoning": "high",
+    "credential_store": "/home/renoa/.renoa/credentials/models.sqlite3"
+  },
   "mcp_adapter": "/opt/renoa/adapters/mcp-client-node/dist/src/main.js",
   "code_mode_worker": null,
   "mcp_registry_adapter": "/opt/renoa/adapters/mcp-registry-node/dist/src/main.js",
+  "shared_plugin_registry": "http://127.0.0.1:7820/",
   "oauth_relay": {
     "origin": "https://renoa.live",
     "credentials": "/home/renoa/.renoa/credentials/oauth-relay-device"

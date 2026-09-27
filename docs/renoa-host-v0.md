@@ -272,26 +272,41 @@ its stable operation receipt after restart without another provider lookup.
 uncertain requests in tab storage and retries their exact operation ID and fields.
 Native grants start empty; plugin discovery, management, and invocation are universal.
 
-`GET /v1/host/discord` reports `setup_required` until a launch configuration is
-provided, otherwise `configured` and saved bindings. Configuration is not worker
-liveness. `POST /v1/host/discord/bindings` accepts `operation_id`, `channel_id`,
+`GET /v1/host/discord` reports `setup_required` until the owner connects a bot,
+then `connected` with the bot and server names, the default agent, and saved
+bindings. Connection is not worker liveness. `POST /v1/host/discord/inspection`
+checks a pasted token without saving it: the token must be a bot whose application
+has Message Content Intent; it returns the bot name, an Administrator invite link
+and the bot's servers, each marked with whether its roles grant Administrator.
+`POST /v1/host/discord/connection` accepts `operation_id`, `bot_token`, `guild_id`
+and `agent_id`. The adapter verifies the Host agent, then re-reads Discord and
+requires Administrator in the chosen server before committing one owner-only
+`credentials/discord.json` by hard link. The record holds the token, server,
+application owner (the operator) and default agent; HTTP responses never return
+the token. An exact retry returns the committed connection before contacting
+Discord; any other request is rejected, so the connection is set once. The
+browser keeps the token in memory only. `GET /v1/host/discord/channels` lists the
+connected server's text and announcement channels in sidebar order.
+`POST /v1/host/discord/bindings` accepts `operation_id`, `channel_id`,
 `agent_id`, and `expected_revision`. The adapter verifies the existing Host agent
-and Discord text/announcement channel in the configured guild before storage.
+and Discord text/announcement channel in the connected guild before storage.
 It does not probe send permission. Revision checks, binding and receipt commit
 in one SQLite transaction; stale edits and reused operation IDs return 409.
 An exact retry returns its original receipt before contacting Discord again.
-Both writes require the owner cookie and exact Origin.
+Every write requires the owner cookie and exact Origin.
 
 Discord owns `state/surfaces/discord/discord.sqlite3` (schema 3). Its channel
 routing, conversation session, and target agent are persisted when a message is
 admitted. Reassignment starts a fresh conversation for subsequent messages;
 already admitted work retains its original agent. Unbound channels still require
-a mention, reply, or active thread, and only the configured operator can use DMs.
-The worker uses each selected agent's canonical workspace. Bot application setup,
-guild, operator and private token file remain trusted launch configuration.
+a mention, reply, or active thread, and only the operator (the application owner)
+can use DMs.
+The worker uses each selected agent's canonical workspace. Its launch file holds
+only the home, models and adapters; the guild, operator, default agent and token
+come from the committed connection, which the surface database then pins.
 
 The Discord event sink consumes structured `plugin_manage` progress. OAuth and
-credential setup links are delivered only to the configured operator's DM, with
+credential setup links are delivered only to the operator's DM, with
 mentions and embeds disabled. SQLite stores a digest and delivery state, never the
 link. Confirmed rate limits may retry; an unknown send outcome cancels that setup
 turn and requires checking the DM before restarting. Recovery never blindly
@@ -970,6 +985,7 @@ another writer's files to empty a directory.
   config/                         launch configuration
   credentials/
     models.sqlite3                default model credential-store location
+    discord.json                  owner-only Discord bot connection, set once
     oauth-secrets/<sha256>.json    private remote OAuth/API-key secrets
   plugins/<sha256>/                immutable external plugin packages
   agents/<agent-id>/

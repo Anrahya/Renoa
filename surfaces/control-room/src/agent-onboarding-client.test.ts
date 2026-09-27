@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isBinding, parseCreationOptions, parseDiscord, pendingOperation, writeOwner } from "./agent-onboarding-client";
+import { isBinding, parseChannels, parseCreationOptions, parseDiscord, parseInspection, pendingOperation, writeOwner } from "./agent-onboarding-client";
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -49,9 +49,18 @@ describe("owner onboarding operations", () => {
 });
 
 it("rejects incompatible discovery and binding records", () => {
-  expect(parseDiscord({ status: "setup_required", bindings: [] }).status).toBe("setup_required");
-  expect(() => parseDiscord({ status: "setup_required", bindings: [binding] })).toThrow();
-  expect(() => parseDiscord({ status: "configured", bindings: [{ ...binding, channel_id: 123456789123456789 }] })).toThrow();
-  expect(() => parseDiscord({ status: "configured", bindings: [{ ...binding, revision: 1.5 }] })).toThrow();
+  const connected = { status: "connected", bot_name: "Renoa", guild_name: "Home", default_agent_id: agent, bindings: [binding] };
+  expect(parseDiscord({ status: "setup_required" }).status).toBe("setup_required");
+  expect(parseDiscord(connected).status).toBe("connected");
+  expect(() => parseDiscord({ status: "setup_required", bindings: [] })).toThrow();
+  expect(() => parseDiscord({ status: "configured", bindings: [binding] })).toThrow();
+  expect(() => parseDiscord({ ...connected, bindings: [{ ...binding, channel_id: 123456789123456789 }] })).toThrow();
+  expect(() => parseDiscord({ ...connected, bindings: [{ ...binding, revision: 1.5 }] })).toThrow();
+  const inspection = { bot_name: "Renoa", invite_url: "https://discord.com/oauth2/authorize?client_id=30&scope=bot&permissions=8", guilds: [{ id: "10", name: "Home", administrator: true }] };
+  expect(parseInspection(inspection).guilds).toHaveLength(1);
+  expect(() => parseInspection({ ...inspection, invite_url: "https://example.com/phish" })).toThrow();
+  expect(() => parseInspection({ ...inspection, guilds: [{ id: "10", name: "Home", administrator: "yes" }] })).toThrow();
+  expect(parseChannels([{ id: "20", name: "desk" }])).toHaveLength(1);
+  expect(() => parseChannels([{ id: "020", name: "desk" }])).toThrow();
   expect(() => parseCreationOptions({ native_tools: ["bash"], models: [{ provider: "xai", model: "fixture", name: "Fixture", reasoning_levels: ["high"], default_reasoning: "max" }], default_model: { provider: "xai", model: "fixture", reasoning: "high" } })).toThrow();
 });

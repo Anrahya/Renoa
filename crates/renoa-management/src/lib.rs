@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod agents;
+mod discord;
 mod identity;
 mod reviews;
 mod routines;
@@ -79,7 +80,7 @@ struct ManagementState {
     reviews: HostReviewControl,
     origin: String,
     agents: Option<renoa_local::LocalHost>,
-    discord: Option<renoa_discord::DiscordControl>,
+    discord: renoa_discord::DiscordControl,
 }
 
 impl ManagementApi {
@@ -110,7 +111,7 @@ impl ManagementApi {
                 reviews: HostReviewControl::open(root, host_id, owner.as_uuid())?,
                 origin,
                 agents: None,
-                discord: None,
+                discord: renoa_discord::DiscordControl::open(root)?,
             }),
         })
     }
@@ -126,20 +127,6 @@ impl ManagementApi {
             return Err(ManagementError::HostMismatch);
         }
         Arc::make_mut(&mut self.state).agents = Some(host);
-        Ok(self)
-    }
-
-    /// Enables owner channel controls using the configured Discord application.
-    /// # Errors
-    /// Rejects a Discord configuration belonging to a different Host.
-    pub fn with_discord(
-        mut self,
-        discord: renoa_discord::DiscordControl,
-    ) -> Result<Self, ManagementError> {
-        if discord.host_id()? != self.state.observer.host_id() {
-            return Err(ManagementError::HostMismatch);
-        }
-        Arc::make_mut(&mut self.state).discord = Some(discord);
         Ok(self)
     }
 
@@ -173,10 +160,19 @@ impl ManagementApi {
                 "/v1/host/agents",
                 axum::routing::post(agents::create).layer(DefaultBodyLimit::max(64 * 1024)),
             )
-            .route("/v1/host/discord", get(agents::discord))
+            .route("/v1/host/discord", get(discord::status))
+            .route(
+                "/v1/host/discord/inspection",
+                axum::routing::post(discord::inspect),
+            )
+            .route(
+                "/v1/host/discord/connection",
+                axum::routing::post(discord::connect),
+            )
+            .route("/v1/host/discord/channels", get(discord::channels))
             .route(
                 "/v1/host/discord/bindings",
-                axum::routing::post(agents::bind_discord),
+                axum::routing::post(discord::bind),
             )
             .route("/v1/host/reviews/{request_id}", get(review_detail))
             .route(

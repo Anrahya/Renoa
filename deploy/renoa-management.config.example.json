@@ -15,6 +15,5 @@
     "initial_model": "your-model-id",
     "initial_reasoning": "high",
     "credential_store": "/home/renoa/.renoa/credentials/models.sqlite3"
-  },
-  "discord_config": null
+  }
 }

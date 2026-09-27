@@ -19,8 +19,6 @@ struct Config {
     public_origin: String,
     listen: SocketAddr,
     models: Option<renoa_local::LocalModelConfiguration>,
-    #[serde(rename = "discord_config")]
-    discord_path: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -56,12 +54,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             renoa_local::LocalHostAdapters::default(),
         )?;
         api = api.with_agent_creation(host).await?;
-    }
-    if let Some(discord) = config.discord_path {
-        api = api.with_discord(renoa_discord::DiscordControl::open(
-            &discord,
-            &config.data_directory,
-        )?)?;
     }
     let api = api.with_assets(&config.assets_directory)?;
     let listener = TcpListener::bind(config.listen).await?;

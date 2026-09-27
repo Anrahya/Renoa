@@ -167,96 +167,14 @@ pub(super) async fn create(
     response
 }
 
-pub(super) async fn discord(
-    State(state): State<Arc<ManagementState>>,
-    headers: HeaderMap,
-) -> Response {
-    let session = match authorize(&state, &headers).await {
-        Ok(session) => session,
-        Err(response) => return response,
-    };
-    if let Some(host) = &state.agents
-        && host.host_id().await.ok() != Some(state.observer.host_id())
-    {
-        return unavailable();
-    }
-    let mut response = match &state.discord {
-        None => {
-            Json(serde_json::json!({ "status": "setup_required", "bindings": [] })).into_response()
-        }
-        Some(discord) => match discord.bindings() {
-            Ok(bindings) => {
-                Json(serde_json::json!({ "status": "configured", "bindings": bindings }))
-                    .into_response()
-            }
-            Err(_) => failure(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "discord_unavailable",
-                "Discord bindings cannot be read. Existing bindings are preserved.",
-            ),
-        },
-    };
-    renew(&mut response, session.renewal);
-    response
-}
-
-pub(super) async fn bind_discord(
-    State(state): State<Arc<ManagementState>>,
-    headers: HeaderMap,
-    request: Result<Json<renoa_discord::DiscordBindingRequest>, JsonRejection>,
-) -> Response {
-    if let Some(response) = origin_failure(&state, &headers) {
-        return response;
-    }
-    let session = match authorize(&state, &headers).await {
-        Ok(session) => session,
-        Err(response) => return response,
-    };
-    let (Some(host), Some(discord)) = (&state.agents, &state.discord) else {
-        return failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "setup_required",
-            "Set up the Discord application before connecting a channel.",
-        );
-    };
-    if host.host_id().await.ok() != Some(state.observer.host_id()) {
-        return unavailable();
-    }
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(error) => {
-            return failure(
-                error.status(),
-                "invalid_request",
-                "Send a valid channel binding request.",
-            );
-        }
-    };
-    let operation_id = request.operation_id;
-    let mut response = match discord.bind(host, request).await {
-        Ok(record) => Json(serde_json::json!({ "operation_id": operation_id, "record": record }))
-            .into_response(),
-        Err(renoa_discord::DiscordError::Invalid(reason)) => {
-            failure(StatusCode::CONFLICT, "binding_rejected", &reason)
-        }
-        Err(_) => failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "discord_unavailable",
-            "Channel binding could not be confirmed. Check bot access, then retry the saved request.",
-        ),
-    };
-    renew(&mut response, session.renewal);
-    response
-}
-
-fn unavailable() -> Response {
+pub(super) fn unavailable() -> Response {
     failure(
         StatusCode::SERVICE_UNAVAILABLE,
         "creation_unavailable",
         "Agent creation is not configured on this Host.",
     )
 }
-fn renew(response: &mut Response, cookie: Option<axum::http::HeaderValue>) {
+pub(super) fn renew(response: &mut Response, cookie: Option<axum::http::HeaderValue>) {
     if let Some(cookie) = cookie {
         response.headers_mut().insert(header::SET_COOKIE, cookie);
     }

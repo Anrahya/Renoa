@@ -10,6 +10,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Renoa control-room decisions
 
+- On 2026-09-28 the owner said the current Control Room aesthetic and UI do not work and will be redesigned as a whole. Until that redesign, new UI (starting with Discord onboarding on the agent Configure page) is deliberately bare-minimum and functional: plain shadcn forms, no visual polish. Do not treat the present look as an approved baseline for the redesign.
+
 - The owner requested finishing the entire Host design pass before backend work. Keep the Agents map as the primary surface, enlarge it to use the viewport, and remove the duplicate selected-agent block below it. Portraits open the agent workspace directly. Finish Connections, Work, and System within the approved shadcn foundation, sharing tab-local preview data and adding destinations only when an existing page cannot contain the function. Backend integration and deployment remain separate work.
 
 - The owner found the first map too still and expects ordinary mouse-wheel zoom. The bubble bodies should visibly flow and float, with moving light and contours; keep the portraits and labels stable. Narrow windows must retain motion rather than being mistaken for a reason to disable it. Pause, reduced-motion preferences, and hidden/offscreen suspension still apply. This supersedes the earlier phone-width motion cutoff.

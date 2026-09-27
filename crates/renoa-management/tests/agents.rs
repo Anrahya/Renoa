@@ -245,8 +245,66 @@ async fn owner_creation_is_usable_and_identical_retry_survives_a_lost_reply_and_
         .json()
         .await
         .unwrap();
-    assert_eq!(discord, json!({"status":"setup_required","bindings":[]}));
+    assert_eq!(discord, json!({"status":"setup_required"}));
+    verify_discord_setup_is_refused_locally(&f).await;
     f.close().await;
+}
+
+/// Every refusal here is decided before Discord is contacted.
+async fn verify_discord_setup_is_refused_locally(f: &Fixture) {
+    let inspect = |origin: &'static str, token: &'static str| {
+        f.client
+            .post(format!("{}/v1/host/discord/inspection", f.url))
+            .header("origin", origin)
+            .header("cookie", &f.cookie)
+            .json(&json!({"bot_token": token}))
+            .send()
+    };
+    assert_eq!(
+        inspect("https://wrong.example", "fixture.token")
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let refused = inspect(ORIGIN, "Bot fixture.token").await.unwrap();
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    let refused: Value = refused.json().await.unwrap();
+    assert_eq!(refused["code"], "discord_rejected");
+    let channels = f
+        .client
+        .get(format!("{}/v1/host/discord/channels", f.url))
+        .header("cookie", &f.cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(channels.status(), StatusCode::CONFLICT);
+    let connect = f
+        .client
+        .post(format!("{}/v1/host/discord/connection", f.url))
+        .header("origin", ORIGIN)
+        .header("cookie", &f.cookie)
+        .json(&json!({
+            "operation_id": Uuid::new_v4(),
+            "bot_token": "fixture.token",
+            "guild_id": "10",
+            "agent_id": Uuid::new_v4(),
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(connect.status(), StatusCode::CONFLICT);
+    let connect: Value = connect.json().await.unwrap();
+    assert_eq!(
+        connect["message"],
+        "The selected agent does not exist on this Host"
+    );
+    assert!(
+        !f.files
+            .path()
+            .join("home/credentials/discord.json")
+            .exists()
+    );
 }
 
 async fn verify_execution(f: &Fixture, id: renoa_kernel::AgentId) {

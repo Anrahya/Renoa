@@ -30,10 +30,8 @@ async fn a_bound_channel_runs_the_owner_created_child_without_a_mention() {
 async fn run_agent(bound: bool) {
     let root = tempfile::tempdir().expect("temp root");
     let data = root.path().join("data");
-    let workspace = root.path().join("workspace");
     let bridge = root.path().join("model-bridge.mjs");
     let credentials = root.path().join("credentials.sqlite3");
-    std::fs::create_dir(&workspace).expect("workspace");
     std::fs::write(&bridge, MODEL_BRIDGE).expect("bridge");
     std::fs::write(&credentials, "").expect("credentials");
     let host = LocalHost::new(
@@ -70,7 +68,6 @@ async fn run_agent(bound: bool) {
             Surface {
                 host,
                 agent_id: Uuid::parse_str(&agent_id.to_string()).expect("agent uuid"),
-                workspace,
                 guild_id: Snowflake::parse("10").expect("guild"),
                 operator_user_id: Snowflake::parse("20").expect("operator"),
                 token: "discord-token".to_owned(),

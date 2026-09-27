@@ -1,206 +1,89 @@
 use std::{fs, path::PathBuf};
 
 use serde::Deserialize;
-use uuid::Uuid;
 
-use crate::{DiscordError, snowflake::Snowflake};
-use renoa_local::{
-    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel,
-};
+use crate::{DiscordError, connection::Connection};
+use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, RenoaHome};
 
-const TOKEN_LIMIT: u64 = 4096;
-
+/// The worker's launch: its trusted runtime file and the owner's connection.
 pub(crate) struct Config {
-    pub(crate) data_directory: PathBuf,
-    pub(crate) guild_id: Snowflake,
-    pub(crate) operator_user_id: Snowflake,
-    pub(crate) agent_id: Uuid,
-    pub(crate) token: String,
-    pub(crate) workspace: PathBuf,
-    pub(crate) model_bridge: PathBuf,
-    pub(crate) model_auth_store: PathBuf,
-    pub(crate) model: String,
-    pub(crate) provider: ModelProvider,
-    pub(crate) providers: Vec<ModelProvider>,
-    pub(crate) reasoning: Option<ReasoningLevel>,
-    pub(crate) mcp_adapter: Option<PathBuf>,
-    pub(crate) code_mode_worker: Option<PathBuf>,
-    pub(crate) mcp_registry_adapter: Option<PathBuf>,
-    pub(crate) oauth_relay: Option<OAuthRelay>,
+    pub(crate) home: RenoaHome,
+    pub(crate) connection: Connection,
+    pub(crate) runtime: Runtime,
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct OAuthRelay {
-    pub(crate) origin: String,
-    pub(crate) credentials: PathBuf,
+struct OAuthRelay {
+    origin: String,
+    credentials: PathBuf,
 }
 
+/// How this Host runs agents. Discord identity comes from the connection.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LaunchFile {
-    #[serde(default, rename = "home")]
-    data_directory: PathBuf,
-    guild_id: String,
-    operator_user_id: String,
-    agent_id: String,
-    bot_token_file: PathBuf,
-    workspace: PathBuf,
-    model_bridge: PathBuf,
+pub(crate) struct Runtime {
     #[serde(default)]
-    model_auth_store: PathBuf,
-    model: String,
-    provider: ModelProvider,
-    #[serde(default)]
-    providers: Vec<ModelProvider>,
-    reasoning: Option<ReasoningLevel>,
+    home: PathBuf,
+    models: LocalModelConfiguration,
     mcp_adapter: Option<PathBuf>,
     code_mode_worker: Option<PathBuf>,
     mcp_registry_adapter: Option<PathBuf>,
+    shared_plugin_registry: Option<String>,
     oauth_relay: Option<OAuthRelay>,
 }
 
 impl Config {
-    /// Reads a Discord launch file and checks the bot token file.
-    ///
-    /// `agent_id` names an existing Host agent. This surface does not create
-    /// that agent. The token stays in memory for the Gateway and is not written
-    /// to the surface database.
+    /// Reads the runtime file, then the connection the owner committed.
     ///
     /// # Errors
     ///
-    /// Returns malformed settings, a relative path, an invalid snowflake or
-    /// agent id, or a token file that is missing, empty, or readable by other users.
+    /// Returns malformed settings, a relative adapter path, a missing or
+    /// shared connection file, or an invalid Renoa home.
     pub(crate) fn read(path: &std::path::Path) -> Result<Self, DiscordError> {
-        let mut file: LaunchFile = serde_json::from_slice(&fs::read(path)?)?;
-        let home = renoa_local::RenoaHome::resolve(Some(file.data_directory.clone()))?;
-        file.data_directory = home.path().to_path_buf();
-        if file.model_auth_store.as_os_str().is_empty() {
-            file.model_auth_store = home.model_credentials();
-        }
-        if !file.data_directory.is_absolute() || !file.bot_token_file.is_absolute() {
-            return Err(DiscordError::Invalid(
-                "home and bot_token_file must be absolute paths".to_owned(),
-            ));
-        }
-        let guild_id = Snowflake::parse(&file.guild_id)?;
-        let operator_user_id = Snowflake::parse(&file.operator_user_id)?;
-        let agent_id = Uuid::parse_str(&file.agent_id).map_err(|_| {
-            DiscordError::Invalid("agent_id must be the UUID of an existing agent".to_owned())
-        })?;
-        for path in [&file.workspace, &file.model_bridge, &file.model_auth_store]
-            .into_iter()
-            .chain(file.mcp_adapter.iter())
-            .chain(file.code_mode_worker.iter())
-            .chain(file.mcp_registry_adapter.iter())
-            .chain(file.oauth_relay.iter().map(|relay| &relay.credentials))
-        {
-            if !path.is_absolute() {
+        let runtime: Runtime = serde_json::from_slice(&fs::read(path)?)?;
+        let home = RenoaHome::resolve(Some(runtime.home.clone()))?;
+        let adapters = runtime
+            .mcp_adapter
+            .iter()
+            .chain(&runtime.code_mode_worker)
+            .chain(&runtime.mcp_registry_adapter)
+            .chain(runtime.oauth_relay.iter().map(|relay| &relay.credentials));
+        for adapter in adapters {
+            if !adapter.is_absolute() {
                 return Err(DiscordError::Invalid(
-                    "Discord workspace, adapter, credential, and worker paths must be absolute"
-                        .to_owned(),
+                    "Discord adapter and credential paths must be absolute".to_owned(),
                 ));
             }
         }
-        if file.model.is_empty() {
-            return Err(DiscordError::Invalid("model must not be empty".to_owned()));
-        }
-        if file.providers.is_empty() {
-            file.providers.push(file.provider);
-        }
-        if !file.providers.contains(&file.provider) {
-            return Err(DiscordError::Invalid(
-                "Default model provider must be enabled".into(),
-            ));
-        }
-        let token = validate_token_file(&file.bot_token_file)?;
+        let connection = Connection::read(&home)?.ok_or_else(|| {
+            DiscordError::Invalid("Connect Discord from the Control Room first".to_owned())
+        })?;
         Ok(Self {
-            data_directory: file.data_directory,
-            guild_id,
-            operator_user_id,
-            agent_id,
-            token,
-            workspace: file.workspace,
-            model_bridge: file.model_bridge,
-            model_auth_store: file.model_auth_store,
-            model: file.model,
-            provider: file.provider,
-            providers: file.providers,
-            reasoning: file.reasoning,
-            mcp_adapter: file.mcp_adapter,
-            code_mode_worker: file.code_mode_worker,
-            mcp_registry_adapter: file.mcp_registry_adapter,
-            oauth_relay: file.oauth_relay,
+            home,
+            connection,
+            runtime,
         })
     }
+}
 
-    pub(crate) fn open_host(&self) -> Result<LocalHost, DiscordError> {
-        if !self.workspace.is_dir()
-            || !self.model_bridge.is_file()
-            || !self.model_auth_store.is_file()
-        {
-            return Err(DiscordError::Invalid(
-                "workspace must be a directory and the model bridge and auth store must be files"
-                    .to_owned(),
-            ));
-        }
+impl Runtime {
+    pub(crate) fn open_host(self, home: &RenoaHome) -> Result<LocalHost, DiscordError> {
         let mut adapters = LocalHostAdapters::new(self.mcp_adapter.as_deref())
             .with_code_mode_worker(self.code_mode_worker.as_deref())
-            .with_mcp_registry(self.mcp_registry_adapter.as_deref());
+            .with_mcp_registry(self.mcp_registry_adapter.as_deref())
+            .with_shared_plugin_registry(self.shared_plugin_registry.as_deref());
         if let Some(relay) = &self.oauth_relay {
             adapters = adapters.with_oauth_relay(&relay.origin, &relay.credentials);
         }
-        let mut models = LocalModelConfiguration::new(
-            &self.model_bridge,
-            self.providers.clone(),
-            self.provider,
-            &self.model,
-            &self.model_auth_store,
-        );
-        if let Some(reasoning) = self.reasoning {
-            models = models.with_initial_reasoning(reasoning);
-        }
-        LocalHost::new(&self.data_directory, models, adapters).map_err(DiscordError::from)
+        LocalHost::new(home.path(), self.models, adapters).map_err(DiscordError::from)
     }
 }
 
-fn validate_token_file(path: &std::path::Path) -> Result<String, DiscordError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        return Err(DiscordError::Invalid(
-            "bot_token_file must name a regular file".to_owned(),
-        ));
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_deployment_example_is_a_valid_runtime() {
+        let example = include_str!("../../../deploy/renoa-discord.config.example.json");
+        serde_json::from_str::<super::Runtime>(example).expect("runtime example");
     }
-    if metadata.len() == 0 || metadata.len() > TOKEN_LIMIT {
-        return Err(DiscordError::Invalid(
-            "bot_token_file has an invalid size".to_owned(),
-        ));
-    }
-    require_private(&metadata)?;
-    let token = fs::read_to_string(path)?;
-    let token = token.trim_end_matches(['\r', '\n']);
-    if token.is_empty() || token.chars().any(char::is_whitespace) {
-        return Err(DiscordError::Invalid(
-            "bot_token_file must contain one token".to_owned(),
-        ));
-    }
-    Ok(token.to_owned())
-}
-
-#[cfg(unix)]
-fn require_private(metadata: &fs::Metadata) -> Result<(), DiscordError> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    if metadata.permissions().mode().trailing_zeros() >= 6 {
-        Ok(())
-    } else {
-        Err(DiscordError::Invalid(
-            "bot_token_file must not be accessible by group or other users".to_owned(),
-        ))
-    }
-}
-
-#[cfg(not(unix))]
-fn require_private(_metadata: &fs::Metadata) -> Result<(), DiscordError> {
-    Ok(())
 }

@@ -3,17 +3,39 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::DiscordError;
+use crate::{
+    DiscordError,
+    discovery::{Application, DiscordGuild, User},
+    snowflake::Snowflake,
+};
 
-const API: &str = "https://discord.com/api/v10";
+pub(crate) const API: &str = "https://discord.com/api/v10";
 
 #[derive(Deserialize)]
 pub(crate) struct Channel {
-    pub(crate) id: String,
-    pub(crate) guild_id: Option<String>,
-    pub(crate) name: Option<String>,
+    pub(crate) id: Snowflake,
+    pub(crate) guild_id: Option<Snowflake>,
+    name: Option<String>,
     #[serde(rename = "type")]
-    pub(crate) kind: u8,
+    kind: u8,
+    #[serde(default)]
+    pub(crate) position: i64,
+    pub(crate) parent_id: Option<Snowflake>,
+}
+
+impl Channel {
+    /// Text and announcement channels carry ordinary chat.
+    pub(crate) fn is_text(&self) -> bool {
+        matches!(self.kind, 0 | 5)
+    }
+
+    pub(crate) fn is_category(&self) -> bool {
+        self.kind == 4
+    }
+
+    pub(crate) fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or("Discord channel")
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +115,45 @@ impl DiscordApi {
 
     pub(crate) async fn channel(&self, channel: &str) -> Result<Channel, ApiError> {
         self.get(&format!("/channels/{channel}")).await
+    }
+
+    pub(crate) async fn application(&self) -> Result<Application, ApiError> {
+        self.get("/applications/@me").await
+    }
+
+    pub(crate) async fn user(&self) -> Result<User, ApiError> {
+        self.get("/users/@me").await
+    }
+
+    /// Every server the bot belongs to, following Discord's ascending pages.
+    pub(crate) async fn guilds(&self) -> Result<Vec<DiscordGuild>, ApiError> {
+        const PAGE: usize = 200;
+        let mut guilds: Vec<DiscordGuild> = Vec::new();
+        loop {
+            let after = guilds.last().map_or("0", |guild| guild.id.as_str());
+            let page: Vec<DiscordGuild> = self
+                .get(&format!("/users/@me/guilds?limit={PAGE}&after={after}"))
+                .await?;
+            let ascending = guilds
+                .last()
+                .into_iter()
+                .chain(&page)
+                .is_sorted_by(|left, right| left.id < right.id);
+            if !ascending {
+                return Err(ApiError::Unknown(
+                    "Discord server pages were not in ascending order".into(),
+                ));
+            }
+            let count = page.len();
+            guilds.extend(page);
+            if count < PAGE {
+                return Ok(guilds);
+            }
+        }
+    }
+
+    pub(crate) async fn channels(&self, guild: &str) -> Result<Vec<Channel>, ApiError> {
+        self.get(&format!("/guilds/{guild}/channels")).await
     }
 
     async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, ApiError> {
