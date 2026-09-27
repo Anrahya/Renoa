@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -54,15 +54,17 @@ impl From<NodeStoreError> for NodeError {
     }
 }
 
-/// One coordinator target resolved to an exact Host agent, session, and workspace.
+/// One advertised coordinator target served by a provisioned Host agent in one
+/// workspace. Every task opened on the target receives its own Host session.
 #[derive(Clone, Debug)]
 pub struct HostTarget {
-    binding: TargetBinding,
+    target: String,
     agent_id: AgentId,
+    workspace: PathBuf,
 }
 
 impl HostTarget {
-    /// Creates one stable RCP-to-Host binding.
+    /// Creates one stable RCP target for a Host agent and workspace.
     ///
     /// # Errors
     ///
@@ -71,7 +73,6 @@ impl HostTarget {
     pub fn new(
         target: &TargetRef,
         agent_id: AgentId,
-        session_id: Uuid,
         workspace: impl AsRef<Path>,
     ) -> Result<Self, NodeError> {
         if target.as_str().is_empty() {
@@ -93,14 +94,17 @@ impl HostTarget {
             ));
         }
         Ok(Self {
-            binding: TargetBinding {
-                target: target.as_str().to_owned(),
-                agent_id: agent_uuid(agent_id),
-                session_id,
-                workspace,
-            },
+            target: target.as_str().to_owned(),
             agent_id,
+            workspace,
         })
+    }
+
+    /// Whether a durable task binding still belongs to this configured target.
+    fn serves(&self, binding: &TargetBinding) -> bool {
+        binding.target == self.target
+            && binding.agent_id == agent_uuid(self.agent_id)
+            && binding.workspace == self.workspace
     }
 }
 
@@ -141,11 +145,11 @@ impl RenoaNode {
         let targets = validate_targets(targets)?;
         preflight_agents(&host, &targets).await?;
         let state = NodeStore::open(ledger_path)?;
-        let durable_targets = targets
-            .values()
-            .map(|target| target.binding.clone())
-            .collect::<Vec<_>>();
-        state.validate_configured_targets(&durable_targets)?;
+        state.validate_configured_targets(|binding| {
+            targets
+                .get(&binding.target)
+                .is_some_and(|target| target.serves(binding))
+        })?;
         let (commits, _) = watch::channel(0_u64);
         Ok(Self {
             endpoint,
@@ -248,10 +252,17 @@ impl NodeRuntime {
         self.targets.keys().cloned().map(TargetRef::new).collect()
     }
 
-    pub(crate) fn binding_for(&self, target: &TargetRef) -> Result<TargetBinding, NodeError> {
+    /// Proposes the binding for a task's first command on `target`. The ledger
+    /// keeps an existing task's recorded session instead of this fresh one.
+    pub(crate) fn proposed_binding(&self, target: &TargetRef) -> Result<TargetBinding, NodeError> {
         self.targets
             .get(target.as_str())
-            .map(|target| target.binding.clone())
+            .map(|target| TargetBinding {
+                target: target.target.clone(),
+                agent_id: agent_uuid(target.agent_id),
+                session_id: Uuid::new_v4(),
+                workspace: target.workspace.clone(),
+            })
             .ok_or_else(|| {
                 NodeError::Protocol(format!(
                     "coordinator requested unconfigured target `{}`",
@@ -263,7 +274,7 @@ impl NodeRuntime {
     fn target_for(&self, binding: &TargetBinding) -> Result<&HostTarget, NodeError> {
         self.targets
             .get(&binding.target)
-            .filter(|target| target.binding == *binding)
+            .filter(|target| target.serves(binding))
             .ok_or_else(|| {
                 NodeError::Configuration(format!(
                     "durable target `{}` no longer matches node configuration",
@@ -280,13 +291,24 @@ impl NodeRuntime {
 
     async fn execute(self: Arc<Self>, record: ExecutionRecord) -> Result<(), NodeError> {
         let command_id = record.command.command_id;
-        let target = self.target_for(&record.binding)?.clone();
+        let agent_id = self.target_for(&record.binding)?.agent_id;
+        node_log::event(
+            "info",
+            "execution_started",
+            &serde_json::json!({
+                "task_id": record.task_id,
+                "command_id": command_id,
+                "target": record.binding.target,
+                "agent_id": record.binding.agent_id,
+                "session_id": record.binding.session_id,
+            }),
+        );
         let session = match self
             .host
             .ensure_agent_session(
-                target.agent_id,
-                &target.binding.workspace,
-                target.binding.session_id,
+                agent_id,
+                &record.binding.workspace,
+                record.binding.session_id,
             )
             .await
         {
@@ -460,15 +482,8 @@ fn validate_targets(targets: Vec<HostTarget>) -> Result<BTreeMap<String, HostTar
         ));
     }
     let mut by_name = BTreeMap::new();
-    let mut sessions = HashSet::new();
     for target in targets {
-        if !sessions.insert(target.binding.session_id) {
-            return Err(NodeError::Configuration(format!(
-                "Host session {} is configured for more than one target",
-                target.binding.session_id
-            )));
-        }
-        let name = target.binding.target.clone();
+        let name = target.target.clone();
         if by_name.insert(name.clone(), target).is_some() {
             return Err(NodeError::Configuration(format!(
                 "Host target `{name}` is configured more than once"

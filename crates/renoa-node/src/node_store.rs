@@ -68,9 +68,11 @@ impl NodeStore {
         })
     }
 
+    /// Refuses startup when a durable task binding is no longer served by the
+    /// current configuration.
     pub(crate) fn validate_configured_targets(
         &self,
-        targets: &[TargetBinding],
+        serves: impl Fn(&TargetBinding) -> bool,
     ) -> Result<(), NodeStoreError> {
         let connection = open_connection(&self.path)?;
         let mut statement = connection.prepare(
@@ -93,7 +95,7 @@ impl NodeStore {
                 session_id: parse_uuid(&session_id, "session")?,
                 workspace: PathBuf::from(workspace),
             };
-            if !targets.iter().any(|configured| configured == &stored) {
+            if !serves(&stored) {
                 return Err(NodeStoreError::Invalid(format!(
                     "durable task target `{target}` does not match current node configuration"
                 )));
@@ -120,7 +122,7 @@ impl NodeStore {
                     binding.target
                 )));
             }
-            ensure_task_binding(&transaction, task_id, &binding)?;
+            let binding = ensure_task_binding(&transaction, task_id, &binding)?;
             if let Some(existing) = load_record(&transaction, command.command_id)? {
                 if existing.task_id != task_id
                     || existing.command != command
@@ -422,3 +424,6 @@ pub(super) fn to_i64(value: u64, name: &str) -> Result<i64, NodeStoreError> {
     i64::try_from(value)
         .map_err(|_| NodeStoreError::Invalid(format!("{name} exceeds SQLite i64 range")))
 }
+
+#[cfg(test)]
+mod tests;

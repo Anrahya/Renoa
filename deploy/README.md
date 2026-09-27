@@ -325,7 +325,7 @@ Host configuration, not RCP wire data:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "endpoint": "wss://renoa.live/connect",
   "model": {
     "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
@@ -343,7 +343,6 @@ Host configuration, not RCP wire data:
     {
       "target": "workspace:example",
       "agentId": "<provisioned-agent-uuid>",
-      "sessionId": "<stable-session-uuid>",
       "workspace": "/srv/renoa/node-workspaces/example"
     }
   ]
@@ -352,8 +351,16 @@ Host configuration, not RCP wire data:
 
 Every configured adapter and model store must already exist at its absolute
 path. Omit any optional adapter field that this Host does not use. Each target
-binds one provisioned agent to one stable Host session and canonical workspace;
-changing a durable binding fails closed.
+names one provisioned agent and canonical workspace. The node advertises every
+target to the coordinator, so the node's owner can open tasks on it at runtime.
+Each task receives its own Host session the first time it executes; the node
+ledger records that session and keeps it for the task's later commands. A
+configuration that no longer serves a recorded task's target, agent, or
+workspace fails closed.
+
+Schema 3 removed each target's `sessionId`. Upgrading from schema 2 means
+setting `schemaVersion` to 3 and deleting every `sessionId`; tasks the ledger
+already bound keep their recorded sessions.
 
 The daemon opens its own private Host data root at `<state-directory>/host`
 (`/var/lib/renoa-node/host` for the supplied unit), separate from the shared

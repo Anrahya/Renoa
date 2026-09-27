@@ -252,7 +252,7 @@ async fn handle_execute(
     task_id: TaskId,
     command: CommandEnvelope,
 ) -> Result<(), NodeError> {
-    let binding = runtime.binding_for(&command.target)?;
+    let binding = runtime.proposed_binding(&command.target)?;
     let command_id = command.command_id;
     runtime.state.admit(task_id, command, binding).await?;
     runtime.state.require_admission_ack(command_id).await?;

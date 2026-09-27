@@ -2,17 +2,17 @@ mod support;
 
 use std::time::Duration;
 
-use renoa_control::TaskEventKind;
+use renoa_control::{TargetSummary, TaskEventKind};
 use renoa_kernel::AgentId;
 use renoa_node::{HostTarget, NodeError, RenoaNode};
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef, TargetRef};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 use support::{
     CuttableProxy, HostFixture, TestSystem, attach, attach_after, collect_through_terminal,
-    collect_through_turn_started, submit_when_node_is_online, wait_for_path,
+    collect_through_turn_started, open_task, submit_when_node_is_online, wait_for_path,
+    wait_for_targets,
 };
 
 #[tokio::test]
@@ -85,18 +85,60 @@ async fn real_alpha_tool_turn_crosses_the_durable_rcp_bridge() {
 }
 
 #[tokio::test]
+async fn tasks_opened_on_one_advertised_target_receive_separate_host_sessions() {
+    timeout(Duration::from_secs(10), async {
+        let system = TestSystem::start().await;
+        let fixture = HostFixture::install(&system).await;
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            system.files.path().join("node.sqlite"),
+            fixture.host(),
+            vec![fixture.target()],
+        )
+        .await
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+        let mut surface = system.connect_surface().await;
+
+        assert_eq!(
+            wait_for_targets(&mut surface, 1).await,
+            vec![TargetSummary {
+                node_id: system.node_id(),
+                target: system.target.clone(),
+            }]
+        );
+        let first = open_task(&mut surface, system.node_id(), system.target.clone()).await;
+        let second = open_task(&mut surface, system.node_id(), system.target.clone()).await;
+        for task in [first, second] {
+            attach(&mut surface, task).await;
+            submit_when_node_is_online(&mut surface, task, CommandId::new(), "Read proof.").await;
+            collect_through_terminal(&mut surface).await;
+        }
+
+        assert_ne!(fixture.session_for(first), fixture.session_for(second));
+        assert_eq!(fixture.operation_count_for(first), 1);
+        assert_eq!(fixture.operation_count_for(second), 1);
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("runtime task opening test timed out");
+}
+
+#[tokio::test]
 async fn unprovisioned_agent_refuses_node_startup_with_the_provision_command() {
     timeout(Duration::from_secs(10), async {
         let system = TestSystem::start().await;
         let fixture = HostFixture::install(&system).await;
         let missing_agent = AgentId::new();
-        let target = HostTarget::new(
-            &system.target,
-            missing_agent,
-            fixture.session_id,
-            &fixture.workspace,
-        )
-        .expect("configure target for an unprovisioned Host agent");
+        let target = HostTarget::new(&system.target, missing_agent, &fixture.workspace)
+            .expect("configure target for an unprovisioned Host agent");
 
         let Err(error) = RenoaNode::open(
             system.url.clone(),
@@ -412,7 +454,6 @@ async fn independent_host_sessions_execute_in_parallel() {
         let second_target_ref = TargetRef::new("workspace:second");
         let second_task = system.create_task(second_target_ref.clone()).await;
         let second_workspace = fixture.additional_workspace();
-        let second_session = Uuid::new_v4();
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
@@ -421,12 +462,7 @@ async fn independent_host_sessions_execute_in_parallel() {
             fixture.host(),
             vec![
                 fixture.target(),
-                HostFixture::target_for(
-                    &second_target_ref,
-                    fixture.agent_id,
-                    second_session,
-                    &second_workspace,
-                ),
+                HostFixture::target_for(&second_target_ref, fixture.agent_id, &second_workspace),
             ],
         )
         .await
@@ -466,7 +502,7 @@ async fn independent_host_sessions_execute_in_parallel() {
         collect_through_terminal(&mut first_surface).await;
         collect_through_terminal(&mut second_surface).await;
         assert_eq!(fixture.operation_count(), 1);
-        assert_eq!(fixture.operation_count_for(second_session), 1);
+        assert_eq!(fixture.operation_count_for(second_task), 1);
 
         node_shutdown.cancel();
         node_task

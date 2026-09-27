@@ -7,8 +7,8 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
-    PeerIdentity, ServerMessage, TaskEvent, TaskEventKind, TaskId, TaskSpec,
+    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
+    NodeId, PeerIdentity, ServerMessage, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSpec,
 };
 use renoa_kernel::{AgentId, Kernel, SessionId};
 use renoa_local::{
@@ -87,11 +87,22 @@ impl TestSystem {
         }
     }
 
+    /// Enrolls the system's node with the system's principal as its owner.
     pub(crate) async fn enroll_node(&self) -> DeviceCredentials {
-        self.enroll(PeerIdentity::Node {
-            node_id: self.node_id,
-        })
-        .await
+        let token = self
+            .coordinator
+            .create_node_enrollment(
+                self.node_id,
+                self.principal_id,
+                SystemTime::now() + Duration::from_mins(1),
+            )
+            .await
+            .expect("create node enrollment");
+        self.claim(token).await
+    }
+
+    pub(crate) const fn node_id(&self) -> NodeId {
+        self.node_id
     }
 
     pub(crate) async fn create_task(&self, target: TargetRef) -> TaskId {
@@ -159,6 +170,10 @@ impl TestSystem {
             .create_enrollment(peer, SystemTime::now() + Duration::from_mins(1))
             .await
             .expect("create enrollment");
+        self.claim(token).await
+    }
+
+    async fn claim(&self, token: EnrollmentToken) -> DeviceCredentials {
         let (mut socket, _) = connect_async(&self.url).await.expect("connect enrollment");
         send(
             &mut socket,
@@ -182,7 +197,8 @@ pub(crate) struct HostFixture {
     bridge: PathBuf,
     credentials: PathBuf,
     target: TargetRef,
-    pub(crate) session_id: Uuid,
+    task_id: TaskId,
+    ledger: PathBuf,
 }
 
 impl HostFixture {
@@ -203,7 +219,8 @@ impl HostFixture {
             bridge,
             credentials,
             target: system.target.clone(),
-            session_id: Uuid::new_v4(),
+            task_id: system.task_id,
+            ledger: system.files.path().join("node.sqlite"),
         }
     }
 
@@ -225,21 +242,15 @@ impl HostFixture {
     }
 
     pub(crate) fn target(&self) -> HostTarget {
-        Self::target_for(
-            &self.target,
-            self.agent_id,
-            self.session_id,
-            &self.workspace,
-        )
+        Self::target_for(&self.target, self.agent_id, &self.workspace)
     }
 
     pub(crate) fn target_for(
         target: &TargetRef,
         agent_id: AgentId,
-        session_id: Uuid,
         workspace: &std::path::Path,
     ) -> HostTarget {
-        HostTarget::new(target, agent_id, session_id, workspace).expect("configure Host target")
+        HostTarget::new(target, agent_id, workspace).expect("configure Host target")
     }
 
     pub(crate) fn additional_workspace(&self) -> PathBuf {
@@ -261,10 +272,24 @@ impl HostFixture {
     }
 
     pub(crate) fn operation_count(&self) -> usize {
-        self.operation_count_for(self.session_id)
+        self.operation_count_for(self.task_id)
     }
 
-    pub(crate) fn operation_count_for(&self, session_id: Uuid) -> usize {
+    /// The Host session the node ledger recorded for the task's first command.
+    pub(crate) fn session_for(&self, task_id: TaskId) -> Uuid {
+        let session_id: String = rusqlite::Connection::open(&self.ledger)
+            .expect("open node ledger")
+            .query_row(
+                "SELECT session_id FROM host_node_tasks WHERE task_id = ?1",
+                [task_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("read the task's Host session");
+        session_id.parse().expect("stored session id")
+    }
+
+    pub(crate) fn operation_count_for(&self, task_id: TaskId) -> usize {
+        let session_id = self.session_for(task_id);
         let session = SessionId::from_uuid(session_id);
         Kernel::open(
             self.data
@@ -439,6 +464,43 @@ pub(crate) async fn attach_after(
     };
     assert_eq!(attached_task, task_id);
     through_sequence
+}
+
+/// Polls until the node's advertisement reaches the coordinator.
+pub(crate) async fn wait_for_targets(surface: &mut Socket, expected: usize) -> Vec<TargetSummary> {
+    for request_id in 900..1000 {
+        send(surface, &ClientMessage::ListTargets { request_id }).await;
+        let ServerMessage::TargetList { targets, .. } = receive(surface).await else {
+            panic!("expected a target list");
+        };
+        if targets.len() == expected {
+            return targets;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("expected {expected} advertised targets");
+}
+
+pub(crate) async fn open_task(surface: &mut Socket, node_id: NodeId, target: TargetRef) -> TaskId {
+    let task_id = TaskId::new();
+    send(
+        surface,
+        &ClientMessage::OpenTask {
+            request_id: 800,
+            task_id,
+            node_id,
+            target,
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(surface).await,
+        ServerMessage::TaskOpened {
+            request_id: 800,
+            task_id,
+        }
+    );
+    task_id
 }
 
 pub(crate) async fn submit_when_node_is_online(

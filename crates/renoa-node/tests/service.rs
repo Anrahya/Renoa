@@ -91,7 +91,7 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
         write_private(
             &config,
             &serde_json::to_vec(&json!({
-                "schemaVersion": 2,
+                "schemaVersion": 3,
                 "endpoint": system.url,
                 "model": {
                     "bridge": model_bridge,
@@ -103,7 +103,6 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
                 "targets": [{
                     "target": system.target.as_str(),
                     "agentId": fixture.agent_id.to_string(),
-                    "sessionId": fixture.session_id,
                     "workspace": fixture.workspace
                 }]
             }))
