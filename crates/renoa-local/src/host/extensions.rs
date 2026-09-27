@@ -84,3 +84,42 @@ impl LocalHost {
             .await?)
     }
 }
+
+impl LocalHost {
+    /// Executes the canonical plugin API for one exact agent. The caller supplies
+    /// its workspace and a stable operation identity for resumable authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, source, authorization, catalog, or storage failures.
+    pub async fn manage_plugin(
+        &self,
+        agent_id: &AgentId,
+        workspace: &Path,
+        request: crate::PluginRequest,
+        invocation: crate::PluginInvocation<'_>,
+    ) -> Result<crate::PluginOutcome, LocalHostError> {
+        self.require_agent(*agent_id).await?;
+        Ok(self
+            .config
+            .plugins
+            .invoke(agent_id, workspace, request, invocation)
+            .await?)
+    }
+}
+
+impl LocalHost {
+    /// Records reviewed origins for a provider family. Existing origins cannot
+    /// move to another family. Package metadata cannot supply this approval.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid rule, conflicting ownership, or catalog storage failures.
+    pub fn define_plugin_provider_family(
+        &self,
+        rule: &crate::PluginProviderFamily,
+    ) -> Result<(), LocalHostError> {
+        crate::plugins::coherence::define(&self.config.database, rule)?;
+        Ok(())
+    }
+}

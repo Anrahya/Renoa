@@ -12,10 +12,16 @@ impl PluginManager {
         source: impl Into<PathBuf>,
     ) -> Result<PluginInspection, PluginError> {
         let source = source.into();
-        tokio::task::spawn_blocking(move || {
-            super::super::inspect::inspect(&source).map(|item| item.inspection)
-        })
-        .await?
+        Ok(self
+            .capture_source(
+                super::super::api::PluginSource::Package {
+                    source_path: source,
+                },
+                std::path::Path::new(""),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await?
+            .inspection)
     }
 
     pub(crate) async fn install(
@@ -25,11 +31,15 @@ impl PluginManager {
     ) -> Result<InstalledPlugin, PluginError> {
         let source = source.into();
         let expected_digest = expected_digest.into();
-        let store = self.store.clone();
-        let installed =
-            tokio::task::spawn_blocking(move || store.install(&source, &expected_digest)).await??;
-        self.synchronize_installed(&installed).await?;
-        Ok(installed)
+        self.install_source(
+            super::super::api::PluginSource::Package {
+                source_path: source,
+            },
+            std::path::Path::new(""),
+            &expected_digest,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
     }
 
     pub(crate) async fn list(&self) -> Result<Vec<InstalledPlugin>, PluginError> {
@@ -58,7 +68,7 @@ impl PluginManager {
             .map_err(SharedRegistryError::into_plugin)
     }
 
-    pub(super) async fn synchronize_installed(
+    pub(crate) async fn synchronize_installed(
         &self,
         installed: &InstalledPlugin,
     ) -> Result<(), PluginError> {
@@ -82,13 +92,11 @@ impl PluginManager {
         self.synchronize_shared().await
     }
 
-    pub(super) async fn load_available(
+    pub(crate) async fn load_available(
         &self,
         package_digest: &str,
     ) -> Result<InstalledPlugin, PluginError> {
-        let store = self.store.clone();
-        let digest = package_digest.to_owned();
-        match tokio::task::spawn_blocking(move || store.load(&digest)).await? {
+        match self.load_local(package_digest).await {
             Ok(plugin) => Ok(plugin),
             Err(PluginError::NotFound(_)) if self.shared_registry.is_some() => {
                 self.synchronize_shared().await?;
@@ -98,5 +106,14 @@ impl PluginManager {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub(crate) async fn load_local(
+        &self,
+        package_digest: &str,
+    ) -> Result<InstalledPlugin, PluginError> {
+        let store = self.store.clone();
+        let digest = package_digest.to_owned();
+        tokio::task::spawn_blocking(move || store.load_or_recover(&digest)).await?
     }
 }

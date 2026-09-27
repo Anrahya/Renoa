@@ -26,8 +26,8 @@ pub(crate) use auth::{
 pub(crate) use digest::hex_sha256;
 pub(crate) use headers::McpRequestHeaders;
 pub(crate) use oauth::{
-    MAX_OAUTH_SCOPE_BYTES, McpAuthorizationResolver, McpOAuthAuthorizationRequest,
-    operation_id as oauth_operation_id, validate_oauth_scope,
+    McpAuthorizationResolver, McpOAuthAuthorizationRequest, operation_id as oauth_operation_id,
+    validate_oauth_scope,
 };
 
 pub use error::{
@@ -39,7 +39,8 @@ pub(crate) use process::{discover, discover_cancellable};
 pub(crate) use registry::{
     McpToolReference, McpToolSummary, SCHEMA_LOOKUP_OUTPUT_BYTES, SEARCH_RESULT_LIMIT, rank_tools,
 };
-pub(crate) use store::{McpCatalogStore, McpConnectionCandidate, McpConnectionStatus};
+pub use store::McpConnectionStatus;
+pub(crate) use store::{McpCatalogStore, McpConnectionCandidate};
 pub(crate) use tool::{adapter_tool_error, agent_registry_bindings};
 
 const MCP_PROTOCOL_VERSION: &str = "2026-07-28";

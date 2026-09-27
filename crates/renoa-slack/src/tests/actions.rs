@@ -4,17 +4,24 @@ use super::*;
 use crate::{actions::Actions, events::Progress};
 
 fn setup_event(stage: &str) -> AgentEvent {
-    let (status, key, url) = if stage == "credentials" {
-        (
-            "credential_required",
-            "setup_url",
-            "https://renoa.example/setup#secret-browser-key",
-        )
+    let progress = if stage == "credentials" {
+        renoa_local::PluginProgress::CredentialRequired(renoa_local::PluginCredentialRequired {
+            credential: "fixture".to_owned(),
+            credential_kind: renoa_local::PluginCredentialKind::OAuthClient,
+            setup_url: "https://renoa.example/setup#secret-browser-key".to_owned(),
+            expires_at_ms: i64::MAX,
+            message: "Open secure setup".to_owned(),
+        })
     } else {
-        (
-            "authorization_required",
-            "authorization_url",
-            "https://provider.example/authorize?state=private-oauth-state",
+        renoa_local::PluginProgress::AuthorizationRequired(
+            renoa_local::PluginAuthorizationRequired {
+                connection: "fixture".to_owned(),
+                display_name: None,
+                authorization_url: "https://provider.example/authorize?state=private-oauth-state"
+                    .to_owned(),
+                expires_at_ms: Some(i64::MAX),
+                message: "Open sign-in".to_owned(),
+            },
         )
     };
     AgentEvent::ToolExecutionUpdate {
@@ -27,7 +34,7 @@ fn setup_event(stage: &str) -> AgentEvent {
         },
         update: ToolOutput {
             content: vec![ContentBlock::text(
-                json!({"status":status,key:url,"expires_at_ms":i64::MAX,"credential_kind":"oauth_client"}).to_string(),
+                serde_json::to_string(&progress).expect("canonical progress event"),
             )],
             details: None,
             is_error: false,

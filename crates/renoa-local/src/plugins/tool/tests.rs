@@ -64,14 +64,14 @@ async fn extension_inventory_is_bounded_and_complete() {
     let fixture = ResearchedMcpFixture::new().await;
     let invalid_limit = fixture
         .tool
-        .list(None, super::inventory::MAX_LIST_LIMIT + 1)
+        .list(None, crate::plugins::api::MAX_PLUGIN_PAGE + 1)
         .await
         .expect_err("the runtime must enforce the schema's page bound");
     assert_eq!(invalid_limit.code(), ToolErrorCode::InvalidInput);
 
     let listed = call(&fixture.tool, json!({"action": "list", "limit": 2})).await;
     assert_eq!(listed["returned"], 2);
-    assert_eq!(listed["total"], 3);
+    assert_eq!(listed["total"], 4);
     let cursor = listed["next_cursor"]
         .as_str()
         .expect("a partial inventory page has a cursor");
@@ -83,7 +83,7 @@ async fn extension_inventory_is_bounded_and_complete() {
         json!({"action": "list", "cursor": cursor, "limit": 2}),
     )
     .await;
-    assert_eq!(listed["returned"], 1);
+    assert_eq!(listed["returned"], 2);
     assert!(listed.get("next_cursor").is_none());
     let connection = inventory_item(&listed, "connection");
     assert_eq!(connection["connection"], fixture.connection);

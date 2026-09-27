@@ -233,3 +233,98 @@ async fn executable_files_survive_the_shared_package_round_trip() {
     assert_ne!(mode & 0o111, 0);
     server.stop().await;
 }
+
+#[tokio::test]
+async fn receiving_host_applies_its_own_provider_rules_and_retries_the_same_revision() {
+    use renoa_local::PluginProviderFamily;
+    let root = tempfile::tempdir().unwrap();
+    let server = RunningRegistry::start(&root.path().join("registry")).await;
+    let producer = local_host(root.path().join("producer"), server.origin());
+    let consumer_data = root.path().join("consumer");
+    let consumer = local_host(consumer_data.clone(), server.origin());
+    consumer.synchronize_shared_plugins().await.unwrap();
+    let rule = PluginProviderFamily {
+        family: "cloud".into(),
+        origins: vec![
+            "https://api.cloud.example".into(),
+            "https://radar.cloud.example".into(),
+        ],
+    };
+    producer.define_plugin_provider_family(&rule).unwrap();
+    let source = root.path().join("source");
+    write_named_plugin(&source, "cloud");
+    fs::write(source.join("mcp.json"),serde_json::json!({"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json","mcpServers":{
+        "api":{"type":"streamable-http","url":"https://api.cloud.example/mcp"},
+        "radar":{"type":"streamable-http","url":"https://radar.cloud.example/mcp"}
+    }}).to_string()).unwrap();
+    let inspected = producer.inspect_plugin(&source).await.unwrap();
+    producer
+        .install_plugin(&source, inspected.digest())
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        consumer
+            .synchronize_shared_plugins()
+            .await
+            .expect_err("producer review is not consumer review");
+        assert!(
+            !consumer_data
+                .join("plugins")
+                .join(inspected.digest())
+                .exists()
+        );
+        let connection = rusqlite::Connection::open(consumer_data.join("host.sqlite3")).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT applied_revision FROM shared_plugin_registry_state",
+                    [],
+                    |r| r.get::<_, u32>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM installed_plugins", [], |r| r
+                    .get::<_, u32>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM host_plugin_provider_families",
+                    [],
+                    |r| r.get::<_, u32>(0)
+                )
+                .unwrap(),
+            0
+        );
+    }
+    consumer.define_plugin_provider_family(&rule).unwrap();
+    consumer
+        .synchronize_shared_plugins()
+        .await
+        .expect("same registry revision remains available for retry");
+    assert_eq!(consumer.installed_plugins().await.unwrap().len(), 1);
+    let connection = rusqlite::Connection::open(consumer_data.join("host.sqlite3")).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT applied_revision FROM shared_plugin_registry_state",
+                [],
+                |r| r.get::<_, u32>(0)
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM host_agent_plugins", [], |r| r
+                .get::<_, u32>(0))
+            .unwrap(),
+        0
+    );
+    server.stop().await;
+}

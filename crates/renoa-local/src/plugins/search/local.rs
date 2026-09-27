@@ -39,11 +39,18 @@ pub(super) struct PluginCard {
     catalog_tool_count: usize,
     credential_configured_connections: usize,
     active_skills: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plugin_id: Option<String>,
+    enabled_for_agent: bool,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum PluginFact {
+    Activation {
+        #[serde(flatten)]
+        activation: crate::plugins::PluginActivation,
+    },
     McpServer {
         server: String,
     },
@@ -127,11 +134,12 @@ impl Inventory {
         packages: &PluginListReport,
         connections: &[McpConnectionStatus],
         skills: &[SkillSourceReport],
+        activations: &[crate::plugins::PluginActivation],
         tools: Vec<McpToolSummary>,
         shared_refresh_unavailable: bool,
     ) -> Self {
         let (mut records, package_integrations) =
-            Self::package_records(packages, connections, skills, &tools);
+            Self::package_records(packages, connections, skills, activations, &tools);
         records.extend(Self::direct_records(
             connections,
             &tools,
@@ -154,14 +162,11 @@ impl Inventory {
         packages: &PluginListReport,
         connections: &[McpConnectionStatus],
         skills: &[SkillSourceReport],
+        activations: &[crate::plugins::PluginActivation],
         tools: &[McpToolSummary],
     ) -> (Vec<CardRecord>, HashSet<String>) {
         let mut records = Vec::new();
         let mut package_integrations = HashSet::new();
-        let mut name_counts = HashMap::<&str, usize>::new();
-        for package in packages.installed() {
-            *name_counts.entry(package.metadata().name()).or_default() += 1;
-        }
         for package in packages.installed() {
             let mut facts = Vec::new();
             let integrations = package
@@ -183,16 +188,15 @@ impl Inventory {
                 status: (*status).clone(),
                 credential_configured: status.credential_configured(),
             }));
-            let active_skills = if name_counts[package.metadata().name()] == 1 {
-                let source = format!("agent-plugin:{}", package.metadata().name());
-                skills
-                    .iter()
-                    .find(|report| report.source() == source)
-                    .map(|report| report.components().accepted().to_vec())
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
+            let activation = activations
+                .iter()
+                .find(|activation| activation.package_digest == package.digest());
+            if let Some(activation) = activation {
+                facts.push(PluginFact::Activation {
+                    activation: activation.clone(),
+                });
+            }
+            let active_skills = activated_skills(activation, skills);
             facts.extend(
                 active_skills
                     .iter()
@@ -225,6 +229,8 @@ impl Inventory {
                     .filter(|status| status.credential_configured())
                     .count(),
                 active_skills: active_skills.len(),
+                plugin_id: activation.map(|activation| activation.plugin_id.clone()),
+                enabled_for_agent: activation.is_some_and(|activation| activation.enabled),
             };
             let mut search_text = format!(
                 "{} {} {} {}",
@@ -298,6 +304,8 @@ impl Inventory {
                     .filter(|status| status.credential_configured())
                     .count(),
                 active_skills: 0,
+                plugin_id: None,
+                enabled_for_agent: linked.iter().any(|status| status.enabled_for_agent()),
             };
             let mut search_text = integration.to_owned();
             for status in &linked {
@@ -457,3 +465,17 @@ fn compact(value: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+fn activated_skills(
+    activation: Option<&crate::plugins::PluginActivation>,
+    skills: &[SkillSourceReport],
+) -> Vec<String> {
+    activation
+        .filter(|activation| activation.enabled)
+        .and_then(|activation| {
+            let source = format!("agent-plugin:{}", activation.plugin_id);
+            skills.iter().find(|report| report.source() == source)
+        })
+        .map(|report| report.components().accepted().to_vec())
+        .unwrap_or_default()
+}

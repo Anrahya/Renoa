@@ -9,7 +9,7 @@ use std::{
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-pub(crate) use publish::{initialize_store, publish};
+pub(crate) use publish::{initialize_store, publish, remove_staging as remove_owned};
 
 #[derive(Clone, Copy)]
 pub(crate) struct TreeLimits {

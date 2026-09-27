@@ -8,21 +8,23 @@ use tokio_util::sync::CancellationToken;
 
 mod actions;
 mod contract;
-mod inventory;
 pub(super) mod output;
 #[cfg(test)]
 mod tests;
 
-use super::{ExtensionAddRequest, ExtensionConnectionRequest, PluginCredential, PluginManager};
+use super::{
+    PluginManager,
+    api::{PLUGIN_API_REVISION, PluginInvocation, PluginRequest},
+};
 use crate::mcp::oauth_operation_id;
-use actions::{ConnectRequest, ExtensionInvocation};
-use contract::{AddSourceInput, CredentialInput, ManageInput, manage_tool_spec, resolve_source};
-use inventory::{ExtensionListPage, MAX_LIST_LIMIT};
-use output::{json_output, plugin_error};
+
+use contract::manage_tool_spec;
+
+use output::{plugin_error, remote_mcp_error_output};
 use renoa_kernel::AgentId;
 
 const TOOL_NAME: &str = crate::capabilities::PLUGIN_MANAGE;
-const BINDING_REVISION: &str = "renoa-plugin-manager-v1";
+const BINDING_REVISION: &str = PLUGIN_API_REVISION;
 
 pub(crate) fn agent_plugin_binding(
     agent_id: AgentId,
@@ -83,7 +85,6 @@ impl Tool for ManageTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
     }
-
     fn execute(
         &self,
         call: ToolCall,
@@ -98,188 +99,63 @@ impl Tool for ManageTool {
                 )));
             }
             let operation_id = oauth_operation_id(self.session_id, self.command_id, &call.id);
-            let input: ManageInput = serde_json::from_value(call.arguments).map_err(|error| {
+            let input: PluginRequest = serde_json::from_value(call.arguments).map_err(|error| {
                 ToolError::invalid_input(format!(
                     "{TOOL_NAME} arguments are invalid for the selected action: {error}"
                 ))
             })?;
-            require_active(&cancellation)?;
-            self.execute_input(input, &operation_id, cancellation, updates)
+            self.invoke(input, &operation_id, cancellation, Some(&updates))
                 .await
         })
     }
 }
 
 impl ManageTool {
-    async fn execute_input(
+    async fn invoke(
         &self,
-        input: ManageInput,
+        request: PluginRequest,
         operation_id: &str,
         cancellation: CancellationToken,
-        updates: ToolUpdates,
+        updates: Option<&ToolUpdates>,
     ) -> Result<ToolOutput, ToolError> {
-        match input {
-            ManageInput::Add {
-                source,
-                server,
-                connection,
-                credential,
-                replace,
-            } => {
-                self.add_input(
-                    source,
-                    server,
-                    connection,
-                    credential,
-                    replace,
-                    ExtensionInvocation::new(operation_id, cancellation, &updates),
-                )
-                .await
-            }
-            ManageInput::Inspect { source_path } => {
-                let source = resolve_source(&self.workspace, source_path)?;
-                let inspection = self
-                    .manager
-                    .inspect(source)
-                    .await
-                    .map_err(|error| plugin_error(error, false))?;
-                json_output(&inspection)
-            }
-            ManageInput::Install {
-                source_path,
-                expected_digest,
-            } => {
-                let source = resolve_source(&self.workspace, source_path)?;
-                let installed = self
-                    .manager
-                    .install(source, expected_digest)
-                    .await
-                    .map_err(|error| plugin_error(error, true))?;
-                json_output(&installed)
-            }
-            ManageInput::List { cursor, limit } => self.list(cursor.as_deref(), limit).await,
-            ManageInput::Connect {
-                package_digest,
-                server,
-                connection,
-                credential,
-                replace,
-                restart,
-                required_scope,
-            } => {
-                actions::connect(
-                    self,
-                    ConnectRequest {
-                        package_digest,
-                        server,
-                        connection,
-                        credential: credential.map_or(PluginCredential::None, Into::into),
-                        replace,
-                        restart,
-                        required_scope,
-                    },
-                    ExtensionInvocation::new(operation_id, cancellation, &updates),
-                )
-                .await
-            }
-            ManageInput::Authorize {
-                connection,
-                restart,
-                required_scope,
-            } => {
-                actions::authorize(
-                    self,
-                    connection,
-                    restart,
-                    required_scope,
-                    ExtensionInvocation::new(operation_id, cancellation, &updates),
-                )
-                .await
-            }
-            ManageInput::Disconnect { connection } => self.disconnect(connection).await,
-            ManageInput::Enable { connection } => self.enable(connection).await,
+        let mutating = !matches!(
+            request,
+            PluginRequest::Inspect { .. } | PluginRequest::List { .. }
+        );
+        match self
+            .manager
+            .invoke(
+                &self.agent_id,
+                &self.workspace,
+                request,
+                PluginInvocation {
+                    operation_id,
+                    updates,
+                    cancellation,
+                },
+            )
+            .await
+        {
+            Ok(outcome) => actions::render(outcome),
+            Err(super::PluginError::Mcp(crate::mcp::McpHostError::Adapter(
+                crate::mcp::McpAdapterError::Remote(remote),
+            ))) => remote_mcp_error_output(&remote),
+            Err(error) => Err(plugin_error(error, mutating)),
         }
     }
 
-    async fn add_input(
-        &self,
-        source: AddSourceInput,
-        server: Option<String>,
-        connection: Option<String>,
-        credential: Option<CredentialInput>,
-        replace: bool,
-        invocation: ExtensionInvocation<'_>,
-    ) -> Result<ToolOutput, ToolError> {
-        let source = source.into_source(&self.workspace)?;
-        let connection =
-            if server.is_some() || connection.is_some() || credential.is_some() || replace {
-                Some(ExtensionConnectionRequest::new(
-                    connection,
-                    server,
-                    credential.map_or(PluginCredential::None, Into::into),
-                    replace,
-                ))
-            } else {
-                None
-            };
-        actions::add(
-            self,
-            ExtensionAddRequest::new(source, connection),
-            invocation,
+    #[cfg(test)]
+    async fn list(&self, cursor: Option<&str>, limit: usize) -> Result<ToolOutput, ToolError> {
+        self.invoke(
+            PluginRequest::List {
+                cursor: cursor.map(str::to_owned),
+                limit,
+            },
+            "fixture-list",
+            CancellationToken::new(),
+            None,
         )
         .await
-    }
-
-    async fn list(&self, cursor: Option<&str>, limit: usize) -> Result<ToolOutput, ToolError> {
-        if !(1..=MAX_LIST_LIMIT).contains(&limit) {
-            return Err(ToolError::invalid_input(format!(
-                "list limit must be between 1 and {MAX_LIST_LIMIT}"
-            )));
-        }
-        let packages = self
-            .manager
-            .list_report()
-            .await
-            .map_err(|error| plugin_error(error, false))?;
-        let connections = self
-            .manager
-            .connection_statuses(&self.agent_id)
-            .await
-            .map_err(|error| plugin_error(error, false))?;
-        let skill_sources = self
-            .manager
-            .skill_source_reports(&self.agent_id)
-            .await
-            .map_err(|error| plugin_error(error, false))?;
-        let page = ExtensionListPage::new(&packages, &connections, &skill_sources, cursor, limit)?;
-        json_output(&page)
-    }
-
-    async fn disconnect(&self, connection: String) -> Result<ToolOutput, ToolError> {
-        let catalog_retained = self
-            .manager
-            .disconnect_agent(&self.agent_id, connection.clone())
-            .await
-            .map_err(|error| plugin_error(error, true))?;
-        json_output(&DisconnectedOutput {
-            status: "disconnected",
-            connection,
-            catalog_retained,
-            enabled_for_agent: false,
-        })
-    }
-
-    async fn enable(&self, connection: String) -> Result<ToolOutput, ToolError> {
-        self.manager
-            .enable_agent(&self.agent_id, connection.clone())
-            .await
-            .map_err(|error| plugin_error(error, true))?;
-        json_output(&EnabledOutput {
-            status: "enabled",
-            connection,
-            catalog_retained: true,
-            enabled_for_agent: true,
-        })
     }
 }
 
@@ -295,6 +171,7 @@ struct ConnectedOutput<'a> {
     rejected_tools: usize,
     notices: &'a [super::PluginNotice],
     skills: &'a crate::skills::SkillComponentReport,
+    activation: &'a crate::plugins::PluginActivation,
 }
 
 #[derive(Serialize)]
@@ -306,6 +183,7 @@ struct InstalledOutput<'a> {
     mcp_servers: &'a [super::PluginMcpServer],
     notices: &'a [super::PluginNotice],
     skills: &'a crate::skills::SkillComponentReport,
+    activation: &'a crate::plugins::PluginActivation,
 }
 
 #[derive(Serialize)]
@@ -342,15 +220,4 @@ struct EnabledOutput {
     connection: String,
     catalog_retained: bool,
     enabled_for_agent: bool,
-}
-
-fn require_active(cancellation: &CancellationToken) -> Result<(), ToolError> {
-    if cancellation.is_cancelled() {
-        Err(ToolError::cancelled(
-            "plugin management was cancelled",
-            false,
-        ))
-    } else {
-        Ok(())
-    }
 }

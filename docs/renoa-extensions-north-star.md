@@ -156,7 +156,7 @@ for GitHub Apps and Actions, not an MCP catalog. It may become a replaceable
 research source when Renoa supports those component types, but it does not feed
 the implemented MCP Registry adapter or bypass package and connection checks.
 
-The implemented management tool exposes read-only `search` and exact `lookup`
+The implemented `plugin_search` exposes read-only `search` and exact `lookup`
 through a replaceable official MCP Registry adapter. Renoa is the downstream
 normalization layer the Registry expects: it normalizes a short human query,
 requests latest versions with bounded cursor pagination, filters broad fallback
@@ -170,18 +170,144 @@ publisher namespace. It does not verify provider endorsement, metadata
 accuracy, server safety, or endpoint behavior. Publisher descriptions remain
 explicitly named publisher data. Registry package declarations are reported as
 unsupported rather than executed, legacy SSE and endpoint templates are
-blocked, and secret header values are never copied. The management tool accepts
+blocked, and secret header values are never copied. Plugin management accepts
 no Registry record as an `add` source. After lookup, the agent verifies the
 endpoint and authentication against the provider's official HTTPS
 documentation, then submits one independently researched typed MCP definition.
-The other `add` source is a local Agent Plugins directory bound to the digest
-returned by `inspect`. Both converge on the same immutable package store and
-component loaders. The digest requirement prevents a crash replay from
-observing different bytes at the same mutable path. Package installation and
-skill loading happen before any MCP connection attempt. A missing credential,
-authorization failure, unsupported server choice, or unreachable endpoint
-therefore leaves the package installed and returns that exact partial state; it
-never makes the package disappear or fabricates a successful connection.
+Other sources are local Agent Plugins directories, standalone standard skills,
+public GitHub repositories pinned to a full commit SHA, and verified installed
+revisions. They converge on the same immutable package store and component
+loaders. Mutable sources require the digest returned by inspection; a retry
+verifies and reuses the published revision even if its old source disappears.
+Connection selectors, static credential references, and known catalog conflicts
+are checked before publication. After package admission, a credential,
+authorization, or discovery failure reports the retained installation separately
+from the failed connection.
+
+### Canonical Host plugin API
+
+`PluginRequest`, `PluginSource`, and `PluginAuthentication` in
+`crates/renoa-local/src/plugins/api.rs` own the lifecycle input contract.
+`LocalHost::manage_plugin` binds it to an exact agent, workspace, stable operation
+identity, cancellation token, and progress channel. The `plugin_manage` tool
+calls that same dispatcher. Typed `PluginOutcome` results distinguish inspection,
+installation, skill binding, catalog discovery, and connection failure. Host
+inventory pages expose typed items and an opaque continuation cursor.
+
+The complete API JSON Schema is derived from these types. The model receives a
+flat projection with generated action/source selector instructions listing each
+variant's required and allowed fields. Runtime decoding rejects foreign fields;
+this projection does not weaken the closed API. Its frozen binding identity is
+`renoa-plugin-api-v2`. Native tool grants are absent from the contract.
+
+| Source kind | Meaning | Admission |
+| --- | --- | --- |
+| `package` | Agent Plugins 1.0 directory | Inspect, then copy digest into the request's `expected_digest` |
+| `skill` | One standard `SKILL.md` directory | Inspect and wrap its unchanged files as one portable plugin |
+| `github` | Public `https://github.com/owner/repo`, full 40-character commit, optional relative directory | Download from GitHub codeload without redirects; inspect, then add/install exact digest |
+| `mcp` | Endpoint, public headers, name, description, verified documentation URL | Generate one portable MCP plugin; add also attempts a connection |
+| `installed` | Exact installed package digest | Add activates its skills and restores retained account selections; a new account needs connect |
+
+For example, this inspects a standalone local skill:
+
+```json
+{"action":"inspect","source":{"kind":"skill","source_path":".agents/skills/review"}}
+```
+
+The subsequent `add` passes that same source and the returned digest as the
+root-level `expected_digest`. `install` publishes library content without
+binding its skills. GitHub directories containing `plugin.json` use the package
+loader; otherwise they must be one valid standard skill directory. Skill license
+and other original metadata remain unchanged in `SKILL.md`. Import never runs
+repository code, skill scripts, or package install hooks.
+
+GitHub intake bounds compressed download bytes, decompressed bytes including
+GNU/PAX metadata, entry count, depth, and file sizes. It rejects traversal,
+duplicate archive paths, and symlinks or special files in the selected subtree;
+unrelated links outside a selected directory are not extracted. Failed or
+cancelled intake drops its owned staging directory. Local package inspection
+reports denied entries, while installation rejects symlinks, special files, and
+a directory at the fixed `mcp.json` location before publication.
+
+Host-configured no-auth and `gh` credential-reference MCP registration also
+creates a portable revision. Discovery and agent activation remain separate;
+credentials are stored outside the package. Existing direct test registrations
+are not adopted by this API.
+
+`PluginProgress` owns authorization and encrypted credential setup event shapes.
+Telegram and Slack consume those types; the existing relay still permits
+approval on another device. Discord currently discards progress events and has
+no account setup action delivery. That delivery path is tracked in
+[issue #47](https://github.com/Anrahya/Renoa/issues/47).
+
+### Agent activation and replacement
+
+The Host library holds immutable revisions. Each agent selects plugins by a
+stable `plugin_id`, initially the first selected package digest. Display names
+never merge packages: two equal-named packages keep separate identities. A
+selection records the current `package_digest` and whether it is enabled.
+`activate` imports one installed revision's skills. `add` installs and activates;
+`install` only publishes library content. Selecting an MCP connection establishes
+its package activation when absent, without importing skills; use activate/add
+to include those skills.
+
+`deactivate` stops future skill discovery and exact MCP resolution for all of
+that plugin's selected accounts. It retains their selections, catalogs, and
+credentials and can disable a package with damaged files. `enable_plugin`
+revalidates and restores the selected revision. Loaded session instructions stay
+pinned through either action; new sessions observe the current selection.
+`disconnect` and `enable` affect just one account and cannot bypass a disabled
+plugin.
+
+`replace_plugin` requires the stable identity, the new installed revision, and
+the currently selected digest. A concurrent change rejects before skill
+publication. Skill publication holds the catalog writer transaction and removes
+new targets on failure; existing immutable targets remain owned by their earlier
+publication. Replacement keeps identity and changes future discovery; it does
+not migrate accounts or credentials to a new endpoint. Every selected historical
+revision retains its identity association, so connect/activate cannot resurrect
+it as a second plugin. Explicit replacement can select an earlier revision.
+Durable operation receipts replay the original result without undoing later
+selection changes; reusing an operation identity with different fields conflicts.
+
+```json
+{"action":"replace_plugin","plugin_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","package_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expected_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+```
+
+Equal skill names in different enabled plugins keep the first binding and report
+a component rejection for the other. Enabling a previously disabled plugin
+rechecks collisions. Package ownership is verified when opening the catalog;
+wrong-owner mappings fail rather than exposing another plugin's tools.
+
+Schema 31 adds activation identities, revision associations, operation receipts,
+and verified MCP ownership. A schema 28–30 catalog with legacy plugin skill or
+MCP selections requires the explicit Host reset, because it lacks exact
+activation identities. Unselected immutable packages migrate with recomputed
+ownership but no current admission. Explicit install or activate verifies the
+retained content and local provider rules before account selection can expose it.
+Admission is a Host library fact and is recorded atomically by the canonical
+store or verified activation path; it is not copied from another Host.
+No old runtime compatibility path is added.
+
+### Provider coherence
+
+Single-server plugins and skill-only plugins need no provider rule. A package
+with multiple MCP entries requires every entry's HTTP origin to belong to one
+Host-reviewed family. Invalid and unsupported sibling entries cannot hide an
+unrelated provider; a stdio sibling cannot supply a reviewable HTTP origin.
+Cloudflare API and Radar may share a family; Drive and Figma must stay separate.
+An unreviewed package is rejected before its publication or agent activation.
+
+The Host owns `PluginProviderFamily { family, origins }` through
+`LocalHost::define_plugin_provider_family` and the daemon's optional
+`plugin_provider_families` configuration. Origins are exact canonical HTTPS
+origins (HTTP loopback is allowed for local servers), never wildcard or suffix
+matches. A reviewed origin may be added to an existing family; an origin cannot
+be reassigned. No default provider taxonomy, automatic endorsement, or removal
+API is supplied. This is explicit Host policy, not proof of corporate ownership.
+Package name, author, and extension metadata cannot create approval. GitHub,
+local, and shared-registry intake use the same check. Each receiving Host needs
+its own rules; the registry transfers neither rules nor activation state.
 
 ## Vocabulary
 
@@ -217,7 +343,7 @@ merely because it may teach an agent how to use tools.
 ### Integration
 
 A service or capability definition such as Google Drive, GitHub, or one MCP
-endpoint. A direct MCP definition may exist without a surrounding package.
+endpoint. New Host and agent MCP intake creates a surrounding package.
 
 ### Connection
 
@@ -322,7 +448,7 @@ refreshes never become active.
 A profile chooses components or connections by stable identity. The Host
 applies current scope and future policy. Small static capabilities become
 ordinary resolved bindings for the next operation. Large MCP catalogs attach
-to a fixed search/load/execute registry; only an exact loaded schema enters
+to fixed search and execution tools; only an exact requested schema enters
 history, and execution resolves its catalog-bound reference. These are two
 composition strategies, not two execution paths through the kernel.
 
@@ -344,7 +470,7 @@ identity. The symmetric enable operation reattaches only a retained complete
 catalog and performs no remote request. The management list reports package
 integrity, registration, catalog presence, authentication kind, Alpha
 attachment, and plugin skill binding results separately rather than collapsing
-them into one enabled flag. It returns at most 32 compact facts per page. The
+them into one enabled flag. It returns at most 200 compact facts per page. The
 opaque cursor binds the next page to the exact inventory revision; if packages,
 connections, or skill bindings change between pages, the Host requires a fresh
 first page rather than allowing offset drift to skip or duplicate facts.
@@ -425,10 +551,9 @@ Alpha's first skill path searches compact name/description metadata through
 `skill_search` and activates one selected name through `skill_load`. Search
 returns at most 200 matches and nothing per match beyond name and short
 description. A workspace skill explicitly overrides a same-named global skill,
-and a global skill overrides a package-provided skill. A newer revision of the
-same plugin replaces that plugin's bindings. Two different plugins with the
-same skill name do not get an arbitrary digest-based winner: the first binding
-remains available and the other plugin receives a visible component rejection.
+and a global skill overrides a package-provided skill. Equal-named plugins keep separate activation identities. Enabled plugins with
+the same skill name keep the first binding available and report a visible
+component rejection for the other.
 Neither the complete catalog nor any skill body is injected up front. A load
 resolves and persists one exact revision internally before returning its
 complete instructions. Later operations reattach that revision as standing
@@ -805,7 +930,7 @@ remain later work and must preserve `rcp-v0.md`.
 
 ## Open decisions
 
-- future Host schema migrations beyond v11 and storage for permissions;
+- future Host schema migrations beyond schema 31 and storage for permissions;
 - model-visible naming and collision handling for tools from many connections;
 - future marketplace selection, ranking, freshness, and cache policy;
 - cross-platform secret-store selection, account recovery, revocation, and
@@ -821,8 +946,8 @@ remain later work and must preserve `rcp-v0.md`.
 - historical resolved-binding retention after catalog or profile changes;
 - when to add stdio MCP servers and how to constrain their process and
   filesystem authority;
-- ancestor-directory skill discovery, explicit profile configuration, manual
-  revision upgrade, deactivation, and garbage collection;
+- ancestor-directory skill discovery, explicit profile configuration, and
+  garbage collection of installed revisions and session-pinned skills;
 - support for MCP resources, prompts, apps, tasks, or future protocol
   extensions;
 - compatibility policy beyond the SDK-supported legacy MCP revisions;

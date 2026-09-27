@@ -1,9 +1,13 @@
+pub(crate) mod activation;
+pub(crate) mod api;
+pub(crate) mod coherence;
 mod discovery;
 mod error;
 mod generated;
 pub(crate) mod inspect;
+mod intake;
 mod json;
-mod manager;
+pub(crate) mod manager;
 mod search;
 pub(crate) mod store;
 mod tool;
@@ -17,31 +21,22 @@ mod store_tests;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+pub use activation::PluginActivation;
+pub use coherence::PluginProviderFamily;
 pub(crate) use discovery::OfficialRegistry;
 pub use error::PluginError;
 pub(crate) use manager::PluginManager;
+pub use manager::{PluginAddOutcome, PluginConnectionOutcome, PluginSourceReceipt};
 #[cfg(test)]
 pub(crate) use search::PluginSearchTool;
 pub(crate) use search::binding as agent_plugin_search_binding;
 pub(crate) use tool::agent_plugin_binding;
 
 pub(crate) const PLUGIN_STORE_DIRECTORY: &str = "plugins";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ExtensionSource {
-    Mcp(RemoteMcpSource),
-    Installed {
-        package_digest: String,
-    },
-    Package {
-        path: PathBuf,
-        expected_digest: String,
-    },
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RemoteMcpSource {
@@ -74,14 +69,14 @@ impl RemoteMcpSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ExtensionConnectionRequest {
+pub(crate) struct PluginConnectionRequest {
     id: Option<String>,
     server: Option<String>,
     credential: PluginCredential,
     replace: bool,
 }
 
-impl ExtensionConnectionRequest {
+impl PluginConnectionRequest {
     pub(crate) const fn new(
         id: Option<String>,
         server: Option<String>,
@@ -94,21 +89,6 @@ impl ExtensionConnectionRequest {
             credential,
             replace,
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ExtensionAddRequest {
-    source: ExtensionSource,
-    connection: Option<ExtensionConnectionRequest>,
-}
-
-impl ExtensionAddRequest {
-    pub(crate) const fn new(
-        source: ExtensionSource,
-        connection: Option<ExtensionConnectionRequest>,
-    ) -> Self {
-        Self { source, connection }
     }
 }
 
@@ -349,7 +329,7 @@ pub enum PluginOAuthRegistration {
 }
 
 #[derive(Debug)]
-struct CapturedPlugin {
+pub(crate) struct CapturedPlugin {
     tree: crate::package_tree::CapturedTree,
     inspection: PluginInspection,
 }

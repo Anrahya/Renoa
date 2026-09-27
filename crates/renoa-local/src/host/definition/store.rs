@@ -340,11 +340,20 @@ pub(super) fn set_connections(
     agent: AgentId,
     connections: &BTreeSet<String>,
 ) -> Result<(), HostCatalogError> {
+    let retained = read_connections(transaction, agent)?;
     transaction.execute(
         "DELETE FROM host_agent_mcp_connections WHERE agent_id = ?1",
         [agent.to_string()],
     )?;
     for connection_id in connections {
+        if !retained.contains(connection_id) {
+            crate::plugins::activation::admit_connection_selection(
+                transaction,
+                &agent.to_string(),
+                connection_id,
+            )
+            .map_err(|error| HostCatalogError::Invalid(error.to_string()))?;
+        }
         transaction.execute(
             "INSERT INTO host_agent_mcp_connections(agent_id, connection_id) VALUES (?1, ?2)",
             params![agent.to_string(), connection_id],

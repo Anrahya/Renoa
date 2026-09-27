@@ -68,6 +68,8 @@ impl PluginManager {
         request: ProfileConnectionRequest<'_>,
         cancellation: CancellationToken,
     ) -> Result<McpCatalogSnapshot, PluginError> {
+        self.preflight_revision(request.agent_id, request.package_digest)
+            .await?;
         let PreparedConnection {
             adapter,
             candidate,
@@ -187,6 +189,19 @@ impl PluginManager {
                 "RENOA_MCP_ADAPTER must be set before connecting a package MCP server".to_owned(),
             )
         })?;
+        super::preflight::add_connection(
+            &self.mcp_catalog,
+            package_digest,
+            plugin.mcp_servers(),
+            Some(&crate::plugins::PluginConnectionRequest::new(
+                Some(connection_id.to_owned()),
+                Some(server_id.to_owned()),
+                credential.clone(),
+                replace,
+            )),
+            false,
+            None,
+        )?;
         let auth = credential_auth(
             credential,
             connection_id,
@@ -224,6 +239,8 @@ impl PluginManager {
         request: ProfileAuthorizationRequest<'_>,
         cancellation: CancellationToken,
     ) -> Result<McpCatalogSnapshot, PluginError> {
+        self.preflight_account(request.agent_id, request.connection_id)
+            .await?;
         let catalog = self.mcp_catalog.clone();
         let stored_connection = request.connection_id.to_owned();
         let connection =

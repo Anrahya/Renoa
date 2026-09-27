@@ -11,7 +11,7 @@ pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 
-const SCHEMA_VERSION: u32 = 30;
+const SCHEMA_VERSION: u32 = 31;
 pub(crate) const HOST_DATABASE: &str = "host.sqlite3";
 
 #[derive(Debug, Error)]
@@ -187,6 +187,7 @@ const SCHEMA: &str = "
         plugin_digest TEXT NOT NULL
             REFERENCES installed_plugins(plugin_digest) ON DELETE RESTRICT,
         server_id TEXT NOT NULL CHECK (length(server_id) BETWEEN 1 AND 128),
+        integration_id TEXT NOT NULL UNIQUE,
         transport TEXT NOT NULL CHECK (transport = 'streamable_http'),
         endpoint TEXT NOT NULL CHECK (length(endpoint) > 0),
         request_headers_json TEXT NOT NULL CHECK (
@@ -247,10 +248,11 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
         transaction.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))?;
     match version {
         SCHEMA_VERSION => {
+            verify(&transaction)?;
             transaction.commit()?;
-            verify(connection)
+            Ok(())
         }
-        28 | 29 => {
+        28..=30 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -262,18 +264,21 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
                 ));
             }
             migrate_selected_plugin_tool_names(&transaction)?;
+            crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
             )?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            verify(&transaction)?;
             transaction.commit()?;
-            verify(connection)
+            Ok(())
         }
         0 => {
             transaction.execute_batch(SCHEMA)?;
             agents::initialize(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
+            crate::plugins::activation::schema::initialize_lifecycle(&transaction, false)?;
             super::definition::schema::initialize(&transaction)?;
             super::routines::initialize(&transaction)?;
             super::reviews::initialize(&transaction)?;
@@ -282,8 +287,9 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
                 [SCHEMA_VERSION],
             )?;
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            verify(&transaction)?;
             transaction.commit()?;
-            verify(connection)
+            Ok(())
         }
         found => Err(HostCatalogError::Invalid(format!(
             "schema {found} is unsupported; expected {SCHEMA_VERSION}"
@@ -431,6 +437,7 @@ fn verify(connection: &Connection) -> Result<(), HostCatalogError> {
             "metadata is missing or incompatible".to_owned(),
         ));
     }
+    crate::plugins::activation::schema::verify_owners(connection)?;
     let violation = connection
         .query_row("PRAGMA foreign_key_check", [], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(2)?))

@@ -18,7 +18,7 @@ use crate::{
 
 #[test]
 fn model_guidance_changes_the_frozen_extension_contract() {
-    assert_eq!(BINDING_REVISION, "renoa-plugin-manager-v1");
+    assert_eq!(BINDING_REVISION, "renoa-plugin-api-v2");
 }
 
 #[tokio::test]

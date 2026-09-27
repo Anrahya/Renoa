@@ -14,6 +14,7 @@ fn version_six_catalog_adds_plugin_skill_scope_without_losing_existing_bindings(
     connection
         .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;
@@ -170,6 +171,7 @@ fn downgrade_to_v4_with_large_skill(path: &Path) {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;
@@ -215,6 +217,7 @@ pub(super) fn downgrade_skill_sources_to_v6_shape(connection: &Connection) {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              CREATE TABLE profile_skill_bindings_v6 (
                 profile_id TEXT NOT NULL CHECK (length(profile_id) > 0),
                 scope_kind TEXT NOT NULL CHECK (scope_kind IN ('global', 'workspace')),

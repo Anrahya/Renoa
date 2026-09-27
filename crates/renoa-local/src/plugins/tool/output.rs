@@ -146,6 +146,7 @@ pub(super) struct InstalledConnectionFailure<'a> {
     pub(super) server: Option<&'a str>,
     pub(super) notices: &'a [crate::plugins::PluginNotice],
     pub(super) skills: &'a crate::skills::SkillComponentReport,
+    pub(super) activation: &'a crate::plugins::PluginActivation,
 }
 
 pub(super) fn installed_connection_failure_output(
@@ -316,6 +317,11 @@ fn attach_installation(
         })?,
     );
     object.insert(
+        "activation".to_owned(),
+        serde_json::to_value(context.activation)
+            .map_err(|error| ToolError::internal(error.to_string()))?,
+    );
+    object.insert(
         "skills".to_owned(),
         serde_json::to_value(context.skills).map_err(|error| {
             ToolError::internal(format!("plugin skills could not be encoded: {error}"))
@@ -327,6 +333,8 @@ fn attach_installation(
 pub(crate) fn plugin_error(error: PluginError, partial_changes_possible: bool) -> ToolError {
     let message = error.to_string();
     match error {
+        PluginError::Cancelled => ToolError::cancelled(message, partial_changes_possible),
+        PluginError::OutputLimit(_) => ToolError::output_limit(message),
         PluginError::Invalid(_)
         | PluginError::Mcp(McpHostError::Invalid(_))
         | PluginError::Skill(crate::skills::SkillError::Invalid(_)) => {

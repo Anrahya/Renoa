@@ -35,7 +35,7 @@ pub(super) use sensitive::SensitiveString;
 use store::OAuthFlowStore;
 
 pub(super) use private_secret::PrivateSecretStore;
-pub(crate) use scope::{MAX_OAUTH_SCOPE_BYTES, validate_oauth_scope};
+pub(crate) use scope::validate_oauth_scope;
 
 const INTERACTIVE_LOCK_WAIT: Duration = Duration::from_secs(2);
 const REFRESH_LOCK_WAIT: Duration = Duration::from_secs(30);

@@ -85,6 +85,10 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
             "install",
             "list",
             "connect",
+            "activate",
+            "deactivate",
+            "enable_plugin",
+            "replace_plugin",
             "authorize",
             "disconnect",
             "enable"
@@ -92,7 +96,7 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     );
     assert_eq!(
         properties["source"]["properties"]["kind"]["enum"],
-        json!(["mcp", "package", "installed"])
+        json!(["installed", "mcp", "package", "skill", "github"])
     );
     assert_eq!(properties["source"]["required"], json!(["kind"]));
     assert_eq!(
@@ -112,7 +116,7 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
     assert!(!properties.contains_key("registry_name"));
     assert!(!properties.contains_key("registry_version"));
     assert!(!encoded.contains("connection_id"));
-    assert_eq!(properties["limit"]["maximum"], 32);
+    assert_eq!(properties["limit"]["maximum"], 200);
     assert!(
         serde_json::from_value::<ManageInput>(json!({"action": "search", "query": "cloudflare"}))
             .is_err()
@@ -145,7 +149,7 @@ fn extension_schema_explains_the_complete_oauth_setup_flow() {
         "pass credential.kind=oauth",
         "secure credential setup",
         "Never put secrets in tool arguments or chat",
-        "only after add, connect, or authorize succeeds",
+        "successful add, connect, or authorize",
         "untrusted metadata",
         "oauth_insufficient_scope",
     ] {
@@ -162,18 +166,20 @@ fn extension_schema_explains_the_complete_oauth_setup_flow() {
         properties["action"]["description"]
             .as_str()
             .expect("action schema has model guidance")
-            .contains("include connection and credential to connect it now")
+            .contains("Include connection and credential to connect it now")
     );
     let credential_description = properties["credential"]["description"]
         .as_str()
         .expect("credential schema has model guidance");
-    assert!(credential_description.contains("stable Host credential_id reference"));
+    assert!(credential_description.contains("stable Host"));
+    assert!(credential_description.contains("credential_id"));
     assert!(credential_description.contains("secret_service_header"));
     assert!(credential_description.contains("Renoa discovers and validates"));
     assert!(
         properties["credential"]["properties"]["kind"]["description"]
             .as_str()
             .expect("credential kind has model guidance")
+            .to_ascii_lowercase()
             .contains("browser sign-in")
     );
     let scope = properties["required_scope"]["description"]
@@ -239,7 +245,11 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
     .expect("write manifest");
     let tool = ManageTool::new(test_agent_id(1), manager, directory.path().to_path_buf());
 
-    let inspected = call(&tool, json!({"action": "inspect", "source_path": "source"})).await;
+    let inspected = call(
+        &tool,
+        json!({"action": "inspect", "source": {"kind":"package","source_path":"source"}}),
+    )
+    .await;
     let digest = inspected["digest"]
         .as_str()
         .expect("inspection returned digest");
@@ -247,7 +257,7 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
         &tool,
         json!({
             "action": "install",
-            "source_path": "source",
+            "source": {"kind":"package","source_path":"source"},
             "expected_digest": digest
         }),
     )
@@ -349,7 +359,7 @@ async fn package_add_reports_loaded_and_rejected_components_after_installation()
     );
     let listed = call(&fixture.tool, json!({"action": "list"})).await;
     let source = super::inventory_item(&listed, "plugin_skill_source");
-    assert_eq!(source["source"], "agent-plugin:local-fixture");
+    assert_eq!(source["source"], format!("agent-plugin:{digest}"));
     assert_eq!(source["accepted_count"], 1);
     assert_eq!(source["rejected_count"], 1);
     let accepted = super::inventory_item(&listed, "plugin_skill");
@@ -375,12 +385,24 @@ async fn package_add_reports_loaded_and_rejected_components_after_installation()
     let [ContentBlock::Text { text }] = connection_failure.content.as_slice() else {
         panic!("connection selection failure must be model-visible")
     };
-    let error: Value = serde_json::from_str(text).expect("decode connection selection failure");
-    assert_eq!(error["status"], "installed_connection_failed");
-    assert_eq!(error["package_digest"], added["package_digest"]);
-    assert_eq!(error["connection"], "local-fixture.default");
-    assert!(error.get("server").is_none());
-    assert_eq!(error["skills"]["accepted"], json!(["review"]));
+    assert!(text.contains("requires an exact supported MCP server id"));
+    assert_eq!(
+        connection_failure
+            .details
+            .as_ref()
+            .and_then(|details| details["error"]["code"].as_str()),
+        Some("invalid_input")
+    );
+    assert_eq!(
+        fixture
+            .tool
+            .manager
+            .list()
+            .await
+            .expect("existing admitted package remains")
+            .len(),
+        1
+    );
 }
 
 struct LocalPackageFixture {
@@ -396,6 +418,7 @@ impl LocalPackageFixture {
         let directory = tempdir().expect("temporary local add fixture");
         let database = directory.path().join("host.sqlite3");
         catalog::initialize(&database).expect("initialize Host catalog");
+        crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
         let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
         let skills = test_skill_store(&database, directory.path());
         let manager = PluginManager::initialize(
@@ -426,7 +449,7 @@ impl LocalPackageFixture {
     async fn digest(&self) -> String {
         let inspected = call(
             &self.tool,
-            json!({"action": "inspect", "source_path": "source"}),
+            json!({"action": "inspect", "source": {"kind":"package","source_path":"source"}}),
         )
         .await;
         inspected["digest"]
@@ -482,9 +505,9 @@ fn package_add(digest: &str, connection: Option<&str>) -> Value {
         "action": "add",
         "source": {
             "kind": "package",
-            "source_path": "source",
-            "expected_digest": digest
-        }
+            "source_path": "source"
+        },
+        "expected_digest": digest
     });
     if let Some(connection) = connection {
         request["connection"] = Value::String(connection.to_owned());

@@ -120,6 +120,7 @@ fn version_one_catalog_migrates_without_losing_no_auth_state() {
     connection
         .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;
@@ -199,6 +200,7 @@ fn version_two_any_tool_selection_migrates_to_the_full_connection_attachment() {
         .expect("open migration fixture")
         .execute_batch(&format!(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;
@@ -269,6 +271,7 @@ fn version_three_catalog_adds_current_skill_state_without_changing_mcp_state() {
         .expect("open migration fixture")
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;
@@ -333,6 +336,7 @@ fn version_five_catalog_adds_package_and_credential_state_without_losing_mcp() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;
@@ -408,6 +412,7 @@ fn version_seven_catalog_adds_oauth_without_changing_existing_connections() {
         .expect("open migration fixture")
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              DROP TABLE mcp_oauth_receipts;
              DROP TABLE mcp_oauth_flows;

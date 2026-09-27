@@ -65,7 +65,9 @@ if (toolResults.length === 0) {
     toolResults[0].result.details !== null ||
     search.total !== 1 ||
     search.items.length !== 1 ||
-    search.items[0].id !== "direct:fixture" ||
+    search.items[0].source !== "installed_plugin" ||
+    search.items[0].name !== "fixture" ||
+    !/^[a-f0-9]{64}$/.test(search.items[0].id) ||
     search.tool_matches.length !== 1 ||
     search.tool_matches[0].name !== "echo" ||
     search.tool_matches[0].input_schema.required.join(",") !== "tenant,text" ||

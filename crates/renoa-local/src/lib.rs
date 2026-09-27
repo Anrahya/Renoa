@@ -73,14 +73,22 @@ pub use host::{
 };
 pub use isolated_workspace::InspectionSandboxConfig;
 pub use mcp::{
-    McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpCredentialError, McpFailureKind,
-    McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure, ResolvedMcpTool,
+    McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpConnectionStatus, McpCredentialError,
+    McpFailureKind, McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure,
+    ResolvedMcpTool,
 };
 pub use model_bridge::{BridgeModel, ModelBridgeError};
 pub use model_catalog::{ModelChoice, ModelProvider, ReasoningLevel, discover_models};
+pub use plugins::api::{
+    MAX_PLUGIN_PAGE, PLUGIN_API_REVISION, PluginAuthentication, PluginAuthorizationRequired,
+    PluginCredentialKind, PluginCredentialRequired, PluginHeader, PluginInventoryItem,
+    PluginInventoryPage, PluginInvocation, PluginOutcome, PluginProgress, PluginRequest,
+    PluginSource, plugin_api_schema,
+};
 pub use plugins::{
-    InstalledPlugin, PluginCredential, PluginError, PluginInspection, PluginMcpServer,
-    PluginMetadata, PluginNotice, PluginOAuthRegistration,
+    InstalledPlugin, PluginActivation, PluginAddOutcome, PluginConnectionOutcome, PluginCredential,
+    PluginError, PluginInspection, PluginMcpServer, PluginMetadata, PluginNotice,
+    PluginOAuthRegistration, PluginProviderFamily, PluginSourceReceipt,
 };
 pub use renoa_kernel::AgentId;
 pub use runtime::{
@@ -89,6 +97,7 @@ pub use runtime::{
 pub use session::{LocalHistoryEntry, LocalSession, LocalSessionError, LocalTurnOutcome};
 pub use shared_registry::SharedPluginSyncReport;
 pub use skills::SkillError;
+pub use skills::store::{SkillComponentRejection, SkillComponentReport};
 pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 

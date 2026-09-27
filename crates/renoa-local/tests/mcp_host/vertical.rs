@@ -245,7 +245,7 @@ fn assert_model_context(path: &Path, configured_endpoint: &str) {
             .all(|message| !message.to_string().contains("Echo one string."))
     );
     let searched_messages = requests[1]["messages"].to_string();
-    assert!(searched_messages.contains("direct:fixture"));
+    assert!(searched_messages.contains("installed_plugin"));
     assert!(searched_messages.contains("Echo one string."));
     assert!(searched_messages.contains("\\\"input_schema\\\""));
     assert!(searched_messages.contains("\\\"tenant\\\""));

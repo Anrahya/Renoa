@@ -78,7 +78,7 @@ impl CredentialSetupCoordinator {
         support::emit_required(
             updates,
             credential_id,
-            kind_name(kind),
+            kind,
             setup_url.as_str(),
             state.expires_at_ms,
         )
@@ -179,12 +179,5 @@ fn setup_requirement(
         McpConnectionAuth::None
         | McpConnectionAuth::GhCli { .. }
         | McpConnectionAuth::OAuth { .. } => None,
-    }
-}
-
-fn kind_name(kind: CredentialRelayKind) -> &'static str {
-    match kind {
-        CredentialRelayKind::ApiToken => "api_token",
-        CredentialRelayKind::OAuthClient => "oauth_client",
     }
 }

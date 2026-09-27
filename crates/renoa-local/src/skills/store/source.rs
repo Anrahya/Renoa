@@ -16,7 +16,7 @@ pub(super) struct SourceSpec {
     pub(super) id: String,
 }
 
-pub(super) struct PreparedSource {
+pub(crate) struct PreparedSource {
     pub(super) spec: SourceSpec,
     pub(super) snapshot: SourceSnapshot,
 }
@@ -94,6 +94,10 @@ fn conflicting_plugin_source(
                AND scope_kind = 'plugin'
                AND skill_name = ?2
                AND source_id != ?3
+               AND EXISTS (SELECT 1 FROM host_agent_plugins AS plugin
+                   WHERE plugin.agent_id = agent_skill_bindings.agent_id
+                     AND 'agent-plugin:' || plugin.plugin_id = agent_skill_bindings.source_id
+                     AND plugin.enabled = 1)
              ORDER BY source_id
              LIMIT 1",
             params![agent_id, skill.metadata.name, source.spec.id],

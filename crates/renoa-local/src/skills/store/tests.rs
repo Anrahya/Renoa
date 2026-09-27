@@ -6,7 +6,7 @@ use tempfile::{TempDir, tempdir};
 use super::SkillStore;
 use crate::{host::catalog, skills::SkillError};
 
-const PROFILE: &str = "renoa.coding.alpha.v2";
+const PROFILE: &str = "00000000-0000-0000-0000-000000000001";
 
 struct Fixture {
     _directory: TempDir,
@@ -332,7 +332,11 @@ fn plugin_skills_hot_load_replace_the_same_plugin_and_reject_cross_plugin_collis
     assert!(conflict.accepted.is_empty());
     assert_eq!(conflict.rejected.len(), 1);
     assert_eq!(conflict.rejected[0].entry(), "review");
-    assert!(conflict.rejected[0].reason().contains("plugin-one"));
+    assert!(
+        conflict.rejected[0]
+            .reason()
+            .contains(&crate::mcp::hex_sha256(b"plugin-one"))
+    );
 
     let replay = fixture
         .store
@@ -468,4 +472,36 @@ fn write_skill(root: &Path, name: &str, description: &str, body: &str) {
         format!("---\nname: {name}\ndescription: {description}\n---\n{body}\n"),
     )
     .expect("write skill");
+}
+
+impl SkillStore {
+    // A store-level fixture establishes the same selection rows as the manager.
+    fn sync_plugin(
+        &self,
+        agent: &str,
+        identity: &str,
+        root: &Path,
+    ) -> Result<super::SkillComponentReport, SkillError> {
+        let digest = crate::mcp::hex_sha256(identity.as_bytes());
+        let mut connection = self.connection()?;
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM host_agents WHERE agent_id=?1)",
+            [agent],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            crate::test_agents::insert_agent(&self.database, agent);
+        }
+        let source = Self::prepare_plugin(&digest, root)?;
+        let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO installed_plugins(plugin_digest,name) VALUES (?1,?2)",
+            rusqlite::params![digest, identity],
+        )?;
+        tx.execute("INSERT OR IGNORE INTO host_agent_plugins(agent_id,plugin_id,package_digest,enabled) VALUES (?1,?2,?2,1)",rusqlite::params![agent,digest])?;
+        tx.execute("INSERT OR IGNORE INTO host_agent_plugin_revisions(agent_id,plugin_id,package_digest) VALUES (?1,?2,?2)",rusqlite::params![agent,digest])?;
+        let (result, publications) = self.commit_plugin(&tx, agent, &source)?;
+        publications.commit(tx)?;
+        Ok(result)
+    }
 }

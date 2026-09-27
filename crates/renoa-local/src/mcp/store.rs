@@ -4,7 +4,7 @@ mod registry;
 use std::path::PathBuf;
 
 pub(crate) use connection_commit::McpConnectionCandidate;
-pub(crate) use registry::McpConnectionStatus;
+pub use registry::McpConnectionStatus;
 
 use super::{
     McpCatalogSnapshot, McpCatalogTool, McpConnectionAuth, McpHostError, McpRequestHeaders,
@@ -36,6 +36,7 @@ impl McpCatalogStore {
         Ok(Self { path })
     }
 
+    #[cfg(test)]
     pub(crate) fn register_direct_connection(
         &self,
         integration_id: &str,
@@ -54,6 +55,7 @@ impl McpCatalogStore {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn register_gh_cli_connection(
         &self,
         integration_id: &str,
@@ -189,6 +191,11 @@ impl McpCatalogStore {
             )));
         }
         store_catalog(&transaction, snapshot)?;
+        crate::plugins::activation::admit_connection_selection(
+            &transaction,
+            agent_id,
+            snapshot.connection_id(),
+        )?;
         transaction.execute(
             "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)
              VALUES (?1, ?2)",

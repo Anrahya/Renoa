@@ -52,6 +52,11 @@ impl McpCatalogStore {
         let transaction =
             connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         Self::require_complete_catalog(&transaction, connection_id)?;
+        crate::plugins::activation::admit_connection_selection(
+            &transaction,
+            agent_id,
+            connection_id,
+        )?;
         transaction.execute(
             "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)
              VALUES (?1, ?2)",
@@ -61,12 +66,19 @@ impl McpCatalogStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_connection_statuses(
         &self,
         agent_id: &str,
     ) -> Result<Vec<McpConnectionStatus>, McpHostError> {
+        Self::agent_connection_statuses_on(&self.connection()?, agent_id)
+    }
+
+    pub(crate) fn agent_connection_statuses_on(
+        connection: &rusqlite::Connection,
+        agent_id: &str,
+    ) -> Result<Vec<McpConnectionStatus>, McpHostError> {
         validate_identity("agent", agent_id)?;
-        let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT configured.connection_id, configured.integration_id,
                     configured.auth_kind, catalog.connection_id IS NOT NULL,
@@ -75,7 +87,7 @@ impl McpCatalogStore {
                     (SELECT count(*) FROM mcp_rejected_tools AS rejected
                      WHERE rejected.connection_id = configured.connection_id),
                     EXISTS(
-                        SELECT 1 FROM host_agent_mcp_connections AS binding
+                        SELECT 1 FROM host_agent_enabled_mcp_connections AS binding
                         WHERE binding.agent_id = ?1
                           AND binding.connection_id = configured.connection_id
                     )
@@ -165,16 +177,23 @@ impl McpCatalogStore {
         Ok(catalog_retained)
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_tool_summaries(
         &self,
         agent_id: &str,
     ) -> Result<Vec<McpToolSummary>, McpHostError> {
+        Self::agent_tool_summaries_on(&self.connection()?, agent_id)
+    }
+
+    pub(crate) fn agent_tool_summaries_on(
+        connection: &rusqlite::Connection,
+        agent_id: &str,
+    ) -> Result<Vec<McpToolSummary>, McpHostError> {
         validate_identity("agent", agent_id)?;
-        let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT connection.integration_id, binding.connection_id,
                     catalog.catalog_digest, tool.name, tool.description
-             FROM host_agent_mcp_connections AS binding
+             FROM host_agent_enabled_mcp_connections AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
              JOIN mcp_catalogs AS catalog
@@ -182,6 +201,7 @@ impl McpCatalogStore {
              JOIN mcp_tools AS tool
                ON tool.connection_id = binding.connection_id
              WHERE binding.agent_id = ?1
+
              ORDER BY binding.connection_id, tool.name",
         )?;
         let tools = statement
@@ -301,7 +321,7 @@ impl McpConnectionAuthKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct McpConnectionStatus {
+pub struct McpConnectionStatus {
     connection: String,
     integration: String,
     auth: McpConnectionAuthKind,
@@ -313,27 +333,33 @@ pub(crate) struct McpConnectionStatus {
 }
 
 impl McpConnectionStatus {
-    pub(crate) fn connection(&self) -> &str {
+    #[must_use]
+    pub fn connection(&self) -> &str {
         &self.connection
     }
 
-    pub(crate) fn integration(&self) -> &str {
+    #[must_use]
+    pub fn integration(&self) -> &str {
         &self.integration
     }
 
-    pub(crate) fn enabled_for_agent(&self) -> bool {
+    #[must_use]
+    pub fn enabled_for_agent(&self) -> bool {
         self.enabled_for_agent
     }
 
-    pub(crate) fn catalog_loaded(&self) -> bool {
+    #[must_use]
+    pub fn catalog_loaded(&self) -> bool {
         self.catalog_loaded
     }
 
-    pub(crate) fn tool_count(&self) -> usize {
+    #[must_use]
+    pub fn tool_count(&self) -> usize {
         self.tools
     }
 
-    pub(crate) fn credential_configured(&self) -> bool {
+    #[must_use]
+    pub fn credential_configured(&self) -> bool {
         self.auth != McpConnectionAuthKind::None
     }
 }
@@ -360,10 +386,11 @@ fn enabled_connection(
                     connection.auth_hostname, connection.auth_account,
                     connection.auth_credential_id, connection.oauth_registration_json,
                     connection.auth_header_name, connection.auth_header_prefix
-             FROM host_agent_mcp_connections AS binding
+             FROM host_agent_enabled_mcp_connections AS binding
              JOIN mcp_connections AS connection
                ON connection.connection_id = binding.connection_id
-             WHERE binding.agent_id = ?1 AND binding.connection_id = ?2",
+             WHERE binding.agent_id = ?1 AND binding.connection_id = ?2
+",
             params![agent_id, connection_id],
             |row| {
                 Ok(EnabledConnection {

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use renoa_agent::{ContentBlock, ToolOutput};
+use renoa_local::{PluginCredentialKind, PluginProgress};
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
@@ -27,41 +28,33 @@ pub(crate) struct Action {
 
 impl Action {
     pub(crate) fn parse(update: &ToolOutput) -> Option<Self> {
-        #[derive(serde::Deserialize)]
-        struct Update {
-            status: String,
-            setup_url: Option<String>,
-            credential_kind: Option<String>,
-            authorization_url: Option<String>,
-            expires_at_ms: i64,
-        }
         if update.is_error {
             return None;
         }
         let [ContentBlock::Text { text }] = update.content.as_slice() else {
             return None;
         };
-        let input: Update = serde_json::from_str(text).ok()?;
-        let (stage, url, title) = match input.status.as_str() {
-            "credential_required" => (
+        let input: PluginProgress = serde_json::from_str(text).ok()?;
+        let (stage, url, title, expires_at_ms) = match input {
+            PluginProgress::CredentialRequired(input) => (
                 "credentials",
-                input.setup_url?,
-                match input.credential_kind.as_deref() {
-                    Some("oauth_client") => {
+                input.setup_url,
+                match input.credential_kind {
+                    PluginCredentialKind::OAuthClient => {
                         "Action needed: configure this connection\nEnter the app credentials on Renoa's secure page. After saving them, return here for a separate authorization message."
                     }
-                    Some("api_token") => {
+                    PluginCredentialKind::ApiToken => {
                         "Action needed: save the API credential\nEnter the API key on Renoa's secure page. Keep it out of chat. Connection setup will continue after it is saved."
                     }
-                    _ => return None,
                 },
+                input.expires_at_ms,
             ),
-            "authorization_required" => (
+            PluginProgress::AuthorizationRequired(input) => (
                 "authorization",
-                input.authorization_url?,
+                input.authorization_url,
                 "Action needed: authorize access\nThe connection is ready for sign-in. Open the provider page below and approve access. This is separate from saving app credentials.",
+                input.expires_at_ms?,
             ),
-            _ => return None,
         };
         let parsed = url::Url::parse(&url).ok()?;
         if parsed.scheme() != "https"
@@ -69,7 +62,7 @@ impl Action {
             || !parsed.username().is_empty()
             || parsed.password().is_some()
             || url.len() > 16 * 1024
-            || input.expires_at_ms <= 0
+            || expires_at_ms <= 0
             || (stage == "authorization" && parsed.fragment().is_some())
         {
             return None;
@@ -79,7 +72,7 @@ impl Action {
             text: format!(
                 "{title}\n\n{url}\n\nThis link expires. If it expires, ask me to restart this connection's setup; saved credentials are reused."
             ),
-            expires_at_ms: input.expires_at_ms,
+            expires_at_ms,
         })
     }
 

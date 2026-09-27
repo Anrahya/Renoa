@@ -1,4 +1,4 @@
-use crate::mcp::{McpCatalogSnapshot, discover};
+use crate::mcp::{McpCatalogSnapshot, McpConnectionAuth, discover};
 use tokio_util::sync::CancellationToken;
 
 use super::{LocalHost, LocalHostError};
@@ -7,28 +7,29 @@ use super::{LocalHost, LocalHostError};
 mod tests;
 
 impl LocalHost {
-    /// Durably registers one direct no-auth MCP integration and connection.
+    /// Installs a portable MCP plugin and registers one no-auth connection.
     ///
-    /// Repeating the same identities and endpoint is a no-op. Reusing either
-    /// identity for different configuration fails without changing storage.
+    /// Repeating the same name, endpoint, and connection converges on one revision.
+    /// Discovery and agent activation remain separate operations.
     ///
     /// # Errors
     ///
     /// Returns validation, conflict, storage, or background-task failures.
     pub async fn register_direct_mcp_connection(
         &self,
-        integration_id: &str,
+        plugin_name: &str,
         connection_id: &str,
         endpoint: &str,
     ) -> Result<(), LocalHostError> {
-        let store = self.config.mcp_catalog.clone();
-        let integration_id = integration_id.to_owned();
-        let connection_id = connection_id.to_owned();
-        let endpoint = endpoint.to_owned();
-        tokio::task::spawn_blocking(move || {
-            store.register_direct_connection(&integration_id, &connection_id, &endpoint)
-        })
-        .await??;
+        self.config
+            .plugins
+            .register_host_mcp(
+                plugin_name,
+                connection_id,
+                endpoint,
+                McpConnectionAuth::None,
+            )
+            .await?;
         Ok(())
     }
 
@@ -42,28 +43,21 @@ impl LocalHost {
     /// Returns validation, conflict, storage, or background-task failures.
     pub async fn register_gh_cli_mcp_connection(
         &self,
-        integration_id: &str,
+        plugin_name: &str,
         connection_id: &str,
         endpoint: &str,
         hostname: &str,
         account: &str,
     ) -> Result<(), LocalHostError> {
-        let store = self.config.mcp_catalog.clone();
-        let integration_id = integration_id.to_owned();
-        let connection_id = connection_id.to_owned();
-        let endpoint = endpoint.to_owned();
-        let hostname = hostname.to_owned();
-        let account = account.to_owned();
-        tokio::task::spawn_blocking(move || {
-            store.register_gh_cli_connection(
-                &integration_id,
-                &connection_id,
-                &endpoint,
-                &hostname,
-                &account,
+        self.config
+            .plugins
+            .register_host_mcp(
+                plugin_name,
+                connection_id,
+                endpoint,
+                McpConnectionAuth::gh_cli(hostname, account)?,
             )
-        })
-        .await??;
+            .await?;
         Ok(())
     }
 

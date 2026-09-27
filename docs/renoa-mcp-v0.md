@@ -375,14 +375,18 @@ currently valid merely because the connection is registered.
 requires the retained complete catalog and performs no network request.
 Management list output also reports the committed accepted and rejected skill
 bindings per plugin source, separately from immutable package installation.
-It flattens those states into compact pages of at most 32 facts. The opaque
+It flattens those states into compact pages of at most 200 facts. The opaque
 continuation cursor fingerprints the complete inventory, so a concurrent Host
 change invalidates that cursor instead of making offset pagination skip or
 repeat an entry.
-The management tool advertises one flat model-facing schema because several
+The canonical typed plugin API derives its complete JSON Schema and its flat
+model-facing projection from the same requests. The management tool advertises
+one flat model-facing schema because several
 OpenAI-compatible providers drop arguments when a function schema is rooted in
 `oneOf`. Its action description states the required companion fields, while the
-Host decodes one closed typed variant per action. Missing fields and fields from
+Host decodes one closed typed variant per action and source. Digest constraints,
+credential reference guidance, and required/allowed companion fields come from
+those canonical types. Missing fields and fields from
 another action are rejected rather than ignored.
 
 ## Protocol lifecycle
