@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 9 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 10 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -131,6 +131,17 @@ These decisions define RCP and are not ordinary implementation details:
     that reuse enrolled device identity. Their records, authorization rules,
     and acknowledgements remain outside the RCP task journal and cannot acquire
     task authority by sharing a process or origin.
+22. A new command or task opening whose node is offline is rejected before
+    admission and leaves no record. An offline node is usually a sleeping or
+    unplugged device, so the sender learns immediately and resends later; the
+    coordinator does not hold work for an absent executor. An exact retry of an
+    already admitted command or opening still returns its original result.
+23. Every node may have one owning principal, recorded by the trusted
+    control plane at enrollment. Only the owner may open new tasks on the node,
+    and only against a target the node currently advertises. Advertisements are
+    connection presence, not durable state; the targets stay opaque and carry
+    no harness configuration. A node without an owner serves only tasks the
+    operator created for it.
 
 ## Vocabulary
 
@@ -432,8 +443,7 @@ expire it, or require confirmation before delayed execution. Whichever policy
 is selected must be explicit. An acknowledged command cannot silently vanish,
 and an unacknowledged command must be safe to retry.
 
-The loopback proof currently rejects new work while the bound node is offline.
-That behavior is not yet a permanent RCP default.
+Renoa rejects new work while the bound node is offline (locked decision 22).
 
 Connection loss never implies that a task, command, or execution completed.
 
@@ -590,6 +600,12 @@ The current implementation demonstrates:
 - gap-free replay followed by live delivery;
 - two surfaces observing the same kernel-backed execution;
 - static routing to one authenticated node;
+- node ownership recorded atomically with node enrollment;
+- per-connection target advertisement, owner-filtered target discovery, and
+  idempotent runtime task opening that rejects offline nodes, unadvertised
+  targets, and other principals' nodes without writing a task;
+- a separate Host session for every task a Rust node executes, recorded in the
+  node ledger at the task's first command;
 - a durable pending-execution outbox committed with command admission;
 - explicit, idempotent node admission acknowledgement;
 - redelivery after node reconnect and coordinator restart;
@@ -609,7 +625,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 9 JSON/WebSocket shape with binding-level conformance
+- a documented version 10 JSON/WebSocket shape with binding-level conformance
   assertions;
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
@@ -686,9 +702,10 @@ The proof deliberately does not yet satisfy the full RCP architecture:
 2. The coordinator listener is plaintext and loopback-only. Public WSS is
    currently supplied by an outbound Cloudflare Tunnel, so the protocol does
    not depend on the tunnel provider and no public origin port is exposed.
-3. Rust Host targets are statically supplied when the node starts. Their
-   admitted task bindings are durable, but remote target provisioning,
-   configuration revisions, and mutation APIs for those targets remain unimplemented.
+3. Rust Host targets are statically supplied when the node starts. The owner
+   can open any number of tasks on them at runtime, each with its own Host
+   session, but remote target provisioning, configuration revisions, and
+   mutation APIs for the targets themselves remain unimplemented.
    The separate personal Host management adapter provides authenticated observation
    plus narrow routine and review-policy mutations, not RCP node provisioning.
    The Pi adapter still has one process-local harness configuration and an
@@ -799,9 +816,8 @@ These questions are intentionally unresolved and must not be filled in from
 assumption after context compaction:
 
 - The stable task-record wire envelope and versioning rules
-- Node-side task-to-harness provisioning, configuration revisions, and a
-  durable registry for one node hosting multiple harness configurations
-- The product default for commands submitted while a node is offline
+- Remote provisioning of node targets, configuration revisions, and a durable
+  registry for one node hosting multiple harness configurations
 - Execution generations and safe rebinding messages
 - Task-list pagination and live directory updates
 - Cancellation, steering, approval, and queued-follow-up semantics
