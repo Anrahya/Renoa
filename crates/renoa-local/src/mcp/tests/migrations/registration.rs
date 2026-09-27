@@ -5,6 +5,7 @@ use super::{count, count_where, cut_over, migrated_connections};
 use crate::mcp::{McpConnectionAuth, McpOAuthRegistration, McpRequestHeaders};
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     let (directory, store) = store();
     let agent = agent_id(1).to_string();
@@ -37,6 +38,7 @@ fn version_eight_oauth_connections_migrate_as_dynamic_registration() {
     connection
         .execute_batch(
             r#"PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              INSERT INTO mcp_oauth_flows(
                 connection_id, operation_id, phase, callback_port, expires_at_ms
@@ -131,6 +133,7 @@ fn version_nine_credentials_survive_and_custom_headers_become_available() {
         .expect("open version downgrade fixture")
         .execute_batch(
             r"PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              DROP TABLE shared_plugin_registry_state;
              CREATE TABLE mcp_connections_v9 (
                 connection_id TEXT PRIMARY KEY CHECK (length(connection_id) > 0),
@@ -212,6 +215,7 @@ fn version_eleven_loopback_oauth_flow_gains_an_empty_relay_identity() {
         .expect("open version downgrade fixture")
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              CREATE TABLE mcp_oauth_flows_v11 (
                  connection_id TEXT PRIMARY KEY
                      REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,
@@ -282,6 +286,7 @@ fn version_twelve_oauth_attempts_are_decoupled_from_active_connections() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;
              CREATE TABLE mcp_oauth_flows_v12 (
                  connection_id TEXT PRIMARY KEY
                      REFERENCES mcp_connections(connection_id) ON DELETE CASCADE,

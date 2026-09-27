@@ -305,6 +305,11 @@ impl LocalHost {
                 return Err(LocalHostError::AgentNotFound(id));
             }
             crate::mcp::McpCatalogStore::require_complete_catalog(&transaction, &connection_id)?;
+            crate::plugins::activation::admit_connection_selection(
+                &transaction,
+                &id.to_string(),
+                &connection_id,
+            )?;
             let mut selected = store::read_connections(&transaction, id)?;
             selected.insert(connection_id);
             store::set_connections(&transaction, id, &selected)?;

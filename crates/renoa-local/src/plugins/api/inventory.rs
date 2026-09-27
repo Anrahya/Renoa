@@ -41,6 +41,7 @@ impl PluginInventoryPage {
         packages: &PluginListReport,
         connections: &[McpConnectionStatus],
         skill_sources: &[SkillSourceReport],
+        activations: &[crate::plugins::PluginActivation],
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<Self, PluginError> {
@@ -49,7 +50,13 @@ impl PluginInventoryPage {
                 "list limit must be between 1 and {MAX_LIST_LIMIT}"
             )));
         }
-        let inventory = inventory(packages, connections, skill_sources);
+        let mut inventory = inventory(packages, connections, skill_sources);
+        inventory.extend(
+            activations
+                .iter()
+                .cloned()
+                .map(|activation| PluginInventoryItem::Activation { activation }),
+        );
         let total = inventory.len();
         let encoded = serde_json::to_vec(&inventory).map_err(|error| {
             PluginError::Unavailable(format!(
@@ -127,6 +134,10 @@ fn invalid_cursor() -> PluginError {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PluginInventoryItem {
+    Activation {
+        #[serde(flatten)]
+        activation: crate::plugins::PluginActivation,
+    },
     Package {
         package_digest: String,
         name: String,
@@ -252,7 +263,7 @@ mod tests {
             })
             .collect();
         let packages = PluginListReport::new(Vec::new(), rejected);
-        let page = PluginInventoryPage::new(&packages, &[], &[], None, MAX_LIST_LIMIT)
+        let page = PluginInventoryPage::new(&packages, &[], &[], &[], None, MAX_LIST_LIMIT)
             .expect("bounded inventory page");
         let encoded = serde_json::to_vec(&page).expect("encode inventory page");
         assert!(encoded.len() <= MAX_TOOL_OUTPUT_BYTES);
@@ -268,7 +279,8 @@ mod tests {
     #[test]
     fn an_invalid_cursor_never_becomes_an_empty_page() {
         let packages = PluginListReport::new(Vec::new(), Vec::new());
-        let Err(error) = PluginInventoryPage::new(&packages, &[], &[], Some("not-a-cursor"), 1)
+        let Err(error) =
+            PluginInventoryPage::new(&packages, &[], &[], &[], Some("not-a-cursor"), 1)
         else {
             panic!("malformed cursor must fail")
         };

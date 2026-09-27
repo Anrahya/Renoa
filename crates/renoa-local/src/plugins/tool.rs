@@ -171,6 +171,7 @@ struct ConnectedOutput<'a> {
     rejected_tools: usize,
     notices: &'a [super::PluginNotice],
     skills: &'a crate::skills::SkillComponentReport,
+    activation: &'a crate::plugins::PluginActivation,
 }
 
 #[derive(Serialize)]
@@ -182,6 +183,7 @@ struct InstalledOutput<'a> {
     mcp_servers: &'a [super::PluginMcpServer],
     notices: &'a [super::PluginNotice],
     skills: &'a crate::skills::SkillComponentReport,
+    activation: &'a crate::plugins::PluginActivation,
 }
 
 #[derive(Serialize)]

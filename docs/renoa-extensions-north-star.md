@@ -198,7 +198,7 @@ The complete API JSON Schema is derived from these types. The model receives a
 flat projection with generated action/source selector instructions listing each
 variant's required and allowed fields. Runtime decoding rejects foreign fields;
 this projection does not weaken the closed API. Its frozen binding identity is
-`renoa-plugin-api-v1`. Native tool grants are absent from the contract.
+`renoa-plugin-api-v2`. Native tool grants are absent from the contract.
 
 | Source kind | Meaning | Admission |
 | --- | --- | --- |
@@ -206,7 +206,7 @@ this projection does not weaken the closed API. Its frozen binding identity is
 | `skill` | One standard `SKILL.md` directory | Inspect and wrap its unchanged files as one portable plugin |
 | `github` | Public `https://github.com/owner/repo`, full 40-character commit, optional relative directory | Download from GitHub codeload without redirects; inspect, then add/install exact digest |
 | `mcp` | Endpoint, public headers, name, description, verified documentation URL | Generate one portable MCP plugin; add also attempts a connection |
-| `installed` | Exact installed package digest | Add enables its skills; connect or enable handles MCP access separately |
+| `installed` | Exact installed package digest | Add activates its skills and restores retained account selections; a new account needs connect |
 
 For example, this inspects a standalone local skill:
 
@@ -240,14 +240,74 @@ approval on another device. Discord currently discards progress events and has
 no account setup action delivery. That delivery path is tracked in
 [issue #47](https://github.com/Anrahya/Renoa/issues/47).
 
-The API currently disconnects/enables MCP connections. Skill-only disable and
-explicit same-name plugin replacement policy remain open. Plugin skill bindings
-still use plugin names as source identities, so callers must not treat unrelated
-same-named packages as distinct activation namespaces. Provider coherence for
-multi-server imported packages also remains open; an imported manifest is not
-proof that its servers belong to one provider. Activation and identity are
-tracked in [issue #48](https://github.com/Anrahya/Renoa/issues/48); provider
-coherence is tracked in [issue #41](https://github.com/Anrahya/Renoa/issues/41).
+### Agent activation and replacement
+
+The Host library holds immutable revisions. Each agent selects plugins by a
+stable `plugin_id`, initially the first selected package digest. Display names
+never merge packages: two equal-named packages keep separate identities. A
+selection records the current `package_digest` and whether it is enabled.
+`activate` imports one installed revision's skills. `add` installs and activates;
+`install` only publishes library content. Selecting an MCP connection establishes
+its package activation when absent, without importing skills; use activate/add
+to include those skills.
+
+`deactivate` stops future skill discovery and exact MCP resolution for all of
+that plugin's selected accounts. It retains their selections, catalogs, and
+credentials and can disable a package with damaged files. `enable_plugin`
+revalidates and restores the selected revision. Loaded session instructions stay
+pinned through either action; new sessions observe the current selection.
+`disconnect` and `enable` affect just one account and cannot bypass a disabled
+plugin.
+
+`replace_plugin` requires the stable identity, the new installed revision, and
+the currently selected digest. A concurrent change rejects before skill
+publication. Skill publication holds the catalog writer transaction and removes
+new targets on failure; existing immutable targets remain owned by their earlier
+publication. Replacement keeps identity and changes future discovery; it does
+not migrate accounts or credentials to a new endpoint. Every selected historical
+revision retains its identity association, so connect/activate cannot resurrect
+it as a second plugin. Explicit replacement can select an earlier revision.
+Durable operation receipts replay the original result without undoing later
+selection changes; reusing an operation identity with different fields conflicts.
+
+```json
+{"action":"replace_plugin","plugin_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","package_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expected_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+```
+
+Equal skill names in different enabled plugins keep the first binding and report
+a component rejection for the other. Enabling a previously disabled plugin
+rechecks collisions. Package ownership is verified when opening the catalog;
+wrong-owner mappings fail rather than exposing another plugin's tools.
+
+Schema 31 adds activation identities, revision associations, operation receipts,
+and verified MCP ownership. A schema 28–30 catalog with legacy plugin skill or
+MCP selections requires the explicit Host reset, because it lacks exact
+activation identities. Unselected immutable packages migrate with recomputed
+ownership but no current admission. Explicit install or activate verifies the
+retained content and local provider rules before account selection can expose it.
+Admission is a Host library fact and is recorded atomically by the canonical
+store or verified activation path; it is not copied from another Host.
+No old runtime compatibility path is added.
+
+### Provider coherence
+
+Single-server plugins and skill-only plugins need no provider rule. A package
+with multiple MCP entries requires every entry's HTTP origin to belong to one
+Host-reviewed family. Invalid and unsupported sibling entries cannot hide an
+unrelated provider; a stdio sibling cannot supply a reviewable HTTP origin.
+Cloudflare API and Radar may share a family; Drive and Figma must stay separate.
+An unreviewed package is rejected before its publication or agent activation.
+
+The Host owns `PluginProviderFamily { family, origins }` through
+`LocalHost::define_plugin_provider_family` and the daemon's optional
+`plugin_provider_families` configuration. Origins are exact canonical HTTPS
+origins (HTTP loopback is allowed for local servers), never wildcard or suffix
+matches. A reviewed origin may be added to an existing family; an origin cannot
+be reassigned. No default provider taxonomy, automatic endorsement, or removal
+API is supplied. This is explicit Host policy, not proof of corporate ownership.
+Package name, author, and extension metadata cannot create approval. GitHub,
+local, and shared-registry intake use the same check. Each receiving Host needs
+its own rules; the registry transfers neither rules nor activation state.
 
 ## Vocabulary
 
@@ -491,12 +551,9 @@ Alpha's first skill path searches compact name/description metadata through
 `skill_search` and activates one selected name through `skill_load`. Search
 returns at most 200 matches and nothing per match beyond name and short
 description. A workspace skill explicitly overrides a same-named global skill,
-and a global skill overrides a package-provided skill. An equal-named plugin
-currently replaces that package name's bindings; unrelated equal-named plugins
-need the explicit identity and replacement policy described above. Two
-differently named plugins with the same skill name do not get an arbitrary
-digest-based winner: the first binding
-remains available and the other plugin receives a visible component rejection.
+and a global skill overrides a package-provided skill. Equal-named plugins keep separate activation identities. Enabled plugins with
+the same skill name keep the first binding available and report a visible
+component rejection for the other.
 Neither the complete catalog nor any skill body is injected up front. A load
 resolves and persists one exact revision internally before returning its
 complete instructions. Later operations reattach that revision as standing
@@ -873,7 +930,7 @@ remain later work and must preserve `rcp-v0.md`.
 
 ## Open decisions
 
-- future Host schema migrations beyond v11 and storage for permissions;
+- future Host schema migrations beyond schema 31 and storage for permissions;
 - model-visible naming and collision handling for tools from many connections;
 - future marketplace selection, ranking, freshness, and cache policy;
 - cross-platform secret-store selection, account recovery, revocation, and
@@ -889,8 +946,8 @@ remain later work and must preserve `rcp-v0.md`.
 - historical resolved-binding retention after catalog or profile changes;
 - when to add stdio MCP servers and how to constrain their process and
   filesystem authority;
-- ancestor-directory skill discovery, explicit profile configuration, manual
-  revision upgrade, deactivation, and garbage collection;
+- ancestor-directory skill discovery, explicit profile configuration, and
+  garbage collection of installed revisions and session-pinned skills;
 - support for MCP resources, prompts, apps, tasks, or future protocol
   extensions;
 - compatibility policy beyond the SDK-supported legacy MCP revisions;

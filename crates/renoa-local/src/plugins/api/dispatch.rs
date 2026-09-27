@@ -26,6 +26,7 @@ pub enum PluginOutcome {
     Installed(InstalledPlugin),
     Added(Box<PluginAddOutcome>),
     Listed(PluginInventoryPage),
+    Activation(crate::plugins::PluginActivation),
     Connected {
         package_digest: String,
         server: String,
@@ -146,16 +147,56 @@ impl PluginManager {
                     )));
                 }
                 let packages = self.list_report().await?;
-                let connections = self.connection_statuses(agent_id).await?;
-                let skills = self.skill_source_reports(agent_id).await?;
+                let snapshot = self.agent_snapshot(agent_id).await?;
                 Ok(PluginOutcome::Listed(PluginInventoryPage::new(
                     &packages,
-                    &connections,
-                    &skills,
+                    &snapshot.connections,
+                    &snapshot.skills,
+                    &snapshot.activations,
                     cursor.as_deref(),
                     limit,
                 )?))
             }
+            PluginRequest::Activate { package_digest } => Ok(PluginOutcome::Activation(
+                self.change_activation(
+                    agent_id,
+                    crate::plugins::activation::ActivationChange::Activate { package_digest },
+                    invocation.operation_id,
+                )
+                .await?,
+            )),
+            PluginRequest::Deactivate { plugin_id } => Ok(PluginOutcome::Activation(
+                self.change_activation(
+                    agent_id,
+                    crate::plugins::activation::ActivationChange::Deactivate { plugin_id },
+                    invocation.operation_id,
+                )
+                .await?,
+            )),
+            PluginRequest::EnablePlugin { plugin_id } => Ok(PluginOutcome::Activation(
+                self.change_activation(
+                    agent_id,
+                    crate::plugins::activation::ActivationChange::Enable { plugin_id },
+                    invocation.operation_id,
+                )
+                .await?,
+            )),
+            PluginRequest::ReplacePlugin {
+                plugin_id,
+                package_digest,
+                expected_digest,
+            } => Ok(PluginOutcome::Activation(
+                self.change_activation(
+                    agent_id,
+                    crate::plugins::activation::ActivationChange::Replace {
+                        plugin_id,
+                        package_digest,
+                        expected_digest,
+                    },
+                    invocation.operation_id,
+                )
+                .await?,
+            )),
             PluginRequest::Connect {
                 package_digest,
                 server,
@@ -235,39 +276,39 @@ impl PluginManager {
     ) -> Result<InstalledPlugin, PluginError> {
         intake::validate(&source)?;
         super::super::store::validate_digest(expected_digest)?;
-        if let PluginSource::Installed { package_digest } = &source {
+        let installed = if let PluginSource::Installed { package_digest } = &source {
             if package_digest != expected_digest {
                 return Err(PluginError::Conflict(
                     "installed source and expected_digest differ".to_owned(),
                 ));
             }
-            let installed = self.load_available(package_digest).await?;
-            self.synchronize_installed(&installed).await?;
-            return Ok(installed);
-        }
-        // A replay verifies and reuses the published content even if its old
-        // source disappeared. Source syntax is still validated before adoption.
-        match self.load_local(expected_digest).await {
-            Ok(installed) => {
-                self.synchronize_installed(&installed).await?;
-                return Ok(installed);
+            self.load_available(package_digest).await?
+        } else {
+            // Reuse verified published content even if its source disappeared.
+            match self.load_local(expected_digest).await {
+                Ok(installed) => installed,
+                Err(PluginError::NotFound(_)) => {
+                    let captured = self
+                        .capture_source(source, workspace, cancellation.clone())
+                        .await?;
+                    if captured.inspection.digest != expected_digest {
+                        return Err(PluginError::Conflict(format!(
+                            "plugin source changed after inspection: expected {expected_digest}, found {}",
+                            captured.inspection.digest
+                        )));
+                    }
+                    intake::require_active(&cancellation)?;
+                    let store = self.store.clone();
+                    tokio::task::spawn_blocking(move || store.install_captured(&captured)).await??
+                }
+                Err(error) => return Err(error),
             }
-            Err(PluginError::NotFound(_)) => (),
-            Err(error) => return Err(error),
-        }
-        let captured = self
-            .capture_source(source, workspace, cancellation.clone())
-            .await?;
-        if captured.inspection.digest != expected_digest {
-            return Err(PluginError::Conflict(format!(
-                "plugin source changed after inspection: expected {expected_digest}, found {}",
-                captured.inspection.digest
-            )));
-        }
-        intake::require_active(&cancellation)?;
+        };
+        // Explicit install re-admits verified retained revisions. Ordinary reads
+        // keep the library's admission state unchanged.
         let store = self.store.clone();
-        let installed =
-            tokio::task::spawn_blocking(move || store.install_captured(&captured)).await??;
+        let verified = installed.clone();
+        tokio::task::spawn_blocking(move || store.record(&verified)).await??;
         self.synchronize_installed(&installed).await?;
         Ok(installed)
     }

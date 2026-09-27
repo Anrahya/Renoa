@@ -326,7 +326,7 @@ fn valid_stdio_cwd(value: &str) -> bool {
         || value.starts_with("${PLUGIN_DATA}/")
 }
 
-fn validate_url(value: &str) -> Result<String, String> {
+pub(crate) fn validate_url(value: &str) -> Result<String, String> {
     let url = Url::parse(value).map_err(|error| format!("MCP URL is invalid: {error}"))?;
     if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
         return Err("MCP URL must not contain user information or a fragment".to_owned());

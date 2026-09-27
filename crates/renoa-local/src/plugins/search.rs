@@ -89,34 +89,26 @@ impl PluginSearchTool {
                 true,
             ),
         };
-        let connections = self
+        let snapshot = self
             .manager
-            .connection_statuses(&self.agent_id)
+            .agent_snapshot(&self.agent_id)
             .await
             .map_err(|error| plugin_error(error, false))?;
         let connections = if self.can_manage {
-            connections
+            snapshot.connections
         } else {
-            connections
+            snapshot
+                .connections
                 .into_iter()
                 .filter(McpConnectionStatus::enabled_for_agent)
                 .collect()
         };
-        let skills = self
-            .manager
-            .skill_source_reports(&self.agent_id)
-            .await
-            .map_err(|error| plugin_error(error, false))?;
-        let tools = self
-            .manager
-            .tool_summaries(&self.agent_id)
-            .await
-            .map_err(|error| plugin_error(error, false))?;
         Ok(local::Inventory::new(
             &packages,
             &connections,
-            &skills,
-            tools,
+            &snapshot.skills,
+            &snapshot.activations,
+            snapshot.tools,
             shared_refresh_unavailable,
         ))
     }

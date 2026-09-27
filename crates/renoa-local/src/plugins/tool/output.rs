@@ -146,6 +146,7 @@ pub(super) struct InstalledConnectionFailure<'a> {
     pub(super) server: Option<&'a str>,
     pub(super) notices: &'a [crate::plugins::PluginNotice],
     pub(super) skills: &'a crate::skills::SkillComponentReport,
+    pub(super) activation: &'a crate::plugins::PluginActivation,
 }
 
 pub(super) fn installed_connection_failure_output(
@@ -314,6 +315,11 @@ fn attach_installation(
         serde_json::to_value(context.notices).map_err(|error| {
             ToolError::internal(format!("plugin notices could not be encoded: {error}"))
         })?,
+    );
+    object.insert(
+        "activation".to_owned(),
+        serde_json::to_value(context.activation)
+            .map_err(|error| ToolError::internal(error.to_string()))?,
     );
     object.insert(
         "skills".to_owned(),

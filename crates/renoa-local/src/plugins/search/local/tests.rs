@@ -42,7 +42,7 @@ fn one_package_card_contains_related_servers_and_skill_only_packages_remain_visi
         notices: Vec::new(),
     };
     let packages = PluginListReport::new(vec![google, skill_only], Vec::new());
-    let inventory = Inventory::new(&packages, &[], &[], Vec::new(), false);
+    let inventory = Inventory::new(&packages, &[], &[], &[], Vec::new(), false);
     for query in ["drive", "gmail"] {
         let result = serde_json::to_value(inventory.search(query, 0).expect("search package"))
             .expect("encode search page");

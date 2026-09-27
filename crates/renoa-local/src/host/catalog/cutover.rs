@@ -56,6 +56,7 @@ fn migrate(
     match version {
         SCHEMA_VERSION => {}
         version if (1..SCHEMA_VERSION).contains(&version) => {
+            transaction.execute_batch("DROP VIEW IF EXISTS host_agent_enabled_mcp_connections;")?;
             if version <= 2 {
                 require_complete_selected_catalogs(&transaction)?;
             }
@@ -85,6 +86,7 @@ fn migrate(
             crate::host::routines::initialize(&transaction)?;
             crate::host::reviews::initialize(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
+            crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -169,6 +171,9 @@ fn require_complete_selected_catalogs(connection: &Connection) -> Result<(), Hos
 fn retire_agent_owners(transaction: &rusqlite::Transaction<'_>) -> Result<(), HostCatalogError> {
     for table in [
         // Canonical owners whose shape or children changed.
+        "host_plugin_activation_operations",
+        "host_agent_plugin_revisions",
+        "host_agent_plugins",
         "host_agent_tool_selections",
         "host_agent_mcp_connections",
         "host_agent_creations",

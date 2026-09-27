@@ -85,6 +85,10 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
             "install",
             "list",
             "connect",
+            "activate",
+            "deactivate",
+            "enable_plugin",
+            "replace_plugin",
             "authorize",
             "disconnect",
             "enable"
@@ -355,7 +359,7 @@ async fn package_add_reports_loaded_and_rejected_components_after_installation()
     );
     let listed = call(&fixture.tool, json!({"action": "list"})).await;
     let source = super::inventory_item(&listed, "plugin_skill_source");
-    assert_eq!(source["source"], "agent-plugin:local-fixture");
+    assert_eq!(source["source"], format!("agent-plugin:{digest}"));
     assert_eq!(source["accepted_count"], 1);
     assert_eq!(source["rejected_count"], 1);
     let accepted = super::inventory_item(&listed, "plugin_skill");
@@ -414,6 +418,7 @@ impl LocalPackageFixture {
         let directory = tempdir().expect("temporary local add fixture");
         let database = directory.path().join("host.sqlite3");
         catalog::initialize(&database).expect("initialize Host catalog");
+        crate::test_agents::insert_agent(&database, &test_agent_id(1).to_string());
         let mcp = McpCatalogStore::open(database.clone()).expect("open MCP catalog");
         let skills = test_skill_store(&database, directory.path());
         let manager = PluginManager::initialize(

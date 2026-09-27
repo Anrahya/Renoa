@@ -120,13 +120,14 @@ credential ceremony. Every session of that agent sees the same attachment.
 A different agent selects the connection explicitly; availability in the Host
 library does not automatically expose every tool to every definition.
 
-To reuse a package's skills, call `add` with
+To activate an installed package, call `add` with
 `source: {"kind": "installed", "package_digest": "<digest from list>"}`.
 The Host verifies that exact installed revision and attaches its supported
-skills to the agent without needing the original source directory or a
-network registry. This does not connect the package's MCP servers. Existing
-connection identities are reused through `enable`; a new connection remains an
-explicit separate operation. Missing or corrupt revisions fail rather than
+skills to the agent and restores retained account selections without needing
+the original source directory or a network registry. A new MCP connection
+remains an explicit separate operation. Whole-plugin `deactivate` and
+`enable_plugin` gate future skills and all selected accounts; `replace_plugin`
+changes the selected revision with a current-digest check. Missing or corrupt revisions fail rather than
 being downloaded or substituted.
 
 Global skills are discoverable by each agent through the configured global
@@ -698,10 +699,10 @@ without restarting the session or surface. Disconnect is idempotent and the
 next search stops exposing its tools while the verified catalog remains
 available for recovery or later reattachment. Package skills enter the same
 skill registry under a lower-priority plugin scope; workspace overrides global, and
-global overrides plugin. Plugin skill sources are currently keyed by package
-name: an equal-named package replaces those bindings, while a differently named
-plugin with the same skill name is rejected. Explicit plugin identity and
-revision replacement remain open lifecycle decisions.
+global overrides plugin. Plugin skill sources use stable per-agent activation
+identities; equal package names never replace each other. An equal skill name
+from another enabled plugin produces a component rejection. Explicit replacement
+keeps the activation identity and uses the current digest to reject races.
 The next `skill_search` sees a committed package skill without restarting the
 session or surface. Model-facing management results use the same 50 KiB
 tool-output boundary as local tools and fail instead of silently truncating
@@ -1287,7 +1288,8 @@ separate work. An agent's files remain retrievable through that agent's configur
 
 The daemon launch JSON contains `data_directory`, `model_bridge`, `providers`,
 `provider`, `model`, `model_auth_store`, and optional `reasoning`, `mcp_adapter`,
-`code_mode_worker`, `mcp_registry_adapter`, `shared_plugin_registry`, and `oauth_relay` (origin and private
+`code_mode_worker`, `mcp_registry_adapter`, `shared_plugin_registry`,
+`plugin_provider_families` (Host-reviewed family and exact-origin arrays), and `oauth_relay` (origin and private
 device credential path). These are Host settings; there are no Slack tokens or
 channel IDs. `deploy/renoa-host.service` runs this process independently of surfaces.
 The supplied systemd unit loads `/etc/renoa/host.json` as `host-config` and the
@@ -2000,6 +2002,13 @@ from revision 9 to revision 10. An unfinished revision-9 operation fails closed
 after upgrade instead of acquiring network synchronization under its old
 manifest.
 
-The canonical plugin API binding is `renoa-plugin-api-v1`; source-contract
+Schema 31 owns agent plugin activation, historical revision identities, and
+durable activation receipts. Multi-server packages use Host-reviewed provider
+families before admission; portable metadata cannot authorize itself. Legacy
+plugin selections require the explicit Host reset; unselected library revisions
+migrate with verified MCP ownership and require explicit current admission
+through install or activate before their retained accounts can be selected.
+
+The canonical plugin API binding is `renoa-plugin-api-v2`; source-contract
 changes cannot replay under an older frozen management manifest. The full
 source and lifecycle contract is in `renoa-extensions-north-star.md`.

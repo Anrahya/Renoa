@@ -107,3 +107,19 @@ impl LocalHost {
             .await?)
     }
 }
+
+impl LocalHost {
+    /// Records reviewed origins for a provider family. Existing origins cannot
+    /// move to another family. Package metadata cannot supply this approval.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid rule, conflicting ownership, or catalog storage failures.
+    pub fn define_plugin_provider_family(
+        &self,
+        rule: &crate::PluginProviderFamily,
+    ) -> Result<(), LocalHostError> {
+        crate::plugins::coherence::define(&self.config.database, rule)?;
+        Ok(())
+    }
+}

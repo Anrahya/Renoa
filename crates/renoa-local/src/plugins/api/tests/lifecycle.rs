@@ -194,7 +194,7 @@ async fn typed_inventory_pages_cover_exactly_the_requested_facts() {
             break;
         }
     }
-    assert_eq!(total, 3);
+    assert_eq!(total, 4);
     assert_eq!(returned, total);
     assert_eq!(names, ["review", "review"]);
 }

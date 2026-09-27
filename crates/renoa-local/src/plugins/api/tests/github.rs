@@ -137,3 +137,97 @@ fn skill_archive(skill: &str, selected: &str) -> Vec<u8> {
         .expect("unrelated symlink");
     archive.into_inner().expect("tar").finish().expect("gzip")
 }
+
+#[tokio::test]
+async fn github_multi_server_intake_requires_local_host_review_before_publication() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut manager, _) = manager(root.path());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    manager.github_source = crate::plugins::intake::GithubSourceClient::fixture(format!(
+        "http://{}",
+        listener.local_addr().unwrap()
+    ));
+    let mut archive = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+    for (name, bytes) in [
+        (
+            "plugin.json",
+            serde_json::json!({"$schema":crate::plugins::inspect::PLUGIN_SCHEMA,"name":"cloud"})
+                .to_string(),
+        ),
+        (
+            "mcp.json",
+            serde_json::json!({"$schema":crate::plugins::inspect::MCP_SCHEMA,"mcpServers":{
+                "api":{"type":"streamable-http","url":"https://api.cloud.example/mcp"},
+                "radar":{"type":"streamable-http","url":"https://radar.cloud.example/mcp"}
+            }})
+            .to_string(),
+        ),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_size(bytes.len() as u64);
+        header.set_cksum();
+        archive
+            .append_data(
+                &mut header,
+                format!("repo-{COMMIT}/{name}"),
+                bytes.as_bytes(),
+            )
+            .unwrap();
+    }
+    let bytes = archive.into_inner().unwrap().finish().unwrap();
+    let server = tokio::spawn(async move {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let count = stream.read(&mut request).await.unwrap();
+            assert!(
+                String::from_utf8_lossy(&request[..count])
+                    .starts_with(&format!("GET /owner/repo/tar.gz/{COMMIT} "))
+            );
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        bytes.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            stream.write_all(&bytes).await.unwrap();
+        }
+    });
+    let source = PluginSource::Github {
+        repository: "https://github.com/owner/repo".into(),
+        commit: COMMIT.into(),
+        path: None,
+    };
+    let digest = inspect(&manager, root.path(), source.clone()).await;
+    let request = || PluginRequest::Install {
+        source: source.clone(),
+        expected_digest: digest.clone(),
+    };
+    assert!(matches!(
+        invoke(&manager, root.path(), request()).await,
+        Err(PluginError::Invalid(_))
+    ));
+    assert!(!root.path().join("plugins").join(&digest).exists());
+    assert!(manager.list().await.unwrap().is_empty());
+    crate::plugins::coherence::define(
+        &root.path().join("host.sqlite3"),
+        &crate::plugins::PluginProviderFamily {
+            family: "cloud".into(),
+            origins: vec![
+                "https://api.cloud.example".into(),
+                "https://radar.cloud.example".into(),
+            ],
+        },
+    )
+    .unwrap();
+    invoke(&manager, root.path(), request())
+        .await
+        .expect("retry after Host review");
+    server.await.unwrap();
+    assert_eq!(manager.list().await.unwrap().len(), 1);
+}

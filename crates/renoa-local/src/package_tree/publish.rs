@@ -138,7 +138,7 @@ fn sync_tree(root: &Path) -> Result<(), TreeError> {
     Ok(())
 }
 
-fn remove_staging(path: &Path) -> Result<(), TreeError> {
+pub(crate) fn remove_staging(path: &Path) -> Result<(), TreeError> {
     make_tree_writable(path)?;
     fs::remove_dir_all(path)
         .map_err(|error| TreeError::io("remove package staging directory", path, error))

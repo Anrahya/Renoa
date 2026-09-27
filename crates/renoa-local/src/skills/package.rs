@@ -9,7 +9,9 @@ use std::{
 use super::{SkillError, registry::validate_digest};
 use crate::package_tree::{self, CapturedFile, TreeError, TreeLimits, UnsupportedEntryPolicy};
 
-pub(super) use publish::{initialize_store, publish};
+#[cfg(test)]
+use publish::publish;
+pub(super) use publish::{PublicationBatch, initialize_store};
 
 const MAX_SOURCE_SKILLS: usize = 2_000;
 const MAX_SOURCE_FILES: usize = 16_384;

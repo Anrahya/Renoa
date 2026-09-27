@@ -1,11 +1,13 @@
+pub(crate) mod activation;
 pub(crate) mod api;
+pub(crate) mod coherence;
 mod discovery;
 mod error;
 mod generated;
 pub(crate) mod inspect;
 mod intake;
 mod json;
-mod manager;
+pub(crate) mod manager;
 mod search;
 pub(crate) mod store;
 mod tool;
@@ -23,6 +25,8 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+pub use activation::PluginActivation;
+pub use coherence::PluginProviderFamily;
 pub(crate) use discovery::OfficialRegistry;
 pub use error::PluginError;
 pub(crate) use manager::PluginManager;

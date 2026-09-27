@@ -10,12 +10,27 @@ use crate::{
 };
 use std::{fs, path::Path};
 
+mod activation;
+mod coherence;
 mod github;
 mod lifecycle;
 
 fn manager(root: &Path) -> (PluginManager, SkillStore) {
     let database = root.join("host.sqlite3");
     catalog::initialize(&database).expect("catalog");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    for agent in [test_agent_id(1), test_agent_id(2)] {
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM host_agents WHERE agent_id=?1)",
+                [agent.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        if !exists {
+            crate::test_agents::insert_agent(&database, &agent.to_string());
+        }
+    }
     let mcp = McpCatalogStore::open(database.clone()).expect("MCP store");
     let skills = test_skill_store(&database, root);
     let manager = PluginManager::initialize(
@@ -93,6 +108,20 @@ async fn a_standalone_skill_becomes_one_shared_plugin_and_replays_its_exact_revi
         credential: None,
         replace: false,
     };
+    invoke(
+        &manager,
+        root.path(),
+        PluginRequest::Install {
+            source: source.clone(),
+            expected_digest: digest.clone(),
+        },
+    )
+    .await
+    .expect("publish before activation");
+    rusqlite::Connection::open(root.path().join("host.sqlite3"))
+        .unwrap()
+        .execute_batch("DELETE FROM installed_plugins;")
+        .expect("publication acknowledgement lost before activation admission");
     let PluginOutcome::Added(added) = invoke(&manager, root.path(), request()).await.expect("add")
     else {
         panic!("add outcome")
@@ -120,10 +149,6 @@ async fn a_standalone_skill_becomes_one_shared_plugin_and_replays_its_exact_revi
         b"Inspect the implementation."
     );
     fs::remove_dir_all(skill).expect("remove old source");
-    rusqlite::Connection::open(root.path().join("host.sqlite3"))
-        .expect("database")
-        .execute_batch("DELETE FROM installed_plugins;")
-        .expect("simulate a lost publication acknowledgement");
     invoke(&manager, root.path(), request())
         .await
         .expect("replay without source");

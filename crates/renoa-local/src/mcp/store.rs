@@ -191,6 +191,11 @@ impl McpCatalogStore {
             )));
         }
         store_catalog(&transaction, snapshot)?;
+        crate::plugins::activation::admit_connection_selection(
+            &transaction,
+            agent_id,
+            snapshot.connection_id(),
+        )?;
         transaction.execute(
             "INSERT OR IGNORE INTO host_agent_mcp_connections(agent_id, connection_id)
              VALUES (?1, ?2)",

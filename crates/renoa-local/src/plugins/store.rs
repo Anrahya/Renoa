@@ -33,7 +33,9 @@ impl PluginStore {
     ) -> Result<InstalledPlugin, PluginError> {
         validate_digest(expected_digest)?;
         if load_stored(&self.connection()?, expected_digest)?.is_some() {
-            return self.load(expected_digest);
+            let installed = self.load(expected_digest)?;
+            self.record(&installed)?;
+            return Ok(installed);
         }
         if let Some(installed) = self.recover_published(expected_digest)? {
             return Ok(installed);
@@ -52,6 +54,7 @@ impl PluginStore {
         &self,
         captured: &CapturedPlugin,
     ) -> Result<InstalledPlugin, PluginError> {
+        super::coherence::require(&self.connection()?, captured)?;
         if !captured.tree.skipped_entries.is_empty()
             || captured
                 .tree
@@ -63,7 +66,9 @@ impl PluginStore {
         }
         let expected_digest = captured.inspection.digest.clone();
         if load_stored(&self.connection()?, &expected_digest)?.is_some() {
-            return self.load(&expected_digest);
+            let installed = self.load(&expected_digest)?;
+            self.record(&installed)?;
+            return Ok(installed);
         }
         if let Some(installed) = self.recover_published(&expected_digest)? {
             return Ok(installed);
@@ -106,6 +111,7 @@ impl PluginStore {
             Ok(_) => {}
         }
         let captured = inspect::inspect(&target)?;
+        super::coherence::require(&self.connection()?, &captured)?;
         require_no_denied_installed_entries(&captured, expected_digest)?;
         if captured.inspection.digest != expected_digest {
             return Err(PluginError::Conflict(format!(
@@ -117,10 +123,11 @@ impl PluginStore {
         Ok(Some(installed))
     }
 
-    fn record(&self, installed: &InstalledPlugin) -> Result<(), PluginError> {
+    pub(super) fn record(&self, installed: &InstalledPlugin) -> Result<(), PluginError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure_installed(&transaction, installed)?;
+        record_admission(&transaction, installed.digest())?;
         transaction.commit()?;
         Ok(())
     }
@@ -132,6 +139,7 @@ impl PluginStore {
             PluginError::NotFound(format!("package digest '{digest}' is not installed"))
         })?;
         let captured = inspect::inspect(&self.packages.join(digest))?;
+        super::coherence::require(&connection, &captured)?;
         require_no_denied_installed_entries(&captured, digest)?;
         let observed = InstalledPlugin::from_inspection(captured.inspection);
         if same_durable_plugin(&observed, &stored) {
@@ -189,7 +197,7 @@ impl PluginStore {
         Ok(self.packages.join(digest))
     }
 
-    fn connection(&self) -> Result<Connection, PluginError> {
+    pub(crate) fn connection(&self) -> Result<Connection, PluginError> {
         Ok(crate::host::catalog::open_verified(&self.database)?)
     }
 }
@@ -254,13 +262,14 @@ fn ensure_installed(
         for server in &plugin.mcp_servers {
             transaction.execute(
                 "INSERT INTO plugin_mcp_servers(
-                    plugin_digest, server_id, transport, endpoint, request_headers_json
-                 ) VALUES (?1, ?2, 'streamable_http', ?3, ?4)",
+                    plugin_digest, server_id, transport, endpoint, request_headers_json, integration_id
+                 ) VALUES (?1, ?2, 'streamable_http', ?3, ?4, ?5)",
                 params![
                     plugin.digest,
                     server.id,
                     server.endpoint,
                     serde_json::to_string(&server.request_headers)?,
+                    super::manager::integration_id(&plugin.digest, &server.id),
                 ],
             )?;
         }
@@ -410,4 +419,15 @@ pub(crate) fn validate_digest(digest: &str) -> Result<(), PluginError> {
             "package digest must be 64 lowercase hexadecimal characters".to_owned(),
         ))
     }
+}
+
+pub(crate) fn record_admission(
+    transaction: &Transaction<'_>,
+    digest: &str,
+) -> rusqlite::Result<()> {
+    transaction.execute(
+        "INSERT OR IGNORE INTO host_plugin_admissions(package_digest) VALUES (?1)",
+        [digest],
+    )?;
+    Ok(())
 }

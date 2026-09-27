@@ -38,7 +38,7 @@ async fn installed_reuse_rejects_connection_fields_before_any_agent_mutation() {
         .await
         .expect("definite rejection");
         assert!(output.is_error);
-        assert!(output.content.iter().any(|block| matches!(block, ContentBlock::Text { text } if text.contains("reuse only enables skills"))));
+        assert!(output.content.iter().any(|block| matches!(block, ContentBlock::Text { text } if text.contains("installed package reuse activates that plugin revision"))));
     }
     assert!(
         fixture

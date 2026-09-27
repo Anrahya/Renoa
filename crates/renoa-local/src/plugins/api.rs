@@ -19,18 +19,19 @@ pub use progress::{
 pub use dispatch::{PluginInvocation, PluginOutcome};
 pub(crate) use schema::manage_tool_spec;
 
-pub const PLUGIN_API_REVISION: &str = "renoa-plugin-api-v1";
+pub const PLUGIN_API_REVISION: &str = "renoa-plugin-api-v2";
 pub const MAX_PLUGIN_PAGE: usize = 200;
 
 /// One operation on the shared library or on the caller's agent bindings.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PluginRequest {
-    /// Add a plugin and enable its skills for this agent. Mutable sources require
+    /// Add and activate a plugin for this agent, restoring its retained account selections. Mutable sources require
     /// `expected_digest` from inspect. Include connection and credential to connect it now.
     Add {
         source: PluginSource,
-        /// Exact 64-character lowercase hexadecimal digest returned by inspect.
+        /// 64 lowercase hexadecimal characters. For add/install, copy the source digest
+        /// returned by inspect. For `replace_plugin`, copy the CURRENT selected `package_digest`.
         #[serde(default)]
         #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
         expected_digest: Option<String>,
@@ -84,6 +85,37 @@ pub enum PluginRequest {
         /// Do not translate, widen, or invent scopes. Omit for initial authorization.
         #[serde(default, deserialize_with = "deserialize_optional_oauth_scope")]
         required_scope: Option<String>,
+    },
+    /// Activate one installed revision for this agent. Names never replace another plugin.
+    Activate {
+        /// Exact installed revision from `plugin_search` or inventory.
+        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        package_digest: String,
+    },
+    /// Stop future discovery and MCP resolution for this plugin. Loaded session skills remain pinned.
+    Deactivate {
+        /// Stable 64-character `plugin_id` from activation or `plugin_search`; not the display name.
+        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        plugin_id: String,
+    },
+    /// Restore a previously selected plugin, including its retained account selections.
+    EnablePlugin {
+        /// Stable 64-character `plugin_id` from activation or `plugin_search`; not the display name.
+        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        plugin_id: String,
+    },
+    /// Replace exactly this agent's selected revision. Retains plugin identity, requires the
+    /// current digest, and does not move credentials or connections to new endpoints.
+    ReplacePlugin {
+        /// Stable `plugin_id` from activation or `plugin_search`. Preserved across revisions.
+        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        plugin_id: String,
+        /// New installed revision; install it first without activating another identity.
+        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        package_digest: String,
+        /// Current selected `package_digest`, not the new revision's inspected digest.
+        #[schemars(length(min = 64, max = 64), regex(pattern = "^[a-f0-9]{64}$"))]
+        expected_digest: String,
     },
     /// Complete or renew OAuth for an existing connection, then refresh its catalog.
     Authorize {

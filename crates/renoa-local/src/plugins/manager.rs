@@ -26,7 +26,7 @@ use crate::{
     skills::{SkillComponentReport, SkillStore},
 };
 use identity::default_connection_id;
-pub(super) use identity::integration_id;
+pub(crate) use identity::integration_id;
 
 pub(crate) use connect::{ProfileAuthorizationRequest, ProfileConnectionRequest};
 
@@ -37,7 +37,7 @@ pub(crate) struct PluginManager {
     mcp_adapter: Option<PathBuf>,
     registry: Option<OfficialRegistry>,
     authorizations: McpAuthorizationResolver,
-    skills: SkillStore,
+    pub(super) skills: SkillStore,
     shared_registry: Option<SharedPluginRegistry>,
     pub(super) github_source: super::intake::GithubSourceClient,
 }
@@ -139,22 +139,13 @@ impl PluginManager {
         cancellation: CancellationToken,
     ) -> Result<PluginAddOutcome, PluginError> {
         super::intake::require_active(&cancellation)?;
-        if matches!(source, super::api::PluginSource::Installed { .. })
-            && connection_request.is_some()
-        {
-            return Err(PluginError::Invalid("installed package reuse only enables skills; omit server, connection, credential, and replace, then use enable for an existing connection or connect for a new one".to_owned()));
-        }
+        validate_add_source(&source, expected.as_deref(), connection_request.is_some())?;
         let connect_by_default = matches!(source, super::api::PluginSource::Mcp { .. });
         let generated_server = match &source {
             super::api::PluginSource::Mcp { server, .. } => Some(server.clone()),
             _ => None,
         };
         let receipt = super::intake::receipt(&source);
-        match &source {
-            super::api::PluginSource::Installed {..} | super::api::PluginSource::Mcp {..} if expected.is_some() => return Err(PluginError::Invalid("installed and MCP sources do not accept expected_digest in add".to_owned())),
-            super::api::PluginSource::Package {..} | super::api::PluginSource::Skill {..} | super::api::PluginSource::Github {..} if expected.is_none() => return Err(PluginError::Invalid("add requires expected_digest from inspect for package, skill, and GitHub sources".to_owned())),
-            _ => (),
-        }
         let existing = if let super::api::PluginSource::Installed { package_digest } = &source {
             Some(self.load_available(package_digest).await?)
         } else if let Some(expected) = &expected {
@@ -216,7 +207,13 @@ impl PluginManager {
             tokio::task::spawn_blocking(move || store.install_captured(&captured)).await??
         };
         self.synchronize_installed(&installed).await?;
-        let skills = self.sync_skills(context.agent_id, &installed).await?;
+        let (activation, skills) = self
+            .activate_added(
+                context.agent_id,
+                installed.digest(),
+                &format!("{}:activate:{}", context.operation_id, installed.digest()),
+            )
+            .await?;
         self.connect_prepared(
             PreparedExtension {
                 installed,
@@ -224,6 +221,7 @@ impl PluginManager {
                 generated_server,
                 connect_by_default,
             },
+            activation,
             skills,
             connection_request,
             context,
@@ -232,28 +230,10 @@ impl PluginManager {
         .await
     }
 
-    async fn sync_skills(
-        &self,
-        agent_id: &AgentId,
-        installed: &InstalledPlugin,
-    ) -> Result<SkillComponentReport, PluginError> {
-        let store = self.store.clone();
-        let package_digest = installed.digest().to_owned();
-        let plugin_name = installed.metadata().name().to_owned();
-        let agent_id = *agent_id;
-        let skills = self.skills.clone();
-        tokio::task::spawn_blocking(move || {
-            let package_root = store.package_root(&package_digest)?;
-            skills
-                .sync_plugin(&agent_id.to_string(), &plugin_name, &package_root)
-                .map_err(PluginError::from)
-        })
-        .await?
-    }
-
     async fn connect_prepared(
         &self,
         prepared: PreparedExtension,
+        activation: super::PluginActivation,
         skills: SkillComponentReport,
         request: Option<PluginConnectionRequest>,
         context: AddOperationContext<'_>,
@@ -263,6 +243,7 @@ impl PluginManager {
             return Ok(PluginAddOutcome {
                 installed: prepared.installed,
                 source: prepared.source,
+                activation,
                 skills,
                 connection: PluginConnectionOutcome::NotRequested,
             });
@@ -284,6 +265,7 @@ impl PluginManager {
                 return Ok(PluginAddOutcome {
                     installed: prepared.installed,
                     source: prepared.source,
+                    activation,
                     skills,
                     connection: PluginConnectionOutcome::Failed {
                         id,
@@ -330,6 +312,7 @@ impl PluginManager {
         Ok(PluginAddOutcome {
             installed: prepared.installed,
             source: prepared.source,
+            activation,
             skills,
             connection: outcome,
         })
@@ -353,6 +336,7 @@ struct PreparedExtension {
 pub struct PluginAddOutcome {
     pub installed: InstalledPlugin,
     pub source: PluginSourceReceipt,
+    pub activation: super::PluginActivation,
     pub skills: SkillComponentReport,
     pub connection: PluginConnectionOutcome,
 }
@@ -377,4 +361,35 @@ pub enum PluginConnectionOutcome {
         server: Option<String>,
         error: PluginError,
     },
+}
+
+fn validate_add_source(
+    source: &super::api::PluginSource,
+    expected: Option<&str>,
+    has_connection: bool,
+) -> Result<(), PluginError> {
+    if matches!(source, super::api::PluginSource::Installed { .. }) && has_connection {
+        return Err(PluginError::Invalid("installed package reuse activates that plugin revision; omit server, connection, credential, and replace, then use enable for an existing connection or connect for a new one".to_owned()));
+    }
+    match source {
+        super::api::PluginSource::Installed { .. } | super::api::PluginSource::Mcp { .. }
+            if expected.is_some() =>
+        {
+            return Err(PluginError::Invalid(
+                "installed and MCP sources do not accept expected_digest in add".to_owned(),
+            ));
+        }
+        super::api::PluginSource::Package { .. }
+        | super::api::PluginSource::Skill { .. }
+        | super::api::PluginSource::Github { .. }
+            if expected.is_none() =>
+        {
+            return Err(PluginError::Invalid(
+                "add requires expected_digest from inspect for package, skill, and GitHub sources"
+                    .to_owned(),
+            ));
+        }
+        _ => (),
+    }
+    Ok(())
 }

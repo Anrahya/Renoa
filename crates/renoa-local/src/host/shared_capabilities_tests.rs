@@ -1,3 +1,5 @@
+mod plugins;
+
 use std::{collections::BTreeSet, fs, os::unix::fs::PermissionsExt as _, path::Path, sync::Arc};
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};

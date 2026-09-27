@@ -86,9 +86,9 @@ pub use plugins::api::{
     PluginSource, plugin_api_schema,
 };
 pub use plugins::{
-    InstalledPlugin, PluginAddOutcome, PluginConnectionOutcome, PluginCredential, PluginError,
-    PluginInspection, PluginMcpServer, PluginMetadata, PluginNotice, PluginOAuthRegistration,
-    PluginSourceReceipt,
+    InstalledPlugin, PluginActivation, PluginAddOutcome, PluginConnectionOutcome, PluginCredential,
+    PluginError, PluginInspection, PluginMcpServer, PluginMetadata, PluginNotice,
+    PluginOAuthRegistration, PluginProviderFamily, PluginSourceReceipt,
 };
 pub use renoa_kernel::AgentId;
 pub use runtime::{

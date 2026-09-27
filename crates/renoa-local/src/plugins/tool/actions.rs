@@ -16,6 +16,7 @@ pub(super) fn render(outcome: PluginOutcome) -> Result<ToolOutput, ToolError> {
         PluginOutcome::Inspected(inspection) => json_output(&inspection),
         PluginOutcome::Installed(installed) => json_output(&installed),
         PluginOutcome::Listed(page) => json_output(&page),
+        PluginOutcome::Activation(activation) => json_output(&activation),
         PluginOutcome::Added(added) => render_added(*added),
         PluginOutcome::Connected {
             package_digest,
@@ -63,14 +64,17 @@ struct AddedExtensionView<'a> {
     source: &'static str,
     installed: &'a InstalledPlugin,
     skills: &'a SkillComponentReport,
+    activation: &'a crate::plugins::PluginActivation,
 }
 
-fn render_added(added: PluginAddOutcome) -> Result<ToolOutput, ToolError> {
+fn render_added(mut added: PluginAddOutcome) -> Result<ToolOutput, ToolError> {
+    added.activation.skills = None;
     let source = source_output(&added.source);
     let output = AddedExtensionView {
         source,
         installed: &added.installed,
         skills: &added.skills,
+        activation: &added.activation,
     };
     match added.connection {
         PluginConnectionOutcome::NotRequested => installed_output(&output),
@@ -94,6 +98,7 @@ fn installed_output(extension: &AddedExtensionView<'_>) -> Result<ToolOutput, To
         mcp_servers: extension.installed.mcp_servers(),
         notices: extension.installed.notices(),
         skills: extension.skills,
+        activation: extension.activation,
     })
 }
 
@@ -115,6 +120,7 @@ fn connected_output(
         rejected_tools: snapshot.rejected_tools().len(),
         notices: extension.installed.notices(),
         skills: extension.skills,
+        activation: extension.activation,
     })
 }
 
@@ -141,6 +147,7 @@ fn installed_failure(
             server,
             notices: extension.installed.notices(),
             skills: extension.skills,
+            activation: extension.activation,
         },
         error,
     )

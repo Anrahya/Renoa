@@ -27,6 +27,8 @@ struct Config {
     mcp_registry_adapter: Option<PathBuf>,
     shared_plugin_registry: Option<String>,
     oauth_relay: Option<Relay>,
+    #[serde(default)]
+    plugin_provider_families: Vec<renoa_local::PluginProviderFamily>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -133,6 +135,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         adapters = adapters.with_oauth_relay(&relay.origin, &relay.device_credential_file);
     }
     let host = LocalHost::new(&c.data_directory, models, adapters)?;
+    for family in &c.plugin_provider_families {
+        host.define_plugin_provider_family(family)?;
+    }
     if args.len() == 3 {
         return run_command(
             &host,

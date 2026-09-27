@@ -5,7 +5,7 @@ use std::{
 
 use renoa_kernel::{CommandId, SessionId};
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
     SkillError,
@@ -16,7 +16,8 @@ use super::{
 mod source;
 mod status;
 
-use source::{PreparedSource, SourceSpec, replace_source};
+pub(crate) use source::PreparedSource;
+use source::{SourceSpec, replace_source};
 
 #[derive(Clone)]
 pub(crate) struct SkillStore {
@@ -25,14 +26,14 @@ pub(crate) struct SkillStore {
     global_source: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillComponentReport {
     accepted: Vec<String>,
     rejected: Vec<SkillComponentRejection>,
 }
 
 impl SkillComponentReport {
-    fn new(accepted: Vec<String>, rejected: Vec<SkillComponentRejection>) -> Self {
+    pub(crate) fn new(accepted: Vec<String>, rejected: Vec<SkillComponentRejection>) -> Self {
         Self { accepted, rejected }
     }
 
@@ -47,13 +48,13 @@ impl SkillComponentReport {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillComponentRejection {
     entry: String,
     reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SkillSourceReport {
     source: String,
     #[serde(flatten)]
@@ -185,26 +186,27 @@ impl SkillStore {
         let mut prepared = Vec::with_capacity(specs.len());
         for spec in specs {
             let snapshot = package::inspect_source(&spec.root)?;
-            for skill in &snapshot.skills {
-                package::publish(&self.packages, skill)?;
-            }
             prepared.push(PreparedSource { spec, snapshot });
         }
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut publications = package::PublicationBatch::new(&self.packages);
         for source in &prepared {
             replace_source(&transaction, agent_id, source)?;
         }
-        transaction.commit()?;
+        let captured = prepared
+            .iter()
+            .flat_map(|source| &source.snapshot.skills)
+            .collect::<Vec<_>>();
+        publications.publish(&captured)?;
+        publications.commit(transaction)?;
         Ok(())
     }
 
-    pub(crate) fn sync_plugin(
-        &self,
-        agent_id: &str,
-        plugin_name: &str,
+    pub(crate) fn prepare_plugin(
+        plugin_id: &str,
         plugin_root: &Path,
-    ) -> Result<SkillComponentReport, SkillError> {
+    ) -> Result<PreparedSource, SkillError> {
         let root = plugin_root.join("skills");
         let snapshot = match package::inspect_source(&root) {
             Ok(snapshot) => snapshot,
@@ -217,23 +219,33 @@ impl SkillStore {
             },
             Err(error) => return Err(error),
         };
-        for skill in &snapshot.skills {
-            package::publish(&self.packages, skill)?;
-        }
-        let prepared = PreparedSource {
+        Ok(PreparedSource {
             spec: SourceSpec {
                 scope: SkillScope::Plugin,
                 workspace: None,
                 root,
-                id: format!("agent-plugin:{plugin_name}"),
+                id: format!("agent-plugin:{plugin_id}"),
             },
             snapshot,
-        };
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let report = replace_source(&transaction, agent_id, &prepared)?;
-        transaction.commit()?;
-        Ok(report)
+        })
+    }
+
+    pub(crate) fn commit_plugin(
+        &self,
+        transaction: &rusqlite::Transaction<'_>,
+        agent_id: &str,
+        prepared: &PreparedSource,
+    ) -> Result<(SkillComponentReport, package::PublicationBatch), SkillError> {
+        let report = replace_source(transaction, agent_id, prepared)?;
+        let mut publications = package::PublicationBatch::new(&self.packages);
+        let accepted = prepared
+            .snapshot
+            .skills
+            .iter()
+            .filter(|skill| report.accepted().contains(&skill.metadata.name))
+            .collect::<Vec<_>>();
+        publications.publish(&accepted)?;
+        Ok((report, publications))
     }
 
     pub(crate) fn summaries(
@@ -250,7 +262,11 @@ impl SkillStore {
                ON revision.skill_digest = binding.skill_digest
              WHERE binding.agent_id = ?1
                AND (
-                    (binding.scope_kind = 'plugin' AND binding.workspace IS NULL)
+                    (binding.scope_kind = 'plugin' AND binding.workspace IS NULL
+                     AND EXISTS (SELECT 1 FROM host_agent_plugins AS plugin
+                         WHERE plugin.agent_id = binding.agent_id
+                           AND 'agent-plugin:' || plugin.plugin_id = binding.source_id
+                           AND plugin.enabled = 1))
                     OR (binding.scope_kind = 'global' AND binding.workspace IS NULL)
                     OR
                     (binding.scope_kind = 'workspace' AND binding.workspace = ?2)
@@ -432,7 +448,11 @@ fn active_or_selected_digest(
              WHERE agent_id = ?1
                AND skill_name = ?2
                AND (
-                    (scope_kind = 'plugin' AND workspace IS NULL)
+                    (scope_kind = 'plugin' AND workspace IS NULL
+                     AND EXISTS (SELECT 1 FROM host_agent_plugins AS plugin
+                         WHERE plugin.agent_id = agent_skill_bindings.agent_id
+                           AND 'agent-plugin:' || plugin.plugin_id = agent_skill_bindings.source_id
+                           AND plugin.enabled = 1))
                     OR (scope_kind = 'global' AND workspace IS NULL)
                     OR
                     (scope_kind = 'workspace' AND workspace = ?3)
