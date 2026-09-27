@@ -13,7 +13,8 @@ use crate::{
     wire::{TASK_BROADCAST_CAPACITY, publish_task_event},
 };
 
-use super::{Coordinator, TaskSpec, attach_surface};
+use super::{Coordinator, TaskSpec};
+use crate::surface_operations::attach_surface;
 
 #[tokio::test]
 async fn a_lagging_surface_is_told_to_replay() {

@@ -9,6 +9,7 @@ mod browser_sessions;
 mod browser_sessions_http;
 mod browser_ticket_store;
 mod connection;
+mod control_log;
 mod control_migrations;
 mod control_schema;
 mod coordinator;
@@ -26,6 +27,8 @@ mod oauth_relay_http;
 mod oauth_relay_store;
 mod operations;
 mod store;
+mod surface_operations;
+mod task_opening;
 mod wire;
 
 pub use browser_sessions::{BrowserSession, BrowserSessions};
@@ -36,4 +39,6 @@ pub use identity::{
 };
 pub use ids::{DeviceId, NodeId, TaskEventId, TaskId};
 pub use json_ws::{ClientMessage, JSON_WS_VERSION, ServerMessage};
-pub use operations::{ErrorCode, PeerIdentity, TaskEvent, TaskEventKind, TaskSummary};
+pub use operations::{
+    ErrorCode, PeerIdentity, TargetSummary, TaskEvent, TaskEventKind, TaskSummary,
+};

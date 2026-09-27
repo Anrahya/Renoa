@@ -7,7 +7,7 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
-use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent};
+use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent, TargetRef};
 use tokio::{sync::watch, task::JoinSet};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
@@ -112,7 +112,21 @@ async fn serve_session_inner(
         }
     }
     *authenticated_at = Some(Instant::now());
-    node_log::event("info", "coordinator_connected", &serde_json::json!({}));
+    let targets = runtime.advertised_targets();
+    send_client(
+        &mut socket,
+        &ClientMessage::AdvertiseTargets {
+            targets: targets.clone(),
+        },
+    )
+    .await?;
+    node_log::event(
+        "info",
+        "coordinator_connected",
+        &serde_json::json!({
+            "advertised_targets": targets.iter().map(TargetRef::as_str).collect::<Vec<_>>(),
+        }),
+    );
 
     let mut publications = HashMap::new();
     refresh_publications(&runtime, &mut publications).await?;
@@ -218,6 +232,8 @@ async fn handle_server_message(
         ServerMessage::Authenticated { .. }
         | ServerMessage::Enrolled { .. }
         | ServerMessage::TaskList { .. }
+        | ServerMessage::TargetList { .. }
+        | ServerMessage::TaskOpened { .. }
         | ServerMessage::Attached { .. }
         | ServerMessage::CommandAccepted { .. }
         | ServerMessage::TaskEvent { .. } => {

@@ -3,9 +3,9 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `9`.
+first implemented transport binding. The current binding version is `10`.
 
-The binding is a candidate contract, not a stable public release. Version `9`
+The binding is a candidate contract, not a stable public release. Version `10`
 is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
 browser surfaces, and a TypeScript Pi node. Cross-language tests cover both authenticated roles,
 discovery and authorization, replay, live reattachment, offline-node rejection,
@@ -53,14 +53,18 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `9` with `version_mismatch` and ends the session.
+rejects any value other than `10` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `9` supersedes version `8` by adding one-use browser connection-ticket
+Version `10` supersedes version `9` by adding node target advertisement
+(`advertise_targets`) and runtime task opening by the node's owner
+(`list_targets`, `open_task`). A version `9` peer is rejected at authentication.
+
+Version `9` superseded version `8` by adding one-use browser connection-ticket
 authentication. The ticket contains no identity claim: its principal and
 surface were bound by the coordinator when the ticket was issued.
 
@@ -82,7 +86,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 9,
+  "version": 10,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -92,7 +96,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 9,
+  "version": 10,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -105,7 +109,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 9,
+  "version": 10,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -118,7 +122,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 9,
+  "version": 10,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -134,7 +138,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 9
+  "version": 10
 }
 ```
 
@@ -169,7 +173,59 @@ by `taskId`:
 ```
 
 An authorized principal with no tasks receives an empty `tasks` array. Version
-`9` defines no pagination or live directory update frame.
+`10` defines no pagination or live directory update frame.
+
+### List targets
+
+```json
+{
+  "type": "list_targets",
+  "request_id": 41
+}
+```
+
+The response contains the targets currently advertised by online nodes that the
+authenticated principal owns, ordered by `nodeId` then `target`:
+
+```json
+{
+  "type": "target_list",
+  "request_id": 41,
+  "targets": [
+    {
+      "nodeId": "00000000-0000-0000-0000-000000000030",
+      "target": "agent:arcee"
+    }
+  ]
+}
+```
+
+### Open a task
+
+```json
+{
+  "type": "open_task",
+  "request_id": 42,
+  "task_id": "00000000-0000-0000-0000-000000000011",
+  "node_id": "00000000-0000-0000-0000-000000000030",
+  "target": "agent:arcee"
+}
+```
+
+The surface generates `task_id` before the first send and reuses it on retry.
+Success, including an exact retry, returns:
+
+```json
+{
+  "type": "task_opened",
+  "request_id": 42,
+  "task_id": "00000000-0000-0000-0000-000000000011"
+}
+```
+
+A node the principal does not own and a target the node does not advertise
+return `not_found`; an offline node returns `node_offline`; a task identity
+already bound differently returns `conflict`.
 
 ### Attach
 
@@ -284,6 +340,19 @@ It is shared by the Rust and Pi nodes and contains complete durable activity,
 not token deltas.
 
 ## Node frames
+
+After authentication, a node advertises the targets it can execute for newly
+opened tasks. Each advertisement replaces the connection's previous targets and
+has no acknowledgement:
+
+```json
+{
+  "type": "advertise_targets",
+  "targets": ["agent:alpha", "agent:arcee"]
+}
+```
+
+An invalid advertisement returns `invalid_message` with a `null` `request_id`.
 
 The coordinator delivers an admitted command:
 
@@ -415,7 +484,7 @@ round.
 
 ## Binding exclusions
 
-Version `9` defines no task-list pagination, live directory updates,
+Version `10` defines no task-list pagination, live directory or target updates,
 application heartbeat or presence, cancellation, steering, approval, artifact,
 binary-frame, compression, HTTP/SSE, webhook, or public TLS deployment
 contract. Adding any of those requires an operation contract first, then a

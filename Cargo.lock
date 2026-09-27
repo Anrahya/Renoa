@@ -2344,6 +2344,7 @@ dependencies = [
  "renoa-home",
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
+ "renoa-telemetry",
  "reqwest",
  "ring",
  "rusqlite",

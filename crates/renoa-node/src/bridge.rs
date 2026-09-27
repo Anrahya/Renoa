@@ -243,6 +243,11 @@ pub(crate) struct NodeRuntime {
 }
 
 impl NodeRuntime {
+    /// The configured targets this node offers for new tasks.
+    pub(crate) fn advertised_targets(&self) -> Vec<TargetRef> {
+        self.targets.keys().cloned().map(TargetRef::new).collect()
+    }
+
     pub(crate) fn binding_for(&self, target: &TargetRef) -> Result<TargetBinding, NodeError> {
         self.targets
             .get(target.as_str())
