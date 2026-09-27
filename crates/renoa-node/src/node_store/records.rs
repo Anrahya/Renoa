@@ -85,11 +85,14 @@ pub(super) fn load_record(
     row.as_ref().map(decode_record).transpose()
 }
 
+/// Returns the task's durable binding, recording `binding` on first use. An
+/// existing task keeps its recorded session; its target, agent, and workspace
+/// must still match.
 pub(super) fn ensure_task_binding(
     transaction: &Transaction<'_>,
     task_id: TaskId,
     binding: &TargetBinding,
-) -> Result<(), NodeStoreError> {
+) -> Result<TargetBinding, NodeStoreError> {
     let existing = transaction
         .query_row(
             "SELECT target, agent_id, session_id, workspace
@@ -112,12 +115,15 @@ pub(super) fn ensure_task_binding(
             session_id: parse_uuid(&session_id, "session")?,
             workspace: PathBuf::from(workspace),
         };
-        if existing != *binding {
+        if existing.target != binding.target
+            || existing.agent_id != binding.agent_id
+            || existing.workspace != binding.workspace
+        {
             return Err(NodeStoreError::Invalid(format!(
                 "task {task_id} conflicts with its durable Host binding"
             )));
         }
-        return Ok(());
+        return Ok(existing);
     }
     let session_owner = transaction
         .query_row(
@@ -146,7 +152,7 @@ pub(super) fn ensure_task_binding(
             workspace,
         ],
     )?;
-    Ok(())
+    Ok(binding.clone())
 }
 
 pub(super) fn insert_event(

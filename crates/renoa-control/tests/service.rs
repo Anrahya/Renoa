@@ -116,7 +116,8 @@ fn create_node_enrollment(database: &Path) -> EnrollmentToken {
         coordinator_command()
             .arg("enroll-node")
             .arg(database)
-            .arg(Uuid::from_u128(2).to_string()),
+            .arg(Uuid::from_u128(2).to_string())
+            .arg(Uuid::from_u128(1).to_string()),
         "node",
     )
 }

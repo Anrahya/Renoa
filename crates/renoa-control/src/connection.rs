@@ -15,9 +15,10 @@ use uuid::Uuid;
 
 use crate::{
     ClientMessage, DeviceId, ErrorCode, JSON_WS_VERSION, PeerIdentity, ServerMessage,
-    coordinator::{CoordinatorState, NodeConnection, handle_surface_operation},
+    coordinator::{CoordinatorState, NodeConnection},
     json_ws::JsonOperation,
     node_messages::handle_node_operation,
+    surface_operations::handle_surface_operation,
     wire::{InboundMessage, classify_message, cleanup_connection, send_control_error, send_error},
 };
 
@@ -180,6 +181,7 @@ async fn activate_device(
                 connection_id,
                 device_id,
                 outgoing: outgoing.clone(),
+                targets: Vec::new(),
             },
         );
     }
@@ -398,6 +400,9 @@ async fn read_peer(
             }
         }
         ClientMessage::ListTasks { .. }
+        | ClientMessage::ListTargets { .. }
+        | ClientMessage::OpenTask { .. }
+        | ClientMessage::AdvertiseTargets { .. }
         | ClientMessage::Attach { .. }
         | ClientMessage::Submit { .. }
         | ClientMessage::AcknowledgeExecution { .. }

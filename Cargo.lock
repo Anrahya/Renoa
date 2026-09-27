@@ -2344,6 +2344,7 @@ dependencies = [
  "renoa-home",
  "renoa-oauth-relay-protocol",
  "renoa-protocol",
+ "renoa-telemetry",
  "reqwest",
  "ring",
  "rusqlite",
@@ -2506,6 +2507,7 @@ dependencies = [
  "renoa-kernel",
  "renoa-local",
  "renoa-protocol",
+ "renoa-telemetry",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2620,6 +2622,7 @@ dependencies = [
  "renoa-agent",
  "renoa-kernel",
  "renoa-local",
+ "renoa-telemetry",
  "reqwest",
  "rusqlite",
  "serde",
@@ -2630,6 +2633,13 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "renoa-telemetry"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

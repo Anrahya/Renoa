@@ -33,6 +33,13 @@ pub(crate) async fn handle_node_operation(
         return;
     }
     match operation {
+        NodeOperation::AdvertiseTargets { targets } => {
+            if let Err(error) =
+                crate::task_opening::advertise_targets(state, node_id, connection_id, targets).await
+            {
+                send_control_error(outgoing, None, &error).await;
+            }
+        }
         NodeOperation::AcknowledgeExecution {
             task_id,
             command_id,

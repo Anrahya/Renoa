@@ -118,7 +118,7 @@ silently skipped.
 
 ## Transport
 
-The version 9 binding uses JSON messages over WebSocket on localhost. WebSocket
+The version 10 binding uses JSON messages over WebSocket on localhost. WebSocket
 supplies an ordered, bidirectional byte stream and works from Rust, TypeScript,
 browsers, and mobile clients. JSON keeps the contract inspectable while it is
 changing. Exact frames are documented in

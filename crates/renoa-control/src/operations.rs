@@ -38,6 +38,14 @@ pub struct TaskSummary {
     pub target: TargetRef,
 }
 
+/// One agent an online node owned by the requesting principal can execute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetSummary {
+    pub node_id: NodeId,
+    pub target: TargetRef,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskEvent {
@@ -66,6 +74,12 @@ pub enum TaskEventKind {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SurfaceOperation {
     ListTasks,
+    ListTargets,
+    OpenTask {
+        task_id: TaskId,
+        node_id: NodeId,
+        target: TargetRef,
+    },
     Attach {
         task_id: TaskId,
         after_sequence: Option<u64>,
@@ -79,6 +93,9 @@ pub(crate) enum SurfaceOperation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum NodeOperation {
+    AdvertiseTargets {
+        targets: Vec<TargetRef>,
+    },
     AcknowledgeExecution {
         task_id: TaskId,
         command_id: CommandId,

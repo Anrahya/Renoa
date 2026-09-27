@@ -238,7 +238,7 @@ fn relay_error(error: &ControlError) -> Response {
             "not_found",
             "credential relay was not found",
         ),
-        ControlErrorKind::Store => (
+        ControlErrorKind::NodeOffline | ControlErrorKind::Store => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "credential relay service failed",

@@ -1,13 +1,13 @@
-use renoa_protocol::{CommandEnvelope, CommandId, CommandInput, ExecutionEvent};
+use renoa_protocol::{CommandEnvelope, CommandId, CommandInput, ExecutionEvent, TargetRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, TaskEvent, TaskEventKind,
-    TaskId, TaskSummary,
+    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, NodeId, TargetSummary,
+    TaskEvent, TaskEventKind, TaskId, TaskSummary,
     operations::{NodeOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 9;
+pub const JSON_WS_VERSION: u32 = 10;
 const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -29,6 +29,15 @@ pub enum ClientMessage {
     ListTasks {
         request_id: u64,
     },
+    ListTargets {
+        request_id: u64,
+    },
+    OpenTask {
+        request_id: u64,
+        task_id: TaskId,
+        node_id: NodeId,
+        target: TargetRef,
+    },
     Attach {
         request_id: u64,
         task_id: TaskId,
@@ -39,6 +48,9 @@ pub enum ClientMessage {
         task_id: TaskId,
         command_id: CommandId,
         input: CommandInput,
+    },
+    AdvertiseTargets {
+        targets: Vec<TargetRef>,
     },
     PublishExecutionEvents {
         task_id: TaskId,
@@ -57,10 +69,12 @@ impl ClientMessage {
             Self::Enroll { .. }
             | Self::Authenticate { .. }
             | Self::AuthenticateTicket { .. }
+            | Self::AdvertiseTargets { .. }
             | Self::AcknowledgeExecution { .. } => true,
-            Self::ListTasks { request_id } | Self::Submit { request_id, .. } => {
-                interoperable(*request_id)
-            }
+            Self::ListTasks { request_id }
+            | Self::ListTargets { request_id }
+            | Self::OpenTask { request_id, .. }
+            | Self::Submit { request_id, .. } => interoperable(*request_id),
             Self::Attach {
                 request_id,
                 after_sequence,
@@ -77,6 +91,23 @@ impl ClientMessage {
             Self::ListTasks { request_id } => Some(JsonOperation::Surface {
                 request_id,
                 operation: SurfaceOperation::ListTasks,
+            }),
+            Self::ListTargets { request_id } => Some(JsonOperation::Surface {
+                request_id,
+                operation: SurfaceOperation::ListTargets,
+            }),
+            Self::OpenTask {
+                request_id,
+                task_id,
+                node_id,
+                target,
+            } => Some(JsonOperation::Surface {
+                request_id,
+                operation: SurfaceOperation::OpenTask {
+                    task_id,
+                    node_id,
+                    target,
+                },
             }),
             Self::Attach {
                 request_id,
@@ -102,6 +133,11 @@ impl ClientMessage {
                     input,
                 },
             }),
+            Self::AdvertiseTargets { targets } => {
+                Some(JsonOperation::Node(NodeOperation::AdvertiseTargets {
+                    targets,
+                }))
+            }
             Self::AcknowledgeExecution {
                 task_id,
                 command_id,
@@ -148,6 +184,14 @@ pub enum ServerMessage {
         request_id: u64,
         tasks: Vec<TaskSummary>,
     },
+    TargetList {
+        request_id: u64,
+        targets: Vec<TargetSummary>,
+    },
+    TaskOpened {
+        request_id: u64,
+        task_id: TaskId,
+    },
     Attached {
         request_id: u64,
         task_id: TaskId,
@@ -185,9 +229,10 @@ impl ServerMessage {
             | Self::Authenticated { .. }
             | Self::ExecutionAcknowledged { .. }
             | Self::Execute { .. } => true,
-            Self::TaskList { request_id, .. } | Self::CommandAccepted { request_id, .. } => {
-                interoperable(*request_id)
-            }
+            Self::TaskList { request_id, .. }
+            | Self::TargetList { request_id, .. }
+            | Self::TaskOpened { request_id, .. }
+            | Self::CommandAccepted { request_id, .. } => interoperable(*request_id),
             Self::Attached {
                 request_id,
                 through_sequence,

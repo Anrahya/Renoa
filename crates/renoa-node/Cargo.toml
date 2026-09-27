@@ -16,6 +16,7 @@ renoa-control = { path = "../renoa-control", version = "0.1.0" }
 renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
 renoa-local = { path = "../renoa-local", version = "0.1.0" }
 renoa-protocol = { path = "../renoa-protocol", version = "0.1.0" }
+renoa-telemetry = { path = "../renoa-telemetry", version = "0.1.0" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

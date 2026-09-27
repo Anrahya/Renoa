@@ -1,6 +1,6 @@
 use renoa_control::{
-    ClientMessage, ConnectionTicket, ErrorCode, JSON_WS_VERSION, ServerMessage, TaskEvent,
-    TaskEventId, TaskEventKind, TaskId, TaskSummary,
+    ClientMessage, ConnectionTicket, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
+    TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
@@ -10,8 +10,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v9_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 9);
+fn json_websocket_v10_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 10);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -24,7 +24,7 @@ fn json_websocket_v9_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 9,
+            "version": 10,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -87,7 +87,7 @@ fn json_websocket_v9_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v9_encodes_task_discovery() {
+fn json_websocket_v10_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -129,7 +129,71 @@ fn json_websocket_v9_encodes_task_discovery() {
 }
 
 #[test]
-fn json_websocket_v9_encodes_harness_neutral_execution_events() {
+fn json_websocket_v10_encodes_target_discovery_and_task_opening() {
+    let node_id = NodeId::from_uuid(Uuid::from_u128(3));
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let cases = [
+        (
+            serde_json::to_value(ClientMessage::AdvertiseTargets {
+                targets: vec![TargetRef::new("agent:alpha")],
+            }),
+            json!({"type": "advertise_targets", "targets": ["agent:alpha"]}),
+        ),
+        (
+            serde_json::to_value(ClientMessage::ListTargets { request_id: 12 }),
+            json!({"type": "list_targets", "request_id": 12}),
+        ),
+        (
+            serde_json::to_value(ClientMessage::OpenTask {
+                request_id: 13,
+                task_id,
+                node_id,
+                target: TargetRef::new("agent:alpha"),
+            }),
+            json!({
+                "type": "open_task",
+                "request_id": 13,
+                "task_id": "00000000-0000-0000-0000-000000000001",
+                "node_id": "00000000-0000-0000-0000-000000000003",
+                "target": "agent:alpha"
+            }),
+        ),
+        (
+            serde_json::to_value(ServerMessage::TargetList {
+                request_id: 12,
+                targets: vec![TargetSummary {
+                    node_id,
+                    target: TargetRef::new("agent:alpha"),
+                }],
+            }),
+            json!({
+                "type": "target_list",
+                "request_id": 12,
+                "targets": [{
+                    "nodeId": "00000000-0000-0000-0000-000000000003",
+                    "target": "agent:alpha"
+                }]
+            }),
+        ),
+        (
+            serde_json::to_value(ServerMessage::TaskOpened {
+                request_id: 13,
+                task_id,
+            }),
+            json!({
+                "type": "task_opened",
+                "request_id": 13,
+                "task_id": "00000000-0000-0000-0000-000000000001"
+            }),
+        ),
+    ];
+    for (encoded, expected) in cases {
+        assert_eq!(encoded.expect("serialize frame"), expected);
+    }
+}
+
+#[test]
+fn json_websocket_v10_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {

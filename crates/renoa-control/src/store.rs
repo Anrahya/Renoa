@@ -51,25 +51,7 @@ impl ControlStore {
 
     pub(crate) async fn create_task(&self, task: TaskSpec) -> Result<(), ControlError> {
         let path = Arc::clone(&self.path);
-        blocking(move || {
-            let connection = open_connection(&path)?;
-            let target_json = serde_json::to_string(&task.target).map_err(json_error)?;
-            connection
-                .execute(
-                    "INSERT INTO tasks (
-                        task_id, principal_id, node_id, target_json, next_sequence
-                     ) VALUES (?1, ?2, ?3, ?4, 0)",
-                    params![
-                        task.task_id.to_string(),
-                        task.principal_id.to_string(),
-                        task.node_id.to_string(),
-                        target_json,
-                    ],
-                )
-                .map_err(sqlite_error)?;
-            Ok(())
-        })
-        .await
+        blocking(move || insert_task(&open_connection(&path)?, &task)).await
     }
 
     pub(crate) async fn list_tasks(
@@ -207,6 +189,24 @@ impl ControlStore {
         })
         .await
     }
+}
+
+pub(crate) fn insert_task(connection: &Connection, task: &TaskSpec) -> Result<(), ControlError> {
+    let target_json = serde_json::to_string(&task.target).map_err(json_error)?;
+    connection
+        .execute(
+            "INSERT INTO tasks (
+                task_id, principal_id, node_id, target_json, next_sequence
+             ) VALUES (?1, ?2, ?3, ?4, 0)",
+            params![
+                task.task_id.to_string(),
+                task.principal_id.to_string(),
+                task.node_id.to_string(),
+                target_json,
+            ],
+        )
+        .map_err(sqlite_error)?;
+    Ok(())
 }
 
 fn load_task(connection: &Connection, task_id: TaskId) -> Result<StoredTask, ControlError> {

@@ -2,8 +2,9 @@ use std::time::{Duration, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
-    ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
-    PeerIdentity, ServerMessage, TaskEvent, TaskEventKind, TaskId, TaskSpec, TaskSummary,
+    ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
+    NodeId, PeerIdentity, ServerMessage, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSpec,
+    TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
@@ -1016,6 +1017,247 @@ mod delivery {
     }
 }
 
+mod task_opening {
+    use super::*;
+
+    const ALPHA: &str = "agent:alpha";
+    const ARCEE: &str = "agent:arcee";
+
+    #[tokio::test]
+    async fn an_owner_opens_a_task_on_an_advertised_target_and_runs_it() {
+        let system = TestSystem::start("workspace:static").await;
+        let node_device = system.enroll_owned_node().await;
+        let mut node = system.connect(&node_device).await;
+        advertise(&mut node, &[ARCEE, ALPHA]).await;
+        let mut surface = system
+            .connect(&system.enroll_surface("discord").await)
+            .await;
+
+        assert_eq!(
+            wait_for_targets(&mut surface, 2).await,
+            vec![
+                TargetSummary {
+                    node_id: system.node_id,
+                    target: TargetRef::new(ALPHA),
+                },
+                TargetSummary {
+                    node_id: system.node_id,
+                    target: TargetRef::new(ARCEE),
+                },
+            ]
+        );
+        let task_id = TaskId::new();
+        assert_eq!(
+            open_task(&mut surface, task_id, system.node_id, ALPHA).await,
+            ServerMessage::TaskOpened {
+                request_id: 3,
+                task_id,
+            }
+        );
+        assert!(list_tasks(&mut surface).await.contains(&TaskSummary {
+            task_id,
+            target: TargetRef::new(ALPHA),
+        }));
+
+        attach_initial(&mut surface, task_id).await;
+        let command_id = CommandId::new();
+        submit(&mut surface, task_id, command_id, "Summarize today.").await;
+        let ServerMessage::Execute {
+            task_id: executed,
+            command,
+        } = receive(&mut node).await
+        else {
+            panic!("the node should execute the opened task");
+        };
+        assert_eq!(executed, task_id);
+        assert_eq!(command.command_id, command_id);
+        assert_eq!(command.target, TargetRef::new(ALPHA));
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn an_exact_retry_converges_after_the_node_leaves_and_a_changed_reuse_conflicts() {
+        let system = TestSystem::start("workspace:static").await;
+        let node_device = system.enroll_owned_node().await;
+        let node = {
+            let mut node = system.connect(&node_device).await;
+            advertise(&mut node, &[ALPHA, ARCEE]).await;
+            node
+        };
+        let mut surface = system
+            .connect(&system.enroll_surface("discord").await)
+            .await;
+        wait_for_targets(&mut surface, 2).await;
+        let task_id = TaskId::new();
+        open_task(&mut surface, task_id, system.node_id, ALPHA).await;
+
+        drop(node);
+        wait_for_targets(&mut surface, 0).await;
+        assert_eq!(
+            open_task(&mut surface, task_id, system.node_id, ALPHA).await,
+            ServerMessage::TaskOpened {
+                request_id: 3,
+                task_id,
+            },
+            "an exact retry observes its original opening while the node is offline"
+        );
+        assert!(matches!(
+            open_task(&mut surface, task_id, system.node_id, ARCEE).await,
+            ServerMessage::Error {
+                request_id: Some(3),
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn an_offline_or_unadvertised_target_is_rejected_without_a_task() {
+        let system = TestSystem::start("workspace:static").await;
+        let node_device = system.enroll_owned_node().await;
+        let mut surface = system
+            .connect(&system.enroll_surface("discord").await)
+            .await;
+        let before = list_tasks(&mut surface).await;
+
+        assert!(matches!(
+            open_task(&mut surface, TaskId::new(), system.node_id, ALPHA).await,
+            ServerMessage::Error {
+                request_id: Some(3),
+                code: ErrorCode::NodeOffline,
+                ..
+            }
+        ));
+        let mut node = system.connect(&node_device).await;
+        advertise(&mut node, &[ALPHA]).await;
+        wait_for_targets(&mut surface, 1).await;
+        assert!(matches!(
+            open_task(&mut surface, TaskId::new(), system.node_id, ARCEE).await,
+            ServerMessage::Error {
+                request_id: Some(3),
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
+
+        assert_eq!(list_tasks(&mut surface).await, before);
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn another_principal_can_neither_see_nor_use_the_node() {
+        let system = TestSystem::start("workspace:static").await;
+        let mut node = system.connect(&system.enroll_owned_node().await).await;
+        advertise(&mut node, &[ALPHA]).await;
+        let mut owner = system
+            .connect(&system.enroll_surface("discord").await)
+            .await;
+        wait_for_targets(&mut owner, 1).await;
+        let stranger_device = system
+            .enroll(PeerIdentity::Surface {
+                principal_id: PrincipalId::new(),
+                surface: SurfaceRef::new("stranger"),
+            })
+            .await;
+        let mut stranger = system.connect(&stranger_device).await;
+
+        assert_eq!(list_targets(&mut stranger).await, Vec::new());
+        assert!(matches!(
+            open_task(&mut stranger, TaskId::new(), system.node_id, ALPHA).await,
+            ServerMessage::Error {
+                request_id: Some(3),
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn an_invalid_advertisement_is_rejected() {
+        let system = TestSystem::start("workspace:static").await;
+        let mut node = system.connect(&system.enroll_owned_node().await).await;
+
+        advertise(&mut node, &[ALPHA, ALPHA]).await;
+
+        assert!(matches!(
+            receive(&mut node).await,
+            ServerMessage::Error {
+                request_id: None,
+                code: ErrorCode::InvalidMessage,
+                ..
+            }
+        ));
+        system.stop().await;
+    }
+
+    async fn advertise(node: &mut Socket, targets: &[&str]) {
+        send(
+            node,
+            &ClientMessage::AdvertiseTargets {
+                targets: targets.iter().copied().map(TargetRef::new).collect(),
+            },
+        )
+        .await;
+    }
+
+    async fn open_task(
+        surface: &mut Socket,
+        task_id: TaskId,
+        node_id: NodeId,
+        target: &str,
+    ) -> ServerMessage {
+        send(
+            surface,
+            &ClientMessage::OpenTask {
+                request_id: 3,
+                task_id,
+                node_id,
+                target: TargetRef::new(target),
+            },
+        )
+        .await;
+        receive(surface).await
+    }
+
+    async fn list_tasks(surface: &mut Socket) -> Vec<TaskSummary> {
+        send(surface, &ClientMessage::ListTasks { request_id: 4 }).await;
+        let ServerMessage::TaskList {
+            request_id: 4,
+            tasks,
+        } = receive(surface).await
+        else {
+            panic!("expected a task list");
+        };
+        tasks
+    }
+
+    async fn list_targets(surface: &mut Socket) -> Vec<TargetSummary> {
+        send(surface, &ClientMessage::ListTargets { request_id: 5 }).await;
+        let ServerMessage::TargetList {
+            request_id: 5,
+            targets,
+        } = receive(surface).await
+        else {
+            panic!("expected a target list");
+        };
+        targets
+    }
+
+    /// Advertisements arrive asynchronously, so poll until the expected count.
+    async fn wait_for_targets(surface: &mut Socket, expected: usize) -> Vec<TargetSummary> {
+        for _ in 0..100 {
+            let targets = list_targets(surface).await;
+            if targets.len() == expected {
+                return targets;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        panic!("expected {expected} advertised targets");
+    }
+}
+
 struct TestSystem {
     files: TempDir,
     coordinator: Coordinator,
@@ -1076,12 +1318,30 @@ impl TestSystem {
         .await
     }
 
+    /// Enrolls the system's node with the system's principal as its owner.
+    async fn enroll_owned_node(&self) -> DeviceCredentials {
+        let token = self
+            .coordinator
+            .create_node_enrollment(
+                self.node_id,
+                self.principal_id,
+                SystemTime::now() + Duration::from_mins(1),
+            )
+            .await
+            .expect("create owned node enrollment");
+        self.claim(token).await
+    }
+
     async fn enroll(&self, peer: PeerIdentity) -> DeviceCredentials {
         let token = self
             .coordinator
             .create_enrollment(peer, SystemTime::now() + Duration::from_mins(1))
             .await
             .expect("create device enrollment");
+        self.claim(token).await
+    }
+
+    async fn claim(&self, token: EnrollmentToken) -> DeviceCredentials {
         let (mut socket, _) = connect_async(&self.url)
             .await
             .expect("connect for enrollment");

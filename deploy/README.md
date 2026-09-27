@@ -252,9 +252,12 @@ snapshot in the single previous-release backup described above. Browser login
 storage is separate and does not need to be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
-the new coordinator binary. It upgrades the identity database to schema 11 and
-keeps passkeys and hashed remembered sessions there. A pre-upgrade binary cannot
-open schema 11; any owner-requested recovery requires the matching identity
+the new coordinator binary. It upgrades the identity database to schema 12 and
+keeps passkeys and hashed remembered sessions there. Schema 12 records each
+node's owning principal: the upgrade adopts the owner of a node whose existing
+tasks all belong to one principal, and a node shared by several principals keeps
+serving its tasks without an owner. A pre-upgrade binary cannot open schema 12;
+any owner-requested recovery requires the matching identity
 snapshot and binary from that same backup. Install `renoa-management.service`, then reload systemd, restart the
 coordinator and enable the management service. The example runs as the existing
 Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
@@ -322,7 +325,7 @@ Host configuration, not RCP wire data:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "endpoint": "wss://renoa.live/connect",
   "model": {
     "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
@@ -340,7 +343,6 @@ Host configuration, not RCP wire data:
     {
       "target": "workspace:example",
       "agentId": "<provisioned-agent-uuid>",
-      "sessionId": "<stable-session-uuid>",
       "workspace": "/srv/renoa/node-workspaces/example"
     }
   ]
@@ -349,8 +351,16 @@ Host configuration, not RCP wire data:
 
 Every configured adapter and model store must already exist at its absolute
 path. Omit any optional adapter field that this Host does not use. Each target
-binds one provisioned agent to one stable Host session and canonical workspace;
-changing a durable binding fails closed.
+names one provisioned agent and canonical workspace. The node advertises every
+target to the coordinator, so the node's owner can open tasks on it at runtime.
+Each task receives its own Host session the first time it executes; the node
+ledger records that session and keeps it for the task's later commands. A
+configuration that no longer serves a recorded task's target, agent, or
+workspace fails closed.
+
+Schema 3 removed each target's `sessionId`. Upgrading from schema 2 means
+setting `schemaVersion` to 3 and deleting every `sessionId`; tasks the ledger
+already bound keep their recorded sessions.
 
 The daemon opens its own private Host data root at `<state-directory>/host`
 (`/var/lib/renoa-node/host` for the supplied unit), separate from the shared
@@ -395,13 +405,14 @@ document converges on the same agent instead of creating a second one. A
 configured agent that is missing from the private Host refuses node startup
 before any command is admitted, naming this command in the error.
 
-On the coordinator host, create the node identity and capture its five-minute
+On the coordinator host, create the node identity for its owning principal, the
+only principal that may open new tasks on the node, and capture its five-minute
 enrollment token directly into an owner-only file:
 
 ```sh
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <node-uuid> > node-enrollment.json
+  /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > node-enrollment.json
 ```
 
 Move that short-lived file to the execution Host over an authenticated private
@@ -500,7 +511,7 @@ and consume the short-lived enrollment without printing either secret:
 install -d -m 0700 -o root -g root /run/renoa
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <oauth-relay-node-uuid> \
+  /home/renoa/.renoa <oauth-relay-node-uuid> <owner-principal-uuid> \
   > /run/renoa/arcee-oauth-relay-enrollment.json
 /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
@@ -650,7 +661,7 @@ Use the same OS account to enroll the execution node and create its task binding
 
 ```sh
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <node-uuid>
+  /home/renoa/.renoa <node-uuid> <owner-principal-uuid>
 
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator create-task \
   /home/renoa/.renoa \
@@ -665,7 +676,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 9; the recorded version-8 proof establishes only the deployment
+binding version 10; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

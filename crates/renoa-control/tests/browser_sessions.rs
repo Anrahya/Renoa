@@ -40,7 +40,7 @@ async fn schema_ten_migration_preserves_existing_passkey_logins() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .expect("version"),
-        11
+        12
     );
     server.stop().await;
 }
