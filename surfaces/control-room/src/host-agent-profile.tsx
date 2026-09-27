@@ -59,7 +59,9 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
         <span className="text-xs text-muted-foreground">Renoa agent · Cloud Host</span>
         <h1 className="break-words text-3xl font-semibold tracking-tight">{agentName}</h1>
         <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Host-owned</Badge>
-          {attention && <Badge variant="destructive">Needs attention</Badge>}
+          {/* A question waiting on the owner is gold, not red. Red is reserved
+              for work that broke, and is reported as Failed. */}
+          {attention && <Badge className="border-[var(--gold-line)] bg-[var(--state-needs-you-wash)] text-[var(--state-needs-you)]">Needs you</Badge>}
           {!designPreview && data.activity.tone === "pending" && <Badge variant="secondary">Unfinished work</Badge>}
         </div>
       </div>

@@ -1,6 +1,7 @@
 import type { Agent, HostSnapshot } from "./host-contract";
 import { agentOverview } from "./host-agent-overview";
 import { agentHref, attentionReviews, scheduleText, timestamp } from "./host-presentation";
+import { DAY_MS, reviewState, startOfToday, toneState, type AgentState, type DayMark } from "./host-state";
 import type { AgentExample } from "./agent-work-preview/agent-example";
 import { DAY, NOW, TODAY, scheduledTimes, statusLabel, time, date } from "./agent-work-preview/data";
 
@@ -9,6 +10,10 @@ export type DirectorySummary = {
   tone: DirectoryTone; status: string; title: string; detail: string; workHref: string;
   automated: boolean; automationCount: number;
   next: { title: string; detail: string; href: string };
+  /** Today's recorded work, oldest first. Empty when the Host recorded none. */
+  day: DayMark[];
+  /** When the most recent record landed, for relative time on attention rows. */
+  lastAt: number | null;
 };
 
 export function directorySummary(host: HostSnapshot, agent: Agent, example?: AgentExample): DirectorySummary {
@@ -19,6 +24,12 @@ export function directorySummary(host: HostSnapshot, agent: Agent, example?: Age
   const next = data.scheduled[0];
   const listeners = data.repositories.filter(item => item.policy.enabled).length;
   const tone = data.activity.tone === "attention" ? "interrupted" : data.activity.tone === "pending" ? "pending" : "quiet";
+  // Only recorded admissions carry a time, so only those reach the day axis.
+  const midnight = startOfToday();
+  const day = data.reviews
+    .filter(review => review.admitted_at_ms >= midnight && review.admitted_at_ms < midnight + DAY_MS)
+    .map(review => ({ at: review.admitted_at_ms, state: reviewState(review) }))
+    .sort((a, b) => a.at - b.at);
   return {
     tone, status: tone === "interrupted" ? "Needs attention" : tone === "pending" ? "Unfinished work" : "No unfinished work",
     title: attention ? `${attention.repository} #${attention.pull_number}` : tone !== "quiet" ? data.activity.label : latest ? `${latest.repository} #${latest.pull_number}` : data.activity.label,
@@ -26,6 +37,7 @@ export function directorySummary(host: HostSnapshot, agent: Agent, example?: Age
     workHref: agentHref(agent.id, "activity"),
     automated: data.routines.length + data.repositories.length > 0,
     automationCount: data.routines.length + data.repositories.length,
+    day, lastAt: day.at(-1)?.at ?? latest?.admitted_at_ms ?? null,
     next: {
       title: next?.name ?? (listeners ? "On repository events" : data.paused.length ? "Schedules paused" : "No scheduled work"),
       detail: next ? `${timestamp(next.next_due_ms)} · ${scheduleText(next)}` : listeners ? `${listeners} ${listeners === 1 ? "repository" : "repositories"} enabled` : data.paused.length ? `${data.paused.length} paused` : "Starts when you assign work.",
@@ -33,6 +45,9 @@ export function directorySummary(host: HostSnapshot, agent: Agent, example?: Age
     },
   };
 }
+
+const runState = (status: string): AgentState =>
+  toneState(status === "waiting" ? "waiting" : status === "interrupted" ? "interrupted" : "completed");
 
 function exampleSummary(agentId: string, example: AgentExample): DirectorySummary {
   const today = example.executions.filter(run => run.started >= TODAY && run.started < TODAY + DAY).sort((a, b) => b.started - a.started);
@@ -48,6 +63,8 @@ function exampleSummary(agentId: string, example: AgentExample): DirectorySummar
     detail: focus?.result ?? "New activity will appear here.",
     workHref: focus ? `${agentHref(agentId, "activity")}/${encodeURIComponent(focus.id)}` : agentHref(agentId, "activity"),
     automated: example.automations.length > 0, automationCount: example.automations.length,
+    day: [...today].reverse().map(run => ({ at: run.started, state: runState(run.status) })),
+    lastAt: today[0]?.started ?? null,
     next: {
       title: upcoming ? `${upcoming.at >= TODAY + DAY ? `${date(upcoming.at)} · ` : ""}${time(upcoming.at)} · ${upcoming.item.name}` : listeners ? "On incoming events" : paused ? "Automations paused" : "No scheduled work",
       detail: upcoming ? upcoming.item.rule : listeners ? `${listeners} event ${listeners === 1 ? "trigger" : "triggers"} enabled` : paused ? `${paused} paused · History is kept` : "Starts when you assign work.",

@@ -1,5 +1,6 @@
 import type { Agent } from "../host-contract";
 import type { DirectorySummary } from "../host-agent-directory-model";
+import { emptyCounts, stateRank, toneState, type AgentState } from "../host-state";
 import { capabilityPlugins, pluginCapabilities } from "../agent-work-preview/configuration-model";
 
 export type Point = { x: number; y: number };
@@ -7,12 +8,27 @@ export type SpaceAgent = {
   id: string; name: string; originalName: string; capabilityIds: string[];
   summary?: DirectorySummary; managerId?: string | undefined; synthetic?: boolean;
 };
-export type PlacedAgent = SpaceAgent & { position: Point };
+export type PlacedAgent = SpaceAgent & { position: Point; state: AgentState };
 export type AgentRegion = {
-  id: string; name: string; members: PlacedAgent[]; color: string;
+  id: string; name: string; members: PlacedAgent[]; color: string; state: AgentState;
+  counts: Record<AgentState, number>;
   bounds: { x: number; y: number; width: number; height: number };
 };
-export type AgentScene = { agents: PlacedAgent[]; regions: AgentRegion[] };
+/** One shared time axis for the scene, so every agent's strip is comparable. */
+export type DayAxis = { start: number; end: number } | null;
+export type AgentScene = { agents: PlacedAgent[]; regions: AgentRegion[]; axis: DayAxis };
+
+export const agentState = (agent: SpaceAgent): AgentState => toneState(agent.summary?.tone, agent.synthetic);
+
+/** The span covering every recorded mark, so two agents' strips line up. */
+export function dayAxis(agents: PlacedAgent[]): DayAxis {
+  const times = agents.flatMap(agent => agent.summary?.day ?? []).map(mark => mark.at);
+  if (!times.length) return null;
+  const start = Math.min(...times) - 60_000;
+  const end = Math.max(...times) + 60_000;
+  return { start, end: Math.max(start + 1, end) };
+}
+
 
 // Explicit design fixtures, not authority inferred from creation provenance.
 const exampleManagement = new Map([
@@ -24,17 +40,23 @@ export function previewManager(agent: Agent, agents: Agent[]): string | undefine
   return agents.some(candidate => candidate.id === manager) ? manager : undefined;
 }
 
-const colors = ["#79a8e8", "#b6a0db", "#8fc6b2", "#c4ad7e", "#91b6cb", "#c79daa", "#a9b790"];
+// Region tint reports the most urgent state among its members, so a failing or
+// blocked space is legible from across the room without reading a label. An
+// all-idle space stays a quiet neutral instead of a decorative colour, which is
+// why the previous arbitrary seven-colour palette is gone.
+const stateColors: Record<AgentState, string> = {
+  "needs-you": "#d3b66f", failed: "#e08a72", running: "#8fae86", idle: "#7d7466",
+};
 const groupNames = ["Atlas", "Beacon", "Orbit", "Relay", "Scout", "Cedar"];
 
 export function createScene(source: SpaceAgent[], expanded: boolean, columns = 4): AgentScene {
-  const agents = source.map(agent => ({ ...agent }));
+  const agents = source.map(agent => ({ ...agent, state: agentState(agent) }));
   if (expanded) {
     const count = Math.max(0, 50 - agents.length);
     for (let i = 0; i < count; i++) {
       const group = Math.floor(i / 8);
       agents.push({ id: `space-example-${i}`, name: i % 8 === 0 ? groupNames[group % groupNames.length]! : `${groupNames[group % groupNames.length]} ${i % 8}`,
-        originalName: "Example agent", synthetic: true, managerId: i % 8 === 0 ? undefined : `space-example-${group * 8}`,
+        originalName: "Example agent", synthetic: true, state: "idle" as AgentState, managerId: i % 8 === 0 ? undefined : `space-example-${group * 8}`,
         capabilityIds: i % 3 === 0 ? ["read", "search", "mail-read"] : i % 3 === 1 ? ["read", "web", "research"] : ["web", "research", "writing"] });
     }
   }
@@ -47,11 +69,15 @@ export function createScene(source: SpaceAgent[], expanded: boolean, columns = 4
       ? columns === 2 ? { x: group === 0 ? 120 + i * 225 : 220, y: group === 0 ? 145 + i * 115 : 600 + (group - 1) * 380 }
         : { x: origin.x + 175 + i * 290, y: (group ? 285 : 195) + i * 165 }
       : { x: origin.x + 160 + (3 - Math.min(3, members.length)) * 105 + i % 3 * 210, y: origin.y + 185 + Math.floor(i / 3) * 200 } }));
+    const counts = emptyCounts();
+    for (const agent of placed) counts[agent.state] += 1;
+    const state = (Object.keys(counts) as AgentState[]).reduce((worst, key) => counts[key] > 0 && stateRank[key] < stateRank[worst] ? key : worst, "idle" as AgentState);
     const xs = placed.map(agent => agent.position.x), ys = placed.map(agent => agent.position.y);
-    return { id: root.id, name: root.name, members: placed, color: colors[group % colors.length]!,
+    return { id: root.id, name: root.name, members: placed, color: stateColors[state], state, counts,
       bounds: { x: Math.min(...xs) - 150, y: Math.min(...ys) - 150, width: Math.max(...xs) - Math.min(...xs) + 300, height: Math.max(...ys) - Math.min(...ys) + 320 } };
   });
-  return { regions, agents: regions.flatMap(region => region.members) };
+  const placed = regions.flatMap(region => region.members);
+  return { regions, agents: placed, axis: dayAxis(placed) };
 }
 
 export function pluginMembers(agents: PlacedAgent[], pluginId: string): PlacedAgent[] {

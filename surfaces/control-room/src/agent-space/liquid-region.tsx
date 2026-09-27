@@ -33,11 +33,11 @@ export const LiquidRegion = memo(function LiquidRegion({ path, width, height, id
       </path>
       <clipPath id={`${id}-clip`}><use href={`#${id}-shape`} /></clipPath>
       <radialGradient id={`${id}-light`}>
-        <stop stopColor="currentColor" stopOpacity=".3" /><stop offset=".55" stopColor="currentColor" stopOpacity=".1" /><stop offset="1" stopColor="currentColor" stopOpacity="0" />
+        <stop stopColor="currentColor" stopOpacity=".26" /><stop offset=".55" stopColor="currentColor" stopOpacity=".09" /><stop offset="1" stopColor="currentColor" stopOpacity="0" />
       </radialGradient>
     </defs>
     <use className="space-region-fill" href={`#${id}-shape`} />
-    <g clipPath={`url(#${id}-clip)`}>
+    <g className="space-region-light" clipPath={`url(#${id}-clip)`}>
       <ellipse cx={width * .3} cy={height * .4} rx={width * .5} ry={height * .5} fill={`url(#${id}-light)`}>
         <animateTransform attributeName="transform" type="translate" values="-25 16;45 -24;-25 16" dur={`${9 + phase * .3}s`} repeatCount="indefinite" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" />
       </ellipse>
