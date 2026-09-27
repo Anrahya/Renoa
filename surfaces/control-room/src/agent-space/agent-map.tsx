@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Background, ReactFlow, ReactFlowProvider, ViewportPortal, useReactFlow, useStore, type Node } from "@xyflow/react";
-import { ArrowsOutSimple, Cube, MagnifyingGlass, Minus, Pause, Play, Plus, X } from "@phosphor-icons/react";
+import { ArrowRight, ArrowsOutSimple, Cube, MagnifyingGlass, Minus, Pause, Play, Plus, X } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -8,12 +8,15 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { capabilityPlugins } from "../agent-work-preview/configuration-model";
 import { useSavedPreviewConfiguration } from "../agent-work-preview/configuration-state";
 import { usePreviewWork } from "../agent-work-preview/work-state";
+import { time } from "../agent-work-preview/data";
 import type { HostSnapshot } from "../host-contract";
 import { agentHref, displayName, isEarlier } from "../host-presentation";
+import { portraitForAgent } from "../host-identity";
 import { directorySummary } from "../host-agent-directory-model";
 import { agentCount } from "../host-design-preview/shared";
-import { createScene, pluginMembers, previewManager, regionPath, type AgentScene } from "./scene";
-import { isDistant, spaceNodeTypes, type PortraitNode, type RegionNode } from "./map-nodes";
+import { agentStates, emptyCounts, stateLabel, type AgentState } from "../host-state";
+import { createScene, pluginMembers, previewManager, regionPath, type AgentScene, type DayAxis, type PlacedAgent } from "./scene";
+import { DayTrack, isDistant, spaceNodeTypes, type PortraitNode, type RegionNode } from "./map-nodes";
 import "@xyflow/react/dist/style.css";
 import "../styles/agent-space.css";
 
@@ -45,16 +48,109 @@ export function AgentSpacePreview({ host, missingAgent }: { host: HostSnapshot; 
   });
   const scene = createScene(source, expanded, compact ? 2 : 4);
   const earlier = host.agents.filter(isEarlier);
+  const counts = useMemo(() => {
+    const tally = emptyCounts();
+    for (const agent of scene.agents) tally[agent.state] += 1;
+    return tally;
+  }, [scene]);
+  const waiting = scene.agents.filter(agent => agent.state === "needs-you");
+  const failed = scene.agents.filter(agent => agent.state === "failed");
   return <main id="host-main" className="agent-space-page">
-    <div className="space-heading"><div><h1>Agents <span>{scene.agents.length}</span></h1><p>Your agents, how they’re organized, and what they share.</p></div>
+    <div className="space-heading"><div><h1>Agents <span>{scene.agents.length}</span></h1>
+      <p>{[
+        waiting.length ? `${waiting.length} waiting on you` : "Nothing waiting on you",
+        failed.length ? `${failed.length} failed` : null,
+      ].filter(Boolean).join(" · ")}</p></div>
       <NativeSelect aria-label="Example scene" value={expanded ? "50" : "host"} onChange={event => setExpanded(event.target.value === "50")}>
         <NativeSelectOption value="host">Your agents · preview</NativeSelectOption><NativeSelectOption value="50">50-agent example</NativeSelectOption>
       </NativeSelect>
     </div>
+    <TodayBand agents={scene.agents} axis={scene.axis} />
     {missingAgent && <Alert><AlertDescription>That agent is not in this Host snapshot. Choose an available agent below.</AlertDescription></Alert>}
+    <AttentionRail agents={[...waiting, ...failed]} />
     <ReactFlowProvider key={`${expanded}-${compact}`}><AgentMap scene={scene} ui={mapUi} setUi={setMapUi} /></ReactFlowProvider>
+    <StateLegend counts={counts} />
     {earlier.length > 0 && <details className="space-earlier"><summary>Earlier identities <span>{earlier.length}</span></summary><ul>{earlier.map(agent => <li key={agent.id}><a href={agentHref(agent.id)}>{agent.name}</a></li>)}</ul></details>}
   </main>;
+}
+
+// What the whole system did today, in one band. The rail answers "what needs
+// me"; this answers "what has been happening", so the landing screen carries
+// both questions without anyone opening the map or Work.
+function TodayBand({ agents, axis }: { agents: PlacedAgent[]; axis: DayAxis }) {
+  const day = agents.flatMap(agent => agent.summary?.day ?? []);
+  const rows = agents.map(agent => ({ agent, day: agent.summary?.day ?? [] })).filter(entry => entry.day.length > 0);
+  if (day.length === 0 || !axis) {
+    return <div className="space-today space-today-empty" role="status">
+      <span className="space-today-label">Today</span>
+      <p>No work recorded today. Records appear here as the Host admits them.</p>
+    </div>;
+  }
+  const clock = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return <section className="space-today" aria-label="Today's recorded work">
+    <span className="space-today-head">
+      <span className="space-today-label">Today</span>
+      <b>{day.length}</b>
+    </span>
+    <div className="space-today-rows">
+      {rows.map(({ agent, day: agentDay }) => <div className="space-today-row" key={agent.id}>
+        <span className="space-today-name" title={agent.name}>{agent.name}</span>
+        <DayTrack marks={agentDay} axis={axis} className="space-today-track" />
+        <span className="space-today-count">{agentDay.length}</span>
+      </div>)}
+    </div>
+    <div className="space-today-scale" aria-hidden="true">
+      <span>{clock(axis.start)}</span>
+      <span>{clock(axis.end)}</span>
+    </div>
+  </section>;
+}
+
+// The one thing the owner can act on, above everything else. Two lanes, never
+// merged: an agent waiting on a decision is gold because it is a question, and
+// an agent that broke is coral because it is a fault. Collapsing them is what
+// made every attention record look like an error.
+function AttentionRail({ agents }: { agents: PlacedAgent[] }) {
+  const [open, setOpen] = useState(true);
+  const waiting = agents.filter(agent => agent.state === "needs-you").length;
+  const failed = agents.length - waiting;
+  if (agents.length === 0) {
+    return <div className="space-clear" role="status">
+      <span className="space-clear-mark" aria-hidden="true" />
+      <p><strong>Nothing needs you.</strong> Work continues on its own; anything that needs a decision appears here.</p>
+    </div>;
+  }
+  return <section className="space-waiting" aria-labelledby="waiting-heading" data-open={open}>
+    <button className="space-waiting-toggle" aria-expanded={open} aria-controls="waiting-list" onClick={() => setOpen(value => !value)}>
+      <h2 id="waiting-heading">Needs you <span>{waiting}</span></h2>
+      {failed > 0 && <span className="space-waiting-failed" data-state="failed">Failed <span>{failed}</span></span>}
+      <span className="space-waiting-hint">{open ? "Hide" : "Show"}</span>
+    </button>
+    {open && <ul id="waiting-list" className="space-waiting-list">
+      {agents.map(agent => <li key={agent.id} data-state={agent.state}>
+        <a href={agent.summary?.workHref ?? agentHref(agent.id, "activity")}>
+          <img className="space-waiting-avatar" src={portraitForAgent(agent.id, agent.originalName)} alt="" aria-hidden="true" draggable={false} />
+          <span className="space-waiting-body">
+            <strong>{agent.summary?.title ?? (agent.state === "failed" ? "Work stopped before it finished" : "Open work needs a decision")}</strong>
+            <small>{agent.summary?.detail ?? "Inspect the retained record and diagnostics."}</small>
+          </span>
+          <span className="space-waiting-agent">{agent.name}{agent.summary?.lastAt != null && <em>{time(agent.summary.lastAt)}</em>}</span>
+          <ArrowRight className="space-waiting-arrow" aria-hidden="true" />
+        </a>
+      </li>)}
+    </ul>}
+  </section>;
+}
+
+// One legend, one owner: the four states the map tints by, with the counts that
+// produced them. A space on the map is only meaningful if the colours are named.
+function StateLegend({ counts }: { counts: Record<AgentState, number> }) {
+  return <div className="space-legend" aria-label="Agent states">
+    <span className="space-legend-title">State</span>
+    <ul>{agentStates.map(state => <li key={state} data-state={state}>
+      <i aria-hidden="true" />{stateLabel[state]}<b>{counts[state]}</b>
+    </li>)}</ul>
+  </div>;
 }
 
 function AgentMap({ scene, ui, setUi }: { scene: AgentScene; ui: MapUi; setUi: Dispatch<SetStateAction<MapUi>> }) {
@@ -114,12 +210,12 @@ function AgentMap({ scene, ui, setUi }: { scene: AgentScene; ui: MapUi; setUi: D
   const matchIds = new Set(matches.map(agent => agent.id));
   const nodes: Node[] = [
     ...scene.regions.map((region): RegionNode => ({ id: `region-${region.id}`, type: "region", position: { x: region.bounds.x, y: region.bounds.y },
-      width: region.bounds.width, height: region.bounds.height, data: { region, moving: motionAllowed && !paused, focus: focusRegion }, selectable: false, draggable: false, zIndex: distant ? 3 : 0 })),
+      width: region.bounds.width, height: region.bounds.height, data: { region, moving: motionAllowed && !paused, axis: scene.axis, focus: focusRegion }, selectable: false, draggable: false, zIndex: distant ? 3 : 0 })),
     ...scene.agents.map((agent): PortraitNode => {
       const parent = scene.agents.find(item => item.id === agent.managerId);
       const children = scene.agents.filter(item => item.managerId === agent.id).length;
       return { id: agent.id, type: "portrait", position: { x: agent.position.x - 90, y: agent.position.y - 65 }, width: 180, height: 180, zIndex: 2,
-        data: { agent, active: selected === agent.id && !pluginId, dimmed: !!pluginId && !memberIds.has(agent.id) || !!term && !matchIds.has(agent.id), crowded: scene.agents.length > 6, choose,
+        data: { agent, active: selected === agent.id && !pluginId, dimmed: !!pluginId && !memberIds.has(agent.id) || !!term && !matchIds.has(agent.id), crowded: scene.agents.length > 6, choose, axis: scene.axis,
           relationship: parent ? `Managed by ${parent.name}` : children ? `Manages ${children} ${children === 1 ? "agent" : "agents"}` : "Independent agent" } };
     }),
   ];
