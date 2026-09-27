@@ -594,11 +594,19 @@ full schema within 64 KiB. Plugin cards and nested tool pages return at most
 200 items within 50 KiB. A missing MCP adapter fails remote execution visibly;
 it does not prevent Host plugins from running.
 
+`plugin_search` with `plugin` and `query` searches that plugin's enabled tools.
+For an external MCP plugin, this includes its enabled accounts and endpoints;
+each returned reference identifies its connection. `connection` and `query`
+select one account or endpoint. An external plugin id without `query` returns
+component and connection facts.
+
 A configured exact-pinned Monty worker automatically replaces the visible
 `tool_execute` with `code_mode`, retaining the same executor as a hidden durable
 binding. Python uses `await plugin(reference, arguments)` for either Host or
 MCP tools. No MCP adapter is required to invoke a Host plugin. Every nested
 invocation remains independently durable; the model sees the final Python value.
+The tool guides the model to check error flags, use supported pagination and
+field filters, and return only the task's needed fields from large results.
 The evaluator pool starts empty and is capped at two subprocesses. Worker hash
 validation happens before mutable Host state is opened. This release's worker
 is Linux x86-64 only; an invalid configured worker refuses startup.
@@ -817,19 +825,13 @@ creator links, and isolated
 multi-session execution are tested across restart. The Host UUID identifies a
 durable data root; this slice does not replicate catalogs across machines.
 
-The first product-owned management command installs the read-only GitHub MCP
-connection without putting service policy in the generic Host API:
-
-```sh
-renoa-agent mcp github install --account ACCOUNT
-```
-
-It registers the exact `github.com` account reference, resolves its token with
-`gh` only for discovery, atomically publishes the complete catalog, and attaches
-the GitHub connection to the agent named by `RENOA_AGENT_ID`. Repeating the
-command converges on the same durable state. The next registry search sees the
-connection without restarting Waku or the agent; no GitHub schema is advertised
-until explicitly loaded.
+An agent adds GitHub or another external MCP through `plugin_manage`, using
+the same researched `source.kind=mcp` contract. Endpoint and public headers come
+from provider documentation; credentials use an owner-provisioned secret
+reference or the supported OAuth setup. A successful add installs the immutable
+package, activates it for the caller, and publishes its catalog. The next
+`plugin_search` sees the connection without restarting the agent. MCP schemas
+are returned by targeted search or exact-reference lookup.
 
 The first real Host flow accepts either an ordinary prompt or a typed compact
 control:

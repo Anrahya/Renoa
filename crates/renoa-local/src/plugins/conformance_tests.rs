@@ -49,26 +49,3 @@ fn the_first_party_google_drive_package_is_a_supported_agent_plugin() {
     assert_eq!(server.endpoint(), "https://drive.renoa.live/mcp");
     assert!(server.request_headers().is_empty());
 }
-
-#[test]
-fn the_github_review_package_loads_an_mcp_and_its_review_skill_through_the_normal_inspector() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/github");
-    let inspection = super::inspect::inspect(&root)
-        .expect("supported GitHub package")
-        .inspection;
-    assert!(
-        inspection.notices().is_empty(),
-        "{:?}",
-        inspection.notices()
-    );
-    let [server] = inspection.mcp_servers() else {
-        panic!("one GitHub connection")
-    };
-    assert_eq!(
-        url::Url::parse(server.endpoint()).unwrap().host_str(),
-        Some("api.githubcopilot.com")
-    );
-    let skill = crate::skills::package::capture(&root.join("skills/github-review"), None)
-        .expect("supported review skill");
-    assert_eq!(skill.metadata.name, "github-review");
-}

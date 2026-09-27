@@ -1,11 +1,67 @@
-use super::{PREVIEW_SCHEMA_BYTES, PluginSearchTool, ToolMatch};
+use std::str::FromStr as _;
+
+use super::{PREVIEW_LIMIT, PREVIEW_SCHEMA_BYTES, PluginSearchTool, ToolMatch, local, page};
 use crate::{
-    mcp::{McpHostError, McpToolReference},
-    plugins::{PluginError, tool::output::plugin_error},
+    mcp::{McpHostError, McpToolReference, McpToolSummary, rank_tools},
+    plugins::{
+        PluginError,
+        tool::output::{json_output, plugin_error},
+    },
 };
-use renoa_agent::ToolError;
+use renoa_agent::{ToolError, ToolOutput};
 
 impl PluginSearchTool {
+    pub(super) async fn search_tools(
+        &self,
+        inventory: &local::Inventory,
+        tools: Vec<McpToolSummary>,
+        query: &str,
+        offset: usize,
+    ) -> Result<ToolOutput, ToolError> {
+        let ranked = rank_tools(tools, query, offset)
+            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
+        let mut matches = ranked
+            .matches
+            .into_iter()
+            .map(|tool| {
+                Ok(ToolMatch {
+                    reference: tool
+                        .reference()
+                        .map_err(|error| ToolError::internal(error.to_string()))?
+                        .to_string(),
+                    name: tool.name().to_owned(),
+                    description: tool.description().to_owned(),
+                    input_schema: None,
+                })
+            })
+            .collect::<Result<Vec<_>, ToolError>>()?;
+        if query.trim() != "*" {
+            let references = matches
+                .iter()
+                .take(PREVIEW_LIMIT)
+                .map(|tool| {
+                    McpToolReference::from_str(&tool.reference)
+                        .map_err(|error| ToolError::internal(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let previews = self.describe_tools(references, true).await?;
+            for preview in previews {
+                if let Some(item) = matches
+                    .iter_mut()
+                    .find(|item| item.reference == preview.reference)
+                {
+                    item.input_schema = preview.input_schema;
+                }
+            }
+        }
+        json_output(&page::Page::new(
+            matches,
+            ranked.total_matches,
+            offset,
+            inventory.shared_refresh_unavailable(),
+        )?)
+    }
+
     pub(super) async fn describe_tools(
         &self,
         references: Vec<McpToolReference>,

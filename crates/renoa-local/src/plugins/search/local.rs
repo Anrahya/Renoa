@@ -425,6 +425,30 @@ impl Inventory {
             .cloned()
             .collect())
     }
+
+    pub(super) fn plugin_tools(&self, plugin: &str) -> Result<Vec<McpToolSummary>, ToolError> {
+        let record = self
+            .records
+            .iter()
+            .find(|record| record.card.id == plugin)
+            .ok_or_else(|| ToolError::invalid_input("plugin id was not found; search again"))?;
+        let connections = record
+            .facts
+            .iter()
+            .filter_map(|fact| match fact {
+                PluginFact::Connection { status, .. } if status.enabled_for_agent() => {
+                    Some(status.connection())
+                }
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        Ok(self
+            .tools
+            .iter()
+            .filter(|tool| connections.contains(tool.connection_id()))
+            .cloned()
+            .collect())
+    }
 }
 
 pub(super) fn validate_query(query: &str) -> Result<String, ToolError> {

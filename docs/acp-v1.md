@@ -43,17 +43,12 @@ This read-only command uses the same provider settings as ACP, marks the
 configured initial model and each model's default reasoning level, and does not
 create or modify durable session state.
 
-The product CLI can install Renoa's first read-only GitHub connection with the
-same Host data root and adapter configuration:
-
-```sh
-renoa-agent mcp github install --account ACCOUNT
-```
-
-This resolves the exact account through `gh`, refreshes the complete remote
-catalog, and attaches that connection to the configured agent's searchable
-registry. It stores the hostname/account reference, not the token. No GitHub
-schema is advertised until that agent loads an exact search result.
+Agents add external MCPs, including GitHub, through `plugin_manage` with a
+researched `source.kind=mcp`. Endpoint and public headers come from provider
+documentation; credential arguments contain only saved references or an OAuth
+selection. A successful add installs and activates the plugin and publishes its
+catalog. `plugin_search` then exposes its tools through the same session, with
+full schemas returned by targeted search or exact-reference lookup.
 
 When a private shared plugin registry is configured, the same Host process can
 reconcile its immutable package library explicitly:
@@ -75,7 +70,7 @@ The process reads:
 - `RENOA_MODEL`
 - optional `RENOA_MODEL_AUTH_STORE` (defaults to `<home>/credentials/models.sqlite3`)
 - `RENOA_AGENT_ID`, the id of an agent provisioned on this Host. `renoa-agent
-  acp`, `renoa-agent mcp github install`, and `renoa-agent plugins sync` build
+  acp` and `renoa-agent plugins sync` build
   the full configuration and require it; `renoa-agent models --json` does not.
 - optional `RENOA_HOME`
 - optional `RENOA_MCP_ADAPTER`
@@ -86,7 +81,7 @@ The process reads:
 Without `RENOA_HOME`, Host state uses `~/.renoa`.
 `RENOA_MCP_ADAPTER` is the absolute path to the built MCP process adapter. It
 enables Host catalog refresh and invocation. A tool reaches the configured agent
-only after a per-agent attachment such as the GitHub command above. A committed
+only after a per-agent attachment through `plugin_manage`. A committed
 change is visible on the next registry call without restarting ACP or the
 surface.
 `RENOA_CODE_MODE_WORKER` is the absolute path to the exact-pinned Monty binary.

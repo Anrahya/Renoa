@@ -23,12 +23,12 @@ use crate::{
 
 mod local;
 mod page;
-mod schemas;
 #[cfg(test)]
 mod tests;
+mod tools;
 
 const TOOL_NAME: &str = crate::capabilities::PLUGIN_SEARCH;
-const BINDING_REVISION: &str = "renoa-plugin-search-v3";
+const BINDING_REVISION: &str = "renoa-plugin-search-v4";
 const PREVIEW_LIMIT: usize = 3;
 const PREVIEW_SCHEMA_BYTES: usize = 4 * 1024;
 
@@ -50,14 +50,14 @@ impl PluginSearchTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_owned(),
                 description: format!(
-                    "Search the Host plugin library. Start with a targeted query; use query=* only to browse. A targeted local search returns plugin cards and up to {PREVIEW_LIMIT} matching plugin tools with exact references. If a match includes input_schema, use that complete schema to call code_mode's Python plugin(reference, arguments), or tool_execute when Code Mode is absent. If input_schema is absent, call plugin_search with only reference to get the full schema before calling the tool. Pass plugin to inspect components and connections; Host plugin inspection returns its nested tools; pass an enabled connection to list up to {SEARCH_RESULT_LIMIT} MCP tools per page. source=official_mcp_registry researches external candidates and never installs them. A loaded catalog or configured credential does not guarantee a remote call will succeed."
+                    "Search the Host plugin library. Start with a targeted query; use query=* only to browse. A targeted local search returns plugin cards and up to {PREVIEW_LIMIT} matching plugin tools with exact references. If a match includes input_schema, use that complete schema to call code_mode's Python plugin(reference, arguments), or tool_execute when Code Mode is absent. If input_schema is absent, call plugin_search with only reference to get the full schema before calling the tool. Pass plugin and query to search that plugin's enabled tools. An external plugin may span several enabled connections; each tool reference identifies its connection. Pass connection and query to search one account or endpoint. Pass an external plugin id without query to inspect its components and connection status. Tool pages contain up to {SEARCH_RESULT_LIMIT} items. source=official_mcp_registry researches external candidates and never installs them. A loaded catalog or configured credential does not guarantee a remote call will succeed."
                 ),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type":"string", "minLength":1, "maxLength":256, "description":"Search text for local plugins, nested connection tools, or the official Registry. Use * only to browse locally. Omit for exact plugin, reference, or Registry name/version lookup."},
-                        "plugin": {"type":"string", "description":"Exact plugin id returned by local search. Inspect this plugin's components and visible connection status."},
-                        "connection": {"type":"string", "description":"Exact enabled connection id returned by plugin inspection. Return nested MCP tools and exact references."},
+                        "query": {"type":"string", "minLength":1, "maxLength":256, "description":"Search text for local plugins, a selected plugin's tools, one connection's tools, or the official Registry. Use * only to browse locally. Omit when inspecting an external plugin's components, an exact reference, or a Registry name/version."},
+                        "plugin": {"type":"string", "description":"Exact plugin id returned by local search. Pair with query to search its enabled tools. For an external plugin, omit query to inspect components and connection status. Do not combine with connection or reference."},
+                        "connection": {"type":"string", "description":"Exact enabled connection id returned by add, connect, or plugin inspection. Pair with query to search its MCP tools and exact references; omit plugin and reference."},
                         "reference": {"type":"string", "description":"Exact plugin tool reference returned by local search. Use alone to get its complete model-facing input_schema; never combine with query, plugin, connection, offset, or Registry fields."},
                         "offset": {"type":"integer", "minimum":0, "description":"Next offset returned by a local page; omit for the first page."},
                         "source": {"type":"string", "enum":["local", "official_mcp_registry"], "description":"Defaults to local. Use official_mcp_registry only to research an external MCP candidate."},
@@ -187,10 +187,27 @@ impl PluginSearchTool {
             (Some(plugin), None) if input.query.is_none() => {
                 json_output(&inventory.inspect(&plugin, input.offset)?)
             }
+            (Some(plugin), None) => {
+                self.search_tools(
+                    &inventory,
+                    inventory.plugin_tools(&plugin)?,
+                    input
+                        .query
+                        .as_deref()
+                        .expect("inspection without query handled above"),
+                    input.offset,
+                )
+                .await
+            }
             (None, Some(connection)) => {
                 let query = input.query.as_deref().unwrap_or("*");
-                self.search_connection(&inventory, &connection, query, input.offset)
-                    .await
+                self.search_tools(
+                    &inventory,
+                    inventory.tools(&connection)?,
+                    query,
+                    input.offset,
+                )
+                .await
             }
             (None, None) => {
                 let query = input.query.as_deref().ok_or_else(|| {
@@ -199,7 +216,7 @@ impl PluginSearchTool {
                 self.search_cards(&inventory, query, input.offset).await
             }
             _ => Err(ToolError::invalid_input(
-                "inspect a plugin without query or connection, or search tools by connection without plugin",
+                "choose either plugin or connection; they cannot be combined",
             )),
         }
     }
@@ -250,57 +267,6 @@ impl PluginSearchTool {
             details: None,
             is_error: false,
         })
-    }
-
-    async fn search_connection(
-        &self,
-        inventory: &local::Inventory,
-        connection: &str,
-        query: &str,
-        offset: usize,
-    ) -> Result<ToolOutput, ToolError> {
-        let ranked = rank_tools(inventory.tools(connection)?, query, offset)
-            .map_err(|error| ToolError::invalid_input(error.to_string()))?;
-        let mut matches = ranked
-            .matches
-            .into_iter()
-            .map(|tool| {
-                Ok(ToolMatch {
-                    reference: tool
-                        .reference()
-                        .map_err(|error| ToolError::internal(error.to_string()))?
-                        .to_string(),
-                    name: tool.name().to_owned(),
-                    description: tool.description().to_owned(),
-                    input_schema: None,
-                })
-            })
-            .collect::<Result<Vec<_>, ToolError>>()?;
-        if query.trim() != "*" {
-            let references = matches
-                .iter()
-                .take(PREVIEW_LIMIT)
-                .map(|tool| {
-                    McpToolReference::from_str(&tool.reference)
-                        .map_err(|error| ToolError::internal(error.to_string()))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let previews = self.describe_tools(references, true).await?;
-            for preview in previews {
-                if let Some(item) = matches
-                    .iter_mut()
-                    .find(|item| item.reference == preview.reference)
-                {
-                    item.input_schema = preview.input_schema;
-                }
-            }
-        }
-        json_output(&page::Page::new(
-            matches,
-            ranked.total_matches,
-            offset,
-            inventory.shared_refresh_unavailable(),
-        )?)
     }
 
     async fn search_cards(

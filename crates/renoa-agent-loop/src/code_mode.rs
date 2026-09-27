@@ -29,7 +29,7 @@ pub(crate) struct CodeModeInput {
 pub(crate) fn spec() -> ToolSpec {
     ToolSpec {
         name: CODE_MODE_TOOL.to_owned(),
-        description: "Run Python for plugin work. Search for plugin tools with plugin_search. Use a returned input_schema to form arguments; if it is absent, call plugin_search with only reference to get the complete schema first. In Python, call await plugin(reference, arguments), or use asyncio.gather for independent calls. Each plugin result is a dictionary with content, details, and is_error. Only the final Python value is returned; each plugin call is durably recorded before dispatch."
+        description: "Run Python for plugin work. Search for plugin tools with plugin_search. Use a returned input_schema to form arguments; if it is absent, call plugin_search with only reference to get the complete schema first. In Python, call await plugin(reference, arguments), or use asyncio.gather for independent calls. Each plugin result is a dictionary with content, details, and is_error. Check is_error and preserve failure details in your returned value. Use supported pagination and field filters to fetch only needed data. For JSON text payloads, import json and parse json.loads(block['text']) before selecting fields; copying content or details unchanged returns the full payload. Return only fields needed for the task. Only the final Python value enters the model context; each plugin call is durably recorded before dispatch."
             .to_owned(),
         input_schema: json!({
             "type": "object",
