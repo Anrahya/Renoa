@@ -25,6 +25,11 @@ use serde_json::{Value, json};
 use tokio::sync::{Barrier, Notify};
 use tokio_util::sync::CancellationToken;
 
+/// Turns a hang into a failure. Each wait here ends in milliseconds when the
+/// behavior is right and never when it is wrong, so the bound only has to
+/// outlast a loaded CI runner.
+const HANG_GUARD: Duration = Duration::from_secs(30);
+
 #[test]
 fn code_mode_refuses_a_replayable_mcp_executor() {
     let model = Arc::new(ScriptedModel {
@@ -74,7 +79,7 @@ async fn parallel_mcp_calls_are_durable_and_only_one_code_result_enters_model_co
     let admission = kernel
         .submit(session, Command::new(CommandId::new(), command))
         .expect("submit");
-    let result = tokio::time::timeout(Duration::from_secs(3), kernel.drive(session, &runtime))
+    let result = tokio::time::timeout(HANG_GUARD, kernel.drive(session, &runtime))
         .await
         .expect("plugin calls must run concurrently")
         .expect("drive");
@@ -247,14 +252,14 @@ async fn cancellation_during_nested_mcp_calls_balances_outer_calls() {
     let runner = Arc::clone(&kernel);
     let running_runtime = Arc::clone(&runtime);
     let drive = tokio::spawn(async move { runner.drive(session, running_runtime.as_ref()).await });
-    tokio::time::timeout(Duration::from_secs(3), arrival.wait())
+    tokio::time::timeout(HANG_GUARD, arrival.wait())
         .await
         .expect("both plugin children must enter the adapter");
     kernel
         .request_cancellation(session, operation, CancellationId::new())
         .expect("request cancellation");
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(3), drive)
+        tokio::time::timeout(HANG_GUARD, drive)
             .await
             .expect("drive must finish")
             .expect("join drive")
@@ -325,14 +330,14 @@ async fn cancellation_during_python_evaluation_balances_outer_calls() {
     let runner = Arc::clone(&kernel);
     let running_runtime = Arc::clone(&runtime);
     let drive = tokio::spawn(async move { runner.drive(session, running_runtime.as_ref()).await });
-    tokio::time::timeout(Duration::from_secs(3), invoked.notified())
+    tokio::time::timeout(HANG_GUARD, invoked.notified())
         .await
         .expect("Python evaluator must start");
     kernel
         .request_cancellation(session, operation, CancellationId::new())
         .expect("request cancellation");
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(3), drive)
+        tokio::time::timeout(HANG_GUARD, drive)
             .await
             .expect("drive must finish")
             .expect("join drive")
