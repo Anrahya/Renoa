@@ -171,7 +171,11 @@ impl AgentBehavior {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDocuments {
+    /// Read the agent's own SOUL.md: its identity, judgment, and voice.
     pub soul: bool,
+    /// Read the USER.md of whoever talks to the agent, the profile every agent
+    /// that talks to that person shares. False for a job that does not need to
+    /// know the person, such as a scheduled report.
     pub user: bool,
 }
 
