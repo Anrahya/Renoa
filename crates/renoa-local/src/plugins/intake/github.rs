@@ -167,6 +167,15 @@ async fn download_into(
                 source,
             })?;
     }
+    // Tokio finishes a file's last write in the background; extraction must
+    // not open the archive before that write lands.
+    tokio::io::AsyncWriteExt::flush(&mut file)
+        .await
+        .map_err(|source| PluginError::Io {
+            action: "write GitHub archive",
+            path: archive_path.clone(),
+            source,
+        })?;
     drop(file);
     let prefix = format!("{repo}-{commit}");
     let subdirectory = path.map(str::to_owned);
