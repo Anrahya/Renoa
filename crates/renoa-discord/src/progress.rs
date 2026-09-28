@@ -1,14 +1,17 @@
 //! Transient progress for running commands: a typing indicator in the
 //! command's channel and one progress message, edited in place, listing its
-//! tool calls and the intermediate messages that led to them. Once the command
-//! finishes and its answer has had time to post, the progress message is
-//! deleted.
+//! tool calls and the intermediate messages that led to them. One edit interval
+//! after the command finishes, or once it has been idle too long, the progress
+//! message is deleted.
 //!
-//! Progress is presence, not history. Nothing here is stored: after a restart
-//! progress resumes from the next task record, and a failed Discord call is
-//! retried on the next tick or dropped. A command that calls no tool shows only
-//! the typing indicator, and a command that finishes before its progress
-//! message was posted never posts one.
+//! Progress is presence, not history. Only the posted message's identity is
+//! stored, so a restarted surface still deletes it: after a restart progress
+//! resumes from the next task record in the same message, and a finished
+//! command's message is deleted. A message posted just before a crash, and not
+//! yet recorded, is left behind. A failed Discord call is retried on the next
+//! tick or dropped. A command that calls no tool shows only the typing
+//! indicator, and a command that finishes before its progress message was
+//! posted never posts one.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -18,20 +21,24 @@ use std::{
 
 use renoa_control::TaskEventKind;
 use renoa_protocol::ExecutionEventKind;
-use tokio::sync::mpsc;
+use tokio::{
+    sync::mpsc,
+    time::{Interval, MissedTickBehavior},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     DiscordError,
     api::{ApiError, DiscordApi},
-    store::ProgressTarget,
+    store::{ProgressTarget, ShownProgress, SurfaceStore},
 };
 
 /// Discord shows a typing indicator for about ten seconds.
 const TYPING_INTERVAL: Duration = Duration::from_secs(8);
 /// Edits stay well inside Discord's per-channel message rate limit.
 const EDIT_INTERVAL: Duration = Duration::from_millis(1500);
-/// A command that reports nothing for this long is no longer shown as working.
+/// A command that reports nothing for this long is no longer shown as working,
+/// and its progress message is deleted.
 const IDLE_LIMIT: Duration = Duration::from_mins(20);
 const MAX_LENGTH: usize = 1900;
 const PREVIEW_CHARS: usize = 200;
@@ -137,7 +144,7 @@ pub(crate) struct Command {
     /// follows it; otherwise it is the answer, which the reply carries.
     pending: Option<String>,
     /// When the command finished; its progress message is deleted one edit
-    /// interval later, once the answer has had time to post.
+    /// interval later, so the answer usually posts first.
     finished: Option<Instant>,
     message_id: Option<String>,
     shown: Option<String>,
@@ -145,7 +152,7 @@ pub(crate) struct Command {
 }
 
 impl Command {
-    pub(crate) fn new(target: ProgressTarget) -> Self {
+    pub(crate) fn new(target: ProgressTarget, now: Instant) -> Self {
         Self {
             target,
             lines: Vec::new(),
@@ -153,12 +160,28 @@ impl Command {
             finished: None,
             message_id: None,
             shown: None,
-            touched: Instant::now(),
+            touched: now,
         }
     }
 
-    pub(crate) fn apply(&mut self, step: Step) {
-        self.touched = Instant::now();
+    /// A command whose progress message a previous run posted.
+    fn resumed(shown: ShownProgress, now: Instant) -> (String, Self) {
+        let mut command = Self::new(
+            ProgressTarget {
+                channel_id: shown.channel_id,
+                reply_to: None,
+            },
+            now,
+        );
+        command.message_id = Some(shown.message_id);
+        if shown.finished {
+            command.finished = Some(now);
+        }
+        (shown.command_id, command)
+    }
+
+    pub(crate) fn apply(&mut self, step: Step, now: Instant) {
+        self.touched = now;
         match step {
             Step::Working => {}
             Step::Said(text) => {
@@ -193,13 +216,22 @@ impl Command {
             }
             Step::Finished => {
                 self.pending = None;
-                self.finished = Some(Instant::now());
+                self.finished = Some(now);
             }
         }
     }
 
-    fn running(&self) -> bool {
-        self.finished.is_none() && self.touched.elapsed() < IDLE_LIMIT
+    fn running(&self, now: Instant) -> bool {
+        self.finished.is_none() && now.saturating_duration_since(self.touched) < IDLE_LIMIT
+    }
+
+    /// Whether the command's progress message should be deleted: one edit
+    /// interval after it finished, or once it has been idle too long.
+    fn expired(&self, now: Instant) -> bool {
+        match self.finished {
+            Some(finished) => now.saturating_duration_since(finished) >= EDIT_INTERVAL,
+            None => now.saturating_duration_since(self.touched) >= IDLE_LIMIT,
+        }
     }
 
     /// The progress message of a running command, or `None` while there is
@@ -211,6 +243,7 @@ impl Command {
         let heading = "**Working…**";
         let rendered: Vec<String> = self.lines.iter().map(render_line).collect();
         let mut kept = Vec::new();
+        // Room for the heading and the "… N earlier steps" line.
         let mut length = heading.len() + 40;
         for line in rendered.iter().rev() {
             if length + line.len() + 1 > MAX_LENGTH {
@@ -260,12 +293,13 @@ fn render_line(line: &Line) -> String {
 /// the surface.
 pub(crate) async fn run(
     api: Arc<DiscordApi>,
+    store: Arc<SurfaceStore>,
     Receiver(mut updates): Receiver,
     shutdown: CancellationToken,
 ) -> Result<(), DiscordError> {
-    let mut commands: HashMap<String, Command> = HashMap::new();
-    let mut edits = tokio::time::interval(EDIT_INTERVAL);
-    let mut typing = tokio::time::interval(TYPING_INTERVAL);
+    let mut commands = resume(&store, Instant::now())?;
+    let mut edits = ticker(EDIT_INTERVAL);
+    let mut typing = ticker(TYPING_INTERVAL);
     loop {
         tokio::select! {
             () = shutdown.cancelled() => return Ok(()),
@@ -273,18 +307,22 @@ pub(crate) async fn run(
                 let Some(Update { command_id, target, step }) = update else {
                     return Ok(());
                 };
+                let now = Instant::now();
                 let new = !commands.contains_key(&command_id);
-                let command = commands.entry(command_id).or_insert_with(|| Command::new(target));
-                command.apply(step);
-                if new && command.running() {
+                let command = commands
+                    .entry(command_id)
+                    .or_insert_with(|| Command::new(target, now));
+                command.apply(step, now);
+                if new && command.running(now) {
                     type_in(&api, &command.target.channel_id).await;
                 }
             }
-            _ = edits.tick() => show(&api, &mut commands).await,
+            _ = edits.tick() => show(&api, &store, &mut commands, Instant::now()).await,
             _ = typing.tick() => {
+                let now = Instant::now();
                 let channels: BTreeSet<&str> = commands
                     .values()
-                    .filter(|command| command.running())
+                    .filter(|command| command.running(now))
                     .map(|command| command.target.channel_id.as_str())
                     .collect();
                 for channel in channels {
@@ -295,12 +333,33 @@ pub(crate) async fn run(
     }
 }
 
-async fn show(api: &DiscordApi, commands: &mut HashMap<String, Command>) {
+/// The commands whose progress messages a previous run posted and did not
+/// delete.
+fn resume(store: &SurfaceStore, now: Instant) -> Result<HashMap<String, Command>, DiscordError> {
+    Ok(store
+        .shown_progress()?
+        .into_iter()
+        .map(|shown| Command::resumed(shown, now))
+        .collect())
+}
+
+/// A timer that, after a stall, ticks once and then keeps its period instead
+/// of catching up on every missed tick with a burst of Discord calls.
+fn ticker(period: Duration) -> Interval {
+    let mut timer = tokio::time::interval(period);
+    timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    timer
+}
+
+async fn show(
+    api: &DiscordApi,
+    store: &SurfaceStore,
+    commands: &mut HashMap<String, Command>,
+    now: Instant,
+) {
     for (command_id, command) in commands.iter_mut() {
-        if let Some(finished) = command.finished {
-            if finished.elapsed() >= EDIT_INTERVAL {
-                remove(api, command_id, command).await;
-            }
+        if command.expired(now) {
+            remove(api, store, command_id, command).await;
             continue;
         }
         let Some(body) = command.render() else {
@@ -325,20 +384,27 @@ async fn show(api: &DiscordApi, commands: &mut HashMap<String, Command>) {
         };
         match result {
             Ok(created) => {
-                if created.is_some() {
-                    command.message_id = created;
+                if let Some(message_id) = created {
+                    if let Err(error) = store.record_progress_message(
+                        command_id,
+                        &command.target.channel_id,
+                        &message_id,
+                    ) {
+                        log_failure(command_id, &error.to_string());
+                    }
+                    command.message_id = Some(message_id);
                 }
                 command.shown = Some(body);
             }
             Err(error) => log_failure(command_id, &error.to_string()),
         }
     }
-    commands.retain(|_, command| command.running() || command.message_id.is_some());
+    commands.retain(|_, command| !command.expired(now) || command.message_id.is_some());
 }
 
-/// Deletes a finished command's progress message. A refusal, such as a
+/// Deletes an expired command's progress message. A refusal, such as a
 /// message someone already deleted, is final; other failures retry.
-async fn remove(api: &DiscordApi, command_id: &str, command: &mut Command) {
+async fn remove(api: &DiscordApi, store: &SurfaceStore, command_id: &str, command: &mut Command) {
     let Some(message_id) = &command.message_id else {
         return;
     };
@@ -346,12 +412,13 @@ async fn remove(api: &DiscordApi, command_id: &str, command: &mut Command) {
         .delete_message(&command.target.channel_id, message_id)
         .await
     {
-        Ok(()) => command.message_id = None,
-        Err(ApiError::Rejected(error)) => {
-            log_failure(command_id, &error);
-            command.message_id = None;
-        }
-        Err(error) => log_failure(command_id, &error.to_string()),
+        Ok(()) => {}
+        Err(ApiError::Rejected(error)) => log_failure(command_id, &error),
+        Err(error) => return log_failure(command_id, &error.to_string()),
+    }
+    command.message_id = None;
+    if let Err(error) = store.clear_progress_message(command_id) {
+        log_failure(command_id, &error.to_string());
     }
 }
 

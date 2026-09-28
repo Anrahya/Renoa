@@ -3,8 +3,9 @@
 //! The end-of-turn history projection repeats what was already recorded live,
 //! and a restarted node re-drives the same turn. Each event is therefore
 //! identified by what it reports: a tool start or finish by its call id, and an
-//! assistant message by its text. An identified event is recorded once per
-//! occurrence, whichever path reports it first.
+//! assistant message by its text. Occurrences are counted per identity, so a
+//! message the turn repeats is recorded twice while a re-driven turn's repeat
+//! of what it already recorded is not.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -70,16 +71,57 @@ impl Recorded {
         }
         Ok(remaining)
     }
+}
 
-    fn contains(&self, kind: &ExecutionEventKind) -> Result<bool, NodeStoreError> {
-        Ok(self.0.contains_key(&EventKey::of(kind)?))
+/// A running turn's live reports, counted against what its command already
+/// recorded. The ledger is loaded once when the turn starts; while the turn
+/// runs it is the only source of live events for its command, so admitting a
+/// report needs no scan of the command's earlier events.
+#[derive(Debug)]
+pub(crate) struct LiveLedger {
+    recorded: HashMap<EventKey, usize>,
+    reported: HashMap<EventKey, usize>,
+}
+
+impl LiveLedger {
+    /// Counts one live report and returns whether it is a new occurrence: the
+    /// n-th report of an event is new when fewer than n are recorded.
+    pub(crate) fn admit(&mut self, kind: &ExecutionEventKind) -> Result<bool, NodeStoreError> {
+        let key = EventKey::of(kind)?;
+        let reported = self.reported.entry(key.clone()).or_default();
+        *reported += 1;
+        let recorded = self.recorded.entry(key).or_default();
+        if *reported <= *recorded {
+            return Ok(false);
+        }
+        *recorded = *reported;
+        Ok(true)
     }
 }
 
 impl NodeStore {
-    /// Records one durable event of a running execution. Returns whether it
-    /// was recorded: an event already recorded for the command, or one that
-    /// arrives after the execution finished, is skipped.
+    /// What a command has recorded so far, for the turn about to run it.
+    pub(crate) async fn live_ledger(
+        &self,
+        command_id: CommandId,
+    ) -> Result<LiveLedger, NodeStoreError> {
+        let path = Arc::clone(&self.path);
+        blocking(move || {
+            let mut connection = open_connection(&path)?;
+            let transaction = connection.transaction()?;
+            let Recorded(recorded) = Recorded::load(&transaction, command_id)?;
+            transaction.commit()?;
+            Ok(LiveLedger {
+                recorded,
+                reported: HashMap::new(),
+            })
+        })
+        .await
+    }
+
+    /// Records one durable event of a running execution, admitted by the
+    /// turn's [`LiveLedger`]. Returns whether it was recorded: an event that
+    /// arrives after the execution finished is skipped.
     pub(crate) async fn append_progress(
         &self,
         command_id: CommandId,
@@ -103,7 +145,7 @@ impl NodeStore {
             let record = load_record(&transaction, command_id)?.ok_or_else(|| {
                 NodeStoreError::Invalid(format!("execution for command {command_id} was not found"))
             })?;
-            if record.terminal || Recorded::load(&transaction, command_id)?.contains(&kind)? {
+            if record.terminal {
                 transaction.commit()?;
                 return Ok(false);
             }

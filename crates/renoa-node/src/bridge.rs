@@ -228,7 +228,8 @@ impl NodeRuntime {
         let cancellation = CancellationToken::new();
         let (setup_events, setup) =
             operator::setup_sink(self.host.home(), command_id.as_uuid(), &cancellation);
-        let events = Arc::new(LiveEvents::new(Arc::clone(&self), command_id, setup_events));
+        let events =
+            Arc::new(LiveEvents::start(Arc::clone(&self), command_id, setup_events).await?);
         let observation =
             TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
         let result = session

@@ -3,30 +3,39 @@
 //! turn ends. Token deltas and reasoning stay local; only complete events are
 //! recorded, and the end-of-turn projection records whatever is still missing.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use renoa_agent::{AgentEvent, AgentEventSink, AssistantContent, BoxFuture};
 use renoa_protocol::{CommandId, ExecutionEventKind};
 
-use crate::{bridge::NodeRuntime, node_log, projection::project_tool_result};
+use crate::{
+    bridge::NodeRuntime,
+    node_log,
+    node_store::{LiveLedger, NodeStoreError},
+    projection::project_tool_result,
+};
 
 pub(crate) struct LiveEvents {
     runtime: Arc<NodeRuntime>,
     command_id: CommandId,
+    /// Held only to count a report, never across an await.
+    ledger: Mutex<LiveLedger>,
     inner: Arc<dyn AgentEventSink>,
 }
 
 impl LiveEvents {
-    pub(crate) fn new(
+    pub(crate) async fn start(
         runtime: Arc<NodeRuntime>,
         command_id: CommandId,
         inner: Arc<dyn AgentEventSink>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, NodeStoreError> {
+        let ledger = runtime.state.live_ledger(command_id).await?;
+        Ok(Self {
             runtime,
             command_id,
+            ledger: Mutex::new(ledger),
             inner,
-        }
+        })
     }
 
     /// The durable events one agent event completes.
@@ -74,6 +83,19 @@ impl LiveEvents {
     }
 
     async fn record(&self, kind: ExecutionEventKind) {
+        // The ledger only decides what to record live. The end-of-turn
+        // projection reconciles against the database, so counts left by a
+        // panic cannot lose an event.
+        let admitted = self
+            .ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .admit(&kind);
+        match admitted {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => return self.warn(&error.to_string()),
+        }
         match self
             .runtime
             .state

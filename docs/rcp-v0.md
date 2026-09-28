@@ -384,7 +384,9 @@ surfaces see progress before the terminal event. Once the kernel settles, the
 node derives assistant and tool records from durable Host history and commits
 the records not already recorded, with the terminal RCP event, in one
 transaction. A tool record is identified by its call id and an assistant record
-by its text, so a re-driven turn does not repeat what the node recorded live.
+by its text, and occurrences are counted per identity: a message the turn
+repeats is recorded again in its place, while a re-driven turn does not repeat
+what the node recorded live.
 
 ### Harness adapter boundary
 

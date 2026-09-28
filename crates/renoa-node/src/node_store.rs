@@ -13,6 +13,8 @@ mod progress;
 mod records;
 mod schema;
 
+pub(crate) use progress::LiveLedger;
+
 use records::{
     decode_record, ensure_task_binding, insert_event, load_event, load_record, next_event_sequence,
     stored_row,

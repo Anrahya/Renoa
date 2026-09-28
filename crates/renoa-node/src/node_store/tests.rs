@@ -68,6 +68,20 @@ async fn a_task_cannot_move_to_another_agent() {
     assert!(store.admit(task_id, command(11), moved).await.is_err());
 }
 
+/// Records one live report the way a running turn does.
+async fn report(
+    store: &NodeStore,
+    ledger: &mut super::LiveLedger,
+    command_id: CommandId,
+    kind: renoa_protocol::ExecutionEventKind,
+) -> bool {
+    ledger.admit(&kind).expect("count the report")
+        && store
+            .append_progress(command_id, kind)
+            .await
+            .expect("record")
+}
+
 #[tokio::test]
 async fn live_progress_is_recorded_once_and_the_final_projection_adds_only_the_rest() {
     use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
@@ -94,20 +108,14 @@ async fn live_progress_is_recorded_once_and_the_final_projection_adds_only_the_r
         is_error: false,
     };
 
+    let mut ledger = store.live_ledger(command_id).await.expect("ledger");
     for kind in [message("Reading."), started.clone(), finished("proof")] {
-        assert!(
-            store
-                .append_progress(command_id, kind)
-                .await
-                .expect("record")
-        );
+        assert!(report(&store, &mut ledger, command_id, kind).await);
     }
+    let mut redriven = store.live_ledger(command_id).await.expect("ledger");
     assert!(
-        !store
-            .append_progress(command_id, started.clone())
-            .await
-            .expect("a re-driven tool start"),
-        "a tool call is recorded once"
+        !report(&store, &mut redriven, command_id, started.clone()).await,
+        "a re-driven turn does not record its tool call again"
     );
     assert!(
         store
@@ -158,4 +166,51 @@ async fn live_progress_is_recorded_once_and_the_final_projection_adds_only_the_r
             terminal,
         ]
     );
+}
+
+#[tokio::test]
+async fn a_message_the_turn_repeats_is_recorded_live_in_its_place() {
+    use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
+
+    let files = tempfile::tempdir().expect("temporary directory");
+    let store = NodeStore::open(files.path().join("node.sqlite")).expect("open node ledger");
+    let task_id = TaskId::from_uuid(Uuid::from_u128(3));
+    let command_id = store
+        .admit(task_id, command(10), proposal(100))
+        .await
+        .expect("admit the command")
+        .command
+        .command_id;
+    let checking = ExecutionEventKind::AssistantMessage {
+        text: "Checking.".to_owned(),
+    };
+    let tool = |call_id: &str| ExecutionEventKind::ToolStarted {
+        call_id: call_id.to_owned(),
+        name: "read_file".to_owned(),
+        arguments: serde_json::json!({}),
+    };
+    let turn = vec![checking.clone(), tool("one"), checking.clone(), tool("two")];
+
+    let mut ledger = store.live_ledger(command_id).await.expect("ledger");
+    for kind in turn.clone() {
+        assert!(report(&store, &mut ledger, command_id, kind).await);
+    }
+    let terminal = ExecutionEventKind::ExecutionTerminated {
+        terminal: ExecutionTerminal::Completed,
+    };
+    let mut projection = turn.clone();
+    projection.push(terminal.clone());
+    store.finish(command_id, projection).await.expect("finish");
+
+    let kinds = store
+        .load_events_after(command_id, None)
+        .await
+        .expect("events")
+        .into_iter()
+        .map(|event| event.kind)
+        .collect::<Vec<_>>();
+    let mut expected = vec![ExecutionEventKind::ExecutionStarted];
+    expected.extend(turn);
+    expected.push(terminal);
+    assert_eq!(kinds, expected);
 }

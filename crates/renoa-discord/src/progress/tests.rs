@@ -1,11 +1,42 @@
-use super::{Command, Step};
-use crate::store::ProgressTarget;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
-fn command() -> Command {
-    Command::new(ProgressTarget {
+use futures_util::FutureExt as _;
+
+use super::{Command, EDIT_INTERVAL, IDLE_LIMIT, Step, resume, show, ticker};
+use crate::{
+    api::DiscordApi,
+    store::{ProgressTarget, SurfaceStore},
+};
+
+const COMMAND: &str = "33333333-3333-4333-8333-333333333333";
+
+fn target() -> ProgressTarget {
+    ProgressTarget {
         channel_id: "202".to_owned(),
         reply_to: Some("101".to_owned()),
-    })
+    }
+}
+
+/// A command whose steps all arrive at one instant.
+struct Timed(Command, Instant);
+
+impl Timed {
+    fn apply(&mut self, step: Step) {
+        self.0.apply(step, self.1);
+    }
+
+    fn render(&self) -> Option<String> {
+        self.0.render()
+    }
+}
+
+fn command() -> Timed {
+    let now = Instant::now();
+    Timed(Command::new(target(), now), now)
 }
 
 fn tool(call_id: &str, name: &str) -> Step {
@@ -97,4 +128,101 @@ fn a_tool_record_is_named_by_the_plugin_tool_it_runs() {
     };
     let (_, step) = Step::of(&kind);
     assert_eq!(step, tool("one", "exa.web_search_exa"));
+}
+
+#[test]
+fn a_command_idle_too_long_expires_and_a_finished_one_expires_after_one_edit() {
+    let start = Instant::now();
+    let mut idle = Command::new(target(), start);
+    idle.apply(tool("one", "bash"), start);
+    assert!(!idle.expired(start + IDLE_LIMIT.saturating_sub(Duration::from_secs(1))));
+    assert!(idle.expired(start + IDLE_LIMIT));
+
+    let mut finished = Command::new(target(), start);
+    finished.apply(Step::Finished, start);
+    assert!(!finished.expired(start));
+    assert!(finished.expired(start + EDIT_INTERVAL));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stalled_timer_ticks_once_instead_of_bursting() {
+    let mut timer = ticker(Duration::from_secs(8));
+    timer.tick().await;
+    tokio::time::advance(Duration::from_secs(40)).await;
+    timer.tick().await;
+    assert!(
+        timer.tick().now_or_never().is_none(),
+        "missed ticks are not replayed"
+    );
+}
+
+/// A Discord API that records each channel request and answers message
+/// creation with id 900.
+async fn discord() -> (DiscordApi, Arc<Mutex<Vec<String>>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("http port");
+    let address = listener.local_addr().expect("http address");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&requests);
+    tokio::spawn(async move { crate::live_test::serve_http(listener, 0, recorded).await });
+    let api =
+        DiscordApi::with_origin("token".to_owned(), format!("http://{address}")).expect("api");
+    (api, requests)
+}
+
+fn deleted(requests: &Mutex<Vec<String>>) -> bool {
+    requests
+        .lock()
+        .expect("requests")
+        .iter()
+        .any(|request| request.starts_with("DELETE /channels/202/messages/900"))
+}
+
+#[tokio::test]
+async fn a_restarted_surface_deletes_the_progress_message_its_last_run_posted() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let (api, requests) = discord().await;
+    let start = Instant::now();
+    {
+        let store = SurfaceStore::open(directory.path()).expect("store");
+        let mut commands = HashMap::new();
+        let mut command = Command::new(target(), start);
+        command.apply(tool("one", "bash"), start);
+        commands.insert(COMMAND.to_owned(), command);
+        show(&api, &store, &mut commands, start).await;
+        assert_eq!(
+            store.shown_progress().expect("shown")[0].message_id,
+            "900",
+            "the posted message is recorded"
+        );
+    }
+
+    // The command finished while the surface was down.
+    let store = SurfaceStore::open(directory.path()).expect("reopen store");
+    let mut commands = resume(&store, start).expect("resume");
+    show(&api, &store, &mut commands, start + EDIT_INTERVAL).await;
+
+    assert!(deleted(&requests));
+    assert!(store.shown_progress().expect("shown").is_empty());
+    assert!(commands.is_empty());
+}
+
+#[tokio::test]
+async fn an_idle_command_has_its_progress_message_deleted() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let (api, requests) = discord().await;
+    let store = SurfaceStore::open(directory.path()).expect("store");
+    let start = Instant::now();
+    let mut commands = HashMap::new();
+    let mut command = Command::new(target(), start);
+    command.apply(tool("one", "bash"), start);
+    commands.insert(COMMAND.to_owned(), command);
+    show(&api, &store, &mut commands, start).await;
+
+    show(&api, &store, &mut commands, start + IDLE_LIMIT).await;
+
+    assert!(deleted(&requests));
+    assert!(store.shown_progress().expect("shown").is_empty());
+    assert!(commands.is_empty(), "an idle command is forgotten");
 }

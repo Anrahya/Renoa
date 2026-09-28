@@ -63,6 +63,7 @@ pub(crate) async fn run(
     let (progress, progress_updates) = Progress::channel();
     tasks.spawn(progress::run(
         Arc::clone(&api),
+        Arc::clone(&store),
         progress_updates,
         shutdown.clone(),
     ));
