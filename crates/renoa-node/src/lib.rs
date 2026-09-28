@@ -5,6 +5,7 @@ mod backoff;
 mod bridge;
 mod node_log;
 mod node_store;
+mod operator;
 mod projection;
 mod session;
 
