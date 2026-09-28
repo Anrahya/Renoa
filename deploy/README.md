@@ -205,9 +205,11 @@ from another surface are posted to the channel with their origin.
 While a command runs, the channel shows the bot typing. Once the agent calls a
 tool, one progress message answers the command and is edited in place, listing
 each tool call and the intermediate messages that led to it. The answer itself
-arrives as the reply, and the progress message is then deleted. Progress is
-transient: it is not stored, a command that calls no tool only shows typing,
-and after a restart progress resumes from the next task record.
+arrives as the reply, and the progress message is then deleted; so is the
+message of a command idle for 20 minutes. Progress is transient: only the posted
+message's identity is stored, a command that calls no tool only shows typing,
+and after a restart progress resumes from the next task record in the same
+message, or the message is deleted if its command finished meanwhile.
 
 OAuth and credential links go to the application owner's DM. The executing node
 sends them directly with the Host's Discord connection, never through the RCP
@@ -220,6 +222,9 @@ The connection cannot be changed from the Control Room. To connect a different b
 server or default agent, stop `renoa-discord.path` and `renoa-discord.service`,
 then remove `credentials/discord.json` and `state/surfaces/discord`; the latter
 pins the previous identity and holds its bindings and task cursors.
+
+Discord store schema 5 records posted progress messages, so a restart still
+deletes them; upgrading from schema 4 adds the empty table.
 
 Discord store schema 4 moved conversations into RCP tasks. Upgrading keeps the
 identity, channel bindings, gateway cursor, and message deduplication, and drops

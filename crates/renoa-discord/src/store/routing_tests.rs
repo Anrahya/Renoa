@@ -93,8 +93,14 @@ fn schema_one_reaches_schema_four_keeping_its_identity_and_message_deduplication
         upgraded
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
+    let progress: i64 = upgraded
+        .query_row("SELECT count(*) FROM progress_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(progress, 0);
     let agent: String = upgraded
         .query_row("SELECT agent_id FROM identity", [], |row| row.get(0))
         .unwrap();

@@ -382,3 +382,49 @@ fn delivery_state(store: &SurfaceStore, command_id: &str, chunk: i64) -> String 
         })
         .expect("delivery state")
 }
+
+#[test]
+fn a_recorded_progress_message_is_finished_once_its_command_is() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let store = bound_store(&directory);
+    enqueue(&store, "101", "Summarize today.");
+    let (task_id, command_id, _) = submit(&store);
+    store
+        .apply_event(&record(
+            task_id,
+            0,
+            TaskEventKind::CommandSubmitted {
+                command: command(command_id, "discord", "Summarize today."),
+            },
+        ))
+        .expect("submitted");
+    let command_id_text = command_id.to_string();
+    store
+        .record_progress_message(&command_id_text, "202", "900")
+        .expect("record progress");
+    let shown = store.shown_progress().expect("shown progress");
+    assert_eq!(
+        (shown.len(), shown[0].message_id.as_str(), shown[0].finished),
+        (1, "900", false)
+    );
+
+    store
+        .apply_event(&record(
+            task_id,
+            1,
+            execution(
+                command_id,
+                0,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Completed,
+                },
+            ),
+        ))
+        .expect("terminated");
+    assert!(store.shown_progress().expect("shown progress")[0].finished);
+
+    store
+        .clear_progress_message(&command_id_text)
+        .expect("clear progress");
+    assert!(store.shown_progress().expect("shown progress").is_empty());
+}

@@ -431,7 +431,7 @@ async fn receive(socket: &mut Socket) -> ServerMessage {
     }
 }
 
-async fn serve_http(
+pub(crate) async fn serve_http(
     listener: tokio::net::TcpListener,
     gateway_port: u16,
     requests: Arc<Mutex<Vec<String>>>,
