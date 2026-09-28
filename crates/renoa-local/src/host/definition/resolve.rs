@@ -1,7 +1,8 @@
 //! Runtime resolution of one canonical agent definition.
 //!
-//! Resolution reads the root row and its children, attaches the agent's own
-//! document root, and composes the system prompt for one workspace. A preset is
+//! Resolution reads the root row and its children, attaches the agent's
+//! documents, and composes the system prompt for one workspace and, when a
+//! turn names one, the person it talks to. A preset is
 //! never consulted here: the stored definition is the only operational owner.
 
 use std::{fs, io::Read as _, path::Path};
@@ -57,6 +58,16 @@ impl ResolvedAgentDefinition {
         self.definition.operational.model.as_ref()
     }
 
+    /// Selects the person one turn talks to, whose `USER.md` the prompt shows
+    /// and `agent_documents` edits. `None` leaves the turn without a `USER.md`.
+    #[must_use]
+    pub(crate) fn with_principal(mut self, principal: Option<uuid::Uuid>) -> Self {
+        self.documents = self
+            .documents
+            .map(|documents| documents.with_principal(principal));
+        self
+    }
+
     /// Composes the system prompt for one workspace.
     ///
     /// # Errors
@@ -69,7 +80,8 @@ impl ResolvedAgentDefinition {
             .documents
             .as_ref()
             .map(AgentDocumentStore::render)
-            .transpose()?;
+            .transpose()?
+            .filter(|documents| !documents.is_empty());
         let project = if self
             .definition
             .operational
@@ -107,10 +119,12 @@ impl ResolvedAgentDefinition {
         Ok(prompt)
     }
 
-    /// Builds the tool binding that edits this agent's own documents.
+    /// Builds the tool binding that edits this turn's documents.
     #[must_use]
     pub(crate) fn document_binding(&self) -> Option<AgentToolBinding> {
-        self.documents.as_ref().map(AgentDocumentStore::binding)
+        self.documents
+            .as_ref()
+            .and_then(AgentDocumentStore::binding)
     }
 }
 

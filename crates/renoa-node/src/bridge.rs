@@ -239,6 +239,7 @@ impl NodeRuntime {
                 observation,
                 events,
                 cancellation,
+                Some(record.command.principal_id.as_uuid()),
             )
             .await;
         // A setup link that could not be delivered stopped the turn; its

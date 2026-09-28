@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use renoa_kernel::AgentId;
 
-use crate::{AgentDefinitionError, AgentDocuments, atomic_file::content_hash};
+use crate::{AgentDefinitionError, atomic_file::content_hash};
 
 pub(super) const SOUL_FILE: &str = "SOUL.md";
 pub(super) const USER_FILE: &str = "USER.md";
@@ -46,9 +46,8 @@ impl PublicationRoot {
 pub(super) fn publication_root(
     data_directory: &Path,
     agent: AgentId,
-    enabled: AgentDocuments,
 ) -> Result<PublicationRoot, AgentDefinitionError> {
-    let data_directory = document_data_directory(data_directory, enabled)?;
+    let data_directory = canonical_data_directory(data_directory)?;
     let directory = data_directory.join(DOCUMENT_DIRECTORY);
     let root = directory.join(agent.to_string());
     let parent_created = create_plain_directory(&directory, agent)?;
@@ -85,9 +84,8 @@ pub(super) fn publication_root(
 pub(super) fn existing_document_root(
     data_directory: &Path,
     agent: AgentId,
-    enabled: AgentDocuments,
 ) -> Result<PathBuf, AgentDefinitionError> {
-    let data_directory = document_data_directory(data_directory, enabled)?;
+    let data_directory = canonical_data_directory(data_directory)?;
     let directory = data_directory.join(DOCUMENT_DIRECTORY);
     require_plain_directory(&directory, agent)?;
     let root = directory.join(agent.to_string());
@@ -95,13 +93,9 @@ pub(super) fn existing_document_root(
     resolve_exact_root(&root, agent)
 }
 
-fn document_data_directory(
+pub(super) fn canonical_data_directory(
     data_directory: &Path,
-    enabled: AgentDocuments,
 ) -> Result<PathBuf, AgentDefinitionError> {
-    if !enabled.any() {
-        return Err(AgentDefinitionError::EmptyDocumentSet);
-    }
     fs::canonicalize(data_directory)
         .map_err(|source| document_io("resolve Host data directory", data_directory, source))
 }
@@ -445,14 +439,14 @@ pub(super) fn require_regular_file(path: &Path) -> Result<(), AgentDefinitionErr
 
 pub(super) fn append_document(
     target: &mut String,
-    tag: &str,
-    file: &str,
+    document: Document,
     snapshot: &DocumentSnapshot,
 ) {
+    let tag = document.name();
     target.push('<');
     target.push_str(tag);
     target.push_str(" source=\"");
-    target.push_str(file);
+    target.push_str(document.file_name());
     target.push_str("\" revision=\"");
     target.push_str(&snapshot.revision);
     target.push_str("\">\n");

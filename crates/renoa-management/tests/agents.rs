@@ -321,6 +321,7 @@ async fn verify_execution(f: &Fixture, id: renoa_kernel::AgentId) {
             TurnObservation::now().unwrap(),
             Arc::new(Quiet),
             CancellationToken::new(),
+            None,
         )
         .await
         .unwrap();

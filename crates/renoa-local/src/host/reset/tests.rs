@@ -87,7 +87,6 @@ async fn a_malformed_agent_document_is_refused_before_rows_or_files_are_removed(
     let documents = root.join("agents").join(agent.to_string());
     fs::remove_file(documents.join("SOUL.md")).unwrap();
     fs::create_dir(documents.join("SOUL.md")).unwrap();
-    let user_before = fs::read(documents.join("USER.md")).unwrap();
     drop(host);
 
     let error = reset_host_data_root(&root).expect_err("document preflight");
@@ -97,7 +96,6 @@ async fn a_malformed_agent_document_is_refused_before_rows_or_files_are_removed(
             .to_string()
             .contains("agent document must be a regular file")
     );
-    assert_eq!(fs::read(documents.join("USER.md")).unwrap(), user_before);
     assert!(documents.join("SOUL.md").is_dir());
 }
 
@@ -277,6 +275,9 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     let sessions = root.join("data/sessions");
     fs::create_dir_all(sessions.join("session-one")).expect("session directory");
     fs::write(sessions.join("session-one/manifest.json"), "{}\n").expect("session file");
+    let profile = root.join("data/users").join(Uuid::new_v4().to_string());
+    fs::create_dir_all(&profile).expect("profile directory");
+    fs::write(profile.join("USER.md"), "Prefers mornings.\n").expect("profile");
 
     let report = reset_host_data_root(&root.join("data")).expect("reset");
 
@@ -304,6 +305,11 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
     assert_eq!(
         fs::read_to_string(workspace.join("notes.md")).expect("kept file"),
         "kept\n"
+    );
+    assert_eq!(
+        fs::read_to_string(profile.join("USER.md")).expect("a person's profile survives"),
+        "Prefers mornings.\n",
+        "a person's USER.md is not agent state"
     );
 
     let second = reset_host_data_root(&root.join("data")).expect("repeat reset");

@@ -80,6 +80,8 @@ impl Worker {
                         observation,
                         sink,
                         cancellation,
+                        // Chat identities here are not RCP principals, so no USER.md is read.
+                        None,
                     )
                     .await
             }

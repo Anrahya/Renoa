@@ -99,6 +99,9 @@ if (prompt === "Read proof." && toolResults.length === 0) {{
     await new Promise(resolve => setTimeout(resolve, 10));
   }}
   content = [{{ type: "text", text: `Finished parallel ${{suffix}}.` }}];
+}} else if (prompt === "Which profile do you see?") {{
+  const seen = JSON.stringify(request).match(/PROFILE_[A-Z]+/g) ?? ["none"];
+  content = [{{ type: "text", text: seen.join(",") }}];
 }} else if (prompt === "First.") {{
   content = [{{ type: "text", text: "First response." }}];
 }} else if (prompt === "Second.") {{

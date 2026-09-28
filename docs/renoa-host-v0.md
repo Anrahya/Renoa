@@ -42,19 +42,29 @@ tool selection, and the exact selected Host connection ids. Creation snapshots
 the preset into that definition; runtime resolution never consults a preset again.
 
 An Arcee agent's stable system rules are part of its stored definition. When
-that definition enables documents, the Host publishes owner-editable `SOUL.md`
-and `USER.md` files under `agents/<agent-id>/` in its data directory and reads
-both for every newly admitted turn. The `agent_documents` tool replaces one
-complete document atomically against the revision shown in the prompt. A stale
-edit fails without changing the newer file. Existing files are never overwritten
-during startup. The Soul controls the agent's identity and voice. The User file
-stores durable facts and preferences about the user. Neither file changes kernel
-state or the surface binding.
+that definition enables the Soul, the Host publishes an owner-editable `SOUL.md`
+under `agents/<agent-id>/` in its data directory. The Soul controls the agent's
+identity and voice.
 
-A new Arcee agent's User document starts with no recorded durable facts. The
-agent learns durable facts during ordinary work and may update either document
-through `agent_documents` when the evidence is strong enough. Startup does not
-interrogate the user or invent durable user facts from environment data.
+`USER.md` belongs to a person, not to an agent. Each RCP principal has one file
+at `users/<principal-id>/USER.md`, and every agent that enables the User
+document reads the file of the principal whose command started the turn. So two
+agents talking to the same person share one profile, and one person never sees
+another's. A turn with no principal (a routine, a Telegram or Slack message, the
+CLI) has no `USER.md`. A person with no file reads as an empty profile. The
+first edit creates the file and its private directory, and an edit rejected for
+a stale revision creates nothing.
+
+Both files are read for every newly admitted turn. The `agent_documents` tool
+replaces one complete document atomically against the revision shown in the
+prompt. A stale edit fails without changing the newer file, which keeps
+concurrent edits from two agents safe. Existing files are never overwritten
+during startup. Neither file changes kernel state or the surface binding.
+
+The agent learns durable facts during ordinary work and may update either
+document through `agent_documents` when the evidence is strong enough. Startup
+does not interrogate the user or invent durable user facts from environment
+data.
 
 An Arcee agent's stored definition starts automatic compaction when the exact
 projected model input reaches 400,000 tokens. The provider's advertised context
@@ -489,12 +499,12 @@ invocation boundary as external MCP tools:
 | --- | --- |
 | `renoa.agents` | Create, list, rename agents |
 | `renoa.routines` | Manage schedules and read retained results |
-| `renoa.documents` | Read and edit this agent's enabled SOUL/USER files |
+| `renoa.documents` | Edit this agent's SOUL and the speaking person's USER file |
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
 | `renoa.git` | Inspect local changes, diffs, and commits |
 
 These plugins start enabled; document tools exist only for definitions that enable
-documents. `plugin_manage` can enable or deactivate a compiled plugin for its
+documents, and `USER.md` is editable only in a turn that names a principal. `plugin_manage` can enable or deactivate a compiled plugin for its
 caller. Stored state is checked again on discovery and dispatch. Imported
 manifests cannot register native implementations or change machine grants.
 References bind the real schema and implementation revision; stale references
@@ -962,8 +972,10 @@ another writer's files to empty a directory.
     oauth-secrets/<sha256>.json    private remote OAuth/API-key secrets
   plugins/<sha256>/                immutable external plugin packages
   agents/<agent-id>/
-    SOUL.md, USER.md                enabled identity and user documents
+    SOUL.md                        enabled identity document
     workspace/                     scheduled/headless agent workspace
+  users/<principal-id>/
+    USER.md                        one person's profile, shared by their agents
   state/
     host.sqlite3                   definitions, plugins, connections, receipts
     skills/<sha256>/               imported immutable skill revisions
@@ -1043,10 +1055,10 @@ guidance. Reopening the upgraded catalog does not repeat the conversion.
    shape, running the earlier migration ladder first for the shared domains it
    still owns.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
-   agent-owned rows, the session directories, enabled SOUL/USER files, and
+   agent-owned rows, the session directories, enabled SOUL files, and
    predecessor document roots. It preserves canonical
-   `agents/<agent-id>/workspace` directories and never deletes workspace files
-   or the Host's shared state. One transaction
+   `agents/<agent-id>/workspace` directories and people's `users/` profiles,
+   and never deletes workspace files or the Host's shared state. One transaction
    deletes the whole row set with foreign keys deferred, so the order it is
    written in cannot break a reset, and a test that classifies every catalog
    table is what keeps the delete list complete.
