@@ -1,6 +1,11 @@
+use renoa_control::{TaskEvent, TaskEventId, TaskEventKind, TaskId};
+use renoa_protocol::{
+    CommandEnvelope, CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind,
+    ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
+};
 use uuid::Uuid;
 
-use super::{Admission, Enqueue, IncomingMessage, SurfaceStore};
+use super::{Enqueue, SurfaceStore};
 use crate::snowflake::Snowflake;
 
 fn snowflake(value: &str) -> Snowflake {
@@ -11,59 +16,229 @@ fn agent() -> Uuid {
     Uuid::parse_str("11111111-1111-4111-8111-111111111111").expect("agent id")
 }
 
-fn message(author: &str, canonical: &str) -> IncomingMessage {
-    IncomingMessage {
-        message_id: snowflake("101"),
-        channel_id: snowflake("202"),
-        author_id: snowflake(author),
-        canonical: canonical.as_bytes().to_vec(),
-    }
-}
-
-#[test]
-fn same_message_is_admitted_once_and_a_changed_copy_conflicts() {
-    let directory = tempfile::tempdir().expect("temp directory");
+fn bound_store(directory: &tempfile::TempDir) -> SurfaceStore {
     let store = SurfaceStore::open(directory.path()).expect("open store");
     store
         .bind_identity(&snowflake("10"), &snowflake("20"), agent())
         .expect("bind identity");
+    store
+}
 
+fn enqueue(store: &SurfaceStore, message_id: &str, prompt: &str) {
     assert_eq!(
-        store.admit(message("20", "hello")).expect("admit"),
-        Admission::Accepted
+        store
+            .enqueue(
+                &snowflake(message_id),
+                &snowflake("202"),
+                &snowflake("99"),
+                message_id.as_bytes(),
+                prompt,
+            )
+            .expect("enqueue"),
+        Enqueue::Fresh
+    );
+}
+
+fn command(command_id: Uuid, surface: &str, text: &str) -> CommandEnvelope {
+    CommandEnvelope {
+        command_id: CommandId::from_uuid(command_id),
+        principal_id: PrincipalId::new(),
+        surface: SurfaceRef::new(surface),
+        target: TargetRef::new(format!("agent:{}", agent())),
+        input: CommandInput::Text {
+            text: text.to_owned(),
+        },
+    }
+}
+
+fn record(task_id: Uuid, sequence: u64, kind: TaskEventKind) -> TaskEvent {
+    TaskEvent {
+        event_id: TaskEventId::new(),
+        task_id: TaskId::from_uuid(task_id),
+        sequence,
+        kind,
+    }
+}
+
+fn execution(command_id: Uuid, sequence: u64, kind: ExecutionEventKind) -> TaskEventKind {
+    TaskEventKind::ExecutionEvent {
+        command_id: CommandId::from_uuid(command_id),
+        event: ExecutionEvent {
+            event_id: ExecutionEventId::new(),
+            execution_id: ExecutionId::from_uuid(command_id),
+            sequence,
+            recorded_at_ms: 0,
+            kind,
+        },
+    }
+}
+
+/// Submits the queued message and returns its task and command identities.
+fn submit(store: &SurfaceStore) -> (Uuid, Uuid, String) {
+    let turn = store.next_queued().expect("next queued").expect("turn");
+    store.mark_opened(turn.task_id).expect("opened");
+    store.mark_submitted(&turn.message_id).expect("submitted");
+    (turn.task_id, turn.command_id, turn.message_id)
+}
+
+#[test]
+fn same_message_is_queued_once_and_a_changed_copy_conflicts() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let store = bound_store(&directory);
+    let (message, channel, author) = (snowflake("101"), snowflake("202"), snowflake("99"));
+    assert_eq!(
+        store
+            .enqueue(&message, &channel, &author, b"same", "hello")
+            .expect("enqueue"),
+        Enqueue::Fresh
     );
     assert_eq!(
-        store.admit(message("20", "hello")).expect("duplicate"),
-        Admission::Duplicate
+        store
+            .enqueue(&message, &channel, &author, b"same", "hello")
+            .expect("duplicate"),
+        Enqueue::Duplicate
     );
-    let conflict = store.admit(message("20", "changed")).expect_err("conflict");
+    let conflict = store
+        .enqueue(&message, &channel, &author, b"different", "other")
+        .expect_err("different bytes");
     assert!(
         conflict.to_string().contains("different content"),
         "{conflict}"
     );
+    let queued = store.next_queued().expect("queued").expect("turn");
+    assert_eq!(
+        (queued.message_id.as_str(), queued.prompt.as_str()),
+        ("101", "hello")
+    );
+    assert!(!queued.opened);
 }
 
 #[test]
-fn another_author_is_recorded() {
+fn task_records_become_one_reply_to_the_discord_message_even_when_replayed() {
     let directory = tempfile::tempdir().expect("temp directory");
-    let store = SurfaceStore::open(directory.path()).expect("open store");
-    store
-        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
-        .expect("bind identity");
+    let store = bound_store(&directory);
+    enqueue(&store, "101", "Summarize today.");
+    let (task_id, command_id, message_id) = submit(&store);
+    let records = [
+        record(
+            task_id,
+            0,
+            TaskEventKind::CommandSubmitted {
+                command: command(command_id, "discord", "Summarize today."),
+            },
+        ),
+        record(
+            task_id,
+            1,
+            execution(command_id, 0, ExecutionEventKind::ExecutionStarted),
+        ),
+        record(
+            task_id,
+            2,
+            execution(
+                command_id,
+                1,
+                ExecutionEventKind::AssistantMessage {
+                    text: "Here is the summary.".to_owned(),
+                },
+            ),
+        ),
+        record(
+            task_id,
+            3,
+            execution(
+                command_id,
+                2,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Completed,
+                },
+            ),
+        ),
+    ];
+    let ready = records
+        .iter()
+        .map(|record| store.apply_event(record).expect("apply record"))
+        .collect::<Vec<_>>();
+    assert_eq!(ready, vec![false, false, false, true]);
+    for record in &records {
+        assert!(!store.apply_event(record).expect("replayed record"));
+    }
 
     assert_eq!(
-        store.admit(message("99", "hello")).expect("other author"),
-        Admission::Accepted
+        store.opened_tasks().expect("opened tasks"),
+        vec![(task_id, Some(3))]
     );
+    let reply = store.next_outbound().expect("outbound").expect("reply");
+    assert_eq!(reply.body, "Here is the summary.");
+    assert_eq!(reply.reply_to.as_deref(), Some(message_id.as_str()));
+    assert_eq!(reply.channel_id, "202");
+    store.mark_sending(&reply.command_id, 0).expect("sending");
+    store
+        .mark_sent(&reply.command_id, 0, &snowflake("303"))
+        .expect("sent");
+    assert!(store.next_outbound().expect("outbound").is_none());
+    assert!(store.has_reply("303").expect("reply lookup"));
+}
+
+#[test]
+fn a_command_from_another_surface_is_posted_with_its_origin_and_no_reply_reference() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let store = bound_store(&directory);
+    enqueue(&store, "101", "Start a report.");
+    let (task_id, _, _) = submit(&store);
+    let foreign = Uuid::new_v4();
+    store
+        .apply_event(&record(
+            task_id,
+            0,
+            TaskEventKind::CommandSubmitted {
+                command: command(foreign, "control-room", "Add the chart."),
+            },
+        ))
+        .expect("foreign command");
+    store
+        .apply_event(&record(
+            task_id,
+            1,
+            execution(
+                foreign,
+                0,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Failed {
+                        error: "model unavailable".to_owned(),
+                    },
+                },
+            ),
+        ))
+        .expect("failed execution");
+
+    let reply = store.next_outbound().expect("outbound").expect("reply");
+    assert_eq!(
+        reply.body,
+        "**control-room:** Add the chart.\n\nThe agent could not complete this turn: model unavailable"
+    );
+    assert_eq!(reply.reply_to, None);
+}
+
+#[test]
+fn a_local_answer_replies_without_submitting_and_leaves_nothing_queued() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let store = bound_store(&directory);
+    enqueue(&store, "101", "Are you there?");
+    store
+        .answer_locally("101", "The agent is offline.")
+        .expect("answer");
+
+    assert!(store.next_queued().expect("queued").is_none());
+    let reply = store.next_outbound().expect("outbound").expect("reply");
+    assert_eq!(reply.body, "The agent is offline.");
+    assert_eq!(reply.reply_to.as_deref(), Some("101"));
 }
 
 #[test]
 fn a_different_guild_does_not_replace_the_stored_identity() {
     let directory = tempfile::tempdir().expect("temp directory");
-    let store = SurfaceStore::open(directory.path()).expect("open store");
-    store
-        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
-        .expect("bind identity");
+    let store = bound_store(&directory);
     let error = store
         .bind_identity(&snowflake("11"), &snowflake("20"), agent())
         .expect_err("guild change");
@@ -87,75 +262,11 @@ fn a_second_store_cannot_open_the_same_directory() {
 }
 
 #[test]
-fn admission_before_identity_leaves_no_message() {
-    let directory = tempfile::tempdir().expect("temp directory");
-    let store = SurfaceStore::open(directory.path()).expect("open store");
-    let error = store.admit(message("20", "hello")).expect_err("unbound");
-    assert!(error.to_string().contains("not bound"), "{error}");
-    store
-        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
-        .expect("bind identity");
-    assert_eq!(
-        store
-            .admit(message("20", "hello"))
-            .expect("admit after bind"),
-        Admission::Accepted
-    );
-}
-
-#[test]
-fn a_repeated_discord_message_does_not_queue_a_second_turn() {
-    let directory = tempfile::tempdir().expect("temp directory");
-    let store = SurfaceStore::open(directory.path()).expect("open store");
-    store
-        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
-        .expect("bind identity");
-    let message_id = snowflake("101");
-    let channel_id = snowflake("202");
-    let author_id = snowflake("99");
-    assert_eq!(
-        store
-            .enqueue(&message_id, &channel_id, &author_id, b"same", "hello")
-            .expect("enqueue"),
-        Enqueue::Fresh
-    );
-    assert_eq!(
-        store
-            .enqueue(&message_id, &channel_id, &author_id, b"same", "hello")
-            .expect("duplicate"),
-        Enqueue::Duplicate
-    );
-    let conflict = store
-        .enqueue(&message_id, &channel_id, &author_id, b"different", "other")
-        .expect_err("different bytes");
-    assert!(
-        conflict.to_string().contains("different content"),
-        "{conflict}"
-    );
-    store.mark_running("101").expect("running");
-    store.recover().expect("recover");
-    let queued = store.next_queued().expect("requeued").expect("turn");
-    assert_eq!(queued.message_id, "101");
-    assert_eq!(queued.prompt, "hello");
-}
-
-#[test]
 fn snowflakes_are_processed_in_numeric_order() {
     let directory = tempfile::tempdir().expect("temp directory");
-    let store = SurfaceStore::open(directory.path()).expect("open store");
-    store
-        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
-        .expect("bind identity");
+    let store = bound_store(&directory);
     for message_id in ["100", "99"] {
-        store
-            .enqueue(
-                &snowflake(message_id),
-                &snowflake("202"),
-                &snowflake("20"),
-                message_id.as_bytes(),
-                message_id,
-            )
-            .expect("enqueue");
+        enqueue(&store, message_id, message_id);
     }
 
     assert_eq!(
@@ -167,17 +278,16 @@ fn snowflakes_are_processed_in_numeric_order() {
         "99"
     );
     for message_id in ["99", "100"] {
-        store.mark_running(message_id).expect("running");
         store
-            .mark_ready(message_id, message_id, &[message_id.to_owned()])
-            .expect("ready");
+            .answer_locally(message_id, message_id)
+            .expect("answer");
     }
     assert_eq!(
         store
             .next_outbound()
             .expect("next outbound")
             .expect("outbound")
-            .message_id,
+            .body,
         "99"
     );
 }
@@ -204,94 +314,54 @@ fn a_previous_unreleased_schema_is_refused_without_mutation() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("legacy version");
     assert_eq!(version, 2);
-    let columns: i64 = connection
-        .query_row(
-            "SELECT count(*) FROM pragma_table_info('identity')",
-            [],
-            |row| row.get(0),
-        )
-        .expect("legacy columns");
-    assert_eq!(columns, 1);
 }
 
 #[test]
 fn an_unknown_reply_is_not_sent_again() {
     let directory = tempfile::tempdir().expect("temp directory");
-    let store = SurfaceStore::open(directory.path()).expect("open store");
+    let store = bound_store(&directory);
+    enqueue(&store, "101", "hello");
     store
-        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
-        .expect("bind identity");
-    store
-        .enqueue(
-            &snowflake("101"),
-            &snowflake("202"),
-            &snowflake("99"),
-            b"same",
-            "hello",
-        )
-        .expect("enqueue");
-    store.mark_running("101").expect("running");
-    store
-        .mark_ready(
-            "101",
-            "answer-more",
-            &["answer".to_owned(), "more".to_owned()],
-        )
-        .expect("ready");
-    store.mark_sending("101", 0).expect("sending");
+        .answer_locally("101", &"x".repeat(2500))
+        .expect("two-page answer");
+    let first = store
+        .next_outbound()
+        .expect("outbound")
+        .expect("first page");
+    store.mark_sending(&first.command_id, 0).expect("sending");
     store.recover().expect("recover");
     assert!(store.next_outbound().expect("outbound").is_none());
-    assert_eq!(
-        delivery_state(&store, "101", 1).expect("later page"),
-        "failed"
-    );
+    assert_eq!(delivery_state(&store, &first.command_id, 1), "failed");
 }
 
 #[test]
 fn a_rejected_first_page_does_not_leave_later_pages_pending() {
     let directory = tempfile::tempdir().expect("temp directory");
-    let store = SurfaceStore::open(directory.path()).expect("open store");
+    let store = bound_store(&directory);
+    enqueue(&store, "101", "hello");
     store
-        .bind_identity(&snowflake("10"), &snowflake("20"), agent())
-        .expect("bind identity");
-    store
-        .enqueue(
-            &snowflake("101"),
-            &snowflake("202"),
-            &snowflake("99"),
-            b"same",
-            "hello",
-        )
-        .expect("enqueue");
-    store.mark_running("101").expect("running");
-    store
-        .mark_ready(
-            "101",
-            "answer-more",
-            &["answer".to_owned(), "more".to_owned()],
-        )
-        .expect("ready");
-    store.mark_sending("101", 0).expect("sending");
-    store.mark_failed("101", 0).expect("failed");
+        .answer_locally("101", &"x".repeat(2500))
+        .expect("two-page answer");
+    let first = store
+        .next_outbound()
+        .expect("outbound")
+        .expect("first page");
+    store.mark_sending(&first.command_id, 0).expect("sending");
+    store.mark_failed(&first.command_id, 0).expect("failed");
     assert!(store.next_outbound().expect("outbound").is_none());
-    assert_eq!(
-        delivery_state(&store, "101", 1).expect("later page"),
-        "failed"
-    );
+    assert_eq!(delivery_state(&store, &first.command_id, 1), "failed");
 }
 
-fn delivery_state(
-    store: &SurfaceStore,
-    message_id: &str,
-    chunk: i64,
-) -> Result<String, crate::DiscordError> {
-    store.access(|connection| {
-        connection
-            .query_row(
-                "SELECT state FROM deliveries WHERE message_id = ?1 AND chunk = ?2",
-                rusqlite::params![message_id, chunk],
-                |row| row.get(0),
-            )
-            .map_err(crate::DiscordError::from)
-    })
+fn delivery_state(store: &SurfaceStore, command_id: &str, chunk: i64) -> String {
+    store
+        .access(|connection| {
+            connection
+                .query_row(
+                    "SELECT state FROM deliveries WHERE command_id = ?1 AND chunk = ?2",
+                    rusqlite::params![command_id, chunk],
+                    |row| row.get(0),
+                )
+                .map_err(crate::DiscordError::from)
+        })
+        .expect("delivery state")
 }

@@ -1,86 +1,82 @@
 use std::sync::Arc;
 
-use renoa_agent::ContentBlock;
-use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome, TurnObservation};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 use crate::{
     DiscordError,
     api::{ApiError, DiscordApi},
-    gateway,
-    ingress::pages,
+    config::Rcp,
+    gateway, rcp,
     snowflake::Snowflake,
-    store::{Outbound, QueuedTurn, SurfaceStore},
+    store::{Outbound, SurfaceStore},
 };
 
 pub(crate) struct Surface {
-    pub(crate) host: LocalHost,
-    pub(crate) agent_id: Uuid,
     pub(crate) guild_id: Snowflake,
     pub(crate) operator_user_id: Snowflake,
     pub(crate) token: String,
     pub(crate) data_directory: std::path::PathBuf,
+    pub(crate) rcp: Rcp,
 }
 
+/// Runs the gateway, the coordinator link, and reply delivery until one stops.
 pub(crate) async fn run(
     surface: Surface,
+    agent_id: uuid::Uuid,
     api: DiscordApi,
     shutdown: CancellationToken,
 ) -> Result<(), DiscordError> {
-    let agent_id = AgentId::from_uuid(surface.agent_id);
-    if surface.host.agent_definition(agent_id).await?.is_none() {
-        return Err(DiscordError::Invalid(format!(
-            "configured agent {} is not provisioned on this Host",
-            surface.agent_id
-        )));
-    }
     let store = SurfaceStore::open(&surface.data_directory)?;
-    store.bind_identity(
-        &surface.guild_id,
-        &surface.operator_user_id,
-        surface.agent_id,
-    )?;
+    store.bind_identity(&surface.guild_id, &surface.operator_user_id, agent_id)?;
     store.recover()?;
     let store = Arc::new(store);
-    let wake = Arc::new(Notify::new());
+    let turns = Arc::new(Notify::new());
+    let deliveries = Arc::new(Notify::new());
     let api = Arc::new(api);
     let mut tasks = tokio::task::JoinSet::new();
-    let gateway_store = Arc::clone(&store);
-    let gateway_wake = Arc::clone(&wake);
-    let gateway_shutdown = shutdown.clone();
-    let gateway_api = Arc::clone(&api);
-    let guild_id = surface.guild_id.clone();
-    let operator_user_id = surface.operator_user_id.clone();
-    let token = surface.token.clone();
-    tasks.spawn(async move {
-        gateway::maintain(
-            &gateway_api,
-            &gateway_store,
-            &gateway_wake,
-            &gateway_shutdown,
-            &guild_id,
-            &operator_user_id,
-            &token,
-        )
-        .await
-    });
-    let worker_store = Arc::clone(&store);
-    let worker_wake = Arc::clone(&wake);
-    let worker_shutdown = shutdown.clone();
-    let worker_api = Arc::clone(&api);
-    tasks.spawn(async move {
-        worker(
-            surface,
-            worker_api,
-            worker_store,
-            worker_wake,
-            worker_shutdown,
-        )
-        .await
-    });
+    {
+        let (store, turns, shutdown, api) = (
+            Arc::clone(&store),
+            Arc::clone(&turns),
+            shutdown.clone(),
+            Arc::clone(&api),
+        );
+        let guild_id = surface.guild_id.clone();
+        let operator_user_id = surface.operator_user_id.clone();
+        let token = surface.token.clone();
+        tasks.spawn(async move {
+            gateway::maintain(
+                &api,
+                &store,
+                &turns,
+                &shutdown,
+                &guild_id,
+                &operator_user_id,
+                &token,
+            )
+            .await
+        });
+    }
+    tasks.spawn(rcp::maintain(
+        rcp::Link {
+            endpoint: surface.rcp.endpoint,
+            credentials: surface.rcp.credentials,
+            store: Arc::clone(&store),
+            turns: Arc::clone(&turns),
+            deliveries: Arc::clone(&deliveries),
+        },
+        shutdown.clone(),
+    ));
+    {
+        let (store, deliveries, shutdown, api) = (
+            Arc::clone(&store),
+            Arc::clone(&deliveries),
+            shutdown.clone(),
+            Arc::clone(&api),
+        );
+        tasks.spawn(async move { post_replies(&api, &store, &deliveries, &shutdown).await });
+    }
     let first = tokio::select! {
         () = shutdown.cancelled() => None,
         result = tasks.join_next() => result,
@@ -104,43 +100,18 @@ pub(crate) async fn run(
     }
 }
 
-async fn worker(
-    surface: Surface,
-    api: Arc<DiscordApi>,
-    store: Arc<SurfaceStore>,
-    wake: Arc<Notify>,
-    shutdown: CancellationToken,
+async fn post_replies(
+    api: &DiscordApi,
+    store: &SurfaceStore,
+    wake: &Notify,
+    shutdown: &CancellationToken,
 ) -> Result<(), DiscordError> {
-    let mut session: Option<(Uuid, Arc<AgentSession>)> = None;
     loop {
         if shutdown.is_cancelled() {
             return Ok(());
         }
         if let Some(outbound) = store.next_outbound()? {
-            deliver(&api, &store, &outbound, &shutdown).await?;
-            continue;
-        }
-        if let Some(turn) = store.next_queued()? {
-            let agent_id = AgentId::from_uuid(turn.agent_id);
-            let workspace = surface.host.agent_workspace(agent_id).await?;
-            let held = session_for(
-                &surface.host,
-                agent_id,
-                &workspace,
-                &mut session,
-                turn.session_id,
-            )
-            .await?;
-            let cancellation = shutdown.child_token();
-            let progress = Arc::new(crate::actions::Progress {
-                api: Arc::clone(&api),
-                store: Arc::clone(&store),
-                operator: surface.operator_user_id.clone(),
-                message: turn.message_id.clone(),
-                cancellation: cancellation.clone(),
-                error: tokio::sync::Mutex::new(None),
-            });
-            execute(&store, &held, &turn, progress, &cancellation).await?;
+            deliver(api, store, &outbound, shutdown).await?;
             continue;
         }
         tokio::select! {
@@ -150,112 +121,50 @@ async fn worker(
     }
 }
 
-async fn session_for(
-    host: &LocalHost,
-    agent_id: AgentId,
-    workspace: &std::path::Path,
-    cached: &mut Option<(Uuid, Arc<AgentSession>)>,
-    session_id: Uuid,
-) -> Result<Arc<AgentSession>, DiscordError> {
-    if let Some((cached_id, session)) = cached
-        && *cached_id == session_id
-    {
-        return Ok(Arc::clone(session));
-    }
-    let session = host
-        .ensure_agent_session(agent_id, workspace, session_id)
-        .await?;
-    *cached = Some((session_id, Arc::clone(&session)));
-    Ok(session)
-}
-
-async fn execute(
-    store: &SurfaceStore,
-    session: &AgentSession,
-    turn: &QueuedTurn,
-    progress: Arc<crate::actions::Progress>,
-    shutdown: &CancellationToken,
-) -> Result<(), DiscordError> {
-    store.mark_running(&turn.message_id)?;
-    if turn.prompt.is_empty() {
-        let text = "Send a task after the mention.".to_owned();
-        store.mark_ready(&turn.message_id, &text, &pages(&text))?;
-        return Ok(());
-    }
-    let observation = TurnObservation::from_unix_milliseconds(turn.observed_at_ms)
-        .map_err(|error| DiscordError::Invalid(error.to_string()))?;
-    let outcome = session
-        .execute_turn_observed_with_cancellation(
-            turn.request_id,
-            vec![ContentBlock::text(turn.prompt.clone())],
-            observation,
-            progress.clone(),
-            shutdown.clone(),
-        )
-        .await;
-    let text = if let Some(error) = progress.error.lock().await.take() {
-        error
-    } else {
-        match outcome {
-            Ok(outcome) => reply_text(outcome),
-            Err(error) => format!("The agent could not complete this turn: {error}"),
-        }
-    };
-    let reply_pages = pages(&text);
-    store.mark_ready(&turn.message_id, &text, &reply_pages)?;
-    Ok(())
-}
-
-fn reply_text(outcome: LocalTurnOutcome) -> String {
-    match outcome {
-        LocalTurnOutcome::Completed { output, .. } => output,
-        LocalTurnOutcome::Cancelled => "Stopped.".to_owned(),
-        LocalTurnOutcome::Failed { reason } => {
-            format!("The agent could not complete this turn: {reason}")
-        }
-        LocalTurnOutcome::Compacted {
-            estimated_input_tokens,
-        } => format!("Context compacted. Estimated context: {estimated_input_tokens} tokens."),
-        LocalTurnOutcome::WaitingForInput => "The agent is waiting for more input.".to_owned(),
-        _ => "The agent returned an outcome this Discord surface does not post.".to_owned(),
-    }
-}
-
 async fn deliver(
     api: &DiscordApi,
     store: &SurfaceStore,
     outbound: &Outbound,
     shutdown: &CancellationToken,
 ) -> Result<(), DiscordError> {
-    store.mark_sending(&outbound.message_id, outbound.chunk)?;
-    let reply_to = (outbound.chunk == 0).then_some(outbound.message_id.as_str());
+    store.mark_sending(&outbound.command_id, outbound.chunk)?;
+    let reply_to = outbound.reply_to.as_deref();
     match api
         .create_message(&outbound.channel_id, &outbound.body, reply_to)
         .await
     {
         Ok(reply_id) => {
             let reply_id = Snowflake::parse(&reply_id)?;
-            store.mark_sent(&outbound.message_id, outbound.chunk, &reply_id)?;
+            store.mark_sent(&outbound.command_id, outbound.chunk, &reply_id)?;
             Ok(())
         }
         Err(ApiError::RateLimited(delay)) => {
-            store.release_sending(&outbound.message_id, outbound.chunk)?;
+            store.release_sending(&outbound.command_id, outbound.chunk)?;
             tokio::select! {
                 () = shutdown.cancelled() => Ok(()),
                 () = tokio::time::sleep(delay) => Ok(()),
             }
         }
         Err(ApiError::Unknown(_)) => {
-            store.mark_unknown(&outbound.message_id, outbound.chunk)?;
+            store.mark_unknown(&outbound.command_id, outbound.chunk)?;
             Ok(())
         }
         Err(ApiError::Unauthorized) => {
-            store.release_sending(&outbound.message_id, outbound.chunk)?;
+            store.release_sending(&outbound.command_id, outbound.chunk)?;
             Err(ApiError::Unauthorized.into())
         }
         Err(error) => {
-            eprintln!("renoa-discord: reply rejected: {error}");
-            store.mark_failed(&outbound.message_id, outbound.chunk)?;
+            renoa_telemetry::event(
+                "renoa.discord",
+                "warn",
+                "reply_rejected",
+                &serde_json::json!({
+                    "command_id": outbound.command_id,
+                    "chunk": outbound.chunk,
+                    "error": error.to_string(),
+                }),
+            );
+            store.mark_failed(&outbound.command_id, outbound.chunk)?;
             Ok(())
         }
     }
@@ -290,10 +199,7 @@ mod tests {
                 "task",
             )
             .expect("enqueue");
-        store.mark_running("101").expect("running");
-        store
-            .mark_ready("101", "answer", &["answer".to_owned()])
-            .expect("ready");
+        store.answer_locally("101", "answer").expect("answer");
         let outbound = store
             .next_outbound()
             .expect("next outbound")
@@ -324,7 +230,7 @@ mod tests {
             .next_outbound()
             .expect("retryable outbound")
             .expect("pending reply");
-        assert_eq!(retry.message_id, "101");
+        assert_eq!(retry.reply_to.as_deref(), Some("101"));
         assert_eq!(retry.chunk, 0);
     }
 }

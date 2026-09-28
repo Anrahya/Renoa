@@ -133,20 +133,20 @@ pub(crate) fn validate_token(token: &str) -> Result<(), DiscordError> {
 }
 
 #[cfg(unix)]
-fn require_private(metadata: &fs::Metadata) -> Result<(), DiscordError> {
+pub(crate) fn require_private(metadata: &fs::Metadata) -> Result<(), DiscordError> {
     use std::os::unix::fs::PermissionsExt as _;
 
     if metadata.permissions().mode().trailing_zeros() >= 6 {
         Ok(())
     } else {
         Err(DiscordError::Invalid(
-            "The Discord connection must not be accessible by group or other users".into(),
+            "Discord connection and credential files must not be accessible by group or other users".into(),
         ))
     }
 }
 
 #[cfg(not(unix))]
-fn require_private(_metadata: &fs::Metadata) -> Result<(), DiscordError> {
+pub(crate) fn require_private(_metadata: &fs::Metadata) -> Result<(), DiscordError> {
     Ok(())
 }
 

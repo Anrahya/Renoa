@@ -3,7 +3,8 @@
 //! The owner connects one bot from the Control Room. Bound guild channels route
 //! ordinary messages to their selected Host agent. Other guild messages require
 //! a mention or reply; the operator can send a DM. The surface does not create
-//! agents.
+//! agents or run them: each channel's conversation is an RCP task executed by
+//! the node that advertises its agent.
 
 mod actions;
 mod api;
@@ -16,16 +17,17 @@ mod gateway;
 mod ingress;
 #[cfg(test)]
 mod live_test;
+mod rcp;
 mod service;
 mod snowflake;
 mod store;
 
+pub use actions::{OperatorChannel, SetupDelivery};
 pub use control::{
     DiscordBinding, DiscordBindingRequest, DiscordConnectRequest, DiscordControl, DiscordStatus,
 };
 pub use discovery::{DiscordChannel, DiscordGuild, DiscordInspection};
 pub use error::DiscordError;
-pub use store::Admission;
 
 use std::path::Path;
 
@@ -45,68 +47,32 @@ pub fn bind(config_path: &Path) -> Result<(), DiscordError> {
     Ok(())
 }
 
-/// Records one Discord message in the surface store.
-///
-/// The same message id and payload returns [`Admission::Duplicate`]. A reused
-/// message id with different content is rejected and does not replace the row.
-/// Any author can be recorded. Who may address the bot is decided when a
-/// Discord event is read, not by this store.
-///
-/// # Errors
-///
-/// Returns configuration, filesystem, or database failures, including a missing
-/// identity binding or conflicting message content. Invalid message fields are
-/// rejected before the store is created.
-pub fn admit(
-    config_path: &Path,
-    message_id: &str,
-    channel_id: &str,
-    author_id: &str,
-    canonical: &[u8],
-) -> Result<Admission, DiscordError> {
-    if canonical.is_empty() {
-        return Err(DiscordError::Invalid(
-            "Discord message canonical payload must not be empty".to_owned(),
-        ));
-    }
-    let message = store::IncomingMessage {
-        message_id: snowflake::Snowflake::parse(message_id)?,
-        channel_id: snowflake::Snowflake::parse(channel_id)?,
-        author_id: snowflake::Snowflake::parse(author_id)?,
-        canonical: canonical.to_vec(),
-    };
-    let config = Config::read(config_path)?;
-    let store = open_bound(&config)?;
-    store.admit(message)
-}
-
 /// Serves bound channels, mentions, replies, and operator direct messages.
 ///
-/// The process uses the agent id already stored for this surface. It does not
-/// create an agent. A missing agent fails before the Discord database is opened.
+/// Messages reach agents through the RCP coordinator. A message whose agent's
+/// node is offline is answered as not sent, never held.
 ///
 /// # Errors
 ///
-/// Returns configuration, Discord, Host, or database failures. Ctrl-C shuts the
-/// connection down.
+/// Returns configuration, Discord, coordinator authentication, or database
+/// failures. Ctrl-C or SIGTERM shuts the connection down.
 pub async fn run(config_path: &Path) -> Result<(), DiscordError> {
     let Config {
         home,
         connection,
-        runtime,
+        rcp,
     } = Config::read(config_path)?;
-    let host = runtime.open_host(&home)?;
     let api = api::DiscordApi::new(connection.bot_token.clone())?;
     let shutdown = tokio_util::sync::CancellationToken::new();
     let service = service::run(
         service::Surface {
-            host,
-            agent_id: connection.agent_id,
             guild_id: connection.guild_id,
             operator_user_id: connection.operator_user_id,
             token: connection.bot_token,
             data_directory: home.path().to_owned(),
+            rcp,
         },
+        connection.agent_id,
         api,
         shutdown.clone(),
     );
@@ -150,22 +116,30 @@ mod launch_tests {
     use renoa_local::RenoaHome;
     use uuid::Uuid;
 
-    use super::{DiscordConnectRequest, admit, bind, connection::Connection};
+    use super::{DiscordConnectRequest, bind, connection::Connection};
 
     const AGENT: &str = "11111111-1111-4111-8111-111111111111";
 
     fn write_runtime(path: &Path, home: &Path) {
+        let credentials = home.join("credentials/discord-rcp-device.json");
+        if let Some(parent) = credentials.parent() {
+            fs::create_dir_all(parent).expect("credential directory");
+        }
+        fs::write(
+            &credentials,
+            serde_json::to_vec(&serde_json::json!({
+                "deviceId": Uuid::new_v4(),
+                "credential": "00".repeat(32),
+            }))
+            .expect("credential json"),
+        )
+        .expect("credential");
+        fs::set_permissions(&credentials, fs::Permissions::from_mode(0o600)).expect("mode");
         fs::write(
             path,
             serde_json::to_vec(&serde_json::json!({
                 "home": home,
-                "models": {
-                    "bridge": home.join("bridge"),
-                    "providers": ["opencode-go"],
-                    "initial_provider": "opencode-go",
-                    "initial_model": "fixture-model",
-                    "credential_store": home.join("credentials/models.sqlite3"),
-                },
+                "rcp": {"endpoint": "ws://127.0.0.1:9/connect", "credentials": credentials},
             }))
             .expect("runtime json"),
         )
@@ -225,22 +199,6 @@ mod launch_tests {
         let error = bind(&config).expect_err("unconnected");
         assert!(error.to_string().contains("Control Room"), "{error}");
         assert!(!home.join("state/surfaces/discord").exists());
-    }
-
-    #[test]
-    fn a_bad_message_is_rejected_before_the_store_exists() {
-        let root = tempfile::tempdir().expect("temp directory");
-        let home = root.path().join("home");
-        let config = root.path().join("discord.json");
-        connect(&home, AGENT);
-        write_runtime(&config, &home);
-
-        let error = admit(&config, "0", "202", "20", b"hello").expect_err("bad message id");
-        assert!(error.to_string().contains("snowflake"), "{error}");
-        assert!(
-            !home.join("state/surfaces/discord").exists(),
-            "a rejected message must not create the surface store"
-        );
     }
 
     #[test]

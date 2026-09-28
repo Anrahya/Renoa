@@ -9,9 +9,11 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+const COMMAND: &str = "33333333-3333-4333-8333-333333333333";
+
 struct Fixture {
     files: tempfile::TempDir,
-    progress: Progress,
+    progress: SetupDelivery,
     bodies: Arc<Mutex<Vec<Value>>>,
     stop: CancellationToken,
     task: tokio::task::JoinHandle<()>,
@@ -32,15 +34,6 @@ impl Fixture {
                 &Snowflake::parse("10").unwrap(),
                 &Snowflake::parse("20").unwrap(),
                 uuid::Uuid::new_v4(),
-            )
-            .unwrap();
-        store
-            .enqueue(
-                &Snowflake::parse("101").unwrap(),
-                &Snowflake::parse("202").unwrap(),
-                &Snowflake::parse("99").unwrap(),
-                b"message",
-                "connect",
             )
             .unwrap();
         let bodies = Arc::new(Mutex::new(Vec::new()));
@@ -87,11 +80,11 @@ impl Fixture {
                 .await
                 .unwrap();
         });
-        let progress = Progress {
+        let progress = SetupDelivery {
             api: Arc::new(DiscordApi::with_origin("test".into(), origin).unwrap()),
             store,
             operator: Snowflake::parse("20").unwrap(),
-            message: "101".into(),
+            command: COMMAND.into(),
             cancellation: CancellationToken::new(),
             error: tokio::sync::Mutex::new(None),
         };
@@ -191,11 +184,11 @@ async fn unknown_delivery_cancels_setup_and_is_not_repeated_after_recovery() {
     assert!(f.progress.cancellation.is_cancelled());
     assert!(f.progress.error.lock().await.is_some());
     f.progress.store.recover().unwrap();
-    let fresh = Progress {
+    let fresh = SetupDelivery {
         api: f.progress.api.clone(),
         store: f.progress.store.clone(),
         operator: f.progress.operator.clone(),
-        message: "101".into(),
+        command: COMMAND.into(),
         cancellation: CancellationToken::new(),
         error: tokio::sync::Mutex::new(None),
     };

@@ -16,4 +16,6 @@ pub enum DiscordError {
     Task(#[from] tokio::task::JoinError),
     #[error(transparent)]
     Host(#[from] renoa_local::LocalHostError),
+    #[error(transparent)]
+    Rcp(#[from] renoa_rcp_client::ClientError),
 }
