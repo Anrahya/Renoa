@@ -6,7 +6,7 @@ import { findAgents } from "./host-system-model";
 import { useSystemMotion } from "./host-system-motion";
 import { SystemConnections } from "./host-system-connections";
 import { AgentAvatar } from "./host-avatar";
-import { AgentSchedules, AgentReviews } from "./host-map-branches";
+import { AgentSchedules } from "./host-map-branches";
 import "./styles/host-map.css";
 
 export function AgentMap({ host, live = false, receivedAt = null }: { host: HostSnapshot; live?: boolean; receivedAt?: number | null }) {
@@ -35,27 +35,25 @@ export function AgentMap({ host, live = false, receivedAt = null }: { host: Host
         </div>
         <ul className="system-agents" aria-label="Host-owned agents">{agents.map(agent => <li className="system-agent" key={agent.id}>
           <SystemAgent host={host} agent={agent} pulse={motion.pulses.get(agent.id) ?? null} />
-          <AgentReviews reviews={host.reviews} agentId={agent.id} />
           <AgentSchedules routines={host.routines.filter(r => r.agent_id === agent.id)} now={motion.now} />
         </li>)}</ul>
         {!agents.length && <p className="system-empty" role="status">{query.trim() ? "No matching agents." : "No persistent agents recorded."}</p>}
       </div>
     </div>
     <div className="system-key"><span><span className="system-key-dot" /> No pending work</span><span><Hourglass size={14} aria-hidden="true" /> Unfinished</span><span><WarningCircle size={15} aria-hidden="true" /> Attention</span><span><Clock size={15} aria-hidden="true" /> Schedule</span>
-      <details><summary>About this view</summary><p>Persistent agents belong directly to the Host. Schedules attach to their target agent. Creator history is available inside each agent.</p><p>Light sweeps mark newly received execution records, not worker heartbeats. Review stages are stored records, not proof that a worker is still running. Timers use the recorded due time; reaching zero does not confirm execution. Saved snapshots stay still.</p></details>
+      <details><summary>About this view</summary><p>Persistent agents belong directly to the Host. Schedules attach to their target agent. Creator history is available inside each agent.</p><p>Light sweeps mark newly received execution records, not worker heartbeats. Timers use the recorded due time; reaching zero does not confirm execution. Saved snapshots stay still.</p></details>
     </div>
   </section>;
 }
 
 function SystemAgent({ host, agent, pulse }: { host: HostSnapshot; agent: Agent; pulse: number | null }) {
   const state = agentActivity(host, agent);
-  const review = host.review_repositories.some(repository => repository.policy.agent_id === agent.id);
-  return <a className={`system-agent-link system-state-${state.tone}`} href={agentHref(agent.id)} aria-label={`${displayName(agent.name)}: ${review ? "GitHub reviews. " : ""}${state.label}`} title={state.label}>
-    <span className="system-agent-orb" data-agent-anchor={agent.id}><AgentAvatar agentId={agent.id} name={agent.name} github={review} />
+  return <a className={`system-agent-link system-state-${state.tone}`} href={agentHref(agent.id)} aria-label={`${displayName(agent.name)}: ${state.label}`} title={state.label}>
+    <span className="system-agent-orb" data-agent-anchor={agent.id}><AgentAvatar agentId={agent.id} name={agent.name} />
       {pulse !== null && <svg key={pulse} className="system-activity-ring" viewBox="0 0 80 80" aria-hidden="true"><circle cx="40" cy="40" r="36" pathLength="1" /></svg>}
       <span className="system-agent-indicator" aria-hidden="true">{state.tone === "attention" ? <WarningCircle size={19} weight="fill" /> : state.tone === "pending" ? <Hourglass size={17} /> : <span />}</span>
     </span>
-    <span className="system-agent-name"><strong>{displayName(agent.name)}</strong>{review && <small>GitHub reviews</small>}{isEarlier(agent) && <small>{agent.id.slice(0, 8)}</small>}</span><ArrowUpRight size={18} className="system-open-arrow" aria-hidden="true" />
+    <span className="system-agent-name"><strong>{displayName(agent.name)}</strong>{isEarlier(agent) && <small>{agent.id.slice(0, 8)}</small>}</span><ArrowUpRight size={18} className="system-open-arrow" aria-hidden="true" />
     <span className="sr-only" role="status">{pulse !== null ? "New execution records received" : ""}</span>
   </a>;
 }

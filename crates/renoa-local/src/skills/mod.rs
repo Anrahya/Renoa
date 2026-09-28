@@ -25,8 +25,9 @@ pub(crate) struct SkillRuntimeContext {
     pub(crate) revision: String,
 }
 
-/// Freeze an optional Host-selected skill from the shared content-addressed
-/// catalog. The caller supplies a trusted workspace, never a PR checkout.
+/// Activates one named skill through the shared content-addressed catalog and
+/// renders it, or returns an empty string when the agent cannot see it.
+#[cfg(test)]
 pub(crate) fn frozen_instructions(
     store: &SkillStore,
     profile: &str,

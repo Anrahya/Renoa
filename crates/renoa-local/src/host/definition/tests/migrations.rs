@@ -203,7 +203,7 @@ fn install_legacy_selections(db: &Connection, fixture: &Fixture, version: u32) {
     reason = "one migration lifecycle proves reads, runtime resolution, receipt replay, edits, and reopening"
 )]
 async fn migrated_selections_remain_usable_through_host_consumers_and_replays() {
-    for version in 28..=31 {
+    for version in 28..=32 {
         let (directory, initial) = fixture();
         let fixture = seed(&initial).await;
         let workspace = directory.path().join("workspace");

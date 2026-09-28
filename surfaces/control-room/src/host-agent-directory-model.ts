@@ -1,7 +1,7 @@
 import type { Agent, HostSnapshot } from "./host-contract";
 import { agentOverview } from "./host-agent-overview";
-import { agentHref, attentionReviews, scheduleText, timestamp } from "./host-presentation";
-import { DAY_MS, reviewState, startOfToday, toneState, type AgentState, type DayMark } from "./host-state";
+import { agentHref, scheduleText, timestamp } from "./host-presentation";
+import { toneState, type AgentState, type DayMark } from "./host-state";
 import type { AgentExample } from "./agent-work-preview/agent-example";
 import { DAY, NOW, TODAY, scheduledTimes, statusLabel, time, date } from "./agent-work-preview/data";
 
@@ -19,30 +19,21 @@ export type DirectorySummary = {
 export function directorySummary(host: HostSnapshot, agent: Agent, example?: AgentExample): DirectorySummary {
   if (example) return exampleSummary(agent.id, example);
   const data = agentOverview(host, agent);
-  const attention = attentionReviews(data.reviews)[0];
-  const latest = data.latestAdmission;
   const next = data.scheduled[0];
-  const listeners = data.repositories.filter(item => item.policy.enabled).length;
-  const failed = attentionReviews(data.reviews).some(review => review.state === "incomplete" || review.worker_error) ||
-    data.sessions.some(session => session.observation === "available" && (session.active_operation ?? session.latest_operation)?.state === "failed");
+  const failed = data.sessions.some(session => session.observation === "available" && (session.active_operation ?? session.latest_operation)?.state === "failed");
   const tone = data.activity.tone === "attention" ? failed ? "interrupted" : "waiting" : data.activity.tone === "pending" ? "pending" : "quiet";
-  // Only recorded admissions carry a time, so only those reach the day axis.
-  const midnight = startOfToday();
-  const day = data.reviews
-    .filter(review => review.admitted_at_ms >= midnight && review.admitted_at_ms < midnight + DAY_MS)
-    .map(review => ({ at: review.admitted_at_ms, state: reviewState(review) }))
-    .sort((a, b) => a.at - b.at);
   return {
     tone, status: tone === "interrupted" || tone === "waiting" ? "Needs attention" : tone === "pending" ? "Unfinished work" : "No unfinished work",
-    title: attention ? `${attention.repository} #${attention.pull_number}` : tone !== "quiet" ? data.activity.label : latest ? `${latest.repository} #${latest.pull_number}` : data.activity.label,
-    detail: attention ? `${attention.state} · ${data.activity.label}` : tone !== "quiet" ? "Open activity to inspect the retained work and diagnostics." : latest ? `Last review admitted ${timestamp(latest.admitted_at_ms)} · ${latest.state}` : "Based on the Host’s retained records.",
+    title: data.activity.label,
+    detail: tone !== "quiet" ? "Open activity to inspect the retained work and diagnostics." : "Based on the Host’s retained records.",
     workHref: agentHref(agent.id, "activity"),
-    automated: data.routines.length + data.repositories.length > 0,
-    automationCount: data.routines.length + data.repositories.length,
-    day, lastAt: day.at(-1)?.at ?? latest?.admitted_at_ms ?? null,
+    automated: data.routines.length > 0,
+    automationCount: data.routines.length,
+    // The live snapshot records no timestamped work, so nothing reaches the day axis.
+    day: [], lastAt: null,
     next: {
-      title: next?.name ?? (listeners ? "On repository events" : data.paused.length ? "Schedules paused" : "No scheduled work"),
-      detail: next ? `${timestamp(next.next_due_ms)} · ${scheduleText(next)}` : listeners ? `${listeners} ${listeners === 1 ? "repository" : "repositories"} enabled` : data.paused.length ? `${data.paused.length} paused` : "Starts when you assign work.",
+      title: next?.name ?? (data.paused.length ? "Schedules paused" : "No scheduled work"),
+      detail: next ? `${timestamp(next.next_due_ms)} · ${scheduleText(next)}` : data.paused.length ? `${data.paused.length} paused` : "Starts when you assign work.",
       href: agentHref(agent.id, "automations"),
     },
   };

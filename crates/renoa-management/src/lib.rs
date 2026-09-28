@@ -8,12 +8,12 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path as RequestPath, State},
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
-use renoa_local::{HostObserver, HostReviewControl, HostRoutineControl};
+use renoa_local::{HostObserver, HostRoutineControl};
 use renoa_protocol::PrincipalId;
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -23,7 +23,6 @@ use uuid::Uuid;
 mod agents;
 mod discord;
 mod identity;
-mod reviews;
 mod routines;
 
 fn origin_failure(state: &ManagementState, headers: &HeaderMap) -> Option<Response> {
@@ -77,7 +76,6 @@ struct ManagementState {
     identity: identity::IdentityClient,
     owner: PrincipalId,
     routines: HostRoutineControl,
-    reviews: HostReviewControl,
     origin: String,
     agents: Option<renoa_local::LocalHost>,
     discord: renoa_discord::DiscordControl,
@@ -108,7 +106,6 @@ impl ManagementApi {
                 identity: identity::IdentityClient::new(identity_address)?,
                 owner,
                 routines: HostRoutineControl::open(root, host_id, owner.as_uuid())?,
-                reviews: HostReviewControl::open(root, host_id, owner.as_uuid())?,
                 origin,
                 agents: None,
                 discord: renoa_discord::DiscordControl::open(root)?,
@@ -174,11 +171,6 @@ impl ManagementApi {
                 "/v1/host/discord/bindings",
                 axum::routing::post(discord::bind),
             )
-            .route("/v1/host/reviews/{request_id}", get(review_detail))
-            .route(
-                "/v1/host/repositories/{repository_id}/policy",
-                axum::routing::post(reviews::update_policy),
-            )
             .route(
                 "/v1/host/routines/{routine_id}/enabled",
                 axum::routing::post(routines::set_enabled),
@@ -239,39 +231,6 @@ async fn observe(State(state): State<Arc<ManagementState>>, headers: HeaderMap) 
                 StatusCode::SERVICE_UNAVAILABLE,
                 "host_unavailable",
                 "Host records are temporarily unavailable. Showing the last received state.",
-            )
-        }
-    }
-}
-
-async fn review_detail(
-    State(state): State<Arc<ManagementState>>,
-    headers: HeaderMap,
-    RequestPath(request): RequestPath<Uuid>,
-) -> Response {
-    let session = match authorize(&state, &headers).await {
-        Ok(session) => session,
-        Err(response) => return *response,
-    };
-    match state.observer.review_detail(request).await {
-        Ok(Some(detail)) => {
-            let mut response = secure(Json(detail).into_response());
-            if let Some(cookie) = session.renewal {
-                response.headers_mut().insert(header::SET_COOKIE, cookie);
-            }
-            response
-        }
-        Ok(None) => failure(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "Review not found in this Host.",
-        ),
-        Err(error) => {
-            eprintln!("Host management review detail failed: {error}");
-            failure(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "host_unavailable",
-                "Review details are temporarily unavailable.",
             )
         }
     }

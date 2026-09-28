@@ -1,36 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HostPanelView } from "./host-panel";
-import type { HostSnapshot, Review, Session } from "./host-contract";
-import { agentActivity, attentionReviews, connectionName, currentReviews, sessionNeedsAttention } from "./host-presentation";
+import type { HostSnapshot, Session } from "./host-contract";
+import { agentActivity, connectionName, sessionNeedsAttention } from "./host-presentation";
 import { agentPage, hostRoute } from "./host-navigation";
 
-const review = (id: string, fields: Partial<Review> = {}): Review => ({
-  request_id: id, agent_id: "reviewer", repository: "owner/repo", pull_number: 1, admitted_at_ms: 1,
-  reported_head_sha: "a".repeat(40), reviewed_head_sha: null, publication: "suppressed", worker_error: false,
-  retry_after_ms: null, state: "incomplete", ...fields,
-});
 const host: HostSnapshot = {
   host_id: "host", agents: [{ id: "reviewer", name: "Reviewer", created_by: null, preset_id: null }],
-  sessions: [], routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [],
+  sessions: [], routines: [], connections: [], plugins: [], skills: [],
 };
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Host observation presentation", () => {
-  it("uses admission order rather than timestamps and keeps older publication ambiguity visible", () => {
-    const old = review("old", { admitted_at_ms: 900 });
-    const unknown = review("unknown", { publication: "needs_attention" });
-    const newest = review("new", { state: "reviewed", publication: "published" });
-    const reviews = [old, unknown, newest];
-    expect(currentReviews(reviews)).toEqual([newest]);
-    expect(attentionReviews(reviews)).toEqual([unknown]);
-    expect(reviews).toEqual([old, unknown, newest]);
-  });
-  it("retains earlier worker errors with unconfirmed delivery and latest failures", () => {
-    const old = review("old", { worker_error: true, publication: "sending" });
-    const newest = review("new");
-    expect(attentionReviews([old, newest])).toEqual([newest, old]);
-  });
   it("describes persisted activity without calling it live", () => {
     const session: Session = { id: "s", agent_id: "reviewer", observation: "available", event_count: 8,
       queued_operations: 0, latest_operation: null,
@@ -94,7 +75,7 @@ describe("Host navigation and rendered controls", () => {
     expect(hostRoute("#agent/reviewer")).toEqual({ view: "agents", agent: "reviewer", section: "overview" });
     expect(hostRoute("#agent/reviewer/identity")).toEqual({ view: "agents", agent: "reviewer", section: "identity" });
     expect(hostRoute("#agent/reviewer/work")).toEqual({ view: "agents", agent: "reviewer", section: "work" });
-    expect(hostRoute("#agent/reviewer/policy")).toEqual({ view: "agents", agent: "reviewer", section: "policy" });
+    expect(hostRoute("#agent/reviewer/policy")).toEqual({ view: "agents", agent: "reviewer", section: "overview" });
     expect(hostRoute("#agent/%/work")).toEqual({ view: "agents", agent: null, section: "work" });
     const html = render("#agent/missing/work");
     expect(html).toContain("That agent is not in this Host snapshot");
@@ -129,7 +110,6 @@ describe("Host navigation and rendered controls", () => {
     }
     expect(agentPage("connections")).toBe("configure");
     expect(agentPage("identity")).toBe("configure");
-    expect(agentPage("policy")).toBe("automations");
     expect(agentPage("work")).toBe("activity");
   });
   it("keeps unselected Host connections in the agent library without inventing skill assignments", () => {
@@ -142,7 +122,6 @@ describe("Host navigation and rendered controls", () => {
     expect(html).toContain('aria-label="other-drive: not selected"');
     expect(html).toContain("Selection editing is not available yet");
     expect(html).not.toContain("private-host-skill");
-    expect(html).not.toContain("Save policy");
   });
   it("preserves live schedule controls while making saved previews read-only", () => {
     vi.stubGlobal("localStorage", { getItem: () => null });

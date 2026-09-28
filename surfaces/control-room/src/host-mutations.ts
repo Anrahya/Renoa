@@ -1,5 +1,3 @@
-import { reviewRepository } from "./host-contract";
-
 export interface PendingChange { operation_id: string; expected_revision: number; [field: string]: unknown }
 export interface ChangeResult { kind: "saved" | "rejected" | "uncertain"; message: string }
 const key = (host: string, path: string) => `renoa:owner-change:v1:${host}:${path}`;
@@ -42,9 +40,8 @@ export async function saveChange(host: string, path: string, fields: Record<stri
       ? "Sign in as the Host owner, then retry this saved change."
       : "The Host could not confirm this change. Retry uses the same operation." };
     const body = await response.json();
-    const valid = body?.operation_id === request.operation_id && (path.endsWith("/policy")
-      ? reviewRepository(body.record) && String(body.record.policy.repository_id) === path.split("/").at(-2)
-      : body.id === path.split("/").at(-2) && Number.isSafeInteger(body.revision) && typeof body.enabled === "boolean" && Number.isSafeInteger(body.next_due_ms));
+    const valid = body?.operation_id === request.operation_id && body.id === path.split("/").at(-2) &&
+      Number.isSafeInteger(body.revision) && typeof body.enabled === "boolean" && Number.isSafeInteger(body.next_due_ms);
     if (!valid) throw new Error("Unrecognized receipt");
     clearOwnReceipt();
     return { kind: "saved", message: "Saved by the Host. Refreshing current settings…" };

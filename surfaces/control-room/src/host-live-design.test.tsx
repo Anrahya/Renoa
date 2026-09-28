@@ -5,7 +5,7 @@ import type { HostSnapshot } from "./host-contract";
 import { portraitForAgent } from "./host-identity";
 
 const agent = { id: "main-agent", name: "Assistant", created_by: null, preset_id: null };
-const snapshot: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [] };
+const snapshot: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [] };
 const render = (hash: string, host = snapshot) => {
   vi.stubGlobal("window", { location: { hash, search: "?preview" } });
   return renderToStaticMarkup(<HostPanelView host={{ snapshot: host, status: "connected", receivedAt: 0, error: null, refresh() {}, lock() {} }} />);
@@ -20,7 +20,7 @@ describe("Production control-room design", () => {
     expect(agents).toContain("Create agent");
     expect(agents).not.toContain("50-agent example");
     expect(agents).not.toContain("Example scene");
-    for (const [route, marker] of [["#work", "Today across your agents"], ["#library", "Your shared capability library"], ["#overview", "One system, separate responsibilities"]]) {
+    for (const [route, marker] of [["#work", "Needs your attention"], ["#library", "Your shared capability library"], ["#overview", "One system, separate responsibilities"]]) {
       const html = render(route!);
       expect(html).toContain('class="host-desk"');
       expect(html).toContain(marker);

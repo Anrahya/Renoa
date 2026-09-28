@@ -7,11 +7,6 @@ use serde::Deserialize;
 use std::{collections::BTreeSet, error::Error, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
-#[path = "renoa-host/github_review.rs"]
-mod github_review;
-#[path = "renoa-host/github_service.rs"]
-mod github_service;
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -117,16 +112,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if !(args.len() == 1
         || (args.len() == 6 && args[1] == "rename-agent")
         || (args.len() == 3
-            && (args[1] == "provision"
-                || args[1] == "agent-tools"
-                || args[1] == "reset"
-                || args[1] == "github-review"
-                || args[1] == "github-webhook"
-                || args[1] == "github-execute"
-                || args[1] == "github-service"
-                || args[1] == "github-cleanup")))
+            && (args[1] == "provision" || args[1] == "agent-tools" || args[1] == "reset")))
     {
-        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id>]").into());
     }
     let c = Config::read(std::path::Path::new(&args[0]))?;
     // A reset owns its own cutover, so it must run before the Host opens: an
@@ -159,13 +147,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         host.define_plugin_provider_family(family)?;
     }
     if args.len() == 3 {
-        return run_command(
-            &host,
-            &c.data_directory,
-            &args[1],
-            std::path::Path::new(&args[2]),
-        )
-        .await;
+        return run_command(&host, &args[1], std::path::Path::new(&args[2])).await;
     }
     if args.len() == 6 {
         let text = |index: usize| {
@@ -218,7 +200,6 @@ async fn run_routines(host: &LocalHost) -> Result<(), Box<dyn Error>> {
 
 async fn run_command(
     host: &LocalHost,
-    data: &std::path::Path,
     command: &std::ffi::OsStr,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
@@ -237,24 +218,12 @@ async fn run_command(
         println!("{}", serde_json::to_string(&definition)?);
         return Ok(());
     }
-    if command == "agent-tools" {
-        let edit: AgentToolsUpdate = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-        println!(
-            "{}",
-            serde_json::to_string(&host.set_agent_tools(edit).await?)?
-        );
-        return Ok(());
-    }
-    if command == "github-service" {
-        return github_service::run(host, data, path).await;
-    }
-    if command == "github-cleanup" {
-        let id = uuid::Uuid::parse_str(path.to_str().ok_or("request ID must be UTF-8")?)?;
-        host.reap_github_review(id, renoa_local::TurnObservation::now()?.unix_milliseconds())
-            .await?;
-        return Ok(());
-    }
-    github_review::run(host, command, path).await
+    let edit: AgentToolsUpdate = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    println!(
+        "{}",
+        serde_json::to_string(&host.set_agent_tools(edit).await?)?
+    );
+    Ok(())
 }
 
 /// Copies the whole Host data root to a fresh, empty backup directory.

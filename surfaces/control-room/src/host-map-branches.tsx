@@ -1,8 +1,8 @@
 import { useId, useState, type CSSProperties } from "react";
-import { CaretDown, Clock, GitPullRequest, Hourglass, Pause } from "@phosphor-icons/react";
-import type { Review, Routine } from "./host-contract";
+import { CaretDown, Clock, Hourglass, Pause } from "@phosphor-icons/react";
+import type { Routine } from "./host-contract";
 import { agentHref, scheduleText } from "./host-presentation";
-import { openReviews, reviewStage, scheduleCountdown, scheduleSummary } from "./host-system-model";
+import { scheduleCountdown, scheduleSummary } from "./host-system-model";
 
 export function AgentSchedules({ routines, now }: { routines: Routine[]; now: number | null }) {
   const [expanded, setExpanded] = useState(false);
@@ -31,22 +31,5 @@ function ScheduleLink({ routine, now, prefix = "" }: { routine: Routine; now: nu
   return <a className="system-schedule-link" href={agentHref(routine.agent_id, "automations")} title={`${routine.name} · ${scheduleText(routine)}`} aria-label={`${prefix}${routine.name}: ${value}`}>
     {ticking ? <span className="system-clock" style={{ "--clock-angle": `${Math.floor(now / 1000) * 6}deg` } as CSSProperties} aria-hidden="true" /> : routine.pending_runs ? <Hourglass size={15} aria-hidden="true" /> : routine.enabled ? <Clock size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}
     <span className="system-schedule-name">{prefix}{routine.name}</span><span className="system-timer" aria-hidden="true">{value}</span>
-  </a>;
-}
-
-export function AgentReviews({ reviews, agentId }: { reviews: Review[]; agentId: string }) {
-  const pending = openReviews(reviews).filter(r => r.agent_id === agentId);
-  if (!pending.length) return null;
-  if (pending.length === 1) return <div className="system-review-branch"><ReviewLink review={pending[0]!} /></div>;
-  return <details className="system-review-branch">
-    <summary><GitPullRequest size={15} aria-hidden="true" />{pending.length} unfinished reviews<CaretDown size={14} aria-hidden="true" /></summary>
-    <ul className="system-review-list">{pending.map(review => <li key={review.request_id}><ReviewLink review={review} /></li>)}</ul>
-  </details>;
-}
-
-function ReviewLink({ review }: { review: Review }) {
-  const label = `${review.repository} #${review.pull_number}`;
-  return <a href={agentHref(review.agent_id)} title={`${label} · ${reviewStage(review)}`}>
-    <GitPullRequest size={15} aria-hidden="true" /><span className="system-schedule-name">{label}</span><span className="system-timer">{reviewStage(review)}</span>
   </a>;
 }

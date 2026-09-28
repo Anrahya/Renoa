@@ -4,7 +4,7 @@ import { directorySummary } from "./host-agent-directory-model";
 import { agentExample } from "./agent-work-preview/agent-example";
 
 const agent = { id: "agent", name: "Agent", created_by: null, preset_id: null };
-const host: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [], reviews: [], review_repositories: [] };
+const host: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [] };
 
 describe("agent directory observations", () => {
   it("keeps missing live telemetry explicit instead of substituting preview activity", () => {
@@ -13,10 +13,9 @@ describe("agent directory observations", () => {
     expect(summary.title).toBe("No unfinished work recorded");
     expect(summary.next.title).toBe("No scheduled work");
   });
-  it("surfaces unavailable observations even when a review was completed", () => {
+  it("surfaces unavailable observations as needing attention", () => {
     const summary = directorySummary({ ...host,
       sessions: [{ id: "session", agent_id: agent.id, observation: "unavailable", reason: "Storage unavailable" }],
-      reviews: [{ request_id: "review", agent_id: agent.id, repository: "owner/repo", pull_number: 1, admitted_at_ms: 1, reported_head_sha: "abc", reviewed_head_sha: "abc", publication: "published", worker_error: false, retry_after_ms: null, state: "reviewed" }],
     }, agent);
     expect(summary.tone).toBe("waiting");
     expect(summary.title).toBe("1 record needs attention");

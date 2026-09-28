@@ -24,10 +24,6 @@ const example: HostSnapshot = {
   ],
   plugins: [{ digest: "example-package-revision", name: "Research tools", version: "1.0" }],
   skills: [],
-  review_repositories: [{ revision: 2, policy: { repository_id: 42, installation_id: 7, full_name: "Anrahya/Renoa", agent_id: id(4), enabled: true,
-    triggers: ["opened", "reopened", "ready_for_review", "synchronize"], skip_drafts: false } }],
-  reviews: [{ request_id: id(7), agent_id: id(4), repository: "Anrahya/Renoa", pull_number: 19, admitted_at_ms: Date.parse("2026-09-09T14:00:00Z"),
-    reported_head_sha: "23955af".padEnd(40, "0"), reviewed_head_sha: null, state: "prepared", publication: "not_recorded", worker_error: true, retry_after_ms: Date.parse("2026-09-09T14:02:00Z") }],
 };
 export default function HostPreview() {
   // DEV-only entry point. Local snapshots are ignored by Git and must never
@@ -58,8 +54,7 @@ export default function HostPreview() {
 // Synthetic execution updates exercise the same record-diff path as real polling.
 // This module, including all fixtures, is excluded from production.
 function motionExample(start: number, step: number): HostSnapshot {
-  return { ...example, reviews: example.reviews.map(review => ({ ...review, worker_error: false, retry_after_ms: null,
-      state: step % 4 < 2 ? "queued" : "prepared" })),
+  return { ...example,
     sessions: [{ id: id(8), agent_id: id(2), observation: "available", event_count: step,
     queued_operations: 0, active_operation: { id: id(9), command_id: id(10), position: 1, state: "unfinished" }, latest_operation: null }],
     routines: [
