@@ -737,7 +737,7 @@ stored grant and opens fresh consent when it widens permission. It never
 silently retries the denied MCP call; the Agent must authorize and then issue
 one explicit retry. Registration modes are not model input or fallbacks to
 guess: strict endpoint metadata must name one issuer; the Host then chooses an
-existing issuer-bound client, hosted CIMD when advertised, DCR when advertised,
+existing issuer-bound client, DCR when advertised, hosted CIMD when advertised,
 or a developer-console client form already bound to that issuer. The
 headless setup form's frozen wire spelling is `oauth_client`; coordinators also
 accept the short-lived buggy `o_auth_client` spelling only for rolling upgrade
