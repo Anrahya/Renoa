@@ -33,7 +33,7 @@ impl Fixture {
         let home = files.path().join("home");
         let bridge = files.path().join("model.mjs");
         let auth = files.path().join("models.sqlite3");
-        std::fs::write(&bridge, crate::live_test::MODEL_BRIDGE).unwrap();
+        std::fs::write(&bridge, MODEL_BRIDGE).unwrap();
         std::fs::write(&auth, "").unwrap();
         let host = LocalHost::new(
             &home,
@@ -315,3 +315,49 @@ async fn channel_validation_precedes_storage_and_committed_retries_need_no_disco
     conflict.expected_revision = 1;
     assert!(control.bind(&f.host, conflict).await.is_err());
 }
+
+/// The model adapter the connect and bind checks' real Host loads.
+const MODEL_BRIDGE: &str = r#"
+import { createHash } from "node:crypto";
+let input = "";
+for await (const chunk of process.stdin) input += chunk;
+const action = process.env.RENOA_MODEL_ACTION;
+const modelSpec = process.env.RENOA_MODEL_SPEC;
+if (action === "catalog") {
+  process.stdout.write(JSON.stringify({ ok: true, response: { models: [
+  {
+    id: "fixture-model",
+    name: "Fixture Model",
+    reasoning_levels: ["low", "high"],
+    context_window_tokens: 1000000,
+    model_spec: { id: "fixture-model" }
+  }] } }));
+  process.exit(0);
+}
+if (action === "describe") {
+  process.stdout.write(JSON.stringify({ ok: true, response: {
+    context_window_tokens: 1000000,
+    max_output_tokens: 8192,
+    model_spec: modelSpec,
+    model_binding_id: createHash("sha256").update(modelSpec).digest("hex"),
+    reasoning_level: "high"
+  } }));
+  process.exit(0);
+}
+if (action !== "stream") process.exit(2);
+const request = JSON.parse(input);
+const desk = request.system_prompt.startsWith("You are the owner-created Desk agent.");
+if (!desk && !request.system_prompt.startsWith("You are Arcee, Renoa's personal operator.")) process.exit(3);
+if (desk && request.tools.some(tool => ['bash','read_file','write_file','edit_file','grep','find'].includes(tool.name))) process.exit(7);
+const user = request.messages.at(-1);
+if (user?.role !== "user" || !JSON.stringify(user.content).includes("Do the real task.")) process.exit(6);
+process.stdout.write(JSON.stringify({
+  event: "completed",
+  response: {
+    content: [{ type: "text", text: desk ? "Desk completed the real path." : "Arcee completed the real path." }],
+    stop_reason: "stop",
+    usage: { input: 8, output: 4, cache_read: 0, cache_write: 0 },
+    metadata: { api: "test", provider: process.env.RENOA_MODEL_PROVIDER, model: JSON.parse(modelSpec).id }
+  }
+}) + "\n");
+"#;

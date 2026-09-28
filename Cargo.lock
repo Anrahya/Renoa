@@ -2390,8 +2390,12 @@ dependencies = [
  "axum",
  "futures-util",
  "renoa-agent",
+ "renoa-control",
  "renoa-kernel",
  "renoa-local",
+ "renoa-protocol",
+ "renoa-rcp-client",
+ "renoa-telemetry",
  "reqwest",
  "rusqlite",
  "serde",
@@ -2504,6 +2508,7 @@ dependencies = [
  "nix",
  "renoa-agent",
  "renoa-control",
+ "renoa-discord",
  "renoa-kernel",
  "renoa-local",
  "renoa-protocol",
@@ -2534,6 +2539,21 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "renoa-rcp-client"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "renoa-control",
+ "renoa-protocol",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tokio-util",
 ]
 
 [[package]]

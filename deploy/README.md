@@ -99,20 +99,40 @@ coordinator unit uses `state/coordinator.sqlite3` in this same home; an existing
 installation must move its identity database with SQLite backup before switching
 that unit. The Host unit reads `config/host.json` and the relay credential file.
 
-Build the Discord worker and install its service and path units:
+The Discord worker runs no agents. Each channel's conversation is an RCP task,
+executed by the `renoa-node` that advertises the channel's agent (see
+[RCP execution node](#rcp-execution-node)); install that node first. Build the
+worker and install its service and path units:
 
 ```sh
 cargo build --locked --release -p renoa-discord
 cp deploy/renoa-discord.service deploy/renoa-discord.path /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now renoa-discord.path
 ```
 
-Fill `renoa-discord.config.example.json` with the same home, models and adapters
-as the Host, and save it as `config/discord.json` (owner-only). It holds no Discord
-identity. Configure the MCP registry and OAuth relay adapters for remote plugin
-login; relay device credentials remain local. Enable the path unit, not the
-service: it starts `renoa-discord.service` once the owner connects a bot.
+Enroll the worker as a surface of the Host's owning principal, the same
+principal that owns the node, and exchange the token once:
+
+```sh
+umask 077
+sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
+  /home/renoa/.renoa <owner-principal-uuid> discord > /run/renoa/discord-enrollment.json
+sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
+  ws://127.0.0.1:7818/connect \
+  /run/renoa/discord-enrollment.json \
+  /home/renoa/.renoa/credentials/discord-rcp-device.json
+rm /run/renoa/discord-enrollment.json
+```
+
+Save `renoa-discord.config.example.json` as `config/discord.json` (owner-only).
+It names the home, the loopback coordinator endpoint, and that credential file;
+it holds no Discord identity and no model or adapter settings. Enable the path
+unit, not the service: it starts `renoa-discord.service` once the owner connects
+a bot.
+
+```sh
+systemctl enable --now renoa-discord.path
+```
 
 Create the agent through Agents → Create agent in the Control Room. No native
 machine grants are selected by default. Every agent gets plugin management and
@@ -128,16 +148,27 @@ file's appearance starts the worker. Then choose channels for each agent.
 
 A saved binding proves channel validation and durable routing, not present bot
 connectivity or send permission. New messages in that channel route to the
-selected agent without a mention; reassignment preserves earlier admitted work.
-The default agent answers direct messages and mentions elsewhere. OAuth and
-credential links go to the application owner's DM. Enable DMs before requesting
-plugin authorization. Unknown delivery is not automatically repeated; check the DM
-before restarting setup.
+selected agent without a mention; reassignment starts a new task and preserves
+earlier admitted work. The default agent answers direct messages and mentions
+elsewhere. A message whose agent's node is offline is answered as not sent and
+must be resent; it is never held. Replies to commands submitted to the same task
+from another surface are posted to the channel with their origin.
+
+OAuth and credential links go to the application owner's DM. The executing node
+sends them directly with the Host's Discord connection, never through the RCP
+task journal, because a credential-setup link carries the key that keeps the
+relayed credential unreadable to the coordinator. Enable DMs before requesting
+plugin authorization. Unknown delivery is not automatically repeated; check the
+DM before restarting setup.
 
 The connection cannot be changed from the Control Room. To connect a different bot,
 server or default agent, stop `renoa-discord.path` and `renoa-discord.service`,
 then remove `credentials/discord.json` and `state/surfaces/discord`; the latter
-pins the previous identity and holds its bindings and conversation state.
+pins the previous identity and holds its bindings and task cursors.
+
+Discord store schema 4 moved conversations into RCP tasks. Upgrading keeps the
+identity, channel bindings, gateway cursor, and message deduplication, and drops
+in-process sessions, queued turns, replies, and setup-delivery records.
 
 An installation configured before Control Room onboarding must drop
 `discord_config` from `config/management.json`, replace `config/discord.json` with

@@ -3,7 +3,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalHostError};
+use renoa_local::{AgentSession, LocalHost, LocalHostError, TurnObservation};
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use thiserror::Error;
 use tokio::{
@@ -19,7 +19,8 @@ use crate::{
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
-    projection::{NoopEvents, project_history, terminal_event},
+    operator,
+    projection::{project_history, terminal_event},
     session::{SessionEnd, serve_session},
 };
 
@@ -223,13 +224,26 @@ impl NodeRuntime {
         };
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
+        let cancellation = CancellationToken::new();
+        let (events, setup) =
+            operator::setup_sink(self.host.home(), command_id.as_uuid(), &cancellation);
+        let observation =
+            TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
         let result = session
-            .execute_turn(
+            .execute_turn_observed_with_cancellation(
                 command_id.as_uuid(),
                 vec![ContentBlock::text(record.command.input.text())],
-                Arc::new(NoopEvents),
+                observation,
+                events,
+                cancellation,
             )
             .await;
+        // A setup link that could not be delivered stopped the turn; its
+        // reason is the command's outcome.
+        let setup_failure = match &setup {
+            Some(setup) => setup.take_error().await,
+            None => None,
+        };
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -239,7 +253,12 @@ impl NodeRuntime {
             }
         };
         let mut events = session_events(&session, command_id)?;
-        events.push(terminal_event(outcome));
+        events.push(match setup_failure {
+            Some(error) => ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Failed { error },
+            },
+            None => terminal_event(outcome),
+        });
         self.state.finish(command_id, events).await?;
         self.signal_commit();
         Ok(())

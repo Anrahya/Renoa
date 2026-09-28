@@ -295,23 +295,28 @@ in one SQLite transaction; stale edits and reused operation IDs return 409.
 An exact retry returns its original receipt before contacting Discord again.
 Every write requires the owner cookie and exact Origin.
 
-Discord owns `state/surfaces/discord/discord.sqlite3` (schema 3). Its channel
-routing, conversation session, and target agent are persisted when a message is
-admitted. Reassignment starts a fresh conversation for subsequent messages;
-already admitted work retains its original agent. Unbound channels still require
-a mention, reply, or active thread, and only the operator (the application owner)
-can use DMs.
-The worker uses each selected agent's canonical workspace. Its launch file holds
-only the home, models and adapters; the guild, operator, default agent and token
-come from the committed connection, which the surface database then pins.
+Discord owns `state/surfaces/discord/discord.sqlite3` (schema 4). The worker
+runs no agents: each channel's conversation is an RCP task on its routed agent's
+target, `agent:<uuid>`, opened on the node that advertises it. Channel routing,
+the task, and a stable command identity are persisted when a message is
+admitted, and the message is submitted under that identity, so a reconnect
+retries it exactly. Reassignment starts a new task for subsequent messages;
+already admitted work keeps its original task. Unbound channels still require a
+mention, reply, or active thread, and only the operator (the application owner)
+can use DMs. Task records apply once under a per-task cursor; each finished
+command becomes one reply, including commands submitted to the task from another
+surface. A message whose agent has no online node is answered as not sent. The
+launch file holds only the home and the RCP endpoint and credential; the guild,
+operator, default agent and token come from the committed connection, which the
+surface database then pins.
 
-The Discord event sink consumes structured `plugin_manage` progress. OAuth and
-credential setup links are delivered only to the operator's DM, with
-mentions and embeds disabled. SQLite stores a digest and delivery state, never the
-link. Confirmed rate limits may retry; an unknown send outcome cancels that setup
-turn and requires checking the DM before restarting. Recovery never blindly
-repeats an uncertain link. The Discord Host can compose the MCP registry and
-callback relay adapters and must enable the same providers offered for creation.
+The executing node consumes structured `plugin_manage` progress. OAuth and
+credential setup links are delivered only to the operator's DM through the
+Host's Discord connection, with mentions and embeds disabled, and never enter
+the RCP task journal. SQLite stores a digest and delivery state, keyed by the
+RCP command, never the link. Confirmed rate limits may retry; an unknown send
+outcome stops that command as failed and requires checking the DM before
+restarting. Recovery never blindly repeats an uncertain link.
 
 ### Consistent management
 
