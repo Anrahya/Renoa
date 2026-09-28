@@ -166,6 +166,7 @@ impl AcpProcess {
         loop {
             let message = self.read();
             if message["id"] == 2 {
+                eprintln!("DEBUG session/new response: {message}");
                 return (updates, message);
             }
             updates.push(message);
