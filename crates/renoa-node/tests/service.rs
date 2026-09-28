@@ -81,8 +81,8 @@ async fn enrollment_command_writes_a_private_usable_device_credential() {
 #[tokio::test]
 async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
     timeout(Duration::from_secs(15), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let config = system.files.path().join("node.json");
         let credentials = system.files.path().join("device.json");
         let state = fixture.data.clone();
@@ -91,7 +91,7 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
         write_private(
             &config,
             &serde_json::to_vec(&json!({
-                "schemaVersion": 3,
+                "schemaVersion": 4,
                 "endpoint": system.url,
                 "model": {
                     "bridge": model_bridge,
@@ -99,12 +99,7 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
                     "providers": ["xai"],
                     "defaultProvider": "xai",
                     "defaultModel": "fixture-model"
-                },
-                "targets": [{
-                    "target": system.target.as_str(),
-                    "agentId": fixture.agent_id.to_string(),
-                    "workspace": fixture.workspace
-                }]
+                }
             }))
             .expect("encode node config"),
         );

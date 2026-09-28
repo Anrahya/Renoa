@@ -356,9 +356,10 @@ outside the lock.
 The node's local harness ledger is responsible for deduplicating that execution
 identity before model inference or side effects begin.
 
-The reference `renoa-node` bridge now binds each RCP task to one exact local
-Host profile, session identity, target, and canonical workspace. A Host session
-cannot be silently shared by two tasks. The node stores the exact command and
+The reference `renoa-node` bridge advertises every agent in its Host as the
+opaque target `agent:<agent-uuid>` and binds each RCP task to that agent, its
+Host workspace, and one Host session recorded at the task's first command. A
+Host session cannot be silently shared by two tasks. The node stores the exact command and
 its `ExecutionStarted` record in an owner-only SQLite ledger before
 acknowledging execution. The RCP command UUID is reused as the kernel command
 UUID, so recovery crosses the protocol, Host, and kernel boundaries under one
@@ -702,10 +703,10 @@ The proof deliberately does not yet satisfy the full RCP architecture:
 2. The coordinator listener is plaintext and loopback-only. Public WSS is
    currently supplied by an outbound Cloudflare Tunnel, so the protocol does
    not depend on the tunnel provider and no public origin port is exposed.
-3. Rust Host targets are statically supplied when the node starts. The owner
-   can open any number of tasks on them at runtime, each with its own Host
-   session, but remote target provisioning, configuration revisions, and
-   mutation APIs for the targets themselves remain unimplemented.
+3. A Rust node's targets are its Host's agents, found by polling the Host every
+   five seconds. The owner can open any number of tasks on them at runtime,
+   each with its own Host session. Configuration revisions and per-target
+   workspaces other than the agent's own remain unimplemented.
    The separate personal Host management adapter provides authenticated observation
    plus narrow routine and review-policy mutations, not RCP node provisioning.
    The Pi adapter still has one process-local harness configuration and an

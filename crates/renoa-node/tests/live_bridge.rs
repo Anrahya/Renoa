@@ -4,31 +4,28 @@ use std::time::Duration;
 
 use renoa_control::{TargetSummary, TaskEventKind};
 use renoa_kernel::AgentId;
-use renoa_node::{HostTarget, NodeError, RenoaNode};
-use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef, TargetRef};
+use renoa_node::RenoaNode;
+use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use support::{
-    CuttableProxy, HostFixture, TestSystem, attach, attach_after, collect_through_terminal,
-    collect_through_turn_started, open_task, submit_when_node_is_online, wait_for_path,
-    wait_for_targets,
+    CuttableProxy, HostFixture, TestSystem, agent_target, attach, attach_after,
+    collect_through_terminal, collect_through_turn_started, open_task, submit_when_node_is_online,
+    wait_for_path, wait_for_targets,
 };
 
 #[tokio::test]
 async fn real_alpha_tool_turn_crosses_the_durable_rcp_bridge() {
     timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![fixture.target()],
         )
-        .await
         .expect("open execution node");
         let node_task = tokio::spawn(node.run(node_shutdown.clone()));
 
@@ -87,17 +84,14 @@ async fn real_alpha_tool_turn_crosses_the_durable_rcp_bridge() {
 #[tokio::test]
 async fn tasks_opened_on_one_advertised_target_receive_separate_host_sessions() {
     timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![fixture.target()],
         )
-        .await
         .expect("open execution node");
         let node_task = tokio::spawn(node.run(node_shutdown.clone()));
         let mut surface = system.connect_surface().await;
@@ -132,56 +126,52 @@ async fn tasks_opened_on_one_advertised_target_receive_separate_host_sessions() 
 }
 
 #[tokio::test]
-async fn unprovisioned_agent_refuses_node_startup_with_the_provision_command() {
-    timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
-        let missing_agent = AgentId::new();
-        let target = HostTarget::new(&system.target, missing_agent, &fixture.workspace)
-            .expect("configure target for an unprovisioned Host agent");
-
-        let Err(error) = RenoaNode::open(
+async fn an_agent_created_while_the_node_runs_becomes_an_advertised_target() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
             system.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![target],
         )
-        .await
-        else {
-            panic!("an unprovisioned agent must refuse node startup");
-        };
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+        let mut surface = system.connect_surface().await;
+        wait_for_targets(&mut surface, 1).await;
 
-        assert!(matches!(error, NodeError::Configuration(_)));
-        let message = error.to_string();
+        let created = fixture.provision_agent().await;
+
+        let targets = wait_for_targets(&mut surface, 2).await;
         assert!(
-            message.contains(&missing_agent.to_string()) && message.contains("renoa-host"),
-            "the refusal must name the agent and the provisioning command: {message}"
+            targets
+                .iter()
+                .any(|summary| summary.target == agent_target(created)),
+            "{targets:?}"
         );
-        assert!(
-            !system.files.path().join("node.sqlite").exists(),
-            "a refused startup must not create the node ledger"
-        );
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
         system.stop().await;
     })
     .await
-    .expect("unprovisioned agent startup test timed out");
+    .expect("agent advertisement test timed out");
 }
 
 #[tokio::test]
 async fn agent_loss_after_startup_terminates_as_failed_without_a_turn() {
     timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![fixture.target()],
         )
-        .await
         .expect("open execution node");
         let node_task = tokio::spawn(node.run(node_shutdown.clone()));
 
@@ -241,18 +231,15 @@ async fn remove_agent_definition(data: &std::path::Path, agent_id: AgentId) {
 #[tokio::test]
 async fn transport_reconnect_does_not_interrupt_the_running_host_turn() {
     timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let proxy = CuttableProxy::start(system.url.clone()).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             proxy.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![fixture.target()],
         )
-        .await
         .expect("open execution node");
         let node_task = tokio::spawn(node.run(node_shutdown.clone()));
 
@@ -307,20 +294,12 @@ async fn transport_reconnect_does_not_interrupt_the_running_host_turn() {
 #[tokio::test]
 async fn node_restart_redrives_the_same_safe_kernel_turn() {
     timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let node_credentials = system.enroll_node().await;
-        let node_path = system.files.path().join("node.sqlite");
         let first_shutdown = CancellationToken::new();
-        let first = RenoaNode::open(
-            system.url.clone(),
-            node_credentials.clone(),
-            &node_path,
-            fixture.host(),
-            vec![fixture.target()],
-        )
-        .await
-        .expect("open first execution node");
+        let first = RenoaNode::open(system.url.clone(), node_credentials.clone(), fixture.host())
+            .expect("open first execution node");
         let first_task = tokio::spawn(first.run(first_shutdown.clone()));
 
         let mut surface = system.connect_surface().await;
@@ -337,15 +316,8 @@ async fn node_restart_redrives_the_same_safe_kernel_turn() {
             .expect("first node stops without settling active work");
 
         let restarted_shutdown = CancellationToken::new();
-        let restarted = RenoaNode::open(
-            system.url.clone(),
-            node_credentials,
-            &node_path,
-            fixture.host(),
-            vec![fixture.target()],
-        )
-        .await
-        .expect("reopen execution node");
+        let restarted = RenoaNode::open(system.url.clone(), node_credentials, fixture.host())
+            .expect("reopen execution node");
         let restarted_task = tokio::spawn(restarted.run(restarted_shutdown.clone()));
 
         let terminal = collect_through_terminal(&mut surface).await;
@@ -378,17 +350,14 @@ async fn node_restart_redrives_the_same_safe_kernel_turn() {
 #[tokio::test]
 async fn queued_turns_publish_in_host_session_order() {
     timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![fixture.target()],
         )
-        .await
         .expect("open execution node");
         let node_task = tokio::spawn(node.run(node_shutdown.clone()));
 
@@ -449,23 +418,15 @@ async fn queued_turns_publish_in_host_session_order() {
 #[tokio::test]
 async fn independent_host_sessions_execute_in_parallel() {
     timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
-        let second_target_ref = TargetRef::new("workspace:second");
-        let second_task = system.create_task(second_target_ref.clone()).await;
-        let second_workspace = fixture.additional_workspace();
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let second_task = system.create_task(system.target.clone()).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![
-                fixture.target(),
-                HostFixture::target_for(&second_target_ref, fixture.agent_id, &second_workspace),
-            ],
         )
-        .await
         .expect("open multi-session execution node");
         let node_task = tokio::spawn(node.run(node_shutdown.clone()));
 
@@ -518,17 +479,14 @@ async fn independent_host_sessions_execute_in_parallel() {
 #[tokio::test]
 async fn independently_enrolled_surfaces_continue_one_host_session() {
     Box::pin(timeout(Duration::from_secs(10), async {
-        let system = TestSystem::start().await;
-        let fixture = HostFixture::install(&system).await;
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
         let node_shutdown = CancellationToken::new();
         let node = RenoaNode::open(
             system.url.clone(),
             system.enroll_node().await,
-            system.files.path().join("node.sqlite"),
             fixture.host(),
-            vec![fixture.target()],
         )
-        .await
         .expect("open execution node");
         let node_task = tokio::spawn(node.run(node_shutdown.clone()));
 
