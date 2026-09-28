@@ -240,7 +240,7 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
 }
 
 #[tokio::test]
-async fn schema_seventeen_upgrade_retains_existing_automations_and_receipts() {
+async fn a_schema_seventeen_root_is_refused_until_reset_and_then_starts_fresh() {
     let (d, h, parent, child) = fixture().await;
     let record = change(
         &h,
@@ -251,6 +251,7 @@ async fn schema_seventeen_upgrade_retains_existing_automations_and_receipts() {
     .await
     .expect("interval");
     let db = crate::host::catalog::open_verified(&h.config.database).expect("db");
+    crate::host::catalog::restore_routine_tables(&db);
     db.execute_batch("UPDATE host_metadata SET schema_version=17; PRAGMA user_version=17;")
         .expect("old schema");
     drop(db);

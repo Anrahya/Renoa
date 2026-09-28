@@ -214,7 +214,8 @@ async fn owner_receipt_failure_rolls_back_change_and_migration_keeps_agent_recei
         .await
         .expect("create");
     let db = catalog::open_verified(&h.config.database).expect("catalog");
-    db.execute_batch("DROP TABLE host_automation_owner_mutations; UPDATE host_metadata SET schema_version=23; PRAGMA user_version=23;").expect("schema 23");
+    catalog::restore_routine_tables(&db);
+    db.execute_batch("DROP TABLE host_routine_owner_mutations; UPDATE host_metadata SET schema_version=23; PRAGMA user_version=23;").expect("schema 23");
     drop(db);
     drop(h);
     let refused = try_host(d.path());
