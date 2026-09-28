@@ -26,14 +26,6 @@ pub struct GitChange {
     pub status: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GitSide {
-    Base,
-    #[default]
-    Head,
-}
-
 impl GitRepository {
     pub(crate) fn open(root: &Path) -> io::Result<Self> {
         let root = std::fs::canonicalize(root)?;
@@ -125,83 +117,6 @@ impl GitRepository {
                     .is_some_and(|entry| entry.split_whitespace().nth(1) == Some("blob")),
                 false,
             ))
-        })
-        .await
-    }
-
-    pub(crate) async fn has_line(
-        &self,
-        commit: &str,
-        path: &str,
-        line: u32,
-        cancel: &CancellationToken,
-    ) -> io::Result<bool> {
-        if line == 0 || !self.contains(commit, path, cancel).await? {
-            return Ok(false);
-        }
-        let command = self.show_command(commit, path)?;
-        process::read(command, cancel, async |stdout| {
-            let mut reader = BufReader::new(stdout);
-            for _ in 1..line {
-                if !process::skip_line(&mut reader).await? {
-                    return Ok((false, false));
-                }
-            }
-            Ok((process::line_prefix(&mut reader).await?.is_some(), true))
-        })
-        .await
-    }
-
-    pub(crate) async fn in_diff(
-        &self,
-        base: &str,
-        head: &str,
-        path: &str,
-        side: GitSide,
-        line: u32,
-        cancel: &CancellationToken,
-    ) -> io::Result<bool> {
-        let command = self.diff_command(base, head, path, cancel).await?;
-        process::read(command, cancel, async |stdout| {
-            let mut reader = BufReader::new(stdout);
-            while let Some(prefix) = process::line_prefix(&mut reader).await? {
-                if let Some((start, count)) = hunk_range(&prefix, side) {
-                    let line = u64::from(line);
-                    if start <= line && line - start < count {
-                        return Ok((true, true));
-                    }
-                }
-            }
-            Ok((false, false))
-        })
-        .await
-    }
-
-    pub(crate) async fn matches(
-        &self,
-        commit: &str,
-        path: &str,
-        line: u32,
-        quote: &str,
-        cancel: &CancellationToken,
-    ) -> io::Result<bool> {
-        if line == 0 || quote.is_empty() || !self.contains(commit, path, cancel).await? {
-            return Ok(false);
-        }
-        let command = self.show_command(commit, path)?;
-        process::read(command, cancel, async |stdout| {
-            let mut reader = BufReader::new(stdout);
-            for _ in 1..line {
-                if !process::skip_line(&mut reader).await? {
-                    return Ok((false, false));
-                }
-            }
-            for expected in quote.lines() {
-                if !process::matches_line(&mut reader, expected.as_bytes()).await? {
-                    return Ok((false, true));
-                }
-            }
-            Ok((true, true))
         })
         .await
     }
@@ -342,14 +257,4 @@ async fn required_field(reader: &mut BufReader<tokio::process::ChildStdout>) -> 
     field(reader)
         .await?
         .ok_or_else(|| io::Error::other("incomplete Git inventory"))
-}
-
-fn hunk_range(prefix: &[u8], side: GitSide) -> Option<(u64, u64)> {
-    let line = std::str::from_utf8(prefix).ok()?.strip_prefix("@@ ")?;
-    let value = line
-        .split_whitespace()
-        .nth(usize::from(side == GitSide::Head))?;
-    let value = value.strip_prefix(if side == GitSide::Base { '-' } else { '+' })?;
-    let (start, count) = value.split_once(',').unwrap_or((value, "1"));
-    Some((start.parse().ok()?, count.parse().ok()?))
 }

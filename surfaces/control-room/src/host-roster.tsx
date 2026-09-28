@@ -19,12 +19,11 @@ export function AgentRoster({ host }: { host: HostSnapshot }) {
 export function AgentEntry({ host, agent, earlier = false }: { host: HostSnapshot; agent: Agent; earlier?: boolean }) {
   const activity = agentActivity(host, agent);
   const sessions = host.sessions.filter(s => s.agent_id === agent.id).length;
-  const repositories = host.review_repositories.filter(r => r.policy.agent_id === agent.id).length;
   const connections = host.connections.filter(c => c.selected_by_agents.includes(agent.id)).length;
   return <a href={agentHref(agent.id)} className={earlier ? "host-earlier-agent" : "host-agent-entry"}>
-    <span className="host-agent-name"><span className="host-roster-identity"><AgentAvatar agentId={agent.id} name={agent.name} github={repositories > 0} />{displayName(agent.name)}</span><ArrowRight size={22} aria-hidden="true" /></span>
+    <span className="host-agent-name"><span className="host-roster-identity"><AgentAvatar agentId={agent.id} name={agent.name} />{displayName(agent.name)}</span><ArrowRight size={22} aria-hidden="true" /></span>
     {earlier && <code>{agent.id.slice(0, 8)}</code>}
-    <span className="host-agent-meta">{repositories ? `${repositories} review ${repositories === 1 ? "repository" : "repositories"}` : `${sessions} ${sessions === 1 ? "session" : "sessions"}`} · {connections} connections</span>
+    <span className="host-agent-meta">{sessions} {sessions === 1 ? "session" : "sessions"} · {connections} connections</span>
     <span className={`host-activity host-activity-${activity.tone}`}>{activity.label}</span>
   </a>;
 }

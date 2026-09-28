@@ -9,8 +9,6 @@ use super::catalog::{self, HostCatalogError};
 use crate::LocalHostError;
 
 mod inventory;
-mod review_activity;
-mod reviews;
 mod sessions;
 #[cfg(test)]
 mod tests;
@@ -18,11 +16,6 @@ mod tests;
 pub use inventory::{
     ObservedAgent, ObservedConnection, ObservedPlugin, ObservedRoutine, ObservedSkill,
 };
-pub use review_activity::{
-    ObservedPublicationState, ObservedReviewExecution, ObservedReviewPublication,
-};
-pub use reviews::ObservedReviewDetail;
-pub use reviews::{ObservedReview, ObservedReviewState};
 pub use sessions::{
     ObservedOperation, ObservedOperationState, ObservedSession, ObservedSessionState,
 };
@@ -39,8 +32,6 @@ pub struct HostObservation {
     pub connections: Vec<ObservedConnection>,
     pub plugins: Vec<ObservedPlugin>,
     pub skills: Vec<ObservedSkill>,
-    pub reviews: Vec<ObservedReview>,
-    pub review_repositories: Vec<crate::GitHubReviewRepository>,
 }
 
 /// Read access to one existing Host, pinned to its durable identity. It cannot
@@ -79,30 +70,6 @@ impl HostObserver {
         tokio::task::spawn_blocking(move || observer.read()).await?
     }
 
-    /// Reads a selected review's outcome without loading its frozen prompt or repository context.
-    /// # Errors
-    /// Returns Host identity, catalog, or stored outcome errors. Unknown requests return `None`.
-    pub async fn review_detail(
-        &self,
-        request: Uuid,
-    ) -> Result<Option<ObservedReviewDetail>, LocalHostError> {
-        let observer = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut db = catalog::open_read_only(&observer.root.join(catalog::HOST_DATABASE))?;
-            let tx = db.transaction().map_err(HostCatalogError::from)?;
-            if identity(&tx)? != observer.host_id {
-                return Err(HostCatalogError::Invalid(
-                    "Host identity changed; reconnect explicitly".to_owned(),
-                )
-                .into());
-            }
-            let detail = reviews::detail(&tx, request)?;
-            tx.commit().map_err(HostCatalogError::from)?;
-            Ok(detail)
-        })
-        .await?
-    }
-
     fn read(&self) -> Result<HostObservation, LocalHostError> {
         let mut db = catalog::open_read_only(&self.root.join(catalog::HOST_DATABASE))?;
         let tx = db.transaction().map_err(HostCatalogError::from)?;
@@ -120,8 +87,6 @@ impl HostObserver {
             connections: inventory::connections(&tx)?,
             plugins: inventory::plugins(&tx)?,
             skills: inventory::skills(&tx)?,
-            reviews: reviews::read(&tx)?,
-            review_repositories: review_activity::repositories(&tx)?,
         };
         tx.commit().map_err(HostCatalogError::from)?;
         result.sessions = sessions::read(&self.root.join("sessions"), &result.agents)?;

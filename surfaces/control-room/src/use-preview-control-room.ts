@@ -7,7 +7,7 @@ const TASKS: readonly TaskSummary[] = [
   task(10, "workspace:renoa"),
   task(11, "workspace:waku"),
   task(12, "telegram:arcee"),
-  task(13, "service:github-review"),
+  task(13, "service:inbox-triage"),
   task(14, "workspace:integrations"),
   task(15, "service:vps-operator"),
   task(16, "service:news-digest"),

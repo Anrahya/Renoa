@@ -3,7 +3,6 @@
     { "package": "renoa-control", "bin": "renoa-coordinator" },
     { "package": "renoa-registry", "bin": "renoa-registry" },
     { "package": "renoa-local", "bin": "renoa-host" },
-    { "package": "renoa-local", "bin": "renoa-workspace-tool" },
     { "package": "renoa-management", "bin": "renoa-management" },
     { "package": "renoa-node", "bin": "renoa-node" },
     { "package": "renoa-discord", "bin": "renoa-discord" }
@@ -12,11 +11,7 @@
   "services": [
     { "unit": "renoa-coordinator.service", "binaries": ["renoa-coordinator"] },
     { "unit": "renoa-registry.service", "binaries": ["renoa-registry"] },
-    {
-      "unit": "renoa-host.service",
-      "binaries": ["renoa-host", "renoa-workspace-tool"],
-      "adapters": true
-    },
+    { "unit": "renoa-host.service", "binaries": ["renoa-host"], "adapters": true },
     {
       "unit": "renoa-management.service",
       "binaries": ["renoa-management"],

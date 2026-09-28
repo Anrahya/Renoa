@@ -28,7 +28,7 @@ fn git(root: &Path, args: &[&str]) -> String {
         .to_owned()
 }
 
-pub(crate) fn fixture() -> (tempfile::TempDir, GitRepository, String, String) {
+fn fixture() -> (tempfile::TempDir, GitRepository, String, String) {
     let dir = tempfile::tempdir().expect("repository");
     git(dir.path(), &["init", "-q"]);
     fs::write(dir.path().join("old.rs"), "fn safe() {}\n").expect("old source");
@@ -80,7 +80,7 @@ pub(crate) fn fixture() -> (tempfile::TempDir, GitRepository, String, String) {
 }
 
 #[tokio::test]
-async fn complete_inventory_and_evidence_survive_old_review_limits() {
+async fn complete_inventory_reports_renames_deletions_and_every_change() {
     let (_dir, repo, base, head) = fixture();
     let cancel = CancellationToken::new();
     let changes = repo
@@ -97,32 +97,6 @@ async fn complete_inventory_and_evidence_survive_old_review_limits() {
         changes
             .iter()
             .any(|c| c.path == "removed.rs" && c.status == "D")
-    );
-    assert!(
-        repo.in_diff(&base, &head, "z-bug.rs", GitSide::Head, 2, &cancel)
-            .await
-            .expect("anchor")
-    );
-    assert!(
-        repo.matches(&head, "z-bug.rs", 2, "    10 / count", &cancel)
-            .await
-            .expect("evidence")
-    );
-    assert!(
-        repo.in_diff(&base, &head, "removed.rs", GitSide::Base, 1, &cancel)
-            .await
-            .expect("deleted anchor")
-    );
-    assert!(
-        repo.matches(&base, "removed.rs", 1, "check_owner();", &cancel)
-            .await
-            .expect("deleted evidence")
-    );
-    assert!(
-        !repo
-            .matches(&head, "z-bug.rs", 2, "    invented", &cancel)
-            .await
-            .expect("false quote")
     );
 }
 
@@ -163,9 +137,11 @@ async fn inspection_uses_immutable_objects_and_rejects_path_or_revision_injectio
     let cancel = CancellationToken::new();
     fs::write(dir.path().join("z-bug.rs"), "worktree changed").expect("uncommitted changes");
     assert!(
-        repo.matches(&head, "z-bug.rs", 2, "    10 / count", &cancel)
+        repo.show(&head, "z-bug.rs", 0, &cancel)
             .await
-            .expect("pinned evidence")
+            .expect("pinned blob")
+            .content
+            .contains("    10 / count")
     );
     assert!(repo.show("--help", "z-bug.rs", 0, &cancel).await.is_err());
     assert!(repo.show(&head, "../config", 0, &cancel).await.is_err());
@@ -184,37 +160,6 @@ async fn inspection_uses_immutable_objects_and_rejects_path_or_revision_injectio
             .kind(),
         io::ErrorKind::Interrupted
     );
-}
-
-#[tokio::test]
-async fn quotations_normalize_terminators_without_accepting_prefixes_or_missing_lines() {
-    let (dir, repo, _, _) = fixture();
-    let quote = "long quote λ".repeat(800);
-    fs::write(
-        dir.path().join("crlf.txt"),
-        format!("first\r\n\r\n{quote}\r\nlast"),
-    )
-    .expect("CRLF source");
-    git(dir.path(), &["add", "."]);
-    git(dir.path(), &["commit", "-qm", "CRLF"]);
-    let head = git(dir.path(), &["rev-parse", "HEAD"]);
-    let cancel = CancellationToken::new();
-    for (line, text, matches) in [
-        (1, "first\n\n", true),
-        (1, "first\r\n\r\n", true),
-        (1, "firs", false),
-        (3, quote.as_str(), true),
-        (4, "last", true),
-        (4, "last\n\n", false),
-        (5, "\n", false),
-    ] {
-        assert_eq!(
-            repo.matches(&head, "crlf.txt", line, text, &cancel)
-                .await
-                .expect("quotation"),
-            matches
-        );
-    }
 }
 
 #[tokio::test]

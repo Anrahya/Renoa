@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { HostPanelView } from "./host-panel";
-import { changedAgents, connectionPath, findAgents, openReviews, reviewStage, scheduleCountdown, scheduleSummary } from "./host-system-model";
-import type { HostSnapshot, Review, Routine, Session } from "./host-contract";
-import { AgentSchedules, AgentReviews } from "./host-map-branches";
+import { changedAgents, connectionPath, findAgents, scheduleCountdown, scheduleSummary } from "./host-system-model";
+import type { HostSnapshot, Routine, Session } from "./host-contract";
+import { AgentSchedules } from "./host-map-branches";
 import { AgentAvatar } from "./host-avatar";
 import { agentActivity } from "./host-presentation";
 import { hostRoute } from "./host-navigation";
@@ -15,7 +15,7 @@ const session: Session = { id: "session", agent_id: "rc", observation: "availabl
 const host: HostSnapshot = { host_id: "host", agents: [
   { id: "rc", name: "Arcee", created_by: null, preset_id: "renoa.personal.arcee.v3" },
   { id: "sound", name: "Soundwave", created_by: "rc", preset_id: "renoa.general.v1" },
-], sessions: [session], routines: [routine], reviews: [], review_repositories: [], connections: [], plugins: [], skills: [] };
+], sessions: [session], routines: [routine], connections: [], plugins: [], skills: [] };
 afterEach(() => vi.unstubAllGlobals());
 
 describe("System observation", () => {
@@ -68,26 +68,10 @@ describe("System observation", () => {
     expect(html).toContain('inert=""');
     expect(agentActivity({ ...host, routines: [schedules[4]!] }, host.agents[0]!).tone).toBe("pending");
   });
-  it("does not keep a superseded review looking active or label a prepared record as running", () => {
-    const old: Review = { request_id: "old", agent_id: "sound", repository: "owner/repo", pull_number: 3,
-      admitted_at_ms: 0, reported_head_sha: "sha", reviewed_head_sha: null, state: "prepared", publication: "not_recorded", worker_error: false, retry_after_ms: null };
-    const finished: Review = { ...old, request_id: "new", state: "reviewed", publication: "published" };
-    expect(openReviews([old, finished])).toEqual([]);
-    expect(agentActivity({ ...host, reviews: [old, finished] }, host.agents[1]!).tone).toBe("quiet");
-    expect(openReviews([finished, { ...old, request_id: "next" }])).toHaveLength(1);
-    expect(reviewStage(old)).toBe("Prepared");
-    expect(reviewStage({ ...old, worker_error: true, retry_after_ms: 100 })).toBe("Retry pending");
-    const html = renderToStaticMarkup(<AgentReviews reviews={[old]} agentId="sound" />);
-    expect(html).toContain("owner/repo #3");
-    expect(html).toContain("Prepared");
-    expect(html).not.toContain("Running");
-  });
-  it("keeps generic portraits stable across renames and reserves badges for recorded roles", () => {
-    const render = (name: string, github = false) => renderToStaticMarkup(<AgentAvatar agentId="durable-id" name={name} github={github} />);
+  it("keeps generic portraits stable across renames", () => {
+    const render = (name: string) => renderToStaticMarkup(<AgentAvatar agentId="durable-id" name={name} />);
     expect(render("Research")).toBe(render("News Desk"));
     expect(render("Research")).toContain("/assets/identities/bots/");
-    expect(render("Soundwave")).not.toContain("host-avatar-surface");
-    expect(render("Research", true)).toContain("host-avatar-surface");
   });
 });
 

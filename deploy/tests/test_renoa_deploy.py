@@ -62,7 +62,7 @@ def sha(data: bytes) -> str:
 def release_archive(directory: Path, tag: str, binaries: dict[str, bytes], assets=("app-1.js",), adapter=b"v1", corrupt=None) -> Path:
     archive = directory / f"renoa-{tag}.tar.gz"
     files = {"release.json": None}
-    binaries = {"renoa-coordinator": b"renoa-coordinator-v0", "renoa-workspace-tool": b"tool-v0", **binaries}
+    binaries = {"renoa-coordinator": b"renoa-coordinator-v0", **binaries}
     for name, data in binaries.items():
         files[f"bin/{name}"] = data
     for service in SERVICES:

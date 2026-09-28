@@ -116,10 +116,6 @@
 .host-history[open] > summary { margin-bottom: 20px; }
 .host-owner-link { font-size: .8125rem; display: inline-block; margin-top: 20px; }
 .host-owner-link + .host-routine { padding-top: 12px; }
-.host-details { color: var(--host-muted); font-size: .8125rem; }
-.host-details summary { cursor: pointer; text-decoration: underline; text-underline-offset: 4px; padding-block: 5px; }
-.host-details > div, .host-details > p { margin-top: 14px; }
-.host-review-evidence > .host-details { margin: 18px 0; }
 .host-agent-detail { margin-top: 32px; }
 .host-back { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 28px; font-size: .8125rem; min-height: 32px; }
 .host-back svg { margin: 0; }
@@ -150,10 +146,6 @@
 .host-token { display: block; max-width: 430px; margin-bottom: 24px; font-size: .875rem; font-weight: 600; }
 .host-token input { display: block; width: 100%; margin-top: 12px; padding: 12px; border: 1px solid #8e8167; border-radius: 5px; background: #22201b; color: inherit; }
 .host-token input::placeholder { color: var(--host-muted); font-weight: 400; }
-.host-diagnostic, .host-review-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.host-review-evidence article { margin: 28px 0; }
-.host-review-evidence pre { font-size: .8125rem; line-height: 1.6; }
-.host-review-evidence p { margin-top: 10px; }
 .host-skip { position: fixed; left: 20px; top: -100px; z-index: 10; background: var(--host-soft); padding: 12px 20px; }
 .host-skip:focus { top: 12px; }
 @media (max-width: 900px) {

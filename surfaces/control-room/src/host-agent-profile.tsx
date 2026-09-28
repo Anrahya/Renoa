@@ -44,7 +44,7 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
   useEffect(() => {
     setVisited(values => values.includes(page) ? values : [...values, page]);
     // Existing deep links land at their matching in-page section.
-    const target = section === "connections" ? "profile-connections" : section === "policy" ? "profile-policy" : null;
+    const target = section === "connections" ? "profile-connections" : null;
     const heading = target ? root.current?.querySelector<HTMLElement>(`#${target}`) : null;
     const frame = heading ? requestAnimationFrame(() => { heading.focus({ preventScroll: true }); heading.scrollIntoView({ block: "start" }); }) : null;
     if (!heading && previous.current !== section) root.current?.querySelector('[role="tablist"]')?.scrollIntoView({ block: "nearest" });
@@ -81,7 +81,7 @@ export function HostAgentProfile({ host, agent, section, controls, execution }: 
           {value === "overview" && <ProfileOverview {...{ host, agent, navigate }} />}
           {value === "configure" && <ProfileConfigure {...{ host, agent, controls }} />}
           {value === "automations" && <ProfileAutomations {...{ data, controls, host }} />}
-          {value === "activity" && <ProfileActivity data={data} preview={controls.preview} active={page === value} />}
+          {value === "activity" && <ProfileActivity data={data} />}
         </>}
       </TabsContent>)}
     </Tabs>

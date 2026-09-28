@@ -1,4 +1,4 @@
-export type AgentSection = "overview" | "configure" | "activity" | "identity" | "work" | "connections" | "automations" | "policy";
+export type AgentSection = "overview" | "configure" | "activity" | "identity" | "work" | "connections" | "automations";
 export type HostRoute = { view: "overview" | "agents" | "work" | "library"; agent: string | null; section: AgentSection; execution?: string; workAgent?: string; tab?: "plugins" | "accounts" };
 export function hostRoute(hash: string): HostRoute {
   const [view, id, section, run] = hash.replace(/^#/, "").split("/");
@@ -8,7 +8,7 @@ export function hostRoute(hash: string): HostRoute {
     if (section === "activity" && run) {
       try { return { view: "agents", agent, section: "activity", execution: decodeURIComponent(run) }; } catch { return { view: "agents", agent, section: "activity" }; }
     }
-    return { view: "agents", agent, section: section === "configure" || section === "activity" || section === "identity" || section === "work" || section === "connections" || section === "automations" || section === "policy" ? section : "overview" };
+    return { view: "agents", agent, section: section === "configure" || section === "activity" || section === "identity" || section === "work" || section === "connections" || section === "automations" ? section : "overview" };
   }
   if (view === "work" && id && section) {
     try { return { view: "work", agent: null, section: "work", workAgent: decodeURIComponent(id), execution: decodeURIComponent(section) }; } catch { return { view: "work", agent: null, section: "work" }; }
@@ -20,7 +20,6 @@ export function hostRoute(hash: string): HostRoute {
 export type AgentPage = "overview" | "configure" | "automations" | "activity";
 export function agentPage(section: AgentSection): AgentPage {
   if (section === "identity" || section === "connections") return "configure";
-  if (section === "policy") return "automations";
   if (section === "work") return "activity";
   return section;
 }

@@ -7,4 +7,3 @@
 .profile-settings-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 @media (min-width: 1024px) { .profile-settings-section { grid-template-columns: 200px minmax(0, 1fr); gap: 40px; } }
 .renoa-agent-profile summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
-.renoa-agent-profile .profile-evidence { --host-ink: var(--foreground); --host-muted: var(--muted-foreground); --host-rule: var(--border); --host-accent: var(--primary); --host-paper: var(--background); --host-soft: var(--muted); --host-warning: var(--destructive); min-height: 0; font: inherit; }
