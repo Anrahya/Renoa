@@ -108,3 +108,66 @@ fn schema_30_selections_require_explicit_reset_and_failed_migration_rolls_back()
         1
     );
 }
+
+/// Schema 32 already records exact plugin activations. The 32 to 33 upgrade
+/// only retires the review tables; it must keep those activations, which are
+/// current selections rather than the unidentified ones earlier schemas held.
+#[test]
+fn schema_32_plugin_activations_survive_the_in_place_upgrade() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("host.sqlite3");
+    catalog::initialize(&path).unwrap();
+    crate::test_agents::insert_agent(&path, AGENT);
+    let integration = integration_id(DIGEST, "main");
+    let connection = Connection::open(&path).unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    connection
+        .execute(
+            "INSERT INTO installed_plugins(plugin_digest,name) VALUES (?1,'fixture')",
+            [DIGEST],
+        )
+        .unwrap();
+    connection.execute("INSERT INTO plugin_mcp_servers(plugin_digest,server_id,integration_id,transport,endpoint,request_headers_json) VALUES (?1,'main',?2,'streamable_http','https://service.example/mcp','{}')",params![DIGEST,integration]).unwrap();
+    connection.execute("INSERT INTO mcp_integrations VALUES (?1,'direct_streamable_http','https://service.example/mcp','{}')",[&integration]).unwrap();
+    connection.execute("INSERT INTO mcp_connections(connection_id,integration_id,auth_kind) VALUES ('account',?1,'none')",[&integration]).unwrap();
+    connection
+        .execute(
+            "INSERT INTO host_agent_mcp_connections(agent_id,connection_id) VALUES (?1,'account')",
+            [AGENT],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO host_plugin_admissions(package_digest) VALUES (?1)",
+            [DIGEST],
+        )
+        .unwrap();
+    connection.execute("INSERT INTO host_agent_plugins(agent_id,plugin_id,package_digest,enabled) VALUES (?1,?2,?2,1)",params![AGENT,DIGEST]).unwrap();
+    connection.execute("INSERT INTO host_agent_plugin_revisions(agent_id,plugin_id,package_digest) VALUES (?1,?2,?2)",params![AGENT,DIGEST]).unwrap();
+    drop(connection);
+    catalog::open_verified(&path).expect("the fixture is a valid current catalog");
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "UPDATE host_metadata SET schema_version=32 WHERE singleton=1;
+             PRAGMA user_version=32;",
+        )
+        .unwrap();
+
+    catalog::initialize(&path).expect("upgrade schema 32 with a plugin activation");
+
+    let connection = catalog::open_verified(&path).unwrap();
+    let enabled: Vec<String> = connection
+        .prepare("SELECT connection_id FROM host_agent_enabled_mcp_connections WHERE agent_id=?1")
+        .unwrap()
+        .query_map([AGENT], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        enabled,
+        ["account"],
+        "the activated plugin MCP stays enabled"
+    );
+    catalog::initialize(&path).expect("convergent restart");
+}
