@@ -81,7 +81,7 @@ impl ResolvedAgentDefinition {
             .as_ref()
             .map(AgentDocumentStore::render)
             .transpose()?
-            .filter(|documents| !documents.is_empty());
+            .flatten();
         let project = if self
             .definition
             .operational

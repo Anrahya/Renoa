@@ -277,6 +277,16 @@ its stable operation receipt after restart without another provider lookup.
 uncertain requests in tab storage and retries their exact operation ID and fields.
 Native grants start empty; plugin discovery, management, and invocation are universal.
 
+`documents.user` decides whether the new agent reads the `USER.md` of whoever talks
+to it. So that the owner can make that choice knowingly, `GET /v1/host/profile`
+returns the signed-in owner's own profile as `{content, revision}`. An absent
+profile is empty content with the revision of empty content. `PUT
+/v1/host/profile` takes `{expected_revision, content}`, checks the origin, and
+makes the same revision-checked edit as `agent_documents`; success returns the new
+profile. A stale revision returns 409 and writes nothing, even on a first save. A
+malformed revision, or a stored profile that is linked, not a regular file, or not
+UTF-8, returns 422 `invalid_profile`; a storage failure returns 503.
+
 `GET /v1/host/discord` reports `setup_required` until the owner connects a bot,
 then `connected` with the bot and server names, the default agent, and saved
 bindings. Connection is not worker liveness. `POST /v1/host/discord/inspection`

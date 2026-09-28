@@ -23,6 +23,7 @@ use uuid::Uuid;
 mod agents;
 mod discord;
 mod identity;
+mod profile;
 mod routines;
 
 fn origin_failure(state: &ManagementState, headers: &HeaderMap) -> Option<Response> {
@@ -156,6 +157,12 @@ impl ManagementApi {
             .route(
                 "/v1/host/agents",
                 axum::routing::post(agents::create).layer(DefaultBodyLimit::max(64 * 1024)),
+            )
+            .route(
+                "/v1/host/profile",
+                get(profile::read)
+                    .put(profile::replace)
+                    .layer(DefaultBodyLimit::max(64 * 1024)),
             )
             .route("/v1/host/discord", get(discord::status))
             .route(
