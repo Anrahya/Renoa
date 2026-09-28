@@ -139,8 +139,8 @@ access and credential sharing between distinct Hosts remain separate work.
 ### Composition and management boundaries
 
 The personal-system direction below guides the control-panel implementation.
-Authenticated browser observation, owner routine enablement, and review-policy
-editing exist; general agent editing and delegation remain future work. Host ownership is a logical boundary, not a requirement that one
+Authenticated browser observation and owner routine enablement exist; general
+agent editing and delegation remain future work. Host ownership is a logical boundary, not a requirement that one
 object, executable, or crate implement every subsystem. A laptop and a VPS are
 deployment choices. Preserving a Host across machine replacement requires its
 durable identity, records, and credential material; a hostname is not its identity.
@@ -153,8 +153,7 @@ Keep responsibility with the component that implements the behavior:
   workspace, and execution components. Their implementations remain outside the
   management transport, and provider and surface policy remain outside the kernel.
 - Domain operations own their validation, transactions, and durable receipts.
-  Routines retain scheduling semantics; reviews retain review semantics. A
-  management router delegates to those operations rather than reimplementing them.
+  Routines retain scheduling semantics. A management router delegates to those operations rather than reimplementing them.
 - Observation projects committed metadata independently of runtime construction.
   Inspection and configuration changes that do not execute work must not require
   model discovery, valid provider credentials, or acquisition of session ownership.
@@ -201,11 +200,9 @@ the two real consumers, but the coordinator must not acquire a dependency on
 Host runtime construction. A browser-provided Host ID, path, or actor ID cannot
 choose another data root or substitute an authenticated identity.
 
-The initial overview uses `HostObserver`, with selected detail reads for actual
-results and failure diagnostics. It shows recorded work, attention, schedules,
+The initial overview uses `HostObserver`. It shows recorded work, attention, schedules,
 agents, and installed capabilities with progressive disclosure. It must preserve
-the observation qualifications below, including unknown worker liveness and the
-difference between reviewed and published. Display refresh time and stale/error
+the observation qualifications below, including unknown worker liveness. Display refresh time and stale/error
 states. Start with refreshable HTTP snapshots; do not add another event journal
 or infer an event sequence from differences between snapshots. Surface health,
 effective runtime tools, and other details need their own evidence before display.
@@ -215,9 +212,7 @@ execution workers. Its configured loopback identity service validates the browse
 cookie; the adapter does not read the identity database or execute agent turns.
 With model configuration it starts catalog/describe requests to validate creation.
 `GET /v1/host/access` reveals only the public owner login identifier. `GET /v1/host`
-and `GET /v1/host/reviews/{request_id}` require that authenticated owner. Review
-detail selects the outcome, findings and model configuration without loading the
-frozen prompt, diff or context. The binary pins one existing Host UUID and refuses
+requires that authenticated owner. The binary pins one existing Host UUID and refuses
 a replaced Host even at the same storage path.
 
 The browser retries unavailable services and network failures, keeping the last
@@ -329,21 +324,11 @@ agent identities, and a surface process is not a separate human owner.
 
 Management is composition of domain operations, not a second execution system.
 The HTTP adapter authenticates the owner, validates the request origin and adapts
-typed requests; routine and review modules retain their transactions and rules.
+typed requests; domain modules retain their transactions and rules.
 Human operations do not impersonate an agent. Agent tools bind their own actor in
 the trusted runtime. They share domain rules with owner operations without gaining
 owner authority. Adding a future definition editor, binding editor or management tool
 must follow this boundary rather than introduce another store or an HTTP-only rule.
-
-`HostReviewControl` edits admission policy for existing review repositories through
-`POST /v1/host/repositories/{repository_id}/policy`. The strict request has
-`operation_id`, `expected_revision`, `enabled`, `triggers` and `skip_drafts`.
-Repository, installation and assigned agent identity remain fixed. The domain uses
-the same revision validation and repository update as trusted local management.
-Owner receipts use `owner:<principal>:<operation_id>` keys in the existing review
-operation table, disjoint from trusted-local UUID keys. The request includes its
-repository identity, and the transaction verifies the pinned Host before mutation
-or replay. No new table or schema version is needed for these review controls.
 
 The browser persists a pending operation's identity and configuration-only body
 before sending it. Lost responses survive navigation and reload; retry sends that
@@ -353,23 +338,8 @@ the latest record. Configuration controls are unavailable on stale snapshots; a
 network outage does not create a new login requirement. These pending records do
 not contain cookies, credentials, standing prompts or conversation content.
 
-Review observation exposes current repository policies separately from each
-request's captured policy. The latter explains eligibility, not the exact triggering
-event: historical requests do not record whether a particular webhook action or a
-manual request caused admission. Detail also exposes recorded execution deadlines,
-retry times and worker diagnostics. Publication is independently not recorded,
-sending, published, suppressed or needs attention. Sending is an uncertain external
-operation, not proof of a posted review; its potentially large POST body stays out
-of management responses. The overview includes only summary status and an error
-indicator, while diagnostics require an authenticated detail read.
-
-The Work view prioritizes the newest request's incomplete outcome for each PR,
-while preserving every attempt in history. Unresolved publication attention and
-worker errors remain visible even when a newer request exists. Recorded starts and
-deadlines do not establish worker liveness. A changed policy affects new admissions;
-already-admitted requests retain their captured policy, and publication checks the
-current repository revision before a new POST. Changing a schedule is not cancelling
-its agent, and changing review policy is not an immediate worker cancellation.
+Recorded operation state does not establish worker liveness. Changing a schedule
+is not cancelling its agent.
 
 These controls establish a consistent management path, not general agent assembly.
 Owner creation and editing of definitions, surface-binding controls, runtime capability
@@ -381,14 +351,14 @@ their composition point; RCP's continuity contracts do not absorb product policy
 ### Personal Host observation
 
 The control panel targets one person's existing Host identity. Its agents,
-installed capabilities, automation records and review work belong to that Host;
+installed capabilities and automation records belong to that Host;
 surface processes are clients of those records. One logical Host does not require
 one process, and a second data root is not implicitly part of the same Host.
 
 `HostObserver::open` opens an existing compatible data root and pins its Host UUID.
 `snapshot` reads agent identities, ordinary session operation summaries, routines,
-shared connection selections, recorded plugin/skill revisions and GitHub review
-outcomes. `renoa-host inspect <data-directory>` is the first consumer. It requires
+shared connection selections and recorded plugin/skill revisions.
+`renoa-host inspect <data-directory>` is the first consumer. It requires
 OS read access, not a launch configuration, model provider, adapter or credentials.
 It neither initializes/migrates a Host nor repairs or imports legacy records.
 
@@ -403,7 +373,7 @@ loading command bodies, checkpoints, effect payloads or transcripts. An unfinish
 operation is not proof of a live worker. A stored MCP catalog is not a connection
 health probe. Agent connection selections are not a claim about the frozen tools
 of an already-admitted operation. Recorded skills are not necessarily loaded in
-any session. A reviewed outcome is separate from publication success. Large
+any session. Large
 artifacts, instructions, provider diagnostics and credential material stay outside
 the overview response and need separate, deliberate detail reads.
 
@@ -481,8 +451,7 @@ independently of surfaces.
 
 Telegram, Slack, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
 adapters; they do not become agents merely because they deliver messages. A
-GitHub-review or daily-assistant agent definition may be used
-from any compatible surface.
+daily-assistant agent definition may be used from any compatible surface.
 
 ## Capability composition
 
@@ -601,8 +570,7 @@ direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
 snapshots, per-agent selected connection identities, immutable skill revisions,
 agent skill bindings and rejections, session skill activations, routines
-and their results and receipts, GitHub review policy and execution/publication
-records, and authenticated-owner routine receipts.
+and their results and receipts, and authenticated-owner routine receipts.
 Registration, discovery, and agent connection selection remain separate states.
 Catalog replacement and selection are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
@@ -1006,9 +974,6 @@ another writer's files to empty a directory.
     node.sqlite3                   node continuity state
     coordinator.sqlite3            coordinator state
     registry/                      private package-registry state
-    review-sessions/                review kernel journals and traces
-    review-workspaces/              frozen inspection checkouts
-    github-executions/              GitHub execution records
   sessions/<session-uuid>/
     session.json                   agent/workspace binding
     runtime.jsonl                  provider/model/reasoning selections
@@ -1048,16 +1013,17 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 32
-by retaining exact machine grants and removing former Host and plugin protocol
-tool selections. Live selections and creation, rename, and selection receipt
-results advance one revision when their grants change. Agent identities and
+Catalogs at the canonical database path with schema 28–32 upgrade to schema 33
+by retaining exact machine grants, removing former Host and plugin protocol
+tool selections, and dropping the retired GitHub review tables. Live selections
+and creation, rename, and selection receipt results advance one revision when
+their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
 Unknown tool names or revision overflow during conversion reject the transaction with reset
 guidance. Reopening the upgraded catalog does not repeat the conversion.
 
 1. Stop every writer: the routine service (`renoa-host <config.json>`), every
-   surface, every review worker, and every node daemon that owns the data root.
+   surface, and every node daemon that owns the data root.
    A copied data root must not have a live writer.
 2. Create exactly one consolidated backup of the previous release's data root.
    `renoa-host <config.json> reset <backup-directory>` does this FIRST: it copies
@@ -1069,15 +1035,16 @@ guidance. Reopening the upgraded catalog does not repeat the conversion.
    the reset is the only path that changes those tables. It drops the retired
    agent-owned tables (`host_agents` in its old shape, `host_bots*`,
    `profile_mcp_connections`, `profile_mcp_tools`, `profile_skill_bindings`,
-   `skill_source_rejections`, the agent skill bindings, and the routine and
-   review records tied to those agents) and recreates the canonical `host_agents`
-   root and its normalized children in their current shape, running the earlier
-   migration ladder first for the shared domains it still owns.
+   `skill_source_rejections`, the agent skill bindings, the routine records tied
+   to those agents, and the retired GitHub review tables) and recreates the
+   canonical `host_agents` root and its normalized children in their current
+   shape, running the earlier migration ladder first for the shared domains it
+   still owns.
    `renoa-local/src/host/reset.rs` owns the bounded reset: it removes
-   agent-owned rows, the session, review-session and review-inspection
-   directories, enabled SOUL/USER files, and predecessor document roots. It preserves
-   canonical `agents/<agent-id>/workspace` directories and
-   never deletes workspace files or the Host's shared state. One transaction
+   agent-owned rows, the session directories, enabled SOUL/USER files, and
+   predecessor document roots. It preserves canonical
+   `agents/<agent-id>/workspace` directories and never deletes workspace files
+   or the Host's shared state. One transaction
    deletes the whole row set with foreign keys deferred, so the order it is
    written in cannot break a reset, and a test that classifies every catalog
    table is what keeps the delete list complete.
@@ -1374,56 +1341,16 @@ Schema 18 admits the one-time schedule variant; older readers cannot decode it.
 Schema 19 adds routine deletion markers consumed by listing, lookup, and admission.
 At that migration, all processes sharing the Host had to support schema 19 before
 restarting. The current schema and later migrations are summarized in the
-GitHub-review section below. The integration tests exercise model-driven creation, agent
+catalog schema history below. The integration tests exercise model-driven creation, agent
 rescheduling, artifact generation, and recovery after losing the Host outcome receipt
 without repeating the kernel's completed file operation.
 
-## GitHub reviewer composition
+## Catalog schema history
 
-The Host implements repository policy, durable review-request admission, a
-disposable inspection executor, and durable GitHub publication. The GitHub
-service receives signed webhooks behind HTTPS ingress and supervises separate
-review workers. The separate authenticated management adapter now observes review
-work and edits existing repository policy, while the browser projects RCP tasks on
-its distinct continuity surface. This
-composition adds no GitHub-specific types to the kernel and does not settle the open
-RCP wire boundaries.
-
-### Admission boundary
-
-`LocalHost::manage_github_review` is the trusted local management boundary.
-`SetRepository` binds a stable GitHub repository ID and installation ID to an
-existing Host agent, an informational `owner/repository` name, enabled
-state, selected triggers, and draft handling. Creation uses no expected
-revision; updates require the exact current revision. A stable operation UUID
-and its exact result are committed together. Reusing an operation UUID with
-different input conflicts; retrying an old edit returns its original result
-without restoring obsolete policy. Agent or browser callers still need an
-authenticated authorization adapter before this local API can be exposed.
-
-`Request` admits an explicit manual request, including while automatic reviews
-are paused. `Repositories` and `Requests` return at most 20 records, ordered by
-repository ID and admission sequence respectively. Continue with the last
-record's ID or sequence. Each request retains its original policy snapshot and
-reported base/head commits. They are admission evidence, not a claim that an
-executor reviewed those commits or that the latest-arriving event is newest.
-
-`LocalHost::admit_github_review_webhook` validates HMAC-SHA256 over the original
-body, limits the payload to 1 MiB, checks installation identity against policy,
-and atomically stores a receipt with any new request. Filtered events retain
-their original ignored outcome on replay. Delivery UUIDs deduplicate transport
-retries; repository/policy revision/PR/base/head identity deduplicates separate
-automatic events requesting the same work. Manual requests have their own
-operation identity and can intentionally request another review. Request
-admission is bounded to 1,024 pending requests; capacity failure acknowledges
-no new work, while already-admitted requests remain replayable. Terminal review
-outcomes release inbox capacity without deleting requests or their receipts.
-
-Host schema 20 added `host_review_repositories`, `host_review_operations`,
-`host_review_requests`, and `host_review_deliveries`. Schema 21 adds
-`host_review_runs`; schema 22 adds `host_review_jobs` (absolute lifetime and
-publication backoff) and `host_review_publications` (intent and remote outcome).
-Schema 23 adds worker-entry evidence, execution retry timing and the last job failure.
+Host schemas 20 through 23 added the GitHub review tables
+(`host_review_repositories`, `host_review_operations`, `host_review_requests`,
+`host_review_deliveries`, `host_review_runs`, `host_review_jobs`, and
+`host_review_publications`) and their execution timing.
 Schema 24 adds `host_routine_owner_mutations` for authenticated owner receipts,
 preserving existing agent receipts and their foreign-key restrictions.
 Schema 27 is the clean break: it drops the retired agent-owned tables
@@ -1439,19 +1366,18 @@ surrounds it, are described in the clean-break section above.
 Schema 28 adds the immutable `result_json` snapshot to
 `host_agent_creations`, so retrying a creation operation returns its exact
 original result even after later edits to the live definition.
+Schema 33 retires the GitHub review service. A schema 28–32 catalog drops the
+seven `host_review_*` tables in place, each child before the parent it
+references; the reset drops them from an earlier data root with the other
+retired owners.
 
-The GitHub service verifies at startup that its worker configuration resolves to
-the same canonical Host database as the supervisor. Separate model configuration
-files and filesystem aliases are allowed; a different Host database is rejected
-before loading App credentials or accepting webhook traffic.
+## Local CLI
 
-The local CLI exposes the same operations without a browser:
+The local CLI exposes these operations without a browser:
 
 ```text
 renoa-host /absolute/host.json provision /absolute/provision.json
 renoa-host /absolute/host.json agent-tools /absolute/edit.json
-renoa-host /absolute/host.json github-review /absolute/request.json
-renoa-host /absolute/host.json github-webhook /absolute/envelope.json
 ```
 
 A provision file is the canonical creation request in camelCase JSON:
@@ -1461,392 +1387,6 @@ operation as `agent_manage` with a `System`/`Provisioning` actor and starts no
 model or surface. Repeating the same request is idempotent;
 reusing an operation id with a changed request conflicts. An `agent-tools` edit
 contains `operation_id`, `id`, `expected_revision`, and `tools`.
-
-A request file is a serialized `GitHubReviewCommand`, for example
-`{"action":"requests","after":0}` or
-`{"action":"repositories","after":null}`. The webhook envelope contains
-`delivery_id`, `event`, `signature`, `body_file`, and `secret_file`. File paths
-must be absolute. The body file contains the exact signed bytes; the private
-secret file contains the exact secret bytes (no automatic whitespace trimming).
-The CLI never prints the secret or original payload. This is a local admission
-and recovery path. The separately launched `github-service` supplies HTTP admission.
-
-### Disposable review execution
-
-`LocalHost::execute_github_review` executes an admitted request under the Host's
-exclusive `.reviews.lock` process lease, independent of the routine scheduler:
-
-```text
-renoa-host /absolute/host.json github-execute /absolute/execution.json
-```
-
-The execution file contains `request_id`, `app_jwt_file`, and
-`workspace: {"bubblewrap":"/usr/bin/bwrap","worker":"/opt/renoa/review-tools/<commit>/renoa-workspace-tool"}`.
-The worker is the release build of the existing workspace tool binary, installed
-at an immutable versioned path. Bubblewrap 0.12.0 or later and unprivileged user
-namespaces are required. The JWT is a private absolute file containing a currently
-valid GitHub App JWT. The GitHub service signs it immediately before dispatch;
-the RSA key stays in that service's systemd credential directory.
-The executor verifies the App installation and repository
-identity, then mints a token restricted to the repository and read-only contents,
-pull requests and checks. Credentials stay outside model context and results.
-
-Before inference, the Host reconciles the PR and freezes base/head and merge-base
-commits, repository policy, the review agent's stored instructions, model specification and
-reasoning and its stored tool selection. Applicable base AGENTS.md files supply
-conventions. PR instructions are review material. Initial model context contains
-the pinned commits, PR metadata, change count and observed CI status. The complete
-change inventory is captured from local Git objects in the durable snapshot;
-patches and repository trees are not copied into the initial prompt. Historical
-API snapshots remain readable and completed runs replay without reinterpretation.
-
-The Host materializes base/, head/ and merge_base/ checkouts under
-`review-workspaces/<request-id>`. Git credentials go only to the trusted fetch
-process and are not stored in Git config; hooks are disabled. Each inspection
-call launches a fresh Bubblewrap sandbox with the checkout mounted read-only,
-the workspace tool, Git, ripgrep and their system libraries. It has isolated namespaces,
-no network, no capabilities, an empty environment and no Host data or credentials.
-Nested user namespaces are disabled. The tool process exits after its response;
-there is no persistent sandbox process during model reasoning. This shares the
-operating-system kernel and is not a microVM;
-the initial deployment serves the owner's personal review workflow.
-
-The Host assembles the named review agent's stored definition with
-`review_instructions.txt`, the shared Rust model/tool loop and the existing
-replaceable compaction strategy.
-`renoa-workspace-tool` executes the same read_file, grep, find, git_changes,
-git_diff and git_show implementations as local agents; only their transport
-changes. The shared Git capability also supports ordinary registered Git
-worktrees. Each new review freezes the agent's stored tool selection and intersects
-it with the inspection environment's read-only capabilities. No generic assistant/coding
-definition is inherited. Bash, dependency installation, test execution, automatic
-fixes and unrelated Host connections are unavailable in this version.
-
-Investigation and validation run until completion, cancellation, failure or the
-explicit 60-minute review deadline. There is no model-response count limit.
-Each provider call, including silent reasoning, can take up to 30 minutes;
-the Node adapter no longer imposes its shorter SDK default. Tool batches allow 50 calls.
-The output allowance is 32,768 tokens, bounded by the provider's supported output.
-Working input targets 272,000 tokens, automatic compaction starts at 258,400, and
-the post-compaction target is 155,040. Smaller model windows lower those settings
-after reserving output and safety headroom. Compaction can repeat within either
-stage while preserving the transcript and active task. The existing two attempts
-per malformed summary are validation retries, not a limit on compaction cycles.
-Provider retry semantics remain unchanged. Prefixes and provider session identity
-remain stable. Recorded token usage includes summary responses; incomplete
-accounting remains unknown.
-
-Each stage is a durable command in `state/review-sessions/<request-id>/kernel.sqlite3`.
-If a normally completed response violates the report schema, the Host returns
-the parser error as a new durable correction turn in the same session. It keeps
-the investigation and uses stable correction identities, so recovery replays
-settled corrections without redoing inference. The invalid report is attached
-to the correction's own input so compaction cannot remove what it must repair.
-Corrections remain subject to
-the review deadline and existing compaction; an identical invalid response
-repeated after feedback is reported as stalled. The schema stays strict and
-findings still require independent validation before publication.
-Settled stages replay before model resolution. A final Host commit failure does
-not repeat completed inference. Unfinished read/model effects retain the kernel's
-safe-to-replay semantics; a crash may repeat unacknowledged inference and cost.
-The Bubblewrap version and worker binary hash participate in runtime tool bindings,
-so an incompatible tool deployment cannot silently resume an active command.
-
-New findings require P0–P3 priorities and are sorted by priority. Legacy reports
-without a priority remain readable without assigning an invented one. Validation
-checks changed-path membership, actual source locations, required fields,
-duplicate anchors and exact evidence against immutable Git blobs, independently
-of the model's prompt or retrieved pages. Locations can refer to the head or the
-merge base (before the change). GitHub supports LEFT-side deleted lines and
-RIGHT-side added/context lines; valid locations outside inline diff geometry
-remain findings in the review body. Old paths of renamed files also use the body
-when they cannot be addressed reliably inline. LF and CRLF terminators are
-normalized for quotation matching, but source text must match complete lines.
-These checks do not prove semantic correctness.
-A final PR/policy check retains findings as superseded when the target changed.
-
-The Host saves the result before removing the checkout. A recovered execution
-recreates its inspection environment from the same commits. Cleanup failure is
-reported; retrying a completed run reconciles leftover workspace resources
-without rerunning inference. Durable transcripts and findings survive cleanup.
-
-### GitHub service, recovery and publication
-
-`renoa-host <host.json> github-service <service.json>` binds a loopback HTTP
-listener at `/v1/github/webhook`. The ingress exposes only that path. Signature
-verification and the Host transaction finish before HTTP 202; no model runs in
-the request handler. The service scans GitHub's retained delivery history every
-five minutes and on first startup, following authenticated same-endpoint pages.
-Failed deliveries without a durable Host receipt are requested again from GitHub;
-the replay uses the same delivery GUID. The next scan time is committed before
-API calls and survives restart. This relies on GitHub's delivery retention window;
-an outage beyond that window needs an explicit review request. Scanning the whole
-retained window avoids assumptions about webhook ordering or cursor monotonicity.
-
-The dispatcher runs one review at a time without blocking Host routines or chat
-surfaces. Queued automatic requests for older heads are skipped using the current
-GitHub PR state; late webhook arrival cannot displace a newer commit. A manual
-request still reconciles the live PR before freezing input.
-
-Before launch, the Host records the absolute deadline. A separate systemd user
-service owns each review's process group: `RuntimeMaxSec` uses the remaining
-deadline, `KillMode=control-group` covers model bridges and tool descendants, and
-`TimeoutStopSec=30s` allows cooperative cancellation before forced termination.
-`ExecStopPost` calls the Host reaper after exit, timeout or crash. It removes only
-that request's checkout and temporary JWT/launcher files under the review lease,
-and records an incomplete outcome when the worker left none. Dispatcher startup
-also reconciles jobs without a live unit, covering a reboot or failed launch.
-The user manager has lingering enabled, so a receiver crash cannot abandon its
-worker's lifetime enforcement. No completed transcript is removed.
-
-Publication uses a fresh write-scoped installation token outside the model loop.
-The Host persists the exact payload before POST and rechecks the PR's current
-head and repository policy. Reviews are bound to the frozen commit, use P0–P3
-inline findings, and disclose incomplete execution or coverage. An uncertain
-POST is reconciled by bot identity, commit and exact body including a stable Host
-request marker. It never causes a blind second POST. An unresolved result is
-`needs_attention`; operator investigation is required before another request.
-Publication errors retain the completed model result and a durable retry time,
-with at least five minutes of backoff and longer GitHub retry/reset hints honored.
-
-`{"action":"publication","request_id":"<uuid>"}` through `github-review`
-retrieves sending, published (review ID and URL), suppressed or attention-required
-state. Individual comment IDs and conversational PR replies remain follow-up
-work; publication currently creates a single GitHub review with inline comments.
-
-GitHub's comment-body boundary is an outbound projection rule, not a report
-validation limit. Ordinary bodies remain unchanged. A rendered body exceeding
-65,536 characters becomes an explicitly labelled, escaped preview identifying
-the Host request and finding number where applicable. The complete structured
-report remains available through Host management, including fields and evidence
-not displayed in GitHub. The exact preview and request marker are persisted
-before POST and used for acknowledgement reconciliation. This handles the
-[observed GitHub body-size rejection](https://github.com/actions/dependency-review-action/issues/730)
-without reintroducing arbitrary per-field or aggregate review-context cutoffs.
-
-`{"action":"run","request_id":"<uuid>"}` through `github-review` retrieves the
-prepared snapshot or immutable outcome (reviewed, superseded, skipped, incomplete)
-without GitHub credentials or inference. Recoverable preparation/API failures
-hand the attempt back to dispatch with persisted backoff and the specific cause,
-clearing worker-entry evidence for the next attempt without extending the original
-deadline. Cleanup preserves that handoff. Rate limits, transient HTTP failures,
-changing PR context and cooperative interruption may retry; invalid credentials,
-configuration and other permanent failures retain a specific incomplete outcome.
-Explicit terminal model outcomes are not retried; rerunning a terminal review
-requires a new request identity. Abrupt worker death without a durable handoff
-still produces an incomplete outcome after cleanup.
-
-Review preparation has no 500-file, 256 KiB patch, 512 KiB aggregate context or
-32-instruction-path cutoff. git_changes pages through the full local comparison,
-including hidden paths, renames, deletions and binary files. This also avoids
-GitHub's 3,000-file API inventory ceiling. git_diff and git_show return byte
-cursors, so the existing 50 KiB workspace response size bounds one page, not the
-accessible source. UTF-8 boundaries are preserved; non-UTF-8 pages use lossless
-base64. These tools require full immutable commit IDs and literal relative paths,
-and disable external diff and text-conversion programs. Source survives context
-compaction in the pinned checkout and can be fetched again. Applicable base
-AGENTS.md files are retrieved through git_show, without a candidate-count cap.
-The durable transcript records retrieved inventory pages; missing paths become
-an explicit coverage limitation. Retrieval alone is not proof of review quality.
-
-Remaining boundaries have separate purposes: API JSON responses and sandbox
-transport frames retain their existing 1 MiB ceilings; raw tool pages are smaller
-and have continuation. read_file retains its existing 2,000-line/50 KiB pages;
-git_show provides byte continuation through giant lines. The review deadline,
-provider timeout, context/compaction settings and per-response tool batch size
-remain as described above, without a total tool-call or model-response quota.
-Legacy CI statuses and full CI logs remain unavailable. Dependency installation
-and test execution are deferred. Quality claims still require labeled evaluation.
-The [commit comparison API](https://docs.github.com/en/rest/commits/commits#compare-two-commits)
-supplies the merge base, separately from the current base tip. No upstream code
-was adapted for this executor. Merge-base discovery requests comparison page two
-with one commit per page: GitHub returns the same merge-base metadata there,
-without its first-page file patches. This was verified against multi-commit and
-single-commit comparisons, including an empty second-page commit list.
-
-### Evidence informing the design
-
-Primary documentation inspected on 2026-09-07 and rechecked on 2026-09-09 informs the following choices.
-Product capabilities and vendor-reported quality metrics are not independent
-evidence that Renoa has reached equivalent review quality.
-
-| Reference | Relevant behavior | Renoa design consequence |
-| --- | --- | --- |
-| [GitHub changed-files API](https://docs.github.com/en/rest/pulls/pulls#list-pull-requests-files), [review comment locations](https://docs.github.com/en/rest/pulls/comments#create-a-review-comment-for-a-pull-request) | File listing stops at 3,000; inline locations support LEFT/RIGHT diff sides. | Capture the complete local Git inventory; separate evidence validation from GitHub placement. |
-| [Git diff](https://git-scm.com/docs/git-diff) | Immutable commit comparison, rename detection, and explicit external-diff/textconv controls. | Reuse one pinned Git inspection capability across agents, with lossless continuation. |
-| [CodeRabbit review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Repository context, incremental reviews on subsequent commits, severity categories, and discussion of findings. | Keep per-PR review history; inspect surrounding code; publish concise findings that remain discussable. |
-| [Cursor: Building a better Bugbot](https://cursor.com/blog/building-bugbot) | Describes an early multi-pass/validator pipeline, then a move to agentic context gathering; measures findings resolved and evaluates on annotated diffs. | Use agentic investigation and a validation stage. Evaluate actual defects and false positives before multiplying model passes. |
-| [Qodo review architecture](https://docs.qodo.ai/code-review) | Agent review agents with a judge that merges and filters findings; repository history and persistent reviews. | Make investigation and validation replaceable. Retain the evidence and disposition of findings between runs. |
-| [Greptile scoped configuration](https://www.greptile.com/docs/code-review/greptile-config) | Directory-scoped rules and explicit context files, with visible configuration precedence. | Apply relevant repository instructions and architecture documents, and show which sources governed a run. |
-| [GitHub Copilot code review](https://docs.github.com/en/copilot/concepts/agents/code-review) | Project context gathering, configurable triggers and effort, and handoff of findings to a coding agent. | Keep review effort explicit and make structured results reusable by later fix workflows. |
-| [PR-Agent](https://github.com/The-PR-Agent/pr-agent) | A separate community-maintained open-source reviewer with configurable providers and deployment methods; it is not the current hosted Qodo implementation. | A useful inspectable reference, not a replacement Host or proof of parity with Qodo. |
-
-PR-Agent's source was inspected at commit
-`782a4e3a6c02189db3ac24240ebe6789629d40c4` (MIT license). No upstream source
-has been adapted into Renoa as part of this design.
-
-### Ownership and management
-
-Review Desk is a Host-owned reviewer identity with a review agent
-definition. Repository
-subscriptions, trigger policy, frozen run configuration, outcomes, and discussion
-context belong to the Host. A temporary review workspace belongs to one admitted
-run. The GitHub adapter owns webhook parsing, installation authentication, and
-the mapping from Host findings to GitHub reviews and comment identities.
-
-The browser and agent-facing management tools must call the same Host operations.
-The initial control panel manages repository selection, automatic review triggers,
-draft handling, model/reasoning, limits, pause/resume, manual review requests, and
-run/result inspection. Each mutation needs a stable operation identity and a
-revision check where edits can conflict; reconnecting must not submit it twice.
-The UI must explain the effective configuration and the frozen configuration
-used by an existing run rather than silently rewriting history after an edit.
-
-Browser access requires an authenticated management path to the existing shared
-Host. The current one-use passkey ticket authenticates an RCP WebSocket only;
-it is not a reusable HTTP bearer token. A management transport must bind the
-authenticated principal to an explicitly authorized Host and keep credentials
-behind that Host. Sharing `renoa.live` must not grant task authority or cause the
-coordinator to assemble agents. RCP locked decision 21 permits this separate
-management service; it does not implement its authentication or routing.
-
-### Review execution and delivery
-
-1. Validate the GitHub webhook signature over the bounded raw request body.
-   Persist the admitted delivery and its logical work identity before returning
-   success, within GitHub's response deadline. Duplicate delivery IDs and multiple
-   events requesting the same automatic review must not create duplicate work.
-   Authenticate installation/repository ownership before admitting expensive work.
-2. Default to Renoa's selected repository, non-draft PR creation, ready-for-review,
-   and new commits. Support an explicit manual request. Coalesce rapid pushes;
-   resolve the current open PR state through GitHub before selecting work, since
-   webhook arrival order is not authoritative. Closed PRs and revoked installation
-   access cannot continue to publish. GitHub does not automatically retry failed
-   webhook deliveries; reconcile retained delivery history against durable Host
-   receipts and request redelivery to recover missed work after downtime. This is event-triggered work, not a
-   new cron schedule variant.
-3. Freeze repository identity, PR, base/head commits, effective policy, model,
-   instructions, and tool composition with the admitted run. Reuse its stable
-   execution identity during restart recovery. Do not review a moving branch or
-   silently substitute a different model after a provider limit.
-4. Gather the complete changed-file inventory, relevant diff, surrounding code,
-   callers, tests, and available CI results. Explicitly record exclusions,
-   truncation, inaccessible files, and budget exhaustion. Repository instructions
-   come from the trusted base revision; changes to instructions inside the PR
-   are review material, not authority to expand access or suppress the review.
-5. Investigate concrete defects and validate candidate findings against the code.
-   Each published finding must identify the condition that triggers the problem,
-   the consequence, supporting source locations, and a useful correction.
-   Reject unsupported assertions, invalid line anchors, duplicate findings, and
-   generic style advice. A confidence number generated by the model is not proof.
-6. Persist structured findings and a publication intent before calling GitHub.
-   Recheck the PR head immediately before publication, suppress known superseded
-   work, and always bind the review to its actual commit SHA. GitHub provides no
-   atomic compare-head-and-post operation: a concurrent push can still make a
-   correctly bound review outdated, and the UI must show that honestly.
-7. Retain remote review/comment IDs and reconcile an uncertain post before any
-   retry. An unresolvable outcome becomes visible attention-required state;
-   it must not cause a blind duplicate comment. Respect API and provider backoff.
-   Retry infrastructure stages without rerunning a completed model review.
-8. Expose the same durable review result to GitHub replies, the control panel,
-   and authorized agent tools. A follow-up conversation must be able to retrieve
-   the exact output and evidence even when it starts on a different surface.
-
-GitHub's [webhook guidance](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks)
-requires a prompt response and explains that redelivery retains the delivery ID.
-Its [redelivery documentation](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks)
-states that failed deliveries are not automatically redelivered.
-Its [review API](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request)
-accepts an explicit commit and inline locations. These support durable admission
-and exact-commit publication, not a claim of exactly-once external side effects.
-
-### Composition, resource limits, and review quality
-
-The first reviewer should have repository read/search and bounded CI-context
-tools. Its GitHub write authority is exercised by the deterministic publisher,
-not exposed as a general model tool. PR text, files, and logs are untrusted input.
-The reviewer cannot inherit Arcee's shared accounts merely because they are
-available on the Host. Existing filesystem read tools already check workspace
-containment. A checkout must not carry Git credentials in its files or config.
-Use a GitHub App installation credential owned by the Host and mint short-lived
-tokens for the selected repository and required operations. GitHub documents
-[installation-scoped tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
-with a one-hour lifetime and optional repository/permission restrictions. App
-registration and installation remain deployment prerequisites; the existing
-interactive GitHub MCP connection is not proof that a review App is installed.
-
-The review composer reuses the shared loop and compaction. Machine tools come
-from the sandbox and the review agent's stored grants. The same plugin management,
-discovery, and invocation protocol is available during reviews; the Git plugin
-uses the pinned inspection sandbox. GitHub MCP supplies online repository context
-when its package and account connection are enabled. Publication remains a Host
-operation.
-
-The review composer selects the optional `renoa-code-review` skill from the
-Host's existing shared skill catalog. It pins the content-addressed revision and
-renders it into the durable review snapshot before inference. PR checkouts are
-never searched for this trusted skill. Changes to the shared skill affect new
-reviews; replay and compaction keep the frozen instructions. Additional skills
-loaded through the plugin protocol bind to the admitted stage command, then
-reattach on the next stage. The context projector replaces exact duplicate skill
-results with receipts while keeping their durable output. A skill already embedded
-in the frozen system prompt is not appended again. The inspection tools accept `include_hidden` for configuration and CI paths while retaining
-workspace containment checks.
-
-Each investigation and validation stage also uses the existing Host trace store
-in `state/review-sessions/<request-id>/trace.sqlite3`. This records model/tool latency,
-first output, reported token/cache usage and provider retries independently of
-kernel recovery state. Progress facts must be ordinary assistant text so the
-shared compactor can retain them. Responses encrypted reasoning is replayed
-unchanged, but its context estimate uses reported output usage instead of treating
-ciphertext bytes as prompt text; unknown formats retain the conservative fallback.
-
-Incomplete review outcomes remain in the Host's run and trace records for the
-control hub. The publisher settles them as suppressed before requesting GitHub
-credentials, so operational failures do not create PR noise. A submission whose
-acknowledgement was already lost is still reconciled without reposting. The
-current RCP browser console does not yet expose these Host review records; that
-management view is part of the control-panel integration.
-
-Worker entry is distinct from the pre-dispatch lifetime record. Failed launches
-retry with a persisted backoff inside the original deadline, after confirming
-the stable systemd unit is stopped. Partial launch files are then replaced.
-Per-job filesystem cleanup failures are retained and retried without preventing
-later jobs from progressing. Unknown unit state, a live execution lease and
-catalog errors still prevent dispatch; they do not prove that an owner has died.
-
-Begin with one review at a time and explicit working-context/output settings.
-Do not impose a review-wide model-call budget. The explicit lifetime is 60 minutes,
-with up to 30 minutes for one provider call. Keep review execution from blocking
-the existing routine queue.
-Keep the system/tool prefix stable, put run-specific metadata after it, and reuse
-content by immutable commit/blob identity. Record provider-reported token and
-cache usage when available; unknown cache savings or monetary cost stay unknown.
-Incremental review should reuse unchanged context and previous findings while
-still checking the current PR as a whole. Fall back to full context after a
-force-push, changed base, or incompatible review configuration.
-
-A later workspace capability can install dependencies and execute tests.
-The current inspection environment uses existing CI evidence and reports that
-tests were not executed by the reviewer. Automatic fixes,
-cross-repository graph indexing, autonomous rule learning, and multiple parallel
-investigators follow a useful measured baseline rather than precede it.
-
-Quality must be tested on fixed base/head pairs with human-labeled defects and
-clean changes, including Renoa's real persistence, retry, OAuth, and context bugs.
-Separate tuning examples from held-out cases. Track actionable precision,
-labeled-defect recall, duplicate/stale findings, missed coverage, latency, token
-usage, and cost where known. Resolution at merge is useful feedback, but does
-not by itself establish correctness: authors may accept a weak suggestion or
-defer a valid defect. Record dismissals and their reasons without automatically
-turning arbitrary PR comments into permanent review policy.
-
-Before enabling automatic publication, deterministic boundary tests must cover
-signature failure, duplicate and out-of-order events, restart after admission,
-rapid pushes, changed heads, revoked access, provider/API backoff, incomplete
-diffs, path escape, malformed findings, and lost publication responses. A labeled
-review evaluation is separate from these delivery tests; passing Rust tests alone
-does not establish that the reviewer finds useful bugs.
 
 ## Locked decisions
 

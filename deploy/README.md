@@ -9,7 +9,6 @@ the current deployment:
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
 - `renoa-host` runs the surface-independent routine scheduler; and
 - `renoa-management` serves the authenticated personal Host control panel; and
-- `renoa-github` receives signed review webhooks and supervises review work; and
 - `renoa-discord` serves saved agent-channel bindings and private plugin approval; and
 - `renoa-slack` and `renoa-telegram` expose the configured Host through their
   respective surfaces (`renoa-slack.service` and `renoa-slack-host.service` are
@@ -35,7 +34,7 @@ installation. Use SQLite's backup API for database snapshots.
 On the next deployment, stage the new backup, verify the new release's running
 binaries, services, and Host records, then replace `previous-release` and delete
 the superseded backup. Remove older release directories, uploaded archives,
-duplicate staging binaries, and unused review-tool versions after verification.
+and duplicate staging binaries after verification.
 Keep only the current release manifest under `/opt/renoa/releases/`.
 
 Drain active work before replacing its runtime or deleting its tools. Deploy
@@ -196,10 +195,8 @@ reports individual unreadable sessions without inventing idle states.
 existing personal Host and asks the loopback identity service to validate browser
 sessions. It never executes agent turns or reads the coordinator's private database.
 With `models` configured it queries the provider catalog for owner creation.
-The initial panel observes agents, sessions, schedules, shared inventory and review
-outcomes. The browser exposes owner pause/resume of existing automations and edits
-to existing review repository triggers, enabled state and draft policy. Review
-details include captured policy, worker retries and publication state. Owners can
+The initial panel observes agents, sessions, schedules and shared inventory. The
+browser exposes owner pause/resume of existing automations. Owners can
 create agents with explicit instructions, models and native grants,
 connect the Discord bot, then save Discord channel bindings. Full definition and automation editors remain
 subsequent work.
@@ -229,14 +226,15 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 32 and cuts agent-owned storage over to the
-canonical agent definition. The cutover is not a migration: it discards the
-previous agent rows, routines, review records and sessions, and it runs only
-through the explicit reset described in
+This release requires Host schema 33. A schema 28–32 catalog upgrades in place
+when the Host opens it, dropping the retired GitHub review tables. An earlier
+data root cuts agent-owned storage over to the canonical agent definition. That
+cutover is not a migration: it discards the previous agent rows, routines and
+sessions, and it runs only through the explicit reset described in
 [`docs/renoa-host-v0.md`](../docs/renoa-host-v0.md). Starting a normal Host
 process against an earlier data root fails closed with the reset command in the
 error, so stop all readers/writers of the shared Host catalog, including
-management, Slack, Telegram and GitHub workers, then run:
+management, Slack and Telegram workers, then run:
 
 ```sh
 renoa-host /home/renoa/.renoa/config/host.json reset /opt/renoa/previous-release-staging/host
@@ -247,7 +245,7 @@ non-empty backup, or one inside the data root), then applies the cutover. Host
 identity, MCP integrations, connections, catalogs, authorizations and
 credentials, installed plugins, immutable skill revisions and sources, the
 shared registry, and every workspace file are preserved; agent-owned rows, the
-session and review-inspection directories, and the agent document roots are not.
+session directories, and the agent document roots are not.
 Provision the configured agent again after the reset:
 
 ```sh
@@ -285,7 +283,7 @@ the coordinator catch-all:
 | `^/assets/.*$` | `http://127.0.0.1:7819` |
 
 Keep `/v1/identity/*`, `/connect`, credential intake and OAuth callbacks routed
-to the coordinator; preserve the separate GitHub webhook route. Both listeners
+to the coordinator. Both listeners
 remain plaintext and loopback-only behind the same HTTPS origin. Cloudflare's
 [tunnel configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/)
 replaces the full configuration, so read and preserve the current rules first.
@@ -685,89 +683,21 @@ terminal event. It received a contiguous 13-event task history, 12 events by
 replay, one command admission, and one completed terminal. The coordinator
 remained loopback-only, and the proof used the tailnet-only port above.
 
-## Soundwave GitHub review service
-
-Soundwave uses the shared Host database and review recipe. GitHub is its trigger
-and publication surface. The implementation and remaining control-panel work are
-described in [the Host architecture](../docs/renoa-host-v0.md#github-reviewer-composition).
-
-Install `deploy/skills/renoa-code-review/` into the service account's shared
-`~/.agents/skills/renoa-code-review/` directory, retaining its source/license
-files. The Host pins this skill into new reviews; updating the shared directory
-does not alter an in-progress review. Existing agents can discover the same
-skill through the shared catalog. Without it, the dedicated review system prompt
-still applies.
+## Shared Host schema readers
 
 Build all readers of the shared Host schema together:
 
 ```sh
-cargo build --release -p renoa-local -p renoa-slack -p renoa-telegram --bin renoa-host --bin renoa-workspace-tool --bin renoa-slack --bin renoa-telegram
+cargo build --release -p renoa-local -p renoa-slack -p renoa-telegram --bin renoa-host --bin renoa-slack --bin renoa-telegram
 pnpm --dir adapters/model-provider-node build
 ```
 
-Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-data root before the reset that brings it to schema 32. Install the new binaries
+Stop the Host, Slack and Telegram services and back up the consistent Host data
+root before the new Host brings it to schema 33. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
-older reader against the cut-over database. Keep the matching database snapshot and binaries
+older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must
 use that matching set; do not restore binaries automatically or retain older sets.
-
-The inspection backend requires Bubblewrap 0.12.0 or later, `/usr/bin/rg`, and
-unprivileged user namespaces. Install only the required security updates; a kernel
-upgrade is not part of this deployment. Install `renoa-workspace-tool` as a
-root-owned executable at `/opt/renoa/review-tools/<source-commit>/renoa-workspace-tool`.
-Keep that versioned path immutable while an execution references it. This version
-does not need Docker, KVM, dependency installation or a test runner.
-
-Create a private GitHub App with selected-repository access, contents/checks read,
-pull requests write, and the `pull_request` event. Enable its webhook at
-`https://renoa.live/v1/github/webhook` with a random secret. Accept the permission
-change in the existing installation as well. Convert the private App key locally:
-
-```sh
-umask 077
-openssl rsa -in app.pem -traditional -outform DER -out app.der
-```
-
-Install the DER key at `/etc/renoa/soundwave-app.der` and the exact webhook secret
-bytes at `/etc/renoa/soundwave-webhook-secret`, root-owned mode 0600. Neither key,
-secret nor installation token belongs in a repository or chat. Use
-`renoa-github.config.example.json` for `/etc/renoa/github.json`, also mode 0600.
-Its `host_config` must point to the same Host used by the daemon; it may omit
-interactive MCP/relay settings because reviews use a dedicated tool composition.
-`app_client_id` is the App's client ID; `bot_login` is its actual `[bot]` login.
-
-Install `renoa-github.service`. The example uses the existing service account
-`renoa-arcee` with UID 299; update both `user@299.service` references and the two
-runtime-directory environment variables if the account has a different UID.
-Enable its independent user manager:
-
-```sh
-sudo loginctl enable-linger renoa-arcee
-sudo systemctl start user@299.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now renoa-github.service
-```
-
-Route only `renoa.live` path `^/v1/github/webhook$` through the Cloudflare tunnel to
-`http://127.0.0.1:7821`, before the existing catch-all host rule. Preserve the RCP
-and OAuth ingress. There is no unauthenticated management API on this listener.
-
-The repository's Host policy controls triggers and draft handling. For a draft-PR
-smoke test set `enabled:true` and `skip_drafts:false` through `SetRepository` with
-the current revision. Open a new draft only after the receiver and route are ready.
-Verify an authentic `opened` delivery returns 202, one Host request is dispatched,
-the saved result produces a GitHub review on the expected SHA, and the unit,
-checkout and temporary credential files are gone afterward. Retain the run's
-transcript. Duplicate delivery must return its existing receipt.
-
-Use `journalctl -u renoa-github` for admission and publication status, and the
-`renoa-review-<request-uuid>.service` user journal for a worker. `github-review`
-actions `requests`, `run`, and `publication` read the same durable Host records.
-Before relying on unattended cleanup, exercise a short-lived test unit with a
-child process and confirm `RuntimeMaxSec`, cgroup termination and `ExecStopPost`
-on the actual host. Normal reviews have 60 minutes total and 30 minutes per model
-call; silence alone is allowed within the call deadline.
 
 ## Shared Agent Plugin registry
 
