@@ -242,9 +242,9 @@ The challenge body is cancelled without opening an enduring event stream;
 metadata requests carry no MCP credential and redirects remain blocked. Fresh
 authorization also uses a valid challenged scope before metadata scope defaults.
 The selected metadata URL is retained in the existing OAuth discovery state for
-subsequent exchanges and refreshes. The Host then reuses a saved issuer-bound client, uses the Renoa HTTPS Client ID Metadata
-Document when advertised, uses DCR when advertised, or requests a developer-app
-client bound to the discovered issuer. The model cannot choose a mode, issuer,
+subsequent exchanges and refreshes. The Host then reuses a saved issuer-bound client, uses DCR when advertised, uses
+the Renoa HTTPS Client ID Metadata Document when advertised, or requests a
+developer-app client bound to the discovered issuer. The model cannot choose a mode, issuer,
 or credential label. The Host validates a proposed connection without publishing
 it, then authenticates and discovers its complete catalog.
 Only one final SQLite transaction publishes the connection, catalog, and
@@ -317,8 +317,10 @@ The control origin publicly serves Renoa's non-secret Client ID Metadata
 Document with a `client_id` equal to that document's exact URL and its exact
 callback URI. The Host supplies that document only when
 the authorization server advertises CIMD. A saved pre-registered client takes
-priority; otherwise CIMD takes priority over advertised DCR. If neither is
-available, the Host requests the provider's developer-app client. Both callback
+priority; otherwise advertised DCR takes priority over CIMD, because a server
+may advertise CIMD yet refuse documents from origins it does not trust, and it
+reports that refusal only in the browser. If neither is available, the Host
+requests the provider's developer-app client. Both callback
 modes validate the state and optional `iss` value before exchange.
 
 Persisted dynamically registered clients and tokens are returned only for the
@@ -781,7 +783,7 @@ and the real process boundary:
 23. replay of the same settled OAuth management operation reads its terminal
     receipt without a second browser flow or credential POST;
 24. strict OAuth preflight accepts exactly one metadata-backed issuer, then
-    selects an existing issuer client, advertised CIMD, advertised DCR, or an
+    selects an existing issuer client, advertised DCR, advertised CIMD, or an
     issuer-bound developer client without a model-chosen fallback;
 25. a pre-registered client skips DCR, authenticates the token exchange, never
     crosses to a different issuer, and never appears in adapter output;

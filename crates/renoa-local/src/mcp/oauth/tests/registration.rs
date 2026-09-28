@@ -41,11 +41,8 @@ fn automatic_oauth_registration_follows_verified_server_metadata() {
             &credential_id,
             false,
         )
-        .expect("advertised CIMD wins"),
-        McpOAuthRegistration::client_metadata(
-            "https://renoa.example/v1/oauth/client-metadata.json"
-        )
-        .expect("expected CIMD policy")
+        .expect("advertised DCR wins over advertised CIMD"),
+        McpOAuthRegistration::dynamic()
     );
 
     let dynamic_only = process::OAuthDiscovery {
@@ -56,6 +53,24 @@ fn automatic_oauth_registration_follows_verified_server_metadata() {
         select_automatic_registration(&dynamic_only, None, &credential_id, false)
             .expect("advertised DCR is selected"),
         McpOAuthRegistration::dynamic()
+    );
+
+    let metadata_only = process::OAuthDiscovery {
+        dynamic_registration_supported: false,
+        ..discovery.clone()
+    };
+    assert_eq!(
+        select_automatic_registration(
+            &metadata_only,
+            Some("https://renoa.example/v1/oauth/client-metadata.json"),
+            &credential_id,
+            false,
+        )
+        .expect("CIMD is used when DCR is not advertised"),
+        McpOAuthRegistration::client_metadata(
+            "https://renoa.example/v1/oauth/client-metadata.json"
+        )
+        .expect("expected CIMD policy")
     );
 
     let developer_app = process::OAuthDiscovery {
