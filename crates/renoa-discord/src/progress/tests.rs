@@ -71,3 +71,30 @@ fn long_progress_keeps_the_latest_steps_within_one_discord_message() {
     assert!(body.ends_with("🔧 `bash` …"));
     assert!(body.contains("step 199 "));
 }
+
+#[test]
+fn a_tool_record_is_named_by_the_plugin_tool_it_runs() {
+    use renoa_control::TaskEventKind;
+    use renoa_protocol::{
+        CommandId, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
+    };
+
+    let kind = TaskEventKind::ExecutionEvent {
+        command_id: CommandId::new(),
+        event: ExecutionEvent {
+            event_id: ExecutionEventId::new(),
+            execution_id: ExecutionId::new(),
+            sequence: 3,
+            recorded_at_ms: 0,
+            kind: ExecutionEventKind::ToolStarted {
+                call_id: "one".to_owned(),
+                name: "tool_execute".to_owned(),
+                arguments: serde_json::json!({
+                    "reference": format!("mcp:exa:{}:web_search_exa", "a".repeat(64)),
+                }),
+            },
+        },
+    };
+    let (_, step) = Step::of(&kind);
+    assert_eq!(step, tool("one", "exa.web_search_exa"));
+}

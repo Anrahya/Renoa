@@ -56,9 +56,13 @@ impl Step {
             TaskEventKind::ExecutionEvent { command_id, event } => {
                 let step = match &event.kind {
                     ExecutionEventKind::AssistantMessage { text } => Self::Said(text.clone()),
-                    ExecutionEventKind::ToolStarted { call_id, name, .. } => Self::ToolStarted {
+                    ExecutionEventKind::ToolStarted {
+                        call_id,
+                        name,
+                        arguments,
+                    } => Self::ToolStarted {
                         call_id: call_id.clone(),
-                        name: name.clone(),
+                        name: label::tool_label(name, arguments),
                     },
                     ExecutionEventKind::ToolFinished {
                         call_id, is_error, ..
@@ -365,6 +369,8 @@ fn log_failure(subject: &str, error: &str) {
         &serde_json::json!({ "subject": subject, "error": error }),
     );
 }
+
+mod label;
 
 #[cfg(test)]
 mod tests;
