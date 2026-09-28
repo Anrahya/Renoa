@@ -16,7 +16,8 @@ pub enum ProfileEditError {
     /// The profile changed after the editor read it; nothing was written.
     #[error("the profile changed after it was read; read it again before editing")]
     Stale,
-    /// The edit named a malformed revision or an unsafe profile.
+    /// The edit named a malformed revision, or the stored profile is unsafe:
+    /// linked, not a regular file, or not UTF-8. Retrying cannot fix it.
     #[error("{0}")]
     Invalid(String),
     /// Storage failed; retrying the same edit converges.

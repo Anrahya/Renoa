@@ -153,12 +153,15 @@ impl AgentDocumentStore {
     }
 
     /// Renders this turn's documents for its system prompt: the agent's
-    /// `SOUL.md`, then the person's `USER.md`. Empty when it reads neither.
+    /// `SOUL.md`, then the person's `USER.md`. `None` when it reads neither.
     ///
     /// # Errors
     ///
     /// Returns an error when a document cannot be read.
-    pub(crate) fn render(&self) -> Result<String, AgentDefinitionError> {
+    pub(crate) fn render(&self) -> Result<Option<String>, AgentDefinitionError> {
+        if self.soul.is_none() && self.person.is_none() {
+            return Ok(None);
+        }
         let mut rendered = String::new();
         if let Some(path) = &self.soul {
             append_document(&mut rendered, Document::Soul, &read_snapshot(path)?);
@@ -169,7 +172,7 @@ impl AgentDocumentStore {
             }
             append_document(&mut rendered, Document::User, &person.read()?);
         }
-        Ok(rendered)
+        Ok(Some(rendered))
     }
 
     /// Builds the tool binding that edits this turn's documents, if it has any.
@@ -205,7 +208,14 @@ impl AgentDocumentStore {
     ) -> Result<String, ToolError> {
         match (document, &self.soul, &self.person) {
             (Document::Soul, Some(path), _) => {
-                replace_document(path, false, expected_revision, content, cancellation).await
+                replace_document(
+                    path,
+                    Missing::Refuse,
+                    expected_revision,
+                    content,
+                    cancellation,
+                )
+                .await
             }
             (Document::User, _, Some(person)) => {
                 person
@@ -222,13 +232,22 @@ impl AgentDocumentStore {
     }
 }
 
+/// What an edit does when its document file does not exist.
+#[derive(Clone, Copy)]
+enum Missing {
+    /// Fail: an agent's published `SOUL.md` is never recreated by an edit.
+    Refuse,
+    /// Read it as empty: a person's first profile edit creates the file.
+    ReadAsEmpty,
+}
+
 /// Replaces one document file against the revision its editor last read.
 ///
 /// A matching edit is idempotent, and a stale one fails without changing the
-/// file. Only a person's first profile edit may find the file absent.
+/// file.
 async fn replace_document(
     path: &Path,
-    may_be_absent: bool,
+    missing: Missing,
     expected_revision: &str,
     content: &str,
     cancellation: &CancellationToken,
@@ -249,7 +268,12 @@ async fn replace_document(
                 "agent document is not a regular file",
             ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && may_be_absent => None,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && matches!(missing, Missing::ReadAsEmpty) =>
+        {
+            None
+        }
         Err(error) => return Err(document_tool_io("inspect agent document", &error)),
     };
     let current_hash = content_hash(current.as_deref().unwrap_or_default());

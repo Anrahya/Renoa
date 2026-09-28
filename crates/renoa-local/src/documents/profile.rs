@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
+    Missing,
     files::{
         DocumentSnapshot, USER_FILE, canonical_data_directory, document_io, restrict_directory,
         revision,
@@ -54,8 +55,8 @@ pub(crate) fn read_user_profile(
 ///
 /// # Errors
 ///
-/// Returns a conflict for a stale revision, invalid input for a malformed one,
-/// and an I/O error when storage fails.
+/// Returns a conflict for a stale revision, invalid input for a malformed one
+/// or an unsafe profile, and an I/O error when storage fails.
 pub(crate) async fn replace_user_profile(
     data_directory: &Path,
     principal: Uuid,
@@ -63,8 +64,8 @@ pub(crate) async fn replace_user_profile(
     content: &str,
     cancellation: &CancellationToken,
 ) -> Result<String, ToolError> {
-    let data_directory =
-        canonical_data_directory(data_directory).map_err(|error| profile_error(&error))?;
+    let data_directory = data_directory.to_path_buf();
+    let data_directory = off_executor(move || canonical_data_directory(&data_directory)).await?;
     PersonProfile::new(&data_directory, principal)
         .replace(expected_revision, content, cancellation)
         .await
@@ -120,44 +121,65 @@ impl PersonProfile {
     ) -> Result<String, ToolError> {
         validate_revision(expected_revision)?;
         let new_revision = revision(content.as_bytes());
-        let current = self.read().map_err(|error| profile_error(&error))?.revision;
+        let profile = self.clone();
+        let current = off_executor(move || profile.read()).await?.revision;
         if current == new_revision {
             return Ok(new_revision);
         }
         if current != expected_revision {
             return Err(stale_edit());
         }
-        self.prepare().map_err(|error| profile_error(&error))?;
-        replace_document(&self.path(), true, expected_revision, content, cancellation).await
+        let profile = self.clone();
+        off_executor(move || profile.prepare()).await?;
+        replace_document(
+            &self.path(),
+            Missing::ReadAsEmpty,
+            expected_revision,
+            content,
+            cancellation,
+        )
+        .await
     }
 
-    /// Creates the private profile directories a first edit writes into.
+    /// Creates the profile directories an edit writes into and makes each one
+    /// private, including one an interrupted first edit left behind.
     ///
     /// # Errors
     ///
-    /// Returns an error when a directory cannot be created or an existing one
-    /// is a link or another file.
+    /// Returns an error when a directory cannot be created or restricted, or
+    /// an existing one is a link or another file.
     fn prepare(&self) -> Result<(), AgentDefinitionError> {
         for directory in [&self.users, &self.directory] {
-            match fs::create_dir(directory) {
-                Ok(()) => restrict_directory(directory)?,
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(source) => {
-                    return Err(document_io(
-                        "create user profile directory",
-                        directory,
-                        source,
-                    ));
-                }
+            if let Err(source) = fs::create_dir(directory)
+                && source.kind() != io::ErrorKind::AlreadyExists
+            {
+                return Err(document_io(
+                    "create user profile directory",
+                    directory,
+                    source,
+                ));
             }
+            // Refuse a link before restricting, since changing permissions
+            // follows it.
             if !plain_directory(directory)? {
                 return Err(AgentDefinitionError::ProfileDirectory {
                     path: directory.clone(),
                 });
             }
+            restrict_directory(directory)?;
         }
         Ok(())
     }
+}
+
+/// Runs blocking profile file work off the async executor.
+async fn off_executor<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, AgentDefinitionError> + Send + 'static,
+) -> Result<T, ToolError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| ToolError::internal(format!("user profile task failed: {error}")))?
+        .map_err(|error| profile_error(&error))
 }
 
 /// Reports whether `path` is a plain directory, `false` when it is absent, and
@@ -180,6 +202,15 @@ fn empty() -> DocumentSnapshot {
     }
 }
 
+/// A linked, non-regular, or non-UTF-8 profile is invalid as it stands; every
+/// other failure is a storage failure.
 fn profile_error(error: &AgentDefinitionError) -> ToolError {
-    ToolError::io(error.to_string(), false)
+    match error {
+        AgentDefinitionError::ProfileDirectory { .. }
+        | AgentDefinitionError::DocumentNotFile { .. }
+        | AgentDefinitionError::DocumentInvalidUtf8 { .. } => {
+            ToolError::invalid_input(error.to_string())
+        }
+        _ => ToolError::io(error.to_string(), false),
+    }
 }

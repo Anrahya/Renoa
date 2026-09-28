@@ -2,6 +2,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
+use renoa_agent::ToolErrorCode;
 use renoa_kernel::AgentId;
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
@@ -64,7 +65,7 @@ fn an_agent_that_reads_only_user_publishes_nothing() {
     assert!(!directory.path().join("agents").exists());
 
     let store = AgentDocumentStore::open(directory.path(), agent, user_only).expect("open");
-    assert!(store.render().expect("render").is_empty());
+    assert!(store.render().expect("render").is_none());
     assert!(
         store.binding().is_none(),
         "without a person there is nothing to edit"
@@ -184,7 +185,12 @@ fn a_turn_shows_only_the_profile_of_the_person_it_talks_to() {
     fs::create_dir_all(&profile).expect("create profile directory");
     fs::write(profile.join("USER.md"), "Lives in Asia/Kolkata.\n").expect("write profile");
 
-    let anonymous = store.clone().with_principal(None).render().expect("render");
+    let anonymous = store
+        .clone()
+        .with_principal(None)
+        .render()
+        .expect("render")
+        .expect("documents");
     assert!(anonymous.contains("source=\"SOUL.md\""));
     assert!(
         !anonymous.contains("USER.md"),
@@ -195,14 +201,16 @@ fn a_turn_shows_only_the_profile_of_the_person_it_talks_to() {
         .clone()
         .with_principal(Some(owner))
         .render()
-        .expect("render");
+        .expect("render")
+        .expect("documents");
     assert!(own.contains("source=\"USER.md\""));
     assert!(own.contains("Lives in Asia/Kolkata."));
 
     let other = store
         .with_principal(Some(stranger))
         .render()
-        .expect("render");
+        .expect("render")
+        .expect("documents");
     assert!(
         !other.contains("Asia/Kolkata"),
         "one person never sees another's"
@@ -233,6 +241,7 @@ async fn one_profile_is_shared_by_every_agent_that_talks_to_the_person() {
         second
             .render()
             .expect("render")
+            .expect("documents")
             .contains("Prefers mornings."),
         "an edit by one agent reaches the next turn of every other agent"
     );
@@ -263,6 +272,7 @@ async fn one_profile_is_shared_by_every_agent_that_talks_to_the_person() {
         first
             .render()
             .expect("render")
+            .expect("documents")
             .contains("Prefers mornings and tea.")
     );
 }
@@ -307,6 +317,56 @@ async fn a_first_profile_edit_writes_a_private_file_and_a_stale_one_writes_nothi
 }
 
 #[tokio::test]
+async fn an_edit_makes_a_profile_directory_left_open_private() {
+    let directory = tempdir().expect("temporary data directory");
+    let person = Uuid::new_v4();
+    let store = opened(directory.path(), AgentId::new()).with_principal(Some(person));
+    let users = directory.path().join("users");
+    let profile = users.join(person.to_string());
+    // A first edit stopped between creating its directories and restricting them.
+    fs::create_dir_all(&profile).expect("create profile directory");
+    for path in [&users, &profile] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("open directory");
+    }
+
+    store
+        .update(
+            Document::User,
+            &empty_revision(),
+            "Stated.\n",
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("edit");
+    assert_eq!(mode(&users), 0o700);
+    assert_eq!(mode(&profile), 0o700);
+}
+
+#[tokio::test]
+async fn a_soul_edit_never_recreates_a_removed_soul() {
+    let directory = tempdir().expect("temporary data directory");
+    let agent = AgentId::new();
+    let store = opened(directory.path(), agent);
+    let soul = directory
+        .path()
+        .join("agents")
+        .join(agent.to_string())
+        .join("SOUL.md");
+    fs::remove_file(&soul).expect("remove soul");
+
+    store
+        .update(
+            Document::Soul,
+            &empty_revision(),
+            "Replacement.\n",
+            &CancellationToken::new(),
+        )
+        .await
+        .expect_err("an edit must not recreate a removed SOUL.md");
+    assert!(!soul.exists());
+}
+
+#[tokio::test]
 async fn a_turn_without_a_person_cannot_edit_a_profile() {
     let directory = tempdir().expect("temporary data directory");
     let store = opened(directory.path(), AgentId::new());
@@ -347,7 +407,7 @@ async fn a_linked_profile_directory_is_refused() {
         error.to_string().contains("never a link"),
         "unexpected: {error}"
     );
-    store
+    let refused = store
         .update(
             Document::User,
             &empty_revision(),
@@ -356,6 +416,11 @@ async fn a_linked_profile_directory_is_refused() {
         )
         .await
         .expect_err("editing through a linked profile must fail closed");
+    assert_eq!(
+        refused.code(),
+        ToolErrorCode::InvalidInput,
+        "a linked profile is refused as it stands, not reported as a storage failure to retry"
+    );
     assert!(
         fs::read_dir(elsewhere.path())
             .expect("read escape target")
@@ -462,5 +527,11 @@ async fn content_hash_cas_rejects_a_stale_soul_revision_and_accepts_the_current_
         .await
         .expect("update with the current revision");
     assert_eq!(current.len(), 64);
-    assert!(store.render().expect("render").contains("new soul"));
+    assert!(
+        store
+            .render()
+            .expect("render")
+            .expect("documents")
+            .contains("new soul")
+    );
 }

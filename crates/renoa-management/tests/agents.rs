@@ -495,3 +495,31 @@ async fn the_owner_reads_and_edits_their_profile_for_agent_creation() {
     );
     f.close().await;
 }
+
+#[tokio::test]
+async fn a_profile_save_that_cannot_apply_is_refused_not_offered_as_a_retry() {
+    let f = Fixture::new().await;
+    let empty: Value = f.profile().await.json().await.unwrap();
+    let malformed = json!({"expected_revision": "latest", "content": "Hi.\n"});
+    let refused = f.save_profile(ORIGIN, &malformed).await;
+    assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let elsewhere = tempfile::tempdir().unwrap();
+    let users = f.files.path().join("home/users");
+    std::fs::create_dir(&users).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), users.join(f.owner.as_uuid().to_string()))
+        .unwrap();
+    let linked = json!({"expected_revision": empty["revision"], "content": "Escaped.\n"});
+    let refused = f.save_profile(ORIGIN, &linked).await;
+    assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let refused: Value = refused.json().await.unwrap();
+    assert_eq!(refused["code"], "invalid_profile");
+    assert!(
+        std::fs::read_dir(elsewhere.path())
+            .unwrap()
+            .next()
+            .is_none(),
+        "a linked profile must not receive the save"
+    );
+    f.close().await;
+}
