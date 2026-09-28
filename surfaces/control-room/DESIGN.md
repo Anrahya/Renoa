@@ -193,7 +193,7 @@ and license notices are in `licenses/`. The specification below is historical.
 
 Renoa's web system is one dark-only visual world. Warm charcoal holds every public and private surface; readable ivory carries the language; polished gold identifies the Host, selected concepts, links, focus, and action. Fine gold fibers and measured ownership lines keep the system open and connected without turning it into a dashboard of boxes.
 
-The public homepage remains conceptual and contains no Host work data. The authenticated Host uses the same palette for recorded structure and controls: every persistent agent connects directly to the Host, then compact schedule and review branches reveal only admitted state. Generated identities add specific character without determining tools, ownership, or policy.
+The public homepage remains conceptual and contains no Host work data. The authenticated Host uses the same palette for recorded structure and controls: every persistent agent connects directly to the Host, then compact schedule branches reveal only admitted state. Generated identities add specific character without determining tools, ownership, or policy.
 
 **Key Characteristics:**
 - Dark charcoal is the only page ground; there is no light theme or theme toggle.
@@ -263,9 +263,9 @@ At `1000px`, proportions tighten. At `720px`, the page becomes a single column, 
 
 ### Authenticated Host
 
-The Host uses a centered `1120px` content column with `56px` side clearance, a `76px` ruled header, and a recurring `36px` section rhythm. Its System destination places a `112px` Host node beside a vertically flowing inventory of persistent agents inside an `880px` maximum stage. Measured curves connect the Host directly to each visible `64px` agent node; `created_by` remains provenance inside agent detail and never changes this layout. Compact schedule and unfinished-review branches indent beneath their target agent. The viewport grows to `min(72vh, 720px)` and scrolls without dropping agents. Search filters the complete inventory, while an explicit control reveals earlier identities.
+The Host uses a centered `1120px` content column with `56px` side clearance, a `76px` ruled header, and a recurring `36px` section rhythm. Its System destination places a `112px` Host node beside a vertically flowing inventory of persistent agents inside an `880px` maximum stage. Measured curves connect the Host directly to each visible `64px` agent node; `created_by` remains provenance inside agent detail and never changes this layout. Compact schedule branches indent beneath their target agent. The viewport grows to `min(72vh, 720px)` and scrolls without dropping agents. Search filters the complete inventory, while an explicit control reveals earlier identities.
 
-The header exposes System, Agents, Work, and Library as separate hash destinations. System contains no work ledger, shared-resource summary, or per-agent resource counts. Agent routes retain their work, connections, automations, and review-policy controls.
+The header exposes System, Agents, Work, and Library as separate hash destinations. System contains no work ledger, shared-resource summary, or per-agent resource counts. Agent routes retain their work, connections, and automation controls.
 
 At `900px`, the System stage narrows its Host column and connecting gap. At `640px`, the header wraps, content uses `20px` side gutters, the map viewport opens to full height, the Host becomes a compact horizontal introduction, and the agent inventory becomes an uncapped indented vertical map. Branch labels and timers wrap without hiding entries. Agent subnavigation becomes a two-column flow, Work selectors wrap with a `48px` minimum height, and other controls keep a `44px` minimum height.
 
@@ -296,18 +296,17 @@ The system is mostly borderless and rectangular. Tight `5px` corners belong to c
 ### Host System Map
 - An original polished-gold Renoa emblem with preserved transparency, a `6s` brightness breath, and a `24s` connected-feed ring anchors the map on charcoal. Every circular agent identity connects directly to the Host.
 - Arcee and Soundwave retain their approved personal portraits. Every other agent receives one of twelve generated generic portraits through a stable hash of agent ID, so renaming or reordering never changes identity. The same portrait component appears in System, the agent directory, and agent detail.
-- A small separate GitHub badge appears only when recorded repository policy assigns that agent to reviews. Portrait choice never determines role or runtime policy. The current Host contract exposes no Slack or Telegram binding telemetry, so the map shows neither badge.
+- Portrait choice never determines role or runtime policy. The current Host contract exposes no Slack or Telegram binding telemetry, so the map shows neither badge.
 - Generated WebPs retain prompt sidecars beside the shipped assets; `design/identities/provenance.json` records the main identity sources and derivatives.
 - A single schedule appears as one direct link. Multiple schedules collapse into a compact group that reports total schedules, pending-run count or enabled state, and the next due timer; expansion reveals every ordered entry in a bounded scroll region.
-- Unfinished review branches show repository, pull-request number, and the actual recorded stage: `Queued`, `Prepared`, `Publishing pending`, `Retry pending`, or `Attention`. The branch never converts stored review state into a worker heartbeat.
 - Search filters all displayed persistent agents. The earlier-identities control expands the inventory explicitly. Creator breadcrumbs, creator branches, resource counts, the shared-library summary, and the work ledger do not belong on System.
 - Curves are measured from rendered node bounds and redraw for resizing and scrolling. Offscreen agents remain in the inventory while their unseen connection paths are omitted. On phones, direct Host connections bend through the open vertical map.
-- The ring turns once every `24s` and the emblem breathes once every `6s` only for a visible connected feed. Newly received session, review, or routine execution-record deltas trigger a `1.8s` sweep along the affected connection and around its agent; these sweeps never claim a worker heartbeat.
+- The ring turns once every `24s` and the emblem breathes once every `6s` only for a visible connected feed. Newly received session or routine execution-record deltas trigger a `1.8s` sweep along the affected connection and around its agent; these sweeps never claim a worker heartbeat.
 - One shared one-second clock updates live due times. Pause stops the ring, sweeps, and timers; hidden or offscreen views stop updates; reduced-motion preferences remove orbit, sweep, and clock-hand movement. Saved snapshots remain still. A development-only control labels synthetic activity as a motion demo and offers a return to the saved Host.
 
 ### Work View Selectors
-- On the separate Work destination, four ruled selectors organize Attention, Unfinished, Schedules, and Reviews. Each uses a familiar icon, a factual count, and a two-pixel Polished Gold rule for the selected state.
-- Only the selected record group is rendered in the Work flow. Empty copy names the absence directly; review history remains inside the Reviews selection.
+- On the separate Work destination, ruled selectors organize Needs attention, Activity, and Automations. The attention selector carries a factual count, and a two-pixel Polished Gold rule marks the selected state.
+- Only the selected record group is rendered in the Work flow. Empty copy names the absence directly.
 
 ### System Form
 - The public native Canvas draws three 64-strand gold bundles from one center. Each strand is a subpixel warm-gold line with varying lightness and transparency; selection fades unselected bundles while the matching HTML control remains keyboard and touch operable.
@@ -315,11 +314,11 @@ The system is mostly borderless and rectangular. Tight `5px` corners belong to c
 
 ### Ruled Records
 - Work, connection, plugin, and skill records are border-separated rows. Native disclosure controls reveal a tonal body with complete identifiers, timestamps, and evidence. State labels remain aligned right on wide screens and stack under titles on phones.
-- Preview banners name the saved snapshot and date it. Write, save, and schedule-toggle actions stay disabled; review policy may open locally for inspection, while its Save remains disabled and the surface explains that changes require the live Host.
+- Preview banners name the saved snapshot and date it. Write, save, and schedule-toggle actions stay disabled, and the surface explains that changes require the live Host.
 
 ### Host Controls and States
 - Schedule controls pause or resume a recorded routine and show pending or uncertain saves in place.
-- Repository policy editing uses native checkboxes, explicit Save and Cancel actions, revision checks, and factual effects on future admissions. Status pills use green for enabled or scheduled and a neutral wash for paused.
+- Status pills use green for enabled or scheduled and a neutral wash for paused.
 - Model and tool recipe editing and cross-agent collaboration have no current control pattern; they remain future API work.
 
 ## Do's and Don'ts
@@ -329,13 +328,13 @@ The system is mostly borderless and rectangular. Tight `5px` corners belong to c
 - **Do** connect the Host directly to every persistent agent and attach schedules only to their recorded target agent.
 - **Do** keep System structural; place work records and shared resources in their separate destinations.
 - **Do** use stable record identities, timestamps, and explicit read-only language wherever a preview cannot act.
-- **Do** preserve revision-safe schedule and repository policy controls on the live Host.
+- **Do** preserve revision-safe schedule controls on the live Host.
 - **Do** preserve stable ID-based assignment across the twelve generic portraits and retain the named Arcee and Soundwave artwork; keep prompt sidecars and provenance with generated assets.
 - **Do** preserve a still, complete homepage composition; keep saved Host snapshots still and suppress System motion when paused, hidden, offscreen, or reduced motion is preferred.
 
 ### Don't:
 - **Don't** introduce card grids, decorative rooms, or a permanent inspector into the Host.
-- **Don't** use portraits to infer tools, ownership, agent role, or policy; keep GitHub as a separate badge sourced from repository assignment.
+- **Don't** use portraits to infer tools, ownership, agent role, or policy.
 - **Don't** add a light theme, blue accents, or a theme toggle.
 - **Don't** invent Slack or Telegram binding badges when the Host snapshot does not expose that telemetry.
 - **Don't** derive operational grouping from `created_by`, names, assignments, or creator history; creation is provenance only.
