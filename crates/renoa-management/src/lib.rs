@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use renoa_local::{HostObserver, HostRoutineControl};
+use renoa_local::{HostAutomationControl, HostObserver};
 use renoa_protocol::PrincipalId;
 use serde::Serialize;
 use tokio::net::TcpListener;
@@ -21,10 +21,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod agents;
+mod automations;
 mod discord;
 mod identity;
 mod profile;
-mod routines;
 
 fn origin_failure(state: &ManagementState, headers: &HeaderMap) -> Option<Response> {
     let mut origins = headers.get_all(header::ORIGIN).iter();
@@ -76,7 +76,7 @@ struct ManagementState {
     observer: HostObserver,
     identity: identity::IdentityClient,
     owner: PrincipalId,
-    routines: HostRoutineControl,
+    automations: HostAutomationControl,
     origin: String,
     agents: Option<renoa_local::LocalHost>,
     discord: renoa_discord::DiscordControl,
@@ -99,14 +99,14 @@ impl ManagementApi {
         if observer.host_id() != host_id {
             return Err(ManagementError::HostMismatch);
         }
-        let origin = routines::validate_origin(public_origin)?;
+        let origin = automations::validate_origin(public_origin)?;
         Ok(Self {
             assets: None,
             state: Arc::new(ManagementState {
                 observer,
                 identity: identity::IdentityClient::new(identity_address)?,
                 owner,
-                routines: HostRoutineControl::open(root, host_id, owner.as_uuid())?,
+                automations: HostAutomationControl::open(root, host_id, owner.as_uuid())?,
                 origin,
                 agents: None,
                 discord: renoa_discord::DiscordControl::open(root)?,
@@ -179,8 +179,8 @@ impl ManagementApi {
                 axum::routing::post(discord::bind),
             )
             .route(
-                "/v1/host/routines/{routine_id}/enabled",
-                axum::routing::post(routines::set_enabled),
+                "/v1/host/automations/{automation_id}/enabled",
+                axum::routing::post(automations::set_enabled),
             )
             .layer(DefaultBodyLimit::max(4096))
             .route(

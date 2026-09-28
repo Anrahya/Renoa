@@ -1,4 +1,4 @@
-use super::{LocalHost, LocalHostError, RoutineRun, store};
+use super::{AutomationRun, LocalHost, LocalHostError, store};
 use crate::{LocalTurnOutcome, TurnObservation};
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
 use std::{sync::Arc, time::Duration};
@@ -32,13 +32,13 @@ impl AgentEventSink for HeadlessProgress {
 }
 
 impl LocalHost {
-    /// Runs the Host-owned routine scheduler until shutdown. One process owns
+    /// Runs the Host-owned automation scheduler until shutdown. One process owns
     /// admission/execution; shutdown drains the active turn before returning.
     /// # Errors
     /// Returns ownership, storage, and execution infrastructure failures. Pending
     /// commands remain durable and are replayed by the next service instance.
-    pub async fn run_routines(&self, shutdown: CancellationToken) -> Result<(), LocalHostError> {
-        let lock = self.config.database.with_file_name(".routines.lock");
+    pub async fn run_automations(&self, shutdown: CancellationToken) -> Result<(), LocalHostError> {
+        let lock = self.config.database.with_file_name(".automations.lock");
         let lease =
             tokio::task::spawn_blocking(move || crate::host::lease::ExecutionLease::acquire(&lock))
                 .await??;
@@ -47,7 +47,7 @@ impl LocalHost {
             let database = self.config.database.clone();
             let next = tokio::task::spawn_blocking(move || store::next(&database, now)).await??;
             if let Some(run) = next {
-                self.execute_routine_run(run).await?;
+                self.execute_automation_run(run).await?;
             } else {
                 tokio::select! {()=shutdown.cancelled()=>{},()=tokio::time::sleep(Duration::from_secs(1))=>{}}
             }
@@ -56,7 +56,10 @@ impl LocalHost {
         Ok(())
     }
 
-    pub(super) async fn execute_routine_run(&self, run: RoutineRun) -> Result<(), LocalHostError> {
+    pub(super) async fn execute_automation_run(
+        &self,
+        run: AutomationRun,
+    ) -> Result<(), LocalHostError> {
         let workspace = self.agent_workspace(run.agent_id).await?;
         let session = self
             .ensure_agent_session(run.agent_id, &workspace, run.session_id)
@@ -69,7 +72,7 @@ impl LocalHost {
                 TurnObservation::from_unix_milliseconds(run.admitted_at_ms)?,
                 Arc::new(HeadlessProgress(cancellation.clone())),
                 cancellation,
-                // A routine records no person, so its turn has no USER.md.
+                // An automation records no person, so its turn has no USER.md.
                 None,
             )
             .await?;

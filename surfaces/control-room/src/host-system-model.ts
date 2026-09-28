@@ -1,10 +1,10 @@
-import type { Agent, HostSnapshot, Routine } from "./host-contract";
+import type { Agent, HostSnapshot, Automation } from "./host-contract";
 
-export function scheduleSummary(routines: Routine[]) {
-  const priority = (r: Routine) => r.pending_runs ? 0 : r.enabled ? 1 : 2;
-  const ordered = [...routines].sort((a, b) => priority(a) - priority(b) || a.next_due_ms - b.next_due_ms || a.id.localeCompare(b.id));
+export function scheduleSummary(automations: Automation[]) {
+  const priority = (r: Automation) => r.pending_runs ? 0 : r.enabled ? 1 : 2;
+  const ordered = [...automations].sort((a, b) => priority(a) - priority(b) || a.next_due_ms - b.next_due_ms || a.id.localeCompare(b.id));
   return { ordered, next: ordered.filter(r => r.enabled && !r.pending_runs).sort((a, b) => a.next_due_ms - b.next_due_ms)[0],
-    pending: routines.reduce((total, r) => total + r.pending_runs, 0), paused: routines.filter(r => !r.enabled).length };
+    pending: automations.reduce((total, r) => total + r.pending_runs, 0), paused: automations.filter(r => !r.enabled).length };
 }
 
 export function findAgents(agents: Agent[], query: string): Agent[] {
@@ -17,7 +17,7 @@ function executionRecords(host: HostSnapshot, agent: string): string {
     host.sessions.filter(s => s.agent_id === agent).map(s => s.observation === "available"
       ? [s.id, s.event_count, s.queued_operations, s.active_operation, s.latest_operation]
       : [s.id, s.observation]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-    host.routines.filter(r => r.agent_id === agent).map(r => [r.id, r.pending_runs, r.completed_runs]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    host.automations.filter(r => r.agent_id === agent).map(r => [r.id, r.pending_runs, r.completed_runs]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
   ]);
 }
 
@@ -28,11 +28,11 @@ export function changedAgents(before: HostSnapshot | null, after: HostSnapshot):
     executionRecords(before, agent.id) !== executionRecords(after, agent.id)).map(a => a.id);
 }
 
-export function scheduleCountdown(routine: Routine, now: number | null): string {
-  if (routine.pending_runs > 0) return "Pending";
-  if (!routine.enabled) return "Paused";
+export function scheduleCountdown(automation: Automation, now: number | null): string {
+  if (automation.pending_runs > 0) return "Pending";
+  if (!automation.enabled) return "Paused";
   if (now === null) return "Scheduled";
-  const seconds = Math.ceil((routine.next_due_ms - now) / 1000);
+  const seconds = Math.ceil((automation.next_due_ms - now) / 1000);
   if (seconds <= 0) return "Due";
   const days = Math.floor(seconds / 86_400);
   const hours = Math.floor(seconds / 3600) % 24;

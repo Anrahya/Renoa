@@ -165,7 +165,7 @@ impl Tool for Manage {
                         model,
                         behavior,
                         documents,
-                        routine: None,
+                        automation: None,
                     };
                     let definition = self
                         .host
@@ -252,7 +252,7 @@ fn description() -> String {
             .expect("writing to a String cannot fail");
     }
     description.push_str(
-        "Use the user's chosen name; otherwise choose a short job name of 1-2 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Every agent receives plugin management and discovery. tools selects machine access only; you cannot grant machine tools to yourself. Explicit settings replace template defaults. Select only the machine tools the job needs, and reuse exact connection ids from plugin_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use routine_manage.",
+        "Use the user's chosen name; otherwise choose a short job name of 1-2 words, such as X Desk, News, or Research. Avoid technical slugs, ids, and redundant agent or manager labels. To rename, list first and pass the exact current name as expected_name; identity, sessions, capabilities, and connections stay the same. Every agent receives plugin management and discovery. tools selects machine access only; you cannot grant machine tools to yourself. Explicit settings replace template defaults. Select only the machine tools the job needs, and reuse exact connection ids from plugin_manage list. Creation persists a separate agent with its own sessions. A repeated identical call reuses the same agent. List returns compact pages; pass next_cursor back as cursor until it is absent. Scheduling is not available in this operation; use automation_manage.",
     );
     description
 }

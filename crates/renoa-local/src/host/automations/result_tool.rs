@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(crate) fn binding(host: Arc<HostConfig>, actor: AgentId) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-routine-results-v2", Arc::new(Results {
+    AgentToolBinding::new("renoa-automation-results-v2", Arc::new(Results {
         host:LocalHost {config:host}, actor,
         spec:ToolSpec {
-            name:capabilities::ROUTINE_RESULTS.to_owned(),
-            description:"Read results from this Host's scheduled or manually triggered routine runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task, output and execution session. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
+            name:capabilities::AUTOMATION_RESULTS.to_owned(),
+            description:"Read results from this Host's scheduled or manually triggered automation runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task, output and execution session. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
             input_schema:input_schema(),
         },
     }), EffectRecovery::SafeToReplay)
@@ -68,7 +68,7 @@ impl Tool for Results {
             if cancellation.is_cancelled() {
                 return Err(ToolError::cancelled("result lookup cancelled", false));
             }
-            if call.name != capabilities::ROUTINE_RESULTS {
+            if call.name != capabilities::AUTOMATION_RESULTS {
                 return Err(ToolError::invalid_input("wrong result tool binding"));
             }
             let input: Input = serde_json::from_value(call.arguments)
@@ -78,7 +78,7 @@ impl Tool for Results {
                 Input::List { agent_id, before } => {
                     let runs = self
                         .host
-                        .routine_results(actor, agent_id.unwrap_or(actor), before)
+                        .automation_results(actor, agent_id.unwrap_or(actor), before)
                         .await
                         .map_err(|e| ToolError::invalid_input(e.to_string()))?;
                     let next = if runs.len() == 20 {
@@ -89,7 +89,7 @@ impl Tool for Results {
                     json!({"runs":runs,"next_before":next})
                 }
                 Input::Read { id } => {
-                    json!({"run":self.host.routine_result(actor,id).await.map_err(|e|ToolError::invalid_input(e.to_string()))?})
+                    json!({"run":self.host.automation_result(actor,id).await.map_err(|e|ToolError::invalid_input(e.to_string()))?})
                 }
             };
             Ok(ToolOutput {

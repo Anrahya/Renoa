@@ -8,7 +8,7 @@ import type { HostSnapshot } from "./host-contract";
 import type { Controls } from "./host-controls";
 import { SessionRow } from "./host-records";
 import { PageHeading, NoResults } from "./host-desk";
-import { RoutineTimeline } from "./host-routine-timeline";
+import { AutomationTimeline } from "./host-automation-timeline";
 import { agentName, sessionNeedsAttention } from "./host-presentation";
 
 export function WorkView({ host, controls }: { host: HostSnapshot; controls: Controls }) {
@@ -19,7 +19,7 @@ export function WorkView({ host, controls }: { host: HostSnapshot; controls: Con
   const scoped = (id: string | null) => owner === "all" || owner === id;
   const sessions = host.sessions.filter(session => scoped(session.agent_id) && `${session.id} ${agentName(host, session.agent_id)}`.toLocaleLowerCase().includes(term));
   const interrupted = sessions.filter(sessionNeedsAttention);
-  const routines = host.routines.filter(routine => scoped(routine.agent_id));
+  const automations = host.automations.filter(automation => scoped(automation.agent_id));
   return <main id="host-main" className="host-desk">
     <PageHeading title="Work" description="What happened, what needs you, and what starts next." />
     <Tabs value={tab} onValueChange={value => { setTab(value); setQuery(""); }} className="gap-6">
@@ -28,7 +28,7 @@ export function WorkView({ host, controls }: { host: HostSnapshot; controls: Con
       <TabsContent value="activity"><div className="desk-toolbar"><h2 className="text-base font-medium">Recorded activity</h2><div className="desk-search"><InputGroup><InputGroupAddon><MagnifyingGlass /></InputGroupAddon><InputGroupInput type="search" aria-label="Search work" placeholder="Search records, outcomes or agents…" value={query} onChange={event => setQuery(event.target.value)} /></InputGroup></div></div>
         {sessions.map(session => <SessionRow key={session.id} {...{ session, host }} />)}{!sessions.length && <NoResults title={term ? "No matching records" : "No work recorded yet"} clear={term ? () => setQuery("") : undefined} />}
       </TabsContent>
-      <TabsContent value="automations"><RoutineTimeline key={owner} {...{ host, controls, routines }} /></TabsContent>
+      <TabsContent value="automations"><AutomationTimeline key={owner} {...{ host, controls, automations }} /></TabsContent>
     </Tabs>
   </main>;
 }

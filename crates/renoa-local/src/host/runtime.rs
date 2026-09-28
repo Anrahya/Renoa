@@ -154,11 +154,11 @@ pub(crate) fn protocol_bindings(
         session_id,
         command_id,
     ));
-    controls.push(super::routines::result_tool::binding(
+    controls.push(super::automations::result_tool::binding(
         Arc::clone(host),
         agent,
     ));
-    controls.push(super::routines::tool::binding(
+    controls.push(super::automations::tool::binding(
         Arc::clone(host),
         agent,
         session_id,

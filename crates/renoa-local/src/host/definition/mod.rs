@@ -34,13 +34,13 @@ pub const MAX_AGENT_PAGE: usize = 20;
 
 const AGENT_ID_DOMAIN: &str = "renoa.agent.create.v1";
 
-/// The optional first routine created with a new agent.
+/// The optional first automation created with a new agent.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct AgentRoutine {
+pub struct AgentAutomation {
     pub name: String,
     pub prompt: String,
-    pub schedule: super::routines::RoutineSchedule,
+    pub schedule: super::automations::AutomationSchedule,
     pub enabled: bool,
 }
 
@@ -58,7 +58,7 @@ pub struct AgentCreateRequest {
     /// Exact caller-selected existing Host connection ids.
     #[serde(default)]
     pub connections: BTreeSet<String>,
-    pub routine: Option<AgentRoutine>,
+    pub automation: Option<AgentAutomation>,
     pub model: Option<AgentModelSelection>,
     pub behavior: Option<AgentBehavior>,
     pub documents: Option<AgentDocuments>,
@@ -79,7 +79,7 @@ impl AgentCreateRequest {
             instructions: Some(instructions.into()),
             tools: None,
             connections: BTreeSet::new(),
-            routine: None,
+            automation: None,
             model: None,
             behavior: None,
             documents: None,
@@ -99,7 +99,7 @@ impl AgentCreateRequest {
             instructions: None,
             tools: None,
             connections: BTreeSet::new(),
-            routine: None,
+            automation: None,
             model: None,
             behavior: None,
             documents: None,
@@ -133,10 +133,10 @@ impl AgentCreateRequest {
         self
     }
 
-    /// Attaches an optional first routine.
+    /// Attaches an optional first automation.
     #[must_use]
-    pub fn with_routine(mut self, routine: AgentRoutine) -> Self {
-        self.routine = Some(routine);
+    pub fn with_automation(mut self, automation: AgentAutomation) -> Self {
+        self.automation = Some(automation);
         self
     }
 }

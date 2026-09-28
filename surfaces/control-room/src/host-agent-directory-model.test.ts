@@ -4,7 +4,7 @@ import { directorySummary } from "./host-agent-directory-model";
 import { agentExample } from "./agent-work-preview/agent-example";
 
 const agent = { id: "agent", name: "Agent", created_by: null, preset_id: null };
-const host: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [] };
+const host: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], automations: [], connections: [], plugins: [], skills: [] };
 
 describe("agent directory observations", () => {
   it("keeps missing live telemetry explicit instead of substituting preview activity", () => {

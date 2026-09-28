@@ -39,7 +39,7 @@ export const pluginCapabilities = (plugin: CapabilityPlugin) => plugin.groups.fl
 export function initialConfiguration(name: string): Configuration {
   return { name, model: exampleModels[0]!, reasoning: "Medium", maxTokens: 8192,
     purpose: "Help me manage research, communication and scheduled work. Use the capabilities selected for this agent and report uncertain outcomes clearly.",
-    behavior: "Be direct, thoughtful and practical. Keep routine updates concise. Ask when a decision needs my judgment.",
+    behavior: "Be direct, thoughtful and practical. Keep automation updates concise. Ask when a decision needs my judgment.",
     preferences: "My timezone is Asia/Kolkata. Keep briefings short and link to original sources.",
     capabilities: ["read", "search", "web", "mail-read", "mail-send", "research", "writing"] };
 }

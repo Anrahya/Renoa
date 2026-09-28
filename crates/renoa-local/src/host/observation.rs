@@ -14,7 +14,7 @@ mod sessions;
 mod tests;
 
 pub use inventory::{
-    ObservedAgent, ObservedConnection, ObservedPlugin, ObservedRoutine, ObservedSkill,
+    ObservedAgent, ObservedAutomation, ObservedConnection, ObservedPlugin, ObservedSkill,
 };
 pub use sessions::{
     ObservedOperation, ObservedOperationState, ObservedSession, ObservedSessionState,
@@ -28,7 +28,7 @@ pub struct HostObservation {
     pub host_id: Uuid,
     pub agents: Vec<ObservedAgent>,
     pub sessions: Vec<ObservedSession>,
-    pub routines: Vec<ObservedRoutine>,
+    pub automations: Vec<ObservedAutomation>,
     pub connections: Vec<ObservedConnection>,
     pub plugins: Vec<ObservedPlugin>,
     pub skills: Vec<ObservedSkill>,
@@ -83,7 +83,7 @@ impl HostObserver {
             host_id: self.host_id,
             agents: inventory::agents(&tx)?,
             sessions: Vec::new(),
-            routines: inventory::routines(&tx)?,
+            automations: inventory::automations(&tx)?,
             connections: inventory::connections(&tx)?,
             plugins: inventory::plugins(&tx)?,
             skills: inventory::skills(&tx)?,

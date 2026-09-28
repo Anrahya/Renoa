@@ -716,7 +716,7 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    each with its own Host session. Configuration revisions and per-target
    workspaces other than the agent's own remain unimplemented.
    The separate personal Host management adapter provides authenticated observation
-   plus narrow routine mutations, not RCP node provisioning.
+   plus narrow automation mutations, not RCP node provisioning.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.

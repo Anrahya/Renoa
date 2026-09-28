@@ -5,9 +5,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel, RoutineMutation,
-    RoutineSchedule, RoutineSpec, host_storage::create_session_storage,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AutomationMutation,
+    AutomationSchedule, AutomationSpec, LocalHost, LocalHostAdapters, LocalModelConfiguration,
+    ModelProvider, ReasoningLevel, host_storage::create_session_storage,
     selection::RuntimeSelection,
 };
 
@@ -117,7 +117,7 @@ async fn observes_owned_sessions_without_loading_models_or_repairing_runtime_log
 }
 
 #[tokio::test]
-async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets() {
+async fn projects_shared_inventory_and_automation_mutations_without_copying_secrets() {
     let root = tempfile::tempdir().expect("root");
     let host = host(root.path());
     let creator = agent(&host).await;
@@ -145,16 +145,16 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
         .await
         .expect("specialist");
     let id = Uuid::new_v4();
-    let routine = host
-        .manage_routine(
+    let automation = host
+        .manage_automation(
             bot.id,
             id,
-            RoutineMutation::Create {
-                spec: RoutineSpec {
+            AutomationMutation::Create {
+                spec: AutomationSpec {
                     agent_id: bot.id,
                     name: "Digest".to_owned(),
-                    prompt: "PRIVATE ROUTINE PROMPT".to_owned(),
-                    schedule: RoutineSchedule::Daily {
+                    prompt: "PRIVATE AUTOMATION PROMPT".to_owned(),
+                    schedule: AutomationSchedule::Daily {
                         hour: 9,
                         minute: 0,
                         timezone: "Asia/Kolkata".to_owned(),
@@ -166,11 +166,11 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
             CancellationToken::new(),
         )
         .await
-        .expect("routine");
+        .expect("automation");
     let observer = HostObserver::open(root.path()).expect("observer");
     let snapshot = observer.snapshot().await.expect("snapshot");
-    assert_eq!(snapshot.routines.len(), 1);
-    assert_eq!(snapshot.routines[0].revision, routine.revision);
+    assert_eq!(snapshot.automations.len(), 1);
+    assert_eq!(snapshot.automations[0].revision, automation.revision);
     assert_eq!(
         snapshot.connections[0].selected_by_agents,
         vec![bot.id.to_string()]
@@ -180,15 +180,15 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
     for secret in [
         "SECRET HEADER",
         "PRIVATE INSTRUCTIONS",
-        "PRIVATE ROUTINE PROMPT",
+        "PRIVATE AUTOMATION PROMPT",
         "https://example.com",
     ] {
         assert!(!encoded.contains(secret));
     }
-    host.manage_routine(
+    host.manage_automation(
         bot.id,
         Uuid::new_v4(),
-        RoutineMutation::Delete {
+        AutomationMutation::Delete {
             id,
             expected_revision: 1,
         },
@@ -202,7 +202,7 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
             .snapshot()
             .await
             .expect("after delete")
-            .routines
+            .automations
             .is_empty()
     );
 }

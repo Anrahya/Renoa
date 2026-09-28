@@ -1,7 +1,7 @@
 export interface Agent { id: string; name: string; created_by: string | null; preset_id: string | null }
 export type Schedule = { kind: "once"; at: string } | { kind: "interval"; hours: number } |
   { kind: "daily"; hour: number; minute: number; timezone: string };
-export interface Routine { id: string; agent_id: string; name: string; schedule: Schedule; enabled: boolean;
+export interface Automation { id: string; agent_id: string; name: string; schedule: Schedule; enabled: boolean;
   revision: number; next_due_ms: number; pending_runs: number; completed_runs: number }
 export interface Operation { id: string; command_id: string; position: number;
   state: "queued" | "unfinished" | "outcome_unknown" | "waiting" | "completed" | "failed" | "cancelled" }
@@ -11,7 +11,7 @@ export type Session = { id: string; agent_id: string | null } & (
 export interface Connection { id: string; catalog_available: boolean; tool_count: number; selected_by_agents: string[] }
 export interface Plugin { digest: string; name: string; version: string | null }
 export interface Skill { digest: string; name: string }
-export interface HostSnapshot { host_id: string; agents: Agent[]; sessions: Session[]; routines: Routine[];
+export interface HostSnapshot { host_id: string; agents: Agent[]; sessions: Session[]; automations: Automation[];
   connections: Connection[]; plugins: Plugin[]; skills: Skill[] }
 
 type RecordValue = Record<string, unknown>;
@@ -37,7 +37,7 @@ export function parseHost(value: unknown): HostSnapshot {
     !array(value.sessions, v => record(v) && id(v.id) && nullable(v.agent_id, id) && (
       v.observation === "unavailable" ? text(v.reason) : v.observation === "available" && count(v.event_count) &&
       count(v.queued_operations) && operation(v.active_operation) && operation(v.latest_operation))) ||
-    !array(value.routines, v => record(v) && id(v.id) && id(v.agent_id) && text(v.name) && schedule(v.schedule) &&
+    !array(value.automations, v => record(v) && id(v.id) && id(v.agent_id) && text(v.name) && schedule(v.schedule) &&
       typeof v.enabled === "boolean" && count(v.revision) && count(v.next_due_ms) && count(v.pending_runs) && count(v.completed_runs)) ||
     !array(value.connections, v => record(v) && text(v.id) && typeof v.catalog_available === "boolean" && count(v.tool_count) && array(v.selected_by_agents, text)) ||
     !array(value.plugins, v => record(v) && text(v.digest) && text(v.name) && nullable(v.version, text)) ||

@@ -211,7 +211,7 @@ recovery instruction. `inspect` includes these action delivery records.
 In channels, setup stops with an instruction to continue privately; setup URLs
 are never published into channels.
 
-Replies, progress updates, and routine results use Slack's native `markdown`
+Replies, progress updates, and automation results use Slack's native `markdown`
 block, so ordinary model Markdown renders as headings, lists, links, and code.
 Top-level text is retained for notification and accessibility fallback. Rendering
 stays in this adapter; the Host and kernel retain the original response.
@@ -251,23 +251,23 @@ kernel history. Tokens are not stored in the surface database or logged.
 
 The adapter uses existing Rust HTTP, WebSocket, and SQLite dependencies.
 
-## Routine result delivery
+## Automation result delivery
 
-The separate `renoa-host` service owns routine scheduling and execution. Slack only
+The separate `renoa-host` service owns automation scheduling and execution. Slack only
 projects completed Host results into the agent's ready channel. Schema 6 adds
 a delivery cursor and durable outbox: admission and cursor advancement commit
 together, posting intent precedes the Slack call, and unreceipted posts remain
-unknown after restart. `inspect` exposes recent routine delivery states. A missing
+unknown after restart. `inspect` exposes recent automation delivery states. A missing
 channel binding leaves that bot's result waiting without blocking other bots;
 reconnecting Slack drains retained Host results.
 Agents support one-time dates, daily schedules, and hourly intervals through
-`routine_manage`, including revision-checked deletion. Ask the agent to delete
+`automation_manage`, including revision-checked deletion. Ask the agent to delete
 an automation to remove it and stop future runs; past results remain readable and
 already-admitted runs finish. For example, ask an agent to run a task once tomorrow at
 2 pm in your timezone. One-time schedules disarm when durably queued; an offline
 Host catches up once after restart. Results use the same delivery path.
-Schema 8 freezes delivered routine excerpts into the next admitted chat prompt,
+Schema 8 freezes delivered automation excerpts into the next admitted chat prompt,
 with their Host run IDs. Existing delivered results are included too. Completed
 uncancelled turns suppress repeated insertion; `!new` can recover recent results.
-`routine_results` reads complete or older Host outputs without rerunning a task.
-See the Host architecture document for routine timing, management, and launch settings.
+`automation_results` reads complete or older Host outputs without rerunning a task.
+See the Host architecture document for automation timing, management, and launch settings.

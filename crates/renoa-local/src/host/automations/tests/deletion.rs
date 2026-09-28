@@ -3,22 +3,22 @@ use super::*;
 async fn change(
     h: &LocalHost,
     actor: AgentId,
-    mutation: RoutineMutation,
-) -> Result<RoutineRecord, LocalHostError> {
-    h.manage_routine(actor, Uuid::new_v4(), mutation, 0, CancellationToken::new())
+    mutation: AutomationMutation,
+) -> Result<AutomationRecord, LocalHostError> {
+    h.manage_automation(actor, Uuid::new_v4(), mutation, 0, CancellationToken::new())
         .await
 }
 
 #[tokio::test]
 async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     let (_d, h, parent, child) = fixture().await;
-    let record = change(&h, parent, RoutineMutation::Create { spec: spec(child) })
+    let record = change(&h, parent, AutomationMutation::Create { spec: spec(child) })
         .await
         .expect("create");
     let run = store::next(&h.config.database, record.next_due_ms)
         .expect("admit")
         .expect("run");
-    h.execute_routine_run(run.clone())
+    h.execute_automation_run(run.clone())
         .await
         .expect("automation");
     let workspace = h.agent_workspace(child).await.expect("workspace");
@@ -29,7 +29,10 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     let output = chat
         .execute_turn(
             Uuid::new_v4(),
-            vec![ContentBlock::text(format!("delete routine {}", record.id))],
+            vec![ContentBlock::text(format!(
+                "delete automation {}",
+                record.id
+            ))],
             Arc::new(Quiet),
         )
         .await
@@ -38,12 +41,12 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
         matches!(output,LocalTurnOutcome::Completed {output,..} if output=="Automation deleted")
     );
     assert!(
-        h.list_routines(parent, child, None)
+        h.list_automations(parent, child, None)
             .await
             .expect("inventory")
             .is_empty()
     );
-    assert!(h.routine(parent, record.id).await.is_err());
+    assert!(h.automation(parent, record.id).await.is_err());
     assert!(
         store::next(&h.config.database, record.next_due_ms + 100_000_000)
             .expect("no future occurrence")
@@ -52,7 +55,7 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     let output = chat
         .execute_turn(
             Uuid::new_v4(),
-            vec![ContentBlock::text("read latest routine result")],
+            vec![ContentBlock::text("read latest automation result")],
             Arc::new(Quiet),
         )
         .await
@@ -61,7 +64,7 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
         matches!(output,LocalTurnOutcome::Completed {output,..} if output=="Digest saved: digest.md")
     );
     assert_eq!(
-        h.routine_result(parent, run.id)
+        h.automation_result(parent, run.id)
             .await
             .expect("retained result")
             .prompt,
@@ -73,9 +76,9 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
 async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
     let (d, h, parent, child) = fixture().await;
     let create_id = Uuid::new_v4();
-    let creation = RoutineMutation::Create { spec: spec(child) };
+    let creation = AutomationMutation::Create { spec: spec(child) };
     let record = h
-        .manage_routine(
+        .manage_automation(
             parent,
             create_id,
             creation.clone(),
@@ -84,7 +87,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         )
         .await
         .expect("create");
-    let deletion = RoutineMutation::Delete {
+    let deletion = AutomationMutation::Delete {
         id: record.id,
         expected_revision: record.revision,
     };
@@ -93,7 +96,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         .expect("pending");
     let operation = Uuid::new_v4();
     let removed = h
-        .manage_routine(
+        .manage_automation(
             child,
             operation,
             deletion.clone(),
@@ -107,22 +110,22 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
     drop(h);
     let h = host(d.path());
     assert_eq!(
-        h.manage_routine(child, operation, deletion, 1, CancellationToken::new())
+        h.manage_automation(child, operation, deletion, 1, CancellationToken::new())
             .await
             .expect("replay"),
         removed
     );
-    h.manage_routine(parent, create_id, creation, 0, CancellationToken::new())
+    h.manage_automation(parent, create_id, creation, 0, CancellationToken::new())
         .await
         .expect("original creation replay");
     assert!(
-        h.list_routines(parent, child, None)
+        h.list_automations(parent, child, None)
             .await
             .expect("still deleted")
             .is_empty()
     );
     assert!(
-        change(&h, child, RoutineMutation::RunNow { id: record.id })
+        change(&h, child, AutomationMutation::RunNow { id: record.id })
             .await
             .is_err()
     );
@@ -130,7 +133,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         change(
             &h,
             child,
-            RoutineMutation::Update {
+            AutomationMutation::Update {
                 id: record.id,
                 expected_revision: removed.revision,
                 spec: record.spec
@@ -143,7 +146,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         .expect("restart")
         .expect("retained run");
     assert_eq!(pending.id, run.id);
-    h.execute_routine_run(pending)
+    h.execute_automation_run(pending)
         .await
         .expect("already admitted run finishes");
     assert!(
@@ -152,7 +155,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
             .is_none()
     );
     assert!(
-        h.routine_result(child, run.id)
+        h.automation_result(child, run.id)
             .await
             .expect("result retained")
             .output
@@ -163,11 +166,11 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
 #[tokio::test]
 async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
     let (d, h, parent, child) = fixture().await;
-    let record = change(&h, parent, RoutineMutation::Create { spec: spec(child) })
+    let record = change(&h, parent, AutomationMutation::Create { spec: spec(child) })
         .await
         .expect("create");
     let db = crate::host::catalog::open_verified(&h.config.database).expect("catalog");
-    db.execute_batch("DROP TABLE host_routine_deletions; UPDATE host_metadata SET schema_version=18; PRAGMA user_version=18;").expect("old schema");
+    db.execute_batch("DROP TABLE host_automation_deletions; UPDATE host_metadata SET schema_version=18; PRAGMA user_version=18;").expect("old schema");
     drop(db);
     drop(h);
     let refused = try_host(d.path());
@@ -179,17 +182,17 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
     crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let h = host(d.path());
     assert!(
-        h.routine(parent, record.id).await.is_err(),
+        h.automation(parent, record.id).await.is_err(),
         "the cutover discards the legacy schedule"
     );
     let (parent, child) = provisioned(&h).await;
-    let record = change(&h, parent, RoutineMutation::Create { spec: spec(child) })
+    let record = change(&h, parent, AutomationMutation::Create { spec: spec(child) })
         .await
         .expect("create after the cutover");
     change(
         &h,
         child,
-        RoutineMutation::Delete {
+        AutomationMutation::Delete {
             id: record.id,
             expected_revision: record.revision,
         },
@@ -197,7 +200,7 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
     .await
     .expect("delete after the cutover");
     assert!(
-        h.list_routines(parent, child, None)
+        h.list_automations(parent, child, None)
             .await
             .expect("deleted")
             .is_empty()
@@ -207,10 +210,10 @@ async fn schema_eighteen_upgrade_preserves_schedules_and_allows_deletion() {
 #[tokio::test]
 async fn rejected_or_cancelled_deletions_leave_the_automation_unchanged() {
     let (_d, h, parent, child) = fixture().await;
-    let record = change(&h, parent, RoutineMutation::Create { spec: spec(child) })
+    let record = change(&h, parent, AutomationMutation::Create { spec: spec(child) })
         .await
         .expect("create");
-    let deletion = RoutineMutation::Delete {
+    let deletion = AutomationMutation::Delete {
         id: record.id,
         expected_revision: record.revision,
     };
@@ -223,7 +226,7 @@ async fn rejected_or_cancelled_deletions_leave_the_automation_unchanged() {
         change(
             &h,
             child,
-            RoutineMutation::Delete {
+            AutomationMutation::Delete {
                 id: record.id,
                 expected_revision: record.revision + 1
             }
@@ -234,12 +237,12 @@ async fn rejected_or_cancelled_deletions_leave_the_automation_unchanged() {
     let stop = CancellationToken::new();
     stop.cancel();
     assert!(
-        h.manage_routine(child, Uuid::new_v4(), deletion.clone(), 0, stop)
+        h.manage_automation(child, Uuid::new_v4(), deletion.clone(), 0, stop)
             .await
             .is_err()
     );
     assert_eq!(
-        h.routine(parent, record.id).await.expect("retained"),
+        h.automation(parent, record.id).await.expect("retained"),
         record
     );
 }

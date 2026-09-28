@@ -7,7 +7,7 @@ the current deployment:
   Host OAuth callback relay; and
 - `renoa-node` executes RCP tasks with the shared Host's agents; and
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
-- `renoa-host` runs the surface-independent routine scheduler; and
+- `renoa-host` runs the surface-independent automation scheduler; and
 - `renoa-management` serves the authenticated personal Host control panel; and
 - `renoa-discord` serves saved agent-channel bindings and private plugin approval; and
 - `renoa-slack` and `renoa-telegram` expose the configured Host through their
@@ -286,10 +286,11 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 33. A schema 28–32 catalog upgrades in place
-when the Host opens it, dropping the retired GitHub review tables. An earlier
+This release requires Host schema 34. A schema 28–33 catalog upgrades in place
+when the Host opens it, dropping the retired GitHub review tables and renaming
+the routine tables and `renoa.routines` plugin activations to automations. An earlier
 data root cuts agent-owned storage over to the canonical agent definition. That
-cutover is not a migration: it discards the previous agent rows, routines and
+cutover is not a migration: it discards the previous agent rows, automations and
 sessions, and it runs only through the explicit reset described in
 [`docs/renoa-host-v0.md`](../docs/renoa-host-v0.md). Starting a normal Host
 process against an earlier data root fails closed with the reset command in the
@@ -753,7 +754,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the Host, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 33. Install the new binaries
+root before the new Host brings it to schema 34. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must

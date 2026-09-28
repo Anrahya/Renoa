@@ -248,7 +248,7 @@ async fn schema_one_upgrade_preserves_queued_operator_session_and_its_identity()
     let database = Connection::open(directory.path().join("state/surfaces/slack/slack.sqlite3"))
         .expect("database");
     database
-        .execute_batch("DROP TABLE routine_context_receipts; DROP TABLE bot_channel_labels; DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
+        .execute_batch("DROP TABLE automation_context_receipts; DROP TABLE bot_channel_labels; DROP TABLE automation_deliveries; DROP TABLE automation_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; DROP TABLE bot_channels; ALTER TABLE sessions DROP COLUMN agent_id; PRAGMA user_version=1;")
         .expect("legacy schema");
     drop(database);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("migrated store");
@@ -295,7 +295,7 @@ async fn schema_three_upgrade_preserves_legacy_prompt_content_and_snapshots_new_
     drop(store);
     let db = Connection::open(directory.path().join("state/surfaces/slack/slack.sqlite3"))
         .expect("database");
-    db.execute_batch("DROP TABLE routine_context_receipts; DROP TABLE bot_channel_labels; DROP TABLE routine_deliveries; DROP TABLE routine_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
+    db.execute_batch("DROP TABLE automation_context_receipts; DROP TABLE bot_channel_labels; DROP TABLE automation_deliveries; DROP TABLE automation_delivery_cursor; DROP TABLE setup_actions; ALTER TABLE requests DROP COLUMN surface_context; PRAGMA user_version=3;")
         .expect("old schema");
     drop(db);
     let store = Store::open(directory.path(), &binding(directory.path())).expect("upgrade");
@@ -409,28 +409,62 @@ async fn setup_action_recovery_keeps_unknown_posts_uncertain_and_retries_only_kn
 }
 
 #[tokio::test]
-async fn interrupted_routine_delivery_is_not_blindly_posted_again_after_restart() {
+async fn interrupted_automation_delivery_is_not_blindly_posted_again_after_restart() {
     let directory = tempfile::tempdir().expect("directory");
     let store = Store::open(directory.path(), &binding(directory.path())).expect("store");
     let id = Uuid::new_v4().to_string();
     let inserted = id.clone();
-    store.run(move|db|{db.execute("INSERT INTO routine_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES(?1,0,'00000000-0000-0000-0000-000000000000','C1','digest','pending')",[inserted])?;Ok(())}).await.expect("outbox");
+    store.run(move|db|{db.execute("INSERT INTO automation_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES(?1,0,'00000000-0000-0000-0000-000000000000','C1','digest','pending')",[inserted])?;Ok(())}).await.expect("outbox");
     store
-        .claim_routine_delivery(id, 0)
+        .claim_automation_delivery(id, 0)
         .await
         .expect("persist before post");
     drop(store);
     let restored = Store::open(directory.path(), &binding(directory.path())).expect("restart");
     assert!(
         restored
-            .next_routine_delivery()
+            .next_automation_delivery()
             .await
             .expect("uncertain delivery excluded")
             .is_none()
     );
     let state: String = restored
-        .run(|db| Ok(db.query_row("SELECT state FROM routine_deliveries", [], |r| r.get(0))?))
+        .run(|db| Ok(db.query_row("SELECT state FROM automation_deliveries", [], |r| r.get(0))?))
         .await
         .expect("state");
     assert_eq!(state, "unknown");
+}
+
+#[tokio::test]
+async fn schema_eight_upgrade_renames_routine_deliveries_and_keeps_their_rows() {
+    let directory = tempfile::tempdir().expect("directory");
+    drop(Store::open(directory.path(), &binding(directory.path())).expect("store"));
+    let path = directory.path().join("state/surfaces/slack/slack.sqlite3");
+    let db = Connection::open(&path).expect("database");
+    db.execute_batch(
+        "UPDATE automation_delivery_cursor SET sequence=7;
+         INSERT INTO automation_deliveries(run_id,chunk,agent_id,channel,text,state)
+         VALUES('run',0,'agent','C1','Morning summary.','pending');
+         ALTER TABLE automation_delivery_cursor RENAME TO routine_delivery_cursor;
+         ALTER TABLE automation_deliveries RENAME TO routine_deliveries;
+         ALTER TABLE automation_context_receipts RENAME TO routine_context_receipts;
+         PRAGMA user_version=8;",
+    )
+    .expect("schema eight");
+    drop(db);
+
+    drop(Store::open(directory.path(), &binding(directory.path())).expect("upgrade"));
+    let db = Connection::open(&path).expect("database");
+    let (sequence, text, routine_tables): (i64, String, i64) = db
+        .query_row(
+            "SELECT (SELECT sequence FROM automation_delivery_cursor),
+                    (SELECT text FROM automation_deliveries WHERE run_id='run'),
+                    (SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'routine%')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("upgraded rows");
+    assert_eq!(sequence, 7);
+    assert_eq!(text, "Morning summary.");
+    assert_eq!(routine_tables, 0);
 }

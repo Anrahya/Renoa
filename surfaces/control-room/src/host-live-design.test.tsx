@@ -5,7 +5,7 @@ import type { HostSnapshot } from "./host-contract";
 import { portraitForAgent } from "./host-identity";
 
 const agent = { id: "main-agent", name: "Assistant", created_by: null, preset_id: null };
-const snapshot: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], routines: [], connections: [], plugins: [], skills: [] };
+const snapshot: HostSnapshot = { host_id: "host", agents: [agent], sessions: [], automations: [], connections: [], plugins: [], skills: [] };
 const render = (hash: string, host = snapshot) => {
   vi.stubGlobal("window", { location: { hash, search: "?preview" } });
   return renderToStaticMarkup(<HostPanelView host={{ snapshot: host, status: "connected", receivedAt: 0, error: null, refresh() {}, lock() {} }} />);

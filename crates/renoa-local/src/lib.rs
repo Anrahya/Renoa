@@ -57,14 +57,14 @@ pub use credential_file::credential_file_is_private;
 pub use documents::UserProfile;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
-    AgentCreateRequest, AgentDefinitionPage, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE,
+    AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate, MAX_AGENT_PAGE,
     RenameAgent, ResolvedAgentDefinition, derived_agent_id,
 };
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
-    HostObservation, HostObserver, ObservedAgent, ObservedConnection, ObservedOperation,
-    ObservedOperationState, ObservedPlugin, ObservedRoutine, ObservedSession, ObservedSessionState,
-    ObservedSkill,
+    HostObservation, HostObserver, ObservedAgent, ObservedAutomation, ObservedConnection,
+    ObservedOperation, ObservedOperationState, ObservedPlugin, ObservedSession,
+    ObservedSessionState, ObservedSkill,
 };
 pub use host::{
     HostResetReport, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
@@ -99,9 +99,10 @@ pub use skills::store::{SkillComponentRejection, SkillComponentReport};
 pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 
-pub use host::routines::{
-    HostRoutineControl, RoutineEnablement, RoutineError, RoutineMutation, RoutineRecord,
-    RoutineResultSummary, RoutineRun, RoutineSchedule, RoutineSpec,
+pub use host::automations::{
+    AutomationEnablement, AutomationError, AutomationMutation, AutomationRecord,
+    AutomationResultSummary, AutomationRun, AutomationSchedule, AutomationSpec,
+    HostAutomationControl,
 };
 
 pub use renoa_home::RenoaHome;

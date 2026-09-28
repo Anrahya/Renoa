@@ -2,14 +2,14 @@ use renoa_kernel::AgentId;
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use uuid::Uuid;
 
-use super::{RoutineError, RoutineRecord, store};
+use super::{AutomationError, AutomationRecord, store};
 use crate::host::catalog::HostCatalogError;
 
 // Separate owner receipts preserve the foreign key and authority of historical
-// agent receipts. Both are committed by the same routine mutation transaction.
+// agent receipts. Both are committed by the same automation mutation transaction.
 pub(super) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
     tx.execute_batch(
-        "CREATE TABLE IF NOT EXISTS host_routine_owner_mutations (
+        "CREATE TABLE IF NOT EXISTS host_automation_owner_mutations (
         operation_id TEXT PRIMARY KEY, principal_id TEXT NOT NULL,
         request_json TEXT NOT NULL CHECK(json_valid(request_json)),
         result_json TEXT NOT NULL CHECK(json_valid(result_json))
@@ -19,13 +19,13 @@ pub(super) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum RoutineActor {
+pub(super) enum AutomationActor {
     Agent(AgentId),
     Owner { host_id: Uuid, principal: Uuid },
 }
 
-impl RoutineActor {
-    pub fn authorize(self, tx: &Transaction<'_>, target: AgentId) -> Result<(), RoutineError> {
+impl AutomationActor {
+    pub fn authorize(self, tx: &Transaction<'_>, target: AgentId) -> Result<(), AutomationError> {
         match self {
             Self::Agent(id) => store::authorize(tx, id, target),
             Self::Owner { .. } => Ok(()),
@@ -37,10 +37,10 @@ impl RoutineActor {
         tx: &Transaction<'_>,
         operation: Uuid,
         request: &str,
-    ) -> Result<Option<RoutineRecord>, RoutineError> {
+    ) -> Result<Option<AutomationRecord>, AutomationError> {
         let (sql, identity) = match self {
             Self::Agent(id) => (
-                "SELECT actor_id,request_json,result_json FROM host_routine_mutations WHERE operation_id=?1",
+                "SELECT actor_id,request_json,result_json FROM host_automation_mutations WHERE operation_id=?1",
                 id.to_string(),
             ),
             Self::Owner { host_id, principal } => {
@@ -56,7 +56,7 @@ impl RoutineActor {
                     .into());
                 }
                 (
-                    "SELECT principal_id,request_json,result_json FROM host_routine_owner_mutations WHERE operation_id=?1",
+                    "SELECT principal_id,request_json,result_json FROM host_automation_owner_mutations WHERE operation_id=?1",
                     principal.to_string(),
                 )
             }
@@ -69,7 +69,7 @@ impl RoutineActor {
         receipt
             .map(|(actor, original, result)| {
                 if actor != identity || original != request {
-                    return Err(RoutineError::Conflict);
+                    return Err(AutomationError::Conflict);
                 }
                 Ok(serde_json::from_str(&result)?)
             })
@@ -81,15 +81,15 @@ impl RoutineActor {
         tx: &Transaction<'_>,
         operation: Uuid,
         request: &str,
-        result: &RoutineRecord,
-    ) -> Result<(), RoutineError> {
+        result: &AutomationRecord,
+    ) -> Result<(), AutomationError> {
         let (sql, identity) = match self {
             Self::Agent(id) => (
-                "INSERT INTO host_routine_mutations(operation_id,actor_id,request_json,result_json) VALUES(?1,?2,?3,?4)",
+                "INSERT INTO host_automation_mutations(operation_id,actor_id,request_json,result_json) VALUES(?1,?2,?3,?4)",
                 id.to_string(),
             ),
             Self::Owner { principal, .. } => (
-                "INSERT INTO host_routine_owner_mutations(operation_id,principal_id,request_json,result_json) VALUES(?1,?2,?3,?4)",
+                "INSERT INTO host_automation_owner_mutations(operation_id,principal_id,request_json,result_json) VALUES(?1,?2,?3,?4)",
                 principal.to_string(),
             ),
         };

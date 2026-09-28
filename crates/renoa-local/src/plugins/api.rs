@@ -98,7 +98,9 @@ pub enum PluginRequest {
         /// Exact `plugin_id`, a 64-character external identity or a renoa.* Host plugin identity from activation or `plugin_search`; not the display name.
         #[schemars(
             length(min = 1, max = 64),
-            regex(pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|routines|documents|skills|git))$")
+            regex(
+                pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|automations|documents|skills|git))$"
+            )
         )]
         plugin_id: String,
     },
@@ -107,7 +109,9 @@ pub enum PluginRequest {
         /// Exact `plugin_id`, a 64-character external identity or a renoa.* Host plugin identity from activation or `plugin_search`; not the display name.
         #[schemars(
             length(min = 1, max = 64),
-            regex(pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|routines|documents|skills|git))$")
+            regex(
+                pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|automations|documents|skills|git))$"
+            )
         )]
         plugin_id: String,
     },

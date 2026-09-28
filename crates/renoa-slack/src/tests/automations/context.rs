@@ -1,10 +1,10 @@
 use super::*;
 
 async fn result(f: &Fixture, sequence: i64, text: &str) -> Uuid {
-    let run = RoutineRun {
+    let run = AutomationRun {
         sequence,
         id: Uuid::new_v4(),
-        routine_id: Uuid::new_v4(),
+        automation_id: Uuid::new_v4(),
         agent_id: f.worker.agent_id,
         session_id: Uuid::new_v4(),
         due_ms: sequence,
@@ -15,24 +15,24 @@ async fn result(f: &Fixture, sequence: i64, text: &str) -> Uuid {
     let id = run.id;
     f.worker
         .store
-        .admit_routine_result(run)
+        .admit_automation_result(run)
         .await
         .expect("project");
     let delivery = f
         .worker
         .store
-        .next_routine_delivery()
+        .next_automation_delivery()
         .await
         .expect("delivery")
         .expect("ready");
     f.worker
         .store
-        .claim_routine_delivery(delivery.run_id.clone(), delivery.chunk)
+        .claim_automation_delivery(delivery.run_id.clone(), delivery.chunk)
         .await
         .expect("claim");
     f.worker
         .store
-        .finish_routine_delivery(
+        .finish_automation_delivery(
             delivery.run_id,
             delivery.chunk,
             crate::store::DeliveryState::Sent,
@@ -117,8 +117,8 @@ async fn fresh_sessions_recover_visible_results_but_never_other_agents_or_unsent
     result(&f, 1, "visible output").await;
     let actor = f.worker.agent_id.to_string();
     f.worker.store.run(move|db|{
-        db.execute("INSERT INTO routine_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES('other',0,'another-agent','D1','private output','sent')",[])?;
-        db.execute("INSERT INTO routine_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES('unsent',0,?1,'D1','unsent output','unknown')",[actor])?;
+        db.execute("INSERT INTO automation_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES('other',0,'another-agent','D1','private output','sent')",[])?;
+        db.execute("INSERT INTO automation_deliveries(run_id,chunk,agent_id,channel,text,state) VALUES('unsent',0,?1,'D1','unsent output','unknown')",[actor])?;
         Ok(())
     }).await.expect("other results");
     f.admit("E1", "1.000001", "Follow up").await;

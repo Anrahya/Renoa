@@ -1,7 +1,7 @@
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { RoutineTimeline } from "./host-routine-timeline";
+import { AutomationTimeline } from "./host-automation-timeline";
 import type { HostSnapshot } from "./host-contract";
 import type { Controls } from "./host-controls";
 import type { agentOverview } from "./host-agent-overview";
@@ -12,7 +12,7 @@ type Overview = ReturnType<typeof agentOverview>;
 export function ProfileAutomations({ data, controls, host }: { data: Overview; controls: Controls; host: HostSnapshot }) {
   return <div className="flex max-w-4xl flex-col gap-8">
     {controls.preview && <Alert><AlertDescription>Saved preview · Schedule changes are disabled.</AlertDescription></Alert>}
-    <RoutineTimeline routines={data.routines} host={host} controls={controls} />
+    <AutomationTimeline automations={data.automations} host={host} controls={controls} />
   </div>;
 }
 
