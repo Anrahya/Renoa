@@ -9,6 +9,7 @@ use rusqlite::{TransactionBehavior, params};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod progress;
 mod records;
 mod schema;
 
@@ -262,6 +263,8 @@ impl NodeStore {
         .await
     }
 
+    /// Records the turn's projected events that were not already recorded
+    /// live, then its terminal event.
     pub(crate) async fn finish(
         &self,
         command_id: CommandId,
@@ -279,6 +282,7 @@ impl NodeStore {
                 transaction.commit()?;
                 return Ok(());
             }
+            let kinds = progress::Recorded::load(&transaction, command_id)?.unrecorded(kinds)?;
             let next = next_event_sequence(&transaction, command_id)?;
             let terminal_count = kinds
                 .iter()

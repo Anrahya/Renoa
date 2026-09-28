@@ -3,6 +3,7 @@
 mod agent_targets;
 mod backoff;
 mod bridge;
+mod live;
 mod node_log;
 mod node_store;
 mod operator;

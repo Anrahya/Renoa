@@ -36,7 +36,7 @@ pub(crate) fn project_history(
     Ok(events)
 }
 
-fn project_tool_result(result: ToolResult) -> Result<ExecutionEventKind, NodeError> {
+pub(crate) fn project_tool_result(result: ToolResult) -> Result<ExecutionEventKind, NodeError> {
     let output = match result.content.as_slice() {
         [ContentBlock::Text { text }] => text.clone(),
         content => serde_json::to_string(content)?,
