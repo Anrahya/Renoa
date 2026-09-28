@@ -7,7 +7,9 @@ use crate::{
     DiscordError,
     api::{ApiError, DiscordApi},
     config::Rcp,
-    gateway, rcp,
+    gateway,
+    progress::{self, Progress},
+    rcp,
     snowflake::Snowflake,
     store::{Outbound, SurfaceStore},
 };
@@ -58,6 +60,13 @@ pub(crate) async fn run(
             .await
         });
     }
+    let (progress, progress_updates) = Progress::channel();
+    tasks.spawn(progress::run(
+        Arc::clone(&api),
+        Arc::clone(&store),
+        progress_updates,
+        shutdown.clone(),
+    ));
     tasks.spawn(rcp::maintain(
         rcp::Link {
             endpoint: surface.rcp.endpoint,
@@ -65,6 +74,7 @@ pub(crate) async fn run(
             store: Arc::clone(&store),
             turns: Arc::clone(&turns),
             deliveries: Arc::clone(&deliveries),
+            progress,
         },
         shutdown.clone(),
     ));

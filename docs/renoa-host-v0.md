@@ -290,7 +290,7 @@ in one SQLite transaction; stale edits and reused operation IDs return 409.
 An exact retry returns its original receipt before contacting Discord again.
 Every write requires the owner cookie and exact Origin.
 
-Discord owns `state/surfaces/discord/discord.sqlite3` (schema 4). The worker
+Discord owns `state/surfaces/discord/discord.sqlite3` (schema 5). The worker
 runs no agents: each channel's conversation is an RCP task on its routed agent's
 target, `agent:<uuid>`, opened on the node that advertises it. Channel routing,
 the task, and a stable command identity are persisted when a message is

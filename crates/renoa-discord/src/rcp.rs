@@ -15,7 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     DiscordError,
-    store::{QueuedTurn, SurfaceStore},
+    progress::{Progress, Step},
+    store::{Applied, QueuedTurn, SurfaceStore},
 };
 
 const EMPTY_PROMPT: &str = "Send a task after the mention.";
@@ -31,6 +32,8 @@ pub(crate) struct Link {
     pub(crate) turns: Arc<Notify>,
     /// Signalled when reply pages are ready to post.
     pub(crate) deliveries: Arc<Notify>,
+    /// Receives each applied record's step for transient progress.
+    pub(crate) progress: Progress,
 }
 
 /// Keeps the coordinator link open until shutdown, reconnecting with bounded
@@ -89,8 +92,15 @@ async fn serve(
             () = link.turns.notified() => {}
             event = events.next() => match event {
                 Some(Ok(event)) => {
-                    if link.store.apply_event(&event)? {
+                    let applied = link.store.apply_event(&event)?;
+                    if applied == Applied::ReplyReady {
                         link.deliveries.notify_one();
+                    }
+                    if applied != Applied::Stale {
+                        let (command_id, step) = Step::of(&event.kind);
+                        if let Some(target) = link.store.progress_target(&command_id)? {
+                            link.progress.observe(command_id, target, step);
+                        }
                     }
                 }
                 Some(Err(error)) => return Err(error.into()),

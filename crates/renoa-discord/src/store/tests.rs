@@ -5,7 +5,7 @@ use renoa_protocol::{
 };
 use uuid::Uuid;
 
-use super::{Enqueue, SurfaceStore};
+use super::{Applied, Enqueue, SurfaceStore};
 use crate::snowflake::Snowflake;
 
 fn snowflake(value: &str) -> Snowflake {
@@ -159,10 +159,27 @@ fn task_records_become_one_reply_to_the_discord_message_even_when_replayed() {
         .iter()
         .map(|record| store.apply_event(record).expect("apply record"))
         .collect::<Vec<_>>();
-    assert_eq!(ready, vec![false, false, false, true]);
+    assert_eq!(
+        ready,
+        vec![
+            Applied::Recorded,
+            Applied::Recorded,
+            Applied::Recorded,
+            Applied::ReplyReady
+        ]
+    );
     for record in &records {
-        assert!(!store.apply_event(record).expect("replayed record"));
+        assert_eq!(
+            store.apply_event(record).expect("replayed record"),
+            Applied::Stale
+        );
     }
+    let target = store
+        .progress_target(&command_id.to_string())
+        .expect("progress target")
+        .expect("known command");
+    assert_eq!(target.channel_id, "202");
+    assert_eq!(target.reply_to.as_deref(), Some(message_id.as_str()));
 
     assert_eq!(
         store.opened_tasks().expect("opened tasks"),
@@ -364,4 +381,50 @@ fn delivery_state(store: &SurfaceStore, command_id: &str, chunk: i64) -> String 
                 .map_err(crate::DiscordError::from)
         })
         .expect("delivery state")
+}
+
+#[test]
+fn a_recorded_progress_message_is_finished_once_its_command_is() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let store = bound_store(&directory);
+    enqueue(&store, "101", "Summarize today.");
+    let (task_id, command_id, _) = submit(&store);
+    store
+        .apply_event(&record(
+            task_id,
+            0,
+            TaskEventKind::CommandSubmitted {
+                command: command(command_id, "discord", "Summarize today."),
+            },
+        ))
+        .expect("submitted");
+    let command_id_text = command_id.to_string();
+    store
+        .record_progress_message(&command_id_text, "202", "900")
+        .expect("record progress");
+    let shown = store.shown_progress().expect("shown progress");
+    assert_eq!(
+        (shown.len(), shown[0].message_id.as_str(), shown[0].finished),
+        (1, "900", false)
+    );
+
+    store
+        .apply_event(&record(
+            task_id,
+            1,
+            execution(
+                command_id,
+                0,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Completed,
+                },
+            ),
+        ))
+        .expect("terminated");
+    assert!(store.shown_progress().expect("shown progress")[0].finished);
+
+    store
+        .clear_progress_message(&command_id_text)
+        .expect("clear progress");
+    assert!(store.shown_progress().expect("shown progress").is_empty());
 }

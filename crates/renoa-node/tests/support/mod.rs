@@ -551,7 +551,7 @@ pub(crate) async fn collect_through_terminal(socket: &mut Socket) -> Vec<TaskEve
     .await
 }
 
-async fn collect_until(
+pub(crate) async fn collect_until(
     socket: &mut Socket,
     complete: impl Fn(&ExecutionEvent) -> bool,
 ) -> Vec<TaskEvent> {

@@ -6,7 +6,7 @@ use crate::DiscordError;
 
 pub(super) const DATABASE_FILE: &str = "discord.sqlite3";
 const LEASE_FILE: &str = ".discord.lock";
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
     let connection = Connection::open(path)?;
@@ -23,8 +23,13 @@ pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
         1 => {
             migrate_v1(&connection)?;
             migrate_v3(&connection)?;
+            migrate_v4(&connection)?;
         }
-        3 => migrate_v3(&connection)?,
+        3 => {
+            migrate_v3(&connection)?;
+            migrate_v4(&connection)?;
+        }
+        4 => migrate_v4(&connection)?,
         SCHEMA_VERSION => {}
         other => {
             return Err(DiscordError::Invalid(format!(
@@ -114,10 +119,12 @@ fn initialize(connection: &Connection) -> Result<(), DiscordError> {
          ) STRICT;
 
          {conversations}
+         {progress}
          {GATEWAY_SCHEMA}
          {ACTION_SCHEMA}
          {CONTROL_SCHEMA}",
         conversations = conversation_schema(),
+        progress = progress_schema(),
     ))?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -173,6 +180,19 @@ fn conversation_schema() -> String {
                 (state = 'sent' AND reply_id IS NOT NULL)
                 OR (state <> 'sent' AND reply_id IS NULL)
             )
+         ) STRICT;"
+    )
+}
+
+/// Posted progress messages not yet deleted, one per running command.
+fn progress_schema() -> String {
+    let channel = SNOWFLAKE.replace("{0}", "channel_id");
+    let message = SNOWFLAKE.replace("{0}", "message_id");
+    format!(
+        "CREATE TABLE progress_messages (
+            command_id TEXT PRIMARY KEY CHECK (length(command_id) = 36),
+            channel_id TEXT NOT NULL CHECK ({channel}),
+            message_id TEXT NOT NULL CHECK ({message})
          ) STRICT;"
     )
 }
@@ -243,6 +263,15 @@ fn migrate_v3(connection: &Connection) -> Result<(), DiscordError> {
     )?;
     transaction.execute_batch(&conversation_schema())?;
     transaction.execute_batch(ACTION_SCHEMA)?;
+    transaction.pragma_update(None, "user_version", 4)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Schema 5 records posted progress messages, so a restart still deletes them.
+fn migrate_v4(connection: &Connection) -> Result<(), DiscordError> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(&progress_schema())?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())

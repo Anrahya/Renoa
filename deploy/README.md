@@ -23,25 +23,73 @@ route. Neither transport is part of a Renoa protocol. Funnel is not used.
 The Telegram surface is different: it makes outbound HTTPS requests to the
 Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
 
-## Release retention
+## Releases and deployment
 
-Keep the current installation and exactly one consolidated backup of the
-immediately previous release at `/opt/renoa/previous-release/`. Put that release's
-binaries, configuration, static files, and required SQLite snapshots together;
-do not scatter additional `.pre-*`, `.previous`, or per-step copies around the
-installation. Use SQLite's backup API for database snapshots.
+CI builds every release; nothing deployed is built on a developer machine.
+`.github/workflows/ci.yml` runs the `AGENTS.md` gates on every pull request.
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds one
+archive in a Debian 13 container (the VPS's own glibc) and publishes it as a
+GitHub Release with `SHA256SUMS` and build provenance:
 
-On the next deployment, stage the new backup, verify the new release's running
-binaries, services, and Host records, then replace `previous-release` and delete
-the superseded backup. Remove older release directories, uploaded archives,
-and duplicate staging binaries after verification.
-Keep only the current release manifest under `/opt/renoa/releases/`.
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
 
-Drain active work before replacing its runtime or deleting its tools. Deploy
-only the current runtime; do not keep historical runtimes or compatibility
-paths solely to support old releases. Recovery is an explicit owner action,
-not an automatic rollback. Live conversation history, credentials, and current
-Host databases are application data and are not release backups.
+`deploy/release.json` is the single definition of a release: the binaries to
+build, the Node adapters to ship, and each service with the binaries it runs,
+whether it runs the adapters or serves the Control Room, and its companion
+units. `deploy/package-release` builds the archive from it; the archive's own
+`release.json` adds the tag, commit, build time and each binary's SHA-256.
+
+On the VPS, `renoa-deploy` installs a release:
+
+```sh
+renoa-deploy install v0.2.0
+renoa-deploy status
+```
+
+It downloads the archive, checks it against `SHA256SUMS` and every binary
+against the manifest, then unpacks it into `/opt/renoa/releases/<tag>/`. It
+refuses a release that lacks a binary of an installed service. Only services
+whose unit is installed on this host are updated, and only those whose
+binaries, unit files, adapters or Control Room changed are restarted, in the
+order `release.json` lists them. Restarting `renoa-host` or `renoa-node` first
+waits for running agent turns to finish (`--drain-timeout`, 600 s by default).
+Before switching, it snapshots the Host, coordinator, node and Discord SQLite
+databases with SQLite's backup API, and copies `config/`, into the release
+being replaced. It then carries that release's own hashed Control Room assets
+forward, so a browser holding the previous page still loads, installs changed
+unit files, and switches.
+
+`/opt/renoa/current` points at the running release and `/opt/renoa/previous`
+at the one backup: the release it replaced, with its snapshot. The binaries in
+`/usr/local/bin`, `/opt/renoa/adapters` and `/opt/renoa/control-room` are
+symlinks through `current`, so a switch is one rename. The first install adopts
+a hand-installed layout as `releases/legacy` without changing what runs.
+
+After the switch it checks that every service that was running stays active
+through a ten-second settle window, that management answers an
+unauthenticated request with 401 and a foreign origin with 403, and that the
+Host inspects. Then it deletes every other release and the old
+`/opt/renoa/previous-release`, writes `/opt/renoa/current-release.json`, and
+installs its own new copy at `/usr/local/sbin/renoa-deploy`. A failed check
+leaves the new release running, keeps every release and backup, and prints the
+failures. There is no automatic rollback: recovery is an explicit owner action,
+pointing `current` back at `previous` and restoring its snapshot. Live
+conversation history, credentials and current Host databases are application
+data, not release backups.
+
+The first deploy with this tool runs it from the archive, since
+`/usr/local/sbin/renoa-deploy` does not exist yet:
+
+```sh
+curl -fsSLO https://github.com/Anrahya/Renoa/releases/download/v0.2.0/renoa-v0.2.0-linux-x86_64.tar.gz
+tar xzf renoa-v0.2.0-linux-x86_64.tar.gz renoa-v0.2.0/renoa-deploy
+./renoa-v0.2.0/renoa-deploy install v0.2.0
+```
+
+Installing a service for the first time, enrolling it, and writing its
+configuration stay manual steps; the sections below describe them.
 
 ## Optional MCP Code Mode worker
 
@@ -153,6 +201,15 @@ elsewhere. A message whose agent's node is offline is answered as not sent and
 must be resent; it is never held. Replies to commands submitted to the same task
 from another surface are posted to the channel with their origin.
 
+While a command runs, the channel shows the bot typing. Once the agent calls a
+tool, one progress message answers the command and is edited in place, listing
+each tool call and the intermediate messages that led to it. The answer itself
+arrives as the reply, and the progress message is then deleted; so is the
+message of a command idle for 20 minutes. Progress is transient: only the posted
+message's identity is stored, a command that calls no tool only shows typing,
+and after a restart progress resumes from the next task record in the same
+message, or the message is deleted if its command finished meanwhile.
+
 OAuth and credential links go to the application owner's DM. The executing node
 sends them directly with the Host's Discord connection, never through the RCP
 task journal, because a credential-setup link carries the key that keeps the
@@ -164,6 +221,9 @@ The connection cannot be changed from the Control Room. To connect a different b
 server or default agent, stop `renoa-discord.path` and `renoa-discord.service`,
 then remove `credentials/discord.json` and `state/surfaces/discord`; the latter
 pins the previous identity and holds its bindings and task cursors.
+
+Discord store schema 5 records posted progress messages, so a restart still
+deletes them; upgrading from schema 4 adds the empty table.
 
 Discord store schema 4 moved conversations into RCP tasks. Upgrading keeps the
 identity, channel bindings, gateway cursor, and message deduplication, and drops
@@ -257,8 +317,8 @@ storage themselves. The node daemon runs in the shared Host and keeps only its
 derived ledger at `state/node.sqlite3`; its device credential and the
 coordinator's task bindings live outside the reset roots and
 survive. Each surface store is its own step, as listed in
-`docs/renoa-host-v0.md`. Keep the previous binaries and matching database
-snapshot in the single previous-release backup described above. Browser login
+`docs/renoa-host-v0.md`. The previous binaries and matching database snapshot
+are the single backup at `/opt/renoa/previous` described above. Browser login
 storage is separate and does not need to be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing

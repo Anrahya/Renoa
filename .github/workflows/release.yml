@@ -1,0 +1,66 @@
+# Builds one release archive in a Debian 13 container, the VPS's own glibc.
+# A pushed v* tag publishes it as a GitHub Release with build provenance. A pull
+# request that changes the release machinery, or a manual run, only uploads the
+# archive as a workflow artifact, to prove the build.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "deploy/package-release"
+      - "deploy/release.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.run_number) }}
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev ca-certificates curl git python3 gh
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Build the release archive
+        run: deploy/package-release "$TAG" dist
+      - uses: actions/attest-build-provenance@v2
+        if: github.ref_type == 'tag'
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Publish the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: renoa-${{ env.TAG }}
+          path: dist/
+          retention-days: 7

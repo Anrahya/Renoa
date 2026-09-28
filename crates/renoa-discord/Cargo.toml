@@ -32,6 +32,7 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
 tempfile.workspace = true
 

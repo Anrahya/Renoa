@@ -10,6 +10,7 @@ mod actions;
 mod bindings;
 mod deliveries;
 mod gateway;
+mod progress;
 mod replies;
 mod schema;
 mod turns;
@@ -21,6 +22,8 @@ mod tests;
 
 pub(crate) use deliveries::Outbound;
 pub(crate) use gateway::GatewayCursor;
+pub(crate) use progress::{ProgressTarget, ShownProgress};
+pub(crate) use replies::Applied;
 pub(crate) use turns::{Enqueue, QueuedTurn};
 
 #[derive(Debug)]

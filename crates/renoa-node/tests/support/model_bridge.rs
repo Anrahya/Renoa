@@ -12,6 +12,22 @@ pub(crate) async fn wait_for_path(path: &Path) {
     .expect("timed out waiting for model marker");
 }
 
+/// A tool turn whose final model call waits for release, so its tool events
+/// can only reach a surface while the turn runs.
+const HELD_TOOL_TURN: &str = r#"} else if (prompt === "Read proof, then wait." && toolResults.length === 0) {
+  content = [
+    { type: "text", text: "Reading the proof first." },
+    { type: "tool_call", id: "read-held", name: "read_file", arguments: { path: "proof.txt" } }
+  ];
+  stopReason = "tool_use";
+} else if (prompt === "Read proof, then wait.") {
+  writeFileSync(join(workspace, "model-started"), "started");
+  while (!existsSync(join(workspace, "model-release"))) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  content = [{ type: "text", text: "The held proof was read." }];
+}"#;
+
 pub(super) fn bridge_script(workspace: &Path) -> String {
     let workspace = serde_json::to_string(&workspace.to_string_lossy()).expect("encode workspace");
     format!(
@@ -59,7 +75,7 @@ if (prompt === "Read proof." && toolResults.length === 0) {{
   stopReason = "tool_use";
 }} else if (prompt === "Read proof.") {{
   content = [{{ type: "text", text: "The durable proof was read." }}];
-}} else if (prompt === "Hold through reconnect.") {{
+{HELD_TOOL_TURN} else if (prompt === "Hold through reconnect.") {{
   writeFileSync(join(workspace, "model-started"), "started");
   while (!existsSync(join(workspace, "model-release"))) {{
     await new Promise(resolve => setTimeout(resolve, 10));

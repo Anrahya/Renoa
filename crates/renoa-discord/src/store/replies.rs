@@ -8,10 +8,21 @@ use rusqlite::{OptionalExtension as _, params};
 use super::{SurfaceStore, schema, turns::insert_pages};
 use crate::DiscordError;
 
+/// What applying one task record changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Applied {
+    /// The record was already applied.
+    Stale,
+    /// The record was applied; no reply is ready yet.
+    Recorded,
+    /// The record finished a command, and its reply pages are ready to post.
+    ReplyReady,
+}
+
 impl SurfaceStore {
     /// Applies one task record exactly once, advancing the task's cursor in the
-    /// same transaction. Returns whether reply pages became ready to post.
-    pub(crate) fn apply_event(&self, event: &TaskEvent) -> Result<bool, DiscordError> {
+    /// same transaction.
+    pub(crate) fn apply_event(&self, event: &TaskEvent) -> Result<Applied, DiscordError> {
         let event = event.clone();
         self.access(move |connection| {
             let transaction = schema::immediate_transaction(connection)?;
@@ -33,7 +44,7 @@ impl SurfaceStore {
             })?;
             if cursor.is_some_and(|applied| sequence <= applied) {
                 transaction.commit()?;
-                return Ok(false);
+                return Ok(Applied::Stale);
             }
             let ready = match &event.kind {
                 TaskEventKind::CommandSubmitted { command } => {
@@ -82,7 +93,11 @@ impl SurfaceStore {
                 params![sequence, task_id],
             )?;
             transaction.commit()?;
-            Ok(ready)
+            Ok(if ready {
+                Applied::ReplyReady
+            } else {
+                Applied::Recorded
+            })
         })
     }
 }
