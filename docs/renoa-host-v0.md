@@ -1013,9 +1013,11 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–32 upgrade to schema 33
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 33
 by retaining exact machine grants, removing former Host and plugin protocol
-tool selections, and dropping the retired GitHub review tables. Live selections
+tool selections, and dropping the retired GitHub review tables. A schema 32
+catalog already holds current selections and exact plugin activations, so its
+upgrade only drops the review tables. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.

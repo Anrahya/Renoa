@@ -264,9 +264,13 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
                     "Host schema version and metadata disagree".to_owned(),
                 ));
             }
-            selection_migration::migrate(&transaction)?;
+            // Schema 32 already holds exact plugin activations; only the
+            // earlier schemas need their selections migrated or refused.
+            if version < 32 {
+                selection_migration::migrate(&transaction)?;
+                crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
+            }
             cutover::retire_review_tables(&transaction)?;
-            crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
