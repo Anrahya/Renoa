@@ -34,7 +34,7 @@ const DESK: &str = "22222222-2222-4222-8222-222222222222";
 
 #[tokio::test]
 async fn a_mention_reaches_the_default_agent_through_rcp_and_posts_one_reply() {
-    let bodies = run(Scenario::Mention).await;
+    let bodies = run(Scenario::Mention).await.posted;
     assert_eq!(bodies.len(), 1, "{bodies:?}");
     assert!(
         bodies[0].contains(&format!("agent:{ARCEE} answered")),
@@ -45,7 +45,7 @@ async fn a_mention_reaches_the_default_agent_through_rcp_and_posts_one_reply() {
 
 #[tokio::test]
 async fn a_bound_channel_reaches_its_agent_without_a_mention() {
-    let bodies = run(Scenario::Bound).await;
+    let bodies = run(Scenario::Bound).await.posted;
     assert_eq!(bodies.len(), 1, "{bodies:?}");
     assert!(
         bodies[0].contains(&format!("agent:{DESK} answered")),
@@ -56,9 +56,44 @@ async fn a_bound_channel_reaches_its_agent_without_a_mention() {
 
 #[tokio::test]
 async fn an_agent_without_an_online_node_gets_a_not_sent_reply() {
-    let bodies = run(Scenario::Offline).await;
+    let bodies = run(Scenario::Offline).await.posted;
     assert_eq!(bodies.len(), 1, "{bodies:?}");
     assert!(bodies[0].contains("offline"), "{}", bodies[0]);
+}
+
+#[tokio::test]
+async fn a_running_command_shows_typing_and_its_tool_calls_before_the_answer() {
+    let observed = run(Scenario::Tools).await;
+    assert!(
+        observed
+            .requests
+            .iter()
+            .any(|request| request.starts_with("POST /channels/202/typing")),
+        "{:?}",
+        observed.requests
+    );
+    let [progress, answer] = observed.posted.as_slice() else {
+        panic!(
+            "expected a progress message and one answer: {:?}",
+            observed.posted
+        );
+    };
+    assert!(progress.contains("Working"), "{progress}");
+    assert!(progress.contains("Checking the plugins."), "{progress}");
+    assert!(progress.contains("plugin_search"), "{progress}");
+    assert!(!progress.contains("answered"), "{progress}");
+    assert!(
+        answer.contains(&format!("agent:{ARCEE} answered")),
+        "{answer}"
+    );
+    let edits = observed
+        .requests
+        .iter()
+        .filter(|request| request.starts_with("PATCH /channels/202/messages/900"))
+        .collect::<Vec<_>>();
+    let last = edits.last().expect("the progress message is edited");
+    assert!(last.contains("**Steps**"), "{last}");
+    assert!(!last.contains("answered"), "{last}");
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -66,16 +101,29 @@ enum Scenario {
     Mention,
     Bound,
     Offline,
+    /// The node reports a tool call, pauses, then answers.
+    Tools,
 }
 
-async fn run(scenario: Scenario) -> Vec<String> {
+struct Observed {
+    /// Message bodies the surface posted, in order.
+    posted: Vec<String>,
+    /// Every Discord REST request line and body, in order.
+    requests: Vec<String>,
+}
+
+async fn run(scenario: Scenario) -> Observed {
     let root = tempfile::tempdir().expect("temp root");
     let data = root.path().join("data");
     let coordinator = CoordinatorFixture::start(&root).await;
     let executions = Arc::new(Mutex::new(0_usize));
     if scenario != Scenario::Offline {
         let node = coordinator.node().await;
-        tokio::spawn(scripted_node(node, Arc::clone(&executions)));
+        tokio::spawn(scripted_node(
+            node,
+            Arc::clone(&executions),
+            scenario == Scenario::Tools,
+        ));
     }
     let rcp = Rcp {
         endpoint: coordinator.url.clone(),
@@ -85,7 +133,7 @@ async fn run(scenario: Scenario) -> Vec<String> {
         bind_desk(&data);
     }
 
-    let posted = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::<String>::new()));
     let gateway = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("gateway listener");
@@ -94,8 +142,8 @@ async fn run(scenario: Scenario) -> Vec<String> {
         .await
         .expect("http listener");
     let http_addr = http.local_addr().expect("http port");
-    let posted_http = Arc::clone(&posted);
-    tokio::spawn(async move { serve_http(http, gateway_port, posted_http).await });
+    let recorded = Arc::clone(&requests);
+    tokio::spawn(async move { serve_http(http, gateway_port, recorded).await });
     tokio::spawn(async move { serve_gateway(gateway, scenario == Scenario::Bound).await });
 
     let shutdown = CancellationToken::new();
@@ -117,8 +165,18 @@ async fn run(scenario: Scenario) -> Vec<String> {
         .await
     });
 
+    let settled = |requests: &[String]| {
+        let answered = posted(requests)
+            .iter()
+            .any(|body| body.contains("answered") || body.contains("offline"));
+        let edited = scenario != Scenario::Tools
+            || requests
+                .iter()
+                .any(|request| request.starts_with("PATCH ") && request.contains("**Steps**"));
+        answered && edited
+    };
     tokio::time::timeout(Duration::from_secs(30), async {
-        while posted.lock().expect("posted").is_empty() {
+        while !settled(&requests.lock().expect("requests")) {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
@@ -127,14 +185,27 @@ async fn run(scenario: Scenario) -> Vec<String> {
     // The gateway delivers the same message twice; neither a second command
     // nor a second reply may follow.
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let bodies = posted.lock().expect("posted").clone();
+    let requests = requests.lock().expect("requests").clone();
     if scenario != Scenario::Offline {
         assert_eq!(*executions.lock().expect("executions"), 1);
     }
     shutdown.cancel();
     task.await.expect("service task").expect("service");
     coordinator.stop().await;
-    bodies
+    Observed {
+        posted: posted(&requests),
+        requests,
+    }
+}
+
+fn posted(requests: &[String]) -> Vec<String> {
+    requests
+        .iter()
+        .filter(|request| {
+            request.starts_with("POST /channels/") && request.contains("/messages HTTP")
+        })
+        .cloned()
+        .collect()
 }
 
 fn bind_desk(data: &std::path::Path) {
@@ -257,8 +328,9 @@ impl CoordinatorFixture {
     }
 }
 
-/// Answers every command with `<target> answered`.
-async fn scripted_node(mut node: Socket, executions: Arc<Mutex<usize>>) {
+/// Answers every command with `<target> answered`; with `tools`, first
+/// reports an intermediate message and a tool call, then pauses.
+async fn scripted_node(mut node: Socket, executions: Arc<Mutex<usize>>, tools: bool) {
     loop {
         let ServerMessage::Execute { task_id, command } = receive(&mut node).await else {
             continue;
@@ -274,34 +346,64 @@ async fn scripted_node(mut node: Socket, executions: Arc<Mutex<usize>>) {
         )
         .await;
         let execution_id = ExecutionId::new();
-        let events = [
-            ExecutionEventKind::ExecutionStarted,
+        let mut batches = vec![vec![ExecutionEventKind::ExecutionStarted]];
+        if tools {
+            batches[0].extend([
+                ExecutionEventKind::TurnStarted,
+                ExecutionEventKind::AssistantMessage {
+                    text: "Checking the plugins.".to_owned(),
+                },
+                ExecutionEventKind::ToolStarted {
+                    call_id: "search".to_owned(),
+                    name: "plugin_search".to_owned(),
+                    arguments: serde_json::json!({}),
+                },
+                ExecutionEventKind::ToolFinished {
+                    call_id: "search".to_owned(),
+                    output: "[]".to_owned(),
+                    is_error: false,
+                },
+            ]);
+            batches.push(Vec::new());
+        }
+        batches.last_mut().expect("batch").extend([
             ExecutionEventKind::AssistantMessage {
                 text: format!("{} answered", command.target.as_str()),
             },
             ExecutionEventKind::ExecutionTerminated {
                 terminal: ExecutionTerminal::Completed,
             },
-        ]
-        .into_iter()
-        .zip(0..)
-        .map(|(kind, sequence)| ExecutionEvent {
-            event_id: ExecutionEventId::new(),
-            execution_id,
-            sequence,
-            recorded_at_ms: 0,
-            kind,
-        })
-        .collect();
-        send(
-            &mut node,
-            &ClientMessage::PublishExecutionEvents {
-                task_id,
-                command_id,
-                events,
-            },
-        )
-        .await;
+        ]);
+        let mut sequence = 0;
+        for (index, batch) in batches.into_iter().enumerate() {
+            if index > 0 {
+                // Long enough for the surface to post its progress message.
+                tokio::time::sleep(Duration::from_millis(2500)).await;
+            }
+            let events = batch
+                .into_iter()
+                .map(|kind| {
+                    let event = ExecutionEvent {
+                        event_id: ExecutionEventId::new(),
+                        execution_id,
+                        sequence,
+                        recorded_at_ms: 0,
+                        kind,
+                    };
+                    sequence += 1;
+                    event
+                })
+                .collect();
+            send(
+                &mut node,
+                &ClientMessage::PublishExecutionEvents {
+                    task_id,
+                    command_id,
+                    events,
+                },
+            )
+            .await;
+        }
     }
 }
 
@@ -326,7 +428,7 @@ async fn receive(socket: &mut Socket) -> ServerMessage {
 async fn serve_http(
     listener: tokio::net::TcpListener,
     gateway_port: u16,
-    posted: Arc<Mutex<Vec<String>>>,
+    requests: Arc<Mutex<Vec<String>>>,
 ) {
     loop {
         let Ok((mut stream, _)) = listener.accept().await else {
@@ -337,8 +439,8 @@ async fn serve_http(
             continue;
         };
         let request = String::from_utf8_lossy(&buffer[..read]);
-        let body = if request.contains("POST /channels/") {
-            posted.lock().expect("posted").push(request.to_string());
+        let body = if request.contains(" /channels/") {
+            requests.lock().expect("requests").push(request.to_string());
             r#"{"id":"900"}"#.to_owned()
         } else {
             format!(r#"{{"url":"ws://127.0.0.1:{gateway_port}"}}"#)
