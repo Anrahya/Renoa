@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     agent_targets,
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
+    live::LiveEvents,
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
     operator,
@@ -225,8 +226,9 @@ impl NodeRuntime {
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
         let cancellation = CancellationToken::new();
-        let (events, setup) =
+        let (setup_events, setup) =
             operator::setup_sink(self.host.home(), command_id.as_uuid(), &cancellation);
+        let events = Arc::new(LiveEvents::new(Arc::clone(&self), command_id, setup_events));
         let observation =
             TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
         let result = session

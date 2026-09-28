@@ -154,6 +154,13 @@ elsewhere. A message whose agent's node is offline is answered as not sent and
 must be resent; it is never held. Replies to commands submitted to the same task
 from another surface are posted to the channel with their origin.
 
+While a command runs, the channel shows the bot typing. Once the agent calls a
+tool, one progress message answers the command and is edited in place, listing
+each tool call and the intermediate messages that led to it. The answer itself
+arrives as the reply. Progress is transient: it is not stored, a command that
+calls no tool only shows typing, and after a restart progress resumes from the
+next task record.
+
 OAuth and credential links go to the application owner's DM. The executing node
 sends them directly with the Host's Discord connection, never through the RCP
 task journal, because a credential-setup link carries the key that keeps the

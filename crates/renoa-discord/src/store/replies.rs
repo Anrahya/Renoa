@@ -8,10 +8,29 @@ use rusqlite::{OptionalExtension as _, params};
 use super::{SurfaceStore, schema, turns::insert_pages};
 use crate::DiscordError;
 
+/// What applying one task record changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Applied {
+    /// The record was already applied.
+    Stale,
+    /// The record was applied; no reply is ready yet.
+    Recorded,
+    /// The record finished a command, and its reply pages are ready to post.
+    ReplyReady,
+}
+
+/// Where a command's transient progress is shown: its task's channel and, for
+/// a command from this surface, the Discord message it answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProgressTarget {
+    pub(crate) channel_id: String,
+    pub(crate) reply_to: Option<String>,
+}
+
 impl SurfaceStore {
     /// Applies one task record exactly once, advancing the task's cursor in the
-    /// same transaction. Returns whether reply pages became ready to post.
-    pub(crate) fn apply_event(&self, event: &TaskEvent) -> Result<bool, DiscordError> {
+    /// same transaction.
+    pub(crate) fn apply_event(&self, event: &TaskEvent) -> Result<Applied, DiscordError> {
         let event = event.clone();
         self.access(move |connection| {
             let transaction = schema::immediate_transaction(connection)?;
@@ -33,7 +52,7 @@ impl SurfaceStore {
             })?;
             if cursor.is_some_and(|applied| sequence <= applied) {
                 transaction.commit()?;
-                return Ok(false);
+                return Ok(Applied::Stale);
             }
             let ready = match &event.kind {
                 TaskEventKind::CommandSubmitted { command } => {
@@ -82,7 +101,37 @@ impl SurfaceStore {
                 params![sequence, task_id],
             )?;
             transaction.commit()?;
-            Ok(ready)
+            Ok(if ready {
+                Applied::ReplyReady
+            } else {
+                Applied::Recorded
+            })
+        })
+    }
+
+    /// Where an applied command's progress belongs, if the command is known.
+    pub(crate) fn progress_target(
+        &self,
+        command_id: &str,
+    ) -> Result<Option<ProgressTarget>, DiscordError> {
+        let command_id = command_id.to_owned();
+        self.access(move |connection| {
+            connection
+                .query_row(
+                    "SELECT tasks.channel_id, turns.message_id
+                     FROM replies JOIN tasks ON tasks.task_id = replies.task_id
+                     LEFT JOIN turns ON turns.command_id = replies.command_id
+                     WHERE replies.command_id = ?1",
+                    [&command_id],
+                    |row| {
+                        Ok(ProgressTarget {
+                            channel_id: row.get(0)?,
+                            reply_to: row.get(1)?,
+                        })
+                    },
+                )
+                .optional()
+                .map_err(DiscordError::from)
         })
     }
 }

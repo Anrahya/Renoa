@@ -5,7 +5,7 @@ use renoa_protocol::{
 };
 use uuid::Uuid;
 
-use super::{Enqueue, SurfaceStore};
+use super::{Applied, Enqueue, SurfaceStore};
 use crate::snowflake::Snowflake;
 
 fn snowflake(value: &str) -> Snowflake {
@@ -159,10 +159,27 @@ fn task_records_become_one_reply_to_the_discord_message_even_when_replayed() {
         .iter()
         .map(|record| store.apply_event(record).expect("apply record"))
         .collect::<Vec<_>>();
-    assert_eq!(ready, vec![false, false, false, true]);
+    assert_eq!(
+        ready,
+        vec![
+            Applied::Recorded,
+            Applied::Recorded,
+            Applied::Recorded,
+            Applied::ReplyReady
+        ]
+    );
     for record in &records {
-        assert!(!store.apply_event(record).expect("replayed record"));
+        assert_eq!(
+            store.apply_event(record).expect("replayed record"),
+            Applied::Stale
+        );
     }
+    let target = store
+        .progress_target(&command_id.to_string())
+        .expect("progress target")
+        .expect("known command");
+    assert_eq!(target.channel_id, "202");
+    assert_eq!(target.reply_to.as_deref(), Some(message_id.as_str()));
 
     assert_eq!(
         store.opened_tasks().expect("opened tasks"),

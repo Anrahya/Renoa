@@ -11,8 +11,8 @@ use tokio_util::sync::CancellationToken;
 
 use support::{
     CuttableProxy, HostFixture, TestSystem, agent_target, attach, attach_after,
-    collect_through_terminal, collect_through_turn_started, open_task, submit_when_node_is_online,
-    wait_for_path, wait_for_targets,
+    collect_through_terminal, collect_through_turn_started, collect_until, open_task,
+    submit_when_node_is_online, wait_for_path, wait_for_targets,
 };
 
 #[tokio::test]
@@ -226,6 +226,107 @@ async fn remove_agent_definition(data: &std::path::Path, agent_id: AgentId) {
     })
     .await
     .expect("agent removal task");
+}
+
+#[tokio::test]
+async fn tool_calls_and_intermediate_messages_reach_surfaces_while_the_turn_runs() {
+    timeout(Duration::from_secs(10), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+
+        let mut surface = system.connect_surface().await;
+        attach(&mut surface, system.task_id).await;
+        let command_id = CommandId::new();
+        submit_when_node_is_online(
+            &mut surface,
+            system.task_id,
+            command_id,
+            "Read proof, then wait.",
+        )
+        .await;
+        // The model holds its final answer until released, so these events
+        // can only arrive if the node publishes them while the turn runs.
+        let mut events = collect_until(&mut surface, |event| {
+            matches!(&event.kind, ExecutionEventKind::ToolFinished { call_id, .. }
+                if call_id == "read-held")
+        })
+        .await;
+        let live = execution_kinds(&events, command_id);
+        let reading = live.iter().position(|kind| {
+            matches!(kind, ExecutionEventKind::AssistantMessage { text }
+                if text == "Reading the proof first.")
+        });
+        let started = live.iter().position(|kind| {
+            matches!(kind, ExecutionEventKind::ToolStarted { call_id, .. } if call_id == "read-held")
+        });
+        assert!(
+            matches!((reading, started), (Some(reading), Some(started)) if reading < started),
+            "the intermediate message precedes its tool call: {live:?}"
+        );
+
+        wait_for_path(&fixture.started()).await;
+        fixture.release();
+        events.extend(collect_through_terminal(&mut surface).await);
+        let all = execution_kinds(&events, command_id);
+        let count = |matches: &dyn Fn(&ExecutionEventKind) -> bool| {
+            all.iter().filter(|kind| matches(kind)).count()
+        };
+        assert_eq!(
+            count(&|kind| matches!(kind, ExecutionEventKind::ToolStarted { .. })),
+            1
+        );
+        assert_eq!(
+            count(&|kind| matches!(kind, ExecutionEventKind::ToolFinished { .. })),
+            1
+        );
+        assert_eq!(
+            count(&|kind| matches!(kind, ExecutionEventKind::AssistantMessage { text }
+                if text == "Reading the proof first.")),
+            1
+        );
+        assert!(matches!(
+            &all[all.len() - 2..],
+            [
+                ExecutionEventKind::AssistantMessage { text },
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Completed
+                },
+            ] if text == "The held proof was read."
+        ));
+
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("live progress test timed out");
+}
+
+fn execution_kinds(
+    events: &[renoa_control::TaskEvent],
+    command_id: CommandId,
+) -> Vec<ExecutionEventKind> {
+    events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            TaskEventKind::ExecutionEvent {
+                command_id: cause,
+                event,
+            } if *cause == command_id => Some(event.kind.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[tokio::test]

@@ -376,9 +376,15 @@ parallel.
 After node-process restart, every non-terminal node admission is driven again
 with its exact command and Host session. The kernel checkpoint decides what is
 safe: an interrupted model effect can replay inside the same operation, while
-an effect whose outcome is unknown is not repeated. Once the kernel settles,
-the node derives assistant and tool records from durable Host history and
-commits that projection with the terminal RCP event in one transaction.
+an effect whose outcome is unknown is not repeated.
+
+While the turn runs, the node records each tool start and tool result as it
+happens, and the text of each model response that calls a tool, so attached
+surfaces see progress before the terminal event. Once the kernel settles, the
+node derives assistant and tool records from durable Host history and commits
+the records not already recorded, with the terminal RCP event, in one
+transaction. A tool record is identified by its call id and an assistant record
+by its text, so a re-driven turn does not repeat what the node recorded live.
 
 ### Harness adapter boundary
 

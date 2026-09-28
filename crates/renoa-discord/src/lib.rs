@@ -17,6 +17,7 @@ mod gateway;
 mod ingress;
 #[cfg(test)]
 mod live_test;
+mod progress;
 mod rcp;
 mod service;
 mod snowflake;

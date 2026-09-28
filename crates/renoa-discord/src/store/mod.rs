@@ -21,6 +21,7 @@ mod tests;
 
 pub(crate) use deliveries::Outbound;
 pub(crate) use gateway::GatewayCursor;
+pub(crate) use replies::{Applied, ProgressTarget};
 pub(crate) use turns::{Enqueue, QueuedTurn};
 
 #[derive(Debug)]
