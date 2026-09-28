@@ -86,14 +86,20 @@ async fn a_running_command_shows_typing_and_its_tool_calls_before_the_answer() {
         answer.contains(&format!("agent:{ARCEE} answered")),
         "{answer}"
     );
-    let edits = observed
+    let position = |prefix: &str| {
+        observed
+            .requests
+            .iter()
+            .position(|request| request.starts_with(prefix))
+    };
+    let answered = observed
         .requests
         .iter()
-        .filter(|request| request.starts_with("PATCH /channels/202/messages/900"))
-        .collect::<Vec<_>>();
-    let last = edits.last().expect("the progress message is edited");
-    assert!(last.contains("**Steps**"), "{last}");
-    assert!(!last.contains("answered"), "{last}");
+        .position(|request| request.contains("answered"))
+        .expect("the answer is posted");
+    let deleted = position("DELETE /channels/202/messages/900")
+        .expect("the progress message is deleted after the command finishes");
+    assert!(answered < deleted, "{:?}", observed.requests);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -169,11 +175,11 @@ async fn run(scenario: Scenario) -> Observed {
         let answered = posted(requests)
             .iter()
             .any(|body| body.contains("answered") || body.contains("offline"));
-        let edited = scenario != Scenario::Tools
+        let cleared = scenario != Scenario::Tools
             || requests
                 .iter()
-                .any(|request| request.starts_with("PATCH ") && request.contains("**Steps**"));
-        answered && edited
+                .any(|request| request.starts_with("DELETE /channels/202/messages/900"));
+        answered && cleared
     };
     tokio::time::timeout(Duration::from_secs(30), async {
         while !settled(&requests.lock().expect("requests")) {

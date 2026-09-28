@@ -133,6 +133,19 @@ impl DiscordApi {
         .map(drop)
     }
 
+    pub(crate) async fn delete_message(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+    ) -> Result<(), ApiError> {
+        self.send_bytes(self.client.delete(format!(
+            "{}/channels/{channel_id}/messages/{message_id}",
+            self.origin
+        )))
+        .await
+        .map(drop)
+    }
+
     pub(crate) async fn direct_channel(&self, user: &str) -> Result<String, ApiError> {
         #[derive(Deserialize)]
         struct Channel {

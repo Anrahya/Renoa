@@ -20,12 +20,12 @@ fn a_command_without_tools_shows_only_typing() {
     let mut command = command();
     command.apply(Step::Working);
     command.apply(Step::Said("Here is the answer.".to_owned()));
-    command.apply(Step::Finished { failed: false });
+    command.apply(Step::Finished);
     assert_eq!(command.render(), None);
 }
 
 #[test]
-fn intermediate_messages_and_tool_calls_are_listed_but_the_answer_is_not() {
+fn intermediate_messages_and_tool_calls_are_listed_until_the_command_finishes() {
     let mut command = command();
     command.apply(Step::Said("Searching the library first.".to_owned()));
     command.apply(tool("one", "plugin_search"));
@@ -44,12 +44,17 @@ fn intermediate_messages_and_tool_calls_are_listed_but_the_answer_is_not() {
         is_error: true,
     });
     command.apply(Step::Said("The final answer.".to_owned()));
-    command.apply(Step::Finished { failed: false });
     assert_eq!(
         command.render().as_deref(),
         Some(
-            "**Steps**\n💭 Searching the library first.\n🔧 `plugin_search` ✓\n🔧 `plugin_manage` ✗"
+            "**Working…**\n💭 Searching the library first.\n🔧 `plugin_search` ✓\n🔧 `plugin_manage` ✗"
         )
+    );
+    command.apply(Step::Finished);
+    assert_eq!(
+        command.render(),
+        None,
+        "a finished command shows no progress"
     );
 }
 
