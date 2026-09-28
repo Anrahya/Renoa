@@ -15,6 +15,7 @@ mod lease;
 mod mcp;
 mod models;
 pub(crate) mod observation;
+pub(crate) mod profiles;
 mod reset;
 pub(crate) mod routines;
 mod runtime;

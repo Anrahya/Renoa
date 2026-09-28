@@ -9,15 +9,66 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use renoa_agent::ToolError;
+use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    files::{DocumentSnapshot, USER_FILE, document_io, restrict_directory, revision},
-    read_snapshot,
+    files::{
+        DocumentSnapshot, USER_FILE, canonical_data_directory, document_io, restrict_directory,
+        revision,
+    },
+    read_snapshot, replace_document, stale_edit, validate_revision,
 };
 use crate::AgentDefinitionError;
 
 const PROFILE_DIRECTORY: &str = "users";
+
+/// One person's profile and the revision an edit must name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct UserProfile {
+    pub content: String,
+    pub revision: String,
+}
+
+/// Reads the profile of `principal` from the Host data directory.
+///
+/// # Errors
+///
+/// Returns an error when the data directory or a profile directory is unsafe,
+/// or the profile is not a readable UTF-8 regular file.
+pub(crate) fn read_user_profile(
+    data_directory: &Path,
+    principal: Uuid,
+) -> Result<UserProfile, AgentDefinitionError> {
+    let snapshot =
+        PersonProfile::new(&canonical_data_directory(data_directory)?, principal).read()?;
+    Ok(UserProfile {
+        content: snapshot.content,
+        revision: snapshot.revision,
+    })
+}
+
+/// Replaces the profile of `principal` against the revision its editor read.
+///
+/// # Errors
+///
+/// Returns a conflict for a stale revision, invalid input for a malformed one,
+/// and an I/O error when storage fails.
+pub(crate) async fn replace_user_profile(
+    data_directory: &Path,
+    principal: Uuid,
+    expected_revision: &str,
+    content: &str,
+    cancellation: &CancellationToken,
+) -> Result<String, ToolError> {
+    let data_directory =
+        canonical_data_directory(data_directory).map_err(|error| profile_error(&error))?;
+    PersonProfile::new(&data_directory, principal)
+        .replace(expected_revision, content, cancellation)
+        .await
+}
 
 /// The profile of the person one turn is talking to.
 #[derive(Clone, Debug)]
@@ -57,13 +108,36 @@ impl PersonProfile {
         }
     }
 
+    /// Replaces the profile against the revision its editor last read.
+    ///
+    /// A first edit creates the person's private directory, so the revision is
+    /// checked before that effect: a stale edit leaves nothing behind.
+    pub(super) async fn replace(
+        &self,
+        expected_revision: &str,
+        content: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<String, ToolError> {
+        validate_revision(expected_revision)?;
+        let new_revision = revision(content.as_bytes());
+        let current = self.read().map_err(|error| profile_error(&error))?.revision;
+        if current == new_revision {
+            return Ok(new_revision);
+        }
+        if current != expected_revision {
+            return Err(stale_edit());
+        }
+        self.prepare().map_err(|error| profile_error(&error))?;
+        replace_document(&self.path(), true, expected_revision, content, cancellation).await
+    }
+
     /// Creates the private profile directories a first edit writes into.
     ///
     /// # Errors
     ///
     /// Returns an error when a directory cannot be created or an existing one
     /// is a link or another file.
-    pub(super) fn prepare(&self) -> Result<(), AgentDefinitionError> {
+    fn prepare(&self) -> Result<(), AgentDefinitionError> {
         for directory in [&self.users, &self.directory] {
             match fs::create_dir(directory) {
                 Ok(()) => restrict_directory(directory)?,
@@ -104,4 +178,8 @@ fn empty() -> DocumentSnapshot {
         content: String::new(),
         revision: revision(b""),
     }
+}
+
+fn profile_error(error: &AgentDefinitionError) -> ToolError {
+    ToolError::io(error.to_string(), false)
 }

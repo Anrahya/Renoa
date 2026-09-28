@@ -101,6 +101,24 @@ impl Fixture {
             .await
             .unwrap()
     }
+    async fn profile(&self) -> reqwest::Response {
+        self.client
+            .get(format!("{}/v1/host/profile", self.url))
+            .header("cookie", &self.cookie)
+            .send()
+            .await
+            .unwrap()
+    }
+    async fn save_profile(&self, origin: &str, body: &Value) -> reqwest::Response {
+        self.client
+            .put(format!("{}/v1/host/profile", self.url))
+            .header("origin", origin)
+            .header("cookie", &self.cookie)
+            .json(body)
+            .send()
+            .await
+            .unwrap()
+    }
     async fn restart(&mut self) {
         self.stop.cancel();
         (&mut self.task).await.unwrap().unwrap();
@@ -425,3 +443,55 @@ else if(action==='describe') { process.stdout.write(JSON.stringify({ok:true,resp
 else if(action==='stream') { fs.writeFileSync(new URL('./request.json',import.meta.url),input); process.stdout.write(JSON.stringify({event:'completed',response:{content:[{type:'text',text:'Owner-created agent ran.'}],stop_reason:'stop',usage:{input:8,output:4,cache_read:0,cache_write:0},metadata:{api:'test',provider:process.env.RENOA_MODEL_PROVIDER,model:JSON.parse(spec).id}}})+'\n'); }
 else process.exit(2);
 ";
+
+#[tokio::test]
+async fn the_owner_reads_and_edits_their_profile_for_agent_creation() {
+    let f = Fixture::new().await;
+    let users = f.files.path().join("home/users");
+    let unsigned = f
+        .client
+        .get(format!("{}/v1/host/profile", f.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+
+    let empty: Value = f.profile().await.json().await.unwrap();
+    let empty_revision = empty["revision"].clone();
+    assert_eq!(empty["content"], "");
+    assert_eq!(empty_revision.as_str().unwrap().len(), 64);
+
+    let guess = json!({"expected_revision": "0".repeat(64), "content": "Guessed.\n"});
+    let stale = f.save_profile(ORIGIN, &guess).await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert!(!users.exists(), "a stale save must leave no profile behind");
+
+    let first = json!({"expected_revision": empty_revision, "content": "Prefers mornings.\n"});
+    let foreign = f.save_profile("https://elsewhere.example", &first).await;
+    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+    assert!(!users.exists(), "a foreign origin must not save");
+
+    let saved = f.save_profile(ORIGIN, &first).await;
+    assert_eq!(saved.status(), StatusCode::OK);
+    let saved: Value = saved.json().await.unwrap();
+    assert_eq!(saved["content"], "Prefers mornings.\n");
+    let profile = users.join(f.owner.as_uuid().to_string()).join("USER.md");
+    assert_eq!(
+        std::fs::read_to_string(&profile).unwrap(),
+        "Prefers mornings.\n"
+    );
+
+    // An agent's later edit is what the next read shows, and a save based on
+    // the older revision cannot overwrite it.
+    std::fs::write(&profile, "Prefers mornings and tea.\n").unwrap();
+    let current: Value = f.profile().await.json().await.unwrap();
+    assert_eq!(current["content"], "Prefers mornings and tea.\n");
+    let overwrite = json!({"expected_revision": saved["revision"], "content": "Overwrite.\n"});
+    let outdated = f.save_profile(ORIGIN, &overwrite).await;
+    assert_eq!(outdated.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        std::fs::read_to_string(&profile).unwrap(),
+        "Prefers mornings and tea.\n"
+    );
+    f.close().await;
+}

@@ -32,6 +32,8 @@ use files::{
     restrict_directory, revision, revision_from_hash,
 };
 use profile::PersonProfile;
+pub use profile::UserProfile;
+pub(crate) use profile::{read_user_profile, replace_user_profile};
 
 use crate::{
     AgentDefinitionError, AgentDocuments, atomic_file::content_hash, capabilities,
@@ -201,83 +203,84 @@ impl AgentDocumentStore {
         content: &str,
         cancellation: &CancellationToken,
     ) -> Result<String, ToolError> {
-        let path = match document {
-            Document::Soul => self.soul.clone(),
-            Document::User => self.person.as_ref().map(PersonProfile::path),
+        match (document, &self.soul, &self.person) {
+            (Document::Soul, Some(path), _) => {
+                replace_document(path, false, expected_revision, content, cancellation).await
+            }
+            (Document::User, _, Some(person)) => {
+                person
+                    .replace(expected_revision, content, cancellation)
+                    .await
+            }
+            (Document::User, _, None) if self.enabled.user => Err(ToolError::invalid_input(
+                "no person is identified in this turn, so there is no USER.md to edit",
+            )),
+            _ => Err(ToolError::invalid_input(
+                "this agent does not keep that document",
+            )),
         }
-        .ok_or_else(|| {
-            ToolError::invalid_input(if document == Document::User && self.enabled.user {
-                "no person is identified in this turn, so there is no USER.md to edit"
-            } else {
-                "this agent does not keep that document"
-            })
-        })?;
-        if expected_revision.len() != 64
-            || !expected_revision
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        {
+    }
+}
+
+/// Replaces one document file against the revision its editor last read.
+///
+/// A matching edit is idempotent, and a stale one fails without changing the
+/// file. Only a person's first profile edit may find the file absent.
+async fn replace_document(
+    path: &Path,
+    may_be_absent: bool,
+    expected_revision: &str,
+    content: &str,
+    cancellation: &CancellationToken,
+) -> Result<String, ToolError> {
+    validate_revision(expected_revision)?;
+    let new_revision = revision(content.as_bytes());
+    let update = FileUpdate::acquire(path, cancellation).await?;
+    let current = match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+            Some(
+                tokio::fs::read(path)
+                    .await
+                    .map_err(|error| document_tool_io("read agent document", &error))?,
+            )
+        }
+        Ok(_) => {
             return Err(ToolError::invalid_input(
-                "expected_revision must be a 64-character lowercase SHA-256 digest",
+                "agent document is not a regular file",
             ));
         }
-        let new_revision = revision(content.as_bytes());
-        if let (Document::User, Some(person)) = (document, &self.person) {
-            // A first edit creates the person's private directory, so the
-            // revision is checked before that effect: a stale edit leaves nothing.
-            let current = person
-                .read()
-                .map_err(|error| profile_error(&error))?
-                .revision;
-            if current == new_revision {
-                return Ok(new_revision);
-            }
-            if current != expected_revision {
-                return Err(stale_edit());
-            }
-            person.prepare().map_err(|error| profile_error(&error))?;
-        }
-        let update = FileUpdate::acquire(&path, cancellation).await?;
-        let current = match tokio::fs::symlink_metadata(&path).await {
-            Ok(metadata)
-                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
-            {
-                Some(
-                    tokio::fs::read(&path)
-                        .await
-                        .map_err(|error| document_tool_io("read agent document", &error))?,
-                )
-            }
-            Ok(_) => {
-                return Err(ToolError::invalid_input(
-                    "agent document is not a regular file",
-                ));
-            }
-            // Only a person's profile may be absent; its first edit creates it.
-            Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound && document == Document::User =>
-            {
-                None
-            }
-            Err(error) => return Err(document_tool_io("inspect agent document", &error)),
-        };
-        let current_hash = content_hash(current.as_deref().unwrap_or_default());
-        let current_revision = revision_from_hash(current_hash);
-        if current_revision == new_revision {
-            return Ok(new_revision);
-        }
-        if current_revision != expected_revision {
-            return Err(stale_edit());
-        }
-        update
-            .replace(
-                content.as_bytes(),
-                current.is_some().then_some(current_hash),
-                cancellation,
-            )
-            .await?;
-        Ok(new_revision)
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && may_be_absent => None,
+        Err(error) => return Err(document_tool_io("inspect agent document", &error)),
+    };
+    let current_hash = content_hash(current.as_deref().unwrap_or_default());
+    let current_revision = revision_from_hash(current_hash);
+    if current_revision == new_revision {
+        return Ok(new_revision);
     }
+    if current_revision != expected_revision {
+        return Err(stale_edit());
+    }
+    update
+        .replace(
+            content.as_bytes(),
+            current.is_some().then_some(current_hash),
+            cancellation,
+        )
+        .await?;
+    Ok(new_revision)
+}
+
+fn validate_revision(expected_revision: &str) -> Result<(), ToolError> {
+    if expected_revision.len() == 64
+        && expected_revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Ok(());
+    }
+    Err(ToolError::invalid_input(
+        "expected_revision must be a 64-character lowercase SHA-256 digest",
+    ))
 }
 
 struct AgentDocumentsTool {
@@ -435,10 +438,6 @@ fn stale_edit() -> ToolError {
     ToolError::conflict(
         "agent document changed after this turn began; inspect the next turn's documents before editing again",
     )
-}
-
-fn profile_error(error: &AgentDefinitionError) -> ToolError {
-    ToolError::io(error.to_string(), false)
 }
 
 fn document_tool_io(operation: &str, error: &std::io::Error) -> ToolError {

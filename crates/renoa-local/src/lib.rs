@@ -54,6 +54,7 @@ pub use agent_model::AgentModelSelection;
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use code_mode::validate_code_mode_worker;
 pub use credential_file::credential_file_is_private;
+pub use documents::UserProfile;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
     AgentCreateRequest, AgentDefinitionPage, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE,
@@ -67,7 +68,7 @@ pub use host::observation::{
 };
 pub use host::{
     HostResetReport, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
-    reset_host_data_root,
+    profiles::ProfileEditError, reset_host_data_root,
 };
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpConnectionStatus, McpCredentialError,
