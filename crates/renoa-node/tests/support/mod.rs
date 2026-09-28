@@ -12,8 +12,8 @@ use renoa_control::{
 };
 use renoa_kernel::{AgentId, Kernel, SessionId};
 use renoa_local::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use renoa_protocol::{
     CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, PrincipalId, SurfaceRef, TargetRef,
@@ -94,6 +94,11 @@ impl TestSystem {
 
     pub(crate) const fn node_id(&self) -> NodeId {
         self.node_id
+    }
+
+    /// The principal that owns the system's node and submits its commands.
+    pub(crate) const fn principal_id(&self) -> PrincipalId {
+        self.principal_id
     }
 
     pub(crate) async fn create_task(&self, target: TargetRef) -> TaskId {
@@ -236,6 +241,38 @@ impl HostFixture {
     /// Provisions another agent in the same Host.
     pub(crate) async fn provision_agent(&self) -> AgentId {
         provision_alpha(&self.data, &self.bridge, &self.credentials).await
+    }
+
+    /// Provisions an agent that reads the speaking person's `USER.md`, and
+    /// records `profile` as that file for `principal`.
+    pub(crate) async fn provision_profiled_agent(
+        &self,
+        principal: PrincipalId,
+        profile: &str,
+    ) -> AgentId {
+        let directory = self
+            .data
+            .join("users")
+            .join(principal.as_uuid().to_string());
+        fs::create_dir_all(&directory).expect("create profile directory");
+        fs::write(directory.join("USER.md"), profile).expect("write profile");
+        let mut request = AgentCreateRequest::new(Uuid::new_v4(), "Profiled", "Answer the person.");
+        request.documents = Some(AgentDocuments {
+            soul: false,
+            user: true,
+        });
+        self.host()
+            .create_agent(
+                AgentCreator::System {
+                    component: "node-test".to_owned(),
+                },
+                AgentCreationOrigin::Provisioning,
+                request,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("provision profiled agent")
+            .id
     }
 
     pub(crate) fn host(&self) -> Arc<LocalHost> {

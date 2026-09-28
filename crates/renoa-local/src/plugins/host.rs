@@ -44,7 +44,9 @@ impl HostPluginId {
         match self {
             Self::Agents => "Create, list, and rename Host agents.",
             Self::Routines => "Schedule agents and read routine results.",
-            Self::Documents => "Read and edit this agent's enabled SOUL and USER documents.",
+            Self::Documents => {
+                "Edit this agent's SOUL document and the USER document of the person it talks to."
+            }
             Self::Skills => "Find skills and pin their instructions to this session.",
             Self::Git => {
                 "Inspect local Git changes, diffs, and pinned commits without shell access."

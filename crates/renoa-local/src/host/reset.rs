@@ -121,18 +121,16 @@ fn require_managed_roots(data_directory: &Path) -> Result<(), LocalHostError> {
         for entry in std::fs::read_dir(agents)? {
             let directory = entry?.path();
             require_managed_directory(&directory)?;
-            for name in ["SOUL.md", "USER.md"] {
-                let path = directory.join(name);
-                match std::fs::symlink_metadata(&path) {
-                    Ok(metadata) if metadata.is_file() => (),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-                    Err(error) => return Err(error.into()),
-                    Ok(_) => {
-                        return Err(LocalHostError::InvalidRequest(format!(
-                            "refusing to clear `{}`: an agent document must be a regular file",
-                            path.display()
-                        )));
-                    }
+            let path = directory.join("SOUL.md");
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() => (),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+                Ok(_) => {
+                    return Err(LocalHostError::InvalidRequest(format!(
+                        "refusing to clear `{}`: an agent document must be a regular file",
+                        path.display()
+                    )));
                 }
             }
         }
@@ -197,15 +195,11 @@ fn clear_documents(root: &Path) -> Result<u64, LocalHostError> {
     }
     for entry in std::fs::read_dir(agents)? {
         let directory = entry?.path();
-        let mut changed = false;
-        for name in ["SOUL.md", "USER.md"] {
-            match std::fs::remove_file(directory.join(name)) {
-                Ok(()) => changed = true,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-                Err(error) => return Err(error.into()),
-            }
+        match std::fs::remove_file(directory.join("SOUL.md")) {
+            Ok(()) => removed += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
         }
-        removed += u64::from(changed);
         if std::fs::read_dir(&directory)?.next().is_none() {
             std::fs::remove_dir(directory)?;
         }

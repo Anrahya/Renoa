@@ -69,6 +69,8 @@ impl LocalHost {
                 TurnObservation::from_unix_milliseconds(run.admitted_at_ms)?,
                 Arc::new(HeadlessProgress(cancellation.clone())),
                 cancellation,
+                // A routine records no person, so its turn has no USER.md.
+                None,
             )
             .await?;
         let output = match outcome {

@@ -162,6 +162,46 @@ async fn an_agent_created_while_the_node_runs_becomes_an_advertised_target() {
 }
 
 #[tokio::test]
+async fn a_turn_reads_the_user_profile_of_the_principal_that_sent_the_command() {
+    timeout(Duration::from_secs(10), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let profiled = fixture
+            .provision_profiled_agent(system.principal_id(), "PROFILE_OWNER\n")
+            .await;
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+        let mut surface = system.connect_surface().await;
+        wait_for_targets(&mut surface, 2).await;
+
+        let task = open_task(&mut surface, system.node_id(), agent_target(profiled)).await;
+        attach(&mut surface, task).await;
+        let command_id = CommandId::new();
+        submit_when_node_is_online(&mut surface, task, command_id, "Which profile do you see?")
+            .await;
+        let events = collect_through_terminal(&mut surface).await;
+        assert_execution_event(&events, command_id, |kind| {
+            matches!(kind, ExecutionEventKind::AssistantMessage { text } if text == "PROFILE_OWNER")
+        });
+
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("user profile test timed out");
+}
+
+#[tokio::test]
 async fn agent_loss_after_startup_terminates_as_failed_without_a_turn() {
     timeout(Duration::from_secs(10), async {
         let mut system = TestSystem::start().await;

@@ -14,7 +14,6 @@ use super::{
 use crate::{
     AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDocuments, AgentOperationalDefinition,
     AgentToolSelection, capabilities,
-    documents::DocumentDefaults,
     host::{catalog, routines},
     presets,
     stable_id::stable_id,
@@ -113,12 +112,12 @@ impl LocalHost {
             operation_id: request.operation_id,
             request_json,
             result_json,
-            document_defaults: documents.map(|enabled| {
+            documents: documents.map(|enabled| {
                 (
                     enabled,
                     preset
-                        .and_then(presets::AgentPreset::document_defaults)
-                        .unwrap_or(DocumentDefaults { soul: "", user: "" }),
+                        .and_then(presets::AgentPreset::soul_default)
+                        .unwrap_or_default(),
                 )
             }),
             routine,
@@ -170,7 +169,7 @@ struct CreateCommit {
     operation_id: Uuid,
     request_json: String,
     result_json: String,
-    document_defaults: Option<(AgentDocuments, DocumentDefaults)>,
+    documents: Option<(AgentDocuments, &'static str)>,
     routine: Option<(Uuid, routines::RoutineSpec)>,
     cancellation: CancellationToken,
 }
@@ -183,7 +182,7 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         operation_id,
         request_json,
         result_json,
-        document_defaults,
+        documents,
         routine,
         cancellation,
     } = commit;
@@ -238,12 +237,12 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
     // above has no filesystem effect, while the row still cannot become visible
     // before its documents exist. A crash between the two publishes again on the
     // retry, and the identical files are adopted.
-    if let Some((enabled, defaults)) = document_defaults {
+    if let Some((enabled, soul)) = documents {
         crate::documents::AgentDocumentStore::publish(
             data_directory,
             definition.id,
             *enabled,
-            *defaults,
+            soul,
         )?;
     }
     transaction.commit().map_err(catalog_error)?;

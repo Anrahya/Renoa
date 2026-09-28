@@ -9,8 +9,9 @@ use uuid::Uuid;
 
 use super::protocol_bindings;
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalModelConfiguration, LocalTurnOutcome, ModelProvider, ReasoningLevel,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, LocalTurnOutcome, ModelProvider,
+    ReasoningLevel, TurnObservation,
 };
 
 struct Quiet;
@@ -394,4 +395,47 @@ async fn monty_skill_activation_reattaches_one_body_without_expanding_the_next_t
         );
     }
     assert!(session.history().unwrap().iter().any(|entry| matches!(&entry.message,renoa_agent::Message::Tool {result} if result.name=="code_mode" && result.content.iter().any(|content|matches!(content,ContentBlock::Text {text} if text.contains("PINNED_REVIEW_INSTRUCTION"))))),"projection must preserve the full durable result");
+}
+
+#[tokio::test]
+async fn a_turn_reads_the_profile_of_the_person_it_comes_from() {
+    let directory = tempfile::tempdir().expect("fixture");
+    let host = host(directory.path(), None);
+    let mut request = AgentCreateRequest::new(Uuid::new_v4(), "Profiled", "Answer the person.");
+    request.documents = Some(AgentDocuments {
+        soul: true,
+        user: true,
+    });
+    let agent = create(&host, request).await;
+    let owner = Uuid::new_v4();
+    let profile = host.home().path().join("users").join(owner.to_string());
+    fs::create_dir_all(&profile).expect("profile directory");
+    fs::write(profile.join("USER.md"), "PROFILE_OWNER\n").expect("profile");
+    let workspace = host.agent_workspace(agent.id).await.unwrap();
+    for (principal, seen) in [
+        (Some(owner), "PROFILE_OWNER"),
+        (Some(Uuid::new_v4()), "none"),
+        (None, "none"),
+    ] {
+        // One session per person, as RCP gives each task a single principal.
+        let session = host
+            .ensure_agent_session(agent.id, &workspace, Uuid::new_v4())
+            .await
+            .unwrap();
+        let outcome = session
+            .execute_turn_observed_with_cancellation(
+                Uuid::new_v4(),
+                vec![ContentBlock::text("Which profile do you see?")],
+                TurnObservation::now().expect("time"),
+                Arc::new(Quiet),
+                CancellationToken::new(),
+                principal,
+            )
+            .await
+            .expect("execute");
+        assert!(
+            matches!(&outcome, LocalTurnOutcome::Completed { output, .. } if output == seen),
+            "{principal:?} saw {outcome:?}"
+        );
+    }
 }

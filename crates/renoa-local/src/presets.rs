@@ -10,7 +10,6 @@ use std::sync::LazyLock;
 use crate::{
     AgentBehavior, AgentDefinitionError, AgentDocuments, AgentPresetId, AutomaticCompaction,
     ModelProvider, TurnTiming, WorkspaceInstructions, capabilities::BuiltInCapability,
-    documents::DocumentDefaults,
 };
 
 /// Renoa's built-in coding agent seed.
@@ -23,7 +22,6 @@ pub(crate) const GENERAL_PRESET_ID: &str = "renoa.general.v1";
 const ALPHA_INSTRUCTIONS: &str = include_str!("../prompts/alpha-v1.md");
 const ARCEE_INSTRUCTIONS: &str = include_str!("../prompts/arcee-v1/system.md");
 const ARCEE_SOUL: &str = include_str!("../prompts/arcee-v1/SOUL.md");
-const ARCEE_USER: &str = include_str!("../prompts/arcee-v1/USER.md");
 
 const ARCEE_COMPACTION_TRIGGER: u64 = 400_000;
 const ARCEE_COMPACTION_TARGET: u64 = 40_000;
@@ -55,7 +53,7 @@ pub(crate) struct AgentPreset {
     instructions: &'static str,
     behavior: AgentBehavior,
     documents: Option<AgentDocuments>,
-    document_defaults: Option<DocumentDefaults>,
+    soul_default: Option<&'static str>,
     provider_restriction: Option<ModelProvider>,
     capability_baseline: &'static [BuiltInCapability],
 }
@@ -82,9 +80,10 @@ impl AgentPreset {
         self.documents
     }
 
+    /// The `SOUL.md` a new agent from this preset starts with.
     #[must_use]
-    pub(crate) const fn document_defaults(&self) -> Option<DocumentDefaults> {
-        self.document_defaults
+    pub(crate) const fn soul_default(&self) -> Option<&'static str> {
+        self.soul_default
     }
 
     #[must_use]
@@ -116,7 +115,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
                 automatic_compaction: None,
             },
             documents: None,
-            document_defaults: None,
+            soul_default: None,
             provider_restriction: None,
             capability_baseline: ALPHA_CAPABILITY_BASELINE,
         },
@@ -136,10 +135,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
                 soul: true,
                 user: true,
             }),
-            document_defaults: Some(DocumentDefaults {
-                soul: ARCEE_SOUL,
-                user: ARCEE_USER,
-            }),
+            soul_default: Some(ARCEE_SOUL),
             provider_restriction: Some(ModelProvider::OpenCodeGo),
             capability_baseline: ARCEE_CAPABILITY_BASELINE,
         },
@@ -153,7 +149,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
                 automatic_compaction: None,
             },
             documents: None,
-            document_defaults: None,
+            soul_default: None,
             provider_restriction: None,
             capability_baseline: GENERAL_CAPABILITY_BASELINE,
         },
@@ -232,7 +228,7 @@ mod tests {
         );
         let documents = preset.documents().expect("documents");
         assert!(documents.soul && documents.user);
-        assert!(preset.document_defaults().is_some());
+        assert!(preset.soul_default().is_some());
     }
 
     #[test]
