@@ -1,12 +1,14 @@
 //! Transient progress for running commands: a typing indicator in the
 //! command's channel and one progress message, edited in place, listing its
-//! tool calls and the intermediate messages that led to them.
+//! tool calls and the intermediate messages that led to them. Once the command
+//! finishes and its answer has had time to post, the progress message is
+//! deleted.
 //!
 //! Progress is presence, not history. Nothing here is stored: after a restart
 //! progress resumes from the next task record, and a failed Discord call is
 //! retried on the next tick or dropped. A command that calls no tool shows only
 //! the typing indicator, and a command that finishes before its progress
-//! message was posted never posts one, so progress cannot follow its answer.
+//! message was posted never posts one.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -15,11 +17,15 @@ use std::{
 };
 
 use renoa_control::TaskEventKind;
-use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
+use renoa_protocol::ExecutionEventKind;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::{DiscordError, api::DiscordApi, store::ProgressTarget};
+use crate::{
+    DiscordError,
+    api::{ApiError, DiscordApi},
+    store::ProgressTarget,
+};
 
 /// Discord shows a typing indicator for about ten seconds.
 const TYPING_INTERVAL: Duration = Duration::from_secs(8);
@@ -37,7 +43,7 @@ pub(crate) enum Step {
     Said(String),
     ToolStarted { call_id: String, name: String },
     ToolFinished { call_id: String, is_error: bool },
-    Finished { failed: bool },
+    Finished,
 }
 
 impl Step {
@@ -60,9 +66,7 @@ impl Step {
                         call_id: call_id.clone(),
                         is_error: *is_error,
                     },
-                    ExecutionEventKind::ExecutionTerminated { terminal } => Self::Finished {
-                        failed: !matches!(terminal, ExecutionTerminal::Completed),
-                    },
+                    ExecutionEventKind::ExecutionTerminated { .. } => Self::Finished,
                     ExecutionEventKind::ExecutionStarted | ExecutionEventKind::TurnStarted => {
                         Self::Working
                     }
@@ -128,7 +132,9 @@ pub(crate) struct Command {
     /// The latest assistant message. It becomes a line only when a tool call
     /// follows it; otherwise it is the answer, which the reply carries.
     pending: Option<String>,
-    finished: Option<bool>,
+    /// When the command finished; its progress message is deleted one edit
+    /// interval later, once the answer has had time to post.
+    finished: Option<Instant>,
     message_id: Option<String>,
     shown: Option<String>,
     touched: Instant,
@@ -181,9 +187,9 @@ impl Command {
                     }
                 }
             }
-            Step::Finished { failed } => {
+            Step::Finished => {
                 self.pending = None;
-                self.finished = Some(failed);
+                self.finished = Some(Instant::now());
             }
         }
     }
@@ -192,17 +198,13 @@ impl Command {
         self.finished.is_none() && self.touched.elapsed() < IDLE_LIMIT
     }
 
-    /// The progress message, or `None` while there is nothing beyond typing
-    /// to show.
+    /// The progress message of a running command, or `None` while there is
+    /// nothing beyond typing to show or once the command has finished.
     pub(crate) fn render(&self) -> Option<String> {
-        if self.lines.is_empty() {
+        if self.lines.is_empty() || self.finished.is_some() {
             return None;
         }
-        let heading = match self.finished {
-            None => "**Working…**",
-            Some(false) => "**Steps**",
-            Some(true) => "**Stopped**",
-        };
+        let heading = "**Working…**";
         let rendered: Vec<String> = self.lines.iter().map(render_line).collect();
         let mut kept = Vec::new();
         let mut length = heading.len() + 40;
@@ -291,18 +293,24 @@ pub(crate) async fn run(
 
 async fn show(api: &DiscordApi, commands: &mut HashMap<String, Command>) {
     for (command_id, command) in commands.iter_mut() {
+        if let Some(finished) = command.finished {
+            if finished.elapsed() >= EDIT_INTERVAL {
+                remove(api, command_id, command).await;
+            }
+            continue;
+        }
         let Some(body) = command.render() else {
             continue;
         };
         if command.shown.as_deref() == Some(body.as_str()) {
             continue;
         }
-        let result = match (&command.message_id, command.finished) {
-            (Some(message_id), _) => api
+        let result = match &command.message_id {
+            Some(message_id) => api
                 .edit_message(&command.target.channel_id, message_id, &body)
                 .await
                 .map(|()| None),
-            (None, None) => api
+            None => api
                 .create_message(
                     &command.target.channel_id,
                     &body,
@@ -310,7 +318,6 @@ async fn show(api: &DiscordApi, commands: &mut HashMap<String, Command>) {
                 )
                 .await
                 .map(Some),
-            (None, Some(_)) => Ok(None),
         };
         match result {
             Ok(created) => {
@@ -322,9 +329,26 @@ async fn show(api: &DiscordApi, commands: &mut HashMap<String, Command>) {
             Err(error) => log_failure(command_id, &error.to_string()),
         }
     }
-    commands.retain(|_, command| {
-        command.running() || (command.message_id.is_some() && command.shown != command.render())
-    });
+    commands.retain(|_, command| command.running() || command.message_id.is_some());
+}
+
+/// Deletes a finished command's progress message. A refusal, such as a
+/// message someone already deleted, is final; other failures retry.
+async fn remove(api: &DiscordApi, command_id: &str, command: &mut Command) {
+    let Some(message_id) = &command.message_id else {
+        return;
+    };
+    match api
+        .delete_message(&command.target.channel_id, message_id)
+        .await
+    {
+        Ok(()) => command.message_id = None,
+        Err(ApiError::Rejected(error)) => {
+            log_failure(command_id, &error);
+            command.message_id = None;
+        }
+        Err(error) => log_failure(command_id, &error.to_string()),
+    }
 }
 
 async fn type_in(api: &DiscordApi, channel_id: &str) {
