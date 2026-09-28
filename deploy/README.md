@@ -5,7 +5,7 @@ the current deployment:
 
 - `renoa-coordinator` carries RCP task continuity and the separate short-lived
   Host OAuth callback relay; and
-- `renoa-node` executes statically bound RCP tasks through a local Host; and
+- `renoa-node` executes RCP tasks with the shared Host's agents; and
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
 - `renoa-host` runs the surface-independent routine scheduler; and
 - `renoa-management` serves the authenticated personal Host control panel; and
@@ -224,28 +224,9 @@ renoa-host /home/renoa/.renoa/config/host.json provision /etc/renoa/bootstrap-ag
 ```
 
 Observation and owner-control modules deliberately do not migrate or reset
-storage themselves. The node daemon owns a derived ledger and a complete private
-Host. Its ledger renamed the task column to `agent_id` and refuses an earlier
-shape by name; delete `<state-directory>/node.sqlite`
-(`/var/lib/renoa-node/node.sqlite` for the supplied unit). The private Host can
-hold agent-installed plugins, MCP connections and catalogs, skill revisions and
-shared-registry state, so never delete `<state-directory>/host`. Apply the same
-bounded Host reset used above, placing its fresh backup directory inside the one
-consolidated previous-release backup:
-
-```sh
-renoa-host /etc/renoa/node-host.json reset \
-  /opt/renoa/previous-release-staging/node-host
-```
-
-Preserve `<state-directory>/model-auth.sqlite`
-(`/var/lib/renoa-node/model-auth.sqlite`), which `node.json` names and node
-startup requires. Re-provision the private Host as shown in the node section,
-then start the daemon again. Stop `renoa-node.service` before these steps and
-install both release binaries first: `renoa-node` from the node section and
-`renoa-host` from the shared Host build in
-[the Soundwave section](#soundwave-github-review-service). The node's device
-credential and the coordinator's task binding live outside that directory and
+storage themselves. The node daemon runs in the shared Host and keeps only its
+derived ledger at `state/node.sqlite3`; its device credential and the
+coordinator's task bindings live outside the reset roots and
 survive. Each surface store is its own step, as listed in
 `docs/renoa-host-v0.md`. Keep the previous binaries and matching database
 snapshot in the single previous-release backup described above. Browser login
@@ -309,126 +290,77 @@ and retaining the passkey origin; a DNS name alone does not preserve the system.
 
 ## RCP execution node
 
-Build and install the headless Host node:
+The node executes RCP tasks with the shared Host's agents. It runs as the Host
+account against `/home/renoa/.renoa`, the same installation root as
+`renoa-host`, `renoa-management`, and the Discord surface, so an agent keeps its
+plugins, credentials, and workspace whichever surface reaches it.
+
+Build and install the binary:
 
 ```sh
 cargo build --locked --release -p renoa-node --bin renoa-node
 install -m 0755 target/release/renoa-node /usr/local/bin/renoa-node
-useradd --system --home-dir /var/lib/renoa-node \
-  --shell /usr/sbin/nologin renoa-node
-install -d -m 0700 -o renoa-node -g renoa-node /srv/renoa/node-workspaces
-install -d -m 0700 -o root -g root /etc/renoa
 ```
 
-Create `/etc/renoa/node.json` as root with mode `0600`. It is an exact local
-Host configuration, not RCP wire data:
+Create `/home/renoa/.renoa/config/node.json` owned by `renoa-arcee` with mode
+`0600`. It is local Host configuration, not RCP wire data. Its model and adapter
+settings must match the Host's other services:
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "endpoint": "wss://renoa.live/connect",
   "model": {
     "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
-    "credentialStore": "/var/lib/renoa-node/model-auth.sqlite",
+    "credentialStore": "/home/renoa/.renoa/credentials/models.sqlite3",
     "providers": ["opencode-go"],
     "defaultProvider": "opencode-go",
-    "defaultModel": "glm-5.3-flash"
+    "defaultModel": "<model-id>"
   },
   "adapters": {
     "mcp": "/opt/renoa/adapters/mcp-client-node/dist/src/main.js",
     "mcpRegistry": "/opt/renoa/adapters/mcp-registry-node/dist/src/main.js",
-    "sharedPluginRegistry": "http://<vps-magic-dns-name>:8082/"
-  },
-  "targets": [
-    {
-      "target": "workspace:example",
-      "agentId": "<provisioned-agent-uuid>",
-      "workspace": "/srv/renoa/node-workspaces/example"
+    "sharedPluginRegistry": "http://127.0.0.1:7820/",
+    "oauthRelay": {
+      "origin": "https://renoa.live",
+      "credentials": "/home/renoa/.renoa/credentials/oauth-relay-device"
     }
-  ]
+  }
 }
 ```
 
-Every configured adapter and model store must already exist at its absolute
-path. Omit any optional adapter field that this Host does not use. Each target
-names one provisioned agent and canonical workspace. The node advertises every
-target to the coordinator, so the node's owner can open tasks on it at runtime.
-Each task receives its own Host session the first time it executes; the node
-ledger records that session and keeps it for the task's later commands. A
-configuration that no longer serves a recorded task's target, agent, or
-workspace fails closed.
+Every configured adapter and credential file must already exist at its
+absolute path. Omit any optional adapter field that this Host does not use.
 
-Schema 3 removed each target's `sessionId`. Upgrading from schema 2 means
-setting `schemaVersion` to 3 and deleting every `sessionId`; tasks the ledger
-already bound keep their recorded sessions.
+There is no target list. The node advertises every agent in its Host as the
+target `agent:<agent-uuid>` and polls the Host every five seconds, so an agent
+created in the Control Room becomes available without a restart. Each task
+runs in its agent's own Host workspace and receives its own Host session the
+first time it executes; the node ledger (`state/node.sqlite3`) records that
+session for the task's later commands. A recorded task whose target no longer
+names an agent workspace refuses startup. A task whose agent was removed fails
+its next command instead of stopping the node.
 
-The daemon opens its own private Host data root at `<state-directory>/host`
-(`/var/lib/renoa-node/host` for the supplied unit), separate from the shared
-Host. Each `targets[].agentId` must name an agent provisioned in that root.
-Create `/etc/renoa/node-host.json` and `/etc/renoa/node-bootstrap-agent.json`
-as root with mode `0640` and group `renoa-node`; neither document holds a
-secret, and the provision command runs as the `renoa-node` account so the
-private data root is created with the service account's ownership.
-`home` must be exactly the node's Renoa home, and the
-model settings must match `node.json`'s `model` block:
-
-```json
-{
-  "home": "/var/lib/renoa-node/host",
-  "model_bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
-  "providers": ["opencode-go"],
-  "provider": "opencode-go",
-  "model": "glm-5.3-flash",
-  "model_auth_store": "/var/lib/renoa-node/model-auth.sqlite"
-}
-```
-
-```json
-{
-  "operationId": "<fresh-uuid>",
-  "presetId": "renoa.coding.alpha.v3",
-  "name": "Alpha"
-}
-```
-
-Then provision and copy the printed definition's `id` into every
-`targets[].agentId` in `node.json`:
-
-```sh
-install -d -m 0700 -o renoa-node -g renoa-node /var/lib/renoa-node
-sudo -u renoa-node /usr/local/bin/renoa-host \
-  /etc/renoa/node-host.json provision /etc/renoa/node-bootstrap-agent.json
-```
-
-The agent id is derived from `operationId`, so rerunning the same provision
-document converges on the same agent instead of creating a second one. A
-configured agent that is missing from the private Host refuses node startup
-before any command is admitted, naming this command in the error.
+Schema 4 removed `targets`; schema 3 had removed each target's `sessionId`. A
+document of an earlier schema is refused and names the field to remove.
 
 On the coordinator host, create the node identity for its owning principal, the
-only principal that may open new tasks on the node, and capture its five-minute
-enrollment token directly into an owner-only file:
+only principal that may open new tasks on the node, and exchange the
+five-minute enrollment token once:
 
 ```sh
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > node-enrollment.json
-```
-
-Move that short-lived file to the execution Host over an authenticated private
-channel, keep it mode `0600`, and exchange it once:
-
-```sh
-/usr/local/bin/renoa-node enroll \
+  /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > /run/renoa/node-enrollment.json
+sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
   /run/renoa/node-enrollment.json \
-  /etc/renoa/node-device.json
+  /home/renoa/.renoa/credentials/node-device.json
 rm /run/renoa/node-enrollment.json
 ```
 
 The output credential file is created as mode `0600` and is never overwritten.
-The command prints only `{"status":"enrolled"}`. Install the unit after the
-coordinator task has been created with the same node UUID and target:
+The command prints only `{"status":"enrolled"}`. Then install the unit:
 
 ```sh
 cp deploy/renoa-node.service /etc/systemd/system/
@@ -438,12 +370,10 @@ journalctl -u renoa-node.service -f -o cat
 ```
 
 The unit passes the config and device secret through systemd credentials, whose
-runtime directory is available as `%d`. It grants writes only to the private
-node state and `/srv/renoa/node-workspaces`; add another explicit
-`ReadWritePaths=` entry in a drop-in before binding a workspace elsewhere.
-Node/V8 needs writable executable memory, so `MemoryDenyWriteExecute` remains
-off. Network loss is retried internally with bounded exponential backoff;
-systemd restarts only fatal process exits.
+runtime directory is available as `%d`, and grants writes only to the Host
+root. Node/V8 needs writable executable memory, so `MemoryDenyWriteExecute`
+remains off. Network loss is retried internally with bounded exponential
+backoff; systemd restarts only fatal process exits.
 
 ## Arcee Telegram surface
 

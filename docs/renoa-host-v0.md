@@ -1108,10 +1108,10 @@ directories. The node ledger is a separate idempotent step over
 earlier ledger by name. Stop the node service, take the consolidated backup,
 delete only `<renoa-home>/state/node.sqlite3`, and apply the canonical Host reset
 to `<renoa-home>`, using a fresh subdirectory inside that consolidated
-backup. The private Host's plugins, MCP state, skills and shared registry are
-mutable shared state, not derivable node configuration. Keep
-`<renoa-home>/credentials/models.sqlite3`, re-provision the bootstrap agent, then
-start the daemon again. Each surface store is its own step: the Slack store owns
+backup. The node runs in the shared Host, whose plugins, MCP state, skills and
+shared registry are mutable shared state, not derivable node configuration.
+Keep `<renoa-home>/credentials/models.sqlite3`, then start the daemon again.
+Each surface store is its own step: the Slack store owns
 `identity`, `sessions`, `conversations`, `requests`, `messages`, `receipts`,
 `deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
 `routine_deliveries`, `routine_delivery_cursor`, and `routine_context_receipts`;

@@ -23,6 +23,7 @@ use crate::{
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
+const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 pub(crate) enum SessionEnd {
     Disconnected {
@@ -112,21 +113,11 @@ async fn serve_session_inner(
         }
     }
     *authenticated_at = Some(Instant::now());
-    let targets = runtime.advertised_targets();
-    send_client(
-        &mut socket,
-        &ClientMessage::AdvertiseTargets {
-            targets: targets.clone(),
-        },
-    )
-    .await?;
-    node_log::event(
-        "info",
-        "coordinator_connected",
-        &serde_json::json!({
-            "advertised_targets": targets.iter().map(TargetRef::as_str).collect::<Vec<_>>(),
-        }),
-    );
+    node_log::event("info", "coordinator_connected", &serde_json::json!({}));
+    let mut advertised = None;
+    advertise(&mut socket, &runtime, &mut advertised).await?;
+    let mut agent_refresh = tokio::time::interval(AGENT_REFRESH_INTERVAL);
+    agent_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let mut publications = HashMap::new();
     refresh_publications(&runtime, &mut publications).await?;
@@ -148,6 +139,7 @@ async fn serve_session_inner(
                     schedule_pending(Arc::clone(&runtime), tasks, running).await?;
                 }
             }
+            _ = agent_refresh.tick() => advertise(&mut socket, &runtime, &mut advertised).await?,
             message = receive_server(&mut socket) => {
                 let message = message?;
                 handle_server_message(
@@ -161,6 +153,46 @@ async fn serve_session_inner(
             }
         }
     }
+}
+
+/// Advertises the Host's agents when they differ from this connection's last
+/// advertisement. The Host has no change notification, so the session polls.
+async fn advertise(
+    socket: &mut Socket,
+    runtime: &NodeRuntime,
+    advertised: &mut Option<Vec<TargetRef>>,
+) -> Result<(), NodeError> {
+    let targets = match runtime.advertised_targets().await {
+        Ok(targets) => targets,
+        Err(error) => {
+            // Existing tasks keep executing; the next poll retries the listing.
+            node_log::event(
+                "warn",
+                "targets_unavailable",
+                &serde_json::json!({ "error": error.to_string() }),
+            );
+            return Ok(());
+        }
+    };
+    if advertised.as_ref() == Some(&targets) {
+        return Ok(());
+    }
+    send_client(
+        socket,
+        &ClientMessage::AdvertiseTargets {
+            targets: targets.clone(),
+        },
+    )
+    .await?;
+    node_log::event(
+        "info",
+        "targets_advertised",
+        &serde_json::json!({
+            "targets": targets.iter().map(TargetRef::as_str).collect::<Vec<_>>(),
+        }),
+    );
+    *advertised = Some(targets);
+    Ok(())
 }
 
 #[allow(
@@ -425,70 +457,4 @@ async fn receive_server(socket: &mut Socket) -> Result<ServerMessage, NodeError>
 }
 
 #[cfg(test)]
-mod tests {
-    use renoa_protocol::{ExecutionEventId, ExecutionEventKind, ExecutionId};
-    use uuid::Uuid;
-
-    use super::*;
-
-    #[test]
-    fn publication_batches_stop_before_the_websocket_limit() {
-        let task_id = TaskId::new();
-        let command_id = CommandId::new();
-        let execution_id = ExecutionId::from_uuid(Uuid::new_v4());
-        let events = vec![
-            event(execution_id, 0, ExecutionEventKind::ExecutionStarted),
-            event(
-                execution_id,
-                1,
-                ExecutionEventKind::AssistantMessage {
-                    text: "a".repeat(600_000),
-                },
-            ),
-            event(
-                execution_id,
-                2,
-                ExecutionEventKind::AssistantMessage {
-                    text: "b".repeat(600_000),
-                },
-            ),
-        ];
-
-        let batch = publication_batch(task_id, command_id, events).expect("build batch");
-
-        assert_eq!(batch.len(), 2);
-        let encoded = serde_json::to_vec(&ClientMessage::PublishExecutionEvents {
-            task_id,
-            command_id,
-            events: batch,
-        })
-        .expect("encode batch");
-        assert!(encoded.len() <= MAX_APPLICATION_MESSAGE_BYTES);
-    }
-
-    #[test]
-    fn one_oversized_execution_event_fails_explicitly() {
-        let event = event(
-            ExecutionId::from_uuid(Uuid::new_v4()),
-            1,
-            ExecutionEventKind::AssistantMessage {
-                text: "x".repeat(MAX_APPLICATION_MESSAGE_BYTES),
-            },
-        );
-
-        let error = publication_batch(TaskId::new(), CommandId::new(), vec![event])
-            .expect_err("oversized event must fail");
-
-        assert!(matches!(error, NodeError::Protocol(_)));
-    }
-
-    fn event(execution_id: ExecutionId, sequence: u64, kind: ExecutionEventKind) -> ExecutionEvent {
-        ExecutionEvent {
-            event_id: ExecutionEventId::new(),
-            execution_id,
-            sequence,
-            recorded_at_ms: 1,
-            kind,
-        }
-    }
-}
+mod tests;
