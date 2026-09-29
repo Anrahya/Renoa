@@ -103,7 +103,7 @@ pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 pub use host::automations::{
     AutomationEnablement, AutomationError, AutomationMutation, AutomationRecord,
     AutomationResultSummary, AutomationRun, AutomationSchedule, AutomationScheduler,
-    AutomationSpec, HostAutomationControl, RunOutcome, RunStatus, ScheduledRun,
+    AutomationSpec, HostAutomationControl, RunOutcome, RunResult, RunStatus, ScheduledRun,
 };
 
 pub use renoa_home::RenoaHome;

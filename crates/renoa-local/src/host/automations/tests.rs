@@ -13,10 +13,9 @@ use uuid::Uuid;
 struct Quiet;
 
 /// An executed run's successful outcome with no failed tool calls.
-fn succeeded(output: &str) -> RunOutcome {
-    RunOutcome {
-        status: RunStatus::Succeeded,
-        output: output.to_owned(),
+fn succeeded(answer: &str) -> RunOutcome {
+    RunOutcome::Succeeded {
+        answer: answer.to_owned(),
         failed_tool_calls: 0,
     }
 }

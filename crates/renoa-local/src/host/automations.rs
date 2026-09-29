@@ -91,14 +91,20 @@ pub struct AutomationRun {
     pub due_ms: i64,
     pub admitted_at_ms: i64,
     pub prompt: String,
-    /// The answer of a succeeded run, or why a run failed or was skipped.
-    pub output: Option<String>,
     /// How the run ended; `None` while it is unfinished.
-    pub status: Option<RunStatus>,
-    /// Tool calls that returned an error in a run that executed. `None` while
-    /// unfinished, for a skipped run, and for runs recorded before schema 37.
+    pub result: Option<RunResult>,
+}
+
+/// A finished run's recorded result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunResult {
+    pub status: RunStatus,
+    /// The answer of a succeeded run, or why a run failed or was skipped.
+    pub output: String,
+    /// Tool calls that returned an error. `None` for a skipped run, which never
+    /// executed, and for runs recorded before schema 37.
     pub failed_tool_calls: Option<u32>,
-    /// When the Host recorded the outcome; `None` before schema 37.
+    /// When the Host recorded the result; `None` before schema 37.
     pub finished_at_ms: Option<i64>,
 }
 
@@ -115,7 +121,9 @@ pub enum RunStatus {
 }
 
 impl RunStatus {
-    /// The stored and serialized name.
+    const ALL: [Self; 3] = [Self::Succeeded, Self::Failed, Self::Skipped];
+
+    /// The stored name, the same as the serialized one.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Succeeded => "succeeded",
@@ -123,21 +131,58 @@ impl RunStatus {
             Self::Skipped => "skipped",
         }
     }
+}
 
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        [Self::Succeeded, Self::Failed, Self::Skipped]
+impl rusqlite::types::FromSql for RunStatus {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let stored = value.as_str()?;
+        Self::ALL
             .into_iter()
-            .find(|status| status.as_str() == value)
+            .find(|status| status.as_str() == stored)
+            .ok_or_else(|| {
+                rusqlite::types::FromSqlError::Other(
+                    format!("unknown automation run status `{stored}`").into(),
+                )
+            })
     }
 }
 
-/// How an executed run ended, as its executor reports it.
+/// How an executed run ended, as its executor reports it. Only the Host skips
+/// a run, so an executor reports success or failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RunOutcome {
-    /// `Succeeded` or `Failed`; only the Host skips a run.
-    pub status: RunStatus,
-    pub output: String,
-    pub failed_tool_calls: u32,
+pub enum RunOutcome {
+    /// The execution completed with `answer`, its last assistant message.
+    Succeeded {
+        answer: String,
+        failed_tool_calls: u32,
+    },
+    /// The run could not be sent, or its execution failed or was stopped.
+    Failed {
+        reason: String,
+        failed_tool_calls: u32,
+    },
+}
+
+impl RunOutcome {
+    #[must_use]
+    pub const fn status(&self) -> RunStatus {
+        match self {
+            Self::Succeeded { .. } => RunStatus::Succeeded,
+            Self::Failed { .. } => RunStatus::Failed,
+        }
+    }
+
+    #[must_use]
+    pub const fn failed_tool_calls(&self) -> u32 {
+        match self {
+            Self::Succeeded {
+                failed_tool_calls, ..
+            }
+            | Self::Failed {
+                failed_tool_calls, ..
+            } => *failed_tool_calls,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -261,4 +306,5 @@ impl LocalHost {
     }
 }
 
-pub(super) use store::{SCHEDULER_TABLE, initialize};
+pub(super) use runs::SCHEDULER_TABLE;
+pub(super) use store::initialize;

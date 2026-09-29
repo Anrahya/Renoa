@@ -43,8 +43,9 @@ pub struct ObservedRun {
     pub failed_tool_calls: Option<u32>,
 }
 
-/// The process owning the automation schedule writes a heartbeat every 30
-/// seconds while it runs; an old heartbeat means no scheduler is running.
+/// The process owning the automation schedule records a heartbeat
+/// periodically while it runs, so an old one means no scheduler is running.
+/// The executor sets the period (`renoa-node`: 30 seconds).
 #[derive(Debug, Serialize)]
 pub struct ObservedScheduler {
     pub heartbeat_ms: i64,
@@ -155,7 +156,7 @@ fn last_run(db: &Connection, automation: Uuid) -> Result<Option<ObservedRun>, Ho
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
+                row.get(1)?,
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
@@ -166,9 +167,7 @@ fn last_run(db: &Connection, automation: Uuid) -> Result<Option<ObservedRun>, Ho
     .map(|(id, status, due_ms, finished_at_ms, failed_tool_calls)| {
         Ok(ObservedRun {
             id: parse_id(&id)?,
-            status: RunStatus::parse(&status).ok_or_else(|| {
-                HostCatalogError::Invalid(format!("invalid run status `{status}`"))
-            })?,
+            status,
             due_ms,
             finished_at_ms,
             failed_tool_calls,

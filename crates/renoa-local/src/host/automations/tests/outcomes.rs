@@ -26,6 +26,16 @@ async fn create(
 }
 
 #[test]
+fn a_run_status_is_stored_under_its_serialized_name() {
+    for status in RunStatus::ALL {
+        assert_eq!(
+            serde_json::to_value(status).expect("serialize"),
+            status.as_str()
+        );
+    }
+}
+
+#[test]
 fn a_recurring_run_may_start_half_its_period_late_and_a_one_time_run_any_time() {
     assert_eq!(
         AutomationSchedule::Interval { hours: 6 }.skip_after_ms(),
@@ -58,15 +68,15 @@ async fn a_run_later_than_its_schedule_allows_is_skipped_and_the_schedule_moves_
     let skipped = runs::next(&h.config.database, now)
         .expect("admission")
         .expect("the late occurrence is recorded");
-    assert_eq!(skipped.status, Some(RunStatus::Skipped));
     assert_eq!(
-        skipped.output.as_deref(),
-        Some(
-            "Scheduled run skipped: it reached the scheduler 3 h 1 min after its due time, and a run of this schedule is skipped once it is more than 3 h late."
-        )
+        skipped.result,
+        Some(RunResult {
+            status: RunStatus::Skipped,
+            output: "Scheduled run skipped: it reached the scheduler 3 h 1 min after its due time, and a run of this schedule is skipped once it is more than 3 h late.".to_owned(),
+            failed_tool_calls: None,
+            finished_at_ms: Some(now),
+        })
     );
-    assert_eq!(skipped.failed_tool_calls, None);
-    assert_eq!(skipped.finished_at_ms, Some(now));
     assert_eq!(
         runs::next(&h.config.database, now).expect("admission"),
         None,
@@ -88,7 +98,7 @@ async fn a_run_within_its_limit_runs_and_is_told_how_late_it_started() {
     let on_time = runs::next(&h.config.database, automation.next_due_ms + 60_000)
         .expect("admission")
         .expect("run");
-    assert_eq!(on_time.status, None);
+    assert_eq!(on_time.result, None);
     assert_eq!(on_time.submission(), "scheduled digest");
     runs::finish(&h.config.database, on_time.id, &succeeded("done"), 0).expect("finish");
 
@@ -100,7 +110,7 @@ async fn a_run_within_its_limit_runs_and_is_told_how_late_it_started() {
     let late = runs::next(&h.config.database, next_due + 3 * HOUR)
         .expect("admission")
         .expect("run");
-    assert_eq!(late.status, None, "exactly half the period late still runs");
+    assert_eq!(late.result, None, "exactly half the period late still runs");
     assert_eq!(
         late.submission(),
         "(This scheduled run started 3 h after its due time.)\n\nscheduled digest"
@@ -122,7 +132,7 @@ async fn a_one_time_run_runs_however_late() {
     let run = runs::next(&h.config.database, automation.next_due_ms + 72 * HOUR)
         .expect("admission")
         .expect("run");
-    assert_eq!(run.status, None);
+    assert_eq!(run.result, None);
     assert!(
         run.submission()
             .starts_with("(This scheduled run started 72 h after its due time.)")
@@ -136,18 +146,8 @@ async fn an_executed_run_records_its_status_and_failed_tool_calls() {
     let run = runs::next(&h.config.database, automation.next_due_ms)
         .expect("admission")
         .expect("run");
-    let skipped = RunOutcome {
-        status: RunStatus::Skipped,
-        output: "not mine to decide".to_owned(),
-        failed_tool_calls: 0,
-    };
-    assert!(matches!(
-        runs::finish(&h.config.database, run.id, &skipped, 1),
-        Err(AutomationError::Invalid(_))
-    ));
-    let failed = RunOutcome {
-        status: RunStatus::Failed,
-        output: "Scheduled run failed: the model is unavailable".to_owned(),
+    let failed = RunOutcome::Failed {
+        reason: "Scheduled run failed: the model is unavailable".to_owned(),
         failed_tool_calls: 2,
     };
     runs::finish(&h.config.database, run.id, &failed, 42).expect("finish");
@@ -156,10 +156,18 @@ async fn an_executed_run_records_its_status_and_failed_tool_calls() {
         Err(AutomationError::Conflict)
     ));
 
-    let read = h.automation_result(child, run.id).await.expect("read");
-    assert_eq!(read.status, Some(RunStatus::Failed));
-    assert_eq!(read.failed_tool_calls, Some(2));
-    assert_eq!(read.finished_at_ms, Some(42));
+    assert_eq!(
+        h.automation_result(child, run.id)
+            .await
+            .expect("read")
+            .result,
+        Some(RunResult {
+            status: RunStatus::Failed,
+            output: "Scheduled run failed: the model is unavailable".to_owned(),
+            failed_tool_calls: Some(2),
+            finished_at_ms: Some(42),
+        })
+    );
     let listed = h
         .automation_results(child, child, None)
         .await
@@ -218,4 +226,26 @@ async fn the_scheduler_heartbeat_is_observed() {
             .heartbeat_ms,
         5_678
     );
+}
+
+#[tokio::test]
+async fn a_stored_run_with_a_status_but_no_output_is_refused_as_corrupt() {
+    let (_d, h, parent, child) = fixture().await;
+    let automation = create(&h, parent, child, AutomationSchedule::Interval { hours: 6 }).await;
+    let run = runs::next(&h.config.database, automation.next_due_ms)
+        .expect("admission")
+        .expect("run");
+    rusqlite::Connection::open(&h.config.database)
+        .expect("open catalog")
+        .execute(
+            "UPDATE host_automation_runs SET status='succeeded' WHERE id=?1",
+            [run.id.to_string()],
+        )
+        .expect("corrupt the run");
+
+    let error = h
+        .automation_result(child, run.id)
+        .await
+        .expect_err("a half-recorded run is not a result");
+    assert!(error.to_string().contains("recorded together"), "{error}");
 }

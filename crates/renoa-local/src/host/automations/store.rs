@@ -9,13 +9,6 @@ use std::path::Path;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// The liveness record of the process owning the schedule, which writes its
-/// heartbeat while it runs. Fresh catalogs and the schema 37 upgrade share it.
-pub(in crate::host) const SCHEDULER_TABLE: &str =
-    "CREATE TABLE IF NOT EXISTS host_automation_scheduler (
-    singleton INTEGER PRIMARY KEY CHECK(singleton=1), heartbeat_ms INTEGER NOT NULL
-) STRICT;";
-
 pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::HostCatalogError> {
     tx.execute_batch("CREATE TABLE IF NOT EXISTS host_automations (
         id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
@@ -37,7 +30,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     ) STRICT;
     CREATE INDEX IF NOT EXISTS host_automation_pending ON host_automation_runs(sequence) WHERE output IS NULL;
     UPDATE host_metadata SET schema_version=16 WHERE singleton=1;")?;
-    tx.execute_batch(SCHEDULER_TABLE)?;
+    tx.execute_batch(super::runs::SCHEDULER_TABLE)?;
     super::receipts::initialize(tx)
 }
 

@@ -4,14 +4,25 @@
 use std::path::Path;
 
 use renoa_kernel::AgentId;
-use rusqlite::{OptionalExtension as _, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use uuid::Uuid;
 
-use super::{AutomationError, AutomationRecord, AutomationRun, RunOutcome, RunStatus, store};
+use super::{
+    AutomationError, AutomationRecord, AutomationRun, RunOutcome, RunResult, RunStatus, store,
+};
 use crate::host::catalog;
 
 /// Every read of a run selects these columns, in the order [`run`] maps them.
 pub(super) const RUN_COLUMNS: &str = "sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,prompt,output,status,failed_tool_calls,finished_at_ms";
+
+/// The liveness record of the process owning the schedule, which writes its
+/// [`heartbeat`] while it runs. Fresh catalogs and the schema 37 upgrade share
+/// it; the schema 33 rename step also runs the fresh definitions, so it must be
+/// idempotent.
+pub(in crate::host) const SCHEDULER_TABLE: &str =
+    "CREATE TABLE IF NOT EXISTS host_automation_scheduler (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1), heartbeat_ms INTEGER NOT NULL
+) STRICT;";
 
 /// A run that starts later than this after its due time tells the agent so.
 const LATE_NOTE_AFTER_MS: i64 = 5 * 60_000;
@@ -27,7 +38,25 @@ pub(super) fn insert_run(
     Ok(())
 }
 
+/// Maps a row selected with [`RUN_COLUMNS`]. A finished run has both a status
+/// and an output and a pending run has neither; a row with only one is corrupt.
 pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
+    let result = match (row.get::<_, Option<RunStatus>>(8)?, row.get(7)?) {
+        (None, None) => None,
+        (Some(status), Some(output)) => Some(RunResult {
+            status,
+            output,
+            failed_tool_calls: row.get(9)?,
+            finished_at_ms: row.get(10)?,
+        }),
+        _ => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                8,
+                rusqlite::types::Type::Text,
+                "an automation run's status and output must be recorded together".into(),
+            ));
+        }
+    };
     Ok(AutomationRun {
         sequence: row.get(0)?,
         id: store::parse(row, 1)?,
@@ -36,23 +65,7 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
         due_ms: row.get(4)?,
         admitted_at_ms: row.get(5)?,
         prompt: row.get(6)?,
-        output: row.get(7)?,
-        status: row
-            .get::<_, Option<String>>(8)?
-            .map(|status| parse_status(&status))
-            .transpose()?,
-        failed_tool_calls: row.get(9)?,
-        finished_at_ms: row.get(10)?,
-    })
-}
-
-pub(super) fn parse_status(value: &str) -> rusqlite::Result<RunStatus> {
-    RunStatus::parse(value).ok_or_else(|| {
-        rusqlite::Error::FromSqlConversionFailure(
-            8,
-            rusqlite::types::Type::Text,
-            format!("unknown automation run status `{value}`").into(),
-        )
+        result,
     })
 }
 
@@ -114,34 +127,27 @@ pub(super) fn finish(
     outcome: &RunOutcome,
     now_ms: i64,
 ) -> Result<(), AutomationError> {
-    if outcome.status == RunStatus::Skipped {
-        return Err(AutomationError::Invalid(
-            "only the Host skips a run; an executed run succeeded or failed".to_owned(),
-        ));
-    }
-    let mut db = catalog::open_verified(path)?;
-    let tx = db.transaction()?;
+    let (RunOutcome::Succeeded { answer: output, .. } | RunOutcome::Failed { reason: output, .. }) =
+        outcome;
     record(
-        &tx,
+        &catalog::open_verified(path)?,
         id,
-        outcome.status,
-        &outcome.output,
-        Some(outcome.failed_tool_calls),
+        outcome.status(),
+        output,
+        Some(outcome.failed_tool_calls()),
         now_ms,
-    )?;
-    tx.commit()?;
-    Ok(())
+    )
 }
 
 fn record(
-    tx: &Transaction<'_>,
+    db: &Connection,
     id: Uuid,
     status: RunStatus,
     output: &str,
     failed_tool_calls: Option<u32>,
     now_ms: i64,
 ) -> Result<(), AutomationError> {
-    if tx.execute(
+    if db.execute(
         "UPDATE host_automation_runs SET output=?2,status=?3,failed_tool_calls=?4,finished_at_ms=?5 WHERE id=?1 AND output IS NULL",
         params![id.to_string(), output, status.as_str(), failed_tool_calls, now_ms],
     )? != 1

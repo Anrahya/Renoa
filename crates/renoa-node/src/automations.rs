@@ -147,7 +147,7 @@ async fn serve(
                 () = tokio::time::sleep(PAUSE) => continue,
             }
         };
-        if due.run.status == Some(RunStatus::Skipped) {
+        if due.run.result.as_ref().map(|result| result.status) == Some(RunStatus::Skipped) {
             node_log::event(
                 "warn",
                 "automation_skipped",
@@ -166,8 +166,8 @@ async fn serve(
         let fields = serde_json::json!({
             "automation_id": due.run.automation_id,
             "run_id": due.run.id,
-            "status": outcome.status,
-            "failed_tool_calls": outcome.failed_tool_calls,
+            "status": outcome.status(),
+            "failed_tool_calls": outcome.failed_tool_calls(),
         });
         scheduler
             .finish_run(due.run.id, outcome, now_ms()?)
@@ -317,20 +317,20 @@ async fn wait_for_outcome(
 }
 
 fn finished(outcome: CommandOutcome) -> RunOutcome {
-    let (status, output) = match outcome.terminal {
-        ExecutionTerminal::Completed => (RunStatus::Succeeded, outcome.answer.unwrap_or_default()),
-        ExecutionTerminal::Failed { error } => {
-            (RunStatus::Failed, format!("Scheduled run failed: {error}"))
-        }
-        ExecutionTerminal::Cancelled { reason } => (
-            RunStatus::Failed,
-            format!("Scheduled run stopped: {reason}"),
-        ),
-    };
-    RunOutcome {
-        status,
-        output,
-        failed_tool_calls: outcome.failed_tool_calls,
+    let failed_tool_calls = outcome.failed_tool_calls;
+    match outcome.terminal {
+        ExecutionTerminal::Completed => RunOutcome::Succeeded {
+            answer: outcome.answer.unwrap_or_default(),
+            failed_tool_calls,
+        },
+        ExecutionTerminal::Failed { error } => RunOutcome::Failed {
+            reason: format!("Scheduled run failed: {error}"),
+            failed_tool_calls,
+        },
+        ExecutionTerminal::Cancelled { reason } => RunOutcome::Failed {
+            reason: format!("Scheduled run stopped: {reason}"),
+            failed_tool_calls,
+        },
     }
 }
 
@@ -347,9 +347,8 @@ fn refused(due: &ScheduledRun, task_id: Option<TaskId>, reason: &str) -> RunOutc
             "error": reason,
         }),
     );
-    RunOutcome {
-        status: RunStatus::Failed,
-        output: format!("Scheduled run could not be sent: {reason}"),
+    RunOutcome::Failed {
+        reason: format!("Scheduled run could not be sent: {reason}"),
         failed_tool_calls: 0,
     }
 }

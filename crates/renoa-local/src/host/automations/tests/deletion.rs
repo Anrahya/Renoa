@@ -166,7 +166,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         h.automation_result(child, run.id)
             .await
             .expect("result retained")
-            .output
+            .result
             .is_some()
     );
 }
