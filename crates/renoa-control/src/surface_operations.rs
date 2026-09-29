@@ -108,7 +108,7 @@ pub(crate) async fn handle_surface_operation(
         }
         SurfaceOperation::DeleteTask { task_id } => {
             match crate::task_deletion::delete_task(&state, principal_id, task_id).await {
-                Ok(_) => {
+                Ok(()) => {
                     let _ = outgoing
                         .send(ServerMessage::TaskDeleted {
                             request_id,

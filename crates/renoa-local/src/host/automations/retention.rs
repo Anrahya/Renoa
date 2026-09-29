@@ -196,7 +196,8 @@ pub(super) fn conversations_to_delete(db: &Connection) -> Result<Vec<Uuid>, Auto
         .collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Records that an automation's conversation no longer exists anywhere.
+/// Records that an automation's conversation is gone from the coordinator and
+/// the node that ran it.
 pub(super) fn conversation_deleted(
     db: &Connection,
     automation: Uuid,

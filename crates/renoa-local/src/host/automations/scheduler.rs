@@ -116,7 +116,8 @@ impl AutomationScheduler {
         .await??)
     }
 
-    /// Records that `automation`'s conversation no longer exists anywhere.
+    /// Records that `automation`'s conversation is gone from the coordinator
+    /// and the node that ran it.
     ///
     /// # Errors
     /// Returns catalog failures.

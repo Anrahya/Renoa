@@ -139,8 +139,15 @@ async fn serve(
             .map_err(|error| host_error(&error))?
         else {
             // Deleted automations' conversations go while nothing is due.
+            // Stopping part way is safe: every step converges on a retry and
+            // the Host's mark goes last.
             if Instant::now() >= next_cleanup {
-                automation_cleanup::delete_conversations(runtime, scheduler, connection).await?;
+                tokio::select! {
+                    () = shutdown.cancelled() => return Ok(()),
+                    deleted = automation_cleanup::delete_conversations(
+                        runtime, scheduler, connection,
+                    ) => deleted?,
+                }
                 next_cleanup = Instant::now() + HEARTBEAT;
             }
             tokio::select! {

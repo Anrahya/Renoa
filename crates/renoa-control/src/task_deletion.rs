@@ -18,12 +18,13 @@ use crate::{
     store::{blocking, sqlite_error, task_not_found},
 };
 
-/// Deletes `task_id` for `principal_id`, returning whether it existed.
+/// Deletes `task_id` for `principal_id`; a task that no longer exists is
+/// already deleted.
 pub(crate) async fn delete_task(
     state: &CoordinatorState,
     principal_id: PrincipalId,
     task_id: TaskId,
-) -> Result<bool, ControlError> {
+) -> Result<(), ControlError> {
     let path = Arc::clone(&state.store.path);
     let deleted = blocking(move || {
         let mut connection = open_connection(&path)?;
@@ -68,7 +69,7 @@ pub(crate) async fn delete_task(
     })
     .await?;
     let Some((events, commands)) = deleted else {
-        return Ok(false);
+        return Ok(());
     };
     state.task_senders.lock().await.remove(&task_id);
     control_log::event(
@@ -81,7 +82,7 @@ pub(crate) async fn delete_task(
             "commands": commands,
         }),
     );
-    Ok(true)
+    Ok(())
 }
 
 /// Deletes a task's rows child first, returning its journal entries and
