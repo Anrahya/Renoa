@@ -49,7 +49,7 @@ impl LocalHost {
         let path = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
             let db = catalog::open_verified(&path)?;
-            let run = db.query_row("SELECT sequence,id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE id=?1", [id.to_string()], store::run).optional()?.ok_or(AutomationError::NotFound)?;
+            let run = db.query_row("SELECT sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE id=?1", [id.to_string()], store::run).optional()?.ok_or(AutomationError::NotFound)?;
             store::authorize(&db, actor, run.agent_id)?;
             Ok::<_,AutomationError>(run)
         }).await??)

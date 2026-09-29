@@ -339,8 +339,7 @@ fn daily_schedules_respect_local_time_and_daylight_saving() {
 }
 
 #[tokio::test]
-async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execution_without_rewriting_artifact()
- {
+async fn real_model_tool_schedules_a_specialist_that_reschedules_its_own_automation() {
     let (d, h, parent, child) = fixture().await;
     let workspace = d.path().join("workspace");
     fs::create_dir(&workspace).expect("workspace");
@@ -363,55 +362,25 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
         .await
         .expect("automations");
     assert_eq!(records.len(), 1);
-    let run = store::next(&h.config.database, records[0].next_due_ms)
+    let scheduler = h.automation_scheduler().expect("own the schedule");
+    let due = scheduler
+        .next_run(records[0].next_due_ms)
+        .await
         .expect("admit")
         .expect("due");
-    // Execute the real kernel, then simulate losing only the Host output receipt.
-    h.execute_automation_run(run.clone()).await.expect("run");
-    let child_workspace = h.agent_workspace(child).await.expect("workspace");
     assert_eq!(
-        fs::read_to_string(child_workspace.join("digest.md")).expect("artifact"),
-        "# Digest\nSaved by the specialist."
+        due.origin_session_id, None,
+        "an automation made for another agent runs in a conversation of its own"
     );
-    let db = crate::host::catalog::open_verified(&h.config.database).expect("catalog");
-    db.execute(
-        "UPDATE host_automation_runs SET output=NULL WHERE id=?1",
-        [run.id.to_string()],
-    )
-    .expect("lost receipt");
-    drop(db);
+    scheduler
+        .finish_run(due.run.id, "Digest saved: digest.md".to_owned())
+        .await
+        .expect("record the result");
+    drop(scheduler);
     drop(session);
     drop(h);
-    fs::write(
-        child_workspace.join("digest.md"),
-        "preserve after completed execution",
-    )
-    .expect("marker");
     let restarted = host(d.path());
-    let pending = store::next(&restarted.config.database, run.due_ms + 1)
-        .expect("recover")
-        .expect("pending");
-    assert_eq!(pending.id, run.id);
-    restarted
-        .execute_automation_run(pending)
-        .await
-        .expect("kernel replay");
-    assert_eq!(
-        fs::read_to_string(child_workspace.join("digest.md")).expect("preserved"),
-        "preserve after completed execution"
-    );
-    let outputs = restarted
-        .completed_automation_runs(0)
-        .await
-        .expect("outputs");
-    assert_eq!(outputs.len(), 1);
-    assert!(
-        outputs[0]
-            .output
-            .as_deref()
-            .expect("output")
-            .contains("digest.md")
-    );
+    let child_workspace = restarted.agent_workspace(child).await.expect("workspace");
     let specialist_session = restarted
         .ensure_agent_session(child, &child_workspace, Uuid::new_v4())
         .await
@@ -436,7 +405,7 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
 }
 
 #[tokio::test]
-async fn schema_fifteen_upgrade_preserves_agent_identity_and_runner_has_exclusive_ownership() {
+async fn schema_fifteen_upgrade_preserves_agent_identity_and_the_schedule_has_one_owner() {
     let (d, h, _parent, child) = fixture().await;
     let identity = h.host_id().await.expect("identity");
     let db = crate::host::catalog::open_verified(&h.config.database).expect("database");
@@ -467,21 +436,51 @@ async fn schema_fifteen_upgrade_preserves_agent_identity_and_runner_has_exclusiv
         .open(restored.config.database.with_file_name(".automations.lock"))
         .expect("lease");
     lock.try_lock().expect("first owner");
-    assert!(
-        restored
-            .run_automations(CancellationToken::new())
-            .await
-            .is_err()
-    );
+    assert!(restored.automation_scheduler().is_err());
     lock.unlock()
         .expect("release simulated owner before inherited fork descriptors close");
     drop(lock);
-    let stop = CancellationToken::new();
-    stop.cancel();
-    restored
-        .run_automations(stop)
-        .await
+    let scheduler = restored
+        .automation_scheduler()
         .expect("new owner after release");
+    assert!(
+        restored.automation_scheduler().is_err(),
+        "one process owns the schedule at a time"
+    );
+    drop(scheduler);
+}
+
+#[tokio::test]
+async fn an_automation_an_agent_creates_for_itself_returns_to_the_creating_session() {
+    let (d, h, parent, _child) = fixture().await;
+    let workspace = d.path().join("workspace");
+    fs::create_dir(&workspace).expect("workspace");
+    let session_id = Uuid::new_v4();
+    let session = h
+        .ensure_agent_session(parent, &workspace, session_id)
+        .await
+        .expect("parent session");
+    session
+        .execute_turn(
+            Uuid::new_v4(),
+            vec![ContentBlock::text(format!("create automation {parent}"))],
+            Arc::new(Quiet),
+        )
+        .await
+        .expect("management through model");
+    let record = h
+        .list_automations(parent, parent, None)
+        .await
+        .expect("automations")
+        .remove(0);
+    let scheduler = h.automation_scheduler().expect("own the schedule");
+    let due = scheduler
+        .next_run(record.next_due_ms)
+        .await
+        .expect("admit")
+        .expect("due");
+    assert_eq!(due.run.automation_id, record.id);
+    assert_eq!(due.origin_session_id, Some(session_id));
 }
 
 #[tokio::test]

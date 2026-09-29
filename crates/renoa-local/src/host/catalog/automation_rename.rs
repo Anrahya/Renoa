@@ -43,6 +43,7 @@ pub(super) fn rename_routines(transaction: &Transaction<'_>) -> Result<(), HostC
 /// tables, so upgrade tests start from the shape an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_routine_tables(connection: &rusqlite::Connection) {
+    super::automation_delivery::restore_schema_34_automations(connection);
     connection
         .execute_batch(
             "DROP INDEX host_automation_pending;

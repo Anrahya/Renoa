@@ -9,10 +9,12 @@ use rusqlite::{TransactionBehavior, params};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod delivery;
 mod progress;
 mod records;
 mod schema;
 
+pub(crate) use delivery::CommandOutcome;
 pub(crate) use progress::LiveLedger;
 
 use records::{

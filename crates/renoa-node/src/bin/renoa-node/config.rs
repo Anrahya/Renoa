@@ -19,13 +19,17 @@ use crate::{
 ///
 /// Version 2 renamed each target's required `profile` to `agentId`. Version 3
 /// removed each target's `sessionId`. Version 4 removed `targets`: every agent
-/// in the node's Host is advertised as a target. An earlier document is refused
-/// by version instead of failing as an unknown field.
-const CONFIG_SCHEMA_VERSION: u32 = 4;
+/// in the node's Host is advertised as a target. Version 5 added the required
+/// `automationCredentials`: the node runs the Host's automation schedule. An
+/// earlier document is refused by version instead of failing as an unknown
+/// field.
+const CONFIG_SCHEMA_VERSION: u32 = 5;
 
 pub(crate) struct LoadedConfig {
     pub(crate) endpoint: String,
     pub(crate) credentials: DeviceCredentials,
+    /// The surface credential that submits the Host's automation runs.
+    pub(crate) automation_credentials: DeviceCredentials,
     pub(crate) host: Arc<LocalHost>,
 }
 
@@ -34,6 +38,7 @@ pub(crate) struct LoadedConfig {
 struct ConfigDocument {
     schema_version: u32,
     endpoint: String,
+    automation_credentials: PathBuf,
     model: ModelDocument,
     #[serde(default)]
     adapters: AdapterDocument,
@@ -91,6 +96,18 @@ pub(crate) fn load(
 ) -> Result<LoadedConfig, ServiceError> {
     let config = decode_config(config_path)?;
     let credentials = decode_credentials(credentials_path)?;
+    require_absolute(
+        &config.automation_credentials,
+        "automation surface credential",
+    )?;
+    let automation_credentials = decode_credentials(&config.automation_credentials)?;
+    if automation_credentials.device_id == credentials.device_id {
+        return Err(ServiceError::Configuration(
+            "automationCredentials must name a surface credential enrolled for automations, \
+             not the node's own credential"
+                .to_owned(),
+        ));
+    }
     validate_model(&config.model)?;
     validate_adapters(&config.adapters)?;
     config
@@ -123,6 +140,7 @@ pub(crate) fn load(
     Ok(LoadedConfig {
         endpoint: config.endpoint,
         credentials,
+        automation_credentials,
         host,
     })
 }
@@ -170,6 +188,11 @@ fn unsupported_schema(version: u32) -> String {
         2 | 3 => {
             "; the current schema advertises every agent in the node's Host as a target: remove \
              `targets`"
+        }
+        4 => {
+            "; the node now runs the Host's automation schedule: enroll a surface named \
+             `automations` for the Host's owner, claim it with `renoa-node enroll`, and name its \
+             credential file in `automationCredentials`"
         }
         _ => "",
     };

@@ -13,7 +13,8 @@ pub(crate) async fn serve(
     let config = config::load(config_path, credentials_path, state_directory)?;
     let device_id = config.credentials.device_id.to_string();
     let home = config.host.home().path().display().to_string();
-    let node = RenoaNode::open(config.endpoint, config.credentials, config.host)?;
+    let node = RenoaNode::open(config.endpoint, config.credentials, config.host)?
+        .with_automations(config.automation_credentials)?;
     let shutdown = CancellationToken::new();
     let signal = wait_for_shutdown();
     tokio::pin!(signal);

@@ -13,7 +13,8 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     tx.execute_batch("CREATE TABLE IF NOT EXISTS host_automations (
         id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
         name TEXT NOT NULL, prompt TEXT NOT NULL, schedule_json TEXT NOT NULL CHECK(json_valid(schedule_json)),
-        enabled INTEGER NOT NULL CHECK(enabled IN(0,1)), revision INTEGER NOT NULL CHECK(revision>0), next_due_ms INTEGER NOT NULL
+        enabled INTEGER NOT NULL CHECK(enabled IN(0,1)), revision INTEGER NOT NULL CHECK(revision>0), next_due_ms INTEGER NOT NULL,
+        origin_session_id TEXT
     ) STRICT;
     CREATE TABLE IF NOT EXISTS host_automation_deletions (automation_id TEXT PRIMARY KEY REFERENCES host_automations(id)) STRICT;
     CREATE TABLE IF NOT EXISTS host_automation_mutations (
@@ -23,7 +24,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     CREATE TABLE IF NOT EXISTS host_automation_runs (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
         automation_id TEXT NOT NULL REFERENCES host_automations(id), agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-        session_id TEXT NOT NULL, due_ms INTEGER NOT NULL, admitted_at_ms INTEGER NOT NULL, prompt TEXT NOT NULL, output TEXT
+        due_ms INTEGER NOT NULL, admitted_at_ms INTEGER NOT NULL, prompt TEXT NOT NULL, output TEXT
     ) STRICT;
     CREATE INDEX IF NOT EXISTS host_automation_pending ON host_automation_runs(sequence) WHERE output IS NULL;
     UPDATE host_metadata SET schema_version=16 WHERE singleton=1;")?;
@@ -58,6 +59,7 @@ pub(super) fn mutate(
         AutomationMutation::Create { spec } => {
             spec.validate(now_ms)?;
             actor.authorize(&tx, spec.agent_id)?;
+            let origin = actor.origin_for(spec.agent_id);
             let record = AutomationRecord {
                 id: operation,
                 revision: 1,
@@ -65,6 +67,12 @@ pub(super) fn mutate(
                 spec,
             };
             save(&tx, &record, true)?;
+            if let Some(session) = origin {
+                tx.execute(
+                    "UPDATE host_automations SET origin_session_id=?2 WHERE id=?1",
+                    params![record.id.to_string(), session.to_string()],
+                )?;
+            }
             record
         }
         AutomationMutation::Update {
@@ -306,8 +314,7 @@ fn insert_run(
     due: i64,
     admitted_at: i64,
 ) -> Result<(), AutomationError> {
-    let session = crate::stable_id::stable_id(&format!("renoa.automation.session.v1:{}", r.id));
-    tx.execute("INSERT INTO host_automation_runs(id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),session.to_string(),due,admitted_at,r.spec.prompt])?;
+    tx.execute("INSERT INTO host_automation_runs(id,automation_id,agent_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),due,admitted_at,r.spec.prompt])?;
     Ok(())
 }
 pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
@@ -316,12 +323,29 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
         id: parse(row, 1)?,
         automation_id: parse(row, 2)?,
         agent_id: AgentId::from_uuid(parse(row, 3)?),
-        session_id: parse(row, 4)?,
-        due_ms: row.get(5)?,
-        admitted_at_ms: row.get(6)?,
-        prompt: row.get(7)?,
-        output: row.get(8)?,
+        due_ms: row.get(4)?,
+        admitted_at_ms: row.get(5)?,
+        prompt: row.get(6)?,
+        output: row.get(7)?,
     })
+}
+
+/// The Host session an automation was created in, when its own agent created
+/// it from one. Deleted automations keep theirs, so an admitted run still
+/// returns to its conversation.
+pub(super) fn origin(db: &Connection, automation: Uuid) -> Result<Option<Uuid>, AutomationError> {
+    let value: Option<String> = db.query_row(
+        "SELECT origin_session_id FROM host_automations WHERE id=?1",
+        [automation.to_string()],
+        |row| row.get(0),
+    )?;
+    value
+        .map(|value| {
+            Uuid::parse_str(&value).map_err(|error| {
+                AutomationError::Invalid(format!("stored origin session: {error}"))
+            })
+        })
+        .transpose()
 }
 
 /// Called only while holding the Host scheduler process lease. Admission and
@@ -329,7 +353,7 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
 pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, AutomationError> {
     let mut db = catalog::open_verified(path)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let pending=tx.query_row("SELECT sequence,id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE output IS NULL ORDER BY sequence LIMIT 1",[],run).optional()?;
+    let pending=tx.query_row("SELECT sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE output IS NULL ORDER BY sequence LIMIT 1",[],run).optional()?;
     if pending.is_some() {
         return Ok(pending);
     }
@@ -345,7 +369,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
         r.next_due_ms = r.spec.schedule.advance_past(r.next_due_ms, now_ms)?;
     }
     save(&tx, &r, false)?;
-    let admitted=tx.query_row("SELECT sequence,id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE id=?1",[id.to_string()],run)?;
+    let admitted=tx.query_row("SELECT sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE id=?1",[id.to_string()],run)?;
     tx.commit()?;
     Ok(Some(admitted))
 }
@@ -363,6 +387,6 @@ pub(super) fn finish(path: &Path, id: Uuid, output: &str) -> Result<(), Automati
 }
 pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, AutomationError> {
     let db = catalog::open_verified(path)?;
-    let mut q=db.prepare("SELECT sequence,id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL) ORDER BY sequence LIMIT 20")?;
+    let mut q=db.prepare("SELECT sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL) ORDER BY sequence LIMIT 20")?;
     Ok(q.query_map([after], run)?.collect::<Result<Vec<_>, _>>()?)
 }

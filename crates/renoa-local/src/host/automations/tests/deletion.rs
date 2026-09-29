@@ -18,9 +18,7 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     let run = store::next(&h.config.database, record.next_due_ms)
         .expect("admit")
         .expect("run");
-    h.execute_automation_run(run.clone())
-        .await
-        .expect("automation");
+    store::finish(&h.config.database, run.id, "Digest saved: digest.md").expect("result");
     let workspace = h.agent_workspace(child).await.expect("workspace");
     let chat = h
         .ensure_agent_session(child, &workspace, Uuid::new_v4())
@@ -146,9 +144,8 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         .expect("restart")
         .expect("retained run");
     assert_eq!(pending.id, run.id);
-    h.execute_automation_run(pending)
-        .await
-        .expect("already admitted run finishes");
+    store::finish(&h.config.database, pending.id, "Digest saved: digest.md")
+        .expect("an already admitted run still finishes");
     assert!(
         store::next(&h.config.database, record.next_due_ms + 100_000_000)
             .expect("deleted schedule")

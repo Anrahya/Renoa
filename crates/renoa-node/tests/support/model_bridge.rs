@@ -28,6 +28,37 @@ const HELD_TOOL_TURN: &str = r#"} else if (prompt === "Read proof, then wait." &
   content = [{ type: "text", text: "The held proof was read." }];
 }"#;
 
+/// Creates a paused automation through the Host plugin, discovering its
+/// schema first as a model must, and answers the automation's standing prompt.
+/// "Schedule for <agent>: <standing prompt>" names the automation's agent.
+const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for ")) {
+  const [, agent, standing] = prompt.match(/^Schedule for ([^:]+): (.*)$/);
+  const turn = request.messages.slice(request.messages.findLastIndex(message => message.role === "user") + 1)
+    .filter(message => message.role === "tool");
+  const last = turn.at(-1);
+  if (last?.result.is_error) throw Error(JSON.stringify(last.result));
+  const found = last && JSON.parse(last.result.content[0].text);
+  stopReason = "tool_use";
+  if (turn.length === 0) {
+    content = [{ type: "tool_call", id: "find-automations", name: "plugin_search", arguments: { query: "automation_manage" } }];
+  } else if (turn.length === 1) {
+    const match = found.tool_matches.find(tool => tool.name === "automation_manage");
+    content = [{ type: "tool_call", id: "describe-automations", name: "plugin_search", arguments: { reference: match.reference } }];
+  } else if (turn.length === 2) {
+    content = [{ type: "tool_call", id: "create-automation", name: "tool_execute", arguments: {
+      reference: found.reference,
+      arguments: { action: "create", spec: {
+        agent_id: agent, name: "Digest", prompt: standing,
+        schedule: { kind: "interval", hours: 24 }, enabled: false
+      } }
+    } }];
+  } else {
+    content = [{ type: "text", text: "Scheduled." }];
+    stopReason = "stop";
+  }
+} else if (prompt === "Write the digest.") {
+  content = [{ type: "text", text: "Digest written." }];"#;
+
 pub(super) fn bridge_script(workspace: &Path) -> String {
     let workspace = serde_json::to_string(&workspace.to_string_lossy()).expect("encode workspace");
     format!(
@@ -102,7 +133,7 @@ if (prompt === "Read proof." && toolResults.length === 0) {{
 }} else if (prompt === "Which profile do you see?") {{
   const seen = JSON.stringify(request).match(/PROFILE_[A-Z]+/g) ?? ["none"];
   content = [{{ type: "text", text: seen.join(",") }}];
-}} else if (prompt === "First.") {{
+{AUTOMATION_TURNS}}} else if (prompt === "First.") {{
   content = [{{ type: "text", text: "First response." }}];
 }} else if (prompt === "Second.") {{
   content = [{{ type: "text", text: "Second response." }}];

@@ -109,12 +109,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
         );
         return Ok(());
     }
-    if !(args.len() == 1
-        || (args.len() == 6 && args[1] == "rename-agent")
+    if !((args.len() == 6 && args[1] == "rename-agent")
         || (args.len() == 3
             && (args[1] == "provision" || args[1] == "agent-tools" || args[1] == "reset")))
     {
-        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> (provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id>)").into());
     }
     let c = Config::read(std::path::Path::new(&args[0]))?;
     // A reset owns its own cutover, so it must run before the Host opens: an
@@ -149,52 +148,25 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if args.len() == 3 {
         return run_command(&host, &args[1], std::path::Path::new(&args[2])).await;
     }
-    if args.len() == 6 {
-        let text = |index: usize| {
-            args[index]
-                .to_str()
-                .ok_or_else(|| std::io::Error::other("rename arguments must be UTF-8"))
-        };
-        let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
-        let result = host
-            .rename_agent(
-                id,
-                uuid::Uuid::parse_str(text(5)?)?,
-                RenameAgent {
-                    id,
-                    expected_name: text(3)?.to_owned(),
-                    name: text(4)?.to_owned(),
-                },
-                CancellationToken::new(),
-            )
-            .await?;
-        println!("{}", serde_json::to_string(&result)?);
-        return Ok(());
-    }
-    run_automations(&host).await
-}
-
-async fn run_automations(host: &LocalHost) -> Result<(), Box<dyn Error>> {
-    let stop = CancellationToken::new();
-    let runner = host.run_automations(stop.clone());
-    tokio::pin!(runner);
-    #[cfg(unix)]
-    let mut termination =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let signal = async {
-        #[cfg(unix)]
-        tokio::select! { result=tokio::signal::ctrl_c()=>result, _=termination.recv()=>Ok(()) }
-        #[cfg(not(unix))]
-        tokio::signal::ctrl_c().await
+    let text = |index: usize| {
+        args[index]
+            .to_str()
+            .ok_or_else(|| std::io::Error::other("rename arguments must be UTF-8"))
     };
-    eprintln!(
-        "Renoa Host automation service starting: {}",
-        host.host_id().await?
-    );
-    tokio::select! {
-        result=&mut runner=>result?,
-        result=signal=>{result?;stop.cancel();runner.await?;}
-    }
+    let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
+    let result = host
+        .rename_agent(
+            id,
+            uuid::Uuid::parse_str(text(5)?)?,
+            RenameAgent {
+                id,
+                expected_name: text(3)?.to_owned(),
+                name: text(4)?.to_owned(),
+            },
+            CancellationToken::new(),
+        )
+        .await?;
+    println!("{}", serde_json::to_string(&result)?);
     Ok(())
 }
 

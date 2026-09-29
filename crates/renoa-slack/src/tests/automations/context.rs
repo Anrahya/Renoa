@@ -6,7 +6,6 @@ async fn result(f: &Fixture, sequence: i64, text: &str) -> Uuid {
         id: Uuid::new_v4(),
         automation_id: Uuid::new_v4(),
         agent_id: f.worker.agent_id,
-        session_id: Uuid::new_v4(),
         due_ms: sequence,
         admitted_at_ms: sequence,
         prompt: "test automation".to_owned(),

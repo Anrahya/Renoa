@@ -16,9 +16,7 @@ async fn another_session_reads_the_exact_completed_result_through_model_tools() 
     let run = store::next(&h.config.database, automation.next_due_ms)
         .expect("admit")
         .expect("run");
-    h.execute_automation_run(run.clone())
-        .await
-        .expect("automation");
+    store::finish(&h.config.database, run.id, "Digest saved: digest.md").expect("result");
     drop(h);
     let h = host(d.path());
     let workspace = h.agent_workspace(child).await.expect("workspace");

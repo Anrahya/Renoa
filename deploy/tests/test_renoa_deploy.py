@@ -62,7 +62,7 @@ def sha(data: bytes) -> str:
 def release_archive(directory: Path, tag: str, binaries: dict[str, bytes], assets=("app-1.js",), adapter=b"v1", corrupt=None) -> Path:
     archive = directory / f"renoa-{tag}.tar.gz"
     files = {"release.json": None}
-    binaries = {"renoa-coordinator": b"renoa-coordinator-v0", **binaries}
+    binaries = {"renoa-coordinator": b"renoa-coordinator-v0", "renoa-host": b"renoa-host-v0", **binaries}
     for name, data in binaries.items():
         files[f"bin/{name}"] = data
     for service in SERVICES:
@@ -108,9 +108,9 @@ class DeployTest(unittest.TestCase):
         """The layout PR-era deploys left: real files, one old backup."""
         self.layout.bin.mkdir(parents=True)
         self.layout.units.mkdir(parents=True)
-        for name in ("renoa-host", "renoa-coordinator"):
+        for name in ("renoa-node", "renoa-host", "renoa-coordinator"):
             (self.layout.bin / name).write_bytes(f"{name}-v0".encode())
-        for unit in ("renoa-host.service", "renoa-coordinator.service"):
+        for unit in ("renoa-node.service", "renoa-coordinator.service"):
             (self.layout.units / unit).write_text(UNIT.format(name=unit))
         (self.layout.adapters / "model-provider-node/dist").mkdir(parents=True)
         (self.layout.adapters / "model-provider-node/dist/main.js").write_bytes(b"v1")
@@ -137,17 +137,17 @@ class DeployTest(unittest.TestCase):
         archive = release_archive(
             self.archives,
             "v1",
-            {"renoa-host": b"renoa-host-v1"},
+            {"renoa-node": b"renoa-node-v1"},
         )
 
         self.assertEqual(self.install(archive), 0)
 
-        self.assertEqual(self.host.restarted(), ["renoa-host.service"])
+        self.assertEqual(self.host.restarted(), ["renoa-node.service"])
         self.assertEqual(self.layout.current.resolve().name, "v1")
         self.assertEqual(self.layout.previous.resolve().name, "legacy")
-        self.assertTrue((self.layout.bin / "renoa-host").is_symlink())
-        self.assertEqual((self.layout.bin / "renoa-host").read_bytes(), b"renoa-host-v1")
-        self.assertEqual((self.layout.releases / "legacy/bin/renoa-host").read_bytes(), b"renoa-host-v0")
+        self.assertTrue((self.layout.bin / "renoa-node").is_symlink())
+        self.assertEqual((self.layout.bin / "renoa-node").read_bytes(), b"renoa-node-v1")
+        self.assertEqual((self.layout.releases / "legacy/bin/renoa-node").read_bytes(), b"renoa-node-v0")
         self.assertTrue(self.layout.adapters.is_symlink())
         self.assertEqual((self.layout.control_room / "index.html").read_text(), "<html>v1</html>")
         with closing(sqlite3.connect(self.layout.releases / "legacy/snapshot/state/host.sqlite3")) as backup:
@@ -160,7 +160,7 @@ class DeployTest(unittest.TestCase):
         self.assertIn(("runuser", "-u", "renoa-arcee", "--", "/usr/local/bin/renoa-host", "inspect", deploy.HOME), self.host.commands)
 
     def test_reinstalling_the_running_release_changes_nothing(self):
-        archive = release_archive(self.archives, "v1", {"renoa-host": b"renoa-host-v1"})
+        archive = release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"})
         self.install(archive)
         self.host.commands.clear()
 
@@ -169,9 +169,9 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.host.commands, [])
 
     def test_a_binary_that_does_not_match_its_manifest_is_refused_before_anything_changes(self):
-        self.install(release_archive(self.archives, "v1", {"renoa-host": b"renoa-host-v1"}))
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
         self.host.commands.clear()
-        bad = release_archive(self.archives, "v2", {"renoa-host": b"renoa-host-v2"}, corrupt="renoa-host")
+        bad = release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}, corrupt="renoa-node")
 
         with self.assertRaises(deploy.DeployError):
             self.install(bad)
@@ -181,22 +181,22 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.host.commands, [])
 
     def test_running_turns_stop_the_switch_and_leave_no_staged_release(self):
-        self.install(release_archive(self.archives, "v1", {"renoa-host": b"renoa-host-v1"}))
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
         self.host.turns = 1
 
         with self.assertRaises(deploy.DeployError):
-            self.install(release_archive(self.archives, "v2", {"renoa-host": b"renoa-host-v2"}), drain_timeout=20)
+            self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}), drain_timeout=20)
 
         self.assertEqual(self.releases(), {"v1", "legacy"})
         self.assertEqual(self.layout.current.resolve().name, "v1")
-        self.assertEqual(self.host.restarted(), ["renoa-host.service"], "only v1's restart happened")
+        self.assertEqual(self.host.restarted(), ["renoa-node.service"], "only v1's restart happened")
 
     def test_a_failed_health_check_keeps_the_new_release_running_and_every_backup(self):
-        self.install(release_archive(self.archives, "v1", {"renoa-host": b"renoa-host-v1"}))
-        self.host.restart_during_settle = {"renoa-host.service"}
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"renoa-node-v1"}))
+        self.host.restart_during_settle = {"renoa-node.service"}
         self.host._settled = False
 
-        code = self.install(release_archive(self.archives, "v2", {"renoa-host": b"renoa-host-v2"}))
+        code = self.install(release_archive(self.archives, "v2", {"renoa-node": b"renoa-node-v2"}))
 
         self.assertEqual(code, 1)
         self.assertEqual(self.layout.current.resolve().name, "v2")
@@ -205,36 +205,36 @@ class DeployTest(unittest.TestCase):
         self.assertIn("restarted during the settle window", json.loads(self.layout.manifest.read_text())["health"][0])
 
     def test_the_previous_control_room_assets_stay_available(self):
-        self.install(release_archive(self.archives, "v1", {"renoa-host": b"h1"}, assets=("app-1.js",)))
-        self.install(release_archive(self.archives, "v2", {"renoa-host": b"h2"}, assets=("app-2.js",)))
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}, assets=("app-1.js",)))
+        self.install(release_archive(self.archives, "v2", {"renoa-node": b"h2"}, assets=("app-2.js",)))
 
         assets = {path.name for path in (self.layout.control_room / "assets").iterdir()}
         self.assertEqual(assets, {"app-1.js", "app-2.js"})
 
     def test_services_not_installed_on_this_host_are_left_alone(self):
-        self.install(release_archive(self.archives, "v1", {"renoa-host": b"h1", "renoa-discord": b"d1"}))
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1", "renoa-discord": b"d1"}))
 
         self.assertFalse((self.layout.units / "renoa-discord.service").exists())
         self.assertNotIn("renoa-discord.service", self.host.restarted())
 
     def test_a_changed_adapter_restarts_the_services_that_run_it(self):
-        self.install(release_archive(self.archives, "v1", {"renoa-host": b"h1"}))
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}))
         self.host.commands.clear()
 
-        self.install(release_archive(self.archives, "v2", {"renoa-host": b"h1"}, adapter=b"v2"))
+        self.install(release_archive(self.archives, "v2", {"renoa-node": b"h1"}, adapter=b"v2"))
 
-        self.assertEqual(self.host.restarted(), ["renoa-host.service"])
+        self.assertEqual(self.host.restarted(), ["renoa-node.service"])
 
     def test_a_release_missing_an_installed_service_binary_is_refused(self):
-        self.install(release_archive(self.archives, "v1", {"renoa-host": b"h1"}))
-        archive = release_archive(self.archives, "v2", {"renoa-host": b"h2"})
-        manifest_less = self.archives / "v2-without-host.tar.gz"
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}))
+        archive = release_archive(self.archives, "v2", {"renoa-node": b"h2"})
+        manifest_less = self.archives / "v2-without-node.tar.gz"
         with tarfile.open(archive) as source, tarfile.open(manifest_less, "w:gz") as target:
             for member in source.getmembers():
                 data = source.extractfile(member).read()
                 if member.name.endswith("release.json"):
                     manifest = json.loads(data)
-                    del manifest["binaries"]["renoa-host"]
+                    del manifest["binaries"]["renoa-node"]
                     data = json.dumps(manifest).encode()
                     member.size = len(data)
                 target.addfile(member, io.BytesIO(data))
@@ -247,7 +247,7 @@ class DeployTest(unittest.TestCase):
 
     def test_only_the_running_release_and_its_backup_are_kept(self):
         for tag in ("v1", "v2", "v3"):
-            self.install(release_archive(self.archives, tag, {"renoa-host": tag.encode()}))
+            self.install(release_archive(self.archives, tag, {"renoa-node": tag.encode()}))
 
         self.assertEqual(self.releases(), {"v3", "v2"})
         self.assertEqual(self.layout.previous.resolve().name, "v2")

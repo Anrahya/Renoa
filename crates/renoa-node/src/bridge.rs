@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     agent_targets,
+    automations::{self, AutomationLink},
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
     live::LiveEvents,
     node_log,
@@ -56,6 +57,7 @@ pub struct RenoaNode {
     endpoint: String,
     credentials: DeviceCredentials,
     runtime: Arc<NodeRuntime>,
+    automations: Option<AutomationLink>,
 }
 
 impl RenoaNode {
@@ -87,23 +89,60 @@ impl RenoaNode {
                 state,
                 commits,
             }),
+            automations: None,
         })
     }
 
-    /// Runs durable Host work and reconnects its outbound coordinator session.
+    /// Runs the Host's automation schedule on this node. Each run is submitted
+    /// through the surface enrolled with `credentials`, whose principal and
+    /// surface name the run's command carries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when another process owns the Host's schedule.
+    pub fn with_automations(mut self, credentials: DeviceCredentials) -> Result<Self, NodeError> {
+        let scheduler = self
+            .runtime
+            .host
+            .automation_scheduler()
+            .map_err(|error| NodeError::Configuration(error.to_string()))?;
+        self.automations = Some(AutomationLink {
+            endpoint: self.endpoint.clone(),
+            credentials,
+            scheduler,
+        });
+        Ok(self)
+    }
+
+    /// Runs durable Host work and, when configured, the Host's automation
+    /// schedule, reconnecting both outbound coordinator links.
     ///
     /// # Errors
     ///
     /// Returns an error for authentication, protocol, local durability, or a
     /// failed execution task. Ordinary socket loss is retried.
-    pub async fn run(self, shutdown: CancellationToken) -> Result<(), NodeError> {
+    pub async fn run(mut self, shutdown: CancellationToken) -> Result<(), NodeError> {
         let mut tasks = JoinSet::new();
         let mut running_tasks = HashSet::new();
         schedule_pending(Arc::clone(&self.runtime), &mut tasks, &mut running_tasks).await?;
         let mut commits = self.runtime.commits.subscribe();
-        let result = self
-            .run_connections(&shutdown, &mut commits, &mut tasks, &mut running_tasks)
-            .await;
+        // Boxed: the schedule's future is large and lives as long as the node.
+        let schedule = self.automations.take().map(|link| {
+            Box::pin(automations::run(
+                Arc::clone(&self.runtime),
+                link,
+                shutdown.clone(),
+            ))
+        });
+        let connections =
+            self.run_connections(&shutdown, &mut commits, &mut tasks, &mut running_tasks);
+        let result = match schedule {
+            None => connections.await,
+            Some(schedule) => tokio::select! {
+                result = connections => result,
+                result = schedule => result,
+            },
+        };
 
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
