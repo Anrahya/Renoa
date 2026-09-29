@@ -379,7 +379,8 @@ one process, and a second data root is not implicitly part of the same Host.
 
 `HostObserver::open` opens an existing compatible data root and pins its Host UUID.
 `snapshot` reads agent identities, ordinary session operation summaries, automations,
-shared connection selections and recorded plugin/skill revisions.
+shared connection selections, recorded plugin/skill revisions, and the shared
+plugin registry binding with its failing synchronization, if any.
 `renoa-host inspect <data-directory>` is the first consumer. It requires
 OS read access, not a launch configuration, model provider, adapter or credentials.
 It neither initializes/migrates a Host nor repairs or imports legacy records.
@@ -621,7 +622,12 @@ tar entries, re-runs the normal Agent Plugins inspection, publishes the normal
 immutable local tree, and only then advances its local cursor. A crash between
 local installation and cursor advancement causes a safe repeated verification,
 not a duplicate install. Schema v11 stores only the bound registry UUID and
-last applied revision.
+last applied revision. Schema 36 adds a record that exists only while the latest
+synchronization failed: when the failures began and the latest reason. The Host
+logs `shared_registry_sync_failed` when a failure begins or changes reason and
+`shared_registry_sync_recovered` when a synchronization succeeds again, and Host
+observation reports the record. Plugin search keeps answering from the local
+library while synchronization fails.
 
 Synchronization is pull-on-management rather than a hidden background loop.
 Install and list use it when the optional registry is configured; connect uses
@@ -1037,13 +1043,14 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 35
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 36
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
 and moving automation runs onto RCP tasks. A schema 32 or 33 catalog already
 holds current selections and exact plugin activations, so its upgrade skips the
-selection step, and a schema 34 catalog only moves its runs. Live selections
+selection step, a schema 34 catalog only moves its runs, and a schema 35
+catalog only gains the shared-registry failure record. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1412,6 +1419,8 @@ Schema 35 moves automation runs onto RCP tasks. A run drops its private
 own agent created it from. A schema 28–34 catalog changes both in place, keeping
 every row; an automation created earlier has no origin and runs in a task of its
 own.
+Schema 36 records a failing shared plugin registry synchronization. A schema
+28–35 catalog gains the empty `shared_plugin_registry_sync` table.
 
 ## Local CLI
 

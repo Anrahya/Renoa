@@ -8,6 +8,7 @@ mod automation_delivery;
 mod automation_rename;
 mod cutover;
 mod migrations;
+mod registry_sync;
 mod selection_migration;
 
 #[cfg(test)]
@@ -17,8 +18,10 @@ pub(crate) use automation_rename::restore_routine_tables;
 pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
+#[cfg(test)]
+pub(crate) use registry_sync::restore_schema_35;
 
-const SCHEMA_VERSION: u32 = 35;
+const SCHEMA_VERSION: u32 = 36;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -259,7 +262,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=34 => {
+        28..=35 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -280,7 +283,10 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
                 cutover::retire_review_tables(&transaction)?;
                 automation_rename::rename_routines(&transaction)?;
             }
-            automation_delivery::deliver_runs_through_tasks(&transaction)?;
+            if version < 35 {
+                automation_delivery::deliver_runs_through_tasks(&transaction)?;
+            }
+            registry_sync::record_sync_failures(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -297,6 +303,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, false)?;
             super::definition::schema::initialize(&transaction)?;
             super::automations::initialize(&transaction)?;
+            registry_sync::record_sync_failures(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],

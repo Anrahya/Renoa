@@ -3,7 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use renoa_local::{LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider};
+use renoa_local::{
+    HostObserver, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+    ObservedSharedRegistry,
+};
 use renoa_registry::Registry;
 use renoa_registry_protocol::RegistryStatus;
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -88,24 +91,57 @@ async fn two_live_hosts_converge_on_one_durable_plugin_library() {
 }
 
 #[tokio::test]
-async fn a_host_refuses_a_different_registry_identity_without_losing_packages() {
+async fn a_host_refuses_a_different_registry_identity_and_reports_it_until_recovered() {
     let root = tempfile::tempdir().expect("temporary test root");
     let first = RunningRegistry::start(&root.path().join("registry-a")).await;
+    let bound = first.status().await.registry_id();
     let data = root.path().join("host");
     let host = local_host(data.clone(), first.origin());
     host.synchronize_shared_plugins()
         .await
         .expect("bind first registry");
+    let observer = HostObserver::open(&data).expect("observe Host");
+    let registry = shared_registry(&observer).await;
+    assert_eq!(registry.registry_id, Some(bound.as_uuid()));
+    assert!(registry.failure.is_none());
     first.stop().await;
 
     let second = RunningRegistry::start(&root.path().join("registry-b")).await;
-    let rebound = local_host(data, second.origin());
+    let rebound = local_host(data.clone(), second.origin());
     let error = rebound
         .synchronize_shared_plugins()
         .await
         .expect_err("registry identity change must fail closed");
     assert!(error.to_string().contains("bound to shared registry"));
+    let failure = shared_registry(&observer)
+        .await
+        .failure
+        .expect("observation reports the failing synchronization");
+    assert!(failure.error.contains("bound to shared registry"));
+    assert!(failure.since_ms > 0);
     second.stop().await;
+
+    let restored = RunningRegistry::start(&root.path().join("registry-a")).await;
+    local_host(data, restored.origin())
+        .synchronize_shared_plugins()
+        .await
+        .expect("the original registry synchronizes again");
+    let registry = shared_registry(&observer).await;
+    assert_eq!(registry.registry_id, Some(bound.as_uuid()));
+    assert!(
+        registry.failure.is_none(),
+        "a successful synchronization clears the failure"
+    );
+    restored.stop().await;
+}
+
+async fn shared_registry(observer: &HostObserver) -> ObservedSharedRegistry {
+    observer
+        .snapshot()
+        .await
+        .expect("observe Host")
+        .shared_registry
+        .expect("the Host has a shared registry")
 }
 
 fn local_host(data: PathBuf, registry: &str) -> LocalHost {

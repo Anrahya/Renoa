@@ -451,6 +451,7 @@ fn every_catalog_table_is_classified_agent_owned_or_shared() {
         "mcp_tools",
         "plugin_mcp_servers",
         "shared_plugin_registry_state",
+        "shared_plugin_registry_sync",
         "skill_revisions",
     ];
     let (directory, _host) = fixture();

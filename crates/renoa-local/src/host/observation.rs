@@ -14,7 +14,8 @@ mod sessions;
 mod tests;
 
 pub use inventory::{
-    ObservedAgent, ObservedAutomation, ObservedConnection, ObservedPlugin, ObservedSkill,
+    ObservedAgent, ObservedAutomation, ObservedConnection, ObservedPlugin, ObservedRegistryFailure,
+    ObservedSharedRegistry, ObservedSkill,
 };
 pub use sessions::{
     ObservedOperation, ObservedOperationState, ObservedSession, ObservedSessionState,
@@ -32,6 +33,7 @@ pub struct HostObservation {
     pub connections: Vec<ObservedConnection>,
     pub plugins: Vec<ObservedPlugin>,
     pub skills: Vec<ObservedSkill>,
+    pub shared_registry: Option<ObservedSharedRegistry>,
 }
 
 /// Read access to one existing Host, pinned to its durable identity. It cannot
@@ -87,6 +89,7 @@ impl HostObserver {
             connections: inventory::connections(&tx)?,
             plugins: inventory::plugins(&tx)?,
             skills: inventory::skills(&tx)?,
+            shared_registry: inventory::shared_registry(&tx)?,
         };
         tx.commit().map_err(HostCatalogError::from)?;
         result.sessions = sessions::read(&self.root.join("sessions"), &result.agents)?;
