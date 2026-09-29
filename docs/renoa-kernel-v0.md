@@ -26,7 +26,8 @@ local workspace edit without moving those concerns into the kernel.
 
 `observe_session(path, session_id)` is a non-owning, read-only projection for Host
 inventory. It opens only existing compatible storage, takes no writer lease and
-performs no migration. A single read transaction reports the session's agent,
+performs no migration; schema 3 is compatible because schema 4 changed only
+effects, which it never reads. A single read transaction reports the session's agent,
 event count, queued count, active operation and latest operation, without reading
 command, checkpoint or effect payloads. The projection describes committed state,
 not worker liveness: a running operation can remain after its owner disappears.
@@ -236,6 +237,18 @@ stable `EffectId`, exact binding and binding revision, exact JSON request,
 recovery class, status, dispatch count, and eventual outcome.
 Composite foreign keys prevent an operation's current or input pointer from
 adopting a batch owned by another operation.
+
+The request is kept only while something can read it: dispatch, replay, the
+loop's next decision, or an unknown outcome's examination and abandonment. The
+transaction that completes, fails, or cancels an operation releases the request
+of each settled child in a batch with no unsettled child; the binding, status,
+dispatch count, and outcome stay, and `Kernel::inspect` reports the request as
+absent. A batch with an unsettled child keeps every request. A model request
+carries the whole conversation so far, so keeping it would grow storage with
+calls times context. Schema 4 makes the request nullable and, on first open,
+releases the requests of operations that finished under schema 3, reclaims the
+space with `VACUUM`, and logs `kernel_requests_released` with the session ids
+and the count and bytes released.
 
 The kernel validates every binding before committing anything, then admits the
 batch, all child intents, and the next checkpoint in one transaction. A rejected

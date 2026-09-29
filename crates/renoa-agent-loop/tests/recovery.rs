@@ -56,11 +56,19 @@ async fn interrupted_model_replays_the_exact_persisted_request() {
             "Remember this exact request."
         )]
     );
+    assert_eq!(
+        Some(serde_json::to_value(&requests[0]).expect("encode replayed request")),
+        original_effect.request,
+        "the replay sends the request persisted before the crash"
+    );
     drop(requests);
     let recovered = kernel.inspect(session_id).expect("inspect recovered model");
     let replayed_effect = &recovered.operations[0].effect_batches[0].effects[0];
     assert_eq!(replayed_effect.effect_id, original_effect.effect_id);
-    assert_eq!(replayed_effect.request, original_effect.request);
+    assert_eq!(
+        replayed_effect.request, None,
+        "the finished turn released it"
+    );
     assert_eq!(replayed_effect.dispatch_count, 2);
     assert_eq!(replayed_effect.status, EffectStatus::Settled);
 }

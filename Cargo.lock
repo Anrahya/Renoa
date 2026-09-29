@@ -2423,6 +2423,7 @@ name = "renoa-kernel"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "renoa-telemetry",
  "rusqlite",
  "serde",
  "serde_json",

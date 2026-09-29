@@ -89,14 +89,12 @@ async fn oversized_context_is_summarized_activated_and_reused() {
 
     let snapshot = kernel.inspect(session_id).expect("inspect session");
     assert_eq!(snapshot.operations[1].effect_batches.len(), 2);
-    assert_eq!(
-        snapshot.operations[1].effect_batches[0].effects[0].request,
-        serde_json::to_value(&summary_request).expect("encode persisted summary request")
-    );
-    assert_eq!(
-        snapshot.operations[1].effect_batches[1].effects[0].request,
-        serde_json::to_value(&continued).expect("encode persisted continued request")
-    );
+    for batch in &snapshot.operations[1].effect_batches {
+        assert_eq!(
+            batch.effects[0].request, None,
+            "a finished turn keeps no copy of its summary or continued request"
+        );
+    }
 }
 
 #[tokio::test]
@@ -346,7 +344,14 @@ async fn interrupted_summary_replays_the_exact_intent_then_activates_once() {
         .expect("inspect recovered summary");
     let replayed = &recovered.operations[1].effect_batches[0].effects[0];
     assert_eq!(replayed.effect_id, original.effect_id);
-    assert_eq!(replayed.request, original.request);
+    let sent = requests.lock().expect("request lock");
+    assert_eq!(
+        Some(serde_json::to_value(&sent[2]).expect("encode replayed summary request")),
+        original.request,
+        "the replay sends the summary request persisted before the crash"
+    );
+    drop(sent);
+    assert_eq!(replayed.request, None, "the finished turn released it");
     assert_eq!(replayed.dispatch_count, 2);
     assert_eq!(replayed.status, EffectStatus::Settled);
     assert_eq!(

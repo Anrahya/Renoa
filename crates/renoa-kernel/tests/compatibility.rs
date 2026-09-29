@@ -269,15 +269,15 @@ fn a_newer_database_schema_fails_closed() {
     let database = directory.path().join("kernel.sqlite3");
     let connection = rusqlite::Connection::open(&database).expect("open raw database");
     connection
-        .pragma_update(None, "user_version", 4)
+        .pragma_update(None, "user_version", 5)
         .expect("set future schema");
     drop(connection);
 
     assert!(matches!(
         Kernel::open(&database),
         Err(KernelError::UnsupportedSchema {
-            found: 4,
-            supported: 3,
+            found: 5,
+            supported: 4,
         })
     ));
 }

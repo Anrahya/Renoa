@@ -89,7 +89,9 @@ pub struct EffectSnapshot {
     pub binding: String,
     pub binding_revision: String,
     pub recovery: EffectRecovery,
-    pub request: Value,
+    /// The exact request while its operation is unfinished. `None` once the
+    /// operation finished and the effect settled: the request is released.
+    pub request: Option<Value>,
     pub status: EffectStatus,
     pub dispatch_count: u64,
     pub outcome: Option<EffectOutcome>,

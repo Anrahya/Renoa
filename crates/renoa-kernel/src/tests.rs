@@ -5,6 +5,8 @@ use std::sync::{
 
 use tempfile::tempdir;
 
+mod request_release;
+
 use crate::{
     AgentId, CancellationId, CancellationInput, CancellationTransition, Checkpoint, Command,
     CommandId, CrashPoint, DriveResult, EffectAdapter, EffectBinding, EffectCompletion, EffectFact,
@@ -533,6 +535,16 @@ impl LoopPlugin for EffectLoop {
 struct BatchRecoveryLoop;
 
 impl LoopPlugin for BatchRecoveryLoop {
+    fn abandon_unknown_effect(
+        &self,
+        _input: UnknownEffectInput,
+    ) -> Result<UnknownEffectAbandonment, LoopError> {
+        Ok(UnknownEffectAbandonment {
+            checkpoint: Checkpoint::new(1, serde_json::json!({"abandoned": true})),
+            events: Vec::new(),
+        })
+    }
+
     fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
         if input.effect_batch.is_some() {
             return Ok(LoopDecision::Complete {
