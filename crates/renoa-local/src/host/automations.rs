@@ -9,6 +9,7 @@ mod cron;
 mod receipts;
 pub(crate) mod result_tool;
 mod results;
+mod retention;
 mod runs;
 pub use control::{AutomationEnablement, HostAutomationControl};
 pub use results::AutomationResultSummary;
@@ -309,5 +310,6 @@ impl LocalHost {
     }
 }
 
+pub(super) use retention::{RUN_INDEXES, Removed, purge_all_deleted, report as report_removed};
 pub(super) use runs::SCHEDULER_TABLE;
 pub(super) use store::initialize;

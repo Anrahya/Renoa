@@ -31,6 +31,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     CREATE INDEX IF NOT EXISTS host_automation_pending ON host_automation_runs(sequence) WHERE output IS NULL;
     UPDATE host_metadata SET schema_version=16 WHERE singleton=1;")?;
     tx.execute_batch(super::runs::SCHEDULER_TABLE)?;
+    tx.execute_batch(super::retention::RUN_INDEXES)?;
     super::receipts::initialize(tx)
 }
 
@@ -58,6 +59,7 @@ pub(super) fn mutate(
     if let Some(record) = actor.replay(&tx, operation, &request)? {
         return Ok(record);
     }
+    let deleting = matches!(mutation, AutomationMutation::Delete { .. });
     let record = match mutation {
         AutomationMutation::Create { spec } => {
             spec.validate(now_ms)?;
@@ -142,7 +144,12 @@ pub(super) fn mutate(
     };
     active(cancellation)?;
     actor.save(&tx, operation, &request, &record)?;
+    // A deletion with no run in flight removes the automation's data now,
+    // its own receipt included; otherwise its last run's finish does.
+    let purged = deleting.then(|| super::retention::purge_deleted(&tx, record.id));
+    let purged = purged.transpose()?.flatten();
     tx.commit()?;
+    super::retention::report(purged);
     Ok(record)
 }
 

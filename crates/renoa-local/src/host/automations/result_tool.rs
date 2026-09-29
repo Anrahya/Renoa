@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(crate) fn binding(host: Arc<HostConfig>, actor: AgentId) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-automation-results-v4", Arc::new(Results {
+    AgentToolBinding::new("renoa-automation-results-v5", Arc::new(Results {
         host:LocalHost {config:host}, actor,
         spec:ToolSpec {
             name:capabilities::AUTOMATION_RESULTS.to_owned(),
-            description:"Read results from this Host's scheduled or manually triggered automation runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact metadata for finished runs newest first, each with its status: succeeded, failed, or skipped (too late to run), and how many of its tool calls failed; pass next_before to page older results. Read with a run ID returns its exact task and output; for a failed or skipped run the output says why. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
+            description:"Read results from this Host's scheduled or manually triggered automation runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact metadata for finished runs newest first, each with its status: succeeded, failed, or skipped (too late to run), and how many of its tool calls failed; pass next_before to page older results. Read with a run ID returns its exact task and output; for a failed or skipped run the output says why. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output. Each automation keeps its newest 50 results, none older than 30 days; a deleted automation keeps none.".to_owned(),
             input_schema:input_schema(),
         },
     }), EffectRecovery::SafeToReplay)

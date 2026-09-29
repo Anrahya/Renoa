@@ -262,8 +262,9 @@ channel binding leaves that bot's result waiting without blocking other bots;
 reconnecting Slack drains retained Host results.
 Agents support one-time dates and cron schedules in a named timezone through
 `automation_manage`, including revision-checked deletion. Ask the agent to delete
-an automation to remove it and stop future runs; past results remain readable and
-already-admitted runs finish. For example, ask an agent to run a task once tomorrow at
+an automation to remove it and stop future runs; already-admitted runs finish,
+then its results are deleted. Each automation keeps its newest 50 results, none
+older than 30 days. For example, ask an agent to run a task once tomorrow at
 2 pm in your timezone. One-time schedules disarm when durably queued; an offline
 Host catches up once after restart. Results use the same delivery path.
 Schema 8 freezes delivered automation excerpts into the next admitted chat prompt,

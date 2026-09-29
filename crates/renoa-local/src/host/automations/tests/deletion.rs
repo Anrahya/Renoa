@@ -10,7 +10,7 @@ async fn change(
 }
 
 #[tokio::test]
-async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
+async fn model_deletes_an_automation_and_its_results_go_with_it() {
     let (_d, h, parent, child) = fixture().await;
     let record = change(&h, parent, AutomationMutation::Create { spec: spec(child) })
         .await
@@ -56,24 +56,16 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
             .expect("no future occurrence")
             .is_none()
     );
-    let output = chat
-        .execute_turn(
-            Uuid::new_v4(),
-            vec![ContentBlock::text("read latest automation result")],
-            Arc::new(Quiet),
-        )
-        .await
-        .expect("read history through model");
     assert!(
-        matches!(output,LocalTurnOutcome::Completed {output,..} if output=="Digest saved: digest.md")
-    );
-    assert!(
-        h.automation_result(parent, run.id)
+        h.automation_results(child, child, None)
             .await
-            .expect("retained result")
-            .submission
-            .ends_with("\n\nscheduled digest")
+            .expect("results")
+            .is_empty()
     );
+    assert!(matches!(
+        h.automation_result(parent, run.id).await,
+        Err(LocalHostError::Automation(AutomationError::NotFound))
+    ));
 }
 
 #[tokio::test]
@@ -163,11 +155,8 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
             .is_none()
     );
     assert!(
-        h.automation_result(child, run.id)
-            .await
-            .expect("result retained")
-            .result
-            .is_some()
+        h.automation_result(child, run.id).await.is_err(),
+        "the finished run of a deleted automation goes with it"
     );
 }
 

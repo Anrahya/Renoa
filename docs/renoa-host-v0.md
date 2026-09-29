@@ -1016,13 +1016,17 @@ another writer's files to empty a directory.
 A component creates only its own stores. Directory initialization does not
 configure accounts, install binaries, or create an authenticated model store.
 
-Usage, cache counts, execution timings, provider payloads, streamed chunks, and
-tool diagnostics belong in `trace.sqlite3`, never `runtime.jsonl` or model
-context. The admitted user-turn observation described above is the narrow
+Usage, cache counts, execution timings, request sizes, tool names and failed
+tool errors (their first 500 characters) belong in `trace.sqlite3`, never
+`runtime.jsonl` or model context. The trace keeps no content: no requests,
+responses, streamed text, tool arguments or tool output, which the kernel
+already holds. Trace schema 4 strips a schema 3 trace of that content when it
+is opened and reclaims the space, logging `trace_content_removed` with its
+counts. The admitted user-turn observation described above is the narrow
 exception: it is semantic model context, not diagnostic trace timing.
 Trace rows explain execution but never decide replay or semantic history. A
-trace database is owned by one exact Agent and Session; a mismatched or
-unsupported trace schema fails closed instead of being reinterpreted. The clean
+trace database is owned by one exact Agent and Session; a mismatched identity or
+a trace schema before 3 fails closed instead of being reinterpreted. The clean
 break below does not migrate old session or trace stores.
 
 The Host assembles these files in a hidden directory. After all four are synced
@@ -1044,7 +1048,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 38
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 39
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1288,9 +1292,13 @@ Pausing sets enabled=false; it leaves an already admitted occurrence intact.
 `delete` requires the current revision and records a durable deletion marker in
 Host schema 19 while disabling the automation and incrementing its revision. Deleted
 automations disappear from listing/get and reject update/manual-run operations; they
-cannot be re-armed. Already admitted runs finish, and their results remain readable.
-The original automation row and operation receipts remain for run references and exact
-replay; replaying creation does not resurrect a deleted automation. Deletion and its
+cannot be re-armed. Already admitted runs finish. Once none is in flight, the
+deletion removes the automation's runs and blanks its name and standing task in
+its row and receipts; a receipt keeps its request only as a SHA-256 digest. The
+row, the deletion marker and the receipts stay for exact replay: a retried
+operation still gets its original answer, without the removed text, and replaying
+creation does not resurrect a deleted automation. Each purge logs one
+`automation_purged` event with its counts; nothing is archived. Deletion and its
 receipt commit atomically, and cancelled/stale/unauthorized requests change nothing.
 
 Host schema 16 introduced automations (then named routines), management receipts, and
@@ -1338,7 +1346,8 @@ agent against the current date/time and the user's timezone. Disarming and
 incrementing the revision commit together with the only timed occurrence's
 admission; the retained due time is historical while enabled=false. An overdue
 armed one-time task runs once, however late. A crash resumes its admitted run even though it is
-already disarmed. Results and automation records remain available afterward.
+already disarmed. Its result and record remain afterward, within the retention
+limits below.
 `run_now` also disarms a one-time task, avoiding a second run at its original time;
 a fresh explicit `run_now` may run a disabled task again. Pausing and editing an
 unchanged overdue task are allowed. Re-arming requires a future timestamp and the
@@ -1462,6 +1471,13 @@ Schema 38 replaces daily and interval schedules with cron and renames a run's
 each earlier run's task, which is exactly what it was sent, and refuses to
 upgrade while an automation or a replayable receipt still holds a daily or
 interval schedule, since neither has an exact cron form.
+Schema 39 bounds run history. Each automation keeps its newest 50 finished runs,
+none finished more than 30 days ago (a run recorded before schema 37 ages from
+its admission); unfinished runs are never removed. The count limit applies when
+a run of that automation finishes and the age limit on the scheduler's
+heartbeat, and each removal logs `automation_runs_pruned`. Run history gains
+indexes on `(automation_id, sequence)` and `(agent_id, sequence)`. The upgrade
+purges automations deleted before deletion removed their data.
 
 ## Local CLI
 

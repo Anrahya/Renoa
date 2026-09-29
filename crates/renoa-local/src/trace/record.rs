@@ -4,8 +4,7 @@ use std::{
 };
 
 use renoa_agent::{
-    AgentEvent, AssistantDelta, ContentBlock, ModelFailureCode, ModelRequest, ModelResponse,
-    ToolCall, ToolOutput,
+    AgentEvent, ContentBlock, ModelFailureCode, ModelRequest, ModelResponse, ToolCall,
 };
 use serde_json::{Value, json};
 
@@ -32,22 +31,24 @@ impl TraceState {
         Ok(self.sequence)
     }
 
+    /// The trace records what happened and how long it took, never content:
+    /// no requests, streamed text, tool arguments or tool output. The
+    /// conversation itself lives in the kernel. Streamed pieces and tool
+    /// progress are not recorded at all.
     pub(super) fn agent_event(
         &mut self,
         event: AgentEvent,
         occurred_at_ms: i64,
         elapsed_us: i64,
-    ) -> TraceEntry {
-        match event {
+    ) -> Option<TraceEntry> {
+        Some(match event {
             AgentEvent::MessageStart { role } => {
                 TraceEntry::new("message", "start", occurred_at_ms, elapsed_us)
                     .name(role_name(role))
             }
-            AgentEvent::MessageUpdate {
-                content_index,
-                delta,
-            } => TraceEntry::new("message", "chunk", occurred_at_ms, elapsed_us)
-                .payload(&json!({ "content_index": content_index, "delta": delta })),
+            AgentEvent::MessageUpdate { .. } | AgentEvent::ToolExecutionUpdate { .. } => {
+                return None;
+            }
             AgentEvent::MessageAbort => {
                 TraceEntry::new("message", "aborted", occurred_at_ms, elapsed_us)
             }
@@ -58,25 +59,18 @@ impl TraceState {
             | AgentEvent::ModelRequestEnd { .. }
             | AgentEvent::ModelRequestFailed { .. }
             | AgentEvent::ModelRetryAttempt { .. } => {
-                self.model_agent_event(event, occurred_at_ms, elapsed_us)
+                return self.model_agent_event(event, occurred_at_ms, elapsed_us);
             }
             AgentEvent::ToolExecutionStart { call } => {
                 self.tool_started(call, occurred_at_ms, elapsed_us)
             }
-            AgentEvent::ToolExecutionUpdate { call, update } => {
-                let update = redact_sensitive_tool_progress(&call.name, update);
-                TraceEntry::new("tool", "execution_update", occurred_at_ms, elapsed_us)
-                    .correlation(call.id)
-                    .name(call.name)
-                    .payload(&to_value(update))
-            }
             AgentEvent::ToolExecutionEnd { call, result } => {
-                self.tool_finished(call, occurred_at_ms, elapsed_us, result)
+                self.tool_finished(call, occurred_at_ms, elapsed_us, &result)
             }
             AgentEvent::ToolExecutionOutcomeUnknown { call, error } => {
                 self.tool_unknown(call, occurred_at_ms, elapsed_us, error)
             }
-        }
+        })
     }
 
     fn model_agent_event(
@@ -84,18 +78,18 @@ impl TraceState {
         event: AgentEvent,
         occurred_at_ms: i64,
         elapsed_us: i64,
-    ) -> TraceEntry {
-        match event {
+    ) -> Option<TraceEntry> {
+        Some(match event {
             AgentEvent::ModelRequestStart {
                 invocation_id,
                 request,
-            } => self.model_started(invocation_id, request, occurred_at_ms, elapsed_us),
+            } => self.model_started(invocation_id, &request, occurred_at_ms, elapsed_us),
             AgentEvent::ModelProviderRequest {
                 invocation_id,
                 payload,
             } => TraceEntry::new("model", "provider_request", occurred_at_ms, elapsed_us)
                 .correlation(invocation_id)
-                .payload(&payload),
+                .payload(&json!({ "bytes": payload.to_string().len() })),
             AgentEvent::ModelProviderResponse {
                 invocation_id,
                 status,
@@ -104,17 +98,10 @@ impl TraceState {
                 .correlation(invocation_id)
                 .status(Some(&status.to_string()))
                 .payload(&json!({ "status": status, "headers": headers })),
-            AgentEvent::ModelRequestChunk {
-                invocation_id,
-                content_index,
-                delta,
-            } => self.model_chunk(
-                invocation_id,
-                content_index,
-                &delta,
-                occurred_at_ms,
-                elapsed_us,
-            ),
+            AgentEvent::ModelRequestChunk { invocation_id, .. } => {
+                self.model_chunk(&invocation_id, elapsed_us);
+                return None;
+            }
             AgentEvent::ModelRequestEnd {
                 invocation_id,
                 response,
@@ -157,13 +144,13 @@ impl TraceState {
                 elapsed_us,
             ),
             _ => unreachable!("non-model events are dispatched by agent_event"),
-        }
+        })
     }
 
     fn model_started(
         &mut self,
         invocation_id: String,
-        request: ModelRequest,
+        request: &ModelRequest,
         occurred_at_ms: i64,
         elapsed_us: i64,
     ) -> TraceEntry {
@@ -177,25 +164,19 @@ impl TraceState {
         TraceEntry::new("model", "request_started", occurred_at_ms, elapsed_us)
             .correlation(invocation_id)
             .status(Some("running"))
-            .payload(&to_value(request))
+            .payload(&json!({
+                "messages": request.messages.len(),
+                "tools": request.tools.len(),
+            }))
     }
 
-    fn model_chunk(
-        &mut self,
-        invocation_id: String,
-        content_index: usize,
-        delta: &AssistantDelta,
-        occurred_at_ms: i64,
-        elapsed_us: i64,
-    ) -> TraceEntry {
-        if let Some(timing) = self.model_timings.get_mut(&invocation_id)
+    /// A streamed piece is not recorded; the first one only times the call.
+    fn model_chunk(&mut self, invocation_id: &str, elapsed_us: i64) {
+        if let Some(timing) = self.model_timings.get_mut(invocation_id)
             && timing.first_output_us.is_none()
         {
             timing.first_output_us = Some(elapsed_us);
         }
-        TraceEntry::new("model", "stream_chunk", occurred_at_ms, elapsed_us)
-            .correlation(invocation_id)
-            .payload(&json!({ "content_index": content_index, "delta": delta }))
     }
 
     fn model_finished(
@@ -215,7 +196,7 @@ impl TraceState {
                     .first_output_us
                     .map(|first| first - timing.started_us)
             }))
-            .payload(&to_value(response));
+            .payload(&json!({ "stop_reason": response.stop_reason }));
         if let Some(usage) = response.usage {
             entry = entry.usage(
                 usage.input,
@@ -265,20 +246,34 @@ impl TraceState {
         call: ToolCall,
         occurred_at_ms: i64,
         elapsed_us: i64,
-        result: renoa_agent::ToolResult,
+        result: &renoa_agent::ToolResult,
     ) -> TraceEntry {
         let started = self.tool_starts.remove(&call.id);
-        let status = if result.is_error {
-            "failed"
-        } else {
-            "completed"
-        };
-        TraceEntry::new("tool", "execution_finished", occurred_at_ms, elapsed_us)
+        let entry = TraceEntry::new("tool", "execution_finished", occurred_at_ms, elapsed_us)
             .correlation(call.id)
             .name(call.name)
-            .status(Some(status))
-            .duration(started.map(|started| elapsed_us - started))
-            .payload(&to_value(result))
+            .duration(started.map(|started| elapsed_us - started));
+        if !result.is_error {
+            return entry.status(Some("completed"));
+        }
+        // A failed call keeps the start of its error, enough to see why.
+        let error = result
+            .content
+            .iter()
+            .filter_map(|block| {
+                if let ContentBlock::Text { text } = block {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<String>()
+            .chars()
+            .take(TOOL_ERROR_CHARS)
+            .collect::<String>();
+        entry
+            .status(Some("failed"))
+            .payload(&json!({ "error": error }))
     }
 
     fn tool_unknown(
@@ -303,44 +298,11 @@ impl TraceState {
             .correlation(call.id)
             .name(call.name)
             .status(Some("running"))
-            .payload(&to_value(call.arguments))
     }
 }
 
-fn redact_sensitive_tool_progress(tool: &str, mut update: ToolOutput) -> ToolOutput {
-    if tool != crate::capabilities::PLUGIN_MANAGE {
-        return update;
-    }
-    let mut redacted = false;
-    for block in &mut update.content {
-        let ContentBlock::Text { text } = block else {
-            continue;
-        };
-        let Ok(mut value) = serde_json::from_str::<Value>(text) else {
-            continue;
-        };
-        let Some(object) = value.as_object_mut() else {
-            continue;
-        };
-        let field = match object.get("status").and_then(Value::as_str) {
-            Some("credential_required") => "setup_url",
-            Some("authorization_required") => "authorization_url",
-            _ => continue,
-        };
-        if object.remove(field).is_none() {
-            continue;
-        }
-        object.insert(format!("{field}_omitted"), Value::Bool(true));
-        if let Ok(encoded) = serde_json::to_string(&value) {
-            *text = encoded;
-            redacted = true;
-        }
-    }
-    if redacted {
-        update.details = None;
-    }
-    update
-}
+/// How much of a failed tool call's error the trace keeps.
+const TOOL_ERROR_CHARS: usize = 500;
 
 pub(super) fn now_unix_ms() -> i64 {
     let millis = SystemTime::now()

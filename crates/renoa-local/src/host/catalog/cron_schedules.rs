@@ -36,6 +36,7 @@ pub(super) fn adopt_cron_schedules(transaction: &Transaction<'_>) -> Result<(), 
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_37(connection: &rusqlite::Connection) {
+    super::restore_schema_38(connection);
     connection
         .execute_batch("ALTER TABLE host_automation_runs RENAME COLUMN submission TO prompt;")
         .expect("restore the schema 37 run column");
