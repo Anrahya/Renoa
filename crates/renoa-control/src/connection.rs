@@ -405,6 +405,7 @@ async fn read_peer(
         | ClientMessage::AdvertiseTargets { .. }
         | ClientMessage::Attach { .. }
         | ClientMessage::Submit { .. }
+        | ClientMessage::DeleteTask { .. }
         | ClientMessage::AcknowledgeExecution { .. }
         | ClientMessage::PublishExecutionEvents { .. } => {
             send_error(

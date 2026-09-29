@@ -321,6 +321,18 @@ impl HostFixture {
         session_id.parse().expect("stored session id")
     }
 
+    /// Whether the node ledger still records `task_id`.
+    pub(crate) fn ledger_has_task(&self, task_id: TaskId) -> bool {
+        rusqlite::Connection::open(&self.ledger)
+            .expect("open node ledger")
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM host_node_tasks WHERE task_id = ?1)",
+                [task_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("read the node ledger")
+    }
+
     pub(crate) fn operation_count_for(&self, task_id: TaskId) -> usize {
         let session_id = self.session_for(task_id);
         let session = SessionId::from_uuid(session_id);
@@ -497,6 +509,29 @@ pub(crate) async fn attach_after(
     };
     assert_eq!(attached_task, task_id);
     through_sequence
+}
+
+/// Whether the coordinator still holds `task_id`, asked on a fresh socket so
+/// an attachment never interleaves with the caller's.
+pub(crate) async fn coordinator_has_task(system: &TestSystem, task_id: TaskId) -> bool {
+    let mut socket = system.connect_surface().await;
+    send(
+        &mut socket,
+        &ClientMessage::Attach {
+            request_id: 1,
+            task_id,
+            after_sequence: None,
+        },
+    )
+    .await;
+    match receive(&mut socket).await {
+        ServerMessage::Attached { .. } => true,
+        ServerMessage::Error {
+            code: ErrorCode::NotFound,
+            ..
+        } => false,
+        other => panic!("unexpected reply to attaching to {task_id}: {other:?}"),
+    }
 }
 
 pub(crate) fn agent_target(agent_id: AgentId) -> TargetRef {

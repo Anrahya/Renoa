@@ -27,7 +27,7 @@ use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    agent_targets,
+    agent_targets, automation_cleanup,
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
     bridge::{NodeError, NodeRuntime},
     node_log,
@@ -131,12 +131,25 @@ async fn serve(
     connection: &Connection,
     shutdown: &CancellationToken,
 ) -> Result<(), NodeError> {
+    let mut next_cleanup = Instant::now();
     loop {
         let Some(due) = scheduler
             .next_run(now_ms()?)
             .await
             .map_err(|error| host_error(&error))?
         else {
+            // Deleted automations' conversations go while nothing is due.
+            // Stopping part way is safe: every step converges on a retry and
+            // the Host's mark goes last.
+            if Instant::now() >= next_cleanup {
+                tokio::select! {
+                    () = shutdown.cancelled() => return Ok(()),
+                    deleted = automation_cleanup::delete_conversations(
+                        runtime, scheduler, connection,
+                    ) => deleted?,
+                }
+                next_cleanup = Instant::now() + HEARTBEAT;
+            }
             tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
                 () = connection.closed() => {

@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `10`.
+first implemented transport binding. The current binding version is `11`.
 
 The binding is a candidate contract, not a stable public release. Version `10`
 is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -53,14 +53,17 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `10` with `version_mismatch` and ends the session.
+rejects any value other than `11` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `10` supersedes version `9` by adding node target advertisement
+Version `11` supersedes version `10` by adding task deletion by the task's
+owner (`delete_task`). A version `10` peer is rejected at authentication.
+
+Version `10` superseded version `9` by adding node target advertisement
 (`advertise_targets`) and runtime task opening by the node's owner
 (`list_targets`, `open_task`). A version `9` peer is rejected at authentication.
 
@@ -86,7 +89,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 10,
+  "version": 11,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -96,7 +99,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 10,
+  "version": 11,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -109,7 +112,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 10,
+  "version": 11,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -122,7 +125,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 10,
+  "version": 11,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -138,7 +141,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 10
+  "version": 11
 }
 ```
 
@@ -226,6 +229,29 @@ Success, including an exact retry, returns:
 A node the principal does not own and a target the node does not advertise
 return `not_found`; an offline node returns `node_offline`; a task identity
 already bound differently returns `conflict`.
+
+### Delete a task
+
+```json
+{
+  "type": "delete_task",
+  "request_id": 43,
+  "task_id": "00000000-0000-0000-0000-000000000011"
+}
+```
+
+Success, including a retry for a task already deleted, returns:
+
+```json
+{
+  "type": "task_deleted",
+  "request_id": 43,
+  "task_id": "00000000-0000-0000-0000-000000000011"
+}
+```
+
+A task with an execution in flight returns `conflict`; another principal's task
+returns `not_found`.
 
 ### Attach
 

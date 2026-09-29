@@ -127,6 +127,98 @@ async fn an_automation_made_outside_a_conversation_runs_in_its_own_task() {
 }
 
 #[tokio::test]
+async fn deleting_an_automation_deletes_its_own_conversation_everywhere() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let automation = create(&host, fixture.agent_id, "Write the digest.").await;
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+        let own_task = TaskId::from_uuid(automation.id);
+
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        assert_eq!(
+            result_of(&host, fixture.agent_id, run).await,
+            "Digest written."
+        );
+        let session = fixture
+            .data
+            .join("sessions")
+            .join(fixture.session_for(own_task).to_string());
+        assert!(session.is_dir());
+        // The coordinator refuses to delete a task until it holds the
+        // execution's terminal event.
+        let mut surface = system.connect_surface().await;
+        attach_after(&mut surface, own_task, None).await;
+        collect_through_terminal(&mut surface).await;
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+
+        let revision = host
+            .automation(fixture.agent_id, automation.id)
+            .await
+            .expect("automation")
+            .revision;
+        host.manage_automation(
+            fixture.agent_id,
+            Uuid::new_v4(),
+            AutomationMutation::Delete {
+                id: automation.id,
+                expected_revision: revision,
+            },
+            now_ms(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("delete the automation");
+        // A live session beside its own deletion tombstone makes the Host
+        // refuse to delete it, after the coordinator already has.
+        let tombstone =
+            session.with_file_name(format!(".deleting-{}", fixture.session_for(own_task)));
+        std::fs::create_dir(&tombstone).expect("block the session deletion");
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        while support::coordinator_has_task(&system, own_task).await {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        assert!(session.is_dir() && fixture.ledger_has_task(own_task));
+        assert_eq!(
+            deletion_marks(&fixture),
+            1,
+            "a deletion that failed part way is retried"
+        );
+
+        std::fs::remove_dir(&tombstone).expect("unblock the session deletion");
+        let (shutdown, node_task) = start_node(Arc::clone(&host), &system).await;
+        while session.exists() || fixture.ledger_has_task(own_task) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(!support::coordinator_has_task(&system, own_task).await);
+        assert_eq!(
+            deletion_marks(&fixture),
+            0,
+            "the Host no longer waits on the deletion"
+        );
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("conversation deletion test timed out");
+}
+
+#[tokio::test]
 async fn a_node_restart_during_a_run_neither_drops_nor_repeats_it() {
     timeout(Duration::from_secs(30), async {
         let mut system = TestSystem::start().await;
@@ -398,6 +490,33 @@ async fn a_run_too_late_for_its_schedule_is_skipped_without_executing() {
     })
     .await
     .expect("skipped automation test timed out");
+}
+
+/// Starts a node that owns the automation schedule.
+fn deletion_marks(fixture: &HostFixture) -> i64 {
+    rusqlite::Connection::open(fixture.data.join("state/host.sqlite3"))
+        .expect("open Host catalog")
+        .query_row(
+            "SELECT count(*) FROM host_automation_conversation_deletions",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read deletion marks")
+}
+
+async fn start_node(
+    host: Arc<LocalHost>,
+    system: &TestSystem,
+) -> (
+    CancellationToken,
+    tokio::task::JoinHandle<Result<(), renoa_node::NodeError>>,
+) {
+    let shutdown = CancellationToken::new();
+    let node = RenoaNode::open(system.url.clone(), system.enroll_node().await, host)
+        .expect("open execution node")
+        .with_automations(system.enroll_surface_as("automations").await)
+        .expect("own the automation schedule");
+    (shutdown.clone(), tokio::spawn(node.run(shutdown)))
 }
 
 async fn create(host: &LocalHost, agent: AgentId, prompt: &str) -> AutomationRecord {

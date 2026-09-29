@@ -290,7 +290,7 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 39. A schema 28–38 catalog upgrades in place
+This release requires Host schema 40. A schema 28–39 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
@@ -812,7 +812,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the node, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 39. Install the new binaries
+root before the new Host brings it to schema 40. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must

@@ -1048,7 +1048,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 39
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 40
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1297,8 +1297,18 @@ deletion removes the automation's runs and blanks its name and standing task in
 its row and receipts; a receipt keeps its request only as a SHA-256 digest. The
 row, the deletion marker and the receipts stay for exact replay: a retried
 operation still gets its original answer, without the removed text, and replaying
-creation does not resurrect a deleted automation. Each purge logs one
-`automation_purged` event with its counts; nothing is archived. Deletion and its
+creation does not resurrect a deleted automation. The purge also marks the
+automation's own conversation, the RCP task named by its id and the Host session
+that task ran in, for deletion. The node that owns the schedule deletes the task
+through RCP `DeleteTask`, then the session's files, then its ledger's copy of
+the task, and only then clears the mark, so an interrupted deletion is retried; it
+checks while nothing is due, at most every 30 seconds, and logs
+`automation_conversation_deleted`. A coordinator that still has an unterminated
+execution for the task refuses, and the node retries later. An automation that
+answered in the conversation it was created in has no task of its own; its runs
+there stay part of that conversation. Only the node that ran a task holds its
+session, so with several nodes another node's copy is not deleted. Each purge
+logs one `automation_purged` event with its counts; nothing is archived. Deletion and its
 receipt commit atomically, and cancelled/stale/unauthorized requests change nothing.
 
 Host schema 16 introduced automations (then named routines), management receipts, and
@@ -1478,6 +1488,8 @@ a run of that automation finishes and the age limit on the scheduler's
 heartbeat, and each removal logs `automation_runs_pruned`. Run history gains
 indexes on `(automation_id, sequence)` and `(agent_id, sequence)`. The upgrade
 purges automations deleted before deletion removed their data.
+Schema 40 records the deleted automations whose own conversation is still to be
+deleted. A schema 39 catalog marks the automations it already purged.
 
 ## Local CLI
 

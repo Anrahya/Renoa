@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use uuid::Uuid;
 
-use super::{AutomationError, AutomationRun, LocalHost, LocalHostError, RunOutcome, runs, store};
+use super::{
+    AutomationError, AutomationRun, LocalHost, LocalHostError, RunOutcome, retention, runs, store,
+};
 use crate::host::{catalog, lease::ExecutionLease};
 
 /// One admitted run and the conversation it returns to.
@@ -97,5 +99,33 @@ impl AutomationScheduler {
     pub async fn heartbeat(&self, now_ms: i64) -> Result<(), LocalHostError> {
         let database = self.database.clone();
         Ok(tokio::task::spawn_blocking(move || runs::heartbeat(&database, now_ms)).await??)
+    }
+
+    /// Deleted automations whose own conversation, the RCP task with the
+    /// automation's id and the session it executes in, is still to be
+    /// deleted. The schedule's owner deletes each, then reports it with
+    /// [`Self::conversation_deleted`].
+    ///
+    /// # Errors
+    /// Returns catalog failures.
+    pub async fn conversations_to_delete(&self) -> Result<Vec<Uuid>, LocalHostError> {
+        let database = self.database.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            retention::conversations_to_delete(&catalog::open_verified(&database)?)
+        })
+        .await??)
+    }
+
+    /// Records that `automation`'s conversation is gone from the coordinator
+    /// and the node that ran it.
+    ///
+    /// # Errors
+    /// Returns catalog failures.
+    pub async fn conversation_deleted(&self, automation: Uuid) -> Result<(), LocalHostError> {
+        let database = self.database.clone();
+        Ok(tokio::task::spawn_blocking(move || {
+            retention::conversation_deleted(&catalog::open_verified(&database)?, automation)
+        })
+        .await??)
     }
 }

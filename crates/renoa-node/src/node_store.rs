@@ -10,6 +10,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod delivery;
+mod forgetting;
 mod progress;
 mod records;
 mod schema;

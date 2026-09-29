@@ -67,8 +67,10 @@ pub(super) fn expire(db: &Connection, now_ms: i64) -> Result<Option<Removed>, Au
 /// Its row, deletion mark and receipts stay without them, so a retried
 /// operation still gets its original answer and cannot bring it back: a
 /// receipt keeps its request only as a digest (see [`request_matches`]) and
-/// its result with the name and task blank. Returns `None` while it is not
-/// deleted or a run is unfinished; the run's finish removes it then.
+/// its result with the name and task blank. Its own conversation is marked
+/// for the schedule's owner to delete (see [`conversations_to_delete`]).
+/// Returns `None` while it is not deleted or a run is unfinished, since the
+/// run's finish removes it then, and when nothing was left to remove.
 pub(super) fn purge_deleted(
     tx: &Transaction<'_>,
     automation: Uuid,
@@ -85,6 +87,10 @@ pub(super) fn purge_deleted(
     }
     let runs = tx.execute(
         "DELETE FROM host_automation_runs WHERE automation_id=?1",
+        [&id],
+    )?;
+    let marked = tx.execute(
+        "INSERT OR IGNORE INTO host_automation_conversation_deletions(automation_id) VALUES(?1)",
         [&id],
     )?;
     tx.execute(
@@ -116,6 +122,9 @@ pub(super) fn purge_deleted(
                 [operation, digest(&request)],
             )?;
         }
+    }
+    if runs == 0 && receipts == 0 && marked == 0 {
+        return Ok(None);
     }
     Ok(Some(Removed {
         name: "automation_purged",
@@ -170,4 +179,32 @@ pub(super) fn request_matches(stored: &str, request: &str) -> bool {
         Some(sha256) => sha256 == digest(request),
         None => stored == request,
     }
+}
+
+/// Deleted automations whose own conversation, the RCP task named by the
+/// automation's id and its session, may still exist.
+pub(in crate::host) const CONVERSATION_DELETIONS: &str =
+    "CREATE TABLE IF NOT EXISTS host_automation_conversation_deletions (
+        automation_id TEXT PRIMARY KEY REFERENCES host_automations(id)
+    ) STRICT;";
+
+/// The purged automations whose conversation is still to be deleted.
+pub(super) fn conversations_to_delete(db: &Connection) -> Result<Vec<Uuid>, AutomationError> {
+    Ok(db
+        .prepare("SELECT automation_id FROM host_automation_conversation_deletions")?
+        .query_map([], |row| super::store::parse(row, 0))?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Records that an automation's conversation is gone from the coordinator and
+/// the node that ran it.
+pub(super) fn conversation_deleted(
+    db: &Connection,
+    automation: Uuid,
+) -> Result<(), AutomationError> {
+    db.execute(
+        "DELETE FROM host_automation_conversation_deletions WHERE automation_id=?1",
+        [automation.to_string()],
+    )?;
+    Ok(())
 }

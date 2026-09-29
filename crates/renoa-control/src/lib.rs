@@ -28,6 +28,7 @@ mod oauth_relay_store;
 mod operations;
 mod store;
 mod surface_operations;
+mod task_deletion;
 mod task_opening;
 mod wire;
 

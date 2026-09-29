@@ -266,6 +266,7 @@ async fn handle_server_message(
         | ServerMessage::TaskList { .. }
         | ServerMessage::TargetList { .. }
         | ServerMessage::TaskOpened { .. }
+        | ServerMessage::TaskDeleted { .. }
         | ServerMessage::Attached { .. }
         | ServerMessage::CommandAccepted { .. }
         | ServerMessage::TaskEvent { .. } => {

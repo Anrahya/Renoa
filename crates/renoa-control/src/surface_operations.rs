@@ -106,6 +106,19 @@ pub(crate) async fn handle_surface_operation(
                 send_control_error(outgoing, Some(request_id), &error).await;
             }
         }
+        SurfaceOperation::DeleteTask { task_id } => {
+            match crate::task_deletion::delete_task(&state, principal_id, task_id).await {
+                Ok(()) => {
+                    let _ = outgoing
+                        .send(ServerMessage::TaskDeleted {
+                            request_id,
+                            task_id,
+                        })
+                        .await;
+                }
+                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
+            }
+        }
     }
 }
 

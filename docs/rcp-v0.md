@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 10 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 11 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -634,7 +634,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 10 JSON/WebSocket shape with binding-level conformance
+- a documented version 11 JSON/WebSocket shape with binding-level conformance
   assertions;
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
@@ -837,7 +837,9 @@ assumption after context compaction:
 - Execution generations and safe rebinding messages
 - Task-list pagination and live directory updates
 - Cancellation, steering, approval, and queued-follow-up semantics
-- Snapshot, retention, compaction, artifact, and blob behavior
+- Snapshot, automatic retention, compaction, artifact, and blob behavior. An
+  owner deleting one of its tasks is defined: `DeleteTask` in
+  [RCP operations](rcp-operations-v0.md).
 - HTTP/SSE and webhook transport bindings
 - Sender-constrained device authentication
 - Trusted-device enrollment approval, identity recovery, passkey revocation,

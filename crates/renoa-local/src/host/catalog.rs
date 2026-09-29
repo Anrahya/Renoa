@@ -28,9 +28,9 @@ pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 #[cfg(test)]
 pub(crate) use registry_sync::restore_schema_35;
 #[cfg(test)]
-pub(crate) use run_retention::restore_schema_38;
+pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
 
-const SCHEMA_VERSION: u32 = 39;
+const SCHEMA_VERSION: u32 = 40;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -271,7 +271,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=38 => {
+        28..=39 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
