@@ -232,44 +232,26 @@ fn assert_code_mode_effects(data: &Path, session_uuid: Uuid) {
     let effects = &waves[0].effects;
     assert_eq!(effects.len(), 2);
     assert_ne!(effects[0].effect_id, effects[1].effect_id);
-    let mut arguments = BTreeSet::new();
-    let mut identities = BTreeSet::new();
+    // The finished turn keeps no copy of the calls' requests; the MCP server
+    // saw their arguments (see `assert_mcp_traffic`), and each outcome still
+    // shows which call it answered.
+    let mut outcomes = BTreeSet::new();
     for effect in effects {
         assert_eq!(effect.binding, "renoa.agent.tool/tool_execute");
         assert_eq!(effect.binding_revision, *revision);
         assert_eq!(effect.recovery, EffectRecovery::NeverReplay);
         assert_eq!(effect.dispatch_count, 1);
-        assert_eq!(effect.request["name"], "tool_execute");
-        identities.insert(effect.request["id"].as_str().expect("nested call identity"));
-        arguments.insert(
-            effect.request["arguments"]["arguments"]["text"]
-                .as_str()
-                .expect("nested echo argument"),
-        );
+        assert_eq!(effect.request, None);
         let Some(EffectOutcome::Success(value)) = &effect.outcome else {
             panic!("nested MCP effect did not settle")
         };
         assert_eq!(value["name"], "tool_execute");
+        outcomes.insert((
+            value.to_string().contains("echo: hello"),
+            value["is_error"].as_bool().expect("MCP error flag"),
+        ));
     }
-    assert_eq!(identities.len(), 2);
-    assert_eq!(arguments, BTreeSet::from(["denied", "hello"]));
-    assert_eq!(
-        effects
-            .iter()
-            .map(|effect| {
-                let Some(EffectOutcome::Success(value)) = &effect.outcome else {
-                    unreachable!("checked above")
-                };
-                (
-                    effect.request["arguments"]["arguments"]["text"]
-                        .as_str()
-                        .expect("echo argument"),
-                    value["is_error"].as_bool().expect("MCP error flag"),
-                )
-            })
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([("denied", true), ("hello", false)])
-    );
+    assert_eq!(outcomes, BTreeSet::from([(false, true), (true, false)]));
 }
 
 fn serve_code_mode_mcp(listener: &TcpListener) -> (Vec<String>, Vec<String>) {

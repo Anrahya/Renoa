@@ -1019,8 +1019,9 @@ configure accounts, install binaries, or create an authenticated model store.
 Usage, cache counts, execution timings, request sizes, tool names and failed
 tool errors (their first 500 characters) belong in `trace.sqlite3`, never
 `runtime.jsonl` or model context. The trace keeps no content: no requests,
-responses, streamed text, tool arguments or tool output, which the kernel
-already holds. Trace schema 4 strips a schema 3 trace of that content when it
+responses, streamed text, tool arguments or tool output. The kernel holds the
+conversation and each outcome, and a call's request until its operation
+finishes, unless its batch ended with an unknown or undispatched call. Trace schema 4 strips a schema 3 trace of that content when it
 is opened and reclaims the space, logging `trace_content_removed` with its
 counts. The admitted user-turn observation described above is the narrow
 exception: it is semantic model context, not diagnostic trace timing.

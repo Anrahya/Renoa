@@ -98,7 +98,7 @@ pub(crate) fn load_effect_batch_facts(
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, Option<String>>(6)?,
             ))
@@ -121,6 +121,11 @@ pub(crate) fn load_effect_batch_facts(
             ));
         }
         let effect_id = parse_effect_id(&effect_id)?;
+        // Only a fully settled batch of an operation with an outcome releases
+        // its requests, and nothing loads that batch's facts again.
+        let request = request.ok_or_else(|| {
+            KernelError::Corrupt("effect batch child request was released".to_owned())
+        })?;
         let request: serde_json::Value = serde_json::from_str(&request).map_err(json_error)?;
         let unsettled = || UnsettledEffect {
             effect_id,
@@ -180,7 +185,7 @@ fn load_effect_snapshots(
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(5)?,
                 row.get::<_, String>(6)?,
                 row.get::<_, i64>(7)?,
                 row.get::<_, Option<String>>(8)?,
@@ -203,7 +208,9 @@ fn load_effect_snapshots(
             binding,
             binding_revision: revision,
             recovery: parse_recovery(&recovery)?,
-            request: serde_json::from_str(&request).map_err(json_error)?,
+            request: request
+                .map(|value| serde_json::from_str(&value).map_err(json_error))
+                .transpose()?,
             status: parse_status(&status)?,
             dispatch_count: from_sql_integer(dispatches, "effect dispatch count")?,
             outcome: outcome

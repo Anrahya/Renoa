@@ -217,8 +217,13 @@ async fn recovery_reuses_the_persisted_projection_and_freezes_its_revision() {
         .inspect(session_id)
         .expect("inspect interrupted model");
     let original_effect = interrupted.operations[0].effect_batches[0].effects[0].clone();
-    let original_request: ModelRequest =
-        serde_json::from_value(original_effect.request.clone()).expect("decode model request");
+    let original_request: ModelRequest = serde_json::from_value(
+        original_effect
+            .request
+            .clone()
+            .expect("an unfinished call keeps its request"),
+    )
+    .expect("decode model request");
     assert_eq!(
         original_request.messages,
         vec![Message::user_text("projected message")]
@@ -266,7 +271,10 @@ async fn recovery_reuses_the_persisted_projection_and_freezes_its_revision() {
     let recovered = kernel.inspect(session_id).expect("inspect recovered model");
     let replayed_effect = &recovered.operations[0].effect_batches[0].effects[0];
     assert_eq!(replayed_effect.effect_id, original_effect.effect_id);
-    assert_eq!(replayed_effect.request, original_effect.request);
+    assert_eq!(
+        replayed_effect.request, None,
+        "the finished turn released it"
+    );
     assert_eq!(replayed_effect.dispatch_count, 2);
     assert_eq!(replayed_effect.status, EffectStatus::Settled);
 }
