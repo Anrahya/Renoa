@@ -1,0 +1,6 @@
+# Production modules allowed to reach 500 lines, one path per line with its
+# reason. AGENTS.md judges a module whose bulk is data by its data; anything
+# else is listed only until it is split.
+crates/renoa-kernel/src/schema.rs                 # SQL schema text, not logic
+crates/renoa-local/src/host/catalog/migrations.rs # SQL migration text, not logic
+crates/renoa-local/src/host.rs                    # 506 lines; split pending

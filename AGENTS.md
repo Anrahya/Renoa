@@ -30,7 +30,8 @@
 - Keep production modules below 500 lines; test files are exempt. Crossing the
   line is a trigger to name the second responsibility or delete something, not
   to split at the counter; a module whose bulk is data rather than logic is
-  judged by its data.
+  judged by its data. `scripts/check-module-size.sh` enforces the limit; an
+  exception is listed with its reason in `scripts/module-size-exceptions`.
 - Keep at most one canonical architecture document per module. Do not add
   step, status, handoff, or implementation-summary documents; code and tests
   are the execution truth.
@@ -44,6 +45,7 @@
   refused, or unreachable path into a working one, re-audit everything
   downstream of it in the same change.
 - Treat warnings as errors. Before handing off code, run:
+  `scripts/check-module-size.sh`,
   `cargo fmt --all -- --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, and
   `cargo test --workspace`.
