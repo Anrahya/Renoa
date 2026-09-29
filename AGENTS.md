@@ -41,6 +41,12 @@
 - Test the real execution path with deterministic boundaries.
 - Prove a new test can fail. Revert the change, watch the test fail, restore
   it; a test that cannot fail hides the defect it claims to protect.
+- Derive a classification such as finished, terminal, or active from the code
+  that owns it; when listing enum variants is unavoidable, check the list
+  against every variant.
+- For kernel, RCP, storage, and migration changes, run an independent
+  adversarial review before opening the pull request, and record what it
+  checked.
 - Treat newly reachable code as new code. When a change turns a failing,
   refused, or unreachable path into a working one, re-audit everything
   downstream of it in the same change.
