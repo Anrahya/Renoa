@@ -10,8 +10,8 @@ use std::{sync::Arc, time::Duration};
 use renoa_control::{TaskEvent, TaskEventKind, TaskId};
 use renoa_kernel::AgentId;
 use renoa_local::{
-    AutomationMutation, AutomationRecord, AutomationSchedule, AutomationSpec, LocalHost,
-    TurnObservation,
+    AutomationMutation, AutomationRecord, AutomationSchedule, AutomationSpec, HostObserver,
+    LocalHost, RunResult, RunStatus, TurnObservation,
 };
 use renoa_node::RenoaNode;
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef};
@@ -62,10 +62,10 @@ async fn an_automation_created_in_a_conversation_answers_in_that_conversation() 
         assert_submitted_by_automations(&events, run, "Write the digest.", &system);
         assert!(answered(&events, "Digest written."));
         assert!(completed(&events));
-        assert_eq!(
-            result_of(&host, fixture.agent_id, run).await,
-            "Digest written."
-        );
+        let finished = finished_run(&host, fixture.agent_id, run).await;
+        assert_eq!(finished.output, "Digest written.");
+        assert_eq!(finished.status, RunStatus::Succeeded);
+        assert_eq!(finished.failed_tool_calls, Some(0));
         assert_eq!(
             fixture.operation_count(),
             2,
@@ -160,10 +160,9 @@ async fn a_node_restart_during_a_run_neither_drops_nor_repeats_it() {
             .with_automations(automation_credentials)
             .expect("the stopped node released the schedule");
         let node_task = tokio::spawn(restarted.run(shutdown.clone()));
-        assert_eq!(
-            result_of(&host, fixture.agent_id, run).await,
-            "Recovered the same Host turn."
-        );
+        let finished = finished_run(&host, fixture.agent_id, run).await;
+        assert_eq!(finished.output, "Recovered the same Host turn.");
+        assert_eq!(finished.status, RunStatus::Succeeded);
         assert_eq!(fixture.attempts(), "2");
 
         let own_task = TaskId::from_uuid(automation.id);
@@ -228,6 +227,179 @@ async fn one_node_owns_a_host_schedule_at_a_time() {
     .expect("schedule ownership test timed out");
 }
 
+#[tokio::test]
+async fn a_failed_run_is_recorded_as_failed_and_shown_in_its_conversation() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            Arc::clone(&host),
+        )
+        .expect("open execution node")
+        .with_automations(system.enroll_surface_as("automations").await)
+        .expect("own the automation schedule");
+        let node_task = tokio::spawn(node.run(shutdown.clone()));
+
+        let mut surface = system.connect_surface().await;
+        attach(&mut surface, system.task_id).await;
+        submit_when_node_is_online(
+            &mut surface,
+            system.task_id,
+            CommandId::new(),
+            &format!("Schedule for {}: Fail the digest.", fixture.agent_id),
+        )
+        .await;
+        collect_through_terminal(&mut surface).await;
+        let automation = host
+            .list_automations(fixture.agent_id, fixture.agent_id, None)
+            .await
+            .expect("list automations")
+            .remove(0);
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+
+        let events = collect_through_terminal(&mut surface).await;
+        assert_submitted_by_automations(&events, run, "Fail the digest.", &system);
+        assert!(
+            matches!(
+                events.last().map(|event| &event.kind),
+                Some(TaskEventKind::ExecutionEvent { event, .. })
+                    if matches!(event.kind, ExecutionEventKind::ExecutionTerminated {
+                        terminal: ExecutionTerminal::Failed { .. }
+                    })
+            ),
+            "the conversation shows the run's failure"
+        );
+        let finished = finished_run(&host, fixture.agent_id, run).await;
+        assert_eq!(finished.status, RunStatus::Failed);
+        assert!(
+            finished.output.starts_with("Scheduled run failed: "),
+            "{finished:?}"
+        );
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("failed automation test timed out");
+}
+
+#[tokio::test]
+async fn a_run_whose_tool_call_failed_succeeds_and_counts_the_failure() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        let automation = create(&host, fixture.agent_id, "Read the missing notes.").await;
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+
+        let shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            Arc::clone(&host),
+        )
+        .expect("open execution node")
+        .with_automations(system.enroll_surface_as("automations").await)
+        .expect("own the automation schedule");
+        let node_task = tokio::spawn(node.run(shutdown.clone()));
+        let finished = finished_run(&host, fixture.agent_id, run).await;
+        assert_eq!(finished.status, RunStatus::Succeeded);
+        assert_eq!(finished.output, "The notes are missing.");
+        assert_eq!(finished.failed_tool_calls, Some(1));
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("tool failure automation test timed out");
+}
+
+#[tokio::test]
+async fn a_run_too_late_for_its_schedule_is_skipped_without_executing() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let host = fixture.host();
+        // Created ten hours ago to run hourly, so its first run is nine hours
+        // late, far beyond the half hour an hourly run may start late.
+        let late = armed(
+            &host,
+            fixture.agent_id,
+            "Crash model.",
+            now_ms() - 10 * 3_600_000,
+        )
+        .await;
+        let observer = HostObserver::open(&fixture.data).expect("observe Host");
+
+        let shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            Arc::clone(&host),
+        )
+        .expect("open execution node")
+        .with_automations(system.enroll_surface_as("automations").await)
+        .expect("own the automation schedule");
+        let node_task = tokio::spawn(node.run(shutdown.clone()));
+
+        let skipped = loop {
+            let snapshot = observer.snapshot().await.expect("observe");
+            if let Some(last) = snapshot
+                .automations
+                .iter()
+                .find(|automation| automation.id == late.id)
+                .and_then(|automation| automation.last_run.as_ref())
+            {
+                break last.id;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let skipped = finished_run(&host, fixture.agent_id, skipped).await;
+        assert_eq!(skipped.status, RunStatus::Skipped);
+        // The scheduler moves on: a run queued after the skip executes.
+        let automation = create(&host, fixture.agent_id, "Write the digest.").await;
+        let run = run_now(&host, fixture.agent_id, &automation).await;
+        assert_eq!(
+            result_of(&host, fixture.agent_id, run).await,
+            "Digest written."
+        );
+        assert!(
+            !fixture.started().exists(),
+            "the skipped run never reached the model"
+        );
+        assert!(
+            observer
+                .snapshot()
+                .await
+                .expect("observe")
+                .automation_scheduler
+                .is_some(),
+            "the running scheduler records its heartbeat"
+        );
+
+        shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("skipped automation test timed out");
+}
+
 async fn create(host: &LocalHost, agent: AgentId, prompt: &str) -> AutomationRecord {
     host.manage_automation(
         agent,
@@ -242,6 +414,32 @@ async fn create(host: &LocalHost, agent: AgentId, prompt: &str) -> AutomationRec
             },
         },
         now_ms(),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("create automation")
+}
+
+/// Creates an enabled hourly automation as though at `created_at_ms`.
+async fn armed(
+    host: &LocalHost,
+    agent: AgentId,
+    prompt: &str,
+    created_at_ms: i64,
+) -> AutomationRecord {
+    host.manage_automation(
+        agent,
+        Uuid::new_v4(),
+        AutomationMutation::Create {
+            spec: AutomationSpec {
+                agent_id: agent,
+                name: "Hourly".to_owned(),
+                prompt: prompt.to_owned(),
+                schedule: AutomationSchedule::Interval { hours: 1 },
+                enabled: true,
+            },
+        },
+        created_at_ms,
         CancellationToken::new(),
     )
     .await
@@ -270,18 +468,22 @@ fn now_ms() -> i64 {
 }
 
 /// Waits for the scheduler to record the run's result on the Host.
-async fn result_of(host: &LocalHost, agent: AgentId, run: Uuid) -> String {
+async fn finished_run(host: &LocalHost, agent: AgentId, run: Uuid) -> RunResult {
     loop {
-        if let Some(output) = host
+        if let Some(result) = host
             .automation_result(agent, run)
             .await
             .expect("read the run")
-            .output
+            .result
         {
-            return output;
+            return result;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+async fn result_of(host: &LocalHost, agent: AgentId, run: Uuid) -> String {
+    finished_run(host, agent, run).await.output
 }
 
 fn assert_submitted_by_automations(

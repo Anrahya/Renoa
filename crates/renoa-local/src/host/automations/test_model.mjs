@@ -41,7 +41,7 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
     else if(results.length===1) {
       const listed=JSON.parse(results[0].result.content[0].text);
       invoke("read-result","automation_results",{action:"read",id:listed.runs[0].id});
-    } else complete(text(JSON.parse(results[1].result.content[0].text).run.output));
+    } else complete(text(JSON.parse(results[1].result.content[0].text).run.result.output));
   } else if(prompt==="scheduled digest") {
     if(results.length) complete(text("Digest saved: digest.md"));
     else invoke("write-digest","write_file",{path:"digest.md",content:"# Digest\nSaved by the specialist."});

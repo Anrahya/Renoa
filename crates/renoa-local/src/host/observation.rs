@@ -15,7 +15,7 @@ mod tests;
 
 pub use inventory::{
     ObservedAgent, ObservedAutomation, ObservedConnection, ObservedPlugin, ObservedRegistryFailure,
-    ObservedSharedRegistry, ObservedSkill,
+    ObservedRun, ObservedScheduler, ObservedSharedRegistry, ObservedSkill,
 };
 pub use sessions::{
     ObservedOperation, ObservedOperationState, ObservedSession, ObservedSessionState,
@@ -30,6 +30,8 @@ pub struct HostObservation {
     pub agents: Vec<ObservedAgent>,
     pub sessions: Vec<ObservedSession>,
     pub automations: Vec<ObservedAutomation>,
+    /// The automation scheduler's last heartbeat; null until one has run.
+    pub automation_scheduler: Option<ObservedScheduler>,
     pub connections: Vec<ObservedConnection>,
     pub plugins: Vec<ObservedPlugin>,
     pub skills: Vec<ObservedSkill>,
@@ -86,6 +88,7 @@ impl HostObserver {
             agents: inventory::agents(&tx)?,
             sessions: Vec::new(),
             automations: inventory::automations(&tx)?,
+            automation_scheduler: inventory::scheduler(&tx)?,
             connections: inventory::connections(&tx)?,
             plugins: inventory::plugins(&tx)?,
             skills: inventory::skills(&tx)?,

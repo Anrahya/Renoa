@@ -23,6 +23,7 @@ pub(super) fn record_sync_failures(transaction: &Transaction<'_>) -> Result<(), 
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_35(connection: &rusqlite::Connection) {
+    super::automation_outcomes::restore_schema_36(connection);
     connection
         .execute_batch("DROP TABLE shared_plugin_registry_sync;")
         .expect("restore the schema 35 catalog");

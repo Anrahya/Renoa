@@ -64,7 +64,8 @@ pub use host::history::AgentSessionHistory;
 pub use host::observation::{
     HostObservation, HostObserver, ObservedAgent, ObservedAutomation, ObservedConnection,
     ObservedOperation, ObservedOperationState, ObservedPlugin, ObservedRegistryFailure,
-    ObservedSession, ObservedSessionState, ObservedSharedRegistry, ObservedSkill,
+    ObservedRun, ObservedScheduler, ObservedSession, ObservedSessionState, ObservedSharedRegistry,
+    ObservedSkill,
 };
 pub use host::{
     HostResetReport, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
@@ -102,7 +103,7 @@ pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 pub use host::automations::{
     AutomationEnablement, AutomationError, AutomationMutation, AutomationRecord,
     AutomationResultSummary, AutomationRun, AutomationSchedule, AutomationScheduler,
-    AutomationSpec, HostAutomationControl, ScheduledRun,
+    AutomationSpec, HostAutomationControl, RunOutcome, RunResult, RunStatus, ScheduledRun,
 };
 
 pub use renoa_home::RenoaHome;

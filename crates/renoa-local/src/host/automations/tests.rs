@@ -12,6 +12,14 @@ use uuid::Uuid;
 
 struct Quiet;
 
+/// An executed run's successful outcome with no failed tool calls.
+fn succeeded(answer: &str) -> RunOutcome {
+    RunOutcome::Succeeded {
+        answer: answer.to_owned(),
+        failed_tool_calls: 0,
+    }
+}
+
 #[test]
 fn automation_model_schemas_avoid_unaccepted_unions_and_keep_action_guidance() {
     fn assert_no_one_of(value: &Value) {
@@ -196,8 +204,8 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
             .await
             .expect("replay ignores new clock")
     );
-    let run = store::next(&h.config.database, first.next_due_ms + 100_000_000)
-        .expect("admit catchup")
+    let run = runs::next(&h.config.database, first.next_due_ms + 60_000)
+        .expect("admit on time")
         .expect("run");
     assert_eq!(run.due_ms, first.next_due_ms);
     let mut changed = first.spec.clone();
@@ -243,7 +251,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
         .await
         .is_err()
     );
-    let resumed = store::next(&h.config.database, run.due_ms + 200_000_000)
+    let resumed = runs::next(&h.config.database, run.due_ms + 200_000_000)
         .expect("resume")
         .expect("same occurrence");
     assert_eq!(run, resumed);
@@ -373,7 +381,7 @@ async fn real_model_tool_schedules_a_specialist_that_reschedules_its_own_automat
         "an automation made for another agent runs in a conversation of its own"
     );
     scheduler
-        .finish_run(due.run.id, "Digest saved: digest.md".to_owned())
+        .finish_run(due.run.id, succeeded("Digest saved: digest.md"), 0)
         .await
         .expect("record the result");
     drop(scheduler);
@@ -499,7 +507,7 @@ async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_t
         .await
         .expect("paused automation");
     assert!(
-        store::next(&h.config.database, 100_000_000)
+        runs::next(&h.config.database, 100_000_000)
             .expect("paused")
             .is_none()
     );
@@ -517,14 +525,14 @@ async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_t
     h.manage_automation(child, op, manual, 200_000_000, CancellationToken::new())
         .await
         .expect("manual replay");
-    let admitted = store::next(&h.config.database, 200_000_000)
+    let admitted = runs::next(&h.config.database, 200_000_000)
         .expect("queue")
         .expect("manual");
     assert_eq!(admitted.id, op);
     assert_eq!(admitted.admitted_at_ms, 100_000_000);
-    store::finish(&h.config.database, op, "done").expect("complete");
+    runs::finish(&h.config.database, op, &succeeded("done"), 0).expect("complete");
     assert!(
-        store::next(&h.config.database, 300_000_000)
+        runs::next(&h.config.database, 300_000_000)
             .expect("no recurring run")
             .is_none()
     );
@@ -640,3 +648,4 @@ mod results;
 
 mod control;
 mod deletion;
+mod outcomes;

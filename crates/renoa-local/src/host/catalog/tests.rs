@@ -1,6 +1,6 @@
 use super::{
     HostCatalogError, cutover, initialize, open_verified, restore_schema_34_automations,
-    restore_schema_35,
+    restore_schema_35, restore_schema_36,
 };
 
 #[test]
@@ -529,5 +529,90 @@ fn schema_35_gains_a_record_of_failing_registry_synchronization() {
         ),
         0,
         "an upgraded Host records no failure until a synchronization fails"
+    );
+}
+
+#[test]
+fn schema_36_runs_gain_a_status_derived_from_their_recorded_result() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    initialize(&database).expect("initialize current catalog");
+    let connection = open_verified(&database).expect("open current catalog");
+    restore_schema_36(&connection);
+    connection
+        .execute_batch(
+            "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Scheduler', 1,
+                'provisioning', NULL, '{}', 'system', 'migration-test');
+             INSERT INTO host_automations(id, agent_id, name, prompt, schedule_json,
+                enabled, revision, next_due_ms)
+             VALUES ('00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 'Morning', 'Summarize.',
+                '{\"kind\":\"interval\",\"hours\":24}', 1, 2, 100);
+             INSERT INTO host_automation_runs(id, automation_id, agent_id, due_ms,
+                admitted_at_ms, prompt, output)
+             VALUES
+                ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-00000000000a',
+                 '00000000-0000-0000-0000-000000000001', 1, 1, 'Summarize.', 'Done.'),
+                ('00000000-0000-0000-0000-0000000000b2', '00000000-0000-0000-0000-00000000000a',
+                 '00000000-0000-0000-0000-000000000001', 2, 2, 'Summarize.',
+                 'Scheduled run failed: model unavailable'),
+                ('00000000-0000-0000-0000-0000000000b3', '00000000-0000-0000-0000-00000000000a',
+                 '00000000-0000-0000-0000-000000000001', 3, 3, 'Summarize.',
+                 'Scheduled run stopped. If account setup is needed, resolve it interactively.'),
+                ('00000000-0000-0000-0000-0000000000b4', '00000000-0000-0000-0000-00000000000a',
+                 '00000000-0000-0000-0000-000000000001', 4, 4, 'Summarize.',
+                 'Scheduled run could not be sent: node offline'),
+                ('00000000-0000-0000-0000-0000000000b5', '00000000-0000-0000-0000-00000000000a',
+                 '00000000-0000-0000-0000-000000000001', 5, 5, 'Summarize.',
+                 'Scheduled run needs input. Continue with the agent to resolve it.'),
+                ('00000000-0000-0000-0000-0000000000b6', '00000000-0000-0000-0000-00000000000a',
+                 '00000000-0000-0000-0000-000000000001', 6, 6, 'Summarize.', NULL);
+             UPDATE host_metadata SET schema_version = 36 WHERE singleton = 1;
+             PRAGMA user_version = 36;",
+        )
+        .expect("seed schema 36 runs");
+    drop(connection);
+
+    initialize(&database).expect("upgrade schema 36 in place");
+    initialize(&database).expect("reopening the upgraded catalog is stable");
+    let connection = open_verified(&database).expect("open upgraded catalog");
+    let mut statement = connection
+        .prepare("SELECT status FROM host_automation_runs ORDER BY due_ms")
+        .expect("prepare");
+    let statuses = statement
+        .query_map([], |row| row.get::<_, Option<String>>(0))
+        .expect("query")
+        .map(|row| row.expect("row"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statuses,
+        [
+            Some("succeeded"),
+            Some("failed"),
+            Some("failed"),
+            Some("failed"),
+            Some("failed"),
+            None
+        ]
+        .map(|status| status.map(str::to_owned)),
+        "a finished run's status comes from its text; an unfinished run has none"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_runs
+             WHERE failed_tool_calls IS NOT NULL OR finished_at_ms IS NOT NULL"
+        ),
+        0,
+        "what an earlier scheduler did not record stays unknown"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_scheduler"
+        ),
+        0
     );
 }

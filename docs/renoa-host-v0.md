@@ -378,7 +378,8 @@ surface processes are clients of those records. One logical Host does not requir
 one process, and a second data root is not implicitly part of the same Host.
 
 `HostObserver::open` opens an existing compatible data root and pins its Host UUID.
-`snapshot` reads agent identities, ordinary session operation summaries, automations,
+`snapshot` reads agent identities, ordinary session operation summaries, automations
+with their run statuses, the automation scheduler's heartbeat,
 shared connection selections, recorded plugin/skill revisions, and the shared
 plugin registry binding with its failing synchronization, if any.
 `renoa-host inspect <data-directory>` is the first consumer. It requires
@@ -1043,14 +1044,15 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 36
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 37
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
 and moving automation runs onto RCP tasks. A schema 32 or 33 catalog already
 holds current selections and exact plugin activations, so its upgrade skips the
-selection step, a schema 34 catalog only moves its runs, and a schema 35
-catalog only gains the shared-registry failure record. Live selections
+selection step, a schema 34 catalog only moves its runs, a schema 35 catalog
+also gains the shared-registry failure record, and a schema 36 catalog only
+gives its runs a status. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
@@ -1306,7 +1308,11 @@ and actual admission time before the run is submitted. Advancing the schedule
 commits in the same transaction. Daily schedules require an IANA timezone; repeated
 fall-back times run once and nonexistent spring times shift forward across the gap.
 Elapsed-hour intervals retain their original phase. Downtime coalesces missed times
-into one catch-up occurrence. A manual run retains the normal recurring schedule and
+into one occurrence. A recurring occurrence admitted more than half its period
+after its due time (12 hours for a daily schedule, 3 hours for a six-hour
+interval) is recorded as skipped, with the reason, in the admitting transaction
+and never executes. A run that starts more than five minutes late is told how
+late it started in a note before its task. A manual run retains the normal recurring schedule and
 cannot overlap another admitted occurrence of that automation.
 
 One-time schedules use `{"kind":"once","at":"2026-09-08T14:00:00+05:30"}`.
@@ -1315,15 +1321,16 @@ when creating or re-arming an enabled task. Relative requests are resolved by th
 agent against the current date/time and the user's timezone. Disarming and
 incrementing the revision commit together with the only timed occurrence's
 admission; the retained due time is historical while enabled=false. An overdue
-armed task catches up once. A crash resumes its admitted run even though it is
+armed one-time task runs once, however late. A crash resumes its admitted run even though it is
 already disarmed. Results and automation records remain available afterward.
 `run_now` also disarms a one-time task, avoiding a second run at its original time;
 a fresh explicit `run_now` may run a disabled task again. Pausing and editing an
 unchanged overdue task are allowed. Re-arming requires a future timestamp and the
 current revision; admitted work is unaffected by subsequent edits.
 
-`automation_results` exposes completed-run summaries and exact run lookup through
-Host APIs. An agent reads only its own results; reading another agent's results
+`automation_results` exposes finished-run summaries, each with its status
+(succeeded, failed, or skipped) and its failed tool call count, and exact run
+lookup through Host APIs. An agent reads only its own results; reading another agent's results
 requires the actor's stored selection to contain `agent_manage`.
 Listing is bounded to 20 results, newest first, with sequence pagination; exact
 lookup returns the retained task and output. This path does not execute the
@@ -1342,9 +1349,17 @@ context. A run keeps its occurrence ID until its result is recorded, so after a
 restart the scheduler submits the same command again, the coordinator keeps one
 copy, and the node re-drives an interrupted execution through the kernel. Once
 the node ledger holds the command's terminal event, the node records the result
-on the run: the final answer, or the failure or cancellation reason. A run the
-coordinator refuses, for example because its agent no longer exists, ends with
-the refusal as its result. Credential and OAuth links reach the owner privately,
+on the run: the final answer, or the failure or cancellation reason, with a
+status and the number of tool calls that returned an error. A completed
+execution succeeded even when some of its tool calls failed; the count shows
+them. A failed or cancelled execution failed. A run the coordinator refuses, for
+example because its agent no longer exists, failed with the refusal as its
+result. An execution that fails in a conversation's task appears in that
+conversation; a refused or skipped run, and any failure of an automation with a
+task of its own, is visible through `automation_results`, the Control Room, and the node's
+`automation_finished` and `automation_skipped` log events. While it owns the
+schedule, the node writes a heartbeat every 30 seconds, which Host observation
+reports, so a stopped scheduler is visible. Credential and OAuth links reach the owner privately,
 as for any other command.
 
 At Slack chat admission, schema 8 appends up to eight newly relevant delivered chunks (4,000
@@ -1421,6 +1436,11 @@ every row; an automation created earlier has no origin and runs in a task of its
 own.
 Schema 36 records a failing shared plugin registry synchronization. A schema
 28–35 catalog gains the empty `shared_plugin_registry_sync` table.
+Schema 37 gives every finished automation run a status, a failed tool call
+count, and a finishing time, and records the scheduler's heartbeat. A schema
+28–36 catalog derives each finished run's status from the failure texts earlier
+schedulers wrote, `failed` for those and `succeeded` otherwise, and leaves its
+tool call count and finishing time unknown.
 
 ## Local CLI
 

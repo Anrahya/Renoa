@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use uuid::Uuid;
 
-use super::{AutomationError, AutomationRun, LocalHost, LocalHostError, store};
+use super::{AutomationError, AutomationRun, LocalHost, LocalHostError, RunOutcome, runs, store};
 use crate::host::{catalog, lease::ExecutionLease};
 
 /// One admitted run and the conversation it returns to.
@@ -51,13 +51,15 @@ impl AutomationScheduler {
     /// Returns the oldest run without a result, or admits the next due
     /// occurrence. A run keeps its identity until its result is recorded, so a
     /// scheduler that restarts hands the same run on again instead of a new one.
+    /// An occurrence too late for its schedule comes back already skipped:
+    /// its status is set, it is not to be executed, and the next call moves on.
     ///
     /// # Errors
     /// Returns catalog and stored-data failures.
     pub async fn next_run(&self, now_ms: i64) -> Result<Option<ScheduledRun>, LocalHostError> {
         let database = self.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
-            let Some(run) = store::next(&database, now_ms)? else {
+            let Some(run) = runs::next(&database, now_ms)? else {
                 return Ok(None);
             };
             let db = catalog::open_verified(&database)?;
@@ -70,12 +72,30 @@ impl AutomationScheduler {
         .await??)
     }
 
-    /// Records a run's result, which ends it.
+    /// Records how an executed run ended, which ends it.
     ///
     /// # Errors
-    /// Returns a conflict for a run that is unknown or already has a result.
-    pub async fn finish_run(&self, run: Uuid, output: String) -> Result<(), LocalHostError> {
+    /// Returns a conflict for a run that is unknown or already has a result,
+    /// and rejects a `Skipped` outcome, which only the Host decides.
+    pub async fn finish_run(
+        &self,
+        run: Uuid,
+        outcome: RunOutcome,
+        now_ms: i64,
+    ) -> Result<(), LocalHostError> {
         let database = self.database.clone();
-        Ok(tokio::task::spawn_blocking(move || store::finish(&database, run, &output)).await??)
+        Ok(
+            tokio::task::spawn_blocking(move || runs::finish(&database, run, &outcome, now_ms))
+                .await??,
+        )
+    }
+
+    /// Records that this scheduler is alive, for Host observation.
+    ///
+    /// # Errors
+    /// Returns catalog failures.
+    pub async fn heartbeat(&self, now_ms: i64) -> Result<(), LocalHostError> {
+        let database = self.database.clone();
+        Ok(tokio::task::spawn_blocking(move || runs::heartbeat(&database, now_ms)).await??)
     }
 }

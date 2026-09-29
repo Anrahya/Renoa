@@ -8,6 +8,7 @@ mod control;
 mod receipts;
 pub(crate) mod result_tool;
 mod results;
+mod runs;
 pub use control::{AutomationEnablement, HostAutomationControl};
 pub use results::AutomationResultSummary;
 mod schedule;
@@ -90,7 +91,98 @@ pub struct AutomationRun {
     pub due_ms: i64,
     pub admitted_at_ms: i64,
     pub prompt: String,
-    pub output: Option<String>,
+    /// How the run ended; `None` while it is unfinished.
+    pub result: Option<RunResult>,
+}
+
+/// A finished run's recorded result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunResult {
+    pub status: RunStatus,
+    /// The answer of a succeeded run, or why a run failed or was skipped.
+    pub output: String,
+    /// Tool calls that returned an error. `None` for a skipped run, which never
+    /// executed, and for runs recorded before schema 37.
+    pub failed_tool_calls: Option<u32>,
+    /// When the Host recorded the result; `None` before schema 37.
+    pub finished_at_ms: Option<i64>,
+}
+
+/// How a finished run ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    /// The agent finished the task. Some of its tool calls may have failed.
+    Succeeded,
+    /// The run could not be sent, or its execution failed or was stopped.
+    Failed,
+    /// The run was too late to be worth running and never executed.
+    Skipped,
+}
+
+impl RunStatus {
+    const ALL: [Self; 3] = [Self::Succeeded, Self::Failed, Self::Skipped];
+
+    /// The stored name, the same as the serialized one.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+impl rusqlite::types::FromSql for RunStatus {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let stored = value.as_str()?;
+        Self::ALL
+            .into_iter()
+            .find(|status| status.as_str() == stored)
+            .ok_or_else(|| {
+                rusqlite::types::FromSqlError::Other(
+                    format!("unknown automation run status `{stored}`").into(),
+                )
+            })
+    }
+}
+
+/// How an executed run ended, as its executor reports it. Only the Host skips
+/// a run, so an executor reports success or failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// The execution completed with `answer`, its last assistant message.
+    Succeeded {
+        answer: String,
+        failed_tool_calls: u32,
+    },
+    /// The run could not be sent, or its execution failed or was stopped.
+    Failed {
+        reason: String,
+        failed_tool_calls: u32,
+    },
+}
+
+impl RunOutcome {
+    #[must_use]
+    pub const fn status(&self) -> RunStatus {
+        match self {
+            Self::Succeeded { .. } => RunStatus::Succeeded,
+            Self::Failed { .. } => RunStatus::Failed,
+        }
+    }
+
+    #[must_use]
+    pub const fn failed_tool_calls(&self) -> u32 {
+        match self {
+            Self::Succeeded {
+                failed_tool_calls, ..
+            }
+            | Self::Failed {
+                failed_tool_calls, ..
+            } => *failed_tool_calls,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -210,8 +302,9 @@ impl LocalHost {
         after: i64,
     ) -> Result<Vec<AutomationRun>, LocalHostError> {
         let database = self.config.database.clone();
-        Ok(tokio::task::spawn_blocking(move || store::completed(&database, after)).await??)
+        Ok(tokio::task::spawn_blocking(move || runs::completed(&database, after)).await??)
     }
 }
 
+pub(super) use runs::SCHEDULER_TABLE;
 pub(super) use store::initialize;

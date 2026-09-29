@@ -15,10 +15,16 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     let record = change(&h, parent, AutomationMutation::Create { spec: spec(child) })
         .await
         .expect("create");
-    let run = store::next(&h.config.database, record.next_due_ms)
+    let run = runs::next(&h.config.database, record.next_due_ms)
         .expect("admit")
         .expect("run");
-    store::finish(&h.config.database, run.id, "Digest saved: digest.md").expect("result");
+    runs::finish(
+        &h.config.database,
+        run.id,
+        &succeeded("Digest saved: digest.md"),
+        0,
+    )
+    .expect("result");
     let workspace = h.agent_workspace(child).await.expect("workspace");
     let chat = h
         .ensure_agent_session(child, &workspace, Uuid::new_v4())
@@ -46,7 +52,7 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     );
     assert!(h.automation(parent, record.id).await.is_err());
     assert!(
-        store::next(&h.config.database, record.next_due_ms + 100_000_000)
+        runs::next(&h.config.database, record.next_due_ms + 100_000_000)
             .expect("no future occurrence")
             .is_none()
     );
@@ -89,7 +95,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         id: record.id,
         expected_revision: record.revision,
     };
-    let run = store::next(&h.config.database, record.next_due_ms)
+    let run = runs::next(&h.config.database, record.next_due_ms)
         .expect("admit")
         .expect("pending");
     let operation = Uuid::new_v4();
@@ -140,14 +146,19 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         .await
         .is_err()
     );
-    let pending = store::next(&h.config.database, record.next_due_ms + 1)
+    let pending = runs::next(&h.config.database, record.next_due_ms + 1)
         .expect("restart")
         .expect("retained run");
     assert_eq!(pending.id, run.id);
-    store::finish(&h.config.database, pending.id, "Digest saved: digest.md")
-        .expect("an already admitted run still finishes");
+    runs::finish(
+        &h.config.database,
+        pending.id,
+        &succeeded("Digest saved: digest.md"),
+        0,
+    )
+    .expect("an already admitted run still finishes");
     assert!(
-        store::next(&h.config.database, record.next_due_ms + 100_000_000)
+        runs::next(&h.config.database, record.next_due_ms + 100_000_000)
             .expect("deleted schedule")
             .is_none()
     );
@@ -155,7 +166,7 @@ async fn deletion_is_idempotent_and_preserves_an_admitted_run_after_restart() {
         h.automation_result(child, run.id)
             .await
             .expect("result retained")
-            .output
+            .result
             .is_some()
     );
 }
