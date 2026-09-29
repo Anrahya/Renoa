@@ -233,8 +233,9 @@ fn assert_code_mode_effects(data: &Path, session_uuid: Uuid) {
     assert_eq!(effects.len(), 2);
     assert_ne!(effects[0].effect_id, effects[1].effect_id);
     // The finished turn keeps no copy of the calls' requests; the MCP server
-    // saw their arguments (see `assert_mcp_traffic`).
-    let mut errors = BTreeSet::new();
+    // saw their arguments (see `assert_mcp_traffic`), and each outcome still
+    // shows which call it answered.
+    let mut outcomes = BTreeSet::new();
     for effect in effects {
         assert_eq!(effect.binding, "renoa.agent.tool/tool_execute");
         assert_eq!(effect.binding_revision, *revision);
@@ -245,9 +246,12 @@ fn assert_code_mode_effects(data: &Path, session_uuid: Uuid) {
             panic!("nested MCP effect did not settle")
         };
         assert_eq!(value["name"], "tool_execute");
-        errors.insert(value["is_error"].as_bool().expect("MCP error flag"));
+        outcomes.insert((
+            value.to_string().contains("echo: hello"),
+            value["is_error"].as_bool().expect("MCP error flag"),
+        ));
     }
-    assert_eq!(errors, BTreeSet::from([false, true]));
+    assert_eq!(outcomes, BTreeSet::from([(false, true), (true, false)]));
 }
 
 fn serve_code_mode_mcp(listener: &TcpListener) -> (Vec<String>, Vec<String>) {

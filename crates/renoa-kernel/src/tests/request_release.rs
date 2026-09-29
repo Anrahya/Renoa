@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use tempfile::tempdir;
 
@@ -6,8 +6,11 @@ use super::{
     RecordingAdapter, UnknownAdapter, batch_recovery_runtime, effect_runtime, kernel_with_command,
 };
 use crate::{
-    Command, CommandId, DriveResult, EffectRecovery, EffectStatus, Kernel, OperationOutcome,
-    schema::open_connection,
+    CancellationId, CancellationInput, CancellationTransition, Checkpoint, Command, CommandId,
+    DriveResult, EffectAdapter, EffectBinding, EffectFuture, EffectInvocation, EffectOutcome,
+    EffectRecovery, EffectRequest, EffectStatus, Kernel, KernelError, LoopBinding, LoopDecision,
+    LoopError, LoopInput, LoopPlugin, OperationOutcome, OperationStatus, Runtime, SessionId,
+    UnknownEffectAbandonment, UnknownEffectInput, schema::open_connection,
 };
 
 /// Every stored request byte, however it is shaped.
@@ -70,6 +73,55 @@ async fn a_finished_operation_keeps_its_outcome_but_no_request() {
         assert!(effect.outcome.is_some());
         assert_eq!(effect.request, None);
     }
+}
+
+/// Calls one effect, then ends the operation waiting for input.
+struct WaitingLoop;
+
+impl LoopPlugin for WaitingLoop {
+    fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
+        let checkpoint = Checkpoint::new(1, serde_json::json!({}));
+        if input.effect_batch.is_some() {
+            return Ok(LoopDecision::WaitForInput {
+                checkpoint,
+                events: Vec::new(),
+            });
+        }
+        Ok(LoopDecision::InvokeEffects {
+            checkpoint,
+            effects: vec![EffectRequest {
+                binding: "external".to_owned(),
+                request: input.command.content().clone(),
+                recovery: EffectRecovery::SafeToReplay,
+            }],
+        })
+    }
+}
+
+#[tokio::test]
+async fn an_operation_waiting_for_input_releases_its_requests() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let (kernel, session_id) = kernel_with_command(&database);
+    let runtime = Runtime::new(
+        LoopBinding::new("waiting-loop", "1", Arc::new(WaitingLoop)),
+        1,
+        "waiting-config-1",
+        vec![EffectBinding::new(
+            "external",
+            "1",
+            Arc::new(RecordingAdapter(Arc::new(Mutex::new(Vec::new())))),
+        )],
+    )
+    .expect("valid runtime");
+    assert!(matches!(
+        kernel.drive(session_id, &runtime).await.expect("drive"),
+        DriveResult::Finished {
+            outcome: OperationOutcome::WaitingForInput,
+            ..
+        }
+    ));
+    assert_eq!(stored_request_bytes(&database), 0);
 }
 
 #[tokio::test]
@@ -203,4 +255,210 @@ async fn schema_three_releases_finished_requests_and_reclaims_their_space() {
     assert_eq!(version, 4);
     assert_eq!(free, 0, "the released space is returned");
     assert!(pages < pages_before, "{pages} pages, {pages_before} before");
+}
+
+/// Whether each effect still holds its request, in batch order.
+fn requests_held(database: &std::path::Path) -> Vec<(String, bool)> {
+    open_connection(database)
+        .expect("open kernel database")
+        .prepare(
+            "SELECT e.binding, e.request_json IS NOT NULL FROM effects AS e
+             JOIN effect_batches AS b ON b.batch_id = e.batch_id
+             ORDER BY b.position, e.position",
+        )
+        .expect("prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("effects")
+}
+
+/// Calls `first`, then `second`, then fails; it abandons and cancels on
+/// request.
+struct TwoBatchLoop(EffectRecovery);
+
+impl LoopPlugin for TwoBatchLoop {
+    fn decide(&self, input: LoopInput) -> Result<LoopDecision, LoopError> {
+        let step = input.checkpoint.as_ref().map_or(0, |checkpoint| {
+            checkpoint.state()["step"].as_u64().unwrap_or_default()
+        });
+        let checkpoint = Checkpoint::new(1, serde_json::json!({ "step": step + 1 }));
+        let binding = match step {
+            0 => "first",
+            1 => "second",
+            _ => {
+                return Ok(LoopDecision::Fail {
+                    checkpoint,
+                    events: Vec::new(),
+                    reason: "done".to_owned(),
+                });
+            }
+        };
+        Ok(LoopDecision::InvokeEffects {
+            checkpoint,
+            effects: vec![EffectRequest {
+                binding: binding.to_owned(),
+                request: serde_json::json!({ "call": binding }),
+                recovery: if step == 0 {
+                    EffectRecovery::SafeToReplay
+                } else {
+                    self.0
+                },
+            }],
+        })
+    }
+
+    fn abandon_unknown_effect(
+        &self,
+        _input: UnknownEffectInput,
+    ) -> Result<UnknownEffectAbandonment, LoopError> {
+        Ok(UnknownEffectAbandonment {
+            checkpoint: Checkpoint::new(1, serde_json::json!({ "abandoned": true })),
+            events: Vec::new(),
+        })
+    }
+
+    fn cancel_operation(
+        &self,
+        _input: CancellationInput,
+    ) -> Result<CancellationTransition, LoopError> {
+        Ok(CancellationTransition {
+            checkpoint: Checkpoint::new(1, serde_json::json!({ "cancelled": true })),
+            events: Vec::new(),
+        })
+    }
+}
+
+fn two_batch_runtime(recovery: EffectRecovery, second: Arc<dyn EffectAdapter>) -> Runtime {
+    Runtime::new(
+        LoopBinding::new("two-batch-loop", "1", Arc::new(TwoBatchLoop(recovery))),
+        1,
+        "two-batch-config-1",
+        vec![
+            EffectBinding::new(
+                "first",
+                "1",
+                Arc::new(RecordingAdapter(Arc::new(Mutex::new(Vec::new())))),
+            ),
+            EffectBinding::new("second", "1", second),
+        ],
+    )
+    .expect("valid runtime")
+}
+
+/// Succeeds after recording a cancellation of the operation it runs in.
+struct CancellingAdapter {
+    kernel: Weak<Kernel>,
+    session_id: SessionId,
+}
+
+impl EffectAdapter for CancellingAdapter {
+    fn invoke(&self, _invocation: EffectInvocation) -> EffectFuture<'_> {
+        let kernel = self.kernel.upgrade().expect("kernel still live");
+        let operation_id =
+            kernel.inspect(self.session_id).expect("inspect").operations[0].operation_id;
+        kernel
+            .request_cancellation(self.session_id, operation_id, CancellationId::new())
+            .expect("request cancellation");
+        Box::pin(std::future::ready(
+            EffectOutcome::Success(serde_json::json!({ "ok": true })).into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_failed_operation_releases_every_batch() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let (kernel, session_id) = kernel_with_command(&database);
+    let runtime = two_batch_runtime(
+        EffectRecovery::SafeToReplay,
+        Arc::new(RecordingAdapter(Arc::new(Mutex::new(Vec::new())))),
+    );
+    assert!(matches!(
+        kernel.drive(session_id, &runtime).await.expect("drive"),
+        DriveResult::Finished {
+            outcome: OperationOutcome::Failed { .. },
+            ..
+        }
+    ));
+    assert_eq!(
+        requests_held(&database),
+        [("first".to_owned(), false), ("second".to_owned(), false)]
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_operation_releases_its_settled_batches() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let (kernel, session_id) = kernel_with_command(&database);
+    let kernel = Arc::new(kernel);
+    let runtime = two_batch_runtime(
+        EffectRecovery::SafeToReplay,
+        Arc::new(CancellingAdapter {
+            kernel: Arc::downgrade(&kernel),
+            session_id,
+        }),
+    );
+    kernel.drive(session_id, &runtime).await.expect("drive");
+    assert_eq!(
+        kernel.inspect(session_id).expect("inspect").operations[0].status,
+        OperationStatus::Cancelled
+    );
+    assert_eq!(
+        requests_held(&database),
+        [("first".to_owned(), false), ("second".to_owned(), false)]
+    );
+}
+
+#[tokio::test]
+async fn abandonment_releases_earlier_batches_and_keeps_the_unknown_one() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    let (kernel, session_id) = kernel_with_command(&database);
+    let runtime = two_batch_runtime(EffectRecovery::NeverReplay, Arc::new(UnknownAdapter));
+    let DriveResult::Blocked { operation_id } =
+        kernel.drive(session_id, &runtime).await.expect("drive")
+    else {
+        panic!("an unknown outcome blocks the operation")
+    };
+    assert_eq!(
+        requests_held(&database),
+        [("first".to_owned(), true), ("second".to_owned(), true)],
+        "a blocked operation keeps every request"
+    );
+    let unsettled_release = open_connection(&database)
+        .expect("open kernel database")
+        .execute(
+            "UPDATE effects SET request_json = NULL WHERE binding = 'second'",
+            [],
+        );
+    assert!(
+        unsettled_release.is_err(),
+        "only a settled effect may lose its request"
+    );
+
+    kernel
+        .abandon_unknown_effect(session_id, operation_id, &runtime)
+        .expect("abandon");
+    assert_eq!(
+        requests_held(&database),
+        [("first".to_owned(), false), ("second".to_owned(), true)]
+    );
+}
+
+#[test]
+fn a_kernel_without_the_release_fails_to_open() {
+    let directory = tempdir().expect("temporary directory");
+    let database = directory.path().join("kernel.sqlite3");
+    drop(Kernel::open(&database).expect("create kernel"));
+    open_connection(&database)
+        .expect("open kernel database")
+        .execute_batch("DROP TRIGGER release_finished_effect_requests;")
+        .expect("drop the release");
+    assert!(matches!(
+        Kernel::open(&database),
+        Err(KernelError::Corrupt(_))
+    ));
 }

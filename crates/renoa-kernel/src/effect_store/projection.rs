@@ -121,8 +121,8 @@ pub(crate) fn load_effect_batch_facts(
             ));
         }
         let effect_id = parse_effect_id(&effect_id)?;
-        // Only a finished operation's fully settled batch releases its
-        // requests, and nothing loads that batch's facts again.
+        // Only a fully settled batch of an operation with an outcome releases
+        // its requests, and nothing loads that batch's facts again.
         let request = request.ok_or_else(|| {
             KernelError::Corrupt("effect batch child request was released".to_owned())
         })?;

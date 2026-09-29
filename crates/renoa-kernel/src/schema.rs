@@ -266,7 +266,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
         });
     }
     if version == SCHEMA_VERSION {
-        return validate_database(connection);
+        return validate_current(connection);
     }
     if (1..SCHEMA_VERSION).contains(&version) {
         validate_database(connection)?;
@@ -277,7 +277,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
             migrate_v2_to_v3(connection)?;
         }
         request_release::migrate_v3_to_v4(connection)?;
-        return validate_database(connection);
+        return validate_current(connection);
     }
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -288,7 +288,14 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(sqlite_error)?;
     transaction.commit().map_err(sqlite_error)?;
-    validate_database(connection)
+    validate_current(connection)
+}
+
+/// Validates a current-schema database, including the release of finished
+/// requests, which a later rebuild of `effects` or `operations` would drop.
+fn validate_current(connection: &Connection) -> Result<(), KernelError> {
+    validate_database(connection)?;
+    request_release::require_installed(connection)
 }
 
 fn migrate_v1_to_v2(connection: &mut Connection) -> Result<(), KernelError> {

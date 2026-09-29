@@ -27,7 +27,7 @@ local workspace edit without moving those concerns into the kernel.
 `observe_session(path, session_id)` is a non-owning, read-only projection for Host
 inventory. It opens only existing compatible storage, takes no writer lease and
 performs no migration; schema 3 is compatible because schema 4 changed only
-effects, which it never reads. A single read transaction reports the session's agent,
+effects and added a view and trigger over them, none of which it reads. A single read transaction reports the session's agent,
 event count, queued count, active operation and latest operation, without reading
 command, checkpoint or effect payloads. The projection describes committed state,
 not worker liveness: a running operation can remain after its owner disappears.
@@ -240,15 +240,20 @@ adopting a batch owned by another operation.
 
 The request is kept only while something can read it: dispatch, replay, the
 loop's next decision, or an unknown outcome's examination and abandonment. The
-transaction that completes, fails, or cancels an operation releases the request
-of each settled child in a batch with no unsettled child; the binding, status,
+transaction that records an operation's outcome (waiting for input, completed,
+failed, or cancelled) releases the request of each settled child in a batch
+with no unsettled child; the binding, status,
 dispatch count, and outcome stay, and `Kernel::inspect` reports the request as
 absent. A batch with an unsettled child keeps every request. A model request
 carries the whole conversation so far, so keeping it would grow storage with
 calls times context. Schema 4 makes the request nullable and, on first open,
-releases the requests of operations that finished under schema 3, reclaims the
-space with `VACUUM`, and logs `kernel_requests_released` with the session ids
-and the count and bytes released.
+releases the requests of operations that finished under schema 3, then runs
+`VACUUM` to return the space and logs `kernel_requests_released` with the
+session ids and the count and bytes released. The release commits first; a
+failed `VACUUM` is logged as a warning and not retried, so it costs only space.
+The upgrade copies the effects table, so it briefly needs free disk about the
+size of that table. A kernel whose view or trigger is missing fails to open as
+corrupt.
 
 The kernel validates every binding before committing anything, then admits the
 batch, all child intents, and the next checkpoint in one transaction. A rejected
@@ -376,10 +381,10 @@ No loop plugin or effect adapter runs inside a SQLite transaction.
 | Replay live uncertainty | nothing; that child stays `DispatchStarted` and the operation stays `EffectDispatched` | a live unknown report from a safe-to-replay child's first durable dispatch, with no recorded cancellation | invoke only that persisted child once more |
 | Settle non-final child | exact outcome and child `Settled` | sibling work remains authoritative and in progress | persist later completions; never repeat the settled child |
 | Finish effect batch | final child fact plus operation `NeedDecision` or `OutcomeUnknown` | every child is terminal and its ordered facts are durable | call the loop with the settled batch or block without dispatch |
-| Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer | the operation is closed while unknown and settled child facts remain unchanged | return the same outcome on retry or activate queued work |
+| Abandon uncertainty | loop checkpoint and events, operation `Failed`, clear active pointer, release the requests of its fully settled batches | the operation is closed while unknown and settled child facts, and every request of the unknown batch, remain unchanged | return the same outcome on retry or activate queued work |
 | Request cancellation | stable cancellation identity and exact queued or active target | cancellation is authoritative even if the signal reply is lost | signal the exact live operation or close it on the next drive |
-| Close cancellation | loop checkpoint and events, operation `Cancelled`, clear active pointer | effect facts remain definite, not dispatched, or unknown as recorded | exact request retry is a no-op or activate queued work |
-| Terminate | checkpoint, events, outcome, clear active pointer | operation is terminal | activate next queued operation |
+| Close cancellation | loop checkpoint and events, operation `Cancelled`, clear active pointer, release the requests of its fully settled batches | effect facts remain definite, not dispatched, or unknown as recorded | exact request retry is a no-op or activate queued work |
+| Terminate | checkpoint, events, outcome, clear active pointer, release the requests of its fully settled batches | operation is terminal | activate next queued operation |
 
 Required deterministic injections cover both sides of activation, effect-batch
 intent, batch dispatch, child completion, child settlement, unknown-effect
