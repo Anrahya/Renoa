@@ -20,10 +20,11 @@ pub(super) fn deliver_runs_through_tasks(
     Ok(())
 }
 
-/// Turns a current catalog's automation tables back into the schema 34 shape,
-/// so upgrade tests start from the tables an earlier runtime wrote.
+/// Turns a current catalog back into the schema 34 shape, so upgrade tests
+/// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_34_automations(connection: &rusqlite::Connection) {
+    super::registry_sync::restore_schema_35(connection);
     connection
         .execute_batch(
             "ALTER TABLE host_automations DROP COLUMN origin_session_id;

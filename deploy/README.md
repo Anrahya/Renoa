@@ -290,11 +290,12 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 35. A schema 28–34 catalog upgrades in place
+This release requires Host schema 36. A schema 28–35 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
-routine tables and `renoa.routines` plugin activations to automations, and
-moves automation runs onto RCP tasks (see
-[RCP execution node](#rcp-execution-node)). An earlier
+routine tables and `renoa.routines` plugin activations to automations, moves
+automation runs onto RCP tasks (see
+[RCP execution node](#rcp-execution-node)), and adds the record of a failing
+shared-registry synchronization. An earlier
 data root cuts agent-owned storage over to the canonical agent definition. That
 cutover is not a migration: it discards the previous agent rows, automations and
 sessions, and it runs only through the explicit reset described in
@@ -802,7 +803,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the node, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 35. Install the new binaries
+root before the new Host brings it to schema 36. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must
@@ -822,7 +823,8 @@ cargo build --locked --release -p renoa-registry --bin renoa-registry
 
 Install `target/release/renoa-registry` at
 `/usr/local/bin/renoa-registry`, copy `renoa-registry.service` to
-`/etc/systemd/system/`, and enable it:
+`/etc/systemd/system/`, and enable it. `serve` takes a Renoa home and keeps its
+store in that home's `state/registry`; it creates no other directory there:
 
 ```sh
 systemctl daemon-reload

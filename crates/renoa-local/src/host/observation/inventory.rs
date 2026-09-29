@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension as _};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -48,6 +48,25 @@ pub struct ObservedPlugin {
 pub struct ObservedSkill {
     pub digest: String,
     pub name: String,
+}
+
+/// This Host's binding to a shared plugin registry.
+#[derive(Debug, Serialize)]
+pub struct ObservedSharedRegistry {
+    /// The registry this Host synchronizes with; null until the first
+    /// synchronization binds one.
+    pub registry_id: Option<Uuid>,
+    pub applied_revision: u64,
+    /// Present while the latest synchronization failed.
+    pub failure: Option<ObservedRegistryFailure>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ObservedRegistryFailure {
+    /// When the current run of failures began.
+    pub since_ms: i64,
+    /// The latest failure's reason.
+    pub error: String,
 }
 
 pub(super) fn agents(db: &Connection) -> Result<Vec<ObservedAgent>, HostCatalogError> {
@@ -151,4 +170,49 @@ pub(super) fn skills(db: &Connection) -> Result<Vec<ObservedSkill>, HostCatalogE
 fn count(row: &rusqlite::Row<'_>, index: usize) -> Result<u64, HostCatalogError> {
     u64::try_from(row.get::<_, i64>(index)?)
         .map_err(|e| HostCatalogError::Invalid(format!("invalid inventory count: {e}")))
+}
+
+/// Null when this Host has neither bound a shared registry nor failed to
+/// synchronize with one.
+pub(super) fn shared_registry(
+    db: &Connection,
+) -> Result<Option<ObservedSharedRegistry>, HostCatalogError> {
+    let binding = db
+        .query_row(
+            "SELECT registry_id, applied_revision FROM shared_plugin_registry_state
+             WHERE singleton = 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+    let failure = db
+        .query_row(
+            "SELECT failing_since_ms, error FROM shared_plugin_registry_sync
+             WHERE singleton = 1",
+            [],
+            |row| {
+                Ok(ObservedRegistryFailure {
+                    since_ms: row.get(0)?,
+                    error: row.get(1)?,
+                })
+            },
+        )
+        .optional()?;
+    if binding.is_none() && failure.is_none() {
+        return Ok(None);
+    }
+    let (registry_id, applied_revision) = match binding {
+        Some((id, revision)) => (
+            Some(parse_id(&id)?),
+            u64::try_from(revision).map_err(|_| {
+                HostCatalogError::Invalid("stored shared registry revision is negative".to_owned())
+            })?,
+        ),
+        None => (None, 0),
+    };
+    Ok(Some(ObservedSharedRegistry {
+        registry_id,
+        applied_revision,
+        failure,
+    }))
 }

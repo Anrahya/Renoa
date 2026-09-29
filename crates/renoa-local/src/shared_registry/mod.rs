@@ -10,6 +10,7 @@ use std::{
 
 use renoa_registry_protocol::{RegistryChanges, RegistryId, Sha256Digest};
 use serde::Serialize;
+use serde_json::json;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -17,6 +18,7 @@ use self::{archive::PackageArchive, client::RegistryClient, state::RegistryState
 use crate::plugins::{PluginError, store::PluginStore};
 
 const TRANSFER_DIRECTORY: &str = "shared-registry";
+const LOG_COMPONENT: &str = "renoa.host";
 
 #[derive(Clone)]
 pub(crate) struct SharedPluginRegistry {
@@ -111,11 +113,54 @@ impl SharedPluginRegistry {
         })
     }
 
+    /// Synchronizes with the shared registry and records the outcome on the
+    /// Host, so a failure is visible to Host observation. The log carries a
+    /// failure when it begins or changes reason, and its recovery.
     pub(crate) async fn synchronize(
         &self,
         store: &PluginStore,
     ) -> Result<SharedPluginSyncReport, SharedRegistryError> {
         let _guard = self.synchronization.lock().await;
+        let result = self.synchronize_locked(store).await;
+        self.record(result.as_ref().err().map(ToString::to_string))
+            .await;
+        result
+    }
+
+    async fn record(&self, failure: Option<String>) {
+        let state = self.state.clone();
+        let reason = failure.clone();
+        let recorded = blocking(move || match reason {
+            Some(error) => Ok(state.record_failure(&error, now_ms())?.then(|| {
+                (
+                    "warn",
+                    "shared_registry_sync_failed",
+                    json!({ "error": error }),
+                )
+            })),
+            None => Ok(state
+                .clear_failure()?
+                .then(|| ("info", "shared_registry_sync_recovered", json!({})))),
+        })
+        .await;
+        match recorded {
+            Ok(Some((level, name, fields))) => {
+                renoa_telemetry::event(LOG_COMPONENT, level, name, &fields);
+            }
+            Ok(None) => {}
+            Err(error) => renoa_telemetry::event(
+                LOG_COMPONENT,
+                "warn",
+                "shared_registry_sync_unrecorded",
+                &json!({ "sync_error": failure, "record_error": error.to_string() }),
+            ),
+        }
+    }
+
+    async fn synchronize_locked(
+        &self,
+        store: &PluginStore,
+    ) -> Result<SharedPluginSyncReport, SharedRegistryError> {
         let status = self.client.status().await?;
         let registry_id = status.registry_id();
         let mut cursor = blocking({
@@ -237,6 +282,14 @@ fn require_registry(expected: RegistryId, observed: RegistryId) -> Result<(), Sh
             "shared registry identity changed from {expected} to {observed}"
         )))
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 async fn blocking<T, F>(operation: F) -> Result<T, SharedRegistryError>

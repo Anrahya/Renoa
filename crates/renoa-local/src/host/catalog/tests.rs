@@ -1,4 +1,7 @@
-use super::{HostCatalogError, cutover, initialize, open_verified, restore_schema_34_automations};
+use super::{
+    HostCatalogError, cutover, initialize, open_verified, restore_schema_34_automations,
+    restore_schema_35,
+};
 
 #[test]
 fn schema_29_removes_retired_mcp_loader_from_stored_selection() {
@@ -498,5 +501,33 @@ fn schema_34_runs_drop_their_private_session_and_automations_gain_an_origin() {
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'host_automation_pending'"
         ),
         1
+    );
+}
+
+#[test]
+fn schema_35_gains_a_record_of_failing_registry_synchronization() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    initialize(&database).expect("initialize current catalog");
+    let connection = open_verified(&database).expect("open current catalog");
+    restore_schema_35(&connection);
+    connection
+        .execute_batch(
+            "UPDATE host_metadata SET schema_version = 35 WHERE singleton = 1;
+             PRAGMA user_version = 35;",
+        )
+        .expect("mark the catalog as schema 35");
+    drop(connection);
+
+    initialize(&database).expect("upgrade schema 35 in place");
+    initialize(&database).expect("reopening the upgraded catalog is stable");
+    let connection = open_verified(&database).expect("open upgraded catalog");
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM shared_plugin_registry_sync"
+        ),
+        0,
+        "an upgraded Host records no failure until a synchronization fails"
     );
 }

@@ -2456,6 +2456,7 @@ dependencies = [
  "renoa-protocol",
  "renoa-registry",
  "renoa-registry-protocol",
+ "renoa-telemetry",
  "reqwest",
  "ring",
  "rusqlite",
