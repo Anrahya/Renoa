@@ -34,6 +34,7 @@ pub(super) fn record_run_outcomes(transaction: &Transaction<'_>) -> Result<(), H
 /// start from the tables an earlier runtime wrote.
 #[cfg(test)]
 pub(crate) fn restore_schema_36(connection: &rusqlite::Connection) {
+    super::restore_schema_37(connection);
     connection
         .execute_batch(
             "ALTER TABLE host_automation_runs DROP COLUMN status;

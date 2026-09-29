@@ -260,7 +260,7 @@ together, posting intent precedes the Slack call, and unreceipted posts remain
 unknown after restart. `inspect` exposes recent automation delivery states. A missing
 channel binding leaves that bot's result waiting without blocking other bots;
 reconnecting Slack drains retained Host results.
-Agents support one-time dates, daily schedules, and hourly intervals through
+Agents support one-time dates and cron schedules in a named timezone through
 `automation_manage`, including revision-checked deletion. Ask the agent to delete
 an automation to remove it and stop future runs; past results remain readable and
 already-admitted runs finish. For example, ask an agent to run a task once tomorrow at

@@ -36,25 +36,31 @@ fn a_run_status_is_stored_under_its_serialized_name() {
 }
 
 #[test]
-fn a_recurring_run_may_start_half_its_period_late_and_a_one_time_run_any_time() {
+fn a_recurring_run_may_start_half_the_gap_to_its_next_run_late_and_a_one_time_run_any_time() {
     assert_eq!(
-        AutomationSchedule::Interval { hours: 6 }.skip_after_ms(),
+        cron("0 */6 * * *", "UTC").skip_after_ms(0).expect("limit"),
         Some(3 * HOUR)
     );
+    // Friday 09:00 to Monday 09:00 is 72 h; Monday to Tuesday is 24 h.
+    let weekdays = cron("0 9 * * 1-5", "UTC");
+    let friday = "2026-10-02T09:00:00Z"
+        .parse::<jiff::Timestamp>()
+        .expect("friday")
+        .as_millisecond();
     assert_eq!(
-        AutomationSchedule::Daily {
-            hour: 9,
-            minute: 0,
-            timezone: "UTC".to_owned()
-        }
-        .skip_after_ms(),
+        weekdays.skip_after_ms(friday).expect("limit"),
+        Some(36 * HOUR)
+    );
+    assert_eq!(
+        weekdays.skip_after_ms(friday + 72 * HOUR).expect("limit"),
         Some(12 * HOUR)
     );
     assert_eq!(
         AutomationSchedule::Once {
             at: "1970-01-02T00:00:00Z".to_owned()
         }
-        .skip_after_ms(),
+        .skip_after_ms(0)
+        .expect("limit"),
         None
     );
 }
@@ -62,7 +68,16 @@ fn a_recurring_run_may_start_half_its_period_late_and_a_one_time_run_any_time() 
 #[tokio::test]
 async fn a_run_later_than_its_schedule_allows_is_skipped_and_the_schedule_moves_on() {
     let (_d, h, parent, child) = fixture().await;
-    let automation = create(&h, parent, child, AutomationSchedule::Interval { hours: 6 }).await;
+    let automation = create(
+        &h,
+        parent,
+        child,
+        AutomationSchedule::Cron {
+            expression: "0 */6 * * *".to_owned(),
+            timezone: "UTC".to_owned(),
+        },
+    )
+    .await;
     let now = automation.next_due_ms + 3 * HOUR + 60_000;
 
     let skipped = runs::next(&h.config.database, now)
@@ -92,14 +107,17 @@ async fn a_run_later_than_its_schedule_allows_is_skipped_and_the_schedule_moves_
 }
 
 #[tokio::test]
-async fn a_run_within_its_limit_runs_and_is_told_how_late_it_started() {
+async fn a_run_is_told_its_automation_and_due_time_and_how_late_it_started() {
     let (_d, h, parent, child) = fixture().await;
-    let automation = create(&h, parent, child, AutomationSchedule::Interval { hours: 6 }).await;
+    let automation = create(&h, parent, child, cron("30 9 * * *", "Asia/Kolkata")).await;
     let on_time = runs::next(&h.config.database, automation.next_due_ms + 60_000)
         .expect("admission")
         .expect("run");
     assert_eq!(on_time.result, None);
-    assert_eq!(on_time.submission(), "scheduled digest");
+    assert_eq!(
+        on_time.submission,
+        "(Scheduled run \"Digest\", due 09:30 IST.)\n\nscheduled digest"
+    );
     runs::finish(&h.config.database, on_time.id, &succeeded("done"), 0).expect("finish");
 
     let next_due = h
@@ -107,13 +125,13 @@ async fn a_run_within_its_limit_runs_and_is_told_how_late_it_started() {
         .await
         .expect("automation")
         .next_due_ms;
-    let late = runs::next(&h.config.database, next_due + 3 * HOUR)
+    let late = runs::next(&h.config.database, next_due + 12 * HOUR)
         .expect("admission")
         .expect("run");
-    assert_eq!(late.result, None, "exactly half the period late still runs");
+    assert_eq!(late.result, None, "exactly half the gap late still runs");
     assert_eq!(
-        late.submission(),
-        "(This scheduled run started 3 h after its due time.)\n\nscheduled digest"
+        late.submission,
+        "(Scheduled run \"Digest\", due 09:30 IST. Started 12 h late.)\n\nscheduled digest"
     );
 }
 
@@ -133,16 +151,25 @@ async fn a_one_time_run_runs_however_late() {
         .expect("admission")
         .expect("run");
     assert_eq!(run.result, None);
-    assert!(
-        run.submission()
-            .starts_with("(This scheduled run started 72 h after its due time.)")
+    assert_eq!(
+        run.submission,
+        "(Scheduled run \"Digest\". Started 72 h late.)\n\nscheduled digest"
     );
 }
 
 #[tokio::test]
 async fn an_executed_run_records_its_status_and_failed_tool_calls() {
     let (_d, h, parent, child) = fixture().await;
-    let automation = create(&h, parent, child, AutomationSchedule::Interval { hours: 6 }).await;
+    let automation = create(
+        &h,
+        parent,
+        child,
+        AutomationSchedule::Cron {
+            expression: "0 */6 * * *".to_owned(),
+            timezone: "UTC".to_owned(),
+        },
+    )
+    .await;
     let run = runs::next(&h.config.database, automation.next_due_ms)
         .expect("admission")
         .expect("run");
@@ -231,7 +258,16 @@ async fn the_scheduler_heartbeat_is_observed() {
 #[tokio::test]
 async fn a_stored_run_with_a_status_but_no_output_is_refused_as_corrupt() {
     let (_d, h, parent, child) = fixture().await;
-    let automation = create(&h, parent, child, AutomationSchedule::Interval { hours: 6 }).await;
+    let automation = create(
+        &h,
+        parent,
+        child,
+        AutomationSchedule::Cron {
+            expression: "0 */6 * * *".to_owned(),
+            timezone: "UTC".to_owned(),
+        },
+    )
+    .await;
     let run = runs::next(&h.config.database, automation.next_due_ms)
         .expect("admission")
         .expect("run");

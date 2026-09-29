@@ -126,7 +126,7 @@ describe("Host navigation and rendered controls", () => {
   it("preserves live schedule controls while making saved previews read-only", () => {
     vi.stubGlobal("localStorage", { getItem: () => null });
     const snapshot: HostSnapshot = { ...host, automations: [{ id: "r", agent_id: "reviewer", name: "Brief", enabled: false, revision: 1,
-      schedule: { kind: "interval", hours: 12 }, next_due_ms: 1, pending_runs: 0, completed_runs: 1 }] };
+      schedule: { kind: "cron", expression: "0 */12 * * *", timezone: "UTC" }, next_due_ms: 1, pending_runs: 0, completed_runs: 1 }] };
     const previewSwitch = render("#agent/reviewer/automations", snapshot).match(/<button[^>]*role="switch"[^>]*>/)?.[0];
     const liveSwitch = render("#agent/reviewer/automations", snapshot, false).match(/<button[^>]*role="switch"[^>]*>/)?.[0];
     expect(previewSwitch).toContain('aria-label="Enable schedule: Brief"');

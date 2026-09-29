@@ -12,7 +12,7 @@ const example: HostSnapshot = {
   ],
   sessions: [],
   automations: [
-    { id: id(5), agent_id: id(3), name: "Morning brief", schedule: { kind: "daily", hour: 9, minute: 0, timezone: "Asia/Kolkata" },
+    { id: id(5), agent_id: id(3), name: "Morning brief", schedule: { kind: "cron", expression: "0 9 * * *", timezone: "Asia/Kolkata" },
       enabled: true, revision: 2, next_due_ms: Date.parse("2026-09-10T09:00:00+05:30"), pending_runs: 0, completed_runs: 3 },
     { id: id(6), agent_id: id(3), name: "Research reminder", schedule: { kind: "once", at: "2026-09-10T14:00:00+05:30" },
       enabled: true, revision: 1, next_due_ms: Date.parse("2026-09-10T14:00:00+05:30"), pending_runs: 0, completed_runs: 0 },
@@ -62,10 +62,10 @@ function motionExample(start: number, step: number): HostSnapshot {
         schedule: { kind: "once", at: new Date(start + 90_000).toISOString() }, next_due_ms: start + 90_000, pending_runs: 0, completed_runs: 0 },
       ...["Inbox triage", "Repository watch", "Reading digest", "Notes sync", "Weekly recap", "Server check", "Research queue", "Bookmark digest", "Release watch", "Calendar brief", "Archive sweep"].map((name, i) => ({
         id: id(20 + i), agent_id: id(2), name, enabled: i < 8, revision: 1,
-        schedule: { kind: "interval" as const, hours: 12 }, next_due_ms: start + (i + 1) * 3_600_000,
+        schedule: { kind: "cron" as const, expression: "0 */12 * * *", timezone: "UTC" }, next_due_ms: start + (i + 1) * 3_600_000,
         pending_runs: i === 0 ? 1 : 0, completed_runs: 2,
       })),
-      { ...example.automations[0]!, next_due_ms: start + 3_600_000, schedule: { kind: "interval", hours: 12 } },
+      { ...example.automations[0]!, next_due_ms: start + 3_600_000, schedule: { kind: "cron", expression: "0 */12 * * *", timezone: "UTC" } },
       { ...example.automations[1]!, enabled: false },
     ] };
 }

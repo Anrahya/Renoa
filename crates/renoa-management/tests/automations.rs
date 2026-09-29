@@ -79,7 +79,10 @@ async fn seed(host: &LocalHost) -> AutomationRecord {
                 agent_id: child,
                 name: "Brief".into(),
                 prompt: "Do not expose this standing prompt in the mutation receipt".into(),
-                schedule: AutomationSchedule::Interval { hours: 12 },
+                schedule: AutomationSchedule::Cron {
+                    expression: "0 */12 * * *".to_owned(),
+                    timezone: "UTC".to_owned(),
+                },
                 enabled: true,
             },
         },

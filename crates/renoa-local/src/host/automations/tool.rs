@@ -15,9 +15,9 @@ pub(crate) fn binding(
     session: SessionId,
     command: Option<CommandId>,
 ) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-automation-manage-v6",Arc::new(Manage{host:LocalHost{config:host},actor,session,command,spec:ToolSpec{
+    AgentToolBinding::new("renoa-automation-manage-v7",Arc::new(Manage{host:LocalHost{config:host},actor,session,command,spec:ToolSpec{
         name:capabilities::AUTOMATION_MANAGE.to_owned(),
-        description:"Manage Host-owned scheduled tasks. List first for compact automation summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own automations; managing another agent's automations needs the enabled renoa.agents plugin. Create only when the user requests scheduled work. Update the existing automation using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from automation listings and prevents future scheduling or manual runs; past results remain available through automation_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces missed times into one run, a daily or interval run more than half its period late is skipped instead (automation_results shows why), and a late run is told how late it started. Each run is sent as a message into the conversation where the agent created the automation for itself, so the result appears there and that conversation remembers it; an automation created for another agent, or outside a conversation, runs in a conversation of its own. Results are also kept in the agent's Host inbox. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
+        description:"Manage Host-owned scheduled tasks. List first for compact automation summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own automations; managing another agent's automations needs the enabled renoa.agents plugin. Create only when the user requests scheduled work. Update the existing automation using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from automation listings and prevents future scheduling or manual runs; past results remain available through automation_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Repeating schedules use kind=cron with a 5-field expression and the IANA timezone its times are in; runs must be at least 5 minutes apart. No overlapping occurrences; downtime coalesces missed times into one run, a cron run more than half the gap to its next run late is skipped instead (automation_results shows why), and each run starts with a line naming the automation, its due time, and how late it started. Each run is sent as a message into the conversation where the agent created the automation for itself, so the result appears there and that conversation remembers it; an automation created for another agent, or outside a conversation, runs in a conversation of its own. Results are also kept in the agent's Host inbox. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
         input_schema:input_schema()
     }}),EffectRecovery::SafeToReplay)
 }
@@ -44,14 +44,12 @@ pub(super) fn input_schema() -> Value {
                     "enabled": {"type": "boolean"},
                     "schedule": {
                         "type": "object",
-                        "description": "kind=once requires at with a future absolute timestamp and UTC offset or Z. kind=daily requires hour, minute, and an IANA timezone. kind=interval requires hours. Pass only fields for that kind.",
+                        "description": "kind=once runs one time: pass at. kind=cron repeats: pass expression and timezone. Pass only fields for that kind.",
                         "properties": {
-                            "kind": {"type": "string", "enum": ["once", "daily", "interval"]},
-                            "at": {"type": "string", "format": "date-time", "maxLength": 128},
-                            "hour": {"type": "integer", "minimum": 0, "maximum": 23},
-                            "minute": {"type": "integer", "minimum": 0, "maximum": 59},
-                            "timezone": {"type": "string", "description": "Explicit IANA timezone, e.g. Asia/Kolkata"},
-                            "hours": {"type": "integer", "minimum": 1, "maximum": 8760}
+                            "kind": {"type": "string", "enum": ["once", "cron"]},
+                            "at": {"type": "string", "format": "date-time", "maxLength": 128, "description": "Future timestamp with a UTC offset or Z, e.g. 2026-10-01T09:00:00+05:30"},
+                            "expression": {"type": "string", "maxLength": 128, "description": "minute hour day-of-month month weekday. Examples: \"0 9 * * *\" daily at 09:00; \"30 9 * * 1-5\" weekdays at 09:30; \"*/15 * * * *\" every 15 minutes; \"0 */6 * * *\" every 6 hours; \"0 10 1 * *\" monthly on the 1st at 10:00; \"0 18 * * SAT,SUN\" weekends at 18:00"},
+                            "timezone": {"type": "string", "description": "IANA timezone the expression's times are in, e.g. Asia/Kolkata or Asia/Seoul"}
                         },
                         "required": ["kind"],
                         "additionalProperties": false
@@ -225,7 +223,7 @@ mod input_tests {
                     "agent_id": Uuid::nil(),
                     "name": "Digest",
                     "prompt": "Summarize",
-                    "schedule": {"kind": "daily", "hour": 9, "timezone": "Asia/Kolkata"},
+                    "schedule": {"kind": "cron", "expression": "0 9 * * *"},
                     "enabled": true
                 }
             }))

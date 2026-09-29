@@ -194,7 +194,7 @@ async fn deliver(
     let command_id = CommandId::from_uuid(run.id);
     loop {
         match connection
-            .submit(task_id, command_id, run.submission())
+            .submit(task_id, command_id, run.submission.clone())
             .await
         {
             Ok(()) => break,

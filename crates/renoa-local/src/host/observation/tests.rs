@@ -154,9 +154,8 @@ async fn projects_shared_inventory_and_automation_mutations_without_copying_secr
                     agent_id: bot.id,
                     name: "Digest".to_owned(),
                     prompt: "PRIVATE AUTOMATION PROMPT".to_owned(),
-                    schedule: AutomationSchedule::Daily {
-                        hour: 9,
-                        minute: 0,
+                    schedule: AutomationSchedule::Cron {
+                        expression: "0 9 * * *".to_owned(),
                         timezone: "Asia/Kolkata".to_owned(),
                     },
                     enabled: true,

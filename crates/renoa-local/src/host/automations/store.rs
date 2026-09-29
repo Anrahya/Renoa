@@ -24,7 +24,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     CREATE TABLE IF NOT EXISTS host_automation_runs (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
         automation_id TEXT NOT NULL REFERENCES host_automations(id), agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-        due_ms INTEGER NOT NULL, admitted_at_ms INTEGER NOT NULL, prompt TEXT NOT NULL, output TEXT,
+        due_ms INTEGER NOT NULL, admitted_at_ms INTEGER NOT NULL, submission TEXT NOT NULL, output TEXT,
         status TEXT CHECK(status IN ('succeeded','failed','skipped')),
         failed_tool_calls INTEGER CHECK(failed_tool_calls >= 0), finished_at_ms INTEGER
     ) STRICT;
@@ -134,7 +134,7 @@ pub(super) fn mutate(
             if pending_for(&tx, id)? {
                 return Err(AutomationError::Busy);
             }
-            super::runs::insert_run(&tx, &record, operation, now_ms, now_ms)?;
+            super::runs::insert_run(&tx, &record, operation, None, now_ms)?;
             disarm_once(&mut record)?;
             save(&tx, &record, false)?;
             record

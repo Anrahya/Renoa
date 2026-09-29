@@ -110,7 +110,7 @@ async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_ag
         .expect("resume");
     assert!(resumed.spec.enabled);
     assert_eq!(resumed.spec.prompt, "new standing instructions");
-    assert_eq!(resumed.next_due_ms, 343_200_000);
+    assert_eq!(resumed.next_due_ms, 302_400_000);
     let db =
         catalog::open_verified(&d.path().join("data/state/host.sqlite3")).expect("shared catalog");
     assert_eq!(store::get(&db, automation.id).expect("latest"), resumed);

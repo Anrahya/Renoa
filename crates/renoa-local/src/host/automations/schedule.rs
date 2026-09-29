@@ -1,5 +1,5 @@
-use super::{AutomationError, AutomationSchedule, AutomationSpec};
-use jiff::{Timestamp, ToSpan as _, civil::Time, tz::TimeZone};
+use super::{AutomationError, AutomationSchedule, AutomationSpec, cron::Cron};
+use jiff::{Timestamp, tz::TimeZone};
 
 impl AutomationSpec {
     pub(super) fn validate(&self, now_ms: i64) -> Result<(), AutomationError> {
@@ -28,31 +28,29 @@ impl AutomationSchedule {
         Ok(due)
     }
 
-    /// How late a run of this schedule may start before it is skipped: half its
-    /// period, so a late run never lands nearer the next occurrence than its
-    /// own. A one-time run always runs, however late.
-    pub(super) fn skip_after_ms(&self) -> Option<i64> {
+    /// How late a run due at `due_ms` may start before it is skipped: half the
+    /// gap to the schedule's next run, so a late run never lands nearer the
+    /// next occurrence than its own. A one-time run always runs, however late.
+    pub(super) fn skip_after_ms(&self, due_ms: i64) -> Result<Option<i64>, AutomationError> {
         match self {
-            Self::Once { .. } => None,
-            Self::Daily { .. } => Some(12 * 3_600_000),
-            Self::Interval { hours } => Some(i64::from(*hours) * 1_800_000),
+            Self::Once { .. } => Ok(None),
+            Self::Cron { .. } => Ok(Some((self.next_after(due_ms)? - due_ms) / 2)),
         }
     }
 
-    pub(super) fn advance_past(&self, due_ms: i64, now_ms: i64) -> Result<i64, AutomationError> {
-        if let Self::Interval { hours } = self {
-            let period = i64::from(*hours) * 3_600_000;
-            self.next_after(now_ms)?;
-            let missed = now_ms
-                .checked_sub(due_ms)
-                .and_then(|elapsed| elapsed.checked_div(period))
-                .and_then(|count| count.checked_add(1));
-            return missed
-                .and_then(|count| count.checked_mul(period))
-                .and_then(|delta| due_ms.checked_add(delta))
-                .ok_or_else(|| AutomationError::Invalid("schedule time overflow".to_owned()));
+    /// A run's due time as its context line shows it: the local hour and
+    /// minute with the zone's abbreviation. A one-time run's time is in its
+    /// own task, so it has none.
+    pub(super) fn due_label(&self, due_ms: i64) -> Result<Option<String>, AutomationError> {
+        match self {
+            Self::Once { .. } => Ok(None),
+            Self::Cron { timezone, .. } => Ok(Some(
+                Timestamp::from_millisecond(due_ms)?
+                    .to_zoned(zone(timezone)?)
+                    .strftime("%H:%M %Z")
+                    .to_string(),
+            )),
         }
-        self.next_after(now_ms)
     }
 
     pub(super) fn next_after(&self, now_ms: i64) -> Result<i64, AutomationError> {
@@ -76,34 +74,20 @@ impl AutomationSchedule {
                 }
                 Ok(due)
             }
-            Self::Interval { hours } => {
-                if !(1..=8760).contains(hours) {
-                    return Err(AutomationError::Invalid(
-                        "interval must be 1–8760 hours".to_owned(),
-                    ));
-                }
-                now_ms
-                    .checked_add(i64::from(*hours) * 3_600_000)
-                    .ok_or_else(|| AutomationError::Invalid("schedule time overflow".to_owned()))
-            }
-            Self::Daily {
-                hour,
-                minute,
+            Self::Cron {
+                expression,
                 timezone,
-            } => {
-                let time = Time::new(*hour, *minute, 0, 0)?;
-                let zone = TimeZone::get(timezone)?;
-                let now = Timestamp::from_millisecond(now_ms)?.to_zoned(zone.clone());
-                let mut date = now.date();
-                // Compatible resolution chooses the first repeated time in fall
-                // and shifts a nonexistent spring time forward across the gap.
-                let mut next = date.to_datetime(time).to_zoned(zone.clone())?.timestamp();
-                if next.as_millisecond() <= now_ms {
-                    date = date.checked_add(1.day())?;
-                    next = date.to_datetime(time).to_zoned(zone)?.timestamp();
-                }
-                Ok(next.as_millisecond())
-            }
+            } => Ok(Cron::parse(expression)?
+                .next_after(&zone(timezone)?, Timestamp::from_millisecond(now_ms)?)?
+                .as_millisecond()),
         }
     }
+}
+
+fn zone(name: &str) -> Result<TimeZone, AutomationError> {
+    TimeZone::get(name).map_err(|_| {
+        AutomationError::Invalid(format!(
+            "timezone \"{name}\" is not an IANA timezone name; use one like \"Asia/Kolkata\" or \"America/New_York\""
+        ))
+    })
 }

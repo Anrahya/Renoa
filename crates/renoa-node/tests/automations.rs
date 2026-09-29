@@ -409,7 +409,10 @@ async fn create(host: &LocalHost, agent: AgentId, prompt: &str) -> AutomationRec
                 agent_id: agent,
                 name: "Digest".to_owned(),
                 prompt: prompt.to_owned(),
-                schedule: AutomationSchedule::Interval { hours: 24 },
+                schedule: AutomationSchedule::Cron {
+                    expression: "0 0 * * *".to_owned(),
+                    timezone: "UTC".to_owned(),
+                },
                 enabled: false,
             },
         },
@@ -435,7 +438,10 @@ async fn armed(
                 agent_id: agent,
                 name: "Hourly".to_owned(),
                 prompt: prompt.to_owned(),
-                schedule: AutomationSchedule::Interval { hours: 1 },
+                schedule: AutomationSchedule::Cron {
+                    expression: "0 * * * *".to_owned(),
+                    timezone: "UTC".to_owned(),
+                },
                 enabled: true,
             },
         },
@@ -505,7 +511,10 @@ fn assert_submitted_by_automations(
         .expect("the run is a command in the task");
     assert_eq!(command.surface, SurfaceRef::new("automations"));
     assert_eq!(command.principal_id, system.principal_id());
-    assert_eq!(command.input.text(), prompt);
+    assert_eq!(
+        command.input.text(),
+        format!("(Requested run of \"Digest\".)\n\n{prompt}")
+    );
 }
 
 fn answered(events: &[TaskEvent], text: &str) -> bool {

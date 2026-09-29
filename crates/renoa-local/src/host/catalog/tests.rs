@@ -1,6 +1,6 @@
 use super::{
     HostCatalogError, cutover, initialize, open_verified, restore_schema_34_automations,
-    restore_schema_35, restore_schema_36,
+    restore_schema_35, restore_schema_36, restore_schema_37,
 };
 
 #[test]
@@ -290,7 +290,7 @@ fn schema_33_with_routines(database: &std::path::Path) {
                 '00000000-0000-0000-0000-000000000001', 'Morning', 'Summarize.',
                 '{\"interval\":{\"hours\":24}}', 1, 2, 100);
              INSERT INTO host_automation_runs(id, automation_id, agent_id,
-                due_ms, admitted_at_ms, prompt, output)
+                due_ms, admitted_at_ms, submission, output)
              VALUES ('00000000-0000-0000-0000-00000000000b',
                 '00000000-0000-0000-0000-00000000000a',
                 '00000000-0000-0000-0000-000000000001', 100, 101, 'Summarize.', NULL);
@@ -549,7 +549,7 @@ fn schema_36_runs_gain_a_status_derived_from_their_recorded_result() {
                 enabled, revision, next_due_ms)
              VALUES ('00000000-0000-0000-0000-00000000000a',
                 '00000000-0000-0000-0000-000000000001', 'Morning', 'Summarize.',
-                '{\"kind\":\"interval\",\"hours\":24}', 1, 2, 100);
+                '{\"kind\":\"once\",\"at\":\"1970-01-01T00:00:00Z\"}', 1, 2, 100);
              INSERT INTO host_automation_runs(id, automation_id, agent_id, due_ms,
                 admitted_at_ms, prompt, output)
              VALUES
@@ -614,5 +614,107 @@ fn schema_36_runs_gain_a_status_derived_from_their_recorded_result() {
             "SELECT COUNT(*) FROM host_automation_scheduler"
         ),
         0
+    );
+}
+
+/// A catalog in the schema 37 shape holding one automation with `schedule`
+/// and one unfinished run.
+fn schema_37_with(database: &std::path::Path, schedule: &str) {
+    initialize(database).expect("initialize current catalog");
+    let connection = open_verified(database).expect("open current catalog");
+    restore_schema_37(&connection);
+    connection
+        .execute_batch(&format!(
+            "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Scheduler', 1,
+                'provisioning', NULL, '{{}}', 'system', 'migration-test');
+             INSERT INTO host_automations(id, agent_id, name, prompt, schedule_json,
+                enabled, revision, next_due_ms)
+             VALUES ('00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 'Morning', 'Summarize.',
+                '{schedule}', 1, 1, 100);
+             INSERT INTO host_automation_runs(id, automation_id, agent_id, due_ms,
+                admitted_at_ms, prompt)
+             VALUES ('00000000-0000-0000-0000-0000000000b1',
+                '00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 1, 1, 'Summarize.');
+             UPDATE host_metadata SET schema_version = 37 WHERE singleton = 1;
+             PRAGMA user_version = 37;"
+        ))
+        .expect("seed schema 37");
+}
+
+#[test]
+fn schema_37_runs_keep_the_task_they_were_sent() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    schema_37_with(
+        &database,
+        r#"{"kind":"cron","expression":"0 9 * * *","timezone":"Asia/Kolkata"}"#,
+    );
+
+    initialize(&database).expect("upgrade schema 37 in place");
+    initialize(&database).expect("reopening the upgraded catalog is stable");
+    let connection = open_verified(&database).expect("open upgraded catalog");
+    assert_eq!(
+        connection
+            .query_row("SELECT submission FROM host_automation_runs", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("run"),
+        "Summarize.",
+        "a run admitted before schema 38 was sent its standing task alone"
+    );
+}
+
+#[test]
+fn schema_37_daily_and_interval_schedules_are_refused_without_residue() {
+    for schedule in [
+        r#"{"kind":"daily","hour":9,"minute":0,"timezone":"Asia/Kolkata"}"#,
+        r#"{"kind":"interval","hours":6}"#,
+    ] {
+        let directory = tempfile::tempdir().expect("temporary Host catalog");
+        let database = directory.path().join("host.sqlite3");
+        schema_37_with(&database, schedule);
+
+        let error = initialize(&database).expect_err("a legacy schedule has no cron form");
+        assert!(
+            error.to_string().contains(
+                "1 stored automations or automation receipts use daily or interval schedules"
+            ),
+            "{error}"
+        );
+        let connection = rusqlite::Connection::open(&database).expect("open refused catalog");
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .expect("version"),
+            37
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT COUNT(*) FROM pragma_table_info('host_automation_runs') WHERE name = 'prompt'"
+            ),
+            1,
+            "the refused upgrade changed nothing"
+        );
+    }
+
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    schema_37_with(&database, r#"{"kind":"once","at":"1970-01-01T00:00:00Z"}"#);
+    rusqlite::Connection::open(&database)
+        .expect("open catalog")
+        .execute(
+            "INSERT INTO host_automation_mutations VALUES ('00000000-0000-0000-0000-00000000000c',
+                '00000000-0000-0000-0000-000000000001', '{}', ?1)",
+            [r#"{"spec":{"schedule":{"kind":"interval","hours":6}}}"#],
+        )
+        .expect("seed a legacy receipt");
+    assert!(
+        initialize(&database).is_err(),
+        "a receipt that replays a legacy schedule is refused too"
     );
 }

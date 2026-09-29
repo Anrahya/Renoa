@@ -8,7 +8,7 @@ async fn result(f: &Fixture, sequence: i64, text: &str) -> Uuid {
         agent_id: f.worker.agent_id,
         due_ms: sequence,
         admitted_at_ms: sequence,
-        prompt: "test automation".to_owned(),
+        submission: "test automation".to_owned(),
         result: Some(renoa_local::RunResult {
             status: renoa_local::RunStatus::Succeeded,
             output: text.to_owned(),

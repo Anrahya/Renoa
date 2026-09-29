@@ -258,9 +258,9 @@ and next due time; it excludes the standing prompt. Read a new Host snapshot for
 current state rather than treating a historical receipt as the latest revision.
 
 The automation domain retains scheduling semantics and agent restrictions. Pausing
-prevents future admissions, not completion of already-admitted work. Resuming an
-interval starts its next period from the resume time; daily schedules choose the
-next occurrence in their named timezone. Resuming an expired one-time schedule
+prevents future admissions, not completion of already-admitted work. Resuming a
+cron schedule chooses its next occurrence after the resume time in its named
+timezone. Resuming an expired one-time schedule
 returns 422 and needs a new future date through the existing agent editing path.
 Deleted automations return 404; replaying an older receipt cannot restore them.
 Host identity is checked inside the mutation transaction, including on replay.
@@ -1044,7 +1044,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 37
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 38
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1247,7 +1247,7 @@ presentation and can acquire another surface binding later.
 Human controls and model-facing management tools must invoke the same typed
 Host operations. Arcee can create and configure the agent; the agent
 can update its own automation in response to the user's instruction. Changing
-"daily at 16:00" to "daily at 14:00" updates the existing automation with an
+`0 16 * * *` to `0 14 * * *` updates the existing automation with an
 explicit timezone and reports the next occurrence. It must not silently add a
 second automation or mutate an already executing occurrence. A scheduled request
 and an interactive request use the same session-admission and ordering rules.
@@ -1303,17 +1303,33 @@ automation records. Results belong to the agent's durable Host inbox.
 
 The execution node (`renoa-node`) owns one scheduler lease per Host directory.
 It admits one occurrence at a time and hands it on until its result is recorded.
-Admission persists the occurrence ID, exact task, target Agent, scheduled time,
-and actual admission time before the run is submitted. Advancing the schedule
-commits in the same transaction. Daily schedules require an IANA timezone; repeated
-fall-back times run once and nonexistent spring times shift forward across the gap.
-Elapsed-hour intervals retain their original phase. Downtime coalesces missed times
-into one occurrence. A recurring occurrence admitted more than half its period
-after its due time (12 hours for a daily schedule, 3 hours for a six-hour
-interval) is recorded as skipped, with the reason, in the admitting transaction
-and never executes. A run that starts more than five minutes late is told how
-late it started in a note before its task. A manual run retains the normal recurring schedule and
-cannot overlap another admitted occurrence of that automation.
+Admission persists the occurrence ID, the exact message it will submit, target
+Agent, scheduled time, and actual admission time before the run is submitted.
+Advancing the schedule commits in the same transaction.
+
+Repeating schedules use
+`{"kind":"cron","expression":"30 9 * * 1-5","timezone":"Asia/Kolkata"}`: five
+fields, minute, hour, day of month, month and weekday, each accepting `*`,
+values, ranges, `/` steps and comma lists, with `JAN`–`DEC` and `SUN`–`SAT`
+names and 7 as Sunday. When both day of month and weekday are restricted, a day
+matching either runs; a field starting with `*` is unrestricted. The timezone is
+required and must be an IANA name. Runs must be at least five minutes apart,
+which the minute field alone decides, and an expression that never runs is
+refused. Repeated fall-back times run once and nonexistent spring times shift
+forward across the gap. Downtime coalesces missed times into one occurrence. A
+recurring occurrence admitted more than half the gap to its next occurrence
+after its due time (3 hours for `0 */6 * * *`, 36 hours for a Friday run of
+`0 9 * * 1-5`) is recorded as skipped, with the reason, in the admitting
+transaction and never executes.
+
+The submitted message is one context line, a blank line, and the standing task:
+`(Scheduled run "Morning digest", due 09:30 IST.)`. The due time is the local
+time and zone abbreviation of a cron schedule; a one-time run's time is in its
+own task and is left out. A run admitted more than five minutes late adds
+`Started 2 h late.`, and a `run_now` run reads `(Requested run of "Morning
+digest".)`. The line is built at admission, so a resubmission after a restart is
+the same command. A manual run retains the normal recurring schedule and cannot
+overlap another admitted occurrence of that automation.
 
 One-time schedules use `{"kind":"once","at":"2026-09-08T14:00:00+05:30"}`.
 The timestamp must include an explicit UTC offset or Z, and must be in the future
@@ -1441,6 +1457,11 @@ count, and a finishing time, and records the scheduler's heartbeat. A schema
 28–36 catalog derives each finished run's status from the failure texts earlier
 schedulers wrote, `failed` for those and `succeeded` otherwise, and leaves its
 tool call count and finishing time unknown.
+Schema 38 replaces daily and interval schedules with cron and renames a run's
+`prompt` to `submission`, the message it is sent. A schema 28–37 catalog keeps
+each earlier run's task, which is exactly what it was sent, and refuses to
+upgrade while an automation or a replayable receipt still holds a daily or
+interval schedule, since neither has an exact cron form.
 
 ## Local CLI
 

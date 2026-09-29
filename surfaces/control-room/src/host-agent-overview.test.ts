@@ -6,7 +6,7 @@ it("scopes the overview to exact agent relationships and orders schedules by due
   const agent = { id: "a", name: "Same name", created_by: null, preset_id: null };
   const automation = (id: string, due: number, enabled = true, agent_id = "a"): Automation => ({
     id, agent_id, name: id, enabled, revision: 1, next_due_ms: due,
-    schedule: { kind: "interval", hours: 1 }, pending_runs: 0, completed_runs: 0,
+    schedule: { kind: "cron", expression: "0 * * * *", timezone: "UTC" }, pending_runs: 0, completed_runs: 0,
   });
   const host: HostSnapshot = {
     host_id: "h", agents: [agent, { ...agent, id: "b" }],
