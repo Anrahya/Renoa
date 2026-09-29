@@ -11,13 +11,13 @@
   "services": [
     { "unit": "renoa-coordinator.service", "binaries": ["renoa-coordinator"] },
     { "unit": "renoa-registry.service", "binaries": ["renoa-registry"] },
+    { "unit": "renoa-node.service", "binaries": ["renoa-node"], "adapters": true },
     {
       "unit": "renoa-management.service",
       "binaries": ["renoa-management"],
       "adapters": true,
       "control_room": true
     },
-    { "unit": "renoa-node.service", "binaries": ["renoa-node"], "adapters": true },
     {
       "unit": "renoa-discord.service",
       "binaries": ["renoa-discord"],

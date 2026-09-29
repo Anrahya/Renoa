@@ -53,7 +53,9 @@ against the manifest, then unpacks it into `/opt/renoa/releases/<tag>/`. It
 refuses a release that lacks a binary of an installed service. Only services
 whose unit is installed on this host are updated, and only those whose
 binaries, unit files, adapters or Control Room changed are restarted, in the
-order `release.json` lists them. Restarting `renoa-node` first
+order `release.json` lists them. `renoa-node` upgrades the Host catalog when it
+opens it, so it precedes `renoa-management`, which refuses a catalog of an
+older schema. Restarting `renoa-node` first
 waits for running agent turns to finish (`--drain-timeout`, 600 s by default).
 Before switching, it snapshots the Host, coordinator, node and Discord SQLite
 databases with SQLite's backup API, and copies `config/`, into the release
@@ -161,9 +163,11 @@ Enroll the worker as a surface of the Host's owning principal, the same
 principal that owns the node, and exchange the token once:
 
 ```sh
+install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
   /home/renoa/.renoa <owner-principal-uuid> discord > /run/renoa/discord-enrollment.json
+chown renoa-arcee: /run/renoa/discord-enrollment.json
 sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
   ws://127.0.0.1:7818/connect \
   /run/renoa/discord-enrollment.json \
@@ -454,9 +458,11 @@ only principal that may open new tasks on the node, and exchange the
 five-minute enrollment token once:
 
 ```sh
+install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
   /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > /run/renoa/node-enrollment.json
+chown renoa-arcee: /run/renoa/node-enrollment.json
 sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
   /run/renoa/node-enrollment.json \
@@ -469,8 +475,11 @@ The command prints only `{"status":"enrolled"}`. Enroll the automation surface
 for the same owner the same way:
 
 ```sh
+install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
+umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
   /home/renoa/.renoa <owner-principal-uuid> automations > /run/renoa/automations-enrollment.json
+chown renoa-arcee: /run/renoa/automations-enrollment.json
 sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
   /run/renoa/automations-enrollment.json \
