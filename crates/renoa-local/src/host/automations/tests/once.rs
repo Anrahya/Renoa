@@ -23,7 +23,7 @@ async fn change(
 }
 
 #[tokio::test]
-async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
+async fn model_creates_once_and_restart_hands_on_its_only_admitted_run() {
     let (d, h, parent, child) = fixture().await;
     let workspace = d.path().join("workspace");
     fs::create_dir(&workspace).expect("workspace");
@@ -76,41 +76,22 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .await
         .is_err()
     );
-    h.execute_automation_run(run.clone())
-        .await
-        .expect("real execution");
-    let artifact = h
-        .agent_workspace(child)
-        .await
-        .expect("agent workspace")
-        .join("digest.md");
-    assert_eq!(
-        fs::read_to_string(&artifact).expect("artifact"),
-        "# Digest\nSaved by the specialist."
-    );
-    let db = crate::host::catalog::open_verified(&h.config.database).expect("db");
-    db.execute(
-        "UPDATE host_automation_runs SET output=NULL WHERE id=?1",
-        [run.id.to_string()],
-    )
-    .expect("lost Host receipt");
-    drop(db);
     drop(session);
     drop(h);
-    fs::write(&artifact, "preserve after execution").expect("marker");
     let restarted = host(d.path());
     let pending = store::next(&restarted.config.database, expected + 120_000)
         .expect("restart")
         .expect("same run");
-    assert_eq!(pending.id, run.id);
-    restarted
-        .execute_automation_run(pending)
-        .await
-        .expect("kernel recovery");
     assert_eq!(
-        fs::read_to_string(artifact).expect("preserved"),
-        "preserve after execution"
+        pending, run,
+        "a restart hands on the admitted run unchanged"
     );
+    store::finish(
+        &restarted.config.database,
+        run.id,
+        "Digest saved: digest.md",
+    )
+    .expect("result");
     assert!(
         store::next(&restarted.config.database, expected + 86_400_000)
             .expect("no recurrence")

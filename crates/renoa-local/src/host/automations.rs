@@ -8,10 +8,11 @@ mod control;
 mod receipts;
 pub(crate) mod result_tool;
 mod results;
-mod runner;
 pub use control::{AutomationEnablement, HostAutomationControl};
 pub use results::AutomationResultSummary;
 mod schedule;
+mod scheduler;
+pub use scheduler::{AutomationScheduler, ScheduledRun};
 pub(super) mod store;
 #[cfg(test)]
 mod tests;
@@ -86,7 +87,6 @@ pub struct AutomationRun {
     pub id: Uuid,
     pub automation_id: Uuid,
     pub agent_id: AgentId,
-    pub session_id: Uuid,
     pub due_ms: i64,
     pub admitted_at_ms: i64,
     pub prompt: String,
@@ -131,11 +131,27 @@ impl LocalHost {
         now_ms: i64,
         cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<AutomationRecord, LocalHostError> {
+        self.manage_automation_from(actor, None, operation, mutation, now_ms, cancellation)
+            .await
+    }
+
+    /// Applies a management operation an agent sent from one Host session. An
+    /// automation the agent creates for itself runs in that session's
+    /// conversation.
+    pub(super) async fn manage_automation_from(
+        &self,
+        actor: AgentId,
+        session: Option<renoa_kernel::SessionId>,
+        operation: Uuid,
+        mutation: AutomationMutation,
+        now_ms: i64,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<AutomationRecord, LocalHostError> {
         let database = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
             store::mutate(
                 &database,
-                receipts::AutomationActor::Agent(actor),
+                receipts::AutomationActor::Agent { id: actor, session },
                 operation,
                 mutation,
                 now_ms,

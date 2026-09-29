@@ -1,4 +1,4 @@
-use renoa_kernel::AgentId;
+use renoa_kernel::{AgentId, SessionId};
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use uuid::Uuid;
 
@@ -20,15 +20,32 @@ pub(super) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
 
 #[derive(Clone, Copy)]
 pub(super) enum AutomationActor {
-    Agent(AgentId),
-    Owner { host_id: Uuid, principal: Uuid },
+    /// An agent, and the Host session it acted from when it has one.
+    Agent {
+        id: AgentId,
+        session: Option<SessionId>,
+    },
+    Owner {
+        host_id: Uuid,
+        principal: Uuid,
+    },
 }
 
 impl AutomationActor {
     pub fn authorize(self, tx: &Transaction<'_>, target: AgentId) -> Result<(), AutomationError> {
         match self {
-            Self::Agent(id) => store::authorize(tx, id, target),
+            Self::Agent { id, .. } => store::authorize(tx, id, target),
             Self::Owner { .. } => Ok(()),
+        }
+    }
+
+    /// The conversation a new automation's runs return to: the session its
+    /// own agent created it from. An automation made for another agent, or by
+    /// the owner, has none and runs in a conversation of its own.
+    pub fn origin_for(self, agent: AgentId) -> Option<SessionId> {
+        match self {
+            Self::Agent { id, session } if id == agent => session,
+            Self::Agent { .. } | Self::Owner { .. } => None,
         }
     }
 
@@ -39,7 +56,7 @@ impl AutomationActor {
         request: &str,
     ) -> Result<Option<AutomationRecord>, AutomationError> {
         let (sql, identity) = match self {
-            Self::Agent(id) => (
+            Self::Agent { id, .. } => (
                 "SELECT actor_id,request_json,result_json FROM host_automation_mutations WHERE operation_id=?1",
                 id.to_string(),
             ),
@@ -84,7 +101,7 @@ impl AutomationActor {
         result: &AutomationRecord,
     ) -> Result<(), AutomationError> {
         let (sql, identity) = match self {
-            Self::Agent(id) => (
+            Self::Agent { id, .. } => (
                 "INSERT INTO host_automation_mutations(operation_id,actor_id,request_json,result_json) VALUES(?1,?2,?3,?4)",
                 id.to_string(),
             ),

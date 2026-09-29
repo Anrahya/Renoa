@@ -15,9 +15,9 @@ pub(crate) fn binding(
     session: SessionId,
     command: Option<CommandId>,
 ) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-automation-manage-v4",Arc::new(Manage{host:LocalHost{config:host},actor,session,command,spec:ToolSpec{
+    AgentToolBinding::new("renoa-automation-manage-v5",Arc::new(Manage{host:LocalHost{config:host},actor,session,command,spec:ToolSpec{
         name:capabilities::AUTOMATION_MANAGE.to_owned(),
-        description:"Manage Host-owned scheduled tasks. List first for compact automation summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own automations; managing another agent's automations needs the enabled renoa.agents plugin. Create only when the user requests scheduled work. Update the existing automation using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from automation listings and prevents future scheduling or manual runs; past results remain available through automation_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces to one catch-up. Results are durable in the agent's Host inbox; connected surfaces deliver them. Scheduled runs have their own persistent session, separate from interactive chat. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
+        description:"Manage Host-owned scheduled tasks. List first for compact automation summaries and current_agent. Use get to read the full standing task before editing. An agent manages its own automations; managing another agent's automations needs the enabled renoa.agents plugin. Create only when the user requests scheduled work. Update the existing automation using its exact revision and full spec; enabled=false pauses future occurrences. To remove an automation, use delete with its id and exact expected_revision. Deletion removes it from automation listings and prevents future scheduling or manual runs; past results remain available through automation_results, and any already-admitted run finishes. Delete only when requested. run_now queues one manual occurrence; for a one-time schedule it also disarms the future run. Explicit run_now can run a disabled task again. One-time schedules use kind=once with at set to an absolute future timestamp including a UTC offset or Z. They disarm atomically when queued, retain their result/history, and catch up once after downtime. To re-arm a consumed task, update it with a new future date and enabled=true. Daily schedules require an explicit IANA timezone; intervals start from creation/rescheduling and use elapsed hours. No overlapping occurrences; downtime coalesces to one catch-up. Each run is sent as a message into the conversation where the agent created the automation for itself, so the result appears there and that conversation remembers it; an automation created for another agent, or outside a conversation, runs in a conversation of its own. Results are also kept in the agent's Host inbox. Files must be written by an available tool to persist artifacts. Do not claim a schedule exists before this tool succeeds.".to_owned(),
         input_schema:input_schema()
     }}),EffectRecovery::SafeToReplay)
 }
@@ -172,7 +172,14 @@ impl Tool for Manage {
                     .unix_milliseconds();
                 let record = self
                     .host
-                    .manage_automation(actor, operation, mutation, now, cancellation)
+                    .manage_automation_from(
+                        actor,
+                        Some(self.session),
+                        operation,
+                        mutation,
+                        now,
+                        cancellation,
+                    )
                     .await
                     .map_err(|error| match error {
                         crate::LocalHostError::Automation(super::AutomationError::Cancelled) => {

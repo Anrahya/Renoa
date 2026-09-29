@@ -1,6 +1,7 @@
 //! Durable execution-node bridge between RCP and Renoa's local Host.
 
 mod agent_targets;
+mod automations;
 mod backoff;
 mod bridge;
 mod live;

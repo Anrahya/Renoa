@@ -10,11 +10,11 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(crate) fn binding(host: Arc<HostConfig>, actor: AgentId) -> AgentToolBinding {
-    AgentToolBinding::new("renoa-automation-results-v2", Arc::new(Results {
+    AgentToolBinding::new("renoa-automation-results-v3", Arc::new(Results {
         host:LocalHost {config:host}, actor,
         spec:ToolSpec {
             name:capabilities::AUTOMATION_RESULTS.to_owned(),
-            description:"Read results from this Host's scheduled or manually triggered automation runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task, output and execution session. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
+            description:"Read results from this Host's scheduled or manually triggered automation runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact completed-run metadata newest first; pass next_before to page older results. Read with a run ID returns its exact task and output. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output.".to_owned(),
             input_schema:input_schema(),
         },
     }), EffectRecovery::SafeToReplay)

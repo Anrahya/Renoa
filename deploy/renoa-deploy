@@ -44,7 +44,7 @@ DATABASES = (
     "state/surfaces/discord/discord.sqlite3",
 )
 # Restarting these interrupts agent turns, so they wait for turns to finish.
-TURN_SERVICES = ("renoa-host.service", "renoa-node.service")
+TURN_SERVICES = ("renoa-node.service",)
 DRAIN_TIMEOUT = 600
 SETTLE_SECONDS = 10
 
@@ -340,7 +340,7 @@ def health(host: Host, layout: Layout, active: list[str]) -> list[str]:
         )
         if forged != 403:
             failures.append(f"management answered {forged} to a foreign origin, not 403")
-    if "renoa-host.service" in active:
+    if "renoa-node.service" in active:
         try:
             running_turns(host)
         except (DeployError, json.JSONDecodeError) as error:

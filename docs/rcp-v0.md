@@ -704,6 +704,13 @@ The current implementation demonstrates:
   reopened the same Host session: a fresh surface replayed the first turn and
   continued it, while the original surface later received only the missing
   suffix.
+- a Rust node that runs its Host's automation schedule through a second,
+  surface-enrolled link named `automations`. Each due run is a command under
+  the run's identity, carrying that surface's principal, on the task of the
+  conversation its automation was created in, or else on a task of the
+  automation's own. Attached surfaces see the run and its result through the
+  journal with no automation-specific code, and a node restart during a run
+  resubmits the same command, which the coordinator keeps once.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 

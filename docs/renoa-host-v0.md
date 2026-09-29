@@ -50,8 +50,10 @@ identity and voice.
 at `users/<principal-id>/USER.md`, and every agent that enables the User
 document reads the file of the principal whose command started the turn. So two
 agents talking to the same person share one profile, and one person never sees
-another's. A turn with no principal (an automation, a Telegram or Slack message, the
-CLI) has no `USER.md`. A person with no file reads as an empty profile. The
+another's. An automation run is a command of the node's `automations` surface,
+so it reads the file of the principal that surface is enrolled for, the Host's
+owner. A turn with no principal (a Telegram or Slack message, the CLI) has no
+`USER.md`. A person with no file reads as an empty profile. The
 first edit creates the file and its private directory, and an edit rejected for
 a stale revision creates nothing.
 
@@ -466,8 +468,8 @@ management path: its configured Arcee Agent survives restarts, while DMs and
 channel threads bind independent conversations through `ensure_agent_session`.
 Its transport admission and reply receipts remain surface-owned. Slack verifies
 that its configured agent id is already provisioned and no surface can create a
-`host_agents` row; automations use the same Host identities and execute
-independently of surfaces.
+`host_agents` row; automations use the same Host identities, and their runs
+execute through RCP like any other command.
 
 Telegram, Slack, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
 adapters; they do not become agents merely because they deliver messages. A
@@ -1035,21 +1037,21 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 34
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 35
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
-dropping the retired GitHub review tables, and renaming routines to
-automations. A schema 32 or 33 catalog already holds current selections and
-exact plugin activations, so its upgrade only drops the review tables and
-renames routines. Live selections
+dropping the retired GitHub review tables, renaming routines to automations,
+and moving automation runs onto RCP tasks. A schema 32 or 33 catalog already
+holds current selections and exact plugin activations, so its upgrade skips the
+selection step, and a schema 34 catalog only moves its runs. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
 Unknown tool names or revision overflow during conversion reject the transaction with reset
 guidance. Reopening the upgraded catalog does not repeat the conversion.
 
-1. Stop every writer: the automation service (`renoa-host <config.json>`), every
-   surface, and every node daemon that owns the data root.
+1. Stop every writer: every surface and every node daemon that owns the data
+   root.
    A copied data root must not have a live writer.
 2. Create exactly one consolidated backup of the previous release's data root.
    `renoa-host <config.json> reset <backup-directory>` does this FIRST: it copies
@@ -1290,10 +1292,10 @@ conflicting input and stale revisions fail. Creation targets an existing Host
 agent, not a Slack channel. No surface identifiers or credentials appear in
 automation records. Results belong to the agent's durable Host inbox.
 
-The `renoa-host <config.json>` process owns one scheduler lease per Host directory.
-It admits and runs one occurrence at a time, without requiring Slack or Telegram.
-Admission persists the occurrence ID, exact task, target Agent, execution Session,
-scheduled time, and actual admission time before execution. Advancing the schedule
+The execution node (`renoa-node`) owns one scheduler lease per Host directory.
+It admits one occurrence at a time and hands it on until its result is recorded.
+Admission persists the occurrence ID, exact task, target Agent, scheduled time,
+and actual admission time before the run is submitted. Advancing the schedule
 commits in the same transaction. Daily schedules require an IANA timezone; repeated
 fall-back times run once and nonexistent spring times shift forward across the gap.
 Elapsed-hour intervals retain their original phase. Downtime coalesces missed times
@@ -1317,21 +1319,26 @@ current revision; admitted work is unaffected by subsequent edits.
 Host APIs. An agent reads only its own results; reading another agent's results
 requires the actor's stored selection to contain `agent_manage`.
 Listing is bounded to 20 results, newest first, with sequence pagination; exact
-lookup returns the retained task, output, and execution-session identity. This path
-does not execute the automation and remains available from any surface.
+lookup returns the retained task and output. This path does not execute the
+automation and remains available from any surface.
 
-Each automation has a stable execution session, separate from interactive chats, with
-the same stored definition, workspace, and selected Host connections. Its standing
-request must contain the recurring job's requirements; interactive chat history is
-not implicitly copied into it. Admission time enters the existing durable user-turn
-time context, preserving the system/tool cache prefix. The kernel remains the
-execution authority: after a crash, the runner reuses the admitted command and
-recovers the kernel outcome. The Host stores that outcome before surface delivery.
-Infrastructure errors retain pending work for service restart. Graceful shutdown
-drains the current turn; an interrupted process recovers through the kernel.
-Unattended credential/OAuth prompts stop the scheduled turn and report that account
-setup must be completed interactively, preventing a hidden consent wait from blocking
-the scheduler.
+A run is a command on an RCP task, submitted under the occurrence ID by the
+node's `automations` surface. An automation that its own agent created from a
+conversation records that Host session as its origin, and its runs go to the
+task executing in that session, so the result appears wherever that task is
+attached, such as its Discord channel, and the conversation remembers it. An
+automation created for another agent, by the owner, or outside an RCP task runs
+in a task of its own whose identity is the automation's. The command executes
+like any other on the node, with the agent's stored definition, workspace, and
+selected Host connections; its execution time enters the durable user-turn time
+context. A run keeps its occurrence ID until its result is recorded, so after a
+restart the scheduler submits the same command again, the coordinator keeps one
+copy, and the node re-drives an interrupted execution through the kernel. Once
+the node ledger holds the command's terminal event, the node records the result
+on the run: the final answer, or the failure or cancellation reason. A run the
+coordinator refuses, for example because its agent no longer exists, ends with
+the refusal as its result. Credential and OAuth links reach the owner privately,
+as for any other command.
 
 At Slack chat admission, schema 8 appends up to eight newly relevant delivered chunks (4,000
 characters each) and their run IDs to the durable user-turn context. Selection
@@ -1348,29 +1355,27 @@ cursor advancement commit together, even if a channel is not ready. Delivery res
 each agent's ready channel binding; one unbound agent does not block other agents.
 The adapter marks posting intent before calling Slack; rate limits retry and uncertain
 posts remain unknown rather than being blindly duplicated. Slack downtime delays
-notification while the Host continues execution. Other surfaces can consume the same
-Host result API with their own delivery cursors. This slice delivers text and durable
+notification while the Host continues execution. RCP surfaces see a run and its
+result through the task journal instead. This slice delivers text and durable
 workspace file references; binary artifact upload and general workflow graphs remain
 separate work. An agent's files remain retrievable through that agent's configured file tools.
 
-The daemon launch JSON contains optional `home`, `model_bridge`, `providers`,
+The `renoa-host` launch JSON contains optional `home`, `model_bridge`, `providers`,
 `provider`, `model`, `model_auth_store`, and optional `reasoning`, `mcp_adapter`,
 `code_mode_worker`, `mcp_registry_adapter`, `shared_plugin_registry`,
 `plugin_provider_families` (Host-reviewed family and exact-origin arrays), and `oauth_relay` (origin and private
 device credential path). These are Host settings; there are no Slack tokens or
-channel IDs. `deploy/renoa-host.service` runs this process independently of surfaces.
-The supplied systemd unit loads `/etc/renoa/host.json` as `host-config` and the
-shared relay device credential into its own credential directory. For this unit,
-set the relay credential path to `/run/credentials/renoa-host.service/oauth-relay-device`;
-it must not point into a surface service's credential mount.
+channel IDs. `renoa-host` provisions, edits, renames, inspects, and resets; it
+runs no service.
 Host schema 17 adds durable display-name edit receipts.
 Schema 18 admits the one-time schedule variant; older readers cannot decode it.
 Schema 19 adds automation deletion markers consumed by listing, lookup, and admission.
 At that migration, all processes sharing the Host had to support schema 19 before
 restarting. The current schema and later migrations are summarized in the
-catalog schema history below. The integration tests exercise model-driven creation, agent
-rescheduling, artifact generation, and recovery after losing the Host outcome receipt
-without repeating the kernel's completed file operation.
+catalog schema history below. The Host tests exercise model-driven creation, the
+recorded origin, and agent rescheduling; the node tests exercise a run answering
+in its conversation, a run in a task of its own, and a node restart during a run
+that neither drops nor repeats it.
 
 ## Catalog schema history
 
@@ -1402,6 +1407,11 @@ Schema 34 renames routines to automations. A schema 28–33 catalog renames the
 in place, keeping every row, and moves stored `renoa.routines` plugin
 activations and their receipts to `renoa.automations`. The reset drops the
 routine tables and recreates the automation tables empty.
+Schema 35 moves automation runs onto RCP tasks. A run drops its private
+`session_id`, and an automation gains `origin_session_id`, the Host session its
+own agent created it from. A schema 28–34 catalog changes both in place, keeping
+every row; an automation created earlier has no origin and runs in a task of its
+own.
 
 ## Local CLI
 

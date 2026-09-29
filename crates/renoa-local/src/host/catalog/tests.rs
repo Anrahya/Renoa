@@ -1,4 +1,4 @@
-use super::{HostCatalogError, cutover, initialize, open_verified};
+use super::{HostCatalogError, cutover, initialize, open_verified, restore_schema_34_automations};
 
 #[test]
 fn schema_29_removes_retired_mcp_loader_from_stored_selection() {
@@ -281,14 +281,16 @@ fn schema_33_with_routines(database: &std::path::Path) {
                 preset_id, operational_json, creator_kind, creator_component)
              VALUES ('00000000-0000-0000-0000-000000000001', 'Scheduler', 1,
                 'provisioning', NULL, '{}', 'system', 'migration-test');
-             INSERT INTO host_automations VALUES ('00000000-0000-0000-0000-00000000000a',
+             INSERT INTO host_automations(id, agent_id, name, prompt, schedule_json,
+                enabled, revision, next_due_ms)
+             VALUES ('00000000-0000-0000-0000-00000000000a',
                 '00000000-0000-0000-0000-000000000001', 'Morning', 'Summarize.',
                 '{\"interval\":{\"hours\":24}}', 1, 2, 100);
-             INSERT INTO host_automation_runs(id, automation_id, agent_id, session_id,
+             INSERT INTO host_automation_runs(id, automation_id, agent_id,
                 due_ms, admitted_at_ms, prompt, output)
              VALUES ('00000000-0000-0000-0000-00000000000b',
                 '00000000-0000-0000-0000-00000000000a',
-                '00000000-0000-0000-0000-000000000001', 'session', 100, 101, 'Summarize.', NULL);
+                '00000000-0000-0000-0000-000000000001', 100, 101, 'Summarize.', NULL);
              INSERT INTO host_automation_deletions VALUES ('00000000-0000-0000-0000-00000000000a');
              INSERT INTO host_automation_mutations VALUES ('00000000-0000-0000-0000-00000000000c',
                 '00000000-0000-0000-0000-000000000001', '{}', '{}');
@@ -414,4 +416,87 @@ fn a_reset_from_schema_33_recreates_the_automation_tables() {
              VALUES ('00000000-0000-0000-0000-000000000002', 'renoa.automations', 0);",
         )
         .expect("a reset catalog accepts the automations plugin id");
+}
+
+/// Builds a schema 34 catalog holding one automation with a pending run and a
+/// finished one, whose runs still record a private Host session.
+fn schema_34_with_runs(database: &std::path::Path) {
+    initialize(database).expect("initialize current catalog");
+    let connection = open_verified(database).expect("open current catalog");
+    restore_schema_34_automations(&connection);
+    connection
+        .execute_batch(
+            "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Scheduler', 1,
+                'provisioning', NULL, '{}', 'system', 'migration-test');
+             INSERT INTO host_automations VALUES ('00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 'Morning', 'Summarize.',
+                '{\"interval\":{\"hours\":24}}', 1, 2, 100);
+             INSERT INTO host_automation_runs(id, automation_id, agent_id, session_id,
+                due_ms, admitted_at_ms, prompt, output)
+             VALUES ('00000000-0000-0000-0000-00000000000b',
+                '00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001',
+                '00000000-0000-0000-0000-00000000000e', 100, 101, 'Summarize.', 'Done.'),
+                ('00000000-0000-0000-0000-00000000000c',
+                '00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001',
+                '00000000-0000-0000-0000-00000000000e', 200, 201, 'Summarize.', NULL);
+             UPDATE host_metadata SET schema_version = 34 WHERE singleton = 1;
+             PRAGMA user_version = 34;",
+        )
+        .expect("seed schema 34 automation rows");
+}
+
+#[test]
+fn schema_34_runs_drop_their_private_session_and_automations_gain_an_origin() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    schema_34_with_runs(&database);
+
+    initialize(&database).expect("upgrade schema 34 in place");
+    initialize(&database).expect("reopening the upgraded catalog is stable");
+    let connection = open_verified(&database).expect("open upgraded catalog");
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM pragma_table_info('host_automation_runs')
+             WHERE name = 'session_id'"
+        ),
+        0,
+        "a run no longer names a private session"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automations
+             WHERE id = '00000000-0000-0000-0000-00000000000a' AND origin_session_id IS NULL"
+        ),
+        1,
+        "an automation from before schema 35 has no recorded origin"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_runs WHERE output IS NULL"
+        ),
+        1,
+        "the admitted run is still pending"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_runs WHERE output = 'Done.'"
+        ),
+        1,
+        "the finished run keeps its result"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'host_automation_pending'"
+        ),
+        1
+    );
 }

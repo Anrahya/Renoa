@@ -85,14 +85,16 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
         let fixture = HostFixture::install(&mut system).await;
         let config = system.files.path().join("node.json");
         let credentials = system.files.path().join("device.json");
+        let automation_credentials = system.files.path().join("automations.json");
         let state = fixture.data.clone();
         let model_bridge = system.files.path().join("model-bridge.mjs");
         let model_credentials = system.files.path().join("credentials.sqlite3");
         write_private(
             &config,
             &serde_json::to_vec(&json!({
-                "schemaVersion": 4,
+                "schemaVersion": 5,
                 "endpoint": system.url,
+                "automationCredentials": automation_credentials,
                 "model": {
                     "bridge": model_bridge,
                     "credentialStore": model_credentials,
@@ -106,6 +108,11 @@ async fn service_executable_runs_alpha_and_stops_cleanly_on_sigterm() {
         write_private(
             &credentials,
             &serde_json::to_vec(&system.enroll_node().await).expect("encode credentials"),
+        );
+        write_private(
+            &automation_credentials,
+            &serde_json::to_vec(&system.enroll_surface_as("automations").await)
+                .expect("encode automation credentials"),
         );
         let process = StdCommand::new(env!("CARGO_BIN_EXE_renoa-node"))
             .args(["serve"])
