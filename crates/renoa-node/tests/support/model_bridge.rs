@@ -29,7 +29,9 @@ const HELD_TOOL_TURN: &str = r#"} else if (prompt === "Read proof, then wait." &
 }"#;
 
 /// Creates a paused automation through the Host plugin, discovering its
-/// schema first as a model must, and answers the automation's standing prompt.
+/// schema first as a model must, and answers the automation's standing
+/// prompts: one that succeeds, one whose model fails, and one whose tool call
+/// fails before it answers.
 /// "Schedule for <agent>: <standing prompt>" names the automation's agent.
 const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for ")) {
   const [, agent, standing] = prompt.match(/^Schedule for ([^:]+): (.*)$/);
@@ -57,7 +59,15 @@ const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for "))
     stopReason = "stop";
   }
 } else if (prompt === "Write the digest.") {
-  content = [{ type: "text", text: "Digest written." }];"#;
+  content = [{ type: "text", text: "Digest written." }];
+} else if (prompt === "Fail the digest.") {
+  process.stderr.write("the model is unavailable");
+  process.exit(4);
+} else if (prompt === "Read the missing notes." && toolResults.length === 0) {
+  content = [{ type: "tool_call", id: "read-missing", name: "read_file", arguments: { path: "missing-notes.txt" } }];
+  stopReason = "tool_use";
+} else if (prompt === "Read the missing notes.") {
+  content = [{ type: "text", text: "The notes are missing." }];"#;
 
 pub(super) fn bridge_script(workspace: &Path) -> String {
     let workspace = serde_json::to_string(&workspace.to_string_lossy()).expect("encode workspace");

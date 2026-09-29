@@ -36,7 +36,7 @@ async fn create(h: &LocalHost, parent: AgentId, spec: AutomationSpec) -> Automat
 async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_agent_edit() {
     let (d, h, parent, child) = fixture().await;
     let automation = create(&h, parent, spec(child)).await;
-    let admitted = store::next(&h.config.database, automation.next_due_ms)
+    let admitted = runs::next(&h.config.database, automation.next_due_ms)
         .expect("admission")
         .expect("run");
     let (control, owner) = controls(&h).await;
@@ -53,14 +53,20 @@ async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_ag
     assert!(!paused.spec.enabled);
     assert_eq!(paused.revision, 2);
     assert_eq!(
-        store::next(&h.config.database, 100_000_000)
+        runs::next(&h.config.database, 100_000_000)
             .expect("pending")
             .expect("admitted run retained"),
         admitted
     );
-    store::finish(&h.config.database, admitted.id, "completed while paused").expect("finish");
+    runs::finish(
+        &h.config.database,
+        admitted.id,
+        &succeeded("completed while paused"),
+        0,
+    )
+    .expect("finish");
     assert!(
-        store::next(&h.config.database, 200_000_000)
+        runs::next(&h.config.database, 200_000_000)
             .expect("paused admission")
             .is_none()
     );

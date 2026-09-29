@@ -10,6 +10,9 @@ async fn result(f: &Fixture, sequence: i64, text: &str) -> Uuid {
         admitted_at_ms: sequence,
         prompt: "test automation".to_owned(),
         output: Some(text.to_owned()),
+        status: Some(renoa_local::RunStatus::Succeeded),
+        failed_tool_calls: Some(0),
+        finished_at_ms: Some(1),
     };
     let id = run.id;
     f.worker

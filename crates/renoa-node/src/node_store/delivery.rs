@@ -10,11 +10,13 @@ use uuid::Uuid;
 
 use super::{NodeStore, NodeStoreError, blocking, parse_uuid, schema::open_connection};
 
-/// How a finished command ended, with the last assistant text it recorded.
+/// How a finished command ended, with the last assistant text it recorded
+/// and how many of its tool calls returned an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CommandOutcome {
     pub(crate) terminal: ExecutionTerminal,
     pub(crate) answer: Option<String>,
+    pub(crate) failed_tool_calls: u32,
 }
 
 impl NodeStore {
@@ -64,11 +66,15 @@ impl NodeStore {
                 statement.query_map([command_id.to_string()], |row| row.get::<_, String>(0))?;
             let mut answer = None;
             let mut ended = None;
+            let mut failed_tool_calls = 0_u32;
             for row in rows {
                 let event: ExecutionEvent = serde_json::from_str(&row?)?;
                 match event.kind {
                     ExecutionEventKind::AssistantMessage { text } => answer = Some(text),
                     ExecutionEventKind::ExecutionTerminated { terminal } => ended = Some(terminal),
+                    ExecutionEventKind::ToolFinished { is_error: true, .. } => {
+                        failed_tool_calls = failed_tool_calls.saturating_add(1);
+                    }
                     _ => {}
                 }
             }
@@ -77,7 +83,11 @@ impl NodeStore {
                     "terminal execution for command {command_id} has no terminal event"
                 ))
             })?;
-            Ok(Some(CommandOutcome { terminal, answer }))
+            Ok(Some(CommandOutcome {
+                terminal,
+                answer,
+                failed_tool_calls,
+            }))
         })
         .await
     }

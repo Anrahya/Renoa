@@ -436,6 +436,7 @@ async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables(
 fn every_catalog_table_is_classified_agent_owned_or_shared() {
     // Shared Host state, which a reset must keep.
     const SHARED: &[&str] = &[
+        "host_automation_scheduler",
         "host_plugin_admissions",
         "host_plugin_provider_families",
         "host_plugin_provider_origins",

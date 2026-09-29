@@ -290,12 +290,12 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 36. A schema 28–35 catalog upgrades in place
+This release requires Host schema 37. A schema 28–36 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
-[RCP execution node](#rcp-execution-node)), and adds the record of a failing
-shared-registry synchronization. An earlier
+[RCP execution node](#rcp-execution-node)), adds the record of a failing
+shared-registry synchronization, and gives finished automation runs a status. An earlier
 data root cuts agent-owned storage over to the canonical agent definition. That
 cutover is not a migration: it discards the previous agent rows, automations and
 sessions, and it runs only through the explicit reset described in
@@ -451,8 +451,12 @@ run's identity, submitted through a second RCP link: a surface named
 runs in that conversation's task, so its Discord channel shows the run and its
 result. Any other automation runs in a task of its own, whose identity is the
 automation's. The result is also recorded on the run for `automation_results`
-and the Control Room. A run stays admitted until its result is recorded, so a
-restart submits the same command again and the coordinator keeps one copy.
+and the Control Room, with a status: succeeded, failed, or skipped. A recurring
+run more than half its period late is skipped without executing, and the node
+logs `automation_skipped`. A run stays admitted until its result is recorded,
+so a restart submits the same command again and the coordinator keeps one
+copy. While the node owns the schedule it writes a heartbeat every 30 seconds,
+which Host observation reports.
 
 On the coordinator host, create the node identity for its owning principal, the
 only principal that may open new tasks on the node, and exchange the
@@ -803,7 +807,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the node, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 36. Install the new binaries
+root before the new Host brings it to schema 37. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must

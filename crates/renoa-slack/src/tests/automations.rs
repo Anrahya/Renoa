@@ -13,6 +13,9 @@ async fn completed_host_results_wait_for_a_channel_and_deliver_once_without_exec
         admitted_at_ms: 1,
         prompt: "digest".to_owned(),
         output: Some("**Digest**\n- Saved `digest.md`".to_owned()),
+        status: Some(renoa_local::RunStatus::Succeeded),
+        failed_tool_calls: Some(0),
+        finished_at_ms: Some(1),
     };
     let mut blocked = run.clone();
     blocked.sequence = 1;

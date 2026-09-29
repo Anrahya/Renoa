@@ -8,6 +8,7 @@ mod control;
 mod receipts;
 pub(crate) mod result_tool;
 mod results;
+mod runs;
 pub use control::{AutomationEnablement, HostAutomationControl};
 pub use results::AutomationResultSummary;
 mod schedule;
@@ -90,7 +91,53 @@ pub struct AutomationRun {
     pub due_ms: i64,
     pub admitted_at_ms: i64,
     pub prompt: String,
+    /// The answer of a succeeded run, or why a run failed or was skipped.
     pub output: Option<String>,
+    /// How the run ended; `None` while it is unfinished.
+    pub status: Option<RunStatus>,
+    /// Tool calls that returned an error in a run that executed. `None` while
+    /// unfinished, for a skipped run, and for runs recorded before schema 37.
+    pub failed_tool_calls: Option<u32>,
+    /// When the Host recorded the outcome; `None` before schema 37.
+    pub finished_at_ms: Option<i64>,
+}
+
+/// How a finished run ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    /// The agent finished the task. Some of its tool calls may have failed.
+    Succeeded,
+    /// The run could not be sent, or its execution failed or was stopped.
+    Failed,
+    /// The run was too late to be worth running and never executed.
+    Skipped,
+}
+
+impl RunStatus {
+    /// The stored and serialized name.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        [Self::Succeeded, Self::Failed, Self::Skipped]
+            .into_iter()
+            .find(|status| status.as_str() == value)
+    }
+}
+
+/// How an executed run ended, as its executor reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunOutcome {
+    /// `Succeeded` or `Failed`; only the Host skips a run.
+    pub status: RunStatus,
+    pub output: String,
+    pub failed_tool_calls: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -210,8 +257,8 @@ impl LocalHost {
         after: i64,
     ) -> Result<Vec<AutomationRun>, LocalHostError> {
         let database = self.config.database.clone();
-        Ok(tokio::task::spawn_blocking(move || store::completed(&database, after)).await??)
+        Ok(tokio::task::spawn_blocking(move || runs::completed(&database, after)).await??)
     }
 }
 
-pub(super) use store::initialize;
+pub(super) use store::{SCHEDULER_TABLE, initialize};

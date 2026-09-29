@@ -10,6 +10,10 @@
 //! A run keeps its identity until its result is recorded, so after a restart
 //! the scheduler submits the same command again: the coordinator keeps one
 //! copy, and the ledger re-drives an execution the restart interrupted.
+//!
+//! The Host decides whether a due occurrence is too late to run; a skipped
+//! one is only reported here. While it owns the schedule, the scheduler
+//! writes a heartbeat so Host observation can tell it is alive.
 
 use std::{
     sync::Arc,
@@ -17,7 +21,7 @@ use std::{
 };
 
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
-use renoa_local::{AutomationScheduler, ScheduledRun, TurnObservation};
+use renoa_local::{AutomationScheduler, RunOutcome, RunStatus, ScheduledRun, TurnObservation};
 use renoa_protocol::{CommandId, ExecutionTerminal};
 use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
@@ -34,6 +38,9 @@ use crate::{
 /// retrying a submission the coordinator refused because the node is offline.
 const PAUSE: Duration = Duration::from_secs(1);
 
+/// How often the scheduler records that it is alive.
+const HEARTBEAT: Duration = Duration::from_secs(30);
+
 /// The surface link that submits this Host's automation runs, and the
 /// schedule it owns.
 pub(crate) struct AutomationLink {
@@ -43,11 +50,43 @@ pub(crate) struct AutomationLink {
 }
 
 /// Runs the schedule until shutdown, reconnecting the surface link with
-/// bounded backoff. Only socket loss is retried.
+/// bounded backoff, and writes the heartbeat throughout, since a lost
+/// coordinator link does not stop the scheduler. Only socket loss is retried.
 pub(crate) async fn run(
     runtime: Arc<NodeRuntime>,
     link: AutomationLink,
     shutdown: CancellationToken,
+) -> Result<(), NodeError> {
+    tokio::select! {
+        result = schedule(&runtime, &link, &shutdown) => result,
+        result = heartbeat(&link.scheduler, &shutdown) => result,
+    }
+}
+
+async fn heartbeat(
+    scheduler: &AutomationScheduler,
+    shutdown: &CancellationToken,
+) -> Result<(), NodeError> {
+    let mut ticks = tokio::time::interval(HEARTBEAT);
+    loop {
+        tokio::select! {
+            () = shutdown.cancelled() => return Ok(()),
+            _ = ticks.tick() => {}
+        }
+        if let Err(error) = scheduler.heartbeat(now_ms()?).await {
+            node_log::event(
+                "warn",
+                "automation_heartbeat_failed",
+                &serde_json::json!({ "error": error.to_string() }),
+            );
+        }
+    }
+}
+
+async fn schedule(
+    runtime: &NodeRuntime,
+    link: &AutomationLink,
+    shutdown: &CancellationToken,
 ) -> Result<(), NodeError> {
     let mut backoff = ReconnectBackoff::new();
     loop {
@@ -60,7 +99,7 @@ pub(crate) async fn run(
             // No task is attached, so the event stream carries nothing.
             Ok((connection, _events)) => {
                 connected_at = Some(Instant::now());
-                serve(&runtime, &link.scheduler, &connection, &shutdown).await
+                serve(runtime, &link.scheduler, &connection, shutdown).await
             }
             Err(error) => Err(error.into()),
         };
@@ -93,11 +132,8 @@ async fn serve(
     shutdown: &CancellationToken,
 ) -> Result<(), NodeError> {
     loop {
-        let now = TurnObservation::now()
-            .map_err(|error| NodeError::Task(error.to_string()))?
-            .unix_milliseconds();
         let Some(due) = scheduler
-            .next_run(now)
+            .next_run(now_ms()?)
             .await
             .map_err(|error| host_error(&error))?
         else {
@@ -111,29 +147,34 @@ async fn serve(
                 () = tokio::time::sleep(PAUSE) => continue,
             }
         };
-        let Some(finished) = deliver(runtime, connection, &due, shutdown).await? else {
+        if due.run.status == Some(RunStatus::Skipped) {
+            node_log::event(
+                "warn",
+                "automation_skipped",
+                &serde_json::json!({
+                    "automation_id": due.run.automation_id,
+                    "run_id": due.run.id,
+                    "due_ms": due.run.due_ms,
+                    "late_ms": due.run.admitted_at_ms.saturating_sub(due.run.due_ms),
+                }),
+            );
+            continue;
+        }
+        let Some(outcome) = deliver(runtime, connection, &due, shutdown).await? else {
             return Ok(());
         };
+        let fields = serde_json::json!({
+            "automation_id": due.run.automation_id,
+            "run_id": due.run.id,
+            "status": outcome.status,
+            "failed_tool_calls": outcome.failed_tool_calls,
+        });
         scheduler
-            .finish_run(due.run.id, finished.result)
+            .finish_run(due.run.id, outcome, now_ms()?)
             .await
             .map_err(|error| host_error(&error))?;
-        node_log::event(
-            "info",
-            "automation_finished",
-            &serde_json::json!({
-                "automation_id": due.run.automation_id,
-                "run_id": due.run.id,
-                "outcome": finished.outcome,
-            }),
-        );
+        node_log::event("info", "automation_finished", &fields);
     }
-}
-
-/// A run's recorded result and how it ended.
-struct Finished {
-    result: String,
-    outcome: &'static str,
 }
 
 /// Submits one run and waits for its result. Returns `None` at shutdown; the
@@ -143,7 +184,7 @@ async fn deliver(
     connection: &Connection,
     due: &ScheduledRun,
     shutdown: &CancellationToken,
-) -> Result<Option<Finished>, NodeError> {
+) -> Result<Option<RunOutcome>, NodeError> {
     let run = &due.run;
     let task_id = match task_for(runtime, connection, due, shutdown).await? {
         Resolution::Task(task_id) => task_id,
@@ -153,7 +194,7 @@ async fn deliver(
     let command_id = CommandId::from_uuid(run.id);
     loop {
         match connection
-            .submit(task_id, command_id, run.prompt.clone())
+            .submit(task_id, command_id, run.submission())
             .await
         {
             Ok(()) => break,
@@ -176,6 +217,8 @@ async fn deliver(
             "run_id": run.id,
             "command_id": command_id,
             "task_id": task_id,
+            "due_ms": run.due_ms,
+            "late_ms": run.admitted_at_ms.saturating_sub(run.due_ms),
         }),
     );
     Ok(wait_for_outcome(runtime, command_id, shutdown)
@@ -273,26 +316,27 @@ async fn wait_for_outcome(
     }
 }
 
-fn finished(outcome: CommandOutcome) -> Finished {
-    match outcome.terminal {
-        ExecutionTerminal::Completed => Finished {
-            result: outcome.answer.unwrap_or_default(),
-            outcome: "completed",
-        },
-        ExecutionTerminal::Failed { error } => Finished {
-            result: format!("Scheduled run failed: {error}"),
-            outcome: "failed",
-        },
-        ExecutionTerminal::Cancelled { reason } => Finished {
-            result: format!("Scheduled run stopped: {reason}"),
-            outcome: "cancelled",
-        },
+fn finished(outcome: CommandOutcome) -> RunOutcome {
+    let (status, output) = match outcome.terminal {
+        ExecutionTerminal::Completed => (RunStatus::Succeeded, outcome.answer.unwrap_or_default()),
+        ExecutionTerminal::Failed { error } => {
+            (RunStatus::Failed, format!("Scheduled run failed: {error}"))
+        }
+        ExecutionTerminal::Cancelled { reason } => (
+            RunStatus::Failed,
+            format!("Scheduled run stopped: {reason}"),
+        ),
+    };
+    RunOutcome {
+        status,
+        output,
+        failed_tool_calls: outcome.failed_tool_calls,
     }
 }
 
 /// A run the coordinator would not accept ends with the refusal as its result,
 /// so it is visible where results are read and the schedule moves on.
-fn refused(due: &ScheduledRun, task_id: Option<TaskId>, reason: &str) -> Finished {
+fn refused(due: &ScheduledRun, task_id: Option<TaskId>, reason: &str) -> RunOutcome {
     node_log::event(
         "warn",
         "automation_refused",
@@ -303,10 +347,17 @@ fn refused(due: &ScheduledRun, task_id: Option<TaskId>, reason: &str) -> Finishe
             "error": reason,
         }),
     );
-    Finished {
-        result: format!("Scheduled run could not be sent: {reason}"),
-        outcome: "refused",
+    RunOutcome {
+        status: RunStatus::Failed,
+        output: format!("Scheduled run could not be sent: {reason}"),
+        failed_tool_calls: 0,
     }
+}
+
+fn now_ms() -> Result<i64, NodeError> {
+    Ok(TurnObservation::now()
+        .map_err(|error| NodeError::Task(error.to_string()))?
+        .unix_milliseconds())
 }
 
 /// Waits before a retry. Returns `false` when the node is shutting down.

@@ -28,6 +28,17 @@ impl AutomationSchedule {
         Ok(due)
     }
 
+    /// How late a run of this schedule may start before it is skipped: half its
+    /// period, so a late run never lands nearer the next occurrence than its
+    /// own. A one-time run always runs, however late.
+    pub(super) fn skip_after_ms(&self) -> Option<i64> {
+        match self {
+            Self::Once { .. } => None,
+            Self::Daily { .. } => Some(12 * 3_600_000),
+            Self::Interval { hours } => Some(i64::from(*hours) * 1_800_000),
+        }
+    }
+
     pub(super) fn advance_past(&self, due_ms: i64, now_ms: i64) -> Result<i64, AutomationError> {
         if let Self::Interval { hours } = self {
             let period = i64::from(*hours) * 3_600_000;

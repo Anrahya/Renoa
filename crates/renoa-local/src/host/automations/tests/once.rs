@@ -52,11 +52,11 @@ async fn model_creates_once_and_restart_hands_on_its_only_admitted_run() {
         .as_millisecond();
     assert_eq!(record.next_due_ms, expected);
     assert!(
-        store::next(&h.config.database, expected - 1)
+        runs::next(&h.config.database, expected - 1)
             .expect("not due")
             .is_none()
     );
-    let run = store::next(&h.config.database, expected + 60_000)
+    let run = runs::next(&h.config.database, expected + 60_000)
         .expect("late catchup")
         .expect("run");
     let disarmed = h.automation(parent, record.id).await.expect("disarmed");
@@ -79,21 +79,22 @@ async fn model_creates_once_and_restart_hands_on_its_only_admitted_run() {
     drop(session);
     drop(h);
     let restarted = host(d.path());
-    let pending = store::next(&restarted.config.database, expected + 120_000)
+    let pending = runs::next(&restarted.config.database, expected + 120_000)
         .expect("restart")
         .expect("same run");
     assert_eq!(
         pending, run,
         "a restart hands on the admitted run unchanged"
     );
-    store::finish(
+    runs::finish(
         &restarted.config.database,
         run.id,
-        "Digest saved: digest.md",
+        &succeeded("Digest saved: digest.md"),
+        0,
     )
     .expect("result");
     assert!(
-        store::next(&restarted.config.database, expected + 86_400_000)
+        runs::next(&restarted.config.database, expected + 86_400_000)
             .expect("no recurrence")
             .is_none()
     );
@@ -159,7 +160,7 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
     .await
     .expect("pause even after deadline");
     assert!(
-        store::next(&h.config.database, 3000)
+        runs::next(&h.config.database, 3000)
             .expect("paused")
             .is_none()
     );
@@ -208,13 +209,13 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
             .await
             .expect("manual replay")
     );
-    let run = store::next(&h.config.database, 6000)
+    let run = runs::next(&h.config.database, 6000)
         .expect("pending")
         .expect("manual");
     assert_eq!(run.id, op);
-    store::finish(&h.config.database, op, "done").expect("finish");
+    runs::finish(&h.config.database, op, &succeeded("done"), 0).expect("finish");
     assert!(
-        store::next(&h.config.database, 7000)
+        runs::next(&h.config.database, 7000)
             .expect("no timed duplicate")
             .is_none()
     );

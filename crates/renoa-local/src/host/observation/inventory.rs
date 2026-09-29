@@ -3,7 +3,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::{HostCatalogError, parse_id};
-use crate::AutomationSchedule;
+use crate::{AutomationSchedule, RunStatus};
 
 #[derive(Debug, Serialize)]
 pub struct ObservedAgent {
@@ -24,7 +24,30 @@ pub struct ObservedAutomation {
     pub revision: i64,
     pub next_due_ms: i64,
     pub pending_runs: u64,
+    /// Every finished run, whatever its status.
     pub completed_runs: u64,
+    pub failed_runs: u64,
+    pub skipped_runs: u64,
+    /// The most recently finished run.
+    pub last_run: Option<ObservedRun>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ObservedRun {
+    pub id: Uuid,
+    pub status: RunStatus,
+    pub due_ms: i64,
+    /// `None` for runs recorded before schema 37.
+    pub finished_at_ms: Option<i64>,
+    /// `None` for a skipped run and for runs recorded before schema 37.
+    pub failed_tool_calls: Option<u32>,
+}
+
+/// The process owning the automation schedule writes a heartbeat every 30
+/// seconds while it runs; an old heartbeat means no scheduler is running.
+#[derive(Debug, Serialize)]
+pub struct ObservedScheduler {
+    pub heartbeat_ms: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,7 +117,9 @@ pub(super) fn agents(db: &Connection) -> Result<Vec<ObservedAgent>, HostCatalogE
 pub(super) fn automations(db: &Connection) -> Result<Vec<ObservedAutomation>, HostCatalogError> {
     let mut q = db.prepare("SELECT r.id,r.agent_id,r.name,r.schedule_json,r.enabled,r.revision,r.next_due_ms,
         (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.output IS NULL),
-        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.output IS NOT NULL)
+        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.output IS NOT NULL),
+        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.status='failed'),
+        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.status='skipped')
         FROM host_automations r WHERE NOT EXISTS (SELECT 1 FROM host_automation_deletions d WHERE d.automation_id=r.id)
         ORDER BY r.id")?;
     let mut rows = q.query([])?;
@@ -111,9 +136,56 @@ pub(super) fn automations(db: &Connection) -> Result<Vec<ObservedAutomation>, Ho
             next_due_ms: row.get(6)?,
             pending_runs: count(row, 7)?,
             completed_runs: count(row, 8)?,
+            failed_runs: count(row, 9)?,
+            skipped_runs: count(row, 10)?,
+            last_run: None,
         });
     }
+    for automation in &mut items {
+        automation.last_run = last_run(db, automation.id)?;
+    }
     Ok(items)
+}
+
+fn last_run(db: &Connection, automation: Uuid) -> Result<Option<ObservedRun>, HostCatalogError> {
+    db.query_row(
+        "SELECT id,status,due_ms,finished_at_ms,failed_tool_calls FROM host_automation_runs
+         WHERE automation_id=?1 AND output IS NOT NULL ORDER BY sequence DESC LIMIT 1",
+        [automation.to_string()],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )
+    .optional()?
+    .map(|(id, status, due_ms, finished_at_ms, failed_tool_calls)| {
+        Ok(ObservedRun {
+            id: parse_id(&id)?,
+            status: RunStatus::parse(&status).ok_or_else(|| {
+                HostCatalogError::Invalid(format!("invalid run status `{status}`"))
+            })?,
+            due_ms,
+            finished_at_ms,
+            failed_tool_calls,
+        })
+    })
+    .transpose()
+}
+
+pub(super) fn scheduler(db: &Connection) -> Result<Option<ObservedScheduler>, HostCatalogError> {
+    Ok(db
+        .query_row(
+            "SELECT heartbeat_ms FROM host_automation_scheduler WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .map(|heartbeat_ms| ObservedScheduler { heartbeat_ms }))
 }
 
 pub(super) fn connections(db: &Connection) -> Result<Vec<ObservedConnection>, HostCatalogError> {
