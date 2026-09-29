@@ -45,7 +45,7 @@ async fn another_session_reads_the_exact_completed_result_through_model_tools() 
         .automation_result(parent, run.id)
         .await
         .expect("operator can inspect");
-    assert_eq!(exact.prompt, "scheduled digest");
+    assert!(exact.submission.ends_with("\n\nscheduled digest"));
     let denied = outsider(&h).await;
     assert!(h.automation_result(denied, run.id).await.is_err());
     assert!(h.automation_results(denied, child, None).await.is_err());

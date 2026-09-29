@@ -52,7 +52,7 @@ fn automation_model_schemas_avoid_unaccepted_unions_and_keep_action_guidance() {
     );
     assert_eq!(
         manage["properties"]["spec"]["properties"]["schedule"]["properties"]["kind"]["enum"],
-        json!(["once", "daily", "interval"])
+        json!(["once", "cron"])
     );
     assert_eq!(
         results["properties"]["action"]["enum"],
@@ -165,12 +165,18 @@ async fn outsider(h: &LocalHost) -> AgentId {
     .expect("disable outsider agent management");
     agent
 }
+fn cron(expression: &str, timezone: &str) -> AutomationSchedule {
+    AutomationSchedule::Cron {
+        expression: expression.to_owned(),
+        timezone: timezone.to_owned(),
+    }
+}
 fn spec(agent_id: AgentId) -> AutomationSpec {
     AutomationSpec {
         agent_id,
         name: "Digest".to_owned(),
         prompt: "scheduled digest".to_owned(),
-        schedule: AutomationSchedule::Interval { hours: 12 },
+        schedule: cron("0 */12 * * *", "UTC"),
         enabled: true,
     }
 }
@@ -210,7 +216,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
     assert_eq!(run.due_ms, first.next_due_ms);
     let mut changed = first.spec.clone();
     changed.prompt = "changed task".to_owned();
-    changed.schedule = AutomationSchedule::Interval { hours: 24 };
+    changed.schedule = cron("0 0 * * *", "UTC");
     let update_op = Uuid::new_v4();
     let update = AutomationMutation::Update {
         id: first.id,
@@ -255,7 +261,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
         .expect("resume")
         .expect("same occurrence");
     assert_eq!(run, resumed);
-    assert_eq!(run.prompt, "scheduled digest");
+    assert!(run.submission.ends_with("\n\nscheduled digest"));
     assert!(
         h.manage_automation(
             child,
@@ -290,59 +296,6 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
         )
         .await
         .is_err()
-    );
-}
-
-#[test]
-fn daily_schedules_respect_local_time_and_daylight_saving() {
-    let ms = |value: &str| {
-        value
-            .parse::<jiff::Timestamp>()
-            .expect("timestamp")
-            .as_millisecond()
-    };
-    let daily = AutomationSchedule::Daily {
-        hour: 14,
-        minute: 0,
-        timezone: "Asia/Kolkata".to_owned(),
-    };
-    assert_eq!(
-        daily
-            .next_after(ms("2026-09-07T08:29:00Z"))
-            .expect("same day"),
-        ms("2026-09-07T08:30:00Z")
-    );
-    assert_eq!(
-        daily
-            .next_after(ms("2026-09-07T08:30:00Z"))
-            .expect("next day"),
-        ms("2026-09-08T08:30:00Z")
-    );
-    let spring = AutomationSchedule::Daily {
-        hour: 2,
-        minute: 30,
-        timezone: "America/New_York".to_owned(),
-    };
-    assert_eq!(
-        spring
-            .next_after(ms("2026-03-08T05:00:00Z"))
-            .expect("spring gap"),
-        ms("2026-03-08T07:30:00Z")
-    );
-    let fall = AutomationSchedule::Daily {
-        hour: 1,
-        minute: 30,
-        timezone: "America/New_York".to_owned(),
-    };
-    assert_eq!(
-        fall.next_after(ms("2026-11-01T05:30:00Z"))
-            .expect("no duplicate fall occurrence"),
-        ms("2026-11-02T06:30:00Z")
-    );
-    assert!(
-        AutomationSchedule::Interval { hours: 0 }
-            .next_after(0)
-            .is_err()
     );
 }
 
@@ -406,10 +359,7 @@ async fn real_model_tool_schedules_a_specialist_that_reschedules_its_own_automat
         .await
         .expect("new schedule");
     assert_eq!(changed[0].revision, 2);
-    assert_eq!(
-        changed[0].spec.schedule,
-        AutomationSchedule::Interval { hours: 24 }
-    );
+    assert_eq!(changed[0].spec.schedule, cron("0 0 * * *", "UTC"));
 }
 
 #[tokio::test]
@@ -536,12 +486,9 @@ async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_t
             .expect("no recurring run")
             .is_none()
     );
-    let interval = AutomationSchedule::Interval { hours: 12 };
     assert_eq!(
-        interval
-            .advance_past(43_200_000, 90_000_000)
-            .expect("retain phase"),
-        129_600_000
+        admitted.submission, "(Requested run of \"Digest\".)\n\nscheduled digest",
+        "a requested run has no due time"
     );
 }
 
@@ -647,5 +594,6 @@ mod once;
 mod results;
 
 mod control;
+mod cron;
 mod deletion;
 mod outcomes;

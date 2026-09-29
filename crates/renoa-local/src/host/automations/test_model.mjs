@@ -16,7 +16,7 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
   for(const result of results) if(result.result.is_error && !prompt.startsWith("foreign automation ")) throw Error(JSON.stringify(result.result));
   if(prompt.startsWith("create automation ") || prompt.startsWith("create once ")) {
     if(results.length) complete(text("Automation created"));
-    else invoke("create-automation","automation_manage",{action:"create",spec:{agent_id:prompt.split(" ")[2],name:"Digest",prompt:"scheduled digest",schedule:prompt.startsWith("create once ")?{kind:"once",at:prompt.split(" ")[3]}:{kind:"interval",hours:12},enabled:true}});
+    else invoke("create-automation","automation_manage",{action:"create",spec:{agent_id:prompt.split(" ")[2],name:"Digest",prompt:"scheduled digest",schedule:prompt.startsWith("create once ")?{kind:"once",at:prompt.split(" ")[3]}:{kind:"cron",expression:"0 */12 * * *",timezone:"UTC"},enabled:true}});
   } else if(prompt.startsWith("reschedule ")) {
     if(!results.length) invoke("list-automations","automation_manage",{action:"list"});
     else if(results.length===1) {
@@ -25,7 +25,7 @@ if (process.env.RENOA_MODEL_ACTION === "catalog") {
       invoke("get-automation","automation_manage",{action:"get",id:current.id});
     } else if(results.length===2) {
       const current=JSON.parse(results[1].result.content[0].text).automation;
-      invoke("update-automation","automation_manage",{action:"update",id:current.id,expected_revision:current.revision,spec:{...current.spec,schedule:{kind:"interval",hours:24}}});
+      invoke("update-automation","automation_manage",{action:"update",id:current.id,expected_revision:current.revision,spec:{...current.spec,schedule:{kind:"cron",expression:"0 0 * * *",timezone:"UTC"}}});
     } else complete(text("Schedule updated"));
   } else if(prompt.startsWith("delete automation ")) {
     if(!results.length) invoke("get-deleting","automation_manage",{action:"get",id:prompt.split(" ")[2]});

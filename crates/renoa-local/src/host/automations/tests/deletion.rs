@@ -67,12 +67,12 @@ async fn model_deletes_an_automation_and_can_still_read_its_previous_result() {
     assert!(
         matches!(output,LocalTurnOutcome::Completed {output,..} if output=="Digest saved: digest.md")
     );
-    assert_eq!(
+    assert!(
         h.automation_result(parent, run.id)
             .await
             .expect("retained result")
-            .prompt,
-        "scheduled digest"
+            .submission
+            .ends_with("\n\nscheduled digest")
     );
 }
 

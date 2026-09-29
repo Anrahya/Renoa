@@ -11,7 +11,7 @@ async fn completed_host_results_wait_for_a_channel_and_deliver_once_without_exec
         agent_id: f.worker.agent_id,
         due_ms: 1,
         admitted_at_ms: 1,
-        prompt: "digest".to_owned(),
+        submission: "digest".to_owned(),
         result: Some(renoa_local::RunResult {
             status: renoa_local::RunStatus::Succeeded,
             output: "**Digest**\n- Saved `digest.md`".to_owned(),

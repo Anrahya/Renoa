@@ -1,6 +1,5 @@
 export interface Agent { id: string; name: string; created_by: string | null; preset_id: string | null }
-export type Schedule = { kind: "once"; at: string } | { kind: "interval"; hours: number } |
-  { kind: "daily"; hour: number; minute: number; timezone: string };
+export type Schedule = { kind: "once"; at: string } | { kind: "cron"; expression: string; timezone: string };
 export interface Automation { id: string; agent_id: string; name: string; schedule: Schedule; enabled: boolean;
   revision: number; next_due_ms: number; pending_runs: number; completed_runs: number }
 export interface Operation { id: string; command_id: string; position: number;
@@ -28,8 +27,7 @@ function operation(v: unknown): boolean {
 function schedule(v: unknown): boolean {
   if (!record(v)) return false;
   if (v.kind === "once") return text(v.at) && Number.isFinite(Date.parse(v.at));
-  if (v.kind === "interval") return count(v.hours) && v.hours > 0;
-  return v.kind === "daily" && count(v.hour) && v.hour < 24 && count(v.minute) && v.minute < 60 && text(v.timezone);
+  return v.kind === "cron" && text(v.expression) && text(v.timezone);
 }
 export function parseHost(value: unknown): HostSnapshot {
   if (!record(value) || !id(value.host_id) ||

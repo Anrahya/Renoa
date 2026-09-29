@@ -197,7 +197,10 @@ async fn derived_identities_are_stable_across_releases() {
     let automation = AgentAutomation {
         name: "Morning".to_owned(),
         prompt: "Summarize.".to_owned(),
-        schedule: AutomationSchedule::Interval { hours: 24 },
+        schedule: AutomationSchedule::Cron {
+            expression: "0 0 * * *".to_owned(),
+            timezone: "UTC".to_owned(),
+        },
         enabled: true,
     };
     let definition = host
@@ -571,7 +574,10 @@ async fn a_rejected_first_automation_leaves_no_agent_state() {
     let automation = AgentAutomation {
         name: String::new(),
         prompt: String::new(),
-        schedule: AutomationSchedule::Interval { hours: 0 },
+        schedule: AutomationSchedule::Cron {
+            expression: "* * * * *".to_owned(),
+            timezone: "UTC".to_owned(),
+        },
         enabled: true,
     };
     let result = host

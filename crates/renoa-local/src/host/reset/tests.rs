@@ -261,7 +261,10 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
                 agent_id: agent.id,
                 name: "Digest".to_owned(),
                 prompt: "Write the digest.".to_owned(),
-                schedule: AutomationSchedule::Interval { hours: 12 },
+                schedule: AutomationSchedule::Cron {
+                    expression: "0 */12 * * *".to_owned(),
+                    timezone: "UTC".to_owned(),
+                },
                 enabled: true,
             },
         },

@@ -9,7 +9,7 @@ import { agentActivity } from "./host-presentation";
 import { hostRoute } from "./host-navigation";
 
 const automation: Automation = { id: "timer", agent_id: "rc", name: "Recap", enabled: true, revision: 1,
-  schedule: { kind: "interval", hours: 12 }, next_due_ms: 61_000, pending_runs: 0, completed_runs: 0 };
+  schedule: { kind: "cron", expression: "0 */12 * * *", timezone: "UTC" }, next_due_ms: 61_000, pending_runs: 0, completed_runs: 0 };
 const session: Session = { id: "session", agent_id: "rc", observation: "available", event_count: 2,
   queued_operations: 0, active_operation: null, latest_operation: null };
 const host: HostSnapshot = { host_id: "host", agents: [

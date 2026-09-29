@@ -11,9 +11,8 @@ export function timestamp(value: number): string {
 }
 export function scheduleText(automation: Automation): string {
   const s = automation.schedule;
-  if (s.kind === "interval") return `Every ${s.hours} ${s.hours === 1 ? "hour" : "hours"}`;
   if (s.kind === "once") return `Once · ${timestamp(Date.parse(s.at))}`;
-  return `Daily · ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")} · ${s.timezone}`;
+  return `Cron ${s.expression} · ${s.timezone}`;
 }
 export function sessionNeedsAttention(session: Session): boolean {
   if (session.observation === "unavailable") return true;

@@ -51,7 +51,7 @@ const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for "))
       reference: found.reference,
       arguments: { action: "create", spec: {
         agent_id: agent, name: "Digest", prompt: standing,
-        schedule: { kind: "interval", hours: 24 }, enabled: false
+        schedule: { kind: "cron", expression: "0 0 * * *", timezone: "UTC" }, enabled: false
       } }
     } }];
   } else {
@@ -104,7 +104,9 @@ if (action === "describe") {{
 if (action !== "stream") process.exit(2);
 const request = JSON.parse(input);
 const user = request.messages.findLast(message => message.role === "user");
-const prompt = user?.content.find(block => block.type === "text")?.text ?? "";
+// An automation run's task follows its one context line.
+const prompt = (user?.content.find(block => block.type === "text")?.text ?? "")
+  .replace(/^\((Scheduled|Requested) run [^\n]*\)\n\n/, "");
 const toolResults = request.messages.filter(message => message.role === "tool");
 let content;
 let stopReason = "stop";

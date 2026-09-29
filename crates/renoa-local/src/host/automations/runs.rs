@@ -13,7 +13,7 @@ use super::{
 use crate::host::catalog;
 
 /// Every read of a run selects these columns, in the order [`run`] maps them.
-pub(super) const RUN_COLUMNS: &str = "sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,prompt,output,status,failed_tool_calls,finished_at_ms";
+pub(super) const RUN_COLUMNS: &str = "sequence,id,automation_id,agent_id,due_ms,admitted_at_ms,submission,output,status,failed_tool_calls,finished_at_ms";
 
 /// The liveness record of the process owning the schedule, which writes its
 /// [`heartbeat`] while it runs. Fresh catalogs and the schema 37 upgrade share
@@ -27,15 +27,41 @@ pub(in crate::host) const SCHEDULER_TABLE: &str =
 /// A run that starts later than this after its due time tells the agent so.
 const LATE_NOTE_AFTER_MS: i64 = 5 * 60_000;
 
+/// Admits a run of `r`. A scheduled run has the time it was `due`; a run
+/// requested with `run_now` has none and is due when admitted.
 pub(super) fn insert_run(
     tx: &Transaction<'_>,
     r: &AutomationRecord,
     id: Uuid,
-    due: i64,
+    due: Option<i64>,
     admitted_at: i64,
 ) -> Result<(), AutomationError> {
-    tx.execute("INSERT INTO host_automation_runs(id,automation_id,agent_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),due,admitted_at,r.spec.prompt])?;
+    let submission = submission(r, due, admitted_at)?;
+    tx.execute("INSERT INTO host_automation_runs(id,automation_id,agent_id,due_ms,admitted_at_ms,submission) VALUES(?1,?2,?3,?4,?5,?6)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),due.unwrap_or(admitted_at),admitted_at,submission])?;
     Ok(())
+}
+
+/// The standing task after one line of context: which automation this is,
+/// when it was due, and how late it started when that exceeds
+/// [`LATE_NOTE_AFTER_MS`].
+fn submission(
+    r: &AutomationRecord,
+    due: Option<i64>,
+    admitted_at: i64,
+) -> Result<String, AutomationError> {
+    let name = &r.spec.name;
+    let mut context = match due {
+        None => format!("Requested run of \"{name}\"."),
+        Some(due) => match r.spec.schedule.due_label(due)? {
+            Some(label) => format!("Scheduled run \"{name}\", due {label}."),
+            None => format!("Scheduled run \"{name}\"."),
+        },
+    };
+    let late = due.map_or(0, |due| admitted_at.saturating_sub(due));
+    if late > LATE_NOTE_AFTER_MS {
+        context = format!("{context} Started {} late.", duration(late));
+    }
+    Ok(format!("({context})\n\n{}", r.spec.prompt))
 }
 
 /// Maps a row selected with [`RUN_COLUMNS`]. A finished run has both a status
@@ -64,7 +90,7 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
         agent_id: AgentId::from_uuid(store::parse(row, 3)?),
         due_ms: row.get(4)?,
         admitted_at_ms: row.get(5)?,
-        prompt: row.get(6)?,
+        submission: row.get(6)?,
         result,
     })
 }
@@ -94,9 +120,9 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
         "renoa.automation.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
     ));
-    insert_run(&tx, &r, id, r.next_due_ms, now_ms)?;
+    insert_run(&tx, &r, id, Some(r.next_due_ms), now_ms)?;
     let late = now_ms.saturating_sub(r.next_due_ms);
-    if let Some(limit) = r.spec.schedule.skip_after_ms()
+    if let Some(limit) = r.spec.schedule.skip_after_ms(r.next_due_ms)?
         && late > limit
     {
         let reason = format!(
@@ -108,7 +134,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
     }
     // Coalesce missed times into one occurrence, then resume from the current clock.
     if !store::disarm_once(&mut r)? {
-        r.next_due_ms = r.spec.schedule.advance_past(r.next_due_ms, now_ms)?;
+        r.next_due_ms = r.spec.schedule.next_after(now_ms)?;
     }
     store::save(&tx, &r, false)?;
     let admitted = tx.query_row(
@@ -171,24 +197,6 @@ pub(super) fn heartbeat(path: &Path, now_ms: i64) -> Result<(), AutomationError>
         [now_ms],
     )?;
     Ok(())
-}
-
-impl AutomationRun {
-    /// The text an executor submits for this run: its standing task, preceded
-    /// by a note when it starts late. It depends only on the stored run, so a
-    /// resubmission after a restart is the same command.
-    #[must_use]
-    pub fn submission(&self) -> String {
-        let late = self.admitted_at_ms.saturating_sub(self.due_ms);
-        if late <= LATE_NOTE_AFTER_MS {
-            return self.prompt.clone();
-        }
-        format!(
-            "(This scheduled run started {} after its due time.)\n\n{}",
-            duration(late),
-            self.prompt
-        )
-    }
 }
 
 /// Whole hours and minutes, the precision a late run is reported in.

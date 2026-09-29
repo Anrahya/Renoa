@@ -5,6 +5,7 @@ use uuid::Uuid;
 use super::{LocalHost, LocalHostError};
 
 mod control;
+mod cron;
 mod receipts;
 pub(crate) mod result_tool;
 mod results;
@@ -19,7 +20,8 @@ pub(super) mod store;
 mod tests;
 pub(crate) mod tool;
 
-/// Host-owned timing. Daily schedules use named timezones; intervals use elapsed time.
+/// Host-owned timing: one absolute time, or a cron expression read in a named
+/// timezone.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AutomationSchedule {
@@ -27,13 +29,12 @@ pub enum AutomationSchedule {
         /// Absolute timestamp with an explicit UTC offset or Z.
         at: String,
     },
-    Daily {
-        hour: i8,
-        minute: i8,
+    Cron {
+        /// Five fields, "minute hour day-of-month month weekday"; runs at
+        /// least 5 minutes apart.
+        expression: String,
+        /// The IANA timezone the expression's times are read in.
         timezone: String,
-    },
-    Interval {
-        hours: u32,
     },
 }
 
@@ -90,7 +91,9 @@ pub struct AutomationRun {
     pub agent_id: AgentId,
     pub due_ms: i64,
     pub admitted_at_ms: i64,
-    pub prompt: String,
+    /// The message sent to the agent: a context line, then the standing task.
+    /// It is fixed at admission, so a resubmission is the same command.
+    pub submission: String,
     /// How the run ended; `None` while it is unfinished.
     pub result: Option<RunResult>,
 }
