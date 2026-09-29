@@ -173,7 +173,29 @@ async fn a_deleted_automation_leaves_no_trace_of_its_content() {
         "the unfinished run keeps its task until it finishes"
     );
 
+    let scheduler = h.automation_scheduler().expect("scheduler");
+    assert_eq!(
+        scheduler.conversations_to_delete().await.expect("marks"),
+        Vec::<Uuid>::new(),
+        "an automation with a run in flight keeps its conversation"
+    );
     runs::finish(&h.config.database, run.id, &succeeded("private answer"), 2).expect("finish");
+    assert_eq!(
+        scheduler.conversations_to_delete().await.expect("marks"),
+        [automation.id],
+        "its conversation is left for the schedule's owner to delete"
+    );
+    scheduler
+        .conversation_deleted(automation.id)
+        .await
+        .expect("record the deletion");
+    assert!(
+        scheduler
+            .conversations_to_delete()
+            .await
+            .expect("marks")
+            .is_empty()
+    );
     assert_eq!(holding(&h, secret), Vec::<String>::new());
     assert_eq!(holding(&h, "Private digest"), Vec::<String>::new());
     assert_eq!(holding(&h, "private answer"), Vec::<String>::new());

@@ -32,6 +32,7 @@ pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::H
     UPDATE host_metadata SET schema_version=16 WHERE singleton=1;")?;
     tx.execute_batch(super::runs::SCHEDULER_TABLE)?;
     tx.execute_batch(super::retention::RUN_INDEXES)?;
+    tx.execute_batch(super::retention::CONVERSATION_DELETIONS)?;
     super::receipts::initialize(tx)
 }
 

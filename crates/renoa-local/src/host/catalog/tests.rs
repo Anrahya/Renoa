@@ -1,6 +1,6 @@
 use super::{
     HostCatalogError, cutover, initialize, open_verified, restore_schema_34_automations,
-    restore_schema_35, restore_schema_36, restore_schema_37, restore_schema_38,
+    restore_schema_35, restore_schema_36, restore_schema_37, restore_schema_38, restore_schema_39,
 };
 
 #[test]
@@ -768,6 +768,14 @@ fn schema_38_indexes_run_history_and_purges_automations_deleted_earlier() {
         ),
         2
     );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_conversation_deletions"
+        ),
+        1,
+        "the purged automation's conversation is left to delete"
+    );
     for text in ["Private digest", "Read my notes."] {
         assert_eq!(
             count(
@@ -782,4 +790,53 @@ fn schema_38_indexes_run_history_and_purges_automations_deleted_earlier() {
             "{text} is gone"
         );
     }
+}
+
+#[test]
+fn schema_39_records_the_conversations_of_automations_it_already_purged() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    initialize(&database).expect("initialize current catalog");
+    let connection = open_verified(&database).expect("open current catalog");
+    restore_schema_39(&connection);
+    connection
+        .execute_batch(
+            r#"INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Scheduler', 1,
+                'provisioning', NULL, '{}', 'system', 'migration-test');
+             INSERT INTO host_automations(id, agent_id, name, prompt, schedule_json,
+                enabled, revision, next_due_ms)
+             VALUES ('00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', '', '',
+                '{"kind":"once","at":"1970-01-01T00:00:00Z"}', 0, 2, 100),
+                ('00000000-0000-0000-0000-00000000000b',
+                '00000000-0000-0000-0000-000000000001', 'Live', 'Keep going.',
+                '{"kind":"once","at":"1970-01-01T00:00:00Z"}', 1, 1, 100);
+             INSERT INTO host_automation_deletions VALUES ('00000000-0000-0000-0000-00000000000a');
+             UPDATE host_metadata SET schema_version = 39 WHERE singleton = 1;
+             PRAGMA user_version = 39;"#,
+        )
+        .expect("seed schema 39");
+    drop(connection);
+
+    initialize(&database).expect("upgrade schema 39 in place");
+    initialize(&database).expect("reopening the upgraded catalog is stable");
+    let connection = open_verified(&database).expect("open upgraded catalog");
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_conversation_deletions
+             WHERE automation_id = '00000000-0000-0000-0000-00000000000a'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_conversation_deletions"
+        ),
+        1,
+        "a live automation keeps its conversation"
+    );
 }

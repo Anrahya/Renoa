@@ -89,6 +89,9 @@ pub(crate) enum SurfaceOperation {
         command_id: CommandId,
         input: CommandInput,
     },
+    DeleteTask {
+        task_id: TaskId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

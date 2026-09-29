@@ -7,7 +7,7 @@ use crate::{
     operations::{NodeOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 10;
+pub const JSON_WS_VERSION: u32 = 11;
 const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -49,6 +49,10 @@ pub enum ClientMessage {
         command_id: CommandId,
         input: CommandInput,
     },
+    DeleteTask {
+        request_id: u64,
+        task_id: TaskId,
+    },
     AdvertiseTargets {
         targets: Vec<TargetRef>,
     },
@@ -74,7 +78,8 @@ impl ClientMessage {
             Self::ListTasks { request_id }
             | Self::ListTargets { request_id }
             | Self::OpenTask { request_id, .. }
-            | Self::Submit { request_id, .. } => interoperable(*request_id),
+            | Self::Submit { request_id, .. }
+            | Self::DeleteTask { request_id, .. } => interoperable(*request_id),
             Self::Attach {
                 request_id,
                 after_sequence,
@@ -132,6 +137,13 @@ impl ClientMessage {
                     command_id,
                     input,
                 },
+            }),
+            Self::DeleteTask {
+                request_id,
+                task_id,
+            } => Some(JsonOperation::Surface {
+                request_id,
+                operation: SurfaceOperation::DeleteTask { task_id },
             }),
             Self::AdvertiseTargets { targets } => {
                 Some(JsonOperation::Node(NodeOperation::AdvertiseTargets {
@@ -201,6 +213,10 @@ pub enum ServerMessage {
         request_id: u64,
         command_id: CommandId,
     },
+    TaskDeleted {
+        request_id: u64,
+        task_id: TaskId,
+    },
     ExecutionEventsAccepted {
         command_id: CommandId,
         through_execution_sequence: u64,
@@ -232,7 +248,8 @@ impl ServerMessage {
             Self::TaskList { request_id, .. }
             | Self::TargetList { request_id, .. }
             | Self::TaskOpened { request_id, .. }
-            | Self::CommandAccepted { request_id, .. } => interoperable(*request_id),
+            | Self::CommandAccepted { request_id, .. }
+            | Self::TaskDeleted { request_id, .. } => interoperable(*request_id),
             Self::Attached {
                 request_id,
                 through_sequence,

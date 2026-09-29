@@ -1,3 +1,7 @@
+#[allow(
+    dead_code,
+    reason = "the shared node fixture exposes deletion helpers used by the automation suite"
+)]
 mod support;
 
 use std::time::Duration;

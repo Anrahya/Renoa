@@ -214,3 +214,44 @@ async fn a_message_the_turn_repeats_is_recorded_live_in_its_place() {
     expected.push(terminal);
     assert_eq!(kinds, expected);
 }
+
+#[tokio::test]
+async fn a_task_is_named_for_deletion_only_once_its_executions_have_ended() {
+    use renoa_protocol::{ExecutionEventKind, ExecutionTerminal};
+
+    let files = tempfile::tempdir().expect("temporary directory");
+    let store = NodeStore::open(files.path().join("node.sqlite")).expect("open node ledger");
+    let task_id = TaskId::from_uuid(Uuid::from_u128(3));
+    let command_id = CommandId::from_uuid(Uuid::from_u128(10));
+    store
+        .admit(task_id, command(10), proposal(100))
+        .await
+        .expect("admit the command");
+    assert!(
+        store.task_session(task_id).await.is_err(),
+        "an unfinished execution keeps its session"
+    );
+
+    store
+        .finish(
+            command_id,
+            vec![ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Completed,
+            }],
+        )
+        .await
+        .expect("finish");
+    assert_eq!(
+        store.task_session(task_id).await.expect("session"),
+        Some((Uuid::from_u128(1), Uuid::from_u128(100)))
+    );
+    store.forget_task(task_id).await.expect("forget the task");
+    assert_eq!(store.task_session(task_id).await.expect("session"), None);
+    assert!(
+        store
+            .load_unfinished()
+            .await
+            .expect("unfinished")
+            .is_empty()
+    );
+}

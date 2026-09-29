@@ -199,6 +199,29 @@ impl Connection {
         }
     }
 
+    /// Deletes a task this principal owns with everything the coordinator
+    /// holds for it. Deleting a task that no longer exists succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport failure or the coordinator's refusal: `Conflict`
+    /// while a command of the task has not terminated, `NotFound` for another
+    /// principal's task.
+    pub async fn delete_task(&self, task_id: TaskId) -> Result<(), ClientError> {
+        match self
+            .request(|request_id| ClientMessage::DeleteTask {
+                request_id,
+                task_id,
+            })
+            .await?
+        {
+            ServerMessage::TaskDeleted {
+                task_id: deleted, ..
+            } if deleted == task_id => Ok(()),
+            other => Err(unexpected("task_deleted", &other)),
+        }
+    }
+
     /// Attaches to a task after `after_sequence`. The replayed records and then
     /// live records arrive on [`Events`]. Returns the replay high-water mark.
     ///
@@ -339,6 +362,7 @@ async fn dispatch(
         | ServerMessage::TaskList { request_id, .. }
         | ServerMessage::TargetList { request_id, .. }
         | ServerMessage::TaskOpened { request_id, .. }
+        | ServerMessage::TaskDeleted { request_id, .. }
         | ServerMessage::Attached { request_id, .. }
         | ServerMessage::CommandAccepted { request_id, .. } => *request_id,
         ServerMessage::Enrolled { .. }

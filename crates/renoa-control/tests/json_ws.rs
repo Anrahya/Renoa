@@ -10,8 +10,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v10_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 10);
+fn json_websocket_v11_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 11);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -24,7 +24,7 @@ fn json_websocket_v10_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 10,
+            "version": 11,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -70,6 +70,36 @@ fn json_websocket_v10_operation_envelopes_have_expected_shapes() {
         })
     );
 
+    let delete = ClientMessage::DeleteTask {
+        request_id: 8,
+        task_id,
+    };
+    let delete_json = json!({
+        "type": "delete_task",
+        "request_id": 8,
+        "task_id": "00000000-0000-0000-0000-000000000001"
+    });
+    assert_eq!(
+        serde_json::to_value(&delete).expect("serialize task deletion"),
+        delete_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(delete_json).expect("deserialize task deletion"),
+        delete
+    );
+    assert_eq!(
+        serde_json::to_value(ServerMessage::TaskDeleted {
+            request_id: 8,
+            task_id,
+        })
+        .expect("serialize task deleted"),
+        json!({
+            "type": "task_deleted",
+            "request_id": 8,
+            "task_id": "00000000-0000-0000-0000-000000000001"
+        })
+    );
+
     let error = ServerMessage::Error {
         request_id: Some(7),
         code: ErrorCode::Internal,
@@ -87,7 +117,7 @@ fn json_websocket_v10_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v10_encodes_task_discovery() {
+fn json_websocket_v11_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -129,7 +159,7 @@ fn json_websocket_v10_encodes_task_discovery() {
 }
 
 #[test]
-fn json_websocket_v10_encodes_target_discovery_and_task_opening() {
+fn json_websocket_v11_encodes_target_discovery_and_task_opening() {
     let node_id = NodeId::from_uuid(Uuid::from_u128(3));
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let cases = [
@@ -193,7 +223,7 @@ fn json_websocket_v10_encodes_target_discovery_and_task_opening() {
 }
 
 #[test]
-fn json_websocket_v10_encodes_harness_neutral_execution_events() {
+fn json_websocket_v11_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {
