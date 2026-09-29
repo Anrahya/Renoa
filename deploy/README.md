@@ -53,7 +53,9 @@ against the manifest, then unpacks it into `/opt/renoa/releases/<tag>/`. It
 refuses a release that lacks a binary of an installed service. Only services
 whose unit is installed on this host are updated, and only those whose
 binaries, unit files, adapters or Control Room changed are restarted, in the
-order `release.json` lists them. Restarting `renoa-node` first
+order `release.json` lists them. `renoa-node` upgrades the Host catalog when it
+opens it, so it precedes `renoa-management`, which refuses a catalog of an
+older schema. Restarting `renoa-node` first
 waits for running agent turns to finish (`--drain-timeout`, 600 s by default).
 Before switching, it snapshots the Host, coordinator, node and Discord SQLite
 databases with SQLite's backup API, and copies `config/`, into the release

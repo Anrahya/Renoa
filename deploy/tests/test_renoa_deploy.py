@@ -217,6 +217,13 @@ class DeployTest(unittest.TestCase):
         self.assertFalse((self.layout.units / "renoa-discord.service").exists())
         self.assertNotIn("renoa-discord.service", self.host.restarted())
 
+    def test_the_node_upgrades_the_host_catalog_before_management_reads_it(self):
+        (self.layout.units / "renoa-management.service").write_text(UNIT.format(name="renoa-management.service"))
+
+        self.install(release_archive(self.archives, "v1", {"renoa-node": b"n1", "renoa-management": b"m1"}))
+
+        self.assertEqual(self.host.restarted(), ["renoa-node.service", "renoa-management.service"])
+
     def test_a_changed_adapter_restarts_the_services_that_run_it(self):
         self.install(release_archive(self.archives, "v1", {"renoa-node": b"h1"}))
         self.host.commands.clear()
