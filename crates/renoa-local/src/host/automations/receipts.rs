@@ -85,7 +85,7 @@ impl AutomationActor {
             .optional()?;
         receipt
             .map(|(actor, original, result)| {
-                if actor != identity || original != request {
+                if actor != identity || !super::retention::request_matches(&original, request) {
                     return Err(AutomationError::Conflict);
                 }
                 Ok(serde_json::from_str(&result)?)

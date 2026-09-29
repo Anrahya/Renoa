@@ -94,36 +94,34 @@ fn assert_trace(path: &std::path::Path) {
     assert_eq!((run.0.as_str(), run.1), ("completed", 1));
     assert!(run.2 >= 0);
 
-    let provider_payload: String = connection
+    // The trace records the request's shape and size, not its content.
+    let request_shape: (String, String) = connection
         .query_row(
-            "SELECT payload_json FROM events
-             WHERE component = 'model' AND kind = 'provider_request'",
+            "SELECT started.payload_json, sent.payload_json
+             FROM events started JOIN events sent
+               ON sent.run_id = started.run_id AND sent.correlation_id = started.correlation_id
+             WHERE started.kind = 'request_started' AND sent.kind = 'provider_request'",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .expect("read exact provider request");
-    let provider_payload: serde_json::Value =
-        serde_json::from_str(&provider_payload).expect("decode provider payload");
-    assert_eq!(provider_payload["model"], "grok-test");
-    assert!(provider_payload["messages"].is_array());
-    assert_eq!(
-        provider_payload["tools"]
-            .as_array()
-            .expect("tool array")
-            .iter()
-            .map(|tool| tool["name"].as_str().expect("tool name"))
-            .collect::<Vec<_>>(),
-        [
-            "read_file",
-            "edit_file",
-            "write_file",
-            "bash",
-            "grep",
-            "find",
-            "plugin_search",
-            "plugin_manage",
-            "tool_execute",
-        ]
+        .expect("read model request shape");
+    let started: serde_json::Value =
+        serde_json::from_str(&request_shape.0).expect("decode request shape");
+    assert_eq!(started["tools"], 9, "{started}");
+    assert!(
+        started["messages"]
+            .as_u64()
+            .is_some_and(|messages| messages > 0)
+    );
+    let sent: serde_json::Value =
+        serde_json::from_str(&request_shape.1).expect("decode provider request size");
+    assert!(
+        sent["bytes"].as_u64().is_some_and(|bytes| bytes > 0),
+        "{sent}"
+    );
+    assert!(
+        !request_shape.1.contains("grok-test"),
+        "the provider request itself is not kept"
     );
 
     let response: (String, i64) = connection
@@ -170,5 +168,8 @@ fn assert_trace(path: &std::path::Path) {
             |row| row.get(0),
         )
         .expect("count model chunks");
-    assert_eq!(chunks, 2);
+    assert_eq!(
+        chunks, 0,
+        "streamed pieces reach the frontend but not the trace"
+    );
 }

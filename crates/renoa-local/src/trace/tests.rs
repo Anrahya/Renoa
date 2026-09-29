@@ -11,56 +11,152 @@ use tempfile::tempdir;
 
 use super::{TRACE_DATABASE, TraceStore};
 
+/// Every event of a run that carries `secret` in its content.
+async fn emit_content(trace: &super::TraceRun, secret: &str) {
+    let call = ToolCall {
+        id: "call".to_owned(),
+        name: "plugin_manage".to_owned(),
+        arguments: json!({ "argument": secret }),
+        thought_signature: None,
+        namespace: None,
+    };
+    let output = ToolOutput {
+        content: vec![ContentBlock::text(secret)],
+        details: Some(json!({ "details": secret })),
+        is_error: false,
+    };
+    for event in [
+        AgentEvent::ModelRequestStart {
+            invocation_id: "model".to_owned(),
+            request: ModelRequest {
+                system_prompt: secret.to_owned(),
+                messages: vec![renoa_agent::Message::user_text(secret)],
+                tools: Vec::new(),
+            },
+        },
+        AgentEvent::ModelProviderRequest {
+            invocation_id: "model".to_owned(),
+            payload: json!({ "messages": [secret] }),
+        },
+        AgentEvent::MessageUpdate {
+            content_index: 0,
+            delta: AssistantDelta::Text {
+                text: secret.to_owned(),
+            },
+        },
+        AgentEvent::ModelRequestChunk {
+            invocation_id: "model".to_owned(),
+            content_index: 0,
+            delta: AssistantDelta::Text {
+                text: secret.to_owned(),
+            },
+        },
+        AgentEvent::ModelRequestEnd {
+            invocation_id: "model".to_owned(),
+            response: ModelResponse {
+                content: vec![renoa_agent::AssistantContent::text(secret)],
+                stop_reason: StopReason::Stop,
+                usage: None,
+                metadata: AssistantMetadata::default(),
+            },
+        },
+        AgentEvent::ToolExecutionStart { call: call.clone() },
+        AgentEvent::ToolExecutionUpdate {
+            call: call.clone(),
+            update: output,
+        },
+        AgentEvent::ToolExecutionEnd {
+            call: call.clone(),
+            result: renoa_agent::ToolResult {
+                call_id: call.id.clone(),
+                name: call.name.clone(),
+                content: vec![ContentBlock::text(secret)],
+                details: Some(json!({ "details": secret })),
+                is_error: false,
+            },
+        },
+    ] {
+        trace.emit(event).await;
+    }
+}
+
 #[tokio::test]
-async fn trace_omits_credential_setup_and_oauth_authorization_urls() {
+async fn a_trace_records_what_happened_and_no_content() {
     let directory = tempdir().expect("temporary trace directory");
     let path = directory.path().join(TRACE_DATABASE);
     let store = TraceStore::create(path.clone(), SessionId::new(), AgentId::new())
         .expect("create trace store");
+    let secret = "private conversation text";
     let trace = store
         .start_run(
             CommandId::new(),
-            &[ContentBlock::text("connect")],
+            &[ContentBlock::text(secret)],
             "provider",
             "model",
             "high",
         )
         .await
         .expect("start trace");
-    let secret = "ab".repeat(32);
+    emit_content(&trace, secret).await;
     trace
-        .emit(AgentEvent::ToolExecutionUpdate {
+        .finish("completed", None, None)
+        .await
+        .expect("finish trace");
+
+    let connection = Connection::open(path).expect("open trace database");
+    let rows = connection
+        .prepare("SELECT kind || ' ' || payload_json FROM events ORDER BY sequence")
+        .expect("prepare")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("rows");
+    assert_eq!(
+        rows,
+        [
+            r#"request_started {"messages":1,"tools":0}"#.to_owned(),
+            format!(
+                r#"provider_request {{"bytes":{}}}"#,
+                json!({ "messages": [secret] }).to_string().len()
+            ),
+            r#"request_finished {"stop_reason":"stop"}"#.to_owned(),
+            "execution_started null".to_owned(),
+            "execution_finished null".to_owned(),
+        ],
+        "streamed pieces and tool progress leave no rows"
+    );
+    let input: String = connection
+        .query_row("SELECT input_json FROM runs", [], |row| row.get(0))
+        .expect("run input");
+    assert!(!input.contains(secret), "{input}");
+}
+
+#[tokio::test]
+async fn a_failed_tool_call_keeps_the_start_of_its_error() {
+    let directory = tempdir().expect("temporary trace directory");
+    let path = directory.path().join(TRACE_DATABASE);
+    let store = TraceStore::create(path.clone(), SessionId::new(), AgentId::new())
+        .expect("create trace store");
+    let trace = store
+        .start_run(CommandId::new(), &[], "provider", "model", "high")
+        .await
+        .expect("start trace");
+    let error = format!("missing-notes.txt: No such file{}", "!".repeat(600));
+    trace
+        .emit(AgentEvent::ToolExecutionEnd {
             call: ToolCall {
-                id: "credential-call".to_owned(),
-                name: "plugin_manage".to_owned(),
+                id: "read".to_owned(),
+                name: "read_file".to_owned(),
                 arguments: json!({}),
                 thought_signature: None,
                 namespace: None,
             },
-            update: ToolOutput {
-                content: vec![ContentBlock::text(format!(
-                    "{{\"status\":\"credential_required\",\"credential\":\"exa.default\",\"setup_url\":\"https://renoa.live/setup#key={secret}&token={secret}\"}}"
-                ))],
-                details: Some(json!({"must_not_survive": secret})),
-                is_error: false,
-            },
-        })
-        .await;
-    trace
-        .emit(AgentEvent::ToolExecutionUpdate {
-            call: ToolCall {
-                id: "oauth-call".to_owned(),
-                name: "plugin_manage".to_owned(),
-                arguments: json!({}),
-                thought_signature: None,
-                namespace: None,
-            },
-            update: ToolOutput {
-                content: vec![ContentBlock::text(format!(
-                    "{{\"status\":\"authorization_required\",\"connection\":\"notion.default\",\"authorization_url\":\"https://provider.example/authorize?state={secret}\"}}"
-                ))],
-                details: Some(json!({"must_not_survive": secret})),
-                is_error: false,
+            result: renoa_agent::ToolResult {
+                call_id: "read".to_owned(),
+                name: "read_file".to_owned(),
+                content: vec![ContentBlock::text(error.clone())],
+                details: None,
+                is_error: true,
             },
         })
         .await;
@@ -69,27 +165,23 @@ async fn trace_omits_credential_setup_and_oauth_authorization_urls() {
         .await
         .expect("finish trace");
 
-    let connection = Connection::open(path).expect("open trace database");
-    let mut statement = connection
-        .prepare(
-            "SELECT payload_json FROM events WHERE kind = 'execution_update' ORDER BY sequence",
+    let (status, payload) = Connection::open(path)
+        .expect("open trace database")
+        .query_row(
+            "SELECT status, payload_json FROM events WHERE kind = 'execution_finished'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
-        .expect("prepare progress trace query");
-    let payloads = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .expect("query progress traces")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("load progress traces");
-    assert_eq!(payloads.len(), 2);
-    assert!(payloads[0].contains("credential_required"));
-    assert!(payloads[0].contains("setup_url_omitted"));
-    assert!(payloads[1].contains("authorization_required"));
-    assert!(payloads[1].contains("authorization_url_omitted"));
-    assert!(payloads.iter().all(|payload| !payload.contains(&secret)));
+        .expect("tool row");
+    assert_eq!(status, "failed");
+    assert_eq!(
+        payload,
+        json!({ "error": error.chars().take(500).collect::<String>() }).to_string()
+    );
 }
 
 #[tokio::test]
-async fn trace_records_exact_model_flow_and_normalized_usage() {
+async fn trace_records_model_timing_and_normalized_usage() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join(TRACE_DATABASE);
     let session_id = SessionId::new();
@@ -222,7 +314,7 @@ fn assert_trace_identity(path: &std::path::Path, session_id: SessionId, agent_id
             },
         )
         .expect("read trace identity");
-    assert_eq!(stored, (3, session_id.to_string(), agent_id.to_string()));
+    assert_eq!(stored, (4, session_id.to_string(), agent_id.to_string()));
 }
 
 fn assert_model_diagnostics(path: &std::path::Path) {
@@ -254,18 +346,7 @@ fn assert_model_diagnostics(path: &std::path::Path) {
     assert!(finished.5 >= 0);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&finished.6).expect("response JSON"),
-        serde_json::to_value(ModelResponse {
-            content: vec![renoa_agent::AssistantContent::text("Done")],
-            stop_reason: StopReason::Stop,
-            usage: Some(TokenUsage {
-                input: 10,
-                output: 2,
-                cache_read: 7,
-                cache_write: 1,
-            }),
-            metadata: AssistantMetadata::default(),
-        })
-        .expect("encode expected response")
+        json!({ "stop_reason": "stop" })
     );
     let provider_payload: String = connection
         .query_row(
@@ -274,7 +355,11 @@ fn assert_model_diagnostics(path: &std::path::Path) {
             |row| row.get(0),
         )
         .expect("read provider payload");
-    assert!(provider_payload.contains("exact payload"));
+    assert_eq!(
+        provider_payload,
+        json!({ "bytes": json!({ "model": "grok-code", "messages": ["exact payload"] }).to_string().len() })
+            .to_string()
+    );
     let retry_payload: String = connection
         .query_row(
             "SELECT payload_json FROM events WHERE kind = 'retry_attempt'",
@@ -396,4 +481,90 @@ fn trace_open_rejects_the_wrong_session_or_agent_identity() {
         TraceStore::open(path, session_id, AgentId::new()),
         Err(super::TraceError::Incompatible(_))
     ));
+}
+
+#[tokio::test]
+async fn a_schema_3_trace_loses_its_content_and_gives_the_space_back() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join(TRACE_DATABASE);
+    let session_id = SessionId::new();
+    let agent_id = AgentId::new();
+    let store = TraceStore::create(path.clone(), session_id, agent_id).expect("create trace");
+    let trace = store
+        .start_run(CommandId::new(), &[], "provider", "model", "high")
+        .await
+        .expect("start trace");
+    trace
+        .finish("completed", None, None)
+        .await
+        .expect("finish trace");
+    // What a schema 3 runtime wrote: the full request, streamed pieces and
+    // tool output.
+    let secret = "x".repeat(1_000_000);
+    let connection = Connection::open(&path).expect("open trace database");
+    let run_id: String = connection
+        .query_row("SELECT run_id FROM runs", [], |row| row.get(0))
+        .expect("run");
+    for (sequence, kind) in [
+        "request_started",
+        "provider_request",
+        "stream_chunk",
+        "chunk",
+        "execution_update",
+        "execution_finished",
+        "request_finished",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        connection
+            .execute(
+                "INSERT INTO events(run_id, sequence, occurred_at_ms, elapsed_us, component,
+                    kind, payload_json) VALUES (?1, ?2, 0, 0, 'model', ?3, ?4)",
+                rusqlite::params![
+                    run_id,
+                    i64::try_from(sequence).expect("sequence") + 1,
+                    kind,
+                    json!([secret]).to_string()
+                ],
+            )
+            .expect("seed schema 3 event");
+    }
+    connection
+        .execute_batch(&format!(
+            "UPDATE runs SET input_json = '{}';
+             UPDATE trace_metadata SET schema_version = 3;
+             PRAGMA wal_checkpoint(TRUNCATE);",
+            json!([secret])
+        ))
+        .expect("schema 3 shape");
+    drop(connection);
+    let before = std::fs::metadata(&path).expect("size").len();
+
+    TraceStore::open(path.clone(), session_id, agent_id).expect("upgrade schema 3");
+    TraceStore::open(path.clone(), session_id, agent_id).expect("reopen schema 4");
+    assert_trace_identity(&path, session_id, agent_id);
+    let connection = Connection::open(&path).expect("open upgraded trace");
+    let kinds = connection
+        .prepare("SELECT kind || ' ' || payload_json FROM events ORDER BY sequence")
+        .expect("prepare")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("rows");
+    assert_eq!(
+        kinds,
+        [
+            "request_started null",
+            "provider_request null",
+            "execution_finished null",
+            "request_finished null"
+        ]
+    );
+    let input: String = connection
+        .query_row("SELECT input_json FROM runs", [], |row| row.get(0))
+        .expect("run input");
+    assert_eq!(input, "null");
+    let after = std::fs::metadata(&path).expect("size").len();
+    assert!(after * 10 < before, "{before} bytes became {after}");
 }

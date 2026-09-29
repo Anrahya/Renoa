@@ -592,6 +592,7 @@ async fn automation_reads_apply_the_same_actor_rule_as_mutations() {
 
 mod once;
 mod results;
+mod retention;
 
 mod control;
 mod cron;

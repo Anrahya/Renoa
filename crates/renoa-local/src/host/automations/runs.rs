@@ -8,7 +8,8 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehav
 use uuid::Uuid;
 
 use super::{
-    AutomationError, AutomationRecord, AutomationRun, RunOutcome, RunResult, RunStatus, store,
+    AutomationError, AutomationRecord, AutomationRun, RunOutcome, RunResult, RunStatus, retention,
+    store,
 };
 use crate::host::catalog;
 
@@ -132,6 +133,7 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
         );
         record(&tx, id, RunStatus::Skipped, &reason, None, now_ms)?;
     }
+    let pruned = retention::keep_newest(&tx, r.id)?;
     // Coalesce missed times into one occurrence, then resume from the current clock.
     if !store::disarm_once(&mut r)? {
         r.next_due_ms = r.spec.schedule.next_after(now_ms)?;
@@ -143,10 +145,12 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, Au
         run,
     )?;
     tx.commit()?;
+    retention::report(pruned);
     Ok(Some(admitted))
 }
 
-/// Records an executed run's outcome, which ends it.
+/// Records an executed run's outcome, which ends it, then applies its
+/// automation's retention: the run limit, and the purge a deletion waited for.
 pub(super) fn finish(
     path: &Path,
     id: Uuid,
@@ -155,16 +159,26 @@ pub(super) fn finish(
 ) -> Result<(), AutomationError> {
     let (RunOutcome::Succeeded { answer: output, .. } | RunOutcome::Failed { reason: output, .. }) =
         outcome;
-    record(
-        &catalog::open_verified(path)?,
+    let mut db = catalog::open_verified(path)?;
+    let tx = db.transaction()?;
+    let automation = record(
+        &tx,
         id,
         outcome.status(),
         output,
         Some(outcome.failed_tool_calls()),
         now_ms,
-    )
+    )?;
+    let removed = [
+        retention::keep_newest(&tx, automation)?,
+        retention::purge_deleted(&tx, automation)?,
+    ];
+    tx.commit()?;
+    retention::report(removed.into_iter().flatten());
+    Ok(())
 }
 
+/// Ends an unfinished run and returns its automation.
 fn record(
     db: &Connection,
     id: Uuid,
@@ -172,15 +186,15 @@ fn record(
     output: &str,
     failed_tool_calls: Option<u32>,
     now_ms: i64,
-) -> Result<(), AutomationError> {
-    if db.execute(
-        "UPDATE host_automation_runs SET output=?2,status=?3,failed_tool_calls=?4,finished_at_ms=?5 WHERE id=?1 AND output IS NULL",
-        params![id.to_string(), output, status.as_str(), failed_tool_calls, now_ms],
-    )? != 1
-    {
-        return Err(AutomationError::Conflict);
-    }
-    Ok(())
+) -> Result<Uuid, AutomationError> {
+    let automation = db
+        .query_row(
+            "UPDATE host_automation_runs SET output=?2,status=?3,failed_tool_calls=?4,finished_at_ms=?5 WHERE id=?1 AND output IS NULL RETURNING automation_id",
+            params![id.to_string(), output, status.as_str(), failed_tool_calls, now_ms],
+            |row| store::parse(row, 0),
+        )
+        .optional()?;
+    automation.ok_or(AutomationError::Conflict)
 }
 
 pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, AutomationError> {
@@ -189,13 +203,16 @@ pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, A
     Ok(q.query_map([after], run)?.collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Records that the process owning the schedule is alive.
+/// Records that the process owning the schedule is alive, and expires runs
+/// past their age on the same beat.
 pub(super) fn heartbeat(path: &Path, now_ms: i64) -> Result<(), AutomationError> {
-    catalog::open_verified(path)?.execute(
+    let db = catalog::open_verified(path)?;
+    db.execute(
         "INSERT INTO host_automation_scheduler(singleton,heartbeat_ms) VALUES(1,?1)
          ON CONFLICT(singleton) DO UPDATE SET heartbeat_ms=excluded.heartbeat_ms",
         [now_ms],
     )?;
+    retention::report(retention::expire(&db, now_ms)?);
     Ok(())
 }
 

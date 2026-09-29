@@ -1,6 +1,6 @@
 use super::{
     HostCatalogError, cutover, initialize, open_verified, restore_schema_34_automations,
-    restore_schema_35, restore_schema_36, restore_schema_37,
+    restore_schema_35, restore_schema_36, restore_schema_37, restore_schema_38,
 };
 
 #[test]
@@ -717,4 +717,69 @@ fn schema_37_daily_and_interval_schedules_are_refused_without_residue() {
         initialize(&database).is_err(),
         "a receipt that replays a legacy schedule is refused too"
     );
+}
+
+#[test]
+fn schema_38_indexes_run_history_and_purges_automations_deleted_earlier() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    initialize(&database).expect("initialize current catalog");
+    let connection = open_verified(&database).expect("open current catalog");
+    restore_schema_38(&connection);
+    connection
+        .execute_batch(
+            r#"INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Scheduler', 1,
+                'provisioning', NULL, '{}', 'system', 'migration-test');
+             INSERT INTO host_automations(id, agent_id, name, prompt, schedule_json,
+                enabled, revision, next_due_ms)
+             VALUES ('00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 'Private digest', 'Read my notes.',
+                '{"kind":"once","at":"1970-01-01T00:00:00Z"}', 0, 2, 100);
+             INSERT INTO host_automation_deletions VALUES ('00000000-0000-0000-0000-00000000000a');
+             INSERT INTO host_automation_runs(id, automation_id, agent_id, due_ms,
+                admitted_at_ms, submission, output, status)
+             VALUES ('00000000-0000-0000-0000-0000000000b1',
+                '00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 1, 1, 'Read my notes.',
+                'The notes say hello.', 'succeeded');
+             INSERT INTO host_automation_mutations VALUES ('00000000-0000-0000-0000-00000000000c',
+                '00000000-0000-0000-0000-000000000001', '{"action":"create","spec":{"prompt":"Read my notes."}}',
+                '{"id":"00000000-0000-0000-0000-00000000000a","spec":{"name":"Private digest","prompt":"Read my notes."}}');
+             UPDATE host_metadata SET schema_version = 38 WHERE singleton = 1;
+             PRAGMA user_version = 38;"#,
+        )
+        .expect("seed schema 38");
+    drop(connection);
+
+    initialize(&database).expect("upgrade schema 38 in place");
+    initialize(&database).expect("reopening the upgraded catalog is stable");
+    let connection = open_verified(&database).expect("open upgraded catalog");
+    assert_eq!(
+        count(&connection, "SELECT COUNT(*) FROM host_automation_runs"),
+        0
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'
+             AND name IN ('host_automation_runs_by_automation', 'host_automation_runs_by_agent')"
+        ),
+        2
+    );
+    for text in ["Private digest", "Read my notes."] {
+        assert_eq!(
+            count(
+                &connection,
+                &format!(
+                    "SELECT (SELECT COUNT(*) FROM host_automations WHERE name = '{text}' OR prompt = '{text}')
+                          + (SELECT COUNT(*) FROM host_automation_mutations
+                             WHERE instr(request_json, '{text}') OR instr(result_json, '{text}'))"
+                )
+            ),
+            0,
+            "{text} is gone"
+        );
+    }
 }
