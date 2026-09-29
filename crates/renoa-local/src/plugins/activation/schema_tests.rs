@@ -8,6 +8,7 @@ const AGENT: &str = "00000000-0000-0000-0000-000000000001";
 fn schema_30(path: &Path, selected: bool) {
     catalog::initialize(path).unwrap();
     let connection = Connection::open(path).unwrap();
+    catalog::restore_routine_tables(&connection);
     connection.execute_batch("DROP VIEW host_agent_enabled_mcp_connections;
         DROP TABLE host_plugin_admissions;
         DROP TABLE host_plugin_activation_operations;
@@ -146,8 +147,9 @@ fn schema_32_plugin_activations_survive_the_in_place_upgrade() {
     connection.execute("INSERT INTO host_agent_plugin_revisions(agent_id,plugin_id,package_digest) VALUES (?1,?2,?2)",params![AGENT,DIGEST]).unwrap();
     drop(connection);
     catalog::open_verified(&path).expect("the fixture is a valid current catalog");
-    Connection::open(&path)
-        .unwrap()
+    let connection = Connection::open(&path).unwrap();
+    catalog::restore_routine_tables(&connection);
+    connection
         .execute_batch(
             "UPDATE host_metadata SET schema_version=32 WHERE singleton=1;
              PRAGMA user_version=32;",

@@ -1,6 +1,6 @@
 use super::{
-    RoutineError, RoutineMutation, RoutineRecord, RoutineRun, RoutineSchedule, RoutineSpec,
-    receipts::RoutineActor,
+    AutomationError, AutomationMutation, AutomationRecord, AutomationRun, AutomationSchedule,
+    AutomationSpec, receipts::AutomationActor,
 };
 use crate::host::catalog;
 use renoa_kernel::AgentId;
@@ -10,29 +10,29 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(in crate::host) fn initialize(tx: &Transaction<'_>) -> Result<(), catalog::HostCatalogError> {
-    tx.execute_batch("CREATE TABLE IF NOT EXISTS host_routines (
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS host_automations (
         id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
         name TEXT NOT NULL, prompt TEXT NOT NULL, schedule_json TEXT NOT NULL CHECK(json_valid(schedule_json)),
         enabled INTEGER NOT NULL CHECK(enabled IN(0,1)), revision INTEGER NOT NULL CHECK(revision>0), next_due_ms INTEGER NOT NULL
     ) STRICT;
-    CREATE TABLE IF NOT EXISTS host_routine_deletions (routine_id TEXT PRIMARY KEY REFERENCES host_routines(id)) STRICT;
-    CREATE TABLE IF NOT EXISTS host_routine_mutations (
+    CREATE TABLE IF NOT EXISTS host_automation_deletions (automation_id TEXT PRIMARY KEY REFERENCES host_automations(id)) STRICT;
+    CREATE TABLE IF NOT EXISTS host_automation_mutations (
         operation_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL REFERENCES host_agents(agent_id),
         request_json TEXT NOT NULL, result_json TEXT NOT NULL
     ) STRICT;
-    CREATE TABLE IF NOT EXISTS host_routine_runs (
+    CREATE TABLE IF NOT EXISTS host_automation_runs (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
-        routine_id TEXT NOT NULL REFERENCES host_routines(id), agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
+        automation_id TEXT NOT NULL REFERENCES host_automations(id), agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
         session_id TEXT NOT NULL, due_ms INTEGER NOT NULL, admitted_at_ms INTEGER NOT NULL, prompt TEXT NOT NULL, output TEXT
     ) STRICT;
-    CREATE INDEX IF NOT EXISTS host_routine_pending ON host_routine_runs(sequence) WHERE output IS NULL;
+    CREATE INDEX IF NOT EXISTS host_automation_pending ON host_automation_runs(sequence) WHERE output IS NULL;
     UPDATE host_metadata SET schema_version=16 WHERE singleton=1;")?;
     super::receipts::initialize(tx)
 }
 
-fn active(cancellation: &CancellationToken) -> Result<(), RoutineError> {
+fn active(cancellation: &CancellationToken) -> Result<(), AutomationError> {
     if cancellation.is_cancelled() {
-        Err(RoutineError::Cancelled)
+        Err(AutomationError::Cancelled)
     } else {
         Ok(())
     }
@@ -40,12 +40,12 @@ fn active(cancellation: &CancellationToken) -> Result<(), RoutineError> {
 
 pub(super) fn mutate(
     path: &Path,
-    actor: RoutineActor,
+    actor: AutomationActor,
     operation: Uuid,
-    mutation: RoutineMutation,
+    mutation: AutomationMutation,
     now_ms: i64,
     cancellation: &CancellationToken,
-) -> Result<RoutineRecord, RoutineError> {
+) -> Result<AutomationRecord, AutomationError> {
     active(cancellation)?;
     let mut db = catalog::open_verified(path)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -55,10 +55,10 @@ pub(super) fn mutate(
         return Ok(record);
     }
     let record = match mutation {
-        RoutineMutation::Create { spec } => {
+        AutomationMutation::Create { spec } => {
             spec.validate(now_ms)?;
             actor.authorize(&tx, spec.agent_id)?;
-            let record = RoutineRecord {
+            let record = AutomationRecord {
                 id: operation,
                 revision: 1,
                 next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
@@ -67,7 +67,7 @@ pub(super) fn mutate(
             save(&tx, &record, true)?;
             record
         }
-        RoutineMutation::Update {
+        AutomationMutation::Update {
             id,
             expected_revision,
             spec,
@@ -78,7 +78,7 @@ pub(super) fn mutate(
             save(&tx, &record, false)?;
             record
         }
-        RoutineMutation::SetEnabled {
+        AutomationMutation::SetEnabled {
             id,
             expected_revision,
             enabled,
@@ -91,35 +91,37 @@ pub(super) fn mutate(
             save(&tx, &record, false)?;
             record
         }
-        RoutineMutation::Delete {
+        AutomationMutation::Delete {
             id,
             expected_revision,
         } => {
             let mut record = get(&tx, id)?;
             actor.authorize(&tx, record.spec.agent_id)?;
             if record.revision != expected_revision {
-                return Err(RoutineError::Conflict);
+                return Err(AutomationError::Conflict);
             }
             record.spec.enabled = false;
             record.revision = record
                 .revision
                 .checked_add(1)
-                .ok_or(RoutineError::Conflict)?;
+                .ok_or(AutomationError::Conflict)?;
             save(&tx, &record, false)?;
             tx.execute(
-                "INSERT INTO host_routine_deletions(routine_id) VALUES(?1)",
+                "INSERT INTO host_automation_deletions(automation_id) VALUES(?1)",
                 [id.to_string()],
             )?;
             record
         }
-        RoutineMutation::RunNow { id } => {
+        AutomationMutation::RunNow { id } => {
             let mut record = get(&tx, id)?;
             actor.authorize(&tx, record.spec.agent_id)?;
             if now_ms < 0 {
-                return Err(RoutineError::Invalid("invalid occurrence time".to_owned()));
+                return Err(AutomationError::Invalid(
+                    "invalid occurrence time".to_owned(),
+                ));
             }
             if pending_for(&tx, id)? {
-                return Err(RoutineError::Busy);
+                return Err(AutomationError::Busy);
             }
             insert_run(&tx, &record, operation, now_ms, now_ms)?;
             disarm_once(&mut record)?;
@@ -134,13 +136,13 @@ pub(super) fn mutate(
 }
 
 fn updated_record(
-    old: &RoutineRecord,
+    old: &AutomationRecord,
     expected_revision: i64,
-    spec: RoutineSpec,
+    spec: AutomationSpec,
     now_ms: i64,
-) -> Result<RoutineRecord, RoutineError> {
+) -> Result<AutomationRecord, AutomationError> {
     if old.revision != expected_revision || old.spec.agent_id != spec.agent_id {
-        return Err(RoutineError::Conflict);
+        return Err(AutomationError::Conflict);
     }
     spec.validate(now_ms)?;
     let next_due_ms = if old.spec.schedule == spec.schedule && old.spec.enabled == spec.enabled {
@@ -148,9 +150,12 @@ fn updated_record(
     } else {
         spec.schedule.first_due(now_ms, spec.enabled)?
     };
-    Ok(RoutineRecord {
+    Ok(AutomationRecord {
         id: old.id,
-        revision: old.revision.checked_add(1).ok_or(RoutineError::Conflict)?,
+        revision: old
+            .revision
+            .checked_add(1)
+            .ok_or(AutomationError::Conflict)?,
         spec,
         next_due_ms,
     })
@@ -158,8 +163,8 @@ fn updated_record(
 
 // Disarming and admitting share a transaction. Bump the revision so an edit
 // based on the armed state cannot accidentally re-arm a consumed occurrence.
-fn disarm_once(record: &mut RoutineRecord) -> Result<bool, RoutineError> {
-    if !matches!(record.spec.schedule, RoutineSchedule::Once { .. }) {
+fn disarm_once(record: &mut AutomationRecord) -> Result<bool, AutomationError> {
+    if !matches!(record.spec.schedule, AutomationSchedule::Once { .. }) {
         return Ok(false);
     }
     if record.spec.enabled {
@@ -167,7 +172,7 @@ fn disarm_once(record: &mut RoutineRecord) -> Result<bool, RoutineError> {
         record.revision = record
             .revision
             .checked_add(1)
-            .ok_or(RoutineError::Conflict)?;
+            .ok_or(AutomationError::Conflict)?;
     }
     Ok(true)
 }
@@ -176,7 +181,7 @@ pub(super) fn authorize(
     db: &Connection,
     actor: AgentId,
     target: AgentId,
-) -> Result<(), RoutineError> {
+) -> Result<(), AutomationError> {
     if actor == target {
         return Ok(());
     }
@@ -188,26 +193,26 @@ pub(super) fn authorize(
     if manages_agents {
         Ok(())
     } else {
-        Err(RoutineError::Invalid(format!(
-            "an agent needs the enabled `{}` plugin to manage another agent's routines",
+        Err(AutomationError::Invalid(format!(
+            "an agent needs the enabled `{}` plugin to manage another agent's automations",
             "renoa.agents"
         )))
     }
 }
 
-/// Inserts a routine inside a caller's existing transaction.
+/// Inserts an automation inside a caller's existing transaction.
 ///
 /// Agent creation uses this so the agent, its capability rows, its receipt, and
-/// its first routine commit together or not at all. Authorization is inherent:
-/// the caller is creating the agent the routine belongs to.
-pub(in crate::host) fn insert_first_routine(
+/// its first automation commit together or not at all. Authorization is inherent:
+/// the caller is creating the agent the automation belongs to.
+pub(in crate::host) fn insert_first_automation(
     transaction: &Transaction<'_>,
     id: Uuid,
-    spec: RoutineSpec,
+    spec: AutomationSpec,
     now_ms: i64,
-) -> Result<RoutineRecord, RoutineError> {
+) -> Result<AutomationRecord, AutomationError> {
     spec.validate(now_ms)?;
-    let record = RoutineRecord {
+    let record = AutomationRecord {
         id,
         revision: 1,
         next_due_ms: spec.schedule.first_due(now_ms, spec.enabled)?,
@@ -217,11 +222,11 @@ pub(in crate::host) fn insert_first_routine(
     Ok(record)
 }
 
-fn save(tx: &Transaction<'_>, r: &RoutineRecord, create: bool) -> Result<(), RoutineError> {
+fn save(tx: &Transaction<'_>, r: &AutomationRecord, create: bool) -> Result<(), AutomationError> {
     let sql = if create {
-        "INSERT INTO host_routines(id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)"
+        "INSERT INTO host_automations(id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)"
     } else {
-        "UPDATE host_routines SET agent_id=?2,name=?3,prompt=?4,schedule_json=?5,enabled=?6,revision=?7,next_due_ms=?8 WHERE id=?1"
+        "UPDATE host_automations SET agent_id=?2,name=?3,prompt=?4,schedule_json=?5,enabled=?6,revision=?7,next_due_ms=?8 WHERE id=?1"
     };
     tx.execute(
         sql,
@@ -239,10 +244,10 @@ fn save(tx: &Transaction<'_>, r: &RoutineRecord, create: bool) -> Result<(), Rou
     Ok(())
 }
 
-fn record(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutineRecord> {
-    Ok(RoutineRecord {
+fn record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRecord> {
+    Ok(AutomationRecord {
         id: parse(row, 0)?,
-        spec: RoutineSpec {
+        spec: AutomationSpec {
             agent_id: AgentId::from_uuid(parse(row, 1)?),
             name: row.get(2)?,
             prompt: row.get(3)?,
@@ -268,15 +273,15 @@ fn json_column<T: serde::de::DeserializeOwned>(
         rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(e))
     })
 }
-pub(super) fn get(db: &Connection, id: Uuid) -> Result<RoutineRecord, RoutineError> {
-    db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id)",[id.to_string()],record).optional()?.ok_or(RoutineError::NotFound)
+pub(super) fn get(db: &Connection, id: Uuid) -> Result<AutomationRecord, AutomationError> {
+    db.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id)",[id.to_string()],record).optional()?.ok_or(AutomationError::NotFound)
 }
 pub(super) fn list(
     db: &Connection,
     agent: AgentId,
     after: Option<Uuid>,
-) -> Result<Vec<RoutineRecord>, RoutineError> {
-    let mut query=db.prepare("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE agent_id=?1 AND id>?2 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY id LIMIT 20")?;
+) -> Result<Vec<AutomationRecord>, AutomationError> {
+    let mut query=db.prepare("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE agent_id=?1 AND id>?2 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) ORDER BY id LIMIT 20")?;
     Ok(query
         .query_map(
             params![
@@ -287,29 +292,29 @@ pub(super) fn list(
         )?
         .collect::<Result<Vec<_>, _>>()?)
 }
-fn pending_for(db: &Connection, id: Uuid) -> Result<bool, RoutineError> {
+fn pending_for(db: &Connection, id: Uuid) -> Result<bool, AutomationError> {
     Ok(db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM host_routine_runs WHERE routine_id=?1 AND output IS NULL)",
+        "SELECT EXISTS(SELECT 1 FROM host_automation_runs WHERE automation_id=?1 AND output IS NULL)",
         [id.to_string()],
         |row| row.get(0),
     )?)
 }
 fn insert_run(
     tx: &Transaction<'_>,
-    r: &RoutineRecord,
+    r: &AutomationRecord,
     id: Uuid,
     due: i64,
     admitted_at: i64,
-) -> Result<(), RoutineError> {
-    let session = crate::stable_id::stable_id(&format!("renoa.routine.session.v1:{}", r.id));
-    tx.execute("INSERT INTO host_routine_runs(id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),session.to_string(),due,admitted_at,r.spec.prompt])?;
+) -> Result<(), AutomationError> {
+    let session = crate::stable_id::stable_id(&format!("renoa.automation.session.v1:{}", r.id));
+    tx.execute("INSERT INTO host_automation_runs(id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id.to_string(),r.id.to_string(),r.spec.agent_id.to_string(),session.to_string(),due,admitted_at,r.spec.prompt])?;
     Ok(())
 }
-pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutineRun> {
-    Ok(RoutineRun {
+pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRun> {
+    Ok(AutomationRun {
         sequence: row.get(0)?,
         id: parse(row, 1)?,
-        routine_id: parse(row, 2)?,
+        automation_id: parse(row, 2)?,
         agent_id: AgentId::from_uuid(parse(row, 3)?),
         session_id: parse(row, 4)?,
         due_ms: row.get(5)?,
@@ -321,17 +326,17 @@ pub(super) fn run(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutineRun> {
 
 /// Called only while holding the Host scheduler process lease. Admission and
 /// advancing the clock commit together; unfinished runs retain their command ID.
-pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<RoutineRun>, RoutineError> {
+pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<AutomationRun>, AutomationError> {
     let mut db = catalog::open_verified(path)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let pending=tx.query_row("SELECT sequence,id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_routine_runs WHERE output IS NULL ORDER BY sequence LIMIT 1",[],run).optional()?;
+    let pending=tx.query_row("SELECT sequence,id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE output IS NULL ORDER BY sequence LIMIT 1",[],run).optional()?;
     if pending.is_some() {
         return Ok(pending);
     }
-    let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_routines WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_routine_deletions WHERE routine_id=host_routines.id) ORDER BY next_due_ms,id LIMIT 1",[now_ms],record).optional()?;
+    let due=tx.query_row("SELECT id,agent_id,name,prompt,schedule_json,enabled,revision,next_due_ms FROM host_automations WHERE enabled=1 AND next_due_ms<=?1 AND NOT EXISTS(SELECT 1 FROM host_automation_deletions WHERE automation_id=host_automations.id) ORDER BY next_due_ms,id LIMIT 1",[now_ms],record).optional()?;
     let Some(mut r) = due else { return Ok(None) };
     let id = crate::stable_id::stable_id(&format!(
-        "renoa.routine.occurrence.v1:{}:{}:{}",
+        "renoa.automation.occurrence.v1:{}:{}:{}",
         r.id, r.revision, r.next_due_ms
     ));
     insert_run(&tx, &r, id, r.next_due_ms, now_ms)?;
@@ -340,24 +345,24 @@ pub(super) fn next(path: &Path, now_ms: i64) -> Result<Option<RoutineRun>, Routi
         r.next_due_ms = r.spec.schedule.advance_past(r.next_due_ms, now_ms)?;
     }
     save(&tx, &r, false)?;
-    let admitted=tx.query_row("SELECT sequence,id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_routine_runs WHERE id=?1",[id.to_string()],run)?;
+    let admitted=tx.query_row("SELECT sequence,id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs WHERE id=?1",[id.to_string()],run)?;
     tx.commit()?;
     Ok(Some(admitted))
 }
 
-pub(super) fn finish(path: &Path, id: Uuid, output: &str) -> Result<(), RoutineError> {
+pub(super) fn finish(path: &Path, id: Uuid, output: &str) -> Result<(), AutomationError> {
     let db = catalog::open_verified(path)?;
     if db.execute(
-        "UPDATE host_routine_runs SET output=?2 WHERE id=?1 AND output IS NULL",
+        "UPDATE host_automation_runs SET output=?2 WHERE id=?1 AND output IS NULL",
         params![id.to_string(), output],
     )? != 1
     {
-        return Err(RoutineError::Conflict);
+        return Err(AutomationError::Conflict);
     }
     Ok(())
 }
-pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<RoutineRun>, RoutineError> {
+pub(super) fn completed(path: &Path, after: i64) -> Result<Vec<AutomationRun>, AutomationError> {
     let db = catalog::open_verified(path)?;
-    let mut q=db.prepare("SELECT sequence,id,routine_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_routine_runs r WHERE sequence>?1 AND output IS NOT NULL AND NOT EXISTS(SELECT 1 FROM host_routine_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL) ORDER BY sequence LIMIT 20")?;
+    let mut q=db.prepare("SELECT sequence,id,automation_id,agent_id,session_id,due_ms,admitted_at_ms,prompt,output FROM host_automation_runs r WHERE sequence>?1 AND output IS NOT NULL AND NOT EXISTS(SELECT 1 FROM host_automation_runs earlier WHERE earlier.sequence<r.sequence AND earlier.output IS NULL) ORDER BY sequence LIMIT 20")?;
     Ok(q.query_map([after], run)?.collect::<Result<Vec<_>, _>>()?)
 }

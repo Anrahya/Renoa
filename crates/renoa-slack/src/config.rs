@@ -255,6 +255,25 @@ mod tests {
             .expect("inspect live database without model or daemon lease");
         assert_eq!(inspection["requests"], serde_json::json!([]));
         drop(store);
+
+        // A schema 8 database still names its delivery table for routines.
+        let database = config
+            .data_directory
+            .join("state/surfaces/slack/slack.sqlite3");
+        rusqlite::Connection::open(&database)
+            .expect("database")
+            .execute_batch(
+                "INSERT INTO automation_deliveries(run_id,chunk,agent_id,channel,text,state)
+                 VALUES('run',0,'agent','C1','Morning summary.','pending');
+                 ALTER TABLE automation_delivery_cursor RENAME TO routine_delivery_cursor;
+                 ALTER TABLE automation_deliveries RENAME TO routine_deliveries;
+                 ALTER TABLE automation_context_receipts RENAME TO routine_context_receipts;
+                 PRAGMA user_version=8;",
+            )
+            .expect("schema eight");
+        let inspection = crate::inspect(&Config::read(&config_path).expect("read"))
+            .expect("inspect a schema 8 database");
+        assert_eq!(inspection["automation_deliveries"][0]["run_id"], "run");
     }
 
     #[cfg(unix)]

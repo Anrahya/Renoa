@@ -9,8 +9,8 @@ mod receipts;
 pub(crate) mod result_tool;
 mod results;
 mod runner;
-pub use control::{HostRoutineControl, RoutineEnablement};
-pub use results::RoutineResultSummary;
+pub use control::{AutomationEnablement, HostAutomationControl};
+pub use results::AutomationResultSummary;
 mod schedule;
 pub(super) mod store;
 #[cfg(test)]
@@ -20,7 +20,7 @@ pub(crate) mod tool;
 /// Host-owned timing. Daily schedules use named timezones; intervals use elapsed time.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RoutineSchedule {
+pub enum AutomationSchedule {
     Once {
         /// Absolute timestamp with an explicit UTC offset or Z.
         at: String,
@@ -38,33 +38,33 @@ pub enum RoutineSchedule {
 /// A standing task for a persistent agent. Results belong to the agent's Host inbox.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RoutineSpec {
+pub struct AutomationSpec {
     pub agent_id: AgentId,
     pub name: String,
     pub prompt: String,
-    pub schedule: RoutineSchedule,
+    pub schedule: AutomationSchedule,
     pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoutineRecord {
+pub struct AutomationRecord {
     pub id: Uuid,
     pub revision: i64,
-    pub spec: RoutineSpec,
+    pub spec: AutomationSpec,
     pub next_due_ms: i64,
 }
 
 /// Revision-checked management shared by tools and other Host clients.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RoutineMutation {
+pub enum AutomationMutation {
     Create {
-        spec: RoutineSpec,
+        spec: AutomationSpec,
     },
     Update {
         id: Uuid,
         expected_revision: i64,
-        spec: RoutineSpec,
+        spec: AutomationSpec,
     },
     SetEnabled {
         id: Uuid,
@@ -81,10 +81,10 @@ pub enum RoutineMutation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RoutineRun {
+pub struct AutomationRun {
     pub sequence: i64,
     pub id: Uuid,
-    pub routine_id: Uuid,
+    pub automation_id: Uuid,
     pub agent_id: AgentId,
     pub session_id: Uuid,
     pub due_ms: i64,
@@ -94,16 +94,16 @@ pub struct RoutineRun {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum RoutineError {
-    #[error("invalid routine: {0}")]
+pub enum AutomationError {
+    #[error("invalid automation: {0}")]
     Invalid(String),
-    #[error("routine was changed; read its current revision before updating")]
+    #[error("automation was changed; read its current revision before updating")]
     Conflict,
-    #[error("routine not found")]
+    #[error("automation not found")]
     NotFound,
-    #[error("this routine already has an admitted run")]
+    #[error("this automation already has an admitted run")]
     Busy,
-    #[error("routine operation was cancelled before commit")]
+    #[error("automation operation was cancelled before commit")]
     Cancelled,
     #[error("this caller does not own the configured Host")]
     Forbidden,
@@ -119,23 +119,23 @@ pub enum RoutineError {
 
 impl LocalHost {
     /// Applies a management operation once, retaining its exact result for replay.
-    /// An agent manages its own routines; another agent's routines need the
+    /// An agent manages its own automations; another agent's automations need the
     /// actor's stored selection to contain `agent_manage`.
     /// # Errors
     /// Rejects invalid targets, stale revisions, conflicting replay, or storage failures.
-    pub async fn manage_routine(
+    pub async fn manage_automation(
         &self,
         actor: AgentId,
         operation: Uuid,
-        mutation: RoutineMutation,
+        mutation: AutomationMutation,
         now_ms: i64,
         cancellation: tokio_util::sync::CancellationToken,
-    ) -> Result<RoutineRecord, LocalHostError> {
+    ) -> Result<AutomationRecord, LocalHostError> {
         let database = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
             store::mutate(
                 &database,
-                receipts::RoutineActor::Agent(actor),
+                receipts::AutomationActor::Agent(actor),
                 operation,
                 mutation,
                 now_ms,
@@ -145,17 +145,17 @@ impl LocalHost {
         .await??)
     }
 
-    /// Lists a bounded page of an agent's routines in stable ID order. Another
-    /// agent's routines need the actor's stored selection to contain
+    /// Lists a bounded page of an agent's automations in stable ID order. Another
+    /// agent's automations need the actor's stored selection to contain
     /// `agent_manage`.
     /// # Errors
     /// Rejects unauthorized targets and returns catalog and stored-data failures.
-    pub async fn list_routines(
+    pub async fn list_automations(
         &self,
         actor: AgentId,
         agent: AgentId,
         after: Option<Uuid>,
-    ) -> Result<Vec<RoutineRecord>, LocalHostError> {
+    ) -> Result<Vec<AutomationRecord>, LocalHostError> {
         let database = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
             let db = super::catalog::open_verified(&database)?;
@@ -166,18 +166,22 @@ impl LocalHost {
     }
 
     /// Reads one complete standing task for inspection or revision-checked
-    /// editing. Another agent's routines need the actor's stored selection to
+    /// editing. Another agent's automations need the actor's stored selection to
     /// contain `agent_manage`.
     /// # Errors
-    /// Rejects unauthorized targets and returns an unknown routine or catalog
+    /// Rejects unauthorized targets and returns an unknown automation or catalog
     /// failures.
-    pub async fn routine(&self, actor: AgentId, id: Uuid) -> Result<RoutineRecord, LocalHostError> {
+    pub async fn automation(
+        &self,
+        actor: AgentId,
+        id: Uuid,
+    ) -> Result<AutomationRecord, LocalHostError> {
         let database = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || {
             let db = super::catalog::open_verified(&database)?;
             let record = store::get(&db, id)?;
             store::authorize(&db, actor, record.spec.agent_id)?;
-            Ok::<_, RoutineError>(record)
+            Ok::<_, AutomationError>(record)
         })
         .await??)
     }
@@ -185,10 +189,10 @@ impl LocalHost {
     /// Reads completed results after a surface's durable delivery cursor.
     /// # Errors
     /// Returns catalog and stored-data failures.
-    pub async fn completed_routine_runs(
+    pub async fn completed_automation_runs(
         &self,
         after: i64,
-    ) -> Result<Vec<RoutineRun>, LocalHostError> {
+    ) -> Result<Vec<AutomationRun>, LocalHostError> {
         let database = self.config.database.clone();
         Ok(tokio::task::spawn_blocking(move || store::completed(&database, after)).await??)
     }

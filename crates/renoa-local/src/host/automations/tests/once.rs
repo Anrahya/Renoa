@@ -1,18 +1,18 @@
 use super::*;
 
-fn once(agent: AgentId, at: &str) -> RoutineSpec {
-    RoutineSpec {
-        schedule: RoutineSchedule::Once { at: at.to_owned() },
+fn once(agent: AgentId, at: &str) -> AutomationSpec {
+    AutomationSpec {
+        schedule: AutomationSchedule::Once { at: at.to_owned() },
         ..spec(agent)
     }
 }
 async fn change(
     h: &LocalHost,
     actor: AgentId,
-    mutation: RoutineMutation,
+    mutation: AutomationMutation,
     now: i64,
-) -> Result<RoutineRecord, LocalHostError> {
-    h.manage_routine(
+) -> Result<AutomationRecord, LocalHostError> {
+    h.manage_automation(
         actor,
         Uuid::new_v4(),
         mutation,
@@ -42,9 +42,9 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .await
         .expect("model schedules once");
     let record = h
-        .list_routines(parent, child, None)
+        .list_automations(parent, child, None)
         .await
-        .expect("routines")
+        .expect("automations")
         .remove(0);
     let expected = "2100-01-01T08:30:00Z"
         .parse::<jiff::Timestamp>()
@@ -59,14 +59,14 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
     let run = store::next(&h.config.database, expected + 60_000)
         .expect("late catchup")
         .expect("run");
-    let disarmed = h.routine(parent, record.id).await.expect("disarmed");
+    let disarmed = h.automation(parent, record.id).await.expect("disarmed");
     assert!(!disarmed.spec.enabled);
     assert_eq!(disarmed.revision, record.revision + 1);
     assert!(
         change(
             &h,
             child,
-            RoutineMutation::Update {
+            AutomationMutation::Update {
                 id: record.id,
                 expected_revision: record.revision,
                 spec: record.spec
@@ -76,7 +76,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .await
         .is_err()
     );
-    h.execute_routine_run(run.clone())
+    h.execute_automation_run(run.clone())
         .await
         .expect("real execution");
     let artifact = h
@@ -90,7 +90,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
     );
     let db = crate::host::catalog::open_verified(&h.config.database).expect("db");
     db.execute(
-        "UPDATE host_routine_runs SET output=NULL WHERE id=?1",
+        "UPDATE host_automation_runs SET output=NULL WHERE id=?1",
         [run.id.to_string()],
     )
     .expect("lost Host receipt");
@@ -104,7 +104,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
         .expect("same run");
     assert_eq!(pending.id, run.id);
     restarted
-        .execute_routine_run(pending)
+        .execute_automation_run(pending)
         .await
         .expect("kernel recovery");
     assert_eq!(
@@ -118,7 +118,7 @@ async fn model_creates_once_and_restart_recovers_its_only_admitted_execution() {
     );
     assert_eq!(
         restarted
-            .completed_routine_runs(0)
+            .completed_automation_runs(0)
             .await
             .expect("inbox")
             .len(),
@@ -139,7 +139,7 @@ async fn once_rejects_ambiguous_invalid_or_elapsed_dates() {
             change(
                 &h,
                 parent,
-                RoutineMutation::Create {
+                AutomationMutation::Create {
                     spec: once(child, at)
                 },
                 1000
@@ -156,7 +156,7 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
     let record = change(
         &h,
         parent,
-        RoutineMutation::Create {
+        AutomationMutation::Create {
             spec: once(child, "1970-01-01T00:00:02Z"),
         },
         1000,
@@ -168,7 +168,7 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
     let paused = change(
         &h,
         child,
-        RoutineMutation::Update {
+        AutomationMutation::Update {
             id: record.id,
             expected_revision: record.revision,
             spec: paused,
@@ -188,7 +188,7 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
         change(
             &h,
             child,
-            RoutineMutation::Update {
+            AutomationMutation::Update {
                 id: record.id,
                 expected_revision: paused.revision,
                 spec: rearmed.clone()
@@ -198,13 +198,13 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
         .await
         .is_err()
     );
-    rearmed.schedule = RoutineSchedule::Once {
+    rearmed.schedule = AutomationSchedule::Once {
         at: "1970-01-01T00:00:05Z".to_owned(),
     };
     let rearmed = change(
         &h,
         child,
-        RoutineMutation::Update {
+        AutomationMutation::Update {
             id: record.id,
             expected_revision: paused.revision,
             spec: rearmed,
@@ -214,16 +214,16 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
     .await
     .expect("reschedule");
     let op = Uuid::new_v4();
-    let manual = RoutineMutation::RunNow { id: record.id };
+    let manual = AutomationMutation::RunNow { id: record.id };
     let receipt = h
-        .manage_routine(child, op, manual.clone(), 4000, CancellationToken::new())
+        .manage_automation(child, op, manual.clone(), 4000, CancellationToken::new())
         .await
         .expect("run early");
     assert!(!receipt.spec.enabled);
     assert_eq!(receipt.revision, rearmed.revision + 1);
     assert_eq!(
         receipt,
-        h.manage_routine(child, op, manual, 6000, CancellationToken::new())
+        h.manage_automation(child, op, manual, 6000, CancellationToken::new())
             .await
             .expect("manual replay")
     );
@@ -240,12 +240,18 @@ async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
 }
 
 #[tokio::test]
-async fn schema_seventeen_upgrade_retains_existing_routines_and_receipts() {
+async fn a_schema_seventeen_root_is_refused_until_reset_and_then_starts_fresh() {
     let (d, h, parent, child) = fixture().await;
-    let record = change(&h, parent, RoutineMutation::Create { spec: spec(child) }, 0)
-        .await
-        .expect("interval");
+    let record = change(
+        &h,
+        parent,
+        AutomationMutation::Create { spec: spec(child) },
+        0,
+    )
+    .await
+    .expect("interval");
     let db = crate::host::catalog::open_verified(&h.config.database).expect("db");
+    crate::host::catalog::restore_routine_tables(&db);
     db.execute_batch("UPDATE host_metadata SET schema_version=17; PRAGMA user_version=17;")
         .expect("old schema");
     drop(db);
@@ -259,23 +265,23 @@ async fn schema_seventeen_upgrade_retains_existing_routines_and_receipts() {
     crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let restored = host(d.path());
     assert!(
-        restored.routine(parent, record.id).await.is_err(),
-        "the cutover discards the legacy routine and its receipts"
+        restored.automation(parent, record.id).await.is_err(),
+        "the cutover discards the legacy automation and its receipts"
     );
     let (parent, child) = provisioned(&restored).await;
     let record = change(
         &restored,
         parent,
-        RoutineMutation::Create { spec: spec(child) },
+        AutomationMutation::Create { spec: spec(child) },
         0,
     )
     .await
     .expect("interval after the cutover");
     let replay = restored
-        .manage_routine(
+        .manage_automation(
             parent,
             record.id,
-            RoutineMutation::Create { spec: record.spec },
+            AutomationMutation::Create { spec: record.spec },
             9999,
             CancellationToken::new(),
         )

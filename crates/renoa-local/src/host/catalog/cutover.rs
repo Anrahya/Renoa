@@ -83,7 +83,7 @@ fn migrate(
             }
             retire_agent_owners(&transaction)?;
             crate::host::definition::schema::initialize(&transaction)?;
-            crate::host::routines::initialize(&transaction)?;
+            crate::host::automations::initialize(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(
@@ -182,7 +182,12 @@ fn retire_agent_owners(transaction: &rusqlite::Transaction<'_>) -> Result<(), Ho
         "agent_skill_bindings",
         "agent_skill_source_rejections",
         "session_skills",
-        // Agent-owned records whose rows cannot survive the canonical shape.
+        // Schema 34 allows `renoa.automations` where this table allowed
+        // `renoa.routines`, so it is recreated rather than kept.
+        "host_builtin_plugin_operations",
+        "host_agent_builtin_plugins",
+        // Agent-owned records whose rows cannot survive the canonical shape,
+        // under the routine names every earlier schema used.
         "host_routine_deletions",
         "host_routine_mutations",
         "host_routine_owner_mutations",

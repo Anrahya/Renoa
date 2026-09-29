@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use super::super::{HostInitialization, reset_host_data_root};
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, ModelProvider,
-    RoutineMutation, RoutineSchedule, RoutineSpec,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AutomationMutation,
+    AutomationSchedule, AutomationSpec, LocalHost, ModelProvider,
     presets::{ARCEE_PRESET_ID, GENERAL_PRESET_ID},
 };
 
@@ -253,15 +253,15 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
         )
         .await
         .expect("agent");
-    host.manage_routine(
+    host.manage_automation(
         agent.id,
         Uuid::new_v4(),
-        RoutineMutation::Create {
-            spec: RoutineSpec {
+        AutomationMutation::Create {
+            spec: AutomationSpec {
                 agent_id: agent.id,
                 name: "Digest".to_owned(),
                 prompt: "Write the digest.".to_owned(),
-                schedule: RoutineSchedule::Interval { hours: 12 },
+                schedule: AutomationSchedule::Interval { hours: 12 },
                 enabled: true,
             },
         },
@@ -269,7 +269,7 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
         CancellationToken::new(),
     )
     .await
-    .expect("routine");
+    .expect("automation");
     let workspace = host.agent_workspace(agent.id).await.expect("workspace");
     fs::write(workspace.join("notes.md"), "kept\n").expect("workspace file");
     let sessions = root.join("data/sessions");

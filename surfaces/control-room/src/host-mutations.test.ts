@@ -7,7 +7,7 @@ function memory(): Storage {
     removeItem: key => { values.delete(key); }, clear: () => values.clear(), key: index => [...values.keys()][index] ?? null,
     get length() { return values.size; } };
 }
-const path = "/v1/host/routines/routine/enabled";
+const path = "/v1/host/automations/automation/enabled";
 describe("owner changes", () => {
   it("recovers a lost acknowledgment after reload with the same operation and original input", async () => {
     const storage = memory();
@@ -17,7 +17,7 @@ describe("owner changes", () => {
     expect(pendingChange("host", path, storage)?.enabled).toBe(false);
     const retry = vi.fn(async (_: unknown, init?: RequestInit) => {
       sent.push(String(init?.body)); const request = JSON.parse(String(init?.body));
-      return Response.json({ operation_id: request.operation_id, id: "routine", revision: 3, enabled: false, next_due_ms: 0 });
+      return Response.json({ operation_id: request.operation_id, id: "automation", revision: 3, enabled: false, next_due_ms: 0 });
     });
     expect((await saveChange("host", path, { expected_revision: 20, enabled: true }, retry, storage)).kind).toBe("saved");
     expect(sent[0]).toBe(sent[1]);

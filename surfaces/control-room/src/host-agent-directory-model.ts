@@ -27,8 +27,8 @@ export function directorySummary(host: HostSnapshot, agent: Agent, example?: Age
     title: data.activity.label,
     detail: tone !== "quiet" ? "Open activity to inspect the retained work and diagnostics." : "Based on the Host’s retained records.",
     workHref: agentHref(agent.id, "activity"),
-    automated: data.routines.length > 0,
-    automationCount: data.routines.length,
+    automated: data.automations.length > 0,
+    automationCount: data.automations.length,
     // The live snapshot records no timestamped work, so nothing reaches the day axis.
     day: [], lastAt: null,
     next: {

@@ -18,7 +18,7 @@ export function AgentMap({ host, live = false, receivedAt = null }: { host: Host
   const motion = useSystemMotion(viewport, host, live, receivedAt, paused);
   const agents = findAgents(host.agents.filter(agent => includeEarlier || !isEarlier(agent)), query);
   const earlier = host.agents.filter(isEarlier).length;
-  const identity = agents.map(agent => `${agent.id}:${host.routines.filter(r => r.agent_id === agent.id).map(r => r.id).join(",")}`).join(";");
+  const identity = agents.map(agent => `${agent.id}:${host.automations.filter(r => r.agent_id === agent.id).map(r => r.id).join(",")}`).join(";");
   return <section className="system-map" aria-label="Host system" data-moving={motion.moving}>
     <div className="system-toolbar">
       <label className="host-map-search"><MagnifyingGlass size={18} aria-hidden="true" /><span className="sr-only">Find an agent</span>
@@ -35,7 +35,7 @@ export function AgentMap({ host, live = false, receivedAt = null }: { host: Host
         </div>
         <ul className="system-agents" aria-label="Host-owned agents">{agents.map(agent => <li className="system-agent" key={agent.id}>
           <SystemAgent host={host} agent={agent} pulse={motion.pulses.get(agent.id) ?? null} />
-          <AgentSchedules routines={host.routines.filter(r => r.agent_id === agent.id)} now={motion.now} />
+          <AgentSchedules automations={host.automations.filter(r => r.agent_id === agent.id)} now={motion.now} />
         </li>)}</ul>
         {!agents.length && <p className="system-empty" role="status">{query.trim() ? "No matching agents." : "No persistent agents recorded."}</p>}
       </div>

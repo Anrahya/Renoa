@@ -4,15 +4,18 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
 use thiserror::Error;
 
 mod agents;
+mod automation_rename;
 mod cutover;
 mod migrations;
 mod selection_migration;
 
+#[cfg(test)]
+pub(crate) use automation_rename::restore_routine_tables;
 pub(crate) use cutover::cutover_and_clear;
 #[cfg(test)]
 pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 
-const SCHEMA_VERSION: u32 = 33;
+const SCHEMA_VERSION: u32 = 34;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -253,7 +256,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=32 => {
+        28..=33 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -271,6 +274,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
                 crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             }
             cutover::retire_review_tables(&transaction)?;
+            automation_rename::rename_routines(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],
@@ -286,7 +290,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             crate::skills::SkillStore::initialize_tables(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, false)?;
             super::definition::schema::initialize(&transaction)?;
-            super::routines::initialize(&transaction)?;
+            super::automations::initialize(&transaction)?;
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],

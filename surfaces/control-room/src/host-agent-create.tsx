@@ -45,7 +45,7 @@ export function CreateAgent({ controls }: { controls: Controls }) {
     event.preventDefault(); if (busy || controls.preview) return;
     setBusy(true); setNotice(null);
     try {
-      const result = await writeOwner(controls.hostId, path, { name, instructions, tools, connections: [], preset_id: null, routine: null, behavior: null, documents: { soul: true, user: true }, model: selected ? { provider: selected.provider, model: selected.model, reasoning: reasoning || null } : null }, validCreatedAgent);
+      const result = await writeOwner(controls.hostId, path, { name, instructions, tools, connections: [], preset_id: null, automation: null, behavior: null, documents: { soul: true, user: true }, model: selected ? { provider: selected.provider, model: selected.model, reasoning: reasoning || null } : null }, validCreatedAgent);
       setPending(result.kind === "uncertain");
       if (result.kind === "saved") { controls.refresh(); window.location.hash = agentHref(String(result.record.id), "configure"); }
       else setNotice(result.message);

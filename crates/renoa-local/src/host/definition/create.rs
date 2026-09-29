@@ -14,12 +14,14 @@ use super::{
 use crate::{
     AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDocuments, AgentOperationalDefinition,
     AgentToolSelection, capabilities,
-    host::{catalog, routines},
+    host::{automations, catalog},
     presets,
     stable_id::stable_id,
 };
 
-const ROUTINE_ID_DOMAIN: &str = "renoa.agent.routine.v1";
+// A frozen derivation domain: automation ids created by earlier releases were
+// derived from it, so it keeps the name routines had then.
+const AUTOMATION_ID_DOMAIN: &str = "renoa.agent.routine.v1";
 
 impl LocalHost {
     /// Creates one durable agent, or replays the stored result of the same
@@ -93,15 +95,15 @@ impl LocalHost {
             ));
         }
         let result_json = serde_json::to_string(&definition)?;
-        let routine = request.routine.map(|routine| {
+        let automation = request.automation.map(|automation| {
             (
-                stable_id(&format!("{ROUTINE_ID_DOMAIN}:{}", request.operation_id)),
-                routines::RoutineSpec {
+                stable_id(&format!("{AUTOMATION_ID_DOMAIN}:{}", request.operation_id)),
+                automations::AutomationSpec {
                     agent_id: definition.id,
-                    name: routine.name,
-                    prompt: routine.prompt,
-                    schedule: routine.schedule,
-                    enabled: routine.enabled,
+                    name: automation.name,
+                    prompt: automation.prompt,
+                    schedule: automation.schedule,
+                    enabled: automation.enabled,
                 },
             )
         });
@@ -120,7 +122,7 @@ impl LocalHost {
                         .unwrap_or_default(),
                 )
             }),
-            routine,
+            automation,
             cancellation,
         };
         tokio::task::spawn_blocking(move || create_blocking(&commit)).await?
@@ -170,7 +172,7 @@ struct CreateCommit {
     request_json: String,
     result_json: String,
     documents: Option<(AgentDocuments, &'static str)>,
-    routine: Option<(Uuid, routines::RoutineSpec)>,
+    automation: Option<(Uuid, automations::AutomationSpec)>,
     cancellation: CancellationToken,
 }
 
@@ -183,7 +185,7 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         request_json,
         result_json,
         documents,
-        routine,
+        automation,
         cancellation,
     } = commit;
     let mut connection = catalog::open_verified(database)?;
@@ -217,10 +219,10 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         crate::mcp::McpCatalogStore::require_complete_catalog(&transaction, connection_id)?;
     }
     store::insert(&transaction, definition)?;
-    if let Some((routine_id, spec)) = routine {
-        routines::store::insert_first_routine(
+    if let Some((automation_id, spec)) = automation {
+        automations::store::insert_first_automation(
             &transaction,
-            *routine_id,
+            *automation_id,
             spec.clone(),
             definition.created_at_ms,
         )?;

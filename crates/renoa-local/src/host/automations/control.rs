@@ -4,30 +4,32 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::{RoutineError, RoutineMutation, RoutineRecord, receipts::RoutineActor, store};
+use super::{
+    AutomationError, AutomationMutation, AutomationRecord, receipts::AutomationActor, store,
+};
 use crate::{HostCatalogError, HostObserver, LocalHostError, host::catalog};
 
 /// One logical request. Retry with this same identity and revision after an
 /// uncertain response; a new identity represents a new operation.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RoutineEnablement {
+pub struct AutomationEnablement {
     pub operation_id: Uuid,
     pub expected_revision: i64,
     pub enabled: bool,
 }
 
-/// Owner controls for existing routines, without constructing an execution Host.
+/// Owner controls for existing automations, without constructing an execution Host.
 /// The trusted adapter authenticates the principal; request bodies cannot supply
 /// caller identity. Agent tools use `LocalHost`'s restricted agent API instead.
 #[derive(Clone)]
-pub struct HostRoutineControl {
+pub struct HostAutomationControl {
     database: PathBuf,
     host_id: Uuid,
     owner: Uuid,
 }
 
-impl HostRoutineControl {
+impl HostAutomationControl {
     /// Pins existing storage and its configured human owner. Does not migrate,
     /// initialize a Host, discover models, or acquire execution ownership.
     /// # Errors
@@ -52,20 +54,20 @@ impl HostRoutineControl {
     /// receipt, which can be older than subsequent edits. Cancelling this future
     /// does not prove rollback: retry the identical request to recover its receipt.
     /// # Errors
-    /// Rejects other owners, replaced Hosts, stale revisions, deleted routines,
+    /// Rejects other owners, replaced Hosts, stale revisions, deleted automations,
     /// expired one-time schedules when resuming, and storage failures.
     pub async fn set_enabled(
         &self,
         authenticated_principal: Uuid,
-        routine: Uuid,
-        request: RoutineEnablement,
+        automation: Uuid,
+        request: AutomationEnablement,
         now_ms: i64,
-    ) -> Result<RoutineRecord, LocalHostError> {
+    ) -> Result<AutomationRecord, LocalHostError> {
         if authenticated_principal != self.owner {
-            return Err(RoutineError::Forbidden.into());
+            return Err(AutomationError::Forbidden.into());
         }
         let database = self.database.clone();
-        let actor = RoutineActor::Owner {
+        let actor = AutomationActor::Owner {
             host_id: self.host_id,
             principal: self.owner,
         };
@@ -74,8 +76,8 @@ impl HostRoutineControl {
                 &database,
                 actor,
                 request.operation_id,
-                RoutineMutation::SetEnabled {
-                    id: routine,
+                AutomationMutation::SetEnabled {
+                    id: automation,
                     expected_revision: request.expected_revision,
                     enabled: request.enabled,
                 },

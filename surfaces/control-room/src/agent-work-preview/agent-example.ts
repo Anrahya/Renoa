@@ -22,7 +22,7 @@ export function agentExample(agentId: string): AgentExample {
   if (agentId.endsWith("0002")) return { automations: byId(["brief", "event"]), executions: runs("run-106", "run-104") };
   // Broke: a timed-out connection, reported as a failure and not a question.
   if (agentId.endsWith("0003")) return { automations: byId(["workspace"]), executions: runs("run-103", "run-102") };
-  // Working on its own, with a paused routine alongside.
+  // Working on its own, with a paused automation alongside.
   if (agentId.endsWith("0004")) return { automations: byId(["workspace", "cleanup"]), executions: runs("run-102", "run-104") };
   return { automations, executions };
 }

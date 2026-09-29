@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse as _, Response},
 };
-use renoa_local::{LocalHostError, RoutineEnablement, RoutineError, TurnObservation};
+use renoa_local::{AutomationEnablement, AutomationError, LocalHostError, TurnObservation};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -41,7 +41,7 @@ pub(super) async fn set_enabled(
     State(state): State<Arc<ManagementState>>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
-    request: Result<Json<RoutineEnablement>, JsonRejection>,
+    request: Result<Json<AutomationEnablement>, JsonRejection>,
 ) -> Response {
     // Never derive authority from Host/Forwarded headers or a model-supplied actor.
     if let Some(response) = super::origin_failure(&state, &headers) {
@@ -74,7 +74,7 @@ pub(super) async fn set_enabled(
         }
     };
     let mut response = match state
-        .routines
+        .automations
         .set_enabled(session.principal.as_uuid(), id, request, now)
         .await
     {
@@ -86,28 +86,28 @@ pub(super) async fn set_enabled(
             next_due_ms: record.next_due_ms,
         })
         .into_response(),
-        Err(LocalHostError::Routine(RoutineError::Conflict)) => failure(
+        Err(LocalHostError::Automation(AutomationError::Conflict)) => failure(
             StatusCode::CONFLICT,
             "revision_conflict",
             "This automation changed or the operation ID was reused. Refresh before making a new change.",
         ),
-        Err(LocalHostError::Routine(RoutineError::NotFound)) => failure(
+        Err(LocalHostError::Automation(AutomationError::NotFound)) => failure(
             StatusCode::NOT_FOUND,
             "not_found",
             "This automation no longer exists.",
         ),
-        Err(LocalHostError::Routine(RoutineError::Forbidden)) => failure(
+        Err(LocalHostError::Automation(AutomationError::Forbidden)) => failure(
             StatusCode::FORBIDDEN,
             "wrong_owner",
             "This login does not own the configured Host.",
         ),
-        Err(LocalHostError::Routine(RoutineError::Invalid(reason))) => failure(
+        Err(LocalHostError::Automation(AutomationError::Invalid(reason))) => failure(
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_schedule",
             &reason,
         ),
         Err(error) => {
-            eprintln!("Host management routine operation {operation_id} failed: {error}");
+            eprintln!("Host management automation operation {operation_id} failed: {error}");
             failure(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "host_unavailable",

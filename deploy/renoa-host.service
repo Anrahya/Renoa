@@ -1,5 +1,5 @@
 [Unit]
-Description=Renoa Host routine scheduler and runner
+Description=Renoa Host automation scheduler and runner
 After=network-online.target
 Wants=network-online.target
 

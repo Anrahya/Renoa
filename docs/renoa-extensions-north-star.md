@@ -567,7 +567,7 @@ of the same skill name.
 
 ## Compiled Host plugins
 
-The same protocol also discovers compiled `renoa.agents`, `renoa.routines`,
+The same protocol also discovers compiled `renoa.agents`, `renoa.automations`,
 `renoa.documents`, `renoa.skills`, and `renoa.git` plugins. Their implementations
 are registered by the Host and cannot be loaded from an imported package.
 `plugin_manage` enables or deactivates them for its caller using durable receipts;

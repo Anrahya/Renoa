@@ -3,7 +3,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::{HostCatalogError, parse_id};
-use crate::RoutineSchedule;
+use crate::AutomationSchedule;
 
 #[derive(Debug, Serialize)]
 pub struct ObservedAgent {
@@ -15,11 +15,11 @@ pub struct ObservedAgent {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ObservedRoutine {
+pub struct ObservedAutomation {
     pub id: Uuid,
     pub agent_id: Uuid,
     pub name: String,
-    pub schedule: RoutineSchedule,
+    pub schedule: AutomationSchedule,
     pub enabled: bool,
     pub revision: i64,
     pub next_due_ms: i64,
@@ -72,16 +72,16 @@ pub(super) fn agents(db: &Connection) -> Result<Vec<ObservedAgent>, HostCatalogE
     Ok(items)
 }
 
-pub(super) fn routines(db: &Connection) -> Result<Vec<ObservedRoutine>, HostCatalogError> {
+pub(super) fn automations(db: &Connection) -> Result<Vec<ObservedAutomation>, HostCatalogError> {
     let mut q = db.prepare("SELECT r.id,r.agent_id,r.name,r.schedule_json,r.enabled,r.revision,r.next_due_ms,
-        (SELECT count(*) FROM host_routine_runs x WHERE x.routine_id=r.id AND x.output IS NULL),
-        (SELECT count(*) FROM host_routine_runs x WHERE x.routine_id=r.id AND x.output IS NOT NULL)
-        FROM host_routines r WHERE NOT EXISTS (SELECT 1 FROM host_routine_deletions d WHERE d.routine_id=r.id)
+        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.output IS NULL),
+        (SELECT count(*) FROM host_automation_runs x WHERE x.automation_id=r.id AND x.output IS NOT NULL)
+        FROM host_automations r WHERE NOT EXISTS (SELECT 1 FROM host_automation_deletions d WHERE d.automation_id=r.id)
         ORDER BY r.id")?;
     let mut rows = q.query([])?;
     let mut items = Vec::new();
     while let Some(row) = rows.next()? {
-        items.push(ObservedRoutine {
+        items.push(ObservedAutomation {
             id: parse_id(&row.get::<_, String>(0)?)?,
             agent_id: parse_id(&row.get::<_, String>(1)?)?,
             name: row.get(2)?,

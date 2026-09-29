@@ -22,11 +22,11 @@ use crate::{
 
 mod actions;
 mod agents;
+mod automations;
 mod awareness;
 mod channels;
 mod execution;
 mod ingress;
-mod routines;
 mod transport;
 
 struct Fixture {

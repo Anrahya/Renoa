@@ -90,10 +90,14 @@ fn normalize(selection: &mut AgentToolSelection, context: &str) -> Result<bool, 
             machine.insert(name.clone());
         } else if !matches!(
             name.as_str(),
+            // Schemas before 32 stored these names; schema 34 renamed the
+            // routine tools to automation tools.
             "extension_manage"
                 | "tool_search"
                 | "tool_load"
                 | "code_mode"
+                | "routine_manage"
+                | "routine_results"
                 | capabilities::PLUGIN_MANAGE
                 | capabilities::PLUGIN_SEARCH
                 | capabilities::TOOL_EXECUTE

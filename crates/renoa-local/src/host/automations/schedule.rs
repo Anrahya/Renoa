@@ -1,14 +1,14 @@
-use super::{RoutineError, RoutineSchedule, RoutineSpec};
+use super::{AutomationError, AutomationSchedule, AutomationSpec};
 use jiff::{Timestamp, ToSpan as _, civil::Time, tz::TimeZone};
 
-impl RoutineSpec {
-    pub(super) fn validate(&self, now_ms: i64) -> Result<(), RoutineError> {
+impl AutomationSpec {
+    pub(super) fn validate(&self, now_ms: i64) -> Result<(), AutomationError> {
         if self.name.trim().is_empty()
             || self.name.len() > 512
             || self.prompt.trim().is_empty()
             || self.prompt.len() > 32768
         {
-            return Err(RoutineError::Invalid(
+            return Err(AutomationError::Invalid(
                 "name and standing task must be nonempty and bounded".to_owned(),
             ));
         }
@@ -17,18 +17,18 @@ impl RoutineSpec {
     }
 }
 
-impl RoutineSchedule {
-    pub(super) fn first_due(&self, now_ms: i64, enabled: bool) -> Result<i64, RoutineError> {
+impl AutomationSchedule {
+    pub(super) fn first_due(&self, now_ms: i64, enabled: bool) -> Result<i64, AutomationError> {
         let due = self.next_after(now_ms)?;
         if enabled && matches!(self, Self::Once { .. }) && due <= now_ms {
-            return Err(RoutineError::Invalid(
+            return Err(AutomationError::Invalid(
                 "one-time schedules must be in the future when armed".to_owned(),
             ));
         }
         Ok(due)
     }
 
-    pub(super) fn advance_past(&self, due_ms: i64, now_ms: i64) -> Result<i64, RoutineError> {
+    pub(super) fn advance_past(&self, due_ms: i64, now_ms: i64) -> Result<i64, AutomationError> {
         if let Self::Interval { hours } = self {
             let period = i64::from(*hours) * 3_600_000;
             self.next_after(now_ms)?;
@@ -39,27 +39,27 @@ impl RoutineSchedule {
             return missed
                 .and_then(|count| count.checked_mul(period))
                 .and_then(|delta| due_ms.checked_add(delta))
-                .ok_or_else(|| RoutineError::Invalid("schedule time overflow".to_owned()));
+                .ok_or_else(|| AutomationError::Invalid("schedule time overflow".to_owned()));
         }
         self.next_after(now_ms)
     }
 
-    pub(super) fn next_after(&self, now_ms: i64) -> Result<i64, RoutineError> {
+    pub(super) fn next_after(&self, now_ms: i64) -> Result<i64, AutomationError> {
         if now_ms < 0 {
-            return Err(RoutineError::Invalid(
+            return Err(AutomationError::Invalid(
                 "time must follow the Unix epoch".to_owned(),
             ));
         }
         match self {
             Self::Once { at } => {
                 if at.len() > 128 {
-                    return Err(RoutineError::Invalid(
+                    return Err(AutomationError::Invalid(
                         "one-time timestamp is too long".to_owned(),
                     ));
                 }
                 let due = at.parse::<Timestamp>()?.as_millisecond();
                 if due < 0 {
-                    return Err(RoutineError::Invalid(
+                    return Err(AutomationError::Invalid(
                         "one-time schedule must follow the Unix epoch".to_owned(),
                     ));
                 }
@@ -67,13 +67,13 @@ impl RoutineSchedule {
             }
             Self::Interval { hours } => {
                 if !(1..=8760).contains(hours) {
-                    return Err(RoutineError::Invalid(
+                    return Err(AutomationError::Invalid(
                         "interval must be 1–8760 hours".to_owned(),
                     ));
                 }
                 now_ms
                     .checked_add(i64::from(*hours) * 3_600_000)
-                    .ok_or_else(|| RoutineError::Invalid("schedule time overflow".to_owned()))
+                    .ok_or_else(|| AutomationError::Invalid("schedule time overflow".to_owned()))
             }
             Self::Daily {
                 hour,

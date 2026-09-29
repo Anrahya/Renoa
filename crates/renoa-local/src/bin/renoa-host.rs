@@ -1,5 +1,5 @@
 use renoa_local::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentRoutine,
+    AgentAutomation, AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId,
     AgentToolsUpdate, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
     ReasoningLevel, RenameAgent,
 };
@@ -46,7 +46,7 @@ struct ProvisionDocument {
     tools: Option<BTreeSet<String>>,
     #[serde(default)]
     connections: BTreeSet<String>,
-    routine: Option<AgentRoutine>,
+    automation: Option<AgentAutomation>,
     model: Option<renoa_local::AgentModelSelection>,
     behavior: Option<renoa_local::AgentBehavior>,
     documents: Option<renoa_local::AgentDocuments>,
@@ -61,7 +61,7 @@ impl ProvisionDocument {
             instructions: self.instructions,
             tools: self.tools,
             connections: self.connections,
-            routine: self.routine,
+            automation: self.automation,
             model: self.model,
             behavior: self.behavior,
             documents: self.documents,
@@ -171,12 +171,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string(&result)?);
         return Ok(());
     }
-    run_routines(&host).await
+    run_automations(&host).await
 }
 
-async fn run_routines(host: &LocalHost) -> Result<(), Box<dyn Error>> {
+async fn run_automations(host: &LocalHost) -> Result<(), Box<dyn Error>> {
     let stop = CancellationToken::new();
-    let runner = host.run_routines(stop.clone());
+    let runner = host.run_automations(stop.clone());
     tokio::pin!(runner);
     #[cfg(unix)]
     let mut termination =
@@ -188,7 +188,7 @@ async fn run_routines(host: &LocalHost) -> Result<(), Box<dyn Error>> {
         tokio::signal::ctrl_c().await
     };
     eprintln!(
-        "Renoa Host routine service starting: {}",
+        "Renoa Host automation service starting: {}",
         host.host_id().await?
     );
     tokio::select! {

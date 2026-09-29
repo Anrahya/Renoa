@@ -7,6 +7,7 @@ fn schema_29_removes_retired_mcp_loader_from_stored_selection() {
     initialize(&database).expect("initialize current catalog");
     {
         let connection = open_verified(&database).expect("open current catalog");
+        super::restore_routine_tables(&connection);
         connection
             .execute_batch(
                 "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
@@ -41,6 +42,7 @@ fn schema_28_selections_remove_retired_host_tool_names_once() {
     initialize(&database).expect("initialize current catalog");
     {
         let connection = open_verified(&database).expect("open current catalog");
+        super::restore_routine_tables(&connection);
         connection
             .execute_batch(
                 "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
@@ -160,6 +162,7 @@ fn a_creation_receipt_without_a_result_is_refused_and_repaired() {
     initialize(&database).expect("initialize current catalog");
     {
         let connection = open_verified(&database).expect("open current catalog");
+        super::restore_routine_tables(&connection);
         connection
             .execute_batch(
                 "DROP TABLE host_agent_creations;
@@ -204,6 +207,7 @@ fn schema_32_drops_the_retired_review_tables_in_place() {
     initialize(&database).expect("initialize current catalog");
     {
         let connection = open_verified(&database).expect("open current catalog");
+        super::restore_routine_tables(&connection);
         connection
             .execute_batch(
                 "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
@@ -264,4 +268,150 @@ fn schema_32_drops_the_retired_review_tables_in_place() {
         .query_row("SELECT COUNT(*) FROM host_agents", [], |row| row.get(0))
         .expect("count agents");
     assert_eq!(agents, 1, "an in-place upgrade keeps agent rows");
+}
+
+/// Builds a schema 33 catalog holding one automation with a pending run, a
+/// deletion, both receipt kinds, and a disabled `renoa.routines` activation.
+fn schema_33_with_routines(database: &std::path::Path) {
+    initialize(database).expect("initialize current catalog");
+    let connection = open_verified(database).expect("open current catalog");
+    connection
+        .execute_batch(
+            "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Scheduler', 1,
+                'provisioning', NULL, '{}', 'system', 'migration-test');
+             INSERT INTO host_automations VALUES ('00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 'Morning', 'Summarize.',
+                '{\"interval\":{\"hours\":24}}', 1, 2, 100);
+             INSERT INTO host_automation_runs(id, automation_id, agent_id, session_id,
+                due_ms, admitted_at_ms, prompt, output)
+             VALUES ('00000000-0000-0000-0000-00000000000b',
+                '00000000-0000-0000-0000-00000000000a',
+                '00000000-0000-0000-0000-000000000001', 'session', 100, 101, 'Summarize.', NULL);
+             INSERT INTO host_automation_deletions VALUES ('00000000-0000-0000-0000-00000000000a');
+             INSERT INTO host_automation_mutations VALUES ('00000000-0000-0000-0000-00000000000c',
+                '00000000-0000-0000-0000-000000000001', '{}', '{}');
+             INSERT INTO host_automation_owner_mutations VALUES ('00000000-0000-0000-0000-00000000000d',
+                'owner', '{}', '{}');
+             INSERT INTO host_agent_builtin_plugins
+             VALUES ('00000000-0000-0000-0000-000000000001', 'renoa.automations', 0);
+             INSERT INTO host_builtin_plugin_operations
+             VALUES ('00000000-0000-0000-0000-000000000001', 'operation',
+                '{\"plugin_id\":\"renoa.automations\",\"enabled\":false}',
+                '{\"plugin_id\":\"renoa.automations\",\"enabled\":false}');",
+        )
+        .expect("seed automation rows");
+    super::restore_routine_tables(&connection);
+    connection
+        .execute_batch(
+            "UPDATE host_metadata SET schema_version = 33 WHERE singleton = 1;
+             PRAGMA user_version = 33;",
+        )
+        .expect("mark schema 33");
+}
+
+fn count(connection: &rusqlite::Connection, sql: &str) -> u32 {
+    connection
+        .query_row(sql, [], |row| row.get(0))
+        .expect("count rows")
+}
+
+#[test]
+fn schema_33_renames_routines_to_automations_in_place() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    schema_33_with_routines(&database);
+
+    initialize(&database).expect("upgrade schema 33 in place");
+    initialize(&database).expect("reopening the upgraded catalog is stable");
+    let connection = open_verified(&database).expect("open upgraded catalog");
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%routine%'"
+        ),
+        0,
+        "no table or index keeps the routine name"
+    );
+    for (table, rows) in [
+        ("host_automations", 1),
+        ("host_automation_runs WHERE output IS NULL", 1),
+        ("host_automation_deletions", 1),
+        ("host_automation_mutations", 1),
+        ("host_automation_owner_mutations", 1),
+    ] {
+        assert_eq!(
+            count(&connection, &format!("SELECT COUNT(*) FROM {table}")),
+            rows,
+            "{table} keeps its rows"
+        );
+    }
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_automation_runs AS run
+             JOIN host_automation_deletions AS deletion ON deletion.automation_id = run.automation_id"
+        ),
+        1,
+        "renamed columns still link a run and a deletion to their automation"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'host_automation_pending'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_agent_builtin_plugins
+             WHERE plugin_id = 'renoa.automations' AND enabled = 0"
+        ),
+        1,
+        "a disabled plugin stays disabled under its new id"
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM host_builtin_plugin_operations
+             WHERE request_json LIKE '%renoa.automations%' AND result_json LIKE '%renoa.automations%'"
+        ),
+        1
+    );
+    connection
+        .execute(
+            "INSERT INTO host_agent_builtin_plugins
+             VALUES ('00000000-0000-0000-0000-000000000001', 'renoa.routines', 1)",
+            [],
+        )
+        .expect_err("the old plugin id is no longer allowed");
+}
+
+#[test]
+fn a_reset_from_schema_33_recreates_the_automation_tables() {
+    let directory = tempfile::tempdir().expect("temporary Host catalog");
+    let database = directory.path().join("host.sqlite3");
+    schema_33_with_routines(&database);
+
+    cutover(&database).expect("reset schema 33");
+    let connection = open_verified(&database).expect("open reset catalog");
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%routine%'"
+        ),
+        0
+    );
+    connection
+        .execute_batch(
+            "INSERT INTO host_agents(agent_id, name, created_at_ms, created_via,
+                preset_id, operational_json, creator_kind, creator_component)
+             VALUES ('00000000-0000-0000-0000-000000000002', 'Fresh', 1,
+                'provisioning', NULL, '{}', 'system', 'migration-test');
+             INSERT INTO host_agent_builtin_plugins
+             VALUES ('00000000-0000-0000-0000-000000000002', 'renoa.automations', 0);",
+        )
+        .expect("a reset catalog accepts the automations plugin id");
 }

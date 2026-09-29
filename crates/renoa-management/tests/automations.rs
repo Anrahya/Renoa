@@ -5,9 +5,9 @@ use std::{
 
 use renoa_control::{BrowserSessions, Coordinator};
 use renoa_local::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalModelConfiguration, ModelProvider, RoutineMutation, RoutineRecord,
-    RoutineSchedule, RoutineSpec,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AutomationMutation,
+    AutomationRecord, AutomationSchedule, AutomationSpec, LocalHost, LocalHostAdapters,
+    LocalModelConfiguration, ModelProvider,
 };
 use renoa_management::{ManagementApi, ManagementError};
 use renoa_protocol::PrincipalId;
@@ -22,7 +22,7 @@ const ORIGIN: &str = "http://localhost";
 struct Fixture {
     files: tempfile::TempDir,
     host: LocalHost,
-    routine: RoutineRecord,
+    automation: AutomationRecord,
     owner: PrincipalId,
     identity_address: SocketAddr,
     identity_stop: CancellationToken,
@@ -35,8 +35,8 @@ struct Fixture {
 }
 
 /// Provisions the operator and one specialist, then gives the specialist a
-/// standing routine the management API can toggle.
-async fn seed(host: &LocalHost) -> RoutineRecord {
+/// standing automation the management API can toggle.
+async fn seed(host: &LocalHost) -> AutomationRecord {
     let parent = host
         .create_agent(
             AgentCreator::System {
@@ -71,15 +71,15 @@ async fn seed(host: &LocalHost) -> RoutineRecord {
         .await
         .expect("specialist")
         .id;
-    host.manage_routine(
+    host.manage_automation(
         parent,
         Uuid::new_v4(),
-        RoutineMutation::Create {
-            spec: RoutineSpec {
+        AutomationMutation::Create {
+            spec: AutomationSpec {
                 agent_id: child,
                 name: "Brief".into(),
                 prompt: "Do not expose this standing prompt in the mutation receipt".into(),
-                schedule: RoutineSchedule::Interval { hours: 12 },
+                schedule: AutomationSchedule::Interval { hours: 12 },
                 enabled: true,
             },
         },
@@ -87,7 +87,7 @@ async fn seed(host: &LocalHost) -> RoutineRecord {
         CancellationToken::new(),
     )
     .await
-    .expect("routine")
+    .expect("automation")
 }
 
 impl Fixture {
@@ -106,7 +106,7 @@ impl Fixture {
             LocalHostAdapters::default(),
         )
         .expect("Host");
-        let routine = seed(&host).await;
+        let automation = seed(&host).await;
         let database = files.path().join("identity.sqlite");
         let control =
             Coordinator::open_with_passkeys(&database, "localhost", ORIGIN).expect("identity");
@@ -131,7 +131,7 @@ impl Fixture {
         Self {
             files,
             host,
-            routine,
+            automation,
             owner,
             identity_address,
             identity_stop,
@@ -144,7 +144,10 @@ impl Fixture {
         }
     }
     fn endpoint(&self) -> String {
-        format!("{}/v1/host/routines/{}/enabled", self.url, self.routine.id)
+        format!(
+            "{}/v1/host/automations/{}/enabled",
+            self.url, self.automation.id
+        )
     }
     async fn change(&self, body: &Value) -> Response {
         self.client
@@ -306,10 +309,10 @@ async fn writes_require_the_paired_owner_exact_origin_and_a_strict_bounded_reque
     );
     assert_eq!(
         f.host
-            .routine(f.routine.spec.agent_id, f.routine.id)
+            .automation(f.automation.spec.agent_id, f.automation.id)
             .await
             .expect("unchanged"),
-        f.routine
+        f.automation
     );
     BrowserSessions::open(f.files.path().join("identity.sqlite"))
         .expect("issuer")
@@ -333,7 +336,7 @@ async fn http_receipt_survives_restart_and_stale_edits_leave_the_shared_record_i
     assert!(receipt.get("spec").is_none());
     assert_eq!(
         f.host
-            .routine(f.routine.spec.agent_id, f.routine.id)
+            .automation(f.automation.spec.agent_id, f.automation.id)
             .await
             .expect("same Host record")
             .revision,
@@ -387,8 +390,8 @@ async fn http_receipt_survives_restart_and_stale_edits_leave_the_shared_record_i
         .json()
         .await
         .expect("snapshot JSON");
-    assert_eq!(snapshot["routines"][0]["enabled"], true);
-    assert_eq!(snapshot["routines"][0]["revision"], 3);
+    assert_eq!(snapshot["automations"][0]["enabled"], true);
+    assert_eq!(snapshot["automations"][0]["revision"], 3);
     assert!(!f.files.path().join("host/absent-model").exists());
     assert!(!f.files.path().join("host/absent-credentials").exists());
     rusqlite::Connection::open(f.files.path().join("host/state/host.sqlite3"))
@@ -408,17 +411,17 @@ async fn http_receipt_survives_restart_and_stale_edits_leave_the_shared_record_i
 #[tokio::test]
 async fn expired_once_and_identity_outages_return_actionable_errors() {
     let mut f = Fixture::new().await;
-    let mut spec = f.routine.spec.clone();
-    spec.schedule = RoutineSchedule::Once {
+    let mut spec = f.automation.spec.clone();
+    spec.schedule = AutomationSchedule::Once {
         at: "1970-01-01T00:00:01Z".into(),
     };
     spec.enabled = false;
     f.host
-        .manage_routine(
+        .manage_automation(
             spec.agent_id,
             Uuid::new_v4(),
-            RoutineMutation::Update {
-                id: f.routine.id,
+            AutomationMutation::Update {
+                id: f.automation.id,
                 expected_revision: 1,
                 spec,
             },

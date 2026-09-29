@@ -50,7 +50,7 @@ identity and voice.
 at `users/<principal-id>/USER.md`, and every agent that enables the User
 document reads the file of the principal whose command started the turn. So two
 agents talking to the same person share one profile, and one person never sees
-another's. A turn with no principal (a routine, a Telegram or Slack message, the
+another's. A turn with no principal (an automation, a Telegram or Slack message, the
 CLI) has no `USER.md`. A person with no file reads as an empty profile. The
 first edit creates the file and its private directory, and an edit rejected for
 a stale revision creates nothing.
@@ -149,7 +149,7 @@ access and credential sharing between distinct Hosts remain separate work.
 ### Composition and management boundaries
 
 The personal-system direction below guides the control-panel implementation.
-Authenticated browser observation and owner routine enablement exist; general
+Authenticated browser observation and owner automation enablement exist; general
 agent editing and delegation remain future work. Host ownership is a logical boundary, not a requirement that one
 object, executable, or crate implement every subsystem. A laptop and a VPS are
 deployment choices. Preserving a Host across machine replacement requires its
@@ -163,7 +163,7 @@ Keep responsibility with the component that implements the behavior:
   workspace, and execution components. Their implementations remain outside the
   management transport, and provider and surface policy remain outside the kernel.
 - Domain operations own their validation, transactions, and durable receipts.
-  Routines retain scheduling semantics. A management router delegates to those operations rather than reimplementing them.
+  Automations retain scheduling semantics. A management router delegates to those operations rather than reimplementing them.
 - Observation projects committed metadata independently of runtime construction.
   Inspection and configuration changes that do not execute work must not require
   model discovery, valid provider credentials, or acquisition of session ownership.
@@ -238,8 +238,8 @@ passkeys remain optional. Both authenticate the same configured human owner. The
 admission and retry rules live in [identity-v0.md](identity-v0.md), independently
 of Host assembly and surface adapters.
 
-`HostRoutineControl` exposes owner pause/resume without constructing an execution
-Host. `POST /v1/host/routines/{routine_id}/enabled` adapts that domain operation;
+`HostAutomationControl` exposes owner pause/resume without constructing an execution
+Host. `POST /v1/host/automations/{automation_id}/enabled` adapts that domain operation;
 the browser exposes it beside the schedule on both Work and agent detail. The trusted adapter supplies the
 authenticated principal separately from JSON input. Each write requires the
 configured owner cookie and exactly one matching `Origin` header. The management
@@ -247,20 +247,20 @@ configuration names `public_origin`; forwarded headers cannot select it.
 
 The JSON request contains `operation_id` (a fresh UUID for each logical change),
 `expected_revision`, and the desired `enabled` boolean. The server rejects unknown
-fields and bodies over 4 KiB. It persists the routine change and owner receipt in
+fields and bodies over 4 KiB. It persists the automation change and owner receipt in
 one transaction before acknowledging. An identical retry, including after restart,
 returns the original receipt even if another edit has since occurred. Reusing an
 operation ID with different input or applying a stale revision returns 409. The
-response contains the operation ID, routine ID, committed revision, enabled state,
+response contains the operation ID, automation ID, committed revision, enabled state,
 and next due time; it excludes the standing prompt. Read a new Host snapshot for
 current state rather than treating a historical receipt as the latest revision.
 
-The routine domain retains scheduling semantics and agent restrictions. Pausing
+The automation domain retains scheduling semantics and agent restrictions. Pausing
 prevents future admissions, not completion of already-admitted work. Resuming an
 interval starts its next period from the resume time; daily schedules choose the
 next occurrence in their named timezone. Resuming an expired one-time schedule
 returns 422 and needs a new future date through the existing agent editing path.
-Deleted routines return 404; replaying an older receipt cannot restore them.
+Deleted automations return 404; replaying an older receipt cannot restore them.
 Host identity is checked inside the mutation transaction, including on replay.
 Owner receipts remain distinct from agent receipts and cannot grant agent tools
 owner authority. Definition editing and delegation remain separate from this operation.
@@ -376,7 +376,7 @@ surface processes are clients of those records. One logical Host does not requir
 one process, and a second data root is not implicitly part of the same Host.
 
 `HostObserver::open` opens an existing compatible data root and pins its Host UUID.
-`snapshot` reads agent identities, ordinary session operation summaries, routines,
+`snapshot` reads agent identities, ordinary session operation summaries, automations,
 shared connection selections and recorded plugin/skill revisions.
 `renoa-host inspect <data-directory>` is the first consumer. It requires
 OS read access, not a launch configuration, model provider, adapter or credentials.
@@ -466,7 +466,7 @@ management path: its configured Arcee Agent survives restarts, while DMs and
 channel threads bind independent conversations through `ensure_agent_session`.
 Its transport admission and reply receipts remain surface-owned. Slack verifies
 that its configured agent id is already provisioned and no surface can create a
-`host_agents` row; routines use the same Host identities and execute
+`host_agents` row; automations use the same Host identities and execute
 independently of surfaces.
 
 Telegram, Slack, WhatsApp, ACP, a GitHub webhook, and a GUI are surfaces or ingress
@@ -508,7 +508,7 @@ invocation boundary as external MCP tools:
 | Plugin | Capabilities |
 | --- | --- |
 | `renoa.agents` | Create, list, rename agents |
-| `renoa.routines` | Manage schedules and read retained results |
+| `renoa.automations` | Manage schedules and read retained results |
 | `renoa.documents` | Edit this agent's SOUL and the speaking person's USER file |
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
 | `renoa.git` | Inspect local changes, diffs, and commits |
@@ -589,8 +589,8 @@ tables (`host_agents`, `host_agent_tool_selections`, `host_agent_mcp_connections
 direct integration and connection identities, non-secret credential references,
 durable non-secret OAuth phases and terminal receipts, complete MCP catalog
 snapshots, per-agent selected connection identities, immutable skill revisions,
-agent skill bindings and rejections, session skill activations, routines
-and their results and receipts, and authenticated-owner routine receipts.
+agent skill bindings and rejections, session skill activations, automations
+and their results and receipts, and authenticated-owner automation receipts.
 Registration, discovery, and agent connection selection remain separate states.
 Catalog replacement and selection are transactional, and multi-query reads use
 one SQLite snapshot so a registry call cannot observe half of a refresh.
@@ -854,7 +854,7 @@ configuration a running service uses. `provision` is the trusted creation path
 for a `System`/`Provisioning` caller: the first agent on an empty Host is created
 by it. Its document is the canonical creation request in camelCase JSON, for
 example `{"operationId":"<uuid>","presetId":"renoa.coding.alpha.v3","name":"Alpha"}`,
-with optional `instructions`, `tools`, `connections`, and `routine`. `agent-tools`
+with optional `instructions`, `tools`, `connections`, and `automation`. `agent-tools`
 applies one revision-checked capability edit. `rename-agent` applies one
 expected-current-name-checked display-name edit with an explicit operation id. `reset` is the
 bounded clean-break reset described below. None of these commands needs an
@@ -1035,18 +1035,20 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 33
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 34
 by retaining exact machine grants, removing former Host and plugin protocol
-tool selections, and dropping the retired GitHub review tables. A schema 32
-catalog already holds current selections and exact plugin activations, so its
-upgrade only drops the review tables. Live selections
+tool selections (including the `routine_manage` and `routine_results` names),
+dropping the retired GitHub review tables, and renaming routines to
+automations. A schema 32 or 33 catalog already holds current selections and
+exact plugin activations, so its upgrade only drops the review tables and
+renames routines. Live selections
 and creation, rename, and selection receipt results advance one revision when
 their grants change. Agent identities and
 operational definitions stay intact; Host plugins use their activation state.
 Unknown tool names or revision overflow during conversion reject the transaction with reset
 guidance. Reopening the upgraded catalog does not repeat the conversion.
 
-1. Stop every writer: the routine service (`renoa-host <config.json>`), every
+1. Stop every writer: the automation service (`renoa-host <config.json>`), every
    surface, and every node daemon that owns the data root.
    A copied data root must not have a live writer.
 2. Create exactly one consolidated backup of the previous release's data root.
@@ -1059,7 +1061,7 @@ guidance. Reopening the upgraded catalog does not repeat the conversion.
    the reset is the only path that changes those tables. It drops the retired
    agent-owned tables (`host_agents` in its old shape, `host_bots*`,
    `profile_mcp_connections`, `profile_mcp_tools`, `profile_skill_bindings`,
-   `skill_source_rejections`, the agent skill bindings, the routine records tied
+   `skill_source_rejections`, the agent skill bindings, the automation records tied
    to those agents, and the retired GitHub review tables) and recreates the
    canonical `host_agents` root and its normalized children in their current
    shape, running the earlier migration ladder first for the shared domains it
@@ -1110,7 +1112,7 @@ Keep `<renoa-home>/credentials/models.sqlite3`, then start the daemon again.
 Each surface store is its own step: the Slack store owns
 `identity`, `sessions`, `conversations`, `requests`, `messages`, `receipts`,
 `deliveries`, `bot_channels`, `bot_channel_labels`, `setup_actions`,
-`routine_deliveries`, `routine_delivery_cursor`, and `routine_context_receipts`;
+`automation_deliveries`, `automation_delivery_cursor`, and `automation_context_receipts`;
 the Telegram store owns `surface_identity`, `surface_sessions`, `conversations`,
 `updates`, `delivery_messages`, and `surface_actions`, and binds the configured
 agent in `surface_identity`; it refuses an earlier schema by name, so delete
@@ -1194,7 +1196,7 @@ thread can keep another conversation open. Agent working directories live
 under the Host's `agents/<agent-id>/workspace` directory.
 
 The following behavior describes the remaining product direction. Definition edits and structured generated-artifact management remain open. Host-owned
-routines and Slack result delivery are implemented below.
+automations and Slack result delivery are implemented below.
 
 For example, the user asks Arcee to create a news-digest agent with selected
 sources, research tools, and a document-generation capability. Arcee uses Host
@@ -1219,7 +1221,7 @@ The Host must retain distinct relationships:
   without making the creator's current session own the agent's lifetime;
 - a surface binding maps an external conversation to the intended agent and
   session; the Slack channel is not the Agent identity;
-- a routine supplies a standing request, schedule, timezone, and delivery
+- an automation supplies a standing request, schedule, timezone, and delivery
   destination; each occurrence submits ordinary identifiable work; and
 - an output reference identifies a durable artifact independently of its
   Slack attachment or notification.
@@ -1233,16 +1235,16 @@ presentation and can acquire another surface binding later.
 
 Human controls and model-facing management tools must invoke the same typed
 Host operations. Arcee can create and configure the agent; the agent
-can update its own routine in response to the user's instruction. Changing
-"daily at 16:00" to "daily at 14:00" updates the existing routine with an
+can update its own automation in response to the user's instruction. Changing
+"daily at 16:00" to "daily at 14:00" updates the existing automation with an
 explicit timezone and reports the next occurrence. It must not silently add a
-second routine or mutate an already executing occurrence. A scheduled request
+second automation or mutate an already executing occurrence. A scheduled request
 and an interactive request use the same session-admission and ordering rules.
 
 Creation spans local durable records and external surface actions. Retrying an
-interrupted creation must resolve the same agent and routine, reconcile
+interrupted creation must resolve the same agent and automation, reconcile
 surface provisioning, and expose partial failure without claiming a usable
-channel exists before its binding is confirmed. A routine update needs a
+channel exists before its binding is confirmed. An automation update needs a
 durable identity and revision check so concurrent edits cannot overwrite one
 another unnoticed. These guarantees must be tested through actual Host
 management callers rather than implemented only in an operator's prompt.
@@ -1251,7 +1253,7 @@ The first complete Slack milestone must prove: Arcee creates one news
 agent; the user talks to it directly; a manual and a scheduled digest use
 its configured capabilities; a generated document remains retrievable; the
 user changes the schedule through conversation; and restart preserves the
-agent, its relationships, and the updated routine without duplicate creation
+agent, its relationships, and the updated automation without duplicate creation
 or admission. The parent/child roster must be inspectable through management
 operations before the control panel visualization is built.
 
@@ -1261,31 +1263,32 @@ review, general workflow graphs, and execution migration are not prerequisites.
 Exact storage schemas and wire fields remain implementation decisions and are
 introduced only with a consuming execution path or invariant test.
 
-### Host-owned routines
+### Host-owned automations
 
-`routine_manage` and `LocalHost::manage_routine` share typed creation, revision-checked
-replacement, and manual-run operations. An agent manages its own routines; managing
-or reading another agent's routines requires its enabled `renoa.agents` plugin.
-Every agent discovers routine tools through `renoa.routines`. This is Host
+`automation_manage` and `LocalHost::manage_automation` share typed creation, revision-checked
+replacement, and manual-run operations. An agent manages its own automations; managing
+or reading another agent's automations requires its enabled `renoa.agents` plugin.
+Every agent discovers automation tools through `renoa.automations`. This is Host
 management policy; selecting machine tools
 and account connections remains independent. List returns bounded pages with exact
-routine IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
-complete routine for inspection or editing.
+automation IDs, standing tasks, timing, enabled state, revision, and next due time. Model-facing lists omit full standing tasks; `get` reads one
+complete automation for inspection or editing.
 Pausing sets enabled=false; it leaves an already admitted occurrence intact.
 `delete` requires the current revision and records a durable deletion marker in
-Host schema 19 while disabling the routine and incrementing its revision. Deleted
-routines disappear from listing/get and reject update/manual-run operations; they
+Host schema 19 while disabling the automation and incrementing its revision. Deleted
+automations disappear from listing/get and reject update/manual-run operations; they
 cannot be re-armed. Already admitted runs finish, and their results remain readable.
-The original routine row and operation receipts remain for run references and exact
-replay; replaying creation does not resurrect a deleted routine. Deletion and its
+The original automation row and operation receipts remain for run references and exact
+replay; replaying creation does not resurrect a deleted automation. Deletion and its
 receipt commit atomically, and cancelled/stale/unauthorized requests change nothing.
 
-Host schema 16 introduced routines, management receipts, and occurrence records. A tool
-operation derives its stable identity from the session, command, and tool call.
+Host schema 16 introduced automations (then named routines), management receipts, and
+occurrence records. A tool operation derives its stable identity from the session,
+command, and tool call.
 Replaying a management operation returns its original result even after a later edit;
 conflicting input and stale revisions fail. Creation targets an existing Host
 agent, not a Slack channel. No surface identifiers or credentials appear in
-routine records. Results belong to the agent's durable Host inbox.
+automation records. Results belong to the agent's durable Host inbox.
 
 The `renoa-host <config.json>` process owns one scheduler lease per Host directory.
 It admits and runs one occurrence at a time, without requiring Slack or Telegram.
@@ -1295,7 +1298,7 @@ commits in the same transaction. Daily schedules require an IANA timezone; repea
 fall-back times run once and nonexistent spring times shift forward across the gap.
 Elapsed-hour intervals retain their original phase. Downtime coalesces missed times
 into one catch-up occurrence. A manual run retains the normal recurring schedule and
-cannot overlap another admitted occurrence of that routine.
+cannot overlap another admitted occurrence of that automation.
 
 One-time schedules use `{"kind":"once","at":"2026-09-08T14:00:00+05:30"}`.
 The timestamp must include an explicit UTC offset or Z, and must be in the future
@@ -1304,20 +1307,20 @@ agent against the current date/time and the user's timezone. Disarming and
 incrementing the revision commit together with the only timed occurrence's
 admission; the retained due time is historical while enabled=false. An overdue
 armed task catches up once. A crash resumes its admitted run even though it is
-already disarmed. Results and routine records remain available afterward.
+already disarmed. Results and automation records remain available afterward.
 `run_now` also disarms a one-time task, avoiding a second run at its original time;
 a fresh explicit `run_now` may run a disabled task again. Pausing and editing an
 unchanged overdue task are allowed. Re-arming requires a future timestamp and the
 current revision; admitted work is unaffected by subsequent edits.
 
-`routine_results` exposes completed-run summaries and exact run lookup through
+`automation_results` exposes completed-run summaries and exact run lookup through
 Host APIs. An agent reads only its own results; reading another agent's results
 requires the actor's stored selection to contain `agent_manage`.
 Listing is bounded to 20 results, newest first, with sequence pagination; exact
 lookup returns the retained task, output, and execution-session identity. This path
-does not execute the routine and remains available from any surface.
+does not execute the automation and remains available from any surface.
 
-Each routine has a stable execution session, separate from interactive chats, with
+Each automation has a stable execution session, separate from interactive chats, with
 the same stored definition, workspace, and selected Host connections. Its standing
 request must contain the recurring job's requirements; interactive chat history is
 not implicitly copied into it. Admission time enters the existing durable user-turn
@@ -1338,7 +1341,7 @@ replay cannot add later outputs or change the admitted input. Completed uncancel
 turns suppress subsequent duplicate insertion in that session; fresh sessions can
 recover recent results. Cancelled or still-queued turns do not consume this context.
 Earlier system/history prefixes stay unchanged. Full/older outputs remain accessible
-through `routine_results`, including after compaction or when delivery is uncertain.
+through `automation_results`, including after compaction or when delivery is uncertain.
 
 Slack projects completed Host results into its own durable outbox. Projection and
 cursor advancement commit together, even if a channel is not ready. Delivery resolves
@@ -1362,7 +1365,7 @@ set the relay credential path to `/run/credentials/renoa-host.service/oauth-rela
 it must not point into a surface service's credential mount.
 Host schema 17 adds durable display-name edit receipts.
 Schema 18 admits the one-time schedule variant; older readers cannot decode it.
-Schema 19 adds routine deletion markers consumed by listing, lookup, and admission.
+Schema 19 adds automation deletion markers consumed by listing, lookup, and admission.
 At that migration, all processes sharing the Host had to support schema 19 before
 restarting. The current schema and later migrations are summarized in the
 catalog schema history below. The integration tests exercise model-driven creation, agent
@@ -1375,7 +1378,7 @@ Host schemas 20 through 23 added the GitHub review tables
 (`host_review_repositories`, `host_review_operations`, `host_review_requests`,
 `host_review_deliveries`, `host_review_runs`, `host_review_jobs`, and
 `host_review_publications`) and their execution timing.
-Schema 24 adds `host_routine_owner_mutations` for authenticated owner receipts,
+Schema 24 adds `host_automation_owner_mutations` for authenticated owner receipts,
 preserving existing agent receipts and their foreign-key restrictions.
 Schema 27 is the clean break: it drops the retired agent-owned tables
 (`host_agents` in its old shape, `host_bots`, `host_bot_tool_selections`,
@@ -1394,6 +1397,11 @@ Schema 33 retires the GitHub review service. A schema 28–32 catalog drops the
 seven `host_review_*` tables in place, each child before the parent it
 references; the reset drops them from an earlier data root with the other
 retired owners.
+Schema 34 renames routines to automations. A schema 28–33 catalog renames the
+`host_routine_*` tables, their `routine_id` columns, and the pending-run index
+in place, keeping every row, and moves stored `renoa.routines` plugin
+activations and their receipts to `renoa.automations`. The reset drops the
+routine tables and recreates the automation tables empty.
 
 ## Local CLI
 
@@ -1406,7 +1414,7 @@ renoa-host /absolute/host.json agent-tools /absolute/edit.json
 
 A provision file is the canonical creation request in camelCase JSON:
 `operationId`, `name`, `instructions`, and optional `presetId`, `tools`, `model`, `behavior`, `documents`,
-`connections`, and `routine`. `provision` calls the same durable creation
+`connections`, and `automation`. `provision` calls the same durable creation
 operation as `agent_manage` with a `System`/`Provisioning` actor and starts no
 model or surface. Repeating the same request is idempotent;
 reusing an operation id with a changed request conflicts. An `agent-tools` edit

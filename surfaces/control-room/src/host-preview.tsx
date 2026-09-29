@@ -11,7 +11,7 @@ const example: HostSnapshot = {
     { id: id(4), name: "Soundwave", created_by: id(2), preset_id: "renoa.general.v1" },
   ],
   sessions: [],
-  routines: [
+  automations: [
     { id: id(5), agent_id: id(3), name: "Morning brief", schedule: { kind: "daily", hour: 9, minute: 0, timezone: "Asia/Kolkata" },
       enabled: true, revision: 2, next_due_ms: Date.parse("2026-09-10T09:00:00+05:30"), pending_runs: 0, completed_runs: 3 },
     { id: id(6), agent_id: id(3), name: "Research reminder", schedule: { kind: "once", at: "2026-09-10T14:00:00+05:30" },
@@ -57,7 +57,7 @@ function motionExample(start: number, step: number): HostSnapshot {
   return { ...example,
     sessions: [{ id: id(8), agent_id: id(2), observation: "available", event_count: step,
     queued_operations: 0, active_operation: { id: id(9), command_id: id(10), position: 1, state: "unfinished" }, latest_operation: null }],
-    routines: [
+    automations: [
       { id: id(11), agent_id: id(2), name: "Evening recap", enabled: true, revision: 1,
         schedule: { kind: "once", at: new Date(start + 90_000).toISOString() }, next_due_ms: start + 90_000, pending_runs: 0, completed_runs: 0 },
       ...["Inbox triage", "Repository watch", "Reading digest", "Notes sync", "Weekly recap", "Server check", "Research queue", "Bookmark digest", "Release watch", "Calendar brief", "Archive sweep"].map((name, i) => ({
@@ -65,7 +65,7 @@ function motionExample(start: number, step: number): HostSnapshot {
         schedule: { kind: "interval" as const, hours: 12 }, next_due_ms: start + (i + 1) * 3_600_000,
         pending_runs: i === 0 ? 1 : 0, completed_runs: 2,
       })),
-      { ...example.routines[0]!, next_due_ms: start + 3_600_000, schedule: { kind: "interval", hours: 12 } },
-      { ...example.routines[1]!, enabled: false },
+      { ...example.automations[0]!, next_due_ms: start + 3_600_000, schedule: { kind: "interval", hours: 12 } },
+      { ...example.automations[1]!, enabled: false },
     ] };
 }

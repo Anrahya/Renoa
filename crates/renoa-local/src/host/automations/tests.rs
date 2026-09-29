@@ -13,7 +13,7 @@ use uuid::Uuid;
 struct Quiet;
 
 #[test]
-fn routine_model_schemas_avoid_unaccepted_unions_and_keep_action_guidance() {
+fn automation_model_schemas_avoid_unaccepted_unions_and_keep_action_guidance() {
     fn assert_no_one_of(value: &Value) {
         match value {
             Value::Object(fields) => {
@@ -79,7 +79,7 @@ fn host(root: &Path) -> LocalHost {
 }
 async fn provisioned(h: &LocalHost) -> (AgentId, AgentId) {
     let creator = AgentCreator::System {
-        component: "routine-fixture".to_owned(),
+        component: "automation-fixture".to_owned(),
     };
     let parent = h
         .create_agent(
@@ -90,7 +90,7 @@ async fn provisioned(h: &LocalHost) -> (AgentId, AgentId) {
                 AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
                 "Operator",
             )
-            .with_instructions("Manage routines."),
+            .with_instructions("Manage automations."),
             CancellationToken::new(),
         )
         .await
@@ -133,7 +133,7 @@ async fn outsider(h: &LocalHost) -> AgentId {
     let agent = h
         .create_agent(
             AgentCreator::System {
-                component: "routine-fixture".to_owned(),
+                component: "automation-fixture".to_owned(),
             },
             AgentCreationOrigin::Provisioning,
             AgentCreateRequest::from_preset(
@@ -157,12 +157,12 @@ async fn outsider(h: &LocalHost) -> AgentId {
     .expect("disable outsider agent management");
     agent
 }
-fn spec(agent_id: AgentId) -> RoutineSpec {
-    RoutineSpec {
+fn spec(agent_id: AgentId) -> AutomationSpec {
+    AutomationSpec {
         agent_id,
         name: "Digest".to_owned(),
         prompt: "scheduled digest".to_owned(),
-        schedule: RoutineSchedule::Interval { hours: 12 },
+        schedule: AutomationSchedule::Interval { hours: 12 },
         enabled: true,
     }
 }
@@ -185,14 +185,14 @@ async fn turn(session: &AgentSession, prompt: String, label: &str) -> String {
 async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_admitted_runs() {
     let (_d, h, parent, child) = fixture().await;
     let op = Uuid::new_v4();
-    let create = RoutineMutation::Create { spec: spec(child) };
+    let create = AutomationMutation::Create { spec: spec(child) };
     let first = h
-        .manage_routine(parent, op, create.clone(), 1000, CancellationToken::new())
+        .manage_automation(parent, op, create.clone(), 1000, CancellationToken::new())
         .await
         .expect("create");
     assert_eq!(
         first,
-        h.manage_routine(parent, op, create, 5000, CancellationToken::new())
+        h.manage_automation(parent, op, create, 5000, CancellationToken::new())
             .await
             .expect("replay ignores new clock")
     );
@@ -202,15 +202,15 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
     assert_eq!(run.due_ms, first.next_due_ms);
     let mut changed = first.spec.clone();
     changed.prompt = "changed task".to_owned();
-    changed.schedule = RoutineSchedule::Interval { hours: 24 };
+    changed.schedule = AutomationSchedule::Interval { hours: 24 };
     let update_op = Uuid::new_v4();
-    let update = RoutineMutation::Update {
+    let update = AutomationMutation::Update {
         id: first.id,
         expected_revision: 1,
         spec: changed,
     };
     let second = h
-        .manage_routine(
+        .manage_automation(
             child,
             update_op,
             update.clone(),
@@ -222,7 +222,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
     assert_eq!(second.revision, 2);
     assert_eq!(
         second,
-        h.manage_routine(
+        h.manage_automation(
             child,
             update_op,
             update.clone(),
@@ -233,7 +233,7 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
         .expect("exact replay")
     );
     assert!(
-        h.manage_routine(
+        h.manage_automation(
             child,
             Uuid::new_v4(),
             update,
@@ -249,10 +249,10 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
     assert_eq!(run, resumed);
     assert_eq!(run.prompt, "scheduled digest");
     assert!(
-        h.manage_routine(
+        h.manage_automation(
             child,
             Uuid::new_v4(),
-            RoutineMutation::RunNow { id: first.id },
+            AutomationMutation::RunNow { id: first.id },
             run.due_ms,
             CancellationToken::new()
         )
@@ -262,10 +262,10 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
     let cancelled = CancellationToken::new();
     cancelled.cancel();
     assert!(
-        h.manage_routine(
+        h.manage_automation(
             parent,
             Uuid::new_v4(),
-            RoutineMutation::Create { spec: spec(child) },
+            AutomationMutation::Create { spec: spec(child) },
             0,
             cancelled
         )
@@ -273,10 +273,10 @@ async fn edits_replay_exactly_conflict_with_stale_revisions_and_do_not_mutate_ad
         .is_err()
     );
     assert!(
-        h.manage_routine(
+        h.manage_automation(
             outsider(&h).await,
             Uuid::new_v4(),
-            RoutineMutation::Create { spec: spec(child) },
+            AutomationMutation::Create { spec: spec(child) },
             0,
             CancellationToken::new()
         )
@@ -293,7 +293,7 @@ fn daily_schedules_respect_local_time_and_daylight_saving() {
             .expect("timestamp")
             .as_millisecond()
     };
-    let daily = RoutineSchedule::Daily {
+    let daily = AutomationSchedule::Daily {
         hour: 14,
         minute: 0,
         timezone: "Asia/Kolkata".to_owned(),
@@ -310,7 +310,7 @@ fn daily_schedules_respect_local_time_and_daylight_saving() {
             .expect("next day"),
         ms("2026-09-08T08:30:00Z")
     );
-    let spring = RoutineSchedule::Daily {
+    let spring = AutomationSchedule::Daily {
         hour: 2,
         minute: 30,
         timezone: "America/New_York".to_owned(),
@@ -321,7 +321,7 @@ fn daily_schedules_respect_local_time_and_daylight_saving() {
             .expect("spring gap"),
         ms("2026-03-08T07:30:00Z")
     );
-    let fall = RoutineSchedule::Daily {
+    let fall = AutomationSchedule::Daily {
         hour: 1,
         minute: 30,
         timezone: "America/New_York".to_owned(),
@@ -332,7 +332,7 @@ fn daily_schedules_respect_local_time_and_daylight_saving() {
         ms("2026-11-02T06:30:00Z")
     );
     assert!(
-        RoutineSchedule::Interval { hours: 0 }
+        AutomationSchedule::Interval { hours: 0 }
             .next_after(0)
             .is_err()
     );
@@ -348,7 +348,7 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
         .ensure_agent_session(parent, &workspace, Uuid::new_v4())
         .await
         .expect("parent session");
-    let prompt = format!("create routine {child}");
+    let prompt = format!("create automation {child}");
     let result = session
         .execute_turn(
             Uuid::new_v4(),
@@ -359,15 +359,15 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
         .expect("management through model");
     assert!(matches!(result, LocalTurnOutcome::Completed { .. }));
     let records = h
-        .list_routines(parent, child, None)
+        .list_automations(parent, child, None)
         .await
-        .expect("routines");
+        .expect("automations");
     assert_eq!(records.len(), 1);
     let run = store::next(&h.config.database, records[0].next_due_ms)
         .expect("admit")
         .expect("due");
     // Execute the real kernel, then simulate losing only the Host output receipt.
-    h.execute_routine_run(run.clone()).await.expect("run");
+    h.execute_automation_run(run.clone()).await.expect("run");
     let child_workspace = h.agent_workspace(child).await.expect("workspace");
     assert_eq!(
         fs::read_to_string(child_workspace.join("digest.md")).expect("artifact"),
@@ -375,7 +375,7 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
     );
     let db = crate::host::catalog::open_verified(&h.config.database).expect("catalog");
     db.execute(
-        "UPDATE host_routine_runs SET output=NULL WHERE id=?1",
+        "UPDATE host_automation_runs SET output=NULL WHERE id=?1",
         [run.id.to_string()],
     )
     .expect("lost receipt");
@@ -393,14 +393,17 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
         .expect("pending");
     assert_eq!(pending.id, run.id);
     restarted
-        .execute_routine_run(pending)
+        .execute_automation_run(pending)
         .await
         .expect("kernel replay");
     assert_eq!(
         fs::read_to_string(child_workspace.join("digest.md")).expect("preserved"),
         "preserve after completed execution"
     );
-    let outputs = restarted.completed_routine_runs(0).await.expect("outputs");
+    let outputs = restarted
+        .completed_automation_runs(0)
+        .await
+        .expect("outputs");
     assert_eq!(outputs.len(), 1);
     assert!(
         outputs[0]
@@ -422,13 +425,13 @@ async fn real_model_tool_schedules_a_specialist_and_restarted_host_replays_execu
         .await
         .expect("specialist changes own schedule");
     let changed = restarted
-        .list_routines(parent, child, None)
+        .list_automations(parent, child, None)
         .await
         .expect("new schedule");
     assert_eq!(changed[0].revision, 2);
     assert_eq!(
         changed[0].spec.schedule,
-        RoutineSchedule::Interval { hours: 24 }
+        AutomationSchedule::Interval { hours: 24 }
     );
 }
 
@@ -437,7 +440,7 @@ async fn schema_fifteen_upgrade_preserves_agent_identity_and_runner_has_exclusiv
     let (d, h, _parent, child) = fixture().await;
     let identity = h.host_id().await.expect("identity");
     let db = crate::host::catalog::open_verified(&h.config.database).expect("database");
-    db.execute_batch("DROP TABLE host_routine_deletions; DROP TABLE host_routine_mutations; DROP TABLE host_routine_runs; DROP TABLE host_routines; UPDATE host_metadata SET schema_version=15; PRAGMA user_version=15;").expect("schema fifteen");
+    db.execute_batch("DROP TABLE host_automation_deletions; DROP TABLE host_automation_mutations; DROP TABLE host_automation_runs; DROP TABLE host_automations; UPDATE host_metadata SET schema_version=15; PRAGMA user_version=15;").expect("schema fifteen");
     drop(db);
     drop(h);
     let refused = try_host(d.path());
@@ -461,12 +464,12 @@ async fn schema_fifteen_upgrade_preserves_agent_identity_and_runner_has_exclusiv
         .write(true)
         .create(true)
         .truncate(false)
-        .open(restored.config.database.with_file_name(".routines.lock"))
+        .open(restored.config.database.with_file_name(".automations.lock"))
         .expect("lease");
     lock.try_lock().expect("first owner");
     assert!(
         restored
-            .run_routines(CancellationToken::new())
+            .run_automations(CancellationToken::new())
             .await
             .is_err()
     );
@@ -476,34 +479,34 @@ async fn schema_fifteen_upgrade_preserves_agent_identity_and_runner_has_exclusiv
     let stop = CancellationToken::new();
     stop.cancel();
     restored
-        .run_routines(stop)
+        .run_automations(stop)
         .await
         .expect("new owner after release");
 }
 
 #[tokio::test]
-async fn paused_routines_allow_one_idempotent_manual_run_and_intervals_keep_their_phase() {
+async fn paused_automations_allow_one_idempotent_manual_run_and_intervals_keep_their_phase() {
     let (_d, h, parent, child) = fixture().await;
     let mut paused = spec(child);
     paused.enabled = false;
-    let routine = h
-        .manage_routine(
+    let automation = h
+        .manage_automation(
             parent,
             Uuid::new_v4(),
-            RoutineMutation::Create { spec: paused },
+            AutomationMutation::Create { spec: paused },
             0,
             CancellationToken::new(),
         )
         .await
-        .expect("paused routine");
+        .expect("paused automation");
     assert!(
         store::next(&h.config.database, 100_000_000)
             .expect("paused")
             .is_none()
     );
     let op = Uuid::new_v4();
-    let manual = RoutineMutation::RunNow { id: routine.id };
-    h.manage_routine(
+    let manual = AutomationMutation::RunNow { id: automation.id };
+    h.manage_automation(
         child,
         op,
         manual.clone(),
@@ -512,7 +515,7 @@ async fn paused_routines_allow_one_idempotent_manual_run_and_intervals_keep_thei
     )
     .await
     .expect("manual run");
-    h.manage_routine(child, op, manual, 200_000_000, CancellationToken::new())
+    h.manage_automation(child, op, manual, 200_000_000, CancellationToken::new())
         .await
         .expect("manual replay");
     let admitted = store::next(&h.config.database, 200_000_000)
@@ -526,7 +529,7 @@ async fn paused_routines_allow_one_idempotent_manual_run_and_intervals_keep_thei
             .expect("no recurring run")
             .is_none()
     );
-    let interval = RoutineSchedule::Interval { hours: 12 };
+    let interval = AutomationSchedule::Interval { hours: 12 };
     assert_eq!(
         interval
             .advance_past(43_200_000, 90_000_000)
@@ -536,36 +539,36 @@ async fn paused_routines_allow_one_idempotent_manual_run_and_intervals_keep_thei
 }
 
 #[tokio::test]
-async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
+async fn automation_reads_apply_the_same_actor_rule_as_mutations() {
     let (_d, h, parent, child) = fixture().await;
     crate::plugins::host::state::change(
         &h.config.database,
         child,
         crate::plugins::host::HostPluginId::Agents,
         false,
-        "own-routines-only",
+        "own-automations-only",
     )
     .expect("restrict management");
     let own = h
-        .manage_routine(
+        .manage_automation(
             parent,
             Uuid::new_v4(),
-            RoutineMutation::Create { spec: spec(child) },
+            AutomationMutation::Create { spec: spec(child) },
             0,
             CancellationToken::new(),
         )
         .await
-        .expect("own routine");
+        .expect("own automation");
     let foreign = h
-        .manage_routine(
+        .manage_automation(
             parent,
             Uuid::new_v4(),
-            RoutineMutation::Create { spec: spec(parent) },
+            AutomationMutation::Create { spec: spec(parent) },
             0,
             CancellationToken::new(),
         )
         .await
-        .expect("foreign routine");
+        .expect("foreign automation");
     let child_workspace = h.agent_workspace(child).await.expect("workspace");
     let specialist = h
         .ensure_agent_session(child, &child_workspace, Uuid::new_v4())
@@ -578,17 +581,17 @@ async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
         .expect("operator session");
     let denied = turn(
         &specialist,
-        format!("foreign routine list {parent}"),
+        format!("foreign automation list {parent}"),
         "foreign list",
     )
     .await;
     assert!(
         denied.contains("renoa.agents") && !denied.contains("Digest"),
-        "a specialist must not list another agent's routines: {denied}"
+        "a specialist must not list another agent's automations: {denied}"
     );
     let denied = turn(
         &specialist,
-        format!("foreign routine get {}", foreign.id),
+        format!("foreign automation get {}", foreign.id),
         "foreign get",
     )
     .await;
@@ -596,14 +599,14 @@ async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
         denied.contains("renoa.agents") && !denied.contains("scheduled digest"),
         "a specialist must not read another agent's standing task: {denied}"
     );
-    let own_list = turn(&specialist, "own routine list".to_owned(), "own list").await;
+    let own_list = turn(&specialist, "own automation list".to_owned(), "own list").await;
     assert!(
         own_list.contains("Digest"),
-        "a specialist lists its own routines: {own_list}"
+        "a specialist lists its own automations: {own_list}"
     );
     let own_get = turn(
         &specialist,
-        format!("own routine get {}", own.id),
+        format!("own automation get {}", own.id),
         "own get",
     )
     .await;
@@ -613,17 +616,17 @@ async fn routine_reads_apply_the_same_actor_rule_as_mutations() {
     );
     let managed_list = turn(
         &operator,
-        format!("foreign routine list {child}"),
+        format!("foreign automation list {child}"),
         "managed list",
     )
     .await;
     assert!(
         managed_list.contains("Digest"),
-        "an agent_manage holder lists another agent's routines: {managed_list}"
+        "an agent_manage holder lists another agent's automations: {managed_list}"
     );
     let managed_get = turn(
         &operator,
-        format!("foreign routine get {}", own.id),
+        format!("foreign automation get {}", own.id),
         "managed get",
     )
     .await;

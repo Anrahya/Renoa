@@ -185,7 +185,7 @@ async fn pair(
         .to_owned()
 }
 fn creation() -> Value {
-    json!({ "operation_id":Uuid::new_v4(), "name":"Desk", "instructions":"Carry out the owner creation proof.", "tools":["read_file"], "connections":[], "preset_id":null, "routine":null, "behavior":null, "documents":{"soul":true,"user":true}, "model":{"provider":"xai","model":"fixture-model","reasoning":"high"} })
+    json!({ "operation_id":Uuid::new_v4(), "name":"Desk", "instructions":"Carry out the owner creation proof.", "tools":["read_file"], "connections":[], "preset_id":null, "automation":null, "behavior":null, "documents":{"soul":true,"user":true}, "model":{"provider":"xai","model":"fixture-model","reasoning":"high"} })
 }
 
 #[tokio::test]

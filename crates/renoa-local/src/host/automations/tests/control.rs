@@ -1,17 +1,17 @@
 use super::*;
 use crate::host::catalog;
 
-fn command(revision: i64, enabled: bool) -> RoutineEnablement {
-    RoutineEnablement {
+fn command(revision: i64, enabled: bool) -> AutomationEnablement {
+    AutomationEnablement {
         operation_id: Uuid::new_v4(),
         expected_revision: revision,
         enabled,
     }
 }
 
-async fn controls(h: &LocalHost) -> (HostRoutineControl, Uuid) {
+async fn controls(h: &LocalHost) -> (HostAutomationControl, Uuid) {
     let owner = Uuid::new_v4();
-    let control = HostRoutineControl::open(
+    let control = HostAutomationControl::open(
         h.config.home.path(),
         h.host_id().await.expect("Host"),
         owner,
@@ -20,29 +20,34 @@ async fn controls(h: &LocalHost) -> (HostRoutineControl, Uuid) {
     (control, owner)
 }
 
-async fn create(h: &LocalHost, parent: AgentId, spec: RoutineSpec) -> RoutineRecord {
-    h.manage_routine(
+async fn create(h: &LocalHost, parent: AgentId, spec: AutomationSpec) -> AutomationRecord {
+    h.manage_automation(
         parent,
         Uuid::new_v4(),
-        RoutineMutation::Create { spec },
+        AutomationMutation::Create { spec },
         0,
         CancellationToken::new(),
     )
     .await
-    .expect("routine")
+    .expect("automation")
 }
 
 #[tokio::test]
 async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_agent_edit() {
     let (d, h, parent, child) = fixture().await;
-    let routine = create(&h, parent, spec(child)).await;
-    let admitted = store::next(&h.config.database, routine.next_due_ms)
+    let automation = create(&h, parent, spec(child)).await;
+    let admitted = store::next(&h.config.database, automation.next_due_ms)
         .expect("admission")
         .expect("run");
     let (control, owner) = controls(&h).await;
     let pause = command(1, false);
     let paused = control
-        .set_enabled(owner, routine.id, pause.clone(), routine.next_due_ms + 1)
+        .set_enabled(
+            owner,
+            automation.id,
+            pause.clone(),
+            automation.next_due_ms + 1,
+        )
         .await
         .expect("pause");
     assert!(!paused.spec.enabled);
@@ -63,11 +68,11 @@ async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_ag
     let mut changed = paused.spec.clone();
     changed.prompt = "new standing instructions".to_owned();
     let newer = h
-        .manage_routine(
+        .manage_automation(
             child,
             Uuid::new_v4(),
-            RoutineMutation::Update {
-                id: routine.id,
+            AutomationMutation::Update {
+                id: automation.id,
                 expected_revision: 2,
                 spec: changed,
             },
@@ -79,11 +84,11 @@ async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_ag
     let id = h.host_id().await.expect("Host");
     drop(control);
     drop(h);
-    let control = HostRoutineControl::open(&d.path().join("data"), id, owner)
+    let control = HostAutomationControl::open(&d.path().join("data"), id, owner)
         .expect("restart without runtime");
     assert_eq!(
         control
-            .set_enabled(owner, routine.id, pause, 300_000_000)
+            .set_enabled(owner, automation.id, pause, 300_000_000)
             .await
             .expect("recover lost response"),
         paused
@@ -91,7 +96,7 @@ async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_ag
     let resumed = control
         .set_enabled(
             owner,
-            routine.id,
+            automation.id,
             command(newer.revision, true),
             300_000_000,
         )
@@ -102,27 +107,27 @@ async fn owner_pause_keeps_admitted_work_and_restart_replays_receipt_after_an_ag
     assert_eq!(resumed.next_due_ms, 343_200_000);
     let db =
         catalog::open_verified(&d.path().join("data/state/host.sqlite3")).expect("shared catalog");
-    assert_eq!(store::get(&db, routine.id).expect("latest"), resumed);
+    assert_eq!(store::get(&db, automation.id).expect("latest"), resumed);
 }
 
 #[tokio::test]
 async fn owner_and_agent_authority_are_distinct_and_old_revisions_do_not_overwrite() {
     let (_d, h, parent, child) = fixture().await;
-    let routine = create(&h, parent, spec(child)).await;
+    let automation = create(&h, parent, spec(child)).await;
     let (control, owner) = controls(&h).await;
     let pause = command(1, false);
     assert!(matches!(
         control
-            .set_enabled(Uuid::new_v4(), routine.id, pause.clone(), 1)
+            .set_enabled(Uuid::new_v4(), automation.id, pause.clone(), 1)
             .await,
-        Err(LocalHostError::Routine(RoutineError::Forbidden))
+        Err(LocalHostError::Automation(AutomationError::Forbidden))
     ));
     assert!(
-        h.manage_routine(
+        h.manage_automation(
             AgentId::from_uuid(owner),
             pause.operation_id,
-            RoutineMutation::SetEnabled {
-                id: routine.id,
+            AutomationMutation::SetEnabled {
+                id: automation.id,
                 expected_revision: 1,
                 enabled: false
             },
@@ -133,25 +138,27 @@ async fn owner_and_agent_authority_are_distinct_and_old_revisions_do_not_overwri
         .is_err()
     );
     let paused = control
-        .set_enabled(owner, routine.id, pause.clone(), 1)
+        .set_enabled(owner, automation.id, pause.clone(), 1)
         .await
         .expect("real owner");
     assert!(matches!(
         control
-            .set_enabled(owner, routine.id, command(1, true), 2)
+            .set_enabled(owner, automation.id, command(1, true), 2)
             .await,
-        Err(LocalHostError::Routine(RoutineError::Conflict))
+        Err(LocalHostError::Automation(AutomationError::Conflict))
     ));
-    let different = RoutineEnablement {
+    let different = AutomationEnablement {
         enabled: true,
         ..pause
     };
     assert!(matches!(
-        control.set_enabled(owner, routine.id, different, 2).await,
-        Err(LocalHostError::Routine(RoutineError::Conflict))
+        control
+            .set_enabled(owner, automation.id, different, 2)
+            .await,
+        Err(LocalHostError::Automation(AutomationError::Conflict))
     ));
     assert_eq!(
-        h.routine(parent, routine.id)
+        h.automation(parent, automation.id)
             .await
             .expect("same authoritative state"),
         paused
@@ -161,35 +168,35 @@ async fn owner_and_agent_authority_are_distinct_and_old_revisions_do_not_overwri
 #[tokio::test]
 async fn concurrent_owner_retries_commit_once_and_competing_edits_conflict() {
     let (_d, h, parent, child) = fixture().await;
-    let routine = create(&h, parent, spec(child)).await;
+    let automation = create(&h, parent, spec(child)).await;
     let (control, owner) = controls(&h).await;
     let pause = command(1, false);
     let (a, b) = tokio::join!(
-        control.set_enabled(owner, routine.id, pause.clone(), 1),
-        control.set_enabled(owner, routine.id, pause, 2)
+        control.set_enabled(owner, automation.id, pause.clone(), 1),
+        control.set_enabled(owner, automation.id, pause, 2)
     );
     assert_eq!(a.expect("first"), b.expect("duplicate"));
     let (a, b) = tokio::join!(
-        control.set_enabled(owner, routine.id, command(2, true), 3),
-        control.set_enabled(owner, routine.id, command(2, false), 4)
+        control.set_enabled(owner, automation.id, command(2, true), 3),
+        control.set_enabled(owner, automation.id, command(2, false), 4)
     );
     assert_ne!(a.is_ok(), b.is_ok());
     let error = a.err().or_else(|| b.err()).expect("one conflict");
     assert!(matches!(
         error,
-        LocalHostError::Routine(RoutineError::Conflict)
+        LocalHostError::Automation(AutomationError::Conflict)
     ));
     let db = catalog::open_verified(&h.config.database).expect("catalog");
     let receipts: i64 = db
         .query_row(
-            "SELECT COUNT(*) FROM host_routine_owner_mutations",
+            "SELECT COUNT(*) FROM host_automation_owner_mutations",
             [],
             |r| r.get(0),
         )
         .expect("receipts");
     assert_eq!(receipts, 2);
     assert_eq!(
-        h.routine(parent, routine.id)
+        h.automation(parent, automation.id)
             .await
             .expect("revision")
             .revision,
@@ -201,12 +208,13 @@ async fn concurrent_owner_retries_commit_once_and_competing_edits_conflict() {
 async fn owner_receipt_failure_rolls_back_change_and_migration_keeps_agent_receipts() {
     let (d, h, parent, child) = fixture().await;
     let op = Uuid::new_v4();
-    let creation = RoutineMutation::Create { spec: spec(child) };
-    let routine = h
-        .manage_routine(parent, op, creation.clone(), 0, CancellationToken::new())
+    let creation = AutomationMutation::Create { spec: spec(child) };
+    let automation = h
+        .manage_automation(parent, op, creation.clone(), 0, CancellationToken::new())
         .await
         .expect("create");
     let db = catalog::open_verified(&h.config.database).expect("catalog");
+    catalog::restore_routine_tables(&db);
     db.execute_batch("DROP TABLE host_routine_owner_mutations; UPDATE host_metadata SET schema_version=23; PRAGMA user_version=23;").expect("schema 23");
     drop(db);
     drop(h);
@@ -219,30 +227,32 @@ async fn owner_receipt_failure_rolls_back_change_and_migration_keeps_agent_recei
     crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
     let h = host(d.path());
     assert!(
-        h.routine(parent, routine.id).await.is_err(),
-        "the cutover discards the legacy routine and its receipts"
+        h.automation(parent, automation.id).await.is_err(),
+        "the cutover discards the legacy automation and its receipts"
     );
     let (parent, child) = provisioned(&h).await;
-    let routine = create(&h, parent, spec(child)).await;
+    let automation = create(&h, parent, spec(child)).await;
     let (control, owner) = controls(&h).await;
     let pause = command(1, false);
     let db = catalog::open_verified(&h.config.database).expect("catalog");
-    db.execute_batch("CREATE TRIGGER reject_owner_receipt BEFORE INSERT ON host_routine_owner_mutations BEGIN SELECT RAISE(ABORT,'injected receipt failure'); END;").expect("storage failure boundary");
+    db.execute_batch("CREATE TRIGGER reject_owner_receipt BEFORE INSERT ON host_automation_owner_mutations BEGIN SELECT RAISE(ABORT,'injected receipt failure'); END;").expect("storage failure boundary");
     assert!(
         control
-            .set_enabled(owner, routine.id, pause.clone(), 100)
+            .set_enabled(owner, automation.id, pause.clone(), 100)
             .await
             .is_err()
     );
     assert_eq!(
-        h.routine(parent, routine.id).await.expect("rolled back"),
-        routine
+        h.automation(parent, automation.id)
+            .await
+            .expect("rolled back"),
+        automation
     );
     db.execute_batch("DROP TRIGGER reject_owner_receipt")
         .expect("restore storage");
     assert_eq!(
         control
-            .set_enabled(owner, routine.id, pause, 200)
+            .set_enabled(owner, automation.id, pause, 200)
             .await
             .expect("retry")
             .revision,
@@ -251,30 +261,30 @@ async fn owner_receipt_failure_rolls_back_change_and_migration_keeps_agent_recei
 }
 
 #[tokio::test]
-async fn expired_once_deleted_routines_and_replaced_hosts_cannot_be_resumed() {
+async fn expired_once_deleted_automations_and_replaced_hosts_cannot_be_resumed() {
     let (_d, h, parent, child) = fixture().await;
     let mut once = spec(child);
-    once.schedule = RoutineSchedule::Once {
+    once.schedule = AutomationSchedule::Once {
         at: "1970-01-01T00:00:01Z".to_owned(),
     };
-    let routine = create(&h, parent, once).await;
+    let automation = create(&h, parent, once).await;
     let (control, owner) = controls(&h).await;
     let pause = command(1, false);
     control
-        .set_enabled(owner, routine.id, pause.clone(), 2_000)
+        .set_enabled(owner, automation.id, pause.clone(), 2_000)
         .await
         .expect("pause overdue once");
     assert!(matches!(
         control
-            .set_enabled(owner, routine.id, command(2, true), 2_000)
+            .set_enabled(owner, automation.id, command(2, true), 2_000)
             .await,
-        Err(LocalHostError::Routine(RoutineError::Invalid(_)))
+        Err(LocalHostError::Automation(AutomationError::Invalid(_)))
     ));
-    h.manage_routine(
+    h.manage_automation(
         child,
         Uuid::new_v4(),
-        RoutineMutation::Delete {
-            id: routine.id,
+        AutomationMutation::Delete {
+            id: automation.id,
             expected_revision: 2,
         },
         2_000,
@@ -284,20 +294,20 @@ async fn expired_once_deleted_routines_and_replaced_hosts_cannot_be_resumed() {
     .expect("delete");
     assert!(matches!(
         control
-            .set_enabled(owner, routine.id, command(3, true), 2_000)
+            .set_enabled(owner, automation.id, command(3, true), 2_000)
             .await,
-        Err(LocalHostError::Routine(RoutineError::NotFound))
+        Err(LocalHostError::Automation(AutomationError::NotFound))
     ));
-    // A receipt may be read after deletion, but cannot resurrect the routine.
+    // A receipt may be read after deletion, but cannot resurrect the automation.
     assert_eq!(
         control
-            .set_enabled(owner, routine.id, pause.clone(), 3_000)
+            .set_enabled(owner, automation.id, pause.clone(), 3_000)
             .await
             .expect("historical receipt")
             .revision,
         2
     );
-    assert!(h.routine(parent, routine.id).await.is_err());
+    assert!(h.automation(parent, automation.id).await.is_err());
     let db = catalog::open_verified(&h.config.database).expect("catalog");
     db.execute(
         "UPDATE host_identity SET host_id=?1",
@@ -306,7 +316,7 @@ async fn expired_once_deleted_routines_and_replaced_hosts_cannot_be_resumed() {
     .expect("replace Host identity");
     assert!(
         control
-            .set_enabled(owner, routine.id, pause, 4_000)
+            .set_enabled(owner, automation.id, pause, 4_000)
             .await
             .is_err()
     );
@@ -315,12 +325,12 @@ async fn expired_once_deleted_routines_and_replaced_hosts_cannot_be_resumed() {
 #[tokio::test]
 async fn a_missing_catalog_is_not_recreated_by_an_owner_write() {
     let (_d, h, parent, child) = fixture().await;
-    let routine = create(&h, parent, spec(child)).await;
+    let automation = create(&h, parent, spec(child)).await;
     let (control, owner) = controls(&h).await;
     std::fs::remove_file(&h.config.database).expect("catalog removed during outage");
     assert!(
         control
-            .set_enabled(owner, routine.id, command(1, false), 1)
+            .set_enabled(owner, automation.id, command(1, false), 1)
             .await
             .is_err()
     );
@@ -330,7 +340,7 @@ async fn a_missing_catalog_is_not_recreated_by_an_owner_write() {
 #[tokio::test]
 async fn a_fresh_owner_operation_checks_host_identity_before_receipt_lookup_or_mutation() {
     let (_d, h, parent, child) = fixture().await;
-    let routine = create(&h, parent, spec(child)).await;
+    let automation = create(&h, parent, spec(child)).await;
     let (control, owner) = controls(&h).await;
     let db = catalog::open_verified(&h.config.database).expect("catalog");
     db.execute(
@@ -339,7 +349,7 @@ async fn a_fresh_owner_operation_checks_host_identity_before_receipt_lookup_or_m
     )
     .expect("replacement Host");
     let error = control
-        .set_enabled(owner, routine.id, command(1, false), 1_000)
+        .set_enabled(owner, automation.id, command(1, false), 1_000)
         .await
         .expect_err("fresh operation must check identity before lookup returns None");
     assert!(
@@ -347,14 +357,14 @@ async fn a_fresh_owner_operation_checks_host_identity_before_receipt_lookup_or_m
         "{error}"
     );
     assert_eq!(
-        h.routine(parent, routine.id)
+        h.automation(parent, automation.id)
             .await
-            .expect("unchanged routine"),
-        routine
+            .expect("unchanged automation"),
+        automation
     );
     assert_eq!(
         db.query_row(
-            "SELECT COUNT(*) FROM host_routine_owner_mutations",
+            "SELECT COUNT(*) FROM host_automation_owner_mutations",
             [],
             |row| row.get::<_, i64>(0)
         )

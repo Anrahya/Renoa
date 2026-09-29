@@ -3,20 +3,20 @@ use super::*;
 #[tokio::test]
 async fn another_session_reads_the_exact_completed_result_through_model_tools() {
     let (d, h, parent, child) = fixture().await;
-    let routine = h
-        .manage_routine(
+    let automation = h
+        .manage_automation(
             parent,
             Uuid::new_v4(),
-            RoutineMutation::Create { spec: spec(child) },
+            AutomationMutation::Create { spec: spec(child) },
             0,
             CancellationToken::new(),
         )
         .await
         .expect("schedule");
-    let run = store::next(&h.config.database, routine.next_due_ms)
+    let run = store::next(&h.config.database, automation.next_due_ms)
         .expect("admit")
         .expect("run");
-    h.execute_routine_run(run.clone())
+    h.execute_automation_run(run.clone())
         .await
         .expect("automation");
     drop(h);
@@ -29,7 +29,7 @@ async fn another_session_reads_the_exact_completed_result_through_model_tools() 
     let outcome = session
         .execute_turn(
             Uuid::new_v4(),
-            vec![ContentBlock::text("read latest routine result")],
+            vec![ContentBlock::text("read latest automation result")],
             Arc::new(Quiet),
         )
         .await
@@ -38,17 +38,20 @@ async fn another_session_reads_the_exact_completed_result_through_model_tools() 
         matches!(outcome,LocalTurnOutcome::Completed {output,..} if output=="Digest saved: digest.md")
     );
     let exact = h
-        .routine_result(parent, run.id)
+        .automation_result(parent, run.id)
         .await
         .expect("operator can inspect");
     assert_eq!(exact.prompt, "scheduled digest");
     let denied = outsider(&h).await;
-    assert!(h.routine_result(denied, run.id).await.is_err());
-    assert!(h.routine_results(denied, child, None).await.is_err());
-    let page = h.routine_results(child, child, None).await.expect("list");
+    assert!(h.automation_result(denied, run.id).await.is_err());
+    assert!(h.automation_results(denied, child, None).await.is_err());
+    let page = h
+        .automation_results(child, child, None)
+        .await
+        .expect("list");
     assert_eq!(page.len(), 1);
     assert!(
-        h.routine_results(child, child, Some(page[0].sequence))
+        h.automation_results(child, child, Some(page[0].sequence))
             .await
             .expect("older page")
             .is_empty()

@@ -90,7 +90,7 @@ const fn host_error_code(error: &LocalHostError) -> &'static str {
         LocalHostError::Background(_) => "background",
         LocalHostError::AgentCancelled => "agent_cancelled",
         LocalHostError::Definition(_) => "agent_definition",
-        LocalHostError::Routine(_) => "routine",
+        LocalHostError::Automation(_) => "automation",
         LocalHostError::AgentConflict(_) => "agent_conflict",
         LocalHostError::AgentNotFound(_) => "agent_not_found",
         LocalHostError::StatePoisoned => "state_poisoned",

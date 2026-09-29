@@ -91,7 +91,7 @@ impl Store {
                     matches!(command, Command::Prompt(_)).then_some(crate::surface_context::CONTEXT)],
             )?;
             if matches!(command, Command::Prompt(_)) {
-                super::routine_context::attach(&transaction, &request_id, &session_id, &input.topic.channel)?;
+                super::automation_context::attach(&transaction, &request_id, &session_id, &input.topic.channel)?;
             }
             transaction.execute("INSERT INTO messages VALUES (?1,?2,?3,?4,?5)",params![input.topic.channel,input.message_ts,received_thread,input.text,request_id])?;
             transaction.execute("INSERT INTO receipts VALUES (?1,?2,?3)", params![input.event_id,input.topic.channel,input.message_ts])?;
