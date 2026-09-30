@@ -117,7 +117,10 @@ async fn real_passkey_owner_is_required_and_outages_do_not_become_logout() {
     let api = ManagementApi::open(&root, id, identity, owner, "http://localhost")
         .expect("bind exact Host")
         .with_assets(&assets)
-        .expect("public assets");
+        .expect("public assets")
+        .with_agent_creation(host)
+        .await
+        .expect("same Host");
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("management listener");
@@ -259,7 +262,7 @@ async fn check_public_shell_and_private_detail(client: &Client, url: &str, cooki
     let shell = client.get(url).send().await.expect("app shell");
     assert_eq!(shell.status(), StatusCode::OK);
     assert_eq!(shell.text().await.expect("shell body"), "control panel");
-    let detail = format!("{url}/v1/host/reviews/{}", Uuid::new_v4());
+    let detail = format!("{url}/v1/host/agents/{}", Uuid::new_v4());
     assert_eq!(
         client
             .get(&detail)
@@ -275,7 +278,7 @@ async fn check_public_shell_and_private_detail(client: &Client, url: &str, cooki
             .header("cookie", cookie)
             .send()
             .await
-            .expect("absent review")
+            .expect("absent agent")
             .status(),
         StatusCode::NOT_FOUND
     );

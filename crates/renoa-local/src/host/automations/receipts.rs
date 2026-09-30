@@ -1,0 +1,124 @@
+use renoa_kernel::{AgentId, SessionId};
+use rusqlite::{OptionalExtension as _, Transaction, params};
+use uuid::Uuid;
+
+use super::{AutomationError, AutomationRecord, store};
+use crate::host::catalog::HostCatalogError;
+
+// Separate owner receipts preserve the foreign key and authority of historical
+// agent receipts. Both are committed by the same automation mutation transaction.
+pub(super) fn initialize(tx: &Transaction<'_>) -> Result<(), HostCatalogError> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS host_automation_owner_mutations (
+        operation_id TEXT PRIMARY KEY, principal_id TEXT NOT NULL,
+        request_json TEXT NOT NULL CHECK(json_valid(request_json)),
+        result_json TEXT NOT NULL CHECK(json_valid(result_json))
+    ) STRICT;",
+    )?;
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum AutomationActor {
+    /// An agent, and the Host session it acted from when it has one.
+    Agent {
+        id: AgentId,
+        session: Option<SessionId>,
+    },
+    Owner {
+        host_id: Uuid,
+        principal: Uuid,
+    },
+}
+
+impl AutomationActor {
+    pub fn authorize(self, tx: &Transaction<'_>, target: AgentId) -> Result<(), AutomationError> {
+        match self {
+            Self::Agent { id, .. } => store::authorize(tx, id, target),
+            Self::Owner { .. } => Ok(()),
+        }
+    }
+
+    /// The conversation a new automation's runs return to: the session its
+    /// own agent created it from. An automation made for another agent, or by
+    /// the owner, has none and runs in a conversation of its own.
+    pub fn origin_for(self, agent: AgentId) -> Option<SessionId> {
+        match self {
+            Self::Agent { id, session } if id == agent => session,
+            Self::Agent { .. } | Self::Owner { .. } => None,
+        }
+    }
+
+    pub fn replay(
+        self,
+        tx: &Transaction<'_>,
+        operation: Uuid,
+        request: &str,
+    ) -> Result<Option<AutomationRecord>, AutomationError> {
+        let (sql, identity) = match self {
+            Self::Agent { id, .. } => (
+                "SELECT actor_id,request_json,result_json FROM host_automation_mutations WHERE operation_id=?1",
+                id.to_string(),
+            ),
+            Self::Owner { host_id, principal } => {
+                let stored: String = tx.query_row(
+                    "SELECT host_id FROM host_identity WHERE singleton=1",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if stored != host_id.to_string() {
+                    return Err(HostCatalogError::Invalid(
+                        "Host identity changed; reconnect explicitly".to_owned(),
+                    )
+                    .into());
+                }
+                (
+                    "SELECT principal_id,request_json,result_json FROM host_automation_owner_mutations WHERE operation_id=?1",
+                    principal.to_string(),
+                )
+            }
+        };
+        let receipt: Option<(String, String, String)> = tx
+            .query_row(sql, [operation.to_string()], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .optional()?;
+        receipt
+            .map(|(actor, original, result)| {
+                if actor != identity || !super::retention::request_matches(&original, request) {
+                    return Err(AutomationError::Conflict);
+                }
+                Ok(serde_json::from_str(&result)?)
+            })
+            .transpose()
+    }
+
+    pub fn save(
+        self,
+        tx: &Transaction<'_>,
+        operation: Uuid,
+        request: &str,
+        result: &AutomationRecord,
+    ) -> Result<(), AutomationError> {
+        let (sql, identity) = match self {
+            Self::Agent { id, .. } => (
+                "INSERT INTO host_automation_mutations(operation_id,actor_id,request_json,result_json) VALUES(?1,?2,?3,?4)",
+                id.to_string(),
+            ),
+            Self::Owner { principal, .. } => (
+                "INSERT INTO host_automation_owner_mutations(operation_id,principal_id,request_json,result_json) VALUES(?1,?2,?3,?4)",
+                principal.to_string(),
+            ),
+        };
+        tx.execute(
+            sql,
+            params![
+                operation.to_string(),
+                identity,
+                request,
+                serde_json::to_string(result)?
+            ],
+        )?;
+        Ok(())
+    }
+}

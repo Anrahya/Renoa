@@ -14,13 +14,14 @@ use super::{
 use crate::{
     AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDocuments, AgentOperationalDefinition,
     AgentToolSelection, capabilities,
-    documents::DocumentDefaults,
-    host::{catalog, routines},
+    host::{automations, catalog},
     presets,
     stable_id::stable_id,
 };
 
-const ROUTINE_ID_DOMAIN: &str = "renoa.agent.routine.v1";
+// A frozen derivation domain: automation ids created by earlier releases were
+// derived from it, so it keeps the name routines had then.
+const AUTOMATION_ID_DOMAIN: &str = "renoa.agent.routine.v1";
 
 impl LocalHost {
     /// Creates one durable agent, or replays the stored result of the same
@@ -94,15 +95,15 @@ impl LocalHost {
             ));
         }
         let result_json = serde_json::to_string(&definition)?;
-        let routine = request.routine.map(|routine| {
+        let automation = request.automation.map(|automation| {
             (
-                stable_id(&format!("{ROUTINE_ID_DOMAIN}:{}", request.operation_id)),
-                routines::RoutineSpec {
+                stable_id(&format!("{AUTOMATION_ID_DOMAIN}:{}", request.operation_id)),
+                automations::AutomationSpec {
                     agent_id: definition.id,
-                    name: routine.name,
-                    prompt: routine.prompt,
-                    schedule: routine.schedule,
-                    enabled: routine.enabled,
+                    name: automation.name,
+                    prompt: automation.prompt,
+                    schedule: automation.schedule,
+                    enabled: automation.enabled,
                 },
             )
         });
@@ -113,15 +114,15 @@ impl LocalHost {
             operation_id: request.operation_id,
             request_json,
             result_json,
-            document_defaults: documents.map(|enabled| {
+            documents: documents.map(|enabled| {
                 (
                     enabled,
                     preset
-                        .and_then(presets::AgentPreset::document_defaults)
-                        .unwrap_or(DocumentDefaults { soul: "", user: "" }),
+                        .and_then(presets::AgentPreset::soul_default)
+                        .unwrap_or_default(),
                 )
             }),
-            routine,
+            automation,
             cancellation,
         };
         tokio::task::spawn_blocking(move || create_blocking(&commit)).await?
@@ -170,8 +171,8 @@ struct CreateCommit {
     operation_id: Uuid,
     request_json: String,
     result_json: String,
-    document_defaults: Option<(AgentDocuments, DocumentDefaults)>,
-    routine: Option<(Uuid, routines::RoutineSpec)>,
+    documents: Option<(AgentDocuments, &'static str)>,
+    automation: Option<(Uuid, automations::AutomationSpec)>,
     cancellation: CancellationToken,
 }
 
@@ -183,8 +184,8 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         operation_id,
         request_json,
         result_json,
-        document_defaults,
-        routine,
+        documents,
+        automation,
         cancellation,
     } = commit;
     let mut connection = catalog::open_verified(database)?;
@@ -218,10 +219,10 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         crate::mcp::McpCatalogStore::require_complete_catalog(&transaction, connection_id)?;
     }
     store::insert(&transaction, definition)?;
-    if let Some((routine_id, spec)) = routine {
-        routines::store::insert_first_routine(
+    if let Some((automation_id, spec)) = automation {
+        automations::store::insert_first_automation(
             &transaction,
-            *routine_id,
+            *automation_id,
             spec.clone(),
             definition.created_at_ms,
         )?;
@@ -238,12 +239,12 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
     // above has no filesystem effect, while the row still cannot become visible
     // before its documents exist. A crash between the two publishes again on the
     // retry, and the identical files are adopted.
-    if let Some((enabled, defaults)) = document_defaults {
+    if let Some((enabled, soul)) = documents {
         crate::documents::AgentDocumentStore::publish(
             data_directory,
             definition.id,
             *enabled,
-            *defaults,
+            soul,
         )?;
     }
     transaction.commit().map_err(catalog_error)?;

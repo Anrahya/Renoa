@@ -1,9 +1,10 @@
-//! Owner-editable agent prompt documents (`SOUL.md`, `USER.md`).
+//! Prompt documents: an agent's own `SOUL.md` and a person's `USER.md`.
 //!
-//! Files are the content source of truth. Each agent owns its own resource
-//! root at `<data directory>/agents/<agent id>/`, and publication happens
-//! before the database commits the agent, so a committed document-enabled agent
-//! always has both readable files.
+//! Files are the content source of truth. An agent's `SOUL.md` lives in its own
+//! resource root at `<data directory>/agents/<agent id>/`, and publication
+//! happens before the database commits the agent, so a committed soul-enabled
+//! agent always has a readable file. `USER.md` belongs to the person a turn is
+//! talking to and is shared by every agent that talks to them; see [`profile`].
 
 use std::{
     fs::File,
@@ -20,124 +21,130 @@ use renoa_kernel::{AgentId, EffectRecovery};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 mod files;
+mod profile;
 use files::{
-    Document, DocumentSnapshot, Publication, PublicationRoot, Published, PublishedFile,
-    append_document, document_io, existing_document_root, publication_root, publication_state,
-    publish_document, remove_published, require_regular_file, restrict_directory, revision,
-    revision_from_hash,
+    Document, DocumentSnapshot, Publication, PublicationRoot, Published, PublishedFile, SOUL_FILE,
+    append_document, canonical_data_directory, document_io, existing_document_root,
+    publication_root, publication_state, publish_document, remove_published, require_regular_file,
+    restrict_directory, revision, revision_from_hash,
 };
+use profile::PersonProfile;
+pub use profile::UserProfile;
+pub(crate) use profile::{read_user_profile, replace_user_profile};
 
 use crate::{
     AgentDefinitionError, AgentDocuments, atomic_file::content_hash, capabilities,
     file_lock::FileUpdate,
 };
 
-const BINDING_REVISION: &str = "renoa-agent-documents-v1";
+const BINDING_REVISION: &str = "renoa-agent-documents-v2";
 
-/// Default content published for a new agent's documents.
-#[derive(Clone, Copy)]
-pub(crate) struct DocumentDefaults {
-    pub(crate) soul: &'static str,
-    pub(crate) user: &'static str,
-}
-
-/// The published prompt documents of one agent.
+/// The prompt documents one agent's turn reads and may edit.
 #[derive(Clone, Debug)]
 pub(crate) struct AgentDocumentStore {
     agent: AgentId,
-    root: PathBuf,
     enabled: AgentDocuments,
+    data_directory: PathBuf,
+    soul: Option<PathBuf>,
+    person: Option<PersonProfile>,
 }
 
 impl AgentDocumentStore {
-    /// Adopts or publishes the exact default files for a new agent.
+    /// Adopts or publishes the exact default `SOUL.md` for a new agent.
     ///
-    /// The whole set is validated before the first write, and a failure during
-    /// publication removes exactly the files this attempt installed, so a
-    /// rejected creation leaves no publication behind. A matching existing
-    /// publication is adopted, so a retry after a crash between file publication
-    /// and database commit succeeds. Conflicting pre-existing content fails
-    /// closed.
+    /// Validation runs before the first write, and a failure after it removes
+    /// exactly the file and directories this attempt created, so a rejected
+    /// creation leaves no publication behind. A matching existing file is
+    /// adopted, so a retry after a crash between file publication and database
+    /// commit succeeds. Conflicting pre-existing content fails closed. An agent
+    /// that reads only `USER.md` publishes nothing: that file belongs to a person.
     ///
     /// # Errors
     ///
-    /// Returns an error for unsafe paths, conflicting content, or storage
-    /// failures.
+    /// Returns an error for an empty document set, unsafe paths, conflicting
+    /// content, or storage failures.
     pub(crate) fn publish(
         data_directory: &Path,
         agent: AgentId,
         enabled: AgentDocuments,
-        defaults: DocumentDefaults,
+        soul: &'static str,
     ) -> Result<(), AgentDefinitionError> {
-        let root = publication_root(data_directory, agent, enabled)?;
-        let publications: Vec<(PathBuf, &'static str)> = enabled_documents(enabled)
-            .into_iter()
-            .map(|document| {
-                (
-                    root.path.join(document.file_name()),
-                    default_content(document, defaults),
-                )
-            })
-            .collect();
-        for (path, content) in &publications {
-            let state = match publication_state(path, content) {
-                Ok(state) => state,
-                Err(error) => {
-                    root.cleanup_empty();
-                    return Err(error);
-                }
-            };
-            if state == Publication::Conflicting {
-                let error = AgentDefinitionError::DocumentConflict { path: path.clone() };
+        if !enabled.any() {
+            return Err(AgentDefinitionError::EmptyDocumentSet);
+        }
+        if !enabled.soul {
+            return Ok(());
+        }
+        let root = publication_root(data_directory, agent)?;
+        let path = root.path.join(SOUL_FILE);
+        match publication_state(&path, soul) {
+            Ok(Publication::Conflicting) => {
+                root.cleanup_empty();
+                return Err(AgentDefinitionError::DocumentConflict { path });
+            }
+            Ok(Publication::Absent | Publication::Identical) => {}
+            Err(error) => {
                 root.cleanup_empty();
                 return Err(error);
             }
         }
-        let mut created: Vec<(PathBuf, PublishedFile)> = Vec::new();
-        for (path, content) in &publications {
-            match publish_document(path, content) {
-                Ok(Published::Created(published)) => {
-                    created.push((path.clone(), published));
-                    #[cfg(test)]
-                    if let Err(error) = files::fault::after_created(path) {
-                        return Err(remove_created(&root, &created, error));
-                    }
-                }
-                Ok(Published::Adopted) => {}
-                Err(error) => return Err(remove_created(&root, &created, error)),
+        let created = match publish_document(&path, soul) {
+            Ok(Published::Created(published)) => Some(published),
+            Ok(Published::Adopted) => None,
+            Err(error) => {
+                root.cleanup_empty();
+                return Err(error);
             }
-        }
+        };
         if !root.was_created()
             && let Err(error) = restrict_directory(&root.path)
         {
-            return Err(remove_created(&root, &created, error));
+            return Err(remove_created(&root, &path, created.as_ref(), error));
         }
         Ok(())
     }
 
-    /// Opens one agent's published documents.
+    /// Opens one agent's documents, verifying its `SOUL.md` when it keeps one.
     ///
     /// # Errors
     ///
-    /// Returns an error when the resource root escapes the Host data
-    /// directory or an enabled document is missing or not a regular file.
+    /// Returns an error for an empty document set, a resource root that
+    /// escapes the Host data directory, or a missing or unreadable `SOUL.md`.
     pub(crate) fn open(
         data_directory: &Path,
         agent: AgentId,
         enabled: AgentDocuments,
     ) -> Result<Self, AgentDefinitionError> {
-        let root = existing_document_root(data_directory, agent, enabled)?;
-        let documents = Self {
-            agent,
-            root,
-            enabled,
-        };
-        for document in documents.enabled_documents() {
-            documents.read(document)?;
+        if !enabled.any() {
+            return Err(AgentDefinitionError::EmptyDocumentSet);
         }
-        Ok(documents)
+        let soul = if enabled.soul {
+            let path = existing_document_root(data_directory, agent)?.join(SOUL_FILE);
+            read_snapshot(&path)?;
+            Some(path)
+        } else {
+            None
+        };
+        Ok(Self {
+            agent,
+            enabled,
+            data_directory: canonical_data_directory(data_directory)?,
+            soul,
+            person: None,
+        })
+    }
+
+    /// Selects the person this turn talks to. Their `USER.md` is what the turn
+    /// reads and may edit; without a person the turn has no `USER.md`.
+    #[must_use]
+    pub(crate) fn with_principal(mut self, principal: Option<Uuid>) -> Self {
+        self.person = principal
+            .filter(|_| self.enabled.user)
+            .map(|principal| PersonProfile::new(&self.data_directory, principal));
+        self
     }
 
     #[must_use]
@@ -145,66 +152,51 @@ impl AgentDocumentStore {
         self.agent
     }
 
-    /// Renders every enabled document for one system prompt.
+    /// Renders this turn's documents for its system prompt: the agent's
+    /// `SOUL.md`, then the person's `USER.md`. `None` when it reads neither.
     ///
     /// # Errors
     ///
-    /// Returns an error when an enabled document cannot be read.
-    pub(crate) fn render(&self) -> Result<String, AgentDefinitionError> {
-        let enabled = self.enabled_documents();
+    /// Returns an error when a document cannot be read.
+    pub(crate) fn render(&self) -> Result<Option<String>, AgentDefinitionError> {
+        if self.soul.is_none() && self.person.is_none() {
+            return Ok(None);
+        }
         let mut rendered = String::new();
-        for (index, document) in enabled.iter().enumerate() {
-            let snapshot = self.read(*document)?;
-            if index > 0 {
+        if let Some(path) = &self.soul {
+            append_document(&mut rendered, Document::Soul, &read_snapshot(path)?);
+        }
+        if let Some(person) = &self.person {
+            if !rendered.is_empty() {
                 rendered.push_str("\n\n");
             }
-            append_document(
-                &mut rendered,
-                document.name(),
-                document.file_name(),
-                &snapshot,
-            );
+            append_document(&mut rendered, Document::User, &person.read()?);
         }
-        Ok(rendered)
+        Ok(Some(rendered))
     }
 
-    /// Builds the tool binding that edits these documents.
+    /// Builds the tool binding that edits this turn's documents, if it has any.
     #[must_use]
-    pub(crate) fn binding(&self) -> AgentToolBinding {
-        AgentToolBinding::new(
-            format!("{BINDING_REVISION}/{}", self.agent),
-            Arc::new(AgentDocumentsTool::new(self.clone())),
-            EffectRecovery::SafeToReplay,
-        )
+    pub(crate) fn binding(&self) -> Option<AgentToolBinding> {
+        let documents = self.documents();
+        (!documents.is_empty()).then(|| {
+            AgentToolBinding::new(
+                format!("{BINDING_REVISION}/{}", self.agent),
+                Arc::new(AgentDocumentsTool::new(self.clone(), &documents)),
+                EffectRecovery::SafeToReplay,
+            )
+        })
     }
 
-    fn enabled_documents(&self) -> Vec<Document> {
-        enabled_documents(self.enabled)
-    }
-
-    fn read(&self, document: Document) -> Result<DocumentSnapshot, AgentDefinitionError> {
-        let path = self.path(document);
-        require_regular_file(&path)?;
-        let mut bytes = Vec::new();
-        File::open(&path)
-            .and_then(|mut file| file.read_to_end(&mut bytes))
-            .map_err(|source| document_io("read agent document", &path, source))?;
-        let revision = revision(&bytes);
-        let content = String::from_utf8(bytes).map_err(|source| {
-            AgentDefinitionError::DocumentInvalidUtf8 {
-                path: path.clone(),
-                source,
-            }
-        })?;
-        let content = content
-            .strip_prefix('\u{feff}')
-            .unwrap_or(&content)
-            .to_owned();
-        Ok(DocumentSnapshot { content, revision })
-    }
-
-    fn path(&self, document: Document) -> PathBuf {
-        self.root.join(document.file_name())
+    fn documents(&self) -> Vec<Document> {
+        let mut documents = Vec::new();
+        if self.soul.is_some() {
+            documents.push(Document::Soul);
+        }
+        if self.person.is_some() {
+            documents.push(Document::User);
+        }
+        documents
     }
 
     async fn update(
@@ -214,49 +206,105 @@ impl AgentDocumentStore {
         content: &str,
         cancellation: &CancellationToken,
     ) -> Result<String, ToolError> {
-        if !self.enabled_documents().contains(&document) {
-            return Err(ToolError::invalid_input(
+        match (document, &self.soul, &self.person) {
+            (Document::Soul, Some(path), _) => {
+                replace_document(
+                    path,
+                    Missing::Refuse,
+                    expected_revision,
+                    content,
+                    cancellation,
+                )
+                .await
+            }
+            (Document::User, _, Some(person)) => {
+                person
+                    .replace(expected_revision, content, cancellation)
+                    .await
+            }
+            (Document::User, _, None) if self.enabled.user => Err(ToolError::invalid_input(
+                "no person is identified in this turn, so there is no USER.md to edit",
+            )),
+            _ => Err(ToolError::invalid_input(
                 "this agent does not keep that document",
-            ));
+            )),
         }
-        if expected_revision.len() != 64
-            || !expected_revision
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        {
-            return Err(ToolError::invalid_input(
-                "expected_revision must be a 64-character lowercase SHA-256 digest",
-            ));
+    }
+}
+
+/// What an edit does when its document file does not exist.
+#[derive(Clone, Copy)]
+enum Missing {
+    /// Fail: an agent's published `SOUL.md` is never recreated by an edit.
+    Refuse,
+    /// Read it as empty: a person's first profile edit creates the file.
+    ReadAsEmpty,
+}
+
+/// Replaces one document file against the revision its editor last read.
+///
+/// A matching edit is idempotent, and a stale one fails without changing the
+/// file.
+async fn replace_document(
+    path: &Path,
+    missing: Missing,
+    expected_revision: &str,
+    content: &str,
+    cancellation: &CancellationToken,
+) -> Result<String, ToolError> {
+    validate_revision(expected_revision)?;
+    let new_revision = revision(content.as_bytes());
+    let update = FileUpdate::acquire(path, cancellation).await?;
+    let current = match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+            Some(
+                tokio::fs::read(path)
+                    .await
+                    .map_err(|error| document_tool_io("read agent document", &error))?,
+            )
         }
-        let path = self.path(document);
-        let update = FileUpdate::acquire(&path, cancellation).await?;
-        let metadata = tokio::fs::symlink_metadata(&path)
-            .await
-            .map_err(|error| document_tool_io("inspect agent document", &error))?;
-        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        Ok(_) => {
             return Err(ToolError::invalid_input(
                 "agent document is not a regular file",
             ));
         }
-        let current = tokio::fs::read(&path)
-            .await
-            .map_err(|error| document_tool_io("read agent document", &error))?;
-        let current_hash = content_hash(&current);
-        let current_revision = revision_from_hash(current_hash);
-        let new_revision = revision(content.as_bytes());
-        if current_revision == new_revision {
-            return Ok(new_revision);
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && matches!(missing, Missing::ReadAsEmpty) =>
+        {
+            None
         }
-        if current_revision != expected_revision {
-            return Err(ToolError::conflict(
-                "agent document changed after this turn began; inspect the next turn's documents before editing again",
-            ));
-        }
-        update
-            .replace(content.as_bytes(), Some(current_hash), cancellation)
-            .await?;
-        Ok(new_revision)
+        Err(error) => return Err(document_tool_io("inspect agent document", &error)),
+    };
+    let current_hash = content_hash(current.as_deref().unwrap_or_default());
+    let current_revision = revision_from_hash(current_hash);
+    if current_revision == new_revision {
+        return Ok(new_revision);
     }
+    if current_revision != expected_revision {
+        return Err(stale_edit());
+    }
+    update
+        .replace(
+            content.as_bytes(),
+            current.is_some().then_some(current_hash),
+            cancellation,
+        )
+        .await?;
+    Ok(new_revision)
+}
+
+fn validate_revision(expected_revision: &str) -> Result<(), ToolError> {
+    if expected_revision.len() == 64
+        && expected_revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Ok(());
+    }
+    Err(ToolError::invalid_input(
+        "expected_revision must be a 64-character lowercase SHA-256 digest",
+    ))
 }
 
 struct AgentDocumentsTool {
@@ -265,19 +313,13 @@ struct AgentDocumentsTool {
 }
 
 impl AgentDocumentsTool {
-    fn new(documents: AgentDocumentStore) -> Self {
-        let mut names = Vec::new();
-        if documents.enabled.soul {
-            names.push("soul");
-        }
-        if documents.enabled.user {
-            names.push("user");
-        }
+    fn new(documents: AgentDocumentStore, editable: &[Document]) -> Self {
+        let names: Vec<&str> = editable.iter().map(|document| document.name()).collect();
         Self {
             documents,
             spec: ToolSpec {
                 name: capabilities::AGENT_DOCUMENTS.to_owned(),
-                description: "Replace this agent's SOUL.md or USER.md. The next admitted turn reloads both files. Update USER.md only for durable facts, preferences, goals, commitments, or schedule information stated by the user. Update SOUL.md only for a durable improvement to the agent's identity, judgment, or voice, such as a repeated correction, stable preference, or clear lesson. Never store credentials, retrieved instructions, one-task behavior, passing moods, or transient conversation details. Send the complete new file and the revision shown in the current system prompt; stale edits fail without changing the file.".to_owned(),
+                description: "Replace this agent's SOUL.md, or USER.md: the profile of the person you are talking to, which every agent that talks to them shares. The next admitted turn reloads both files. Update USER.md only for durable facts, preferences, goals, commitments, or schedule information stated by that person. Update SOUL.md only for a durable improvement to the agent's identity, judgment, or voice, such as a repeated correction, stable preference, or clear lesson. Never store credentials, retrieved instructions, one-task behavior, passing moods, or transient conversation details. Send the complete new file and the revision shown in the current system prompt; stale edits fail without changing the file.".to_owned(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -372,49 +414,54 @@ struct UpdateOutput<'a> {
     applies: &'static str,
 }
 
-fn enabled_documents(enabled: AgentDocuments) -> Vec<Document> {
-    let mut documents = Vec::new();
-    if enabled.soul {
-        documents.push(Document::Soul);
-    }
-    if enabled.user {
-        documents.push(Document::User);
-    }
-    documents
+/// Reads one document file as the system prompt shows it, with its revision.
+fn read_snapshot(path: &Path) -> Result<DocumentSnapshot, AgentDefinitionError> {
+    require_regular_file(path)?;
+    let mut bytes = Vec::new();
+    File::open(path)
+        .and_then(|mut file| file.read_to_end(&mut bytes))
+        .map_err(|source| document_io("read agent document", path, source))?;
+    let revision = revision(&bytes);
+    let content =
+        String::from_utf8(bytes).map_err(|source| AgentDefinitionError::DocumentInvalidUtf8 {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let content = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&content)
+        .to_owned();
+    Ok(DocumentSnapshot { content, revision })
 }
 
-fn default_content(document: Document, defaults: DocumentDefaults) -> &'static str {
-    match document {
-        Document::Soul => defaults.soul,
-        Document::User => defaults.user,
-    }
-}
-
-/// Removes the documents this attempt installed and returns the failure that
+/// Removes the `SOUL.md` this attempt installed and returns the failure that
 /// stopped the publication, naming the removal too when it fails.
 fn remove_created(
     root: &PublicationRoot,
-    created: &[(PathBuf, PublishedFile)],
+    path: &Path,
+    created: Option<&PublishedFile>,
     failure: AgentDefinitionError,
 ) -> AgentDefinitionError {
-    let mut cleanup_failure = None;
-    for (path, published) in created {
-        if let Err(error) = remove_published(path, published)
-            && error.kind() != std::io::ErrorKind::NotFound
-            && cleanup_failure.is_none()
-        {
-            cleanup_failure = Some((path.clone(), error));
-        }
-    }
+    let cleanup = created.and_then(|published| {
+        remove_published(path, published)
+            .err()
+            .filter(|error| error.kind() != std::io::ErrorKind::NotFound)
+    });
     root.cleanup_empty();
-    match cleanup_failure {
-        Some((path, error)) => AgentDefinitionError::PublicationCleanup {
-            path,
+    match cleanup {
+        Some(error) => AgentDefinitionError::PublicationCleanup {
+            path: path.to_path_buf(),
             failure: failure.to_string(),
             cleanup: error.to_string(),
         },
         None => failure,
     }
+}
+
+fn stale_edit() -> ToolError {
+    ToolError::conflict(
+        "agent document changed after this turn began; inspect the next turn's documents before editing again",
+    )
 }
 
 fn document_tool_io(operation: &str, error: &std::io::Error) -> ToolError {

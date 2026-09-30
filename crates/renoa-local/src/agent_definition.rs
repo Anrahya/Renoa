@@ -166,11 +166,16 @@ impl AgentBehavior {
     }
 }
 
-/// Which owner-editable prompt documents this agent keeps.
+/// Which prompt documents this agent reads: its own `SOUL.md`, and the
+/// `USER.md` of the person each turn is talking to.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDocuments {
+    /// Read the agent's own SOUL.md: its identity, judgment, and voice.
     pub soul: bool,
+    /// Read the USER.md of whoever talks to the agent, the profile every agent
+    /// that talks to that person shares. False for a job that does not need to
+    /// know the person, such as a scheduled report.
     pub user: bool,
 }
 
@@ -329,6 +334,8 @@ pub enum AgentDefinitionError {
     DocumentPath { path: PathBuf },
     #[error("agent document must be a regular file: {path}")]
     DocumentNotFile { path: PathBuf },
+    #[error("a user profile directory must be a plain directory, never a link: {path}")]
+    ProfileDirectory { path: PathBuf },
     #[error("agent document publication at `{path}` was replaced before it settled")]
     DocumentPublicationReplaced { path: PathBuf },
     #[error("agent document at `{path}` is not UTF-8: {source}")]

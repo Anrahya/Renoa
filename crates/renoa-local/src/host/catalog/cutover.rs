@@ -83,8 +83,7 @@ fn migrate(
             }
             retire_agent_owners(&transaction)?;
             crate::host::definition::schema::initialize(&transaction)?;
-            crate::host::routines::initialize(&transaction)?;
-            crate::host::reviews::initialize(&transaction)?;
+            crate::host::automations::initialize(&transaction)?;
             crate::skills::SkillStore::initialize_tables(&transaction)?;
             crate::plugins::activation::schema::initialize_lifecycle(&transaction, true)?;
             transaction.execute(
@@ -183,19 +182,17 @@ fn retire_agent_owners(transaction: &rusqlite::Transaction<'_>) -> Result<(), Ho
         "agent_skill_bindings",
         "agent_skill_source_rejections",
         "session_skills",
-        // Agent-owned records whose rows cannot survive the canonical shape.
+        // Schema 34 allows `renoa.automations` where this table allowed
+        // `renoa.routines`, so it is recreated rather than kept.
+        "host_builtin_plugin_operations",
+        "host_agent_builtin_plugins",
+        // Agent-owned records whose rows cannot survive the canonical shape,
+        // under the routine names every earlier schema used.
         "host_routine_deletions",
         "host_routine_mutations",
         "host_routine_owner_mutations",
         "host_routine_runs",
         "host_routines",
-        "host_review_deliveries",
-        "host_review_jobs",
-        "host_review_operations",
-        "host_review_publications",
-        "host_review_requests",
-        "host_review_runs",
-        "host_review_repositories",
         // Retired owners from earlier runtime versions.
         "host_bots",
         "host_bot_tool_selections",
@@ -205,7 +202,32 @@ fn retire_agent_owners(transaction: &rusqlite::Transaction<'_>) -> Result<(), Ho
         "profile_mcp_tools",
         "profile_skill_bindings",
         "skill_source_rejections",
-    ] {
+    ]
+    .into_iter()
+    .chain(RETIRED_REVIEW_TABLES)
+    {
+        transaction.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+    }
+    Ok(())
+}
+
+/// The GitHub review tables that schema 33 retired, each child before the
+/// parent it references, so a connection enforcing foreign keys can drop them.
+const RETIRED_REVIEW_TABLES: [&str; 7] = [
+    "host_review_publications",
+    "host_review_jobs",
+    "host_review_runs",
+    "host_review_deliveries",
+    "host_review_requests",
+    "host_review_operations",
+    "host_review_repositories",
+];
+
+/// Drops the retired GitHub review tables from a catalog that upgrades in place.
+pub(super) fn retire_review_tables(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<(), HostCatalogError> {
+    for table in RETIRED_REVIEW_TABLES {
         transaction.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
     }
     Ok(())

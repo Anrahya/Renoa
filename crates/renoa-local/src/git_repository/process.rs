@@ -2,7 +2,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use std::{io, process::Stdio};
 use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt as _, AsyncReadExt as _},
+    io::AsyncReadExt as _,
     process::{ChildStdout, Command},
 };
 use tokio_util::sync::CancellationToken;
@@ -123,67 +123,6 @@ where
         .await
         .map_err(io::Error::other)?;
     result
-}
-
-// Git hunk headers contain two pairs of u64 line coordinates. Retain only their
-// prefix; source lines of any length are streamed without allocating whole lines.
-pub(super) async fn line_prefix(
-    reader: &mut (impl AsyncBufRead + Unpin),
-) -> io::Result<Option<Vec<u8>>> {
-    let mut prefix = Vec::new();
-    let mut seen = false;
-    loop {
-        let buf = reader.fill_buf().await?;
-        if buf.is_empty() {
-            return Ok(seen.then_some(prefix));
-        }
-        seen = true;
-        let end = buf.iter().position(|b| *b == b'\n');
-        let n = end.map_or(buf.len(), |n| n + 1);
-        prefix.extend_from_slice(&buf[..n.min(128_usize.saturating_sub(prefix.len()))]);
-        reader.consume(n);
-        if end.is_some() {
-            return Ok(Some(prefix));
-        }
-    }
-}
-
-pub(super) async fn skip_line(reader: &mut (impl AsyncBufRead + Unpin)) -> io::Result<bool> {
-    Ok(line_prefix(reader).await?.is_some())
-}
-
-// Compare source lines without allocating a whole blob line. Normalize only
-// LF/CRLF terminators, as Rust's str::lines does for the supplied quotation.
-pub(super) async fn matches_line(
-    reader: &mut (impl AsyncBufRead + Unpin),
-    expected: &[u8],
-) -> io::Result<bool> {
-    let mut remaining = expected;
-    while !remaining.is_empty() {
-        let bytes = reader.fill_buf().await?;
-        let count = remaining.len().min(bytes.len());
-        if count == 0 || bytes[..count] != remaining[..count] {
-            return Ok(false);
-        }
-        reader.consume(count);
-        remaining = &remaining[count..];
-    }
-    match reader.fill_buf().await?.first().copied() {
-        None => Ok(!expected.is_empty()),
-        Some(b'\n') => {
-            reader.consume(1);
-            Ok(true)
-        }
-        Some(b'\r') => {
-            reader.consume(1);
-            if reader.fill_buf().await?.first() != Some(&b'\n') {
-                return Ok(false);
-            }
-            reader.consume(1);
-            Ok(true)
-        }
-        Some(_) => Ok(false),
-    }
 }
 
 fn interrupted() -> io::Error {

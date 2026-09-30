@@ -52,7 +52,7 @@ The finished system should make all of these ordinary:
   both;
 - connect more than one account to the same integration, such as personal and
   work Google accounts;
-- expose selected tools or skills to Alpha, a GitHub review agent, or another
+- expose selected tools or skills to Alpha, a research agent, or another
   profile without duplicating the underlying installation;
 - add a typical company-hosted remote MCP integration through package data
   alone when Renoa already supports its transport and authentication method;
@@ -567,7 +567,7 @@ of the same skill name.
 
 ## Compiled Host plugins
 
-The same protocol also discovers compiled `renoa.agents`, `renoa.routines`,
+The same protocol also discovers compiled `renoa.agents`, `renoa.automations`,
 `renoa.documents`, `renoa.skills`, and `renoa.git` plugins. Their implementations
 are registered by the Host and cannot be loaded from an imported package.
 `plugin_manage` enables or deactivates them for its caller using durable receipts;

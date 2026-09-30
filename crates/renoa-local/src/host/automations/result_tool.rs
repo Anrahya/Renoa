@@ -1,0 +1,124 @@
+use super::LocalHost;
+use crate::{capabilities, host::HostConfig};
+use renoa_agent::{BoxFuture, Tool, ToolCall, ToolError, ToolOutput, ToolSpec, ToolUpdates};
+use renoa_agent_loop::AgentToolBinding;
+use renoa_kernel::{AgentId, EffectRecovery};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+pub(crate) fn binding(host: Arc<HostConfig>, actor: AgentId) -> AgentToolBinding {
+    AgentToolBinding::new("renoa-automation-results-v5", Arc::new(Results {
+        host:LocalHost {config:host}, actor,
+        spec:ToolSpec {
+            name:capabilities::AUTOMATION_RESULTS.to_owned(),
+            description:"Read results from this Host's scheduled or manually triggered automation runs, even when they ran in another session or surface. Use this when discussing an automation's output; never rerun a task merely to read its result. List returns compact metadata for finished runs newest first, each with its status: succeeded, failed, or skipped (too late to run), and how many of its tool calls failed; pass next_before to page older results. Read with a run ID returns its exact task and output; for a failed or skipped run the output says why. An agent reads only its own results; reading another agent's results needs the enabled renoa.agents plugin and that agent's id from agent_manage list. If only an excerpt was provided in chat context, read the run for the full output. Each automation keeps its newest 50 results, none older than 30 days; a deleted automation keeps none.".to_owned(),
+            input_schema:input_schema(),
+        },
+    }), EffectRecovery::SafeToReplay)
+}
+
+pub(super) fn input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "read"],
+                "description": "list: optional agent_id and before. read: required id only. Pass only fields for the selected action."
+            },
+            "agent_id": {"type": "string", "format": "uuid"},
+            "before": {"type": "integer", "minimum": 1},
+            "id": {"type": "string", "format": "uuid"}
+        },
+        "required": ["action"],
+        "additionalProperties": false
+    })
+}
+struct Results {
+    host: LocalHost,
+    actor: AgentId,
+    spec: ToolSpec,
+}
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+enum Input {
+    List {
+        agent_id: Option<AgentId>,
+        before: Option<i64>,
+    },
+    Read {
+        id: Uuid,
+    },
+}
+
+impl Tool for Results {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+    fn execute(
+        &self,
+        call: ToolCall,
+        cancellation: CancellationToken,
+        _: ToolUpdates,
+    ) -> BoxFuture<'_, Result<ToolOutput, ToolError>> {
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(ToolError::cancelled("result lookup cancelled", false));
+            }
+            if call.name != capabilities::AUTOMATION_RESULTS {
+                return Err(ToolError::invalid_input("wrong result tool binding"));
+            }
+            let input: Input = serde_json::from_value(call.arguments)
+                .map_err(|e| ToolError::invalid_input(e.to_string()))?;
+            let actor = self.actor;
+            let result = match input {
+                Input::List { agent_id, before } => {
+                    let runs = self
+                        .host
+                        .automation_results(actor, agent_id.unwrap_or(actor), before)
+                        .await
+                        .map_err(|e| ToolError::invalid_input(e.to_string()))?;
+                    let next = if runs.len() == 20 {
+                        runs.last().map(|r| r.sequence)
+                    } else {
+                        None
+                    };
+                    json!({"runs":runs,"next_before":next})
+                }
+                Input::Read { id } => {
+                    json!({"run":self.host.automation_result(actor,id).await.map_err(|e|ToolError::invalid_input(e.to_string()))?})
+                }
+            };
+            Ok(ToolOutput {
+                content: vec![renoa_agent::ContentBlock::text(result.to_string())],
+                details: None,
+                is_error: false,
+            })
+        })
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::Input;
+
+    #[test]
+    fn action_variants_still_reject_foreign_or_missing_fields() {
+        assert!(
+            serde_json::from_value::<Input>(json!({"action": "list", "id": Uuid::nil()})).is_err()
+        );
+        assert!(serde_json::from_value::<Input>(json!({"action": "read"})).is_err());
+        assert!(
+            serde_json::from_value::<Input>(
+                json!({"action": "read", "id": Uuid::nil(), "before": 1})
+            )
+            .is_err()
+        );
+    }
+}

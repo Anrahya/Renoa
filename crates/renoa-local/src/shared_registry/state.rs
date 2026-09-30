@@ -85,6 +85,61 @@ impl RegistryState {
             revision,
         })
     }
+
+    /// Records that the latest synchronization failed with `error`. Returns
+    /// whether this began a failure or changed its reason; a repeated failure
+    /// keeps the time it began and writes nothing.
+    pub(super) fn record_failure(
+        &self,
+        error: &str,
+        now_ms: i64,
+    ) -> Result<bool, SharedRegistryError> {
+        let mut connection = crate::host::catalog::open_verified(&self.database)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let recorded = transaction
+            .query_row(
+                "SELECT error FROM shared_plugin_registry_sync WHERE singleton = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let changed = match recorded {
+            Some(recorded) if recorded == error => false,
+            Some(_) => {
+                transaction.execute(
+                    "UPDATE shared_plugin_registry_sync SET error = ?1 WHERE singleton = 1",
+                    [error],
+                )?;
+                true
+            }
+            None => {
+                transaction.execute(
+                    "INSERT INTO shared_plugin_registry_sync(singleton, failing_since_ms, error)
+                     VALUES (1, ?1, ?2)",
+                    rusqlite::params![now_ms, error],
+                )?;
+                true
+            }
+        };
+        transaction.commit()?;
+        Ok(changed)
+    }
+
+    /// Clears the failure record after a synchronization succeeds. Returns
+    /// whether one was recorded; a Host that was not failing writes nothing.
+    pub(super) fn clear_failure(&self) -> Result<bool, SharedRegistryError> {
+        let connection = crate::host::catalog::open_verified(&self.database)?;
+        let failing = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM shared_plugin_registry_sync)",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !failing {
+            return Ok(false);
+        }
+        connection.execute("DELETE FROM shared_plugin_registry_sync", [])?;
+        Ok(true)
+    }
 }
 
 fn read_cursor(connection: &rusqlite::Connection) -> Result<Option<Cursor>, SharedRegistryError> {
@@ -122,6 +177,8 @@ fn sql_i64(value: u64) -> Result<i64, SharedRegistryError> {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::OptionalExtension as _;
+
     use super::RegistryState;
 
     #[test]
@@ -140,5 +197,37 @@ mod tests {
                 .bind(renoa_registry_protocol::RegistryId::new())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_failure_is_recorded_once_per_reason_and_cleared_by_success() {
+        let directory = tempfile::tempdir().expect("temporary Host state");
+        let database = directory.path().join("host.sqlite3");
+        crate::host::catalog::initialize(&database).expect("initialize Host catalog");
+        let state = RegistryState::new(database.clone());
+        let failure = |connection: &rusqlite::Connection| {
+            connection
+                .query_row(
+                    "SELECT failing_since_ms, error FROM shared_plugin_registry_sync",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+                .expect("read failure record")
+        };
+        let connection = rusqlite::Connection::open(&database).expect("open catalog");
+
+        assert!(!state.clear_failure().expect("clear nothing"));
+        assert!(state.record_failure("unreachable", 10).expect("record"));
+        assert!(!state.record_failure("unreachable", 20).expect("repeat"));
+        assert_eq!(failure(&connection), Some((10, "unreachable".to_owned())));
+        assert!(state.record_failure("bound elsewhere", 30).expect("change"));
+        assert_eq!(
+            failure(&connection),
+            Some((10, "bound elsewhere".to_owned())),
+            "a changed reason keeps the time the failure began"
+        );
+        assert!(state.clear_failure().expect("clear"));
+        assert_eq!(failure(&connection), None);
     }
 }

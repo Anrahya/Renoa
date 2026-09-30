@@ -2390,8 +2390,12 @@ dependencies = [
  "axum",
  "futures-util",
  "renoa-agent",
+ "renoa-control",
  "renoa-kernel",
  "renoa-local",
+ "renoa-protocol",
+ "renoa-rcp-client",
+ "renoa-telemetry",
  "reqwest",
  "rusqlite",
  "serde",
@@ -2419,6 +2423,7 @@ name = "renoa-kernel"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "renoa-telemetry",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2433,7 +2438,6 @@ dependencies = [
 name = "renoa-local"
 version = "0.1.0"
 dependencies = [
- "axum",
  "base64 0.22.1",
  "flate2",
  "futures-util",
@@ -2453,6 +2457,7 @@ dependencies = [
  "renoa-protocol",
  "renoa-registry",
  "renoa-registry-protocol",
+ "renoa-telemetry",
  "reqwest",
  "ring",
  "rusqlite",
@@ -2504,9 +2509,11 @@ dependencies = [
  "nix",
  "renoa-agent",
  "renoa-control",
+ "renoa-discord",
  "renoa-kernel",
  "renoa-local",
  "renoa-protocol",
+ "renoa-rcp-client",
  "renoa-telemetry",
  "rusqlite",
  "serde",
@@ -2534,6 +2541,21 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "renoa-rcp-client"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "renoa-control",
+ "renoa-protocol",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tokio-util",
 ]
 
 [[package]]

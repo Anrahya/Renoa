@@ -23,11 +23,12 @@ operations. Issuing enrollment tokens, recording a node's owning principal, and
 revoking devices are trusted control-plane actions and are not remotely callable
 RCP operations. An operator may also create a task directly. The node's owner can
 open a task remotely with `OpenTask`, but only against a target its online node
-currently advertises.
+currently advertises, and delete one of its tasks with `DeleteTask`.
 
 After authentication, the session identity fixes the peer's role:
 
-- a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, and `Submit`;
+- a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`, and
+  `DeleteTask`;
 - a node may `AdvertiseTargets`, `AcknowledgeExecution`, and
   `PublishExecutionEvents`;
 - the coordinator may deliver `Execute` to a node and `TaskEvent` records to an
@@ -162,6 +163,21 @@ the node is now offline. Current node availability cannot rewrite the result of
 past durable admission. Reusing the command identity with different content,
 task, surface identity, or target returns `Conflict`.
 
+### `DeleteTask`
+
+Inputs:
+
+- `task_id`: a task the authenticated principal owns.
+
+The coordinator deletes the task, its journal, its commands and their execution
+state in one transaction, then returns `TaskDeleted`. Nothing is archived. A task with a command whose
+execution has not terminated, including one pending delivery or acknowledged
+without events yet, is refused with `Conflict` and left intact. Another
+principal's task returns `NotFound`. Deleting a task that no longer exists
+returns `TaskDeleted`, so a retry after a lost reply converges; its identity may
+then be opened again. The node that executed the task deletes its own copy of
+the task separately.
+
 ## Executor delivery and node operations
 
 ### `Execute`
@@ -265,6 +281,7 @@ task sequence. A timestamp never determines order.
 | `CommandAccepted` | Command, command record, and pending execution delivery |
 | `ExecutionAcknowledged` | Removal of the pending coordinator delivery |
 | `ExecutionEventsAccepted` | New task records and the node's accepted source cursor |
+| `TaskDeleted` | Removal of the task and everything the coordinator held for it |
 
 None of these outcomes means that an external side effect happened exactly
 once.
@@ -297,6 +314,7 @@ correlation value is a binding concern.
 | `AdvertiseTargets` | None; each advertisement replaces the connection's targets | The latest advertisement wins |
 | `Attach` | task ID plus last applied sequence | Reconstructs the same suffix, then resumes live delivery |
 | `Submit` | command ID plus identical content | Returns the existing admission without another task record |
+| `DeleteTask` | task ID | Returns `TaskDeleted` whether or not the task still exists |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |
 | `PublishExecutionEvents` | execution ID, event IDs, and source sequences | Accepts exact overlap and appends only the new contiguous suffix |

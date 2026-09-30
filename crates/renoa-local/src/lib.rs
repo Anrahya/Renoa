@@ -16,7 +16,6 @@ mod file_tools;
 mod git_repository;
 mod host;
 mod host_storage;
-mod isolated_workspace;
 mod mcp;
 mod model_bridge;
 mod model_catalog;
@@ -40,7 +39,6 @@ mod tool_input;
 mod trace;
 mod turn_observation;
 mod workspace;
-pub use git_repository::{GitChange, GitSide};
 
 #[cfg(test)]
 mod model_adapter_process_tests;
@@ -56,24 +54,23 @@ pub use agent_model::AgentModelSelection;
 pub use agent_session::{AgentSession, AgentSessionConfiguration};
 pub use code_mode::validate_code_mode_worker;
 pub use credential_file::credential_file_is_private;
+pub use documents::UserProfile;
 pub use host::catalog::HostCatalogError;
 pub use host::definition::{
-    AgentCreateRequest, AgentDefinitionPage, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE,
+    AgentAutomation, AgentCreateRequest, AgentDefinitionPage, AgentToolsUpdate, MAX_AGENT_PAGE,
     RenameAgent, ResolvedAgentDefinition, derived_agent_id,
 };
 pub use host::history::AgentSessionHistory;
 pub use host::observation::{
-    HostObservation, HostObserver, ObservedAgent, ObservedConnection, ObservedOperation,
-    ObservedOperationState, ObservedPlugin, ObservedPublicationState, ObservedReview,
-    ObservedReviewDetail, ObservedReviewExecution, ObservedReviewPublication, ObservedReviewState,
-    ObservedRoutine, ObservedSession, ObservedSessionState, ObservedSkill,
+    HostObservation, HostObserver, ObservedAgent, ObservedAutomation, ObservedConnection,
+    ObservedOperation, ObservedOperationState, ObservedPlugin, ObservedRegistryFailure,
+    ObservedRun, ObservedScheduler, ObservedSession, ObservedSessionState, ObservedSharedRegistry,
+    ObservedSkill,
 };
-pub use host::reviews::{HostReviewControl, ReviewPolicyUpdate};
 pub use host::{
     HostResetReport, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
-    reset_host_data_root,
+    profiles::ProfileEditError, reset_host_data_root,
 };
-pub use isolated_workspace::InspectionSandboxConfig;
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpConnectionStatus, McpCredentialError,
     McpFailureKind, McpHostError, McpOutcomeCertainty, McpRejectedTool, McpRemoteFailure,
@@ -103,18 +100,10 @@ pub use skills::store::{SkillComponentRejection, SkillComponentReport};
 pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 
-pub use host::routines::{
-    HostRoutineControl, RoutineEnablement, RoutineError, RoutineMutation, RoutineRecord,
-    RoutineResultSummary, RoutineRun, RoutineSchedule, RoutineSpec,
-};
-
-pub use host::reviews::{
-    GitHubReviewAdmission, GitHubReviewCommand, GitHubReviewError, GitHubReviewEvidence,
-    GitHubReviewFinding, GitHubReviewOutcome, GitHubReviewPolicy, GitHubReviewPublication,
-    GitHubReviewReply, GitHubReviewReport, GitHubReviewRepository, GitHubReviewRequest,
-    GitHubReviewRun, GitHubReviewSkip, GitHubReviewSnapshot, GitHubReviewTrigger,
-    GitHubReviewWebhook, GitHubReviewWork, REVIEW_LIFETIME_MS, ReviewCheck, ReviewContext,
-    ReviewFile, ReviewPriority, ReviewSource,
+pub use host::automations::{
+    AutomationEnablement, AutomationError, AutomationMutation, AutomationRecord,
+    AutomationResultSummary, AutomationRun, AutomationSchedule, AutomationScheduler,
+    AutomationSpec, HostAutomationControl, RunOutcome, RunResult, RunStatus, ScheduledRun,
 };
 
 pub use renoa_home::RenoaHome;

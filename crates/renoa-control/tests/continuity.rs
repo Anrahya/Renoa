@@ -1017,6 +1017,139 @@ mod delivery {
     }
 }
 
+mod task_deletion {
+    use super::*;
+
+    async fn delete(surface: &mut Socket, task_id: TaskId) -> ServerMessage {
+        send(
+            surface,
+            &ClientMessage::DeleteTask {
+                request_id: 6,
+                task_id,
+            },
+        )
+        .await;
+        receive(surface).await
+    }
+
+    fn rows_for(system: &TestSystem, task_id: TaskId) -> i64 {
+        rusqlite::Connection::open(system.files.path().join("control.sqlite"))
+            .expect("open coordinator store")
+            .query_row(
+                "SELECT (SELECT count(*) FROM tasks WHERE task_id = ?1)
+                      + (SELECT count(*) FROM task_events WHERE task_id = ?1)
+                      + (SELECT count(*) FROM commands WHERE task_id = ?1)
+                      + (SELECT count(*) FROM execution_event_streams)
+                      + (SELECT count(*) FROM pending_executions)",
+                [task_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("count task rows")
+    }
+
+    #[tokio::test]
+    async fn an_owner_deletes_a_settled_task_and_a_retry_converges() {
+        let system = TestSystem::start("workspace:delete").await;
+        let mut node = system.connect(&system.enroll_node().await).await;
+        let mut mac = system.connect(&system.enroll_surface("mac").await).await;
+        let command_id = CommandId::new();
+        submit(&mut mac, system.task_id, command_id, "Run once.").await;
+        assert!(
+            matches!(
+                delete(&mut mac, system.task_id).await,
+                ServerMessage::Error {
+                    request_id: Some(6),
+                    code: ErrorCode::Conflict,
+                    ..
+                }
+            ),
+            "a command pending delivery keeps its task"
+        );
+        let (_, transcript) = execute(&system, &mut node, command_id).await;
+        assert!(
+            matches!(
+                delete(&mut mac, system.task_id).await,
+                ServerMessage::Error {
+                    request_id: Some(6),
+                    code: ErrorCode::Conflict,
+                    ..
+                }
+            ),
+            "an acknowledged execution with no events yet keeps its task"
+        );
+        let terminal = transcript.events.last().expect("terminal event").sequence;
+        send(
+            &mut node,
+            &ClientMessage::PublishExecutionEvents {
+                task_id: system.task_id,
+                command_id,
+                events: transcript.events,
+            },
+        )
+        .await;
+        assert_eq!(
+            receive(&mut node).await,
+            ServerMessage::ExecutionEventsAccepted {
+                command_id,
+                through_execution_sequence: terminal,
+            }
+        );
+        assert!(rows_for(&system, system.task_id) > 0);
+
+        let deleted = ServerMessage::TaskDeleted {
+            request_id: 6,
+            task_id: system.task_id,
+        };
+        assert_eq!(delete(&mut mac, system.task_id).await, deleted);
+        assert_eq!(rows_for(&system, system.task_id), 0, "nothing is kept");
+        assert_eq!(
+            delete(&mut mac, system.task_id).await,
+            deleted,
+            "a retry converges"
+        );
+        send(
+            &mut mac,
+            &ClientMessage::Attach {
+                request_id: 1,
+                task_id: system.task_id,
+                after_sequence: None,
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut mac).await,
+            ServerMessage::Error {
+                request_id: Some(1),
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn another_principal_cannot_delete_a_task() {
+        let system = TestSystem::start("workspace:delete").await;
+        let stranger_device = system
+            .enroll(PeerIdentity::Surface {
+                principal_id: PrincipalId::new(),
+                surface: SurfaceRef::new("stranger"),
+            })
+            .await;
+        let mut stranger = system.connect(&stranger_device).await;
+        assert!(matches!(
+            delete(&mut stranger, system.task_id).await,
+            ServerMessage::Error {
+                request_id: Some(6),
+                code: ErrorCode::NotFound,
+                ..
+            }
+        ));
+        assert_eq!(rows_for(&system, system.task_id), 1, "the task is intact");
+        system.stop().await;
+    }
+}
+
 mod task_opening {
     use super::*;
 

@@ -11,18 +11,10 @@ pub(crate) async fn serve(
     state_directory: &Path,
 ) -> Result<(), ServiceError> {
     let config = config::load(config_path, credentials_path, state_directory)?;
-    let target_count = config.targets.len();
     let device_id = config.credentials.device_id.to_string();
-    let node = RenoaNode::open(
-        config.endpoint,
-        config.credentials,
-        renoa_local::RenoaHome::at(&config.state_directory)
-            .map_err(|error| ServiceError::Configuration(error.to_string()))?
-            .node_database(),
-        config.host,
-        config.targets,
-    )
-    .await?;
+    let home = config.host.home().path().display().to_string();
+    let node = RenoaNode::open(config.endpoint, config.credentials, config.host)?
+        .with_automations(config.automation_credentials)?;
     let shutdown = CancellationToken::new();
     let signal = wait_for_shutdown();
     tokio::pin!(signal);
@@ -31,7 +23,7 @@ pub(crate) async fn serve(
         "service_started",
         &serde_json::json!({
             "device_id": device_id,
-            "target_count": target_count,
+            "home": home,
         }),
     );
     let run = node.run(shutdown.clone());

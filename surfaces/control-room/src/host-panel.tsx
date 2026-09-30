@@ -60,7 +60,7 @@ export function HostPanelView({ host, preview = false, previewLabel = "Example d
   if (host.snapshot && host.status !== "locked" && host.status !== "forbidden") {
     const designPreview = workDesignPreview(preview);
     const page = <>
-      {route.view === "overview" && (designPreview && SystemPreview ? <SystemPreview host={host.snapshot} /> : <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} refresh={host.refresh} preview={preview} />)}
+      {route.view === "overview" && (designPreview && SystemPreview ? <SystemPreview host={host.snapshot} /> : <SystemView host={host.snapshot} live={(!preview || demo) && host.status === "connected"} receivedAt={host.receivedAt} refresh={host.refresh} />)}
       {route.view === "work" && (designPreview && WorkPreview ? <WorkPreview host={host.snapshot} route={route} /> : <WorkView host={host.snapshot} controls={controls} />)}
       {route.view === "agents" && <AgentsView host={host.snapshot} route={route} controls={controls} />}
       {route.view === "library" && (designPreview && ConnectionsPreview ? <ConnectionsPreview host={host.snapshot} tab={route.tab ?? "plugins"} /> : <ConnectionsView host={host.snapshot} tab={route.tab ?? "plugins"} />)}

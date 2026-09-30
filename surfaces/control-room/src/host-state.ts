@@ -1,6 +1,3 @@
-import type { Review } from "./host-contract";
-import { needsAttention } from "./host-presentation";
-
 /** One recorded event for an agent, placed on a day axis. */
 export type DayMark = { at: number; state: AgentState };
 
@@ -28,20 +25,3 @@ export function toneState(tone: string | undefined, synthetic = false): AgentSta
     default: return "idle";
   }
 }
-
-// A published review is finished work, not a state. An incomplete or
-// worker-errored one is a failure; queued and prepared records are unfinished.
-export function reviewState(review: Review): AgentState {
-  if (needsAttention(review)) return review.state === "incomplete" || review.worker_error ? "failed" : "needs-you";
-  if (["queued", "prepared"].includes(review.state)) return "running";
-  return "idle";
-}
-
-/** Local midnight today, the shared left edge of every day axis. */
-export function startOfToday(): number {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
-export const DAY_MS = 86_400_000;

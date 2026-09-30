@@ -1,13 +1,13 @@
-use std::{collections::BTreeSet, path::Path};
+use std::path::Path;
 
 use renoa_kernel::{AgentId, Command, CommandId, Kernel, SessionId};
 use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalModelConfiguration, ModelProvider, ReasoningLevel, RoutineMutation,
-    RoutineSchedule, RoutineSpec, host_storage::create_session_storage,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AutomationMutation,
+    AutomationSchedule, AutomationSpec, LocalHost, LocalHostAdapters, LocalModelConfiguration,
+    ModelProvider, ReasoningLevel, host_storage::create_session_storage,
     selection::RuntimeSelection,
 };
 
@@ -117,7 +117,7 @@ async fn observes_owned_sessions_without_loading_models_or_repairing_runtime_log
 }
 
 #[tokio::test]
-async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets() {
+async fn projects_shared_inventory_and_automation_mutations_without_copying_secrets() {
     let root = tempfile::tempdir().expect("root");
     let host = host(root.path());
     let creator = agent(&host).await;
@@ -145,18 +145,17 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
         .await
         .expect("specialist");
     let id = Uuid::new_v4();
-    let routine = host
-        .manage_routine(
+    let automation = host
+        .manage_automation(
             bot.id,
             id,
-            RoutineMutation::Create {
-                spec: RoutineSpec {
+            AutomationMutation::Create {
+                spec: AutomationSpec {
                     agent_id: bot.id,
                     name: "Digest".to_owned(),
-                    prompt: "PRIVATE ROUTINE PROMPT".to_owned(),
-                    schedule: RoutineSchedule::Daily {
-                        hour: 9,
-                        minute: 0,
+                    prompt: "PRIVATE AUTOMATION PROMPT".to_owned(),
+                    schedule: AutomationSchedule::Cron {
+                        expression: "0 9 * * *".to_owned(),
                         timezone: "Asia/Kolkata".to_owned(),
                     },
                     enabled: true,
@@ -166,11 +165,11 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
             CancellationToken::new(),
         )
         .await
-        .expect("routine");
+        .expect("automation");
     let observer = HostObserver::open(root.path()).expect("observer");
     let snapshot = observer.snapshot().await.expect("snapshot");
-    assert_eq!(snapshot.routines.len(), 1);
-    assert_eq!(snapshot.routines[0].revision, routine.revision);
+    assert_eq!(snapshot.automations.len(), 1);
+    assert_eq!(snapshot.automations[0].revision, automation.revision);
     assert_eq!(
         snapshot.connections[0].selected_by_agents,
         vec![bot.id.to_string()]
@@ -180,15 +179,15 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
     for secret in [
         "SECRET HEADER",
         "PRIVATE INSTRUCTIONS",
-        "PRIVATE ROUTINE PROMPT",
+        "PRIVATE AUTOMATION PROMPT",
         "https://example.com",
     ] {
         assert!(!encoded.contains(secret));
     }
-    host.manage_routine(
+    host.manage_automation(
         bot.id,
         Uuid::new_v4(),
-        RoutineMutation::Delete {
+        AutomationMutation::Delete {
             id,
             expected_revision: 1,
         },
@@ -202,7 +201,7 @@ async fn projects_shared_inventory_and_routine_mutations_without_copying_secrets
             .snapshot()
             .await
             .expect("after delete")
-            .routines
+            .automations
             .is_empty()
     );
 }
@@ -268,115 +267,4 @@ async fn pins_host_identity_and_never_initializes_an_empty_root() {
     )
     .expect("replace identity");
     assert!(observer.snapshot().await.is_err());
-}
-
-#[tokio::test]
-async fn review_inventory_distinguishes_queued_and_incomplete_without_hydrating_context() {
-    use crate::{GitHubReviewCommand, GitHubReviewPolicy, GitHubReviewTrigger};
-    let root = tempfile::tempdir().expect("root");
-    let host = host(root.path());
-    let agent = agent(&host).await;
-    let reviewer = host
-        .create_agent(
-            AgentCreator::Agent { agent_id: agent },
-            AgentCreationOrigin::AgentTool,
-            AgentCreateRequest::from_preset(
-                Uuid::new_v4(),
-                AgentPresetId::new(crate::presets::GENERAL_PRESET_ID).expect("preset"),
-                "Soundwave",
-            )
-            .with_instructions("Review code"),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("reviewer");
-    host.manage_github_review(
-        GitHubReviewCommand::SetRepository {
-            operation_id: Uuid::new_v4(),
-            expected_revision: None,
-            policy: GitHubReviewPolicy {
-                repository_id: 1,
-                installation_id: 2,
-                full_name: "owner/repo".to_owned(),
-                agent_id: reviewer.id,
-                enabled: true,
-                triggers: BTreeSet::from([GitHubReviewTrigger::Opened]),
-                skip_drafts: true,
-            },
-        },
-        1_789_000_000_000,
-        CancellationToken::new(),
-    )
-    .await
-    .expect("repository");
-    let id = Uuid::new_v4();
-    host.manage_github_review(
-        GitHubReviewCommand::Request {
-            operation_id: id,
-            repository_id: 1,
-            pull_number: 21,
-            reported_base_sha: "a".repeat(40),
-            reported_head_sha: "b".repeat(40),
-        },
-        1_789_000_000_000,
-        CancellationToken::new(),
-    )
-    .await
-    .expect("request");
-    let observer = HostObserver::open(root.path()).expect("observer");
-    let view = observer.snapshot().await.expect("queued view");
-    assert_eq!(view.reviews.len(), 1);
-    assert!(matches!(
-        view.reviews[0].state,
-        super::ObservedReviewState::Queued
-    ));
-    record_incomplete_review(root.path(), id);
-    let view = observer.snapshot().await.expect("terminal view");
-    assert!(matches!(
-        view.reviews[0].state,
-        super::ObservedReviewState::Incomplete
-    ));
-    assert_eq!(view.reviews[0].repository, "owner/repo");
-    assert!(view.reviews[0].reviewed_head_sha.is_none());
-    assert!(
-        !serde_json::to_string(&view)
-            .expect("json")
-            .contains("PRIVATE PROVIDER DIAGNOSTICS")
-    );
-    let detail = observer
-        .review_detail(id)
-        .await
-        .expect("selected detail")
-        .expect("known review");
-    assert_eq!(
-        detail.reason.as_deref(),
-        Some("PRIVATE PROVIDER DIAGNOSTICS")
-    );
-    assert!(detail.report.is_none());
-    assert!(
-        observer
-            .review_detail(Uuid::new_v4())
-            .await
-            .expect("unknown detail")
-            .is_none()
-    );
-}
-
-fn record_incomplete_review(root: &std::path::Path, id: Uuid) {
-    let db = catalog::open_verified(&root.join(catalog::HOST_DATABASE)).expect("catalog");
-    let record = crate::GitHubReviewRun::Finished {
-        request_id: id,
-        snapshot: None,
-        outcome: crate::GitHubReviewOutcome::Incomplete {
-            reason: "PRIVATE PROVIDER DIAGNOSTICS".to_owned(),
-        },
-    };
-    db.execute(
-        "INSERT INTO host_review_runs(request_id,terminal,record_json) VALUES(?1,1,?2)",
-        rusqlite::params![
-            id.to_string(),
-            serde_json::to_string(&record).expect("fixture outcome")
-        ],
-    )
-    .expect("terminal record");
 }

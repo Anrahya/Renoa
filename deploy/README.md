@@ -5,11 +5,10 @@ the current deployment:
 
 - `renoa-coordinator` carries RCP task continuity and the separate short-lived
   Host OAuth callback relay; and
-- `renoa-node` executes statically bound RCP tasks through a local Host; and
+- `renoa-node` executes RCP tasks with the shared Host's agents and runs its
+  automation schedule; and
 - `renoa-registry` shares immutable Agent Plugin packages between Hosts; and
-- `renoa-host` runs the surface-independent routine scheduler; and
 - `renoa-management` serves the authenticated personal Host control panel; and
-- `renoa-github` receives signed review webhooks and supervises review work; and
 - `renoa-discord` serves saved agent-channel bindings and private plugin approval; and
 - `renoa-slack` and `renoa-telegram` expose the configured Host through their
   respective surfaces (`renoa-slack.service` and `renoa-slack-host.service` are
@@ -24,25 +23,75 @@ route. Neither transport is part of a Renoa protocol. Funnel is not used.
 The Telegram surface is different: it makes outbound HTTPS requests to the
 Telegram Bot API and opens no listener, so it does not use Tailscale Serve.
 
-## Release retention
+## Releases and deployment
 
-Keep the current installation and exactly one consolidated backup of the
-immediately previous release at `/opt/renoa/previous-release/`. Put that release's
-binaries, configuration, static files, and required SQLite snapshots together;
-do not scatter additional `.pre-*`, `.previous`, or per-step copies around the
-installation. Use SQLite's backup API for database snapshots.
+CI builds every release; nothing deployed is built on a developer machine.
+`.github/workflows/ci.yml` runs the `AGENTS.md` gates on every pull request.
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds one
+archive in a Debian 13 container (the VPS's own glibc) and publishes it as a
+GitHub Release with `SHA256SUMS` and build provenance:
 
-On the next deployment, stage the new backup, verify the new release's running
-binaries, services, and Host records, then replace `previous-release` and delete
-the superseded backup. Remove older release directories, uploaded archives,
-duplicate staging binaries, and unused review-tool versions after verification.
-Keep only the current release manifest under `/opt/renoa/releases/`.
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
 
-Drain active work before replacing its runtime or deleting its tools. Deploy
-only the current runtime; do not keep historical runtimes or compatibility
-paths solely to support old releases. Recovery is an explicit owner action,
-not an automatic rollback. Live conversation history, credentials, and current
-Host databases are application data and are not release backups.
+`deploy/release.json` is the single definition of a release: the binaries to
+build, the Node adapters to ship, and each service with the binaries it runs,
+whether it runs the adapters or serves the Control Room, and its companion
+units. `deploy/package-release` builds the archive from it; the archive's own
+`release.json` adds the tag, commit, build time and each binary's SHA-256.
+
+On the VPS, `renoa-deploy` installs a release:
+
+```sh
+renoa-deploy install v0.2.0
+renoa-deploy status
+```
+
+It downloads the archive, checks it against `SHA256SUMS` and every binary
+against the manifest, then unpacks it into `/opt/renoa/releases/<tag>/`. It
+refuses a release that lacks a binary of an installed service. Only services
+whose unit is installed on this host are updated, and only those whose
+binaries, unit files, adapters or Control Room changed are restarted, in the
+order `release.json` lists them. `renoa-node` upgrades the Host catalog when it
+opens it, so it precedes `renoa-management`, which refuses a catalog of an
+older schema. Restarting `renoa-node` first
+waits for running agent turns to finish (`--drain-timeout`, 600 s by default).
+Before switching, it snapshots the Host, coordinator, node and Discord SQLite
+databases with SQLite's backup API, and copies `config/`, into the release
+being replaced. It then carries that release's own hashed Control Room assets
+forward, so a browser holding the previous page still loads, installs changed
+unit files, and switches.
+
+`/opt/renoa/current` points at the running release and `/opt/renoa/previous`
+at the one backup: the release it replaced, with its snapshot. The binaries in
+`/usr/local/bin`, `/opt/renoa/adapters` and `/opt/renoa/control-room` are
+symlinks through `current`, so a switch is one rename. The first install adopts
+a hand-installed layout as `releases/legacy` without changing what runs.
+
+After the switch it checks that every service that was running stays active
+through a ten-second settle window, that management answers an
+unauthenticated request with 401 and a foreign origin with 403, and that the
+Host inspects. Then it deletes every other release and the old
+`/opt/renoa/previous-release`, writes `/opt/renoa/current-release.json`, and
+installs its own new copy at `/usr/local/sbin/renoa-deploy`. A failed check
+leaves the new release running, keeps every release and backup, and prints the
+failures. There is no automatic rollback: recovery is an explicit owner action,
+pointing `current` back at `previous` and restoring its snapshot. Live
+conversation history, credentials and current Host databases are application
+data, not release backups.
+
+The first deploy with this tool runs it from the archive, since
+`/usr/local/sbin/renoa-deploy` does not exist yet:
+
+```sh
+curl -fsSLO https://github.com/Anrahya/Renoa/releases/download/v0.2.0/renoa-v0.2.0-linux-x86_64.tar.gz
+tar xzf renoa-v0.2.0-linux-x86_64.tar.gz renoa-v0.2.0/renoa-deploy
+./renoa-v0.2.0/renoa-deploy install v0.2.0
+```
+
+Installing a service for the first time, enrolling it, and writing its
+configuration stay manual steps; the sections below describe them.
 
 ## Optional MCP Code Mode worker
 
@@ -97,22 +146,44 @@ Keep browser identity storage through a Host reset so login survives.
 The supplied
 coordinator unit uses `state/coordinator.sqlite3` in this same home; an existing
 installation must move its identity database with SQLite backup before switching
-that unit. The Host unit reads `config/host.json` and the relay credential file.
+that unit.
 
-Build the Discord worker and install its service and path units:
+The Discord worker runs no agents. Each channel's conversation is an RCP task,
+executed by the `renoa-node` that advertises the channel's agent (see
+[RCP execution node](#rcp-execution-node)); install that node first. Build the
+worker and install its service and path units:
 
 ```sh
 cargo build --locked --release -p renoa-discord
 cp deploy/renoa-discord.service deploy/renoa-discord.path /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now renoa-discord.path
 ```
 
-Fill `renoa-discord.config.example.json` with the same home, models and adapters
-as the Host, and save it as `config/discord.json` (owner-only). It holds no Discord
-identity. Configure the MCP registry and OAuth relay adapters for remote plugin
-login; relay device credentials remain local. Enable the path unit, not the
-service: it starts `renoa-discord.service` once the owner connects a bot.
+Enroll the worker as a surface of the Host's owning principal, the same
+principal that owns the node, and exchange the token once:
+
+```sh
+install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
+umask 077
+sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
+  /home/renoa/.renoa <owner-principal-uuid> discord > /run/renoa/discord-enrollment.json
+chown renoa-arcee: /run/renoa/discord-enrollment.json
+sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
+  ws://127.0.0.1:7818/connect \
+  /run/renoa/discord-enrollment.json \
+  /home/renoa/.renoa/credentials/discord-rcp-device.json
+rm /run/renoa/discord-enrollment.json
+```
+
+Save `renoa-discord.config.example.json` as `config/discord.json` (owner-only).
+It names the home, the loopback coordinator endpoint, and that credential file;
+it holds no Discord identity and no model or adapter settings. Enable the path
+unit, not the service: it starts `renoa-discord.service` once the owner connects
+a bot.
+
+```sh
+systemctl enable --now renoa-discord.path
+```
 
 Create the agent through Agents → Create agent in the Control Room. No native
 machine grants are selected by default. Every agent gets plugin management and
@@ -128,16 +199,39 @@ file's appearance starts the worker. Then choose channels for each agent.
 
 A saved binding proves channel validation and durable routing, not present bot
 connectivity or send permission. New messages in that channel route to the
-selected agent without a mention; reassignment preserves earlier admitted work.
-The default agent answers direct messages and mentions elsewhere. OAuth and
-credential links go to the application owner's DM. Enable DMs before requesting
-plugin authorization. Unknown delivery is not automatically repeated; check the DM
-before restarting setup.
+selected agent without a mention; reassignment starts a new task and preserves
+earlier admitted work. The default agent answers direct messages and mentions
+elsewhere. A message whose agent's node is offline is answered as not sent and
+must be resent; it is never held. Replies to commands submitted to the same task
+from another surface are posted to the channel with their origin.
+
+While a command runs, the channel shows the bot typing. Once the agent calls a
+tool, one progress message answers the command and is edited in place, listing
+each tool call and the intermediate messages that led to it. The answer itself
+arrives as the reply, and the progress message is then deleted; so is the
+message of a command idle for 20 minutes. Progress is transient: only the posted
+message's identity is stored, a command that calls no tool only shows typing,
+and after a restart progress resumes from the next task record in the same
+message, or the message is deleted if its command finished meanwhile.
+
+OAuth and credential links go to the application owner's DM. The executing node
+sends them directly with the Host's Discord connection, never through the RCP
+task journal, because a credential-setup link carries the key that keeps the
+relayed credential unreadable to the coordinator. Enable DMs before requesting
+plugin authorization. Unknown delivery is not automatically repeated; check the
+DM before restarting setup.
 
 The connection cannot be changed from the Control Room. To connect a different bot,
 server or default agent, stop `renoa-discord.path` and `renoa-discord.service`,
 then remove `credentials/discord.json` and `state/surfaces/discord`; the latter
-pins the previous identity and holds its bindings and conversation state.
+pins the previous identity and holds its bindings and task cursors.
+
+Discord store schema 5 records posted progress messages, so a restart still
+deletes them; upgrading from schema 4 adds the empty table.
+
+Discord store schema 4 moved conversations into RCP tasks. Upgrading keeps the
+identity, channel bindings, gateway cursor, and message deduplication, and drops
+in-process sessions, queued turns, replies, and setup-delivery records.
 
 An installation configured before Control Room onboarding must drop
 `discord_config` from `config/management.json`, replace `config/discord.json` with
@@ -165,10 +259,8 @@ reports individual unreadable sessions without inventing idle states.
 existing personal Host and asks the loopback identity service to validate browser
 sessions. It never executes agent turns or reads the coordinator's private database.
 With `models` configured it queries the provider catalog for owner creation.
-The initial panel observes agents, sessions, schedules, shared inventory and review
-outcomes. The browser exposes owner pause/resume of existing automations and edits
-to existing review repository triggers, enabled state and draft policy. Review
-details include captured policy, worker retries and publication state. Owners can
+The initial panel observes agents, sessions, schedules and shared inventory. The
+browser exposes owner pause/resume of existing automations. Owners can
 create agents with explicit instructions, models and native grants,
 connect the Discord bot, then save Discord channel bindings. Full definition and automation editors remain
 subsequent work.
@@ -198,14 +290,24 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 32 and cuts agent-owned storage over to the
-canonical agent definition. The cutover is not a migration: it discards the
-previous agent rows, routines, review records and sessions, and it runs only
-through the explicit reset described in
+This release requires Host schema 40. A schema 28–39 catalog upgrades in place
+when the Host opens it: it drops the retired GitHub review tables, renames the
+routine tables and `renoa.routines` plugin activations to automations, moves
+automation runs onto RCP tasks (see
+[RCP execution node](#rcp-execution-node)), adds the record of a failing
+shared-registry synchronization, gives finished automation runs a status, and
+moves automations to cron schedules, and bounds automation run history; it
+refuses to upgrade while a daily or interval automation remains. Each session's
+`trace.sqlite3` drops its stored requests, responses and tool content the first
+time it opens (the owner's main Discord session shrinks from about 200 MB), so
+the first start after the upgrade takes a few seconds longer. An earlier
+data root cuts agent-owned storage over to the canonical agent definition. That
+cutover is not a migration: it discards the previous agent rows, automations and
+sessions, and it runs only through the explicit reset described in
 [`docs/renoa-host-v0.md`](../docs/renoa-host-v0.md). Starting a normal Host
 process against an earlier data root fails closed with the reset command in the
 error, so stop all readers/writers of the shared Host catalog, including
-management, Slack, Telegram and GitHub workers, then run:
+management, Slack and Telegram workers, then run:
 
 ```sh
 renoa-host /home/renoa/.renoa/config/host.json reset /opt/renoa/previous-release-staging/host
@@ -216,7 +318,7 @@ non-empty backup, or one inside the data root), then applies the cutover. Host
 identity, MCP integrations, connections, catalogs, authorizations and
 credentials, installed plugins, immutable skill revisions and sources, the
 shared registry, and every workspace file are preserved; agent-owned rows, the
-session and review-inspection directories, and the agent document roots are not.
+session directories, and the agent document roots are not.
 Provision the configured agent again after the reset:
 
 ```sh
@@ -224,31 +326,12 @@ renoa-host /home/renoa/.renoa/config/host.json provision /etc/renoa/bootstrap-ag
 ```
 
 Observation and owner-control modules deliberately do not migrate or reset
-storage themselves. The node daemon owns a derived ledger and a complete private
-Host. Its ledger renamed the task column to `agent_id` and refuses an earlier
-shape by name; delete `<state-directory>/node.sqlite`
-(`/var/lib/renoa-node/node.sqlite` for the supplied unit). The private Host can
-hold agent-installed plugins, MCP connections and catalogs, skill revisions and
-shared-registry state, so never delete `<state-directory>/host`. Apply the same
-bounded Host reset used above, placing its fresh backup directory inside the one
-consolidated previous-release backup:
-
-```sh
-renoa-host /etc/renoa/node-host.json reset \
-  /opt/renoa/previous-release-staging/node-host
-```
-
-Preserve `<state-directory>/model-auth.sqlite`
-(`/var/lib/renoa-node/model-auth.sqlite`), which `node.json` names and node
-startup requires. Re-provision the private Host as shown in the node section,
-then start the daemon again. Stop `renoa-node.service` before these steps and
-install both release binaries first: `renoa-node` from the node section and
-`renoa-host` from the shared Host build in
-[the Soundwave section](#soundwave-github-review-service). The node's device
-credential and the coordinator's task binding live outside that directory and
+storage themselves. The node daemon runs in the shared Host and keeps only its
+derived ledger at `state/node.sqlite3`; its device credential and the
+coordinator's task bindings live outside the reset roots and
 survive. Each surface store is its own step, as listed in
-`docs/renoa-host-v0.md`. Keep the previous binaries and matching database
-snapshot in the single previous-release backup described above. Browser login
+`docs/renoa-host-v0.md`. The previous binaries and matching database snapshot
+are the single backup at `/opt/renoa/previous` described above. Browser login
 storage is separate and does not need to be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
@@ -273,7 +356,7 @@ the coordinator catch-all:
 | `^/assets/.*$` | `http://127.0.0.1:7819` |
 
 Keep `/v1/identity/*`, `/connect`, credential intake and OAuth callbacks routed
-to the coordinator; preserve the separate GitHub webhook route. Both listeners
+to the coordinator. Both listeners
 remain plaintext and loopback-only behind the same HTTPS origin. Cloudflare's
 [tunnel configuration API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/)
 replaces the full configuration, so read and preserve the current rules first.
@@ -309,126 +392,112 @@ and retaining the passkey origin; a DNS name alone does not preserve the system.
 
 ## RCP execution node
 
-Build and install the headless Host node:
+The node executes RCP tasks with the shared Host's agents. It runs as the Host
+account against `/home/renoa/.renoa`, the same installation root as
+`renoa-host`, `renoa-management`, and the Discord surface, so an agent keeps its
+plugins, credentials, and workspace whichever surface reaches it.
+
+Build and install the binary:
 
 ```sh
 cargo build --locked --release -p renoa-node --bin renoa-node
 install -m 0755 target/release/renoa-node /usr/local/bin/renoa-node
-useradd --system --home-dir /var/lib/renoa-node \
-  --shell /usr/sbin/nologin renoa-node
-install -d -m 0700 -o renoa-node -g renoa-node /srv/renoa/node-workspaces
-install -d -m 0700 -o root -g root /etc/renoa
 ```
 
-Create `/etc/renoa/node.json` as root with mode `0600`. It is an exact local
-Host configuration, not RCP wire data:
+Create `/home/renoa/.renoa/config/node.json` owned by `renoa-arcee` with mode
+`0600`. It is local Host configuration, not RCP wire data. Its model and adapter
+settings must match the Host's other services:
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 5,
   "endpoint": "wss://renoa.live/connect",
+  "automationCredentials": "/home/renoa/.renoa/credentials/automations-rcp-device.json",
   "model": {
     "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
-    "credentialStore": "/var/lib/renoa-node/model-auth.sqlite",
+    "credentialStore": "/home/renoa/.renoa/credentials/models.sqlite3",
     "providers": ["opencode-go"],
     "defaultProvider": "opencode-go",
-    "defaultModel": "glm-5.3-flash"
+    "defaultModel": "<model-id>"
   },
   "adapters": {
     "mcp": "/opt/renoa/adapters/mcp-client-node/dist/src/main.js",
     "mcpRegistry": "/opt/renoa/adapters/mcp-registry-node/dist/src/main.js",
-    "sharedPluginRegistry": "http://<vps-magic-dns-name>:8082/"
-  },
-  "targets": [
-    {
-      "target": "workspace:example",
-      "agentId": "<provisioned-agent-uuid>",
-      "workspace": "/srv/renoa/node-workspaces/example"
+    "sharedPluginRegistry": "http://127.0.0.1:7820/",
+    "oauthRelay": {
+      "origin": "https://renoa.live",
+      "credentials": "/home/renoa/.renoa/credentials/oauth-relay-device"
     }
-  ]
+  }
 }
 ```
 
-Every configured adapter and model store must already exist at its absolute
-path. Omit any optional adapter field that this Host does not use. Each target
-names one provisioned agent and canonical workspace. The node advertises every
-target to the coordinator, so the node's owner can open tasks on it at runtime.
-Each task receives its own Host session the first time it executes; the node
-ledger records that session and keeps it for the task's later commands. A
-configuration that no longer serves a recorded task's target, agent, or
-workspace fails closed.
+Every configured adapter and credential file must already exist at its
+absolute path. Omit any optional adapter field that this Host does not use.
 
-Schema 3 removed each target's `sessionId`. Upgrading from schema 2 means
-setting `schemaVersion` to 3 and deleting every `sessionId`; tasks the ledger
-already bound keep their recorded sessions.
+There is no target list. The node advertises every agent in its Host as the
+target `agent:<agent-uuid>` and polls the Host every five seconds, so an agent
+created in the Control Room becomes available without a restart. Each task
+runs in its agent's own Host workspace and receives its own Host session the
+first time it executes; the node ledger (`state/node.sqlite3`) records that
+session for the task's later commands. A recorded task whose target no longer
+names an agent workspace refuses startup. A task whose agent was removed fails
+its next command instead of stopping the node.
 
-The daemon opens its own private Host data root at `<state-directory>/host`
-(`/var/lib/renoa-node/host` for the supplied unit), separate from the shared
-Host. Each `targets[].agentId` must name an agent provisioned in that root.
-Create `/etc/renoa/node-host.json` and `/etc/renoa/node-bootstrap-agent.json`
-as root with mode `0640` and group `renoa-node`; neither document holds a
-secret, and the provision command runs as the `renoa-node` account so the
-private data root is created with the service account's ownership.
-`home` must be exactly the node's Renoa home, and the
-model settings must match `node.json`'s `model` block:
+Schema 5 added the required `automationCredentials`; schema 4 removed `targets`;
+schema 3 had removed each target's `sessionId`. A document of an earlier schema
+is refused and names what changed.
 
-```json
-{
-  "home": "/var/lib/renoa-node/host",
-  "model_bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
-  "providers": ["opencode-go"],
-  "provider": "opencode-go",
-  "model": "glm-5.3-flash",
-  "model_auth_store": "/var/lib/renoa-node/model-auth.sqlite"
-}
-```
-
-```json
-{
-  "operationId": "<fresh-uuid>",
-  "presetId": "renoa.coding.alpha.v3",
-  "name": "Alpha"
-}
-```
-
-Then provision and copy the printed definition's `id` into every
-`targets[].agentId` in `node.json`:
-
-```sh
-install -d -m 0700 -o renoa-node -g renoa-node /var/lib/renoa-node
-sudo -u renoa-node /usr/local/bin/renoa-host \
-  /etc/renoa/node-host.json provision /etc/renoa/node-bootstrap-agent.json
-```
-
-The agent id is derived from `operationId`, so rerunning the same provision
-document converges on the same agent instead of creating a second one. A
-configured agent that is missing from the private Host refuses node startup
-before any command is admitted, naming this command in the error.
+The node runs the Host's automation schedule; one process at a time owns it,
+through `state/.automations.lock`. Each due run becomes a command, under the
+run's identity, submitted through a second RCP link: a surface named
+`automations`, enrolled for the Host's owner and named by
+`automationCredentials`. An automation its own agent created in a conversation
+runs in that conversation's task, so its Discord channel shows the run and its
+result. Any other automation runs in a task of its own, whose identity is the
+automation's. The result is also recorded on the run for `automation_results`
+and the Control Room, with a status: succeeded, failed, or skipped. A recurring
+run more than half its period late is skipped without executing, and the node
+logs `automation_skipped`. A run stays admitted until its result is recorded,
+so a restart submits the same command again and the coordinator keeps one
+copy. While the node owns the schedule it writes a heartbeat every 30 seconds,
+which Host observation reports.
 
 On the coordinator host, create the node identity for its owning principal, the
-only principal that may open new tasks on the node, and capture its five-minute
-enrollment token directly into an owner-only file:
+only principal that may open new tasks on the node, and exchange the
+five-minute enrollment token once:
 
 ```sh
+install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
 umask 077
 sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-node \
-  /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > node-enrollment.json
-```
-
-Move that short-lived file to the execution Host over an authenticated private
-channel, keep it mode `0600`, and exchange it once:
-
-```sh
-/usr/local/bin/renoa-node enroll \
+  /home/renoa/.renoa <node-uuid> <owner-principal-uuid> > /run/renoa/node-enrollment.json
+chown renoa-arcee: /run/renoa/node-enrollment.json
+sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
   wss://renoa.live/connect \
   /run/renoa/node-enrollment.json \
-  /etc/renoa/node-device.json
+  /home/renoa/.renoa/credentials/node-device.json
 rm /run/renoa/node-enrollment.json
 ```
 
 The output credential file is created as mode `0600` and is never overwritten.
-The command prints only `{"status":"enrolled"}`. Install the unit after the
-coordinator task has been created with the same node UUID and target:
+The command prints only `{"status":"enrolled"}`. Enroll the automation surface
+for the same owner the same way:
+
+```sh
+install -d -m 0700 -o renoa-arcee -g renoa-arcee /run/renoa
+umask 077
+sudo -u renoa-arcee /usr/local/bin/renoa-coordinator enroll-surface \
+  /home/renoa/.renoa <owner-principal-uuid> automations > /run/renoa/automations-enrollment.json
+chown renoa-arcee: /run/renoa/automations-enrollment.json
+sudo -u renoa-arcee /usr/local/bin/renoa-node enroll \
+  wss://renoa.live/connect \
+  /run/renoa/automations-enrollment.json \
+  /home/renoa/.renoa/credentials/automations-rcp-device.json
+rm /run/renoa/automations-enrollment.json
+```
+
+Then install the unit:
 
 ```sh
 cp deploy/renoa-node.service /etc/systemd/system/
@@ -438,12 +507,21 @@ journalctl -u renoa-node.service -f -o cat
 ```
 
 The unit passes the config and device secret through systemd credentials, whose
-runtime directory is available as `%d`. It grants writes only to the private
-node state and `/srv/renoa/node-workspaces`; add another explicit
-`ReadWritePaths=` entry in a drop-in before binding a workspace elsewhere.
-Node/V8 needs writable executable memory, so `MemoryDenyWriteExecute` remains
-off. Network loss is retried internally with bounded exponential backoff;
-systemd restarts only fatal process exits.
+runtime directory is available as `%d`, and grants writes only to the Host
+root. Node/V8 needs writable executable memory, so `MemoryDenyWriteExecute`
+remains off. Network loss is retried internally with bounded exponential
+backoff; systemd restarts only fatal process exits.
+
+Before node config schema 5, `renoa-host.service` ran the schedule; releases no
+longer ship it. Before installing such a release, stop and remove that unit so
+the node can take the schedule, enroll the automation surface as above, and
+move `node.json` to schema 5:
+
+```sh
+systemctl disable --now renoa-host.service
+rm /etc/systemd/system/renoa-host.service
+systemctl daemon-reload
+```
 
 ## Arcee Telegram surface
 
@@ -724,89 +802,21 @@ terminal event. It received a contiguous 13-event task history, 12 events by
 replay, one command admission, and one completed terminal. The coordinator
 remained loopback-only, and the proof used the tailnet-only port above.
 
-## Soundwave GitHub review service
-
-Soundwave uses the shared Host database and review recipe. GitHub is its trigger
-and publication surface. The implementation and remaining control-panel work are
-described in [the Host architecture](../docs/renoa-host-v0.md#github-reviewer-composition).
-
-Install `deploy/skills/renoa-code-review/` into the service account's shared
-`~/.agents/skills/renoa-code-review/` directory, retaining its source/license
-files. The Host pins this skill into new reviews; updating the shared directory
-does not alter an in-progress review. Existing agents can discover the same
-skill through the shared catalog. Without it, the dedicated review system prompt
-still applies.
+## Shared Host schema readers
 
 Build all readers of the shared Host schema together:
 
 ```sh
-cargo build --release -p renoa-local -p renoa-slack -p renoa-telegram --bin renoa-host --bin renoa-workspace-tool --bin renoa-slack --bin renoa-telegram
+cargo build --release -p renoa-local -p renoa-slack -p renoa-telegram --bin renoa-host --bin renoa-slack --bin renoa-telegram
 pnpm --dir adapters/model-provider-node build
 ```
 
-Stop the Host, Slack, Telegram and GitHub services and back up the consistent Host
-data root before the reset that brings it to schema 32. Install the new binaries
+Stop the node, Slack and Telegram services and back up the consistent Host data
+root before the new Host brings it to schema 40. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
-older reader against the cut-over database. Keep the matching database snapshot and binaries
+older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must
 use that matching set; do not restore binaries automatically or retain older sets.
-
-The inspection backend requires Bubblewrap 0.12.0 or later, `/usr/bin/rg`, and
-unprivileged user namespaces. Install only the required security updates; a kernel
-upgrade is not part of this deployment. Install `renoa-workspace-tool` as a
-root-owned executable at `/opt/renoa/review-tools/<source-commit>/renoa-workspace-tool`.
-Keep that versioned path immutable while an execution references it. This version
-does not need Docker, KVM, dependency installation or a test runner.
-
-Create a private GitHub App with selected-repository access, contents/checks read,
-pull requests write, and the `pull_request` event. Enable its webhook at
-`https://renoa.live/v1/github/webhook` with a random secret. Accept the permission
-change in the existing installation as well. Convert the private App key locally:
-
-```sh
-umask 077
-openssl rsa -in app.pem -traditional -outform DER -out app.der
-```
-
-Install the DER key at `/etc/renoa/soundwave-app.der` and the exact webhook secret
-bytes at `/etc/renoa/soundwave-webhook-secret`, root-owned mode 0600. Neither key,
-secret nor installation token belongs in a repository or chat. Use
-`renoa-github.config.example.json` for `/etc/renoa/github.json`, also mode 0600.
-Its `host_config` must point to the same Host used by the daemon; it may omit
-interactive MCP/relay settings because reviews use a dedicated tool composition.
-`app_client_id` is the App's client ID; `bot_login` is its actual `[bot]` login.
-
-Install `renoa-github.service`. The example uses the existing service account
-`renoa-arcee` with UID 299; update both `user@299.service` references and the two
-runtime-directory environment variables if the account has a different UID.
-Enable its independent user manager:
-
-```sh
-sudo loginctl enable-linger renoa-arcee
-sudo systemctl start user@299.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now renoa-github.service
-```
-
-Route only `renoa.live` path `^/v1/github/webhook$` through the Cloudflare tunnel to
-`http://127.0.0.1:7821`, before the existing catch-all host rule. Preserve the RCP
-and OAuth ingress. There is no unauthenticated management API on this listener.
-
-The repository's Host policy controls triggers and draft handling. For a draft-PR
-smoke test set `enabled:true` and `skip_drafts:false` through `SetRepository` with
-the current revision. Open a new draft only after the receiver and route are ready.
-Verify an authentic `opened` delivery returns 202, one Host request is dispatched,
-the saved result produces a GitHub review on the expected SHA, and the unit,
-checkout and temporary credential files are gone afterward. Retain the run's
-transcript. Duplicate delivery must return its existing receipt.
-
-Use `journalctl -u renoa-github` for admission and publication status, and the
-`renoa-review-<request-uuid>.service` user journal for a worker. `github-review`
-actions `requests`, `run`, and `publication` read the same durable Host records.
-Before relying on unattended cleanup, exercise a short-lived test unit with a
-child process and confirm `RuntimeMaxSec`, cgroup termination and `ExecStopPost`
-on the actual host. Normal reviews have 60 minutes total and 30 minutes per model
-call; silence alone is allowed within the call deadline.
 
 ## Shared Agent Plugin registry
 
@@ -822,7 +832,8 @@ cargo build --locked --release -p renoa-registry --bin renoa-registry
 
 Install `target/release/renoa-registry` at
 `/usr/local/bin/renoa-registry`, copy `renoa-registry.service` to
-`/etc/systemd/system/`, and enable it:
+`/etc/systemd/system/`, and enable it. `serve` takes a Renoa home and keeps its
+store in that home's `state/registry`; it creates no other directory there:
 
 ```sh
 systemctl daemon-reload

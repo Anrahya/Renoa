@@ -8,7 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 renoa-home = { path = "../renoa-home", version = "0.1.0" }
-axum = { workspace = true, features = ["http1", "json", "tokio"] }
 base64.workspace = true
 monty-pool.workspace = true
 monty-types.workspace = true
@@ -24,6 +23,7 @@ renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol",
 renoa-kernel = { path = "../renoa-kernel", version = "0.1.0" }
 renoa-oauth-relay-protocol = { path = "../renoa-oauth-relay-protocol", version = "0.1.0" }
 renoa-registry-protocol = { path = "../renoa-registry-protocol", version = "0.1.0" }
+renoa-telemetry = { path = "../renoa-telemetry", version = "0.1.0" }
 reqwest.workspace = true
 ring.workspace = true
 rusqlite.workspace = true

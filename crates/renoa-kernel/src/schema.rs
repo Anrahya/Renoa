@@ -2,9 +2,9 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
-use crate::{KernelError, StoreError};
+use crate::{KernelError, StoreError, request_release};
 
-pub(crate) const SCHEMA_VERSION: u32 = 3;
+pub(crate) const SCHEMA_VERSION: u32 = 4;
 pub(crate) const OPERATION_STATE_VERSION: u32 = 1;
 
 const SCHEMA: &str = "CREATE TABLE agents (
@@ -90,7 +90,7 @@ const SCHEMA: &str = "CREATE TABLE agents (
         recovery TEXT NOT NULL CHECK (
             recovery IN ('safe_to_replay', 'never_replay')
         ),
-        request_json TEXT NOT NULL,
+        request_json TEXT CHECK (request_json IS NOT NULL OR status = 'settled'),
         status TEXT NOT NULL CHECK (
             status IN (
                 'intent_committed', 'dispatch_started',
@@ -266,28 +266,36 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), KernelError>
         });
     }
     if version == SCHEMA_VERSION {
-        return validate_database(connection);
+        return validate_current(connection);
     }
-    if version == 1 {
+    if (1..SCHEMA_VERSION).contains(&version) {
         validate_database(connection)?;
-        migrate_v1_to_v2(connection)?;
-        migrate_v2_to_v3(connection)?;
-        return validate_database(connection);
-    }
-    if version == 2 {
-        validate_database(connection)?;
-        migrate_v2_to_v3(connection)?;
-        return validate_database(connection);
+        if version == 1 {
+            migrate_v1_to_v2(connection)?;
+        }
+        if version <= 2 {
+            migrate_v2_to_v3(connection)?;
+        }
+        request_release::migrate_v3_to_v4(connection)?;
+        return validate_current(connection);
     }
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sqlite_error)?;
     transaction.execute_batch(SCHEMA).map_err(sqlite_error)?;
+    request_release::install(&transaction)?;
     transaction
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(sqlite_error)?;
     transaction.commit().map_err(sqlite_error)?;
-    validate_database(connection)
+    validate_current(connection)
+}
+
+/// Validates a current-schema database, including the release of finished
+/// requests, which a later rebuild of `effects` or `operations` would drop.
+fn validate_current(connection: &Connection) -> Result<(), KernelError> {
+    validate_database(connection)?;
+    request_release::require_installed(connection)
 }
 
 fn migrate_v1_to_v2(connection: &mut Connection) -> Result<(), KernelError> {
@@ -325,7 +333,7 @@ fn migrate_v2_to_v3(connection: &mut Connection) -> Result<(), KernelError> {
             .execute_batch(MIGRATE_V2_TO_V3)
             .map_err(sqlite_error)?;
         transaction
-            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .pragma_update(None, "user_version", 3_u32)
             .map_err(sqlite_error)?;
         transaction.commit().map_err(sqlite_error)
     })();
@@ -438,7 +446,7 @@ mod tests {
         assert_eq!(pragma_text(&connection, "journal_mode"), "wal");
         assert_eq!(pragma_integer(&connection, "synchronous"), 2);
         assert_eq!(pragma_integer(&connection, "busy_timeout"), 5_000);
-        assert_eq!(pragma_integer(&connection, "user_version"), 3);
+        assert_eq!(pragma_integer(&connection, "user_version"), 4);
     }
 
     #[test]
@@ -515,6 +523,8 @@ mod tests {
         connection
             .execute_batch(
                 "PRAGMA foreign_keys = OFF;
+                 DROP TRIGGER release_finished_effect_requests;
+                 DROP VIEW finished_effect_requests;
                  DROP TABLE effects;
                  DROP TABLE effect_batches;
                  CREATE TABLE operations_v1 (
@@ -588,7 +598,7 @@ mod tests {
         drop(migrated);
 
         let connection = open_connection(&database).expect("inspect migration");
-        assert_eq!(pragma_integer(&connection, "user_version"), 3);
+        assert_eq!(pragma_integer(&connection, "user_version"), 4);
         let cancellation_table: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_schema
@@ -668,6 +678,8 @@ mod tests {
         connection
             .execute_batch(
                 "PRAGMA foreign_keys = OFF;
+                 DROP TRIGGER release_finished_effect_requests;
+                 DROP VIEW finished_effect_requests;
                  ALTER TABLE effects RENAME TO effects_v3;
                  CREATE TABLE effects_v2 (
                     effect_id TEXT PRIMARY KEY NOT NULL,

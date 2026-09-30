@@ -6,7 +6,7 @@ use crate::DiscordError;
 
 pub(super) const DATABASE_FILE: &str = "discord.sqlite3";
 const LEASE_FILE: &str = ".discord.lock";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 5;
 
 pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
     let connection = Connection::open(path)?;
@@ -20,7 +20,16 @@ pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
         connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
     match version {
         0 => initialize(&connection)?,
-        1 => migrate(&connection)?,
+        1 => {
+            migrate_v1(&connection)?;
+            migrate_v3(&connection)?;
+            migrate_v4(&connection)?;
+        }
+        3 => {
+            migrate_v3(&connection)?;
+            migrate_v4(&connection)?;
+        }
+        4 => migrate_v4(&connection)?,
         SCHEMA_VERSION => {}
         other => {
             return Err(DiscordError::Invalid(format!(
@@ -109,52 +118,86 @@ fn initialize(connection: &Connection) -> Result<(), DiscordError> {
             created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)
          ) STRICT;
 
-         {CONVERSATION_SCHEMA}
+         {conversations}
+         {progress}
+         {GATEWAY_SCHEMA}
+         {ACTION_SCHEMA}
          {CONTROL_SCHEMA}",
+        conversations = conversation_schema(),
+        progress = progress_schema(),
     ))?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
 }
 
-const CONVERSATION_SCHEMA: &str = "
-CREATE TABLE conversations (
-    channel_id TEXT PRIMARY KEY CHECK (
-        length(channel_id) BETWEEN 1 AND 20
-        AND channel_id NOT GLOB '*[^0-9]*'
-        AND channel_id NOT GLOB '0*'
-    ),
-    session_id TEXT NOT NULL CHECK (length(session_id) = 36),
-    agent_id TEXT NOT NULL CHECK (length(agent_id) = 36)
-) STRICT;
+const SNOWFLAKE: &str =
+    "length({0}) BETWEEN 1 AND 20 AND {0} NOT GLOB '*[^0-9]*' AND {0} NOT GLOB '0*'";
 
-CREATE TABLE turns (
-    message_id TEXT PRIMARY KEY REFERENCES messages(message_id),
-    session_id TEXT NOT NULL CHECK (length(session_id) = 36),
-    request_id TEXT NOT NULL CHECK (length(request_id) = 36),
-    agent_id TEXT NOT NULL CHECK (length(agent_id) = 36),
-    prompt TEXT NOT NULL,
-    result TEXT,
-    state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'ready')),
-    CHECK (
-        (state IN ('queued', 'running') AND result IS NULL)
-        OR (state = 'ready' AND result IS NOT NULL)
+/// Every Discord conversation is one RCP task on its channel's agent. The
+/// surface keeps only what it needs to submit messages and post replies; the
+/// conversation itself lives in the coordinator's task journal.
+fn conversation_schema() -> String {
+    let channel = SNOWFLAKE.replace("{0}", "channel_id");
+    format!(
+        "CREATE TABLE tasks (
+            task_id TEXT PRIMARY KEY CHECK (length(task_id) = 36),
+            channel_id TEXT NOT NULL CHECK ({channel}),
+            agent_id TEXT NOT NULL CHECK (length(agent_id) = 36),
+            opened INTEGER NOT NULL DEFAULT 0 CHECK (opened IN (0, 1)),
+            cursor INTEGER CHECK (cursor IS NULL OR cursor >= 0),
+            current INTEGER NOT NULL CHECK (current IN (0, 1))
+         ) STRICT;
+         CREATE UNIQUE INDEX tasks_current ON tasks(channel_id) WHERE current = 1;
+
+         CREATE TABLE turns (
+            message_id TEXT PRIMARY KEY REFERENCES messages(message_id),
+            task_id TEXT NOT NULL REFERENCES tasks(task_id),
+            command_id TEXT NOT NULL UNIQUE CHECK (length(command_id) = 36),
+            prompt TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('queued', 'submitted', 'answered'))
+         ) STRICT;
+         CREATE INDEX turns_queued ON turns(message_id) WHERE state = 'queued';
+
+         CREATE TABLE replies (
+            command_id TEXT PRIMARY KEY CHECK (length(command_id) = 36),
+            task_id TEXT NOT NULL REFERENCES tasks(task_id),
+            heading TEXT,
+            answer TEXT,
+            finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1))
+         ) STRICT;
+
+         CREATE TABLE deliveries (
+            command_id TEXT NOT NULL CHECK (length(command_id) = 36),
+            chunk INTEGER NOT NULL CHECK (chunk >= 0),
+            channel_id TEXT NOT NULL CHECK ({channel}),
+            reply_to TEXT,
+            body TEXT NOT NULL CHECK (length(body) > 0),
+            state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'sent', 'unknown', 'failed')),
+            reply_id TEXT,
+            PRIMARY KEY (command_id, chunk),
+            CHECK (
+                (state = 'sent' AND reply_id IS NOT NULL)
+                OR (state <> 'sent' AND reply_id IS NULL)
+            )
+         ) STRICT;"
     )
-) STRICT;
+}
 
-CREATE TABLE deliveries (
-    message_id TEXT NOT NULL REFERENCES turns(message_id),
-    chunk INTEGER NOT NULL CHECK (chunk >= 0),
-    body TEXT NOT NULL CHECK (length(body) > 0),
-    state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'sent', 'unknown', 'failed')),
-    reply_id TEXT,
-    PRIMARY KEY (message_id, chunk),
-    CHECK (
-        (state = 'sent' AND reply_id IS NOT NULL)
-        OR (state <> 'sent' AND reply_id IS NULL)
+/// Posted progress messages not yet deleted, one per running command.
+fn progress_schema() -> String {
+    let channel = SNOWFLAKE.replace("{0}", "channel_id");
+    let message = SNOWFLAKE.replace("{0}", "message_id");
+    format!(
+        "CREATE TABLE progress_messages (
+            command_id TEXT PRIMARY KEY CHECK (length(command_id) = 36),
+            channel_id TEXT NOT NULL CHECK ({channel}),
+            message_id TEXT NOT NULL CHECK ({message})
+         ) STRICT;"
     )
-) STRICT;
+}
 
+const GATEWAY_SCHEMA: &str = "
 CREATE TABLE gateway (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     session_id TEXT,
@@ -165,20 +208,22 @@ CREATE TABLE gateway (
         OR (length(session_id) > 0 AND length(resume_url) > 0)
     )
 ) STRICT;
-
-CREATE INDEX turns_ready ON turns(message_id) WHERE state = 'ready';
-CREATE INDEX turns_queued ON turns(message_id) WHERE state = 'queued';
 ";
 
-const CONTROL_SCHEMA: &str = "
+/// Operator setup-link deliveries, keyed by the RCP command whose tool asked
+/// for them. Only a digest of each link is stored.
+const ACTION_SCHEMA: &str = "
 CREATE TABLE actions (
-    message_id TEXT NOT NULL REFERENCES turns(message_id),
+    command_id TEXT NOT NULL CHECK (length(command_id) = 36),
     call_id TEXT NOT NULL,
     stage TEXT NOT NULL CHECK (stage IN ('authorization', 'credentials')),
     digest BLOB NOT NULL CHECK (length(digest) = 32),
     state TEXT NOT NULL CHECK (state IN ('sending', 'sent', 'unknown', 'failed')),
-    PRIMARY KEY (message_id, call_id, stage)
+    PRIMARY KEY (command_id, call_id, stage)
 ) STRICT;
+";
+
+const CONTROL_SCHEMA: &str = "
 CREATE TABLE channel_bindings (
     channel_id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL CHECK (length(agent_id) = 36),
@@ -191,13 +236,42 @@ CREATE TABLE binding_receipts (
     result TEXT NOT NULL
 ) STRICT;";
 
-fn migrate(connection: &Connection) -> Result<(), DiscordError> {
+/// Schema 1 lacked per-channel agents; it gains them on the way to schema 3.
+fn migrate_v1(connection: &Connection) -> Result<(), DiscordError> {
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch("ALTER TABLE conversations ADD COLUMN agent_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' CHECK (length(agent_id) = 36);
         ALTER TABLE turns ADD COLUMN agent_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' CHECK (length(agent_id) = 36);
         UPDATE conversations SET agent_id = (SELECT agent_id FROM identity WHERE singleton = 1);
         UPDATE turns SET agent_id = (SELECT agent_id FROM identity WHERE singleton = 1);")?;
     transaction.execute_batch(CONTROL_SCHEMA)?;
+    transaction.pragma_update(None, "user_version", 3)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Schema 4 moves conversations into RCP tasks. In-process Host sessions and
+/// their queued turns, replies, and setup deliveries do not carry over; the
+/// connection identity, channel bindings, gateway cursor, and message
+/// deduplication do.
+fn migrate_v3(connection: &Connection) -> Result<(), DiscordError> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(
+        "DROP TABLE IF EXISTS actions;
+         DROP TABLE deliveries;
+         DROP TABLE turns;
+         DROP TABLE conversations;",
+    )?;
+    transaction.execute_batch(&conversation_schema())?;
+    transaction.execute_batch(ACTION_SCHEMA)?;
+    transaction.pragma_update(None, "user_version", 4)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Schema 5 records posted progress messages, so a restart still deletes them.
+fn migrate_v4(connection: &Connection) -> Result<(), DiscordError> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(&progress_schema())?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())

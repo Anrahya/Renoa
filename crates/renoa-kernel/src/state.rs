@@ -89,7 +89,10 @@ pub struct EffectSnapshot {
     pub binding: String,
     pub binding_revision: String,
     pub recovery: EffectRecovery,
-    pub request: Value,
+    /// The exact request. `None` once released: the operation has an outcome
+    /// and every child of this batch settled. A batch with an unknown or
+    /// undispatched child keeps every request.
+    pub request: Option<Value>,
     pub status: EffectStatus,
     pub dispatch_count: u64,
     pub outcome: Option<EffectOutcome>,

@@ -14,7 +14,7 @@ pub(crate) mod state;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum HostPluginId {
     Agents,
-    Routines,
+    Automations,
     Documents,
     Skills,
     Git,
@@ -23,7 +23,7 @@ pub(crate) enum HostPluginId {
 impl HostPluginId {
     pub(crate) const ALL: [Self; 5] = [
         Self::Agents,
-        Self::Routines,
+        Self::Automations,
         Self::Documents,
         Self::Skills,
         Self::Git,
@@ -31,7 +31,7 @@ impl HostPluginId {
     pub(crate) const fn id(self) -> &'static str {
         match self {
             Self::Agents => "renoa.agents",
-            Self::Routines => "renoa.routines",
+            Self::Automations => "renoa.automations",
             Self::Documents => "renoa.documents",
             Self::Skills => "renoa.skills",
             Self::Git => "renoa.git",
@@ -43,8 +43,10 @@ impl HostPluginId {
     pub(crate) const fn description(self) -> &'static str {
         match self {
             Self::Agents => "Create, list, and rename Host agents.",
-            Self::Routines => "Schedule agents and read routine results.",
-            Self::Documents => "Read and edit this agent's enabled SOUL and USER documents.",
+            Self::Automations => "Schedule agents and read automation results.",
+            Self::Documents => {
+                "Edit this agent's SOUL document and the USER document of the person it talks to."
+            }
             Self::Skills => "Find skills and pin their instructions to this session.",
             Self::Git => {
                 "Inspect local Git changes, diffs, and pinned commits without shell access."
@@ -54,7 +56,7 @@ impl HostPluginId {
     pub(crate) fn owner(tool: &str) -> Option<Self> {
         match tool {
             "agent_manage" => Some(Self::Agents),
-            "routine_manage" | "routine_results" => Some(Self::Routines),
+            "automation_manage" | "automation_results" => Some(Self::Automations),
             "agent_documents" => Some(Self::Documents),
             "skill_search" | "skill_load" => Some(Self::Skills),
             "git_changes" | "git_diff" | "git_show" => Some(Self::Git),

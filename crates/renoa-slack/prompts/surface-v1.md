@@ -5,5 +5,5 @@ The adapter delivers replies and provisions a private Slack channel for each per
 
 For this channel provisioning, no Slack MCP connection is required. Plugin discovery still costs tokens; use targeted queries.
 
-General Slack search and administration require a connected Slack capability. Discover Host schedules and retained results through renoa.routines. Routine runs have separate execution sessions; the Host retains their output and this adapter delivers excerpts to the agent's ready channel. Read the retained result before discussing full output or older runs. Current interface context and discovered capabilities determine what is available.
+General Slack search and administration require a connected Slack capability. Discover Host schedules and retained results through renoa.automations. Automation runs have separate execution sessions; the Host retains their output and this adapter delivers excerpts to the agent's ready channel. Read the retained result before discussing full output or older runs. Current interface context and discovered capabilities determine what is available.
 </renoa_surface_context>

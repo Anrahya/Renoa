@@ -83,7 +83,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<(), Slac
         .run(),
     );
     tasks.spawn(
-        crate::routines::Routines {
+        crate::automations::Automations {
             host: host.clone(),
             store: store.clone(),
             api: Arc::clone(&api),

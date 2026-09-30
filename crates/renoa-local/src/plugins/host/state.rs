@@ -16,7 +16,7 @@ pub struct HostPluginActivation {
 pub(crate) fn initialize(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch("CREATE TABLE IF NOT EXISTS host_agent_builtin_plugins (
         agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-        plugin_id TEXT NOT NULL CHECK(plugin_id IN ('renoa.agents','renoa.routines','renoa.documents','renoa.skills','renoa.git')),
+        plugin_id TEXT NOT NULL CHECK(plugin_id IN ('renoa.agents','renoa.automations','renoa.documents','renoa.skills','renoa.git')),
         enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), PRIMARY KEY(agent_id,plugin_id)
     ) STRICT;
     CREATE TABLE IF NOT EXISTS host_builtin_plugin_operations (

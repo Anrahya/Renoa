@@ -1,16 +1,11 @@
 use renoa_local::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentRoutine,
+    AgentAutomation, AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId,
     AgentToolsUpdate, LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
     ReasoningLevel, RenameAgent,
 };
 use serde::Deserialize;
 use std::{collections::BTreeSet, error::Error, path::PathBuf};
 use tokio_util::sync::CancellationToken;
-
-#[path = "renoa-host/github_review.rs"]
-mod github_review;
-#[path = "renoa-host/github_service.rs"]
-mod github_service;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,7 +46,7 @@ struct ProvisionDocument {
     tools: Option<BTreeSet<String>>,
     #[serde(default)]
     connections: BTreeSet<String>,
-    routine: Option<AgentRoutine>,
+    automation: Option<AgentAutomation>,
     model: Option<renoa_local::AgentModelSelection>,
     behavior: Option<renoa_local::AgentBehavior>,
     documents: Option<renoa_local::AgentDocuments>,
@@ -66,7 +61,7 @@ impl ProvisionDocument {
             instructions: self.instructions,
             tools: self.tools,
             connections: self.connections,
-            routine: self.routine,
+            automation: self.automation,
             model: self.model,
             behavior: self.behavior,
             documents: self.documents,
@@ -114,19 +109,11 @@ async fn run() -> Result<(), Box<dyn Error>> {
         );
         return Ok(());
     }
-    if !(args.len() == 1
-        || (args.len() == 6 && args[1] == "rename-agent")
+    if !((args.len() == 6 && args[1] == "rename-agent")
         || (args.len() == 3
-            && (args[1] == "provision"
-                || args[1] == "agent-tools"
-                || args[1] == "reset"
-                || args[1] == "github-review"
-                || args[1] == "github-webhook"
-                || args[1] == "github-execute"
-                || args[1] == "github-service"
-                || args[1] == "github-cleanup")))
+            && (args[1] == "provision" || args[1] == "agent-tools" || args[1] == "reset")))
     {
-        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> [provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id> | github-review <request.json> | github-webhook <envelope.json> | github-execute <execution.json> | github-service <service.json> | github-cleanup <request-id>]").into());
+        return Err(std::io::Error::other("usage: renoa-host inspect <data-directory> | renoa-host <config.json> (provision <provision.json> | agent-tools <edit.json> | reset <backup-directory> | rename-agent <agent-id> <expected-name> <name> <operation-id>)").into());
     }
     let c = Config::read(std::path::Path::new(&args[0]))?;
     // A reset owns its own cutover, so it must run before the Host opens: an
@@ -159,66 +146,32 @@ async fn run() -> Result<(), Box<dyn Error>> {
         host.define_plugin_provider_family(family)?;
     }
     if args.len() == 3 {
-        return run_command(
-            &host,
-            &c.data_directory,
-            &args[1],
-            std::path::Path::new(&args[2]),
-        )
-        .await;
+        return run_command(&host, &args[1], std::path::Path::new(&args[2])).await;
     }
-    if args.len() == 6 {
-        let text = |index: usize| {
-            args[index]
-                .to_str()
-                .ok_or_else(|| std::io::Error::other("rename arguments must be UTF-8"))
-        };
-        let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
-        let result = host
-            .rename_agent(
-                id,
-                uuid::Uuid::parse_str(text(5)?)?,
-                RenameAgent {
-                    id,
-                    expected_name: text(3)?.to_owned(),
-                    name: text(4)?.to_owned(),
-                },
-                CancellationToken::new(),
-            )
-            .await?;
-        println!("{}", serde_json::to_string(&result)?);
-        return Ok(());
-    }
-    run_routines(&host).await
-}
-
-async fn run_routines(host: &LocalHost) -> Result<(), Box<dyn Error>> {
-    let stop = CancellationToken::new();
-    let runner = host.run_routines(stop.clone());
-    tokio::pin!(runner);
-    #[cfg(unix)]
-    let mut termination =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let signal = async {
-        #[cfg(unix)]
-        tokio::select! { result=tokio::signal::ctrl_c()=>result, _=termination.recv()=>Ok(()) }
-        #[cfg(not(unix))]
-        tokio::signal::ctrl_c().await
+    let text = |index: usize| {
+        args[index]
+            .to_str()
+            .ok_or_else(|| std::io::Error::other("rename arguments must be UTF-8"))
     };
-    eprintln!(
-        "Renoa Host routine service starting: {}",
-        host.host_id().await?
-    );
-    tokio::select! {
-        result=&mut runner=>result?,
-        result=signal=>{result?;stop.cancel();runner.await?;}
-    }
+    let id = renoa_kernel::AgentId::from_uuid(uuid::Uuid::parse_str(text(2)?)?);
+    let result = host
+        .rename_agent(
+            id,
+            uuid::Uuid::parse_str(text(5)?)?,
+            RenameAgent {
+                id,
+                expected_name: text(3)?.to_owned(),
+                name: text(4)?.to_owned(),
+            },
+            CancellationToken::new(),
+        )
+        .await?;
+    println!("{}", serde_json::to_string(&result)?);
     Ok(())
 }
 
 async fn run_command(
     host: &LocalHost,
-    data: &std::path::Path,
     command: &std::ffi::OsStr,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn Error>> {
@@ -237,24 +190,12 @@ async fn run_command(
         println!("{}", serde_json::to_string(&definition)?);
         return Ok(());
     }
-    if command == "agent-tools" {
-        let edit: AgentToolsUpdate = serde_json::from_slice(&tokio::fs::read(path).await?)?;
-        println!(
-            "{}",
-            serde_json::to_string(&host.set_agent_tools(edit).await?)?
-        );
-        return Ok(());
-    }
-    if command == "github-service" {
-        return github_service::run(host, data, path).await;
-    }
-    if command == "github-cleanup" {
-        let id = uuid::Uuid::parse_str(path.to_str().ok_or("request ID must be UTF-8")?)?;
-        host.reap_github_review(id, renoa_local::TurnObservation::now()?.unix_milliseconds())
-            .await?;
-        return Ok(());
-    }
-    github_review::run(host, command, path).await
+    let edit: AgentToolsUpdate = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    println!(
+        "{}",
+        serde_json::to_string(&host.set_agent_tools(edit).await?)?
+    );
+    Ok(())
 }
 
 /// Copies the whole Host data root to a fresh, empty backup directory.

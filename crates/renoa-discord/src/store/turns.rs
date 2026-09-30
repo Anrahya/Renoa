@@ -2,7 +2,7 @@ use rusqlite::{OptionalExtension as _, params};
 use uuid::Uuid;
 
 use super::SurfaceStore;
-use crate::{DiscordError, snowflake::Snowflake, store::schema};
+use crate::{DiscordError, ingress::pages, snowflake::Snowflake, store::schema};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Enqueue {
@@ -10,64 +10,20 @@ pub(crate) enum Enqueue {
     Duplicate,
 }
 
+/// One Discord message waiting to become an RCP command.
 #[derive(Debug)]
 pub(crate) struct QueuedTurn {
+    pub(crate) message_id: String,
+    pub(crate) task_id: Uuid,
     pub(crate) agent_id: Uuid,
-    pub(crate) message_id: String,
-    pub(crate) session_id: Uuid,
-    pub(crate) request_id: Uuid,
+    pub(crate) command_id: Uuid,
     pub(crate) prompt: String,
-    pub(crate) observed_at_ms: i64,
-}
-
-#[derive(Debug)]
-pub(crate) struct Outbound {
-    pub(crate) message_id: String,
-    pub(crate) channel_id: String,
-    pub(crate) chunk: i64,
-    pub(crate) body: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct GatewayCursor {
-    pub(crate) session_id: Option<String>,
-    pub(crate) resume_url: Option<String>,
-    pub(crate) sequence: Option<i64>,
+    pub(crate) opened: bool,
 }
 
 impl SurfaceStore {
-    pub(crate) fn remember_bot(&self, bot_user_id: &Snowflake) -> Result<(), DiscordError> {
-        let bot_user_id = bot_user_id.as_str().to_owned();
-        self.access(move |connection| {
-            let changed = connection.execute(
-                "UPDATE identity SET bot_user_id = ?1
-                 WHERE singleton = 1 AND (bot_user_id IS NULL OR bot_user_id = ?1)",
-                [&bot_user_id],
-            )?;
-            if changed == 1 {
-                Ok(())
-            } else {
-                Err(DiscordError::Invalid(
-                    "stored Discord bot user differs from the connected bot".to_owned(),
-                ))
-            }
-        })
-    }
-
-    pub(crate) fn bot_user_id(&self) -> Result<Option<String>, DiscordError> {
-        self.access(|connection| {
-            connection
-                .query_row(
-                    "SELECT bot_user_id FROM identity WHERE singleton = 1",
-                    [],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()
-                .map(std::option::Option::flatten)
-                .map_err(DiscordError::from)
-        })
-    }
-
+    /// Records one addressed Discord message as a queued command on its
+    /// channel's current task. A channel whose agent changed starts a new task.
     pub(crate) fn enqueue(
         &self,
         message_id: &Snowflake,
@@ -114,45 +70,32 @@ impl SurfaceStore {
                 return Ok(Enqueue::Duplicate);
             }
             let agent_id: String = transaction.query_row(
-                "SELECT COALESCE((SELECT agent_id FROM channel_bindings WHERE channel_id = ?1), agent_id) FROM identity WHERE singleton = 1", [&channel_id], |row| row.get(0),
+                "SELECT COALESCE(
+                    (SELECT agent_id FROM channel_bindings WHERE channel_id = ?1), agent_id
+                 ) FROM identity WHERE singleton = 1",
+                [&channel_id],
+                |row| row.get(0),
             )?;
-            let session_id = conversation_session(&transaction, &channel_id, &agent_id)?;
-            let request_id = Uuid::new_v4().to_string();
-            let now = schema::now_ms()?;
+            let task_id = current_task(&transaction, &channel_id, &agent_id)?;
             transaction.execute(
                 "INSERT INTO messages(
                     message_id, channel_id, author_id, canonical, created_at_ms
                  ) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![message_id, channel_id, author_id, canonical, now],
+                params![
+                    message_id,
+                    channel_id,
+                    author_id,
+                    canonical,
+                    schema::now_ms()?
+                ],
             )?;
             transaction.execute(
-                "INSERT INTO turns(message_id, session_id, request_id, prompt, state, agent_id)
-                 VALUES (?1, ?2, ?3, ?4, 'queued', ?5)",
-                params![message_id, session_id, request_id, prompt, agent_id],
+                "INSERT INTO turns(message_id, task_id, command_id, prompt, state)
+                 VALUES (?1, ?2, ?3, ?4, 'queued')",
+                params![message_id, task_id, Uuid::new_v4().to_string(), prompt],
             )?;
             transaction.commit()?;
             Ok(Enqueue::Fresh)
-        })
-    }
-
-    pub(crate) fn recover(&self) -> Result<(), DiscordError> {
-        self.access(|connection| {
-            let transaction = schema::immediate_transaction(connection)?;
-            transaction.execute(
-                "UPDATE turns SET state = 'queued' WHERE state = 'running'",
-                [],
-            )?;
-            transaction.execute(
-                "UPDATE deliveries SET state = 'unknown' WHERE state = 'sending'",
-                [],
-            )?;
-            transaction.execute(
-                "UPDATE actions SET state = 'unknown' WHERE state = 'sending'",
-                [],
-            )?;
-            strand_blocked_pages(&transaction)?;
-            transaction.commit()?;
-            Ok(())
         })
     }
 
@@ -160,20 +103,20 @@ impl SurfaceStore {
         self.access(|connection| {
             connection
                 .query_row(
-                    "SELECT turns.message_id, turns.session_id, turns.request_id, turns.prompt,
-                            messages.created_at_ms, turns.agent_id
-                     FROM turns JOIN messages ON messages.message_id = turns.message_id
+                    "SELECT turns.message_id, turns.task_id, tasks.agent_id, turns.command_id,
+                            turns.prompt, tasks.opened
+                     FROM turns JOIN tasks ON tasks.task_id = turns.task_id
                      WHERE turns.state = 'queued'
                      ORDER BY length(turns.message_id), turns.message_id LIMIT 1",
                     [],
                     |row| {
                         Ok(QueuedTurn {
                             message_id: row.get(0)?,
-                            session_id: parse_uuid(&row.get::<_, String>(1)?)?,
-                            request_id: parse_uuid(&row.get::<_, String>(2)?)?,
-                            prompt: row.get(3)?,
-                            observed_at_ms: row.get(4)?,
-                            agent_id: parse_uuid(&row.get::<_, String>(5)?)?,
+                            task_id: parse_uuid(&row.get::<_, String>(1)?)?,
+                            agent_id: parse_uuid(&row.get::<_, String>(2)?)?,
+                            command_id: parse_uuid(&row.get::<_, String>(3)?)?,
+                            prompt: row.get(4)?,
+                            opened: row.get(5)?,
                         })
                     },
                 )
@@ -182,136 +125,85 @@ impl SurfaceStore {
         })
     }
 
-    pub(crate) fn mark_running(&self, message_id: &str) -> Result<(), DiscordError> {
-        self.transition_turn(message_id, "queued", "running", None)
-    }
-
-    pub(crate) fn mark_ready(
-        &self,
-        message_id: &str,
-        result: &str,
-        pages: &[String],
-    ) -> Result<(), DiscordError> {
-        let message_id = message_id.to_owned();
-        let result = result.to_owned();
-        let pages = pages.to_vec();
+    pub(crate) fn mark_opened(&self, task_id: Uuid) -> Result<(), DiscordError> {
         self.access(move |connection| {
-            let transaction = schema::immediate_transaction(connection)?;
-            let changed = transaction.execute(
-                "UPDATE turns SET state = 'ready', result = ?1
-                 WHERE message_id = ?2 AND state = 'running'",
-                params![result, message_id],
+            connection.execute(
+                "UPDATE tasks SET opened = 1 WHERE task_id = ?1",
+                [task_id.to_string()],
             )?;
-            require_one(changed, &message_id)?;
-            for (chunk, body) in pages.iter().enumerate() {
-                let chunk = i64::try_from(chunk).map_err(|_| {
-                    DiscordError::Invalid("Discord reply has too many pages".to_owned())
-                })?;
-                transaction.execute(
-                    "INSERT INTO deliveries(message_id, chunk, body, state) VALUES (?1, ?2, ?3, 'pending')",
-                    params![message_id, chunk, body],
-                )?;
-            }
-            transaction.commit()?;
             Ok(())
         })
     }
 
-    pub(crate) fn next_outbound(&self) -> Result<Option<Outbound>, DiscordError> {
+    /// Every opened task and the last task sequence this surface applied.
+    pub(crate) fn opened_tasks(&self) -> Result<Vec<(Uuid, Option<u64>)>, DiscordError> {
         self.access(|connection| {
-            connection
-                .query_row(
-                    "SELECT deliveries.message_id, messages.channel_id, deliveries.chunk, deliveries.body
-                     FROM deliveries
-                     JOIN messages ON messages.message_id = deliveries.message_id
-                     WHERE deliveries.state = 'pending'
-                       AND NOT EXISTS (
-                         SELECT 1 FROM deliveries earlier
-                         WHERE earlier.message_id = deliveries.message_id
-                           AND earlier.chunk < deliveries.chunk
-                           AND earlier.state <> 'sent'
-                       )
-                     ORDER BY length(deliveries.message_id), deliveries.message_id,
-                              deliveries.chunk
-                     LIMIT 1",
-                    [],
-                    |row| {
-                        Ok(Outbound {
-                            message_id: row.get(0)?,
-                            channel_id: row.get(1)?,
-                            chunk: row.get(2)?,
-                            body: row.get(3)?,
-                        })
-                    },
-                )
-                .optional()
-                .map_err(DiscordError::from)
+            let mut statement = connection
+                .prepare("SELECT task_id, cursor FROM tasks WHERE opened = 1 ORDER BY task_id")?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    parse_uuid(&row.get::<_, String>(0)?)?,
+                    row.get::<_, Option<i64>>(1)?,
+                ))
+            })?;
+            let mut tasks = Vec::new();
+            for row in rows {
+                let (task_id, cursor) = row?;
+                tasks.push((task_id, cursor.map(to_sequence).transpose()?));
+            }
+            Ok(tasks)
         })
     }
 
-    pub(crate) fn mark_sending(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
-        self.transition_delivery(message_id, chunk, "pending", "sending", None)
-    }
-
-    pub(crate) fn mark_sent(
-        &self,
-        message_id: &str,
-        chunk: i64,
-        reply_id: &Snowflake,
-    ) -> Result<(), DiscordError> {
-        self.transition_delivery(
-            message_id,
-            chunk,
-            "sending",
-            "sent",
-            Some(reply_id.as_str()),
-        )
-    }
-
-    pub(crate) fn mark_unknown(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
-        self.finish_delivery(message_id, chunk, "unknown")
-    }
-
-    pub(crate) fn release_sending(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
-        self.transition_delivery(message_id, chunk, "sending", "pending", None)
-    }
-
-    pub(crate) fn mark_failed(&self, message_id: &str, chunk: i64) -> Result<(), DiscordError> {
-        self.finish_delivery(message_id, chunk, "failed")
-    }
-
-    fn finish_delivery(
-        &self,
-        message_id: &str,
-        chunk: i64,
-        state: &str,
-    ) -> Result<(), DiscordError> {
+    pub(crate) fn mark_submitted(&self, message_id: &str) -> Result<(), DiscordError> {
         let message_id = message_id.to_owned();
-        let state = state.to_owned();
+        self.access(move |connection| {
+            let changed = connection.execute(
+                "UPDATE turns SET state = 'submitted' WHERE message_id = ?1 AND state = 'queued'",
+                [&message_id],
+            )?;
+            require_one(changed, &message_id)
+        })
+    }
+
+    /// Answers a queued message without submitting it, for example when its
+    /// agent is offline.
+    pub(crate) fn answer_locally(&self, message_id: &str, text: &str) -> Result<(), DiscordError> {
+        let message_id = message_id.to_owned();
+        let text = text.to_owned();
         self.access(move |connection| {
             let transaction = schema::immediate_transaction(connection)?;
-            let changed = transaction.execute(
-                "UPDATE deliveries SET state = ?1
-                 WHERE message_id = ?2 AND chunk = ?3 AND state = 'sending'",
-                params![state, message_id, chunk],
+            let (command_id, channel_id): (String, String) = transaction.query_row(
+                "SELECT turns.command_id, tasks.channel_id
+                 FROM turns JOIN tasks ON tasks.task_id = turns.task_id
+                 WHERE turns.message_id = ?1 AND turns.state = 'queued'",
+                [&message_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            require_one(changed, &message_id)?;
             transaction.execute(
-                "UPDATE deliveries SET state = 'failed'
-                 WHERE message_id = ?1 AND chunk > ?2 AND state = 'pending'",
-                params![message_id, chunk],
+                "UPDATE turns SET state = 'answered' WHERE message_id = ?1",
+                [&message_id],
+            )?;
+            insert_pages(
+                &transaction,
+                &command_id,
+                &channel_id,
+                Some(&message_id),
+                &text,
             )?;
             transaction.commit()?;
             Ok(())
         })
     }
 
+    /// Whether the channel already has a conversation, so a thread keeps
+    /// answering without a new mention.
     pub(crate) fn has_conversation(&self, channel_id: &str) -> Result<bool, DiscordError> {
         let channel_id = channel_id.to_owned();
         self.access(move |connection| {
             connection
                 .query_row(
-                    "SELECT 1 FROM conversations WHERE channel_id = ?1",
+                    "SELECT 1 FROM tasks WHERE channel_id = ?1 AND current = 1",
                     [channel_id],
                     |_| Ok(()),
                 )
@@ -320,124 +212,62 @@ impl SurfaceStore {
                 .map_err(DiscordError::from)
         })
     }
-
-    pub(crate) fn has_reply(&self, message_id: &str) -> Result<bool, DiscordError> {
-        let message_id = message_id.to_owned();
-        self.access(move |connection| {
-            connection
-                .query_row(
-                    "SELECT 1 FROM deliveries WHERE reply_id = ?1",
-                    [message_id],
-                    |_| Ok(()),
-                )
-                .optional()
-                .map(|row| row.is_some())
-                .map_err(DiscordError::from)
-        })
-    }
-
-    pub(crate) fn load_gateway(&self) -> Result<GatewayCursor, DiscordError> {
-        self.access(|connection| {
-            let row = connection
-                .query_row(
-                    "SELECT session_id, resume_url, sequence FROM gateway WHERE singleton = 1",
-                    [],
-                    |row| {
-                        Ok(GatewayCursor {
-                            session_id: row.get(0)?,
-                            resume_url: row.get(1)?,
-                            sequence: row.get(2)?,
-                        })
-                    },
-                )
-                .optional()?;
-            Ok(row.unwrap_or(GatewayCursor {
-                session_id: None,
-                resume_url: None,
-                sequence: None,
-            }))
-        })
-    }
-
-    pub(crate) fn save_gateway(&self, cursor: GatewayCursor) -> Result<(), DiscordError> {
-        self.access(move |connection| {
-            connection.execute(
-                "INSERT INTO gateway(singleton, session_id, resume_url, sequence)
-                 VALUES (1, ?1, ?2, ?3)
-                 ON CONFLICT(singleton) DO UPDATE SET
-                    session_id = excluded.session_id,
-                    resume_url = excluded.resume_url,
-                    sequence = excluded.sequence",
-                params![cursor.session_id, cursor.resume_url, cursor.sequence],
-            )?;
-            Ok(())
-        })
-    }
-
-    fn transition_turn(
-        &self,
-        message_id: &str,
-        from: &str,
-        to: &str,
-        result: Option<String>,
-    ) -> Result<(), DiscordError> {
-        let message_id = message_id.to_owned();
-        let from = from.to_owned();
-        let to = to.to_owned();
-        self.access(move |connection| {
-            let changed = connection.execute(
-                "UPDATE turns SET state = ?1, result = ?2 WHERE message_id = ?3 AND state = ?4",
-                params![to, result, message_id, from],
-            )?;
-            require_one(changed, &message_id)
-        })
-    }
-
-    fn transition_delivery(
-        &self,
-        message_id: &str,
-        chunk: i64,
-        from: &str,
-        to: &str,
-        reply_id: Option<&str>,
-    ) -> Result<(), DiscordError> {
-        let message_id = message_id.to_owned();
-        let from = from.to_owned();
-        let to = to.to_owned();
-        let reply_id = reply_id.map(str::to_owned);
-        self.access(move |connection| {
-            let changed = connection.execute(
-                "UPDATE deliveries SET state = ?1, reply_id = ?2
-                 WHERE message_id = ?3 AND chunk = ?4 AND state = ?5",
-                params![to, reply_id, message_id, chunk, from],
-            )?;
-            require_one(changed, &message_id)
-        })
-    }
 }
 
-fn conversation_session(
+/// The channel's current task on `agent_id`, starting a new one when the
+/// channel has none or its agent changed.
+fn current_task(
     connection: &rusqlite::Connection,
     channel_id: &str,
     agent_id: &str,
 ) -> Result<String, DiscordError> {
-    if let Some(session_id) = connection
+    let current = connection
         .query_row(
-            "SELECT session_id FROM conversations WHERE channel_id = ?1 AND agent_id = ?2",
-            params![channel_id, agent_id],
-            |row| row.get::<_, String>(0),
+            "SELECT task_id, agent_id FROM tasks WHERE channel_id = ?1 AND current = 1",
+            [channel_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
-        .optional()?
+        .optional()?;
+    if let Some((task_id, current_agent)) = &current
+        && current_agent == agent_id
     {
-        return Ok(session_id);
+        return Ok(task_id.clone());
     }
-    let session_id = Uuid::new_v4().to_string();
     connection.execute(
-        "INSERT INTO conversations(channel_id, session_id, agent_id) VALUES (?1, ?2, ?3)
-         ON CONFLICT(channel_id) DO UPDATE SET session_id = excluded.session_id, agent_id = excluded.agent_id",
-        params![channel_id, session_id, agent_id],
+        "UPDATE tasks SET current = 0 WHERE channel_id = ?1 AND current = 1",
+        [channel_id],
     )?;
-    Ok(session_id)
+    let task_id = Uuid::new_v4().to_string();
+    connection.execute(
+        "INSERT INTO tasks(task_id, channel_id, agent_id, current) VALUES (?1, ?2, ?3, 1)",
+        params![task_id, channel_id, agent_id],
+    )?;
+    Ok(task_id)
+}
+
+pub(super) fn insert_pages(
+    connection: &rusqlite::Connection,
+    command_id: &str,
+    channel_id: &str,
+    reply_to: Option<&str>,
+    text: &str,
+) -> Result<(), DiscordError> {
+    for (chunk, body) in pages(text).iter().enumerate() {
+        let chunk = i64::try_from(chunk)
+            .map_err(|_| DiscordError::Invalid("Discord reply has too many pages".to_owned()))?;
+        connection.execute(
+            "INSERT INTO deliveries(command_id, chunk, channel_id, reply_to, body, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
+            params![
+                command_id,
+                chunk,
+                channel_id,
+                (chunk == 0).then_some(reply_to).flatten(),
+                body
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 fn parse_uuid(value: &str) -> Result<Uuid, rusqlite::Error> {
@@ -446,27 +276,22 @@ fn parse_uuid(value: &str) -> Result<Uuid, rusqlite::Error> {
     })
 }
 
-fn strand_blocked_pages(connection: &rusqlite::Connection) -> Result<(), DiscordError> {
-    connection.execute(
-        "UPDATE deliveries SET state = 'failed'
-         WHERE state = 'pending'
-           AND EXISTS (
-             SELECT 1 FROM deliveries earlier
-             WHERE earlier.message_id = deliveries.message_id
-               AND earlier.chunk < deliveries.chunk
-               AND earlier.state IN ('unknown', 'failed')
-           )",
-        [],
-    )?;
-    Ok(())
+fn to_sequence(value: i64) -> Result<u64, rusqlite::Error> {
+    u64::try_from(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })
 }
 
-fn require_one(changed: usize, message_id: &str) -> Result<(), DiscordError> {
+pub(super) fn require_one(changed: usize, key: &str) -> Result<(), DiscordError> {
     if changed == 1 {
         Ok(())
     } else {
         Err(DiscordError::Invalid(format!(
-            "Discord message {message_id} was not in the expected state"
+            "Discord record {key} was not in the expected state"
         )))
     }
 }

@@ -11,8 +11,8 @@ const example: HostSnapshot = {
     { id: id(4), name: "Soundwave", created_by: id(2), preset_id: "renoa.general.v1" },
   ],
   sessions: [],
-  routines: [
-    { id: id(5), agent_id: id(3), name: "Morning brief", schedule: { kind: "daily", hour: 9, minute: 0, timezone: "Asia/Kolkata" },
+  automations: [
+    { id: id(5), agent_id: id(3), name: "Morning brief", schedule: { kind: "cron", expression: "0 9 * * *", timezone: "Asia/Kolkata" },
       enabled: true, revision: 2, next_due_ms: Date.parse("2026-09-10T09:00:00+05:30"), pending_runs: 0, completed_runs: 3 },
     { id: id(6), agent_id: id(3), name: "Research reminder", schedule: { kind: "once", at: "2026-09-10T14:00:00+05:30" },
       enabled: true, revision: 1, next_due_ms: Date.parse("2026-09-10T14:00:00+05:30"), pending_runs: 0, completed_runs: 0 },
@@ -24,10 +24,6 @@ const example: HostSnapshot = {
   ],
   plugins: [{ digest: "example-package-revision", name: "Research tools", version: "1.0" }],
   skills: [],
-  review_repositories: [{ revision: 2, policy: { repository_id: 42, installation_id: 7, full_name: "Anrahya/Renoa", agent_id: id(4), enabled: true,
-    triggers: ["opened", "reopened", "ready_for_review", "synchronize"], skip_drafts: false } }],
-  reviews: [{ request_id: id(7), agent_id: id(4), repository: "Anrahya/Renoa", pull_number: 19, admitted_at_ms: Date.parse("2026-09-09T14:00:00Z"),
-    reported_head_sha: "23955af".padEnd(40, "0"), reviewed_head_sha: null, state: "prepared", publication: "not_recorded", worker_error: true, retry_after_ms: Date.parse("2026-09-09T14:02:00Z") }],
 };
 export default function HostPreview() {
   // DEV-only entry point. Local snapshots are ignored by Git and must never
@@ -58,19 +54,18 @@ export default function HostPreview() {
 // Synthetic execution updates exercise the same record-diff path as real polling.
 // This module, including all fixtures, is excluded from production.
 function motionExample(start: number, step: number): HostSnapshot {
-  return { ...example, reviews: example.reviews.map(review => ({ ...review, worker_error: false, retry_after_ms: null,
-      state: step % 4 < 2 ? "queued" : "prepared" })),
+  return { ...example,
     sessions: [{ id: id(8), agent_id: id(2), observation: "available", event_count: step,
     queued_operations: 0, active_operation: { id: id(9), command_id: id(10), position: 1, state: "unfinished" }, latest_operation: null }],
-    routines: [
+    automations: [
       { id: id(11), agent_id: id(2), name: "Evening recap", enabled: true, revision: 1,
         schedule: { kind: "once", at: new Date(start + 90_000).toISOString() }, next_due_ms: start + 90_000, pending_runs: 0, completed_runs: 0 },
       ...["Inbox triage", "Repository watch", "Reading digest", "Notes sync", "Weekly recap", "Server check", "Research queue", "Bookmark digest", "Release watch", "Calendar brief", "Archive sweep"].map((name, i) => ({
         id: id(20 + i), agent_id: id(2), name, enabled: i < 8, revision: 1,
-        schedule: { kind: "interval" as const, hours: 12 }, next_due_ms: start + (i + 1) * 3_600_000,
+        schedule: { kind: "cron" as const, expression: "0 */12 * * *", timezone: "UTC" }, next_due_ms: start + (i + 1) * 3_600_000,
         pending_runs: i === 0 ? 1 : 0, completed_runs: 2,
       })),
-      { ...example.routines[0]!, next_due_ms: start + 3_600_000, schedule: { kind: "interval", hours: 12 } },
-      { ...example.routines[1]!, enabled: false },
+      { ...example.automations[0]!, next_due_ms: start + 3_600_000, schedule: { kind: "cron", expression: "0 */12 * * *", timezone: "UTC" } },
+      { ...example.automations[1]!, enabled: false },
     ] };
 }

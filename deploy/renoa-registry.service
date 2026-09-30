@@ -9,7 +9,9 @@ DynamicUser=yes
 StateDirectory=renoa-registry
 StateDirectoryMode=0700
 UMask=0077
-ExecStart=/usr/local/bin/renoa-registry serve /var/lib/renoa-registry 7820
+# DynamicUser keeps the state directory under /var/lib/private and links
+# /var/lib/renoa-registry to it; the registry refuses a symlinked home.
+ExecStart=/usr/local/bin/renoa-registry serve /var/lib/private/renoa-registry 7820
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=15s

@@ -102,6 +102,50 @@ impl DiscordApi {
         Ok(created.id)
     }
 
+    /// Shows the bot typing in a channel for about ten seconds.
+    pub(crate) async fn trigger_typing(&self, channel_id: &str) -> Result<(), ApiError> {
+        self.send_bytes(
+            self.client
+                .post(format!("{}/channels/{channel_id}/typing", self.origin)),
+        )
+        .await
+        .map(drop)
+    }
+
+    pub(crate) async fn edit_message(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        content: &str,
+    ) -> Result<(), ApiError> {
+        self.send_bytes(
+            self.client
+                .patch(format!(
+                    "{}/channels/{channel_id}/messages/{message_id}",
+                    self.origin
+                ))
+                .header("content-type", "application/json")
+                .body(
+                    json!({ "content": content, "allowed_mentions": { "parse": [] } }).to_string(),
+                ),
+        )
+        .await
+        .map(drop)
+    }
+
+    pub(crate) async fn delete_message(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+    ) -> Result<(), ApiError> {
+        self.send_bytes(self.client.delete(format!(
+            "{}/channels/{channel_id}/messages/{message_id}",
+            self.origin
+        )))
+        .await
+        .map(drop)
+    }
+
     pub(crate) async fn direct_channel(&self, user: &str) -> Result<String, ApiError> {
         #[derive(Deserialize)]
         struct Channel {
@@ -179,6 +223,11 @@ impl DiscordApi {
         &self,
         request: reqwest::RequestBuilder,
     ) -> Result<T, ApiError> {
+        let bytes = self.send_bytes(request).await?;
+        serde_json::from_slice(&bytes).map_err(|error| ApiError::Unknown(error.to_string()))
+    }
+
+    async fn send_bytes(&self, request: reqwest::RequestBuilder) -> Result<Vec<u8>, ApiError> {
         let response = request
             .header("authorization", format!("Bot {}", self.token))
             .header("user-agent", "Renoa (https://renoa.live, 0.1.0)")
@@ -214,7 +263,7 @@ impl DiscordApi {
         if !status.is_success() {
             return Err(ApiError::Rejected(format!("HTTP {}", status.as_u16())));
         }
-        serde_json::from_slice(&bytes).map_err(|error| ApiError::Unknown(error.to_string()))
+        Ok(bytes.to_vec())
     }
 }
 

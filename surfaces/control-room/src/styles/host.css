@@ -90,8 +90,8 @@
 .host-record-body { padding: 18px 24px 24px; background: #22201b; margin: 0 0 18px; }
 .host-record-body > :is(p, div, details) + :is(p, div, details) { margin-top: 12px; }
 .host-record-body > .host-link { display: inline-block; margin-top: 16px; font-size: .875rem; }
-.host-routine { padding: 24px 0; border-bottom: 1px solid var(--host-rule); }
-.host-routine > p { margin-top: 8px; }
+.host-automation { padding: 24px 0; border-bottom: 1px solid var(--host-rule); }
+.host-automation > p { margin-top: 8px; }
 .host-row-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; }
 .host-state { font-size: .8125rem; color: #9bbc91; background: #253025; padding: 3px 9px; border-radius: 4px; white-space: nowrap; }
 .host-state-muted, .host-state.host-secondary { color: var(--host-muted); background: #2b2820; }
@@ -115,11 +115,7 @@
 .host-history > summary > span { float: right; font-size: .8125rem; font-weight: 400; color: var(--host-muted); }
 .host-history[open] > summary { margin-bottom: 20px; }
 .host-owner-link { font-size: .8125rem; display: inline-block; margin-top: 20px; }
-.host-owner-link + .host-routine { padding-top: 12px; }
-.host-details { color: var(--host-muted); font-size: .8125rem; }
-.host-details summary { cursor: pointer; text-decoration: underline; text-underline-offset: 4px; padding-block: 5px; }
-.host-details > div, .host-details > p { margin-top: 14px; }
-.host-review-evidence > .host-details { margin: 18px 0; }
+.host-owner-link + .host-automation { padding-top: 12px; }
 .host-agent-detail { margin-top: 32px; }
 .host-back { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 28px; font-size: .8125rem; min-height: 32px; }
 .host-back svg { margin: 0; }
@@ -150,10 +146,6 @@
 .host-token { display: block; max-width: 430px; margin-bottom: 24px; font-size: .875rem; font-weight: 600; }
 .host-token input { display: block; width: 100%; margin-top: 12px; padding: 12px; border: 1px solid #8e8167; border-radius: 5px; background: #22201b; color: inherit; }
 .host-token input::placeholder { color: var(--host-muted); font-weight: 400; }
-.host-diagnostic, .host-review-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.host-review-evidence article { margin: 28px 0; }
-.host-review-evidence pre { font-size: .8125rem; line-height: 1.6; }
-.host-review-evidence p { margin-top: 10px; }
 .host-skip { position: fixed; left: 20px; top: -100px; z-index: 10; background: var(--host-soft); padding: 12px 20px; }
 .host-skip:focus { top: 12px; }
 @media (max-width: 900px) {

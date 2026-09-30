@@ -18,6 +18,7 @@ use std::{
 
 use renoa_agent::{AgentEvent, AgentEventSink, BoxFuture, ContentBlock};
 use renoa_kernel::{AgentId, CommandId, SessionId};
+use serde_json::json;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -100,7 +101,11 @@ impl TraceStore {
         let session_id = self.session_id;
         let agent_id = self.agent_id;
         let run_id = Uuid::new_v4();
-        let input = serde_json::to_string(content)?;
+        let input = json!({
+            "blocks": content.len(),
+            "bytes": serde_json::to_string(content)?.len(),
+        })
+        .to_string();
         let provider = provider.to_owned();
         let model = model.to_owned();
         let reasoning = reasoning.to_owned();
@@ -191,8 +196,10 @@ impl TraceRun {
     async fn observe(&self, event: AgentEvent) -> Result<(), TraceError> {
         let elapsed_us = self.elapsed_us();
         let mut state = self.state.lock().await;
-        let entry = state.agent_event(event, now_unix_ms(), elapsed_us);
-        self.send_locked(&mut state, entry).await
+        match state.agent_event(event, now_unix_ms(), elapsed_us) {
+            Some(entry) => self.send_locked(&mut state, entry).await,
+            None => Ok(()),
+        }
     }
 
     async fn record_entry(&self, entry: TraceEntry) -> Result<(), TraceError> {

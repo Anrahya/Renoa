@@ -5,13 +5,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    AgentCreateRequest, AgentRoutine, AgentToolsUpdate, MAX_AGENT_PAGE, RenameAgent,
+    AgentAutomation, AgentCreateRequest, AgentToolsUpdate, MAX_AGENT_PAGE, RenameAgent,
     derived_agent_id,
 };
 use crate::{
     AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, LocalHostError, ModelProvider,
     host::HostInitialization,
-    host::routines::RoutineSchedule,
+    host::automations::AutomationSchedule,
     presets::{ALPHA_PRESET_ID, ARCEE_PRESET_ID, GENERAL_PRESET_ID},
 };
 
@@ -163,7 +163,7 @@ async fn creation_writes_one_canonical_definition_and_exact_selection() {
         crate::plugins::host::state::enabled(
             &host.config.database,
             definition.id,
-            crate::plugins::host::HostPluginId::Routines
+            crate::plugins::host::HostPluginId::Automations
         )
         .expect("default plugin access")
     );
@@ -194,30 +194,33 @@ async fn derived_identities_are_stable_across_releases() {
 
     let (_directory, host) = fixture();
     let (creator, origin) = system("test");
-    let routine = AgentRoutine {
+    let automation = AgentAutomation {
         name: "Morning".to_owned(),
         prompt: "Summarize.".to_owned(),
-        schedule: RoutineSchedule::Interval { hours: 24 },
+        schedule: AutomationSchedule::Cron {
+            expression: "0 0 * * *".to_owned(),
+            timezone: "UTC".to_owned(),
+        },
         enabled: true,
     };
     let definition = host
         .create_agent(
             creator,
             origin,
-            specialist(VECTOR_OPERATION, "Scheduled").with_routine(routine),
+            specialist(VECTOR_OPERATION, "Scheduled").with_automation(automation),
             CancellationToken::new(),
         )
         .await
-        .expect("create agent with a first routine");
-    let routines = host
-        .list_routines(definition.id, definition.id, None)
+        .expect("create agent with a first automation");
+    let automations = host
+        .list_automations(definition.id, definition.id, None)
         .await
-        .expect("list routines");
-    assert_eq!(routines.len(), 1);
+        .expect("list automations");
+    assert_eq!(automations.len(), 1);
     assert_eq!(
-        routines[0].id.to_string(),
+        automations[0].id.to_string(),
         "5795ef98-6b50-4219-6d80-57f795411276",
-        "the routine id derives from its own domain string"
+        "the automation id derives from its own domain string"
     );
 }
 
@@ -565,26 +568,29 @@ async fn validation_rejects_untrusted_pairs_unknown_names_and_preset_mismatches(
 }
 
 #[tokio::test]
-async fn a_rejected_first_routine_leaves_no_agent_state() {
+async fn a_rejected_first_automation_leaves_no_agent_state() {
     let (_directory, host) = fixture();
     let (creator, origin) = system("test");
-    let routine = AgentRoutine {
+    let automation = AgentAutomation {
         name: String::new(),
         prompt: String::new(),
-        schedule: RoutineSchedule::Interval { hours: 0 },
+        schedule: AutomationSchedule::Cron {
+            expression: "* * * * *".to_owned(),
+            timezone: "UTC".to_owned(),
+        },
         enabled: true,
     };
     let result = host
         .create_agent(
             creator,
             origin,
-            specialist(Uuid::new_v4(), "Broken routine").with_routine(routine),
+            specialist(Uuid::new_v4(), "Broken automation").with_automation(automation),
             CancellationToken::new(),
         )
         .await;
     assert!(
-        matches!(result, Err(LocalHostError::Routine(_))),
-        "an invalid routine must fail the creation: {result:?}"
+        matches!(result, Err(LocalHostError::Automation(_))),
+        "an invalid automation must fail the creation: {result:?}"
     );
     assert!(
         host.list_agent_definitions(None, MAX_AGENT_PAGE)

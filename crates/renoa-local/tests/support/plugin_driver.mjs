@@ -1,5 +1,5 @@
 // Deterministic model fixtures discover Host plugin schemas before invoking them.
-const fixturePluginTools = new Set(['agent_manage', 'routine_manage', 'routine_results', 'skill_search', 'skill_load', 'agent_documents']);
+const fixturePluginTools = new Set(['agent_manage', 'automation_manage', 'automation_results', 'skill_search', 'skill_load', 'agent_documents']);
 let fixturePluginRequest;
 const fixturePluginSchemas = new Map();
 const fixtureOriginalWrite = process.stdout.write.bind(process.stdout);

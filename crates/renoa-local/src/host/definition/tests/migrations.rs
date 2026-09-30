@@ -189,6 +189,7 @@ fn install_legacy_selections(db: &Connection, fixture: &Fixture, version: u32) {
             .unwrap();
         }
     }
+    crate::host::catalog::restore_routine_tables(db);
     db.execute(
         "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
         [version],

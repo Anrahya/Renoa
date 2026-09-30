@@ -25,10 +25,12 @@ async fn a_document_preset_publishes_files_and_records_provenance() {
         .join("data")
         .join("agents")
         .join(definition.id.to_string());
-    for file in ["SOUL.md", "USER.md"] {
-        let metadata = fs::symlink_metadata(root.join(file)).expect("published document");
-        assert!(metadata.file_type().is_file());
-    }
+    let metadata = fs::symlink_metadata(root.join("SOUL.md")).expect("published soul");
+    assert!(metadata.file_type().is_file());
+    assert!(
+        !root.join("USER.md").exists(),
+        "USER.md belongs to a person, never to an agent"
+    );
 
     // Provenance is record data and never enters the instructions.
     assert!(
@@ -102,7 +104,15 @@ async fn resolution_composes_the_stored_definition_with_workspace_rules() {
     assert!(resolved.document_binding().is_some());
     let prompt = resolved.system_prompt(&workspace).expect("compose prompt");
     assert!(prompt.contains("source=\"SOUL.md\""));
-    assert!(prompt.contains("source=\"USER.md\""));
+    assert!(
+        !prompt.contains("source=\"USER.md\""),
+        "without a person the prompt has no USER.md"
+    );
     assert!(prompt.contains("<project_instructions source=\"AGENTS.md\">"));
     assert!(prompt.contains("Keep the public API small."));
+    let prompt = resolved
+        .with_principal(Some(Uuid::new_v4()))
+        .system_prompt(&workspace)
+        .expect("compose prompt for a person");
+    assert!(prompt.contains("source=\"USER.md\""));
 }

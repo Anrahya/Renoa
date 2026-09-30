@@ -39,7 +39,10 @@ async fn exact_intent_and_dispatch_are_durable_before_adapter_invocation() {
     assert!(*observed.lock().expect("observation lock"));
     let snapshot = kernel.inspect(session_id).expect("inspect session");
     let effect = &snapshot.operations[0].effect_batches[0].effects[0];
-    assert_eq!(effect.request, request);
+    assert_eq!(
+        effect.request, None,
+        "a finished operation releases the request its adapter saw"
+    );
     assert_eq!(effect.status, EffectStatus::Settled);
     assert_eq!(effect.dispatch_count, 1);
 }
@@ -662,7 +665,7 @@ impl EffectAdapter for ObservingAdapter {
             .expect("inspect during effect");
         let effect = &snapshot.operations[0].effect_batches[0].effects[0];
         assert_eq!(effect.status, EffectStatus::DispatchStarted);
-        assert_eq!(effect.request, self.expected_request);
+        assert_eq!(effect.request.as_ref(), Some(&self.expected_request));
         assert_eq!(effect.dispatch_count, 1);
         *self.observed.lock().expect("observation lock") = true;
         Box::pin(std::future::ready(

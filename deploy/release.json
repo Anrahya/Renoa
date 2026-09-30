@@ -1,0 +1,27 @@
+{
+  "binaries": [
+    { "package": "renoa-control", "bin": "renoa-coordinator" },
+    { "package": "renoa-registry", "bin": "renoa-registry" },
+    { "package": "renoa-local", "bin": "renoa-host" },
+    { "package": "renoa-management", "bin": "renoa-management" },
+    { "package": "renoa-node", "bin": "renoa-node" },
+    { "package": "renoa-discord", "bin": "renoa-discord" }
+  ],
+  "adapters": ["mcp-client-node", "mcp-registry-node", "model-provider-node"],
+  "services": [
+    { "unit": "renoa-coordinator.service", "binaries": ["renoa-coordinator"] },
+    { "unit": "renoa-registry.service", "binaries": ["renoa-registry"] },
+    { "unit": "renoa-node.service", "binaries": ["renoa-node"], "adapters": true },
+    {
+      "unit": "renoa-management.service",
+      "binaries": ["renoa-management"],
+      "adapters": true,
+      "control_room": true
+    },
+    {
+      "unit": "renoa-discord.service",
+      "binaries": ["renoa-discord"],
+      "companion_units": ["renoa-discord.path"]
+    }
+  ]
+}

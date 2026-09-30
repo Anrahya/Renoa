@@ -8,13 +8,12 @@ use uuid::Uuid;
 
 use super::super::{HostInitialization, reset_host_data_root};
 use crate::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost, ModelProvider,
-    RoutineMutation, RoutineSchedule, RoutineSpec,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AutomationMutation,
+    AutomationSchedule, AutomationSpec, LocalHost, ModelProvider,
     presets::{ARCEE_PRESET_ID, GENERAL_PRESET_ID},
 };
 
 const RETAINED_INTEGRATION: &str = "retained.integration";
-const REQUEST_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 /// A managed root that is a symbolic link must be refused rather than followed,
 /// and the refusal must come before any durable agent state is deleted.
@@ -88,7 +87,6 @@ async fn a_malformed_agent_document_is_refused_before_rows_or_files_are_removed(
     let documents = root.join("agents").join(agent.to_string());
     fs::remove_file(documents.join("SOUL.md")).unwrap();
     fs::create_dir(documents.join("SOUL.md")).unwrap();
-    let user_before = fs::read(documents.join("USER.md")).unwrap();
     drop(host);
 
     let error = reset_host_data_root(&root).expect_err("document preflight");
@@ -98,7 +96,6 @@ async fn a_malformed_agent_document_is_refused_before_rows_or_files_are_removed(
             .to_string()
             .contains("agent document must be a regular file")
     );
-    assert_eq!(fs::read(documents.join("USER.md")).unwrap(), user_before);
     assert!(documents.join("SOUL.md").is_dir());
 }
 
@@ -220,25 +217,20 @@ fn count(path: &Path, table: &str) -> i64 {
         .expect("count rows")
 }
 
-fn database(root: &Path) -> std::path::PathBuf {
-    root.join("data").join("state/host.sqlite3")
+fn table_exists(path: &Path, table: &str) -> bool {
+    Connection::open(path)
+        .expect("open catalog")
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("table lookup")
+        > 0
 }
 
-/// Writes one review binding chain for an agent, so the reset's delete set
-/// spans the tables that reference the agent root.
-fn seed_review_records(path: &Path, agent: crate::AgentId) {
-    let connection = Connection::open(path).expect("open Host catalog");
-    connection
-        .execute_batch(&format!(
-            "INSERT INTO host_review_repositories(repository_id, agent_id, record_json)
-             VALUES (7, '{agent}', '{{}}');
-             INSERT INTO host_review_requests(id, repository_id, repository_json, pull_number,
-                base_sha, head_sha, admitted_at_ms)
-             VALUES ('{REQUEST_ID}', 7, '{{}}', 1, 'a', 'b', 0);
-             INSERT INTO host_review_runs(request_id, terminal, record_json)
-             VALUES ('{REQUEST_ID}', 0, '{{}}');"
-        ))
-        .expect("review binding fixture");
+fn database(root: &Path) -> std::path::PathBuf {
+    root.join("data").join("state/host.sqlite3")
 }
 
 #[tokio::test]
@@ -261,15 +253,18 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
         )
         .await
         .expect("agent");
-    host.manage_routine(
+    host.manage_automation(
         agent.id,
         Uuid::new_v4(),
-        RoutineMutation::Create {
-            spec: RoutineSpec {
+        AutomationMutation::Create {
+            spec: AutomationSpec {
                 agent_id: agent.id,
                 name: "Digest".to_owned(),
                 prompt: "Write the digest.".to_owned(),
-                schedule: RoutineSchedule::Interval { hours: 12 },
+                schedule: AutomationSchedule::Cron {
+                    expression: "0 */12 * * *".to_owned(),
+                    timezone: "UTC".to_owned(),
+                },
                 enabled: true,
             },
         },
@@ -277,25 +272,20 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
         CancellationToken::new(),
     )
     .await
-    .expect("routine");
-    seed_review_records(&database(root), agent.id);
-    let review_workspace = root.join("data/state/review-workspaces").join(REQUEST_ID);
-    fs::create_dir_all(&review_workspace).expect("review workspace");
-    fs::write(review_workspace.join("checkout.txt"), "discarded\n").expect("checkout file");
-    let execution = root.join("data/state/github-executions").join(REQUEST_ID);
-    fs::create_dir_all(&execution).expect("execution directory");
-    fs::write(execution.join("app.jwt"), "discarded\n").expect("execution file");
+    .expect("automation");
     let workspace = host.agent_workspace(agent.id).await.expect("workspace");
     fs::write(workspace.join("notes.md"), "kept\n").expect("workspace file");
     let sessions = root.join("data/sessions");
     fs::create_dir_all(sessions.join("session-one")).expect("session directory");
     fs::write(sessions.join("session-one/manifest.json"), "{}\n").expect("session file");
+    let profile = root.join("data/users").join(Uuid::new_v4().to_string());
+    fs::create_dir_all(&profile).expect("profile directory");
+    fs::write(profile.join("USER.md"), "Prefers mornings.\n").expect("profile");
 
     let report = reset_host_data_root(&root.join("data")).expect("reset");
 
-    assert!(report.total_rows() >= 6, "{report:?}");
+    assert_eq!(report.total_rows(), 5, "{report:?}");
     assert_eq!(report.removed_sessions, 1);
-    assert_eq!(report.removed_review_directories, 2);
     assert_eq!(report.removed_document_roots, 1);
     assert_eq!(
         report.preserved_workspaces,
@@ -308,8 +298,6 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
             .join("SOUL.md")
             .exists()
     );
-    assert!(!review_workspace.exists());
-    assert!(!execution.exists());
     let path = database(root);
     assert_eq!(count(&path, "host_agents"), 0);
     assert_eq!(count(&path, "host_agent_tool_selections"), 0);
@@ -321,11 +309,15 @@ async fn a_reset_removes_agent_state_and_keeps_shared_state() {
         fs::read_to_string(workspace.join("notes.md")).expect("kept file"),
         "kept\n"
     );
+    assert_eq!(
+        fs::read_to_string(profile.join("USER.md")).expect("a person's profile survives"),
+        "Prefers mornings.\n",
+        "a person's USER.md is not agent state"
+    );
 
     let second = reset_host_data_root(&root.join("data")).expect("repeat reset");
     assert_eq!(second.total_rows(), 0);
     assert_eq!(second.removed_sessions, 0);
-    assert_eq!(second.removed_review_directories, 0);
     assert_eq!(second.removed_document_roots, 0);
     assert_eq!(count(&path, "mcp_integrations"), 1);
 }
@@ -356,7 +348,14 @@ async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables(
                     source_id TEXT NOT NULL,
                     skill_name TEXT NOT NULL
                  ) STRICT;
+                 CREATE TABLE host_review_repositories (repository_id INTEGER PRIMARY KEY) STRICT;
+                 CREATE TABLE host_review_requests (
+                    id TEXT PRIMARY KEY,
+                    repository_id INTEGER REFERENCES host_review_repositories(repository_id)
+                 ) STRICT;
                  INSERT INTO host_bots VALUES ('legacy-bot', 'legacy-owner', '{}');
+                 INSERT INTO host_review_repositories VALUES (7);
+                 INSERT INTO host_review_requests VALUES ('legacy-request', 7);
                  INSERT INTO mcp_integrations(integration_id, kind, endpoint, request_headers_json)
                  VALUES ('retained.integration', 'direct_streamable_http', 'https://example.com/mcp', '{}');
                  DROP TABLE host_agent_tool_selections;
@@ -399,16 +398,13 @@ async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables(
         "host_bots",
         "profile_mcp_connections",
         "profile_skill_bindings",
+        "host_review_repositories",
+        "host_review_requests",
     ] {
-        let connection = Connection::open(&path).expect("open catalog");
-        let present: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                [retired],
-                |row| row.get(0),
-            )
-            .expect("table lookup");
-        assert_eq!(present, 0, "retired table {retired} survived migration");
+        assert!(
+            !table_exists(&path, retired),
+            "retired table {retired} survived migration"
+        );
     }
 
     let agent = migrated
@@ -443,6 +439,7 @@ async fn a_data_root_from_an_earlier_runtime_migrates_onto_the_canonical_tables(
 fn every_catalog_table_is_classified_agent_owned_or_shared() {
     // Shared Host state, which a reset must keep.
     const SHARED: &[&str] = &[
+        "host_automation_scheduler",
         "host_plugin_admissions",
         "host_plugin_provider_families",
         "host_plugin_provider_origins",
@@ -458,6 +455,7 @@ fn every_catalog_table_is_classified_agent_owned_or_shared() {
         "mcp_tools",
         "plugin_mcp_servers",
         "shared_plugin_registry_state",
+        "shared_plugin_registry_sync",
         "skill_revisions",
     ];
     let (directory, _host) = fixture();

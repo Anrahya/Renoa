@@ -300,13 +300,16 @@ fn select_automatic_registration(
     if has_pre_registered {
         return McpOAuthRegistration::pre_registered_for_issuer(credential_id, &discovery.issuer);
     }
+    // DCR precedes CIMD: a server may advertise CIMD yet accept documents only
+    // from origins it trusts, and it refuses others in the browser, after the
+    // Host can no longer choose again.
+    if discovery.dynamic_registration_supported {
+        return Ok(McpOAuthRegistration::dynamic());
+    }
     if discovery.client_metadata_supported
         && let Some(url) = client_metadata_url
     {
         return McpOAuthRegistration::client_metadata(url);
-    }
-    if discovery.dynamic_registration_supported {
-        return Ok(McpOAuthRegistration::dynamic());
     }
     McpOAuthRegistration::pre_registered_for_issuer(credential_id, &discovery.issuer)
 }

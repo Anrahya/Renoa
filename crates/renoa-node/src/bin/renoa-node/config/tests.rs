@@ -1,4 +1,5 @@
 use serde_json::json;
+use uuid::Uuid;
 
 use super::*;
 
@@ -11,18 +12,18 @@ fn private(path: &Path) {
 }
 
 #[test]
-fn config_is_versioned_strict_and_targets_one_configured_agent() {
+fn config_is_versioned_strict_and_accepts_an_oauth_relay() {
     let files = tempfile::tempdir().expect("temporary directory");
     let bridge = files.path().join("bridge.mjs");
     let credential_store = files.path().join("model.sqlite");
-    let workspace = files.path().join("workspace");
+    let relay_device = files.path().join("oauth-relay-device");
     std::fs::write(&bridge, "").expect("write bridge");
     std::fs::write(&credential_store, "").expect("write model store");
-    std::fs::create_dir(&workspace).expect("create workspace");
-    let agent_id = Uuid::new_v4();
+    std::fs::write(&relay_device, "").expect("write relay device credential");
     let base = json!({
-        "schemaVersion": 3,
+        "schemaVersion": 5,
         "endpoint": "ws://127.0.0.1:9/connect",
+        "automationCredentials": files.path().join("automations.json"),
         "model": {
             "bridge": bridge,
             "credentialStore": credential_store,
@@ -30,45 +31,29 @@ fn config_is_versioned_strict_and_targets_one_configured_agent() {
             "defaultProvider": "xai",
             "defaultModel": "fixture-model"
         },
-        "targets": [{
-            "target": "workspace:test",
-            "agentId": agent_id,
-            "workspace": workspace
-        }]
+        "adapters": {
+            "oauthRelay": {"origin": "https://renoa.live", "credentials": relay_device}
+        }
     });
     let path = files.path().join("node.json");
     std::fs::write(&path, serde_json::to_vec(&base).expect("encode config")).expect("write config");
     #[cfg(unix)]
     private(&path);
     let decoded = decode_config(&path).expect("decode strict config");
-    assert_eq!(decoded.targets[0].agent_id, agent_id);
+    validate_adapters(&decoded.adapters).expect("the relay credential exists");
 
-    let mut missing_agent = base.clone();
-    missing_agent["targets"][0]
-        .as_object_mut()
-        .expect("target document")
-        .remove("agentId");
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&missing_agent).expect("encode config"),
-    )
-    .expect("write target without agent id");
-    assert!(decode_config(&path).is_err());
-
-    let mut unknown = base.clone();
-    unknown["unexpected"] = json!(true);
-    std::fs::write(&path, serde_json::to_vec(&unknown).expect("encode config"))
-        .expect("write unknown config");
-    assert!(decode_config(&path).is_err());
-
-    let mut earlier_version = base;
-    earlier_version["schemaVersion"] = json!(1);
-    std::fs::write(
-        &path,
-        serde_json::to_vec(&earlier_version).expect("encode config"),
-    )
-    .expect("write earlier version config");
-    assert!(decode_config(&path).is_err());
+    for (field, value) in [
+        ("unexpected", json!(true)),
+        ("targets", json!([])),
+        ("schemaVersion", json!(1)),
+        ("automationCredentials", json!(null)),
+    ] {
+        let mut changed = base.clone();
+        changed[field] = value;
+        std::fs::write(&path, serde_json::to_vec(&changed).expect("encode config"))
+            .expect("write changed config");
+        assert!(decode_config(&path).is_err(), "{field} must be refused");
+    }
 }
 
 #[test]
@@ -105,7 +90,7 @@ fn an_earlier_config_document_is_refused_by_version_not_by_a_malformed_field() {
         message.contains("unsupported node config schema 1"),
         "{message}"
     );
-    assert!(message.contains("expected 3"), "{message}");
+    assert!(message.contains("expected 5"), "{message}");
     assert!(
         message.contains("profile") && message.contains("agentId"),
         "{message}"
@@ -113,11 +98,11 @@ fn an_earlier_config_document_is_refused_by_version_not_by_a_malformed_field() {
 }
 
 #[test]
-fn a_version_two_document_is_told_to_drop_its_fixed_sessions() {
+fn a_document_with_static_targets_is_told_to_remove_them() {
     let files = tempfile::tempdir().expect("temporary directory");
     let path = files.path().join("node.json");
     let legacy = json!({
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "endpoint": "ws://127.0.0.1:9/connect",
         "model": {
             "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
@@ -129,7 +114,6 @@ fn a_version_two_document_is_told_to_drop_its_fixed_sessions() {
         "targets": [{
             "target": "workspace:example",
             "agentId": Uuid::new_v4(),
-            "sessionId": Uuid::new_v4(),
             "workspace": "/srv/renoa/node-workspaces/example"
         }]
     });
@@ -140,13 +124,105 @@ fn a_version_two_document_is_told_to_drop_its_fixed_sessions() {
 
     let message = decode_config(&path)
         .err()
-        .expect("a version 2 document is refused")
+        .expect("a version 3 document is refused")
         .to_string();
     assert!(
-        message.contains("unsupported node config schema 2"),
+        message.contains("unsupported node config schema 3"),
         "{message}"
     );
-    assert!(message.contains("sessionId"), "{message}");
+    assert!(message.contains("targets"), "{message}");
+}
+
+#[test]
+fn a_document_without_an_automation_surface_is_told_to_enroll_one() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let path = files.path().join("node.json");
+    let legacy = json!({
+        "schemaVersion": 4,
+        "endpoint": "ws://127.0.0.1:9/connect",
+        "model": {
+            "bridge": "/opt/renoa/adapters/model-provider-node/dist/src/main.js",
+            "credentialStore": "/var/lib/renoa-node/model-auth.sqlite",
+            "providers": ["opencode-go"],
+            "defaultProvider": "opencode-go",
+            "defaultModel": "fixture-model"
+        }
+    });
+    std::fs::write(&path, serde_json::to_vec(&legacy).expect("encode config"))
+        .expect("write legacy config");
+    #[cfg(unix)]
+    private(&path);
+
+    let message = decode_config(&path)
+        .err()
+        .expect("a version 4 document is refused")
+        .to_string();
+    assert!(
+        message.contains("unsupported node config schema 4"),
+        "{message}"
+    );
+    assert!(
+        message.contains("automations") && message.contains("automationCredentials"),
+        "{message}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_node_credential_cannot_also_submit_automations() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let bridge = files.path().join("bridge.mjs");
+    let credential_store = files.path().join("model.sqlite");
+    let config = files.path().join("node.json");
+    let credentials = files.path().join("device.json");
+    let state = files.path().join("uncreated-state");
+    std::fs::write(&bridge, "").expect("write bridge");
+    std::fs::write(&credential_store, "").expect("write model store");
+    std::fs::write(
+        &config,
+        serde_json::to_vec(&json!({
+            "schemaVersion": 5,
+            "endpoint": "ws://127.0.0.1:9/connect",
+            "automationCredentials": credentials,
+            "model": {
+                "bridge": bridge,
+                "credentialStore": credential_store,
+                "providers": ["xai"],
+                "defaultProvider": "xai",
+                "defaultModel": "fixture-model"
+            }
+        }))
+        .expect("encode config"),
+    )
+    .expect("write config");
+    write_credentials(&credentials);
+    private(&config);
+
+    let error = load(&config, &credentials, &state)
+        .err()
+        .expect("one credential for both roles must be refused");
+    assert!(
+        error.to_string().contains("automationCredentials"),
+        "{error}"
+    );
+    assert!(
+        !state.exists(),
+        "a refused config leaves no state directory"
+    );
+}
+
+fn write_credentials(path: &Path) {
+    std::fs::write(
+        path,
+        serde_json::to_vec(&json!({
+            "deviceId": Uuid::new_v4(),
+            "credential": "00".repeat(32)
+        }))
+        .expect("encode credentials"),
+    )
+    .expect("write credentials");
+    #[cfg(unix)]
+    private(path);
 }
 
 #[test]
@@ -177,22 +253,22 @@ fn wrong_code_mode_worker_is_refused_before_state_directory_creation() {
     let files = tempfile::tempdir().expect("temporary directory");
     let bridge = files.path().join("bridge.mjs");
     let credential_store = files.path().join("model.sqlite");
-    let workspace = files.path().join("workspace");
     let worker = files.path().join("wrong-monty");
     let config = files.path().join("node.json");
     let credentials = files.path().join("device.json");
+    let automations = files.path().join("automations.json");
     let state = files.path().join("uncreated-state");
     std::fs::write(&bridge, "").expect("write bridge");
     std::fs::write(&credential_store, "").expect("write model store");
     std::fs::write(&worker, "not the pinned worker").expect("write wrong worker");
     std::fs::set_permissions(&worker, std::fs::Permissions::from_mode(0o755))
         .expect("make worker executable");
-    std::fs::create_dir(&workspace).expect("create workspace");
     std::fs::write(
         &config,
         serde_json::to_vec(&json!({
-            "schemaVersion": 3,
+            "schemaVersion": 5,
             "endpoint": "ws://127.0.0.1:9/connect",
+            "automationCredentials": automations,
             "model": {
                 "bridge": bridge,
                 "credentialStore": credential_store,
@@ -200,30 +276,14 @@ fn wrong_code_mode_worker_is_refused_before_state_directory_creation() {
                 "defaultProvider": "xai",
                 "defaultModel": "fixture-model"
             },
-            "adapters": {"codeModeWorker": worker},
-            "targets": [{
-                "target": "workspace:test",
-                "agentId": Uuid::new_v4(),
-                "workspace": workspace
-            }]
+            "adapters": {"codeModeWorker": worker}
         }))
         .expect("encode config"),
     )
     .expect("write config");
-    std::fs::write(
-        &credentials,
-        serde_json::to_vec(&json!({
-            "deviceId": Uuid::new_v4(),
-            "credential": "00".repeat(32)
-        }))
-        .expect("encode credentials"),
-    )
-    .expect("write credentials");
-    #[cfg(unix)]
-    {
-        private(&config);
-        private(&credentials);
-    }
+    write_credentials(&credentials);
+    write_credentials(&automations);
+    private(&config);
     let error = load(&config, &credentials, &state)
         .err()
         .expect("wrong worker must be refused");

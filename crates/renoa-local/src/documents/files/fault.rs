@@ -10,8 +10,6 @@ pub(in crate::documents) enum Injection {
     ConflictingWinner,
     /// The persist succeeds and the sync that follows it fails.
     PostPersistFailure,
-    /// The path is replaced after this attempt reports creating it.
-    ReplacementAfterCreation,
 }
 
 thread_local! {
@@ -53,18 +51,4 @@ pub(super) fn before_persist(path: &Path, content: &str) -> Result<(), AgentDefi
 
 pub(super) fn after_persist(path: &Path) -> bool {
     armed_for(path) == Some(Injection::PostPersistFailure)
-}
-
-pub(in crate::documents) fn after_created(path: &Path) -> Result<(), AgentDefinitionError> {
-    if armed_for(path) != Some(Injection::ReplacementAfterCreation) {
-        return Ok(());
-    }
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("document");
-    let replacement = path.with_file_name(format!(".replacement-{name}"));
-    fs::write(&replacement, "replacement writer\n")
-        .and_then(|()| fs::rename(&replacement, path))
-        .map_err(|source| document_io("inject a replacement writer", path, source))
 }

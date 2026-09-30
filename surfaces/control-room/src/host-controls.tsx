@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { pendingChange, saveChange } from "./host-mutations";
-import type { ReviewTrigger } from "./host-contract";
 
 export interface Controls { hostId: string; refresh: () => void; available: boolean; preview: boolean }
 
@@ -26,7 +25,3 @@ export function useChange(controls: Controls, path: string) {
   return { busy, pending, notice: storageError ?? notice,
     disabled: busy || !controls.available || controls.preview || !!storageError, save };
 }
-
-export const triggerLabels: Record<ReviewTrigger, string> = {
-  opened: "New pull request", reopened: "Reopened pull request", ready_for_review: "Marked ready for review", synchronize: "New commits pushed",
-};

@@ -216,9 +216,10 @@ recovery cannot silently execute pending work under different model behavior.
 
 `trace.sqlite3` is the separate diagnostic timeline. One run records ordered
 wall-clock timestamps and elapsed times, model time-to-first-output and total
-duration, every stream chunk, exact provider-neutral and translated provider
-requests, redacted response headers, normalized input/output/cache tokens, and
-tool inputs, progress, results, durations, and typed failures. It is never read
+duration, request message and tool counts and provider request size, redacted
+response headers, normalized input/output/cache tokens, tool names, durations,
+the first 500 characters of a failed tool's error, and typed failures. It keeps
+no content: no requests, responses, streamed text, tool arguments or output. It is never read
 to rebuild model context or decide kernel recovery.
 
 An ACP client can send one UUID in `_meta.requestId` and `_meta.promptId` for

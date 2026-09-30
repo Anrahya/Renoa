@@ -1,14 +1,9 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalHostError};
+use renoa_local::{AgentSession, LocalHost, LocalHostError, TurnObservation};
 use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use thiserror::Error;
 use tokio::{
@@ -18,13 +13,16 @@ use tokio::{
 };
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, client::IntoClientRequest};
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
 
 use crate::{
+    agent_targets,
+    automations::{self, AutomationLink},
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
+    live::LiveEvents,
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
-    projection::{NoopEvents, project_history, terminal_event},
+    operator,
+    projection::{project_history, terminal_event},
     session::{SessionEnd, serve_session},
 };
 
@@ -54,129 +52,97 @@ impl From<NodeStoreError> for NodeError {
     }
 }
 
-/// One advertised coordinator target served by a provisioned Host agent in one
-/// workspace. Every task opened on the target receives its own Host session.
-#[derive(Clone, Debug)]
-pub struct HostTarget {
-    target: String,
-    agent_id: AgentId,
-    workspace: PathBuf,
-}
-
-impl HostTarget {
-    /// Creates one stable RCP target for a Host agent and workspace.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the target is empty or the workspace is not an
-    /// existing absolute directory.
-    pub fn new(
-        target: &TargetRef,
-        agent_id: AgentId,
-        workspace: impl AsRef<Path>,
-    ) -> Result<Self, NodeError> {
-        if target.as_str().is_empty() {
-            return Err(NodeError::Configuration(
-                "Host target identity must not be empty".to_owned(),
-            ));
-        }
-        let workspace = std::fs::canonicalize(workspace.as_ref()).map_err(|error| {
-            NodeError::Configuration(format!("Host target workspace cannot be resolved: {error}"))
-        })?;
-        if !workspace.is_dir() {
-            return Err(NodeError::Configuration(
-                "Host target workspace must be a directory".to_owned(),
-            ));
-        }
-        if workspace.to_str().is_none() {
-            return Err(NodeError::Configuration(
-                "Host target workspace must be valid UTF-8".to_owned(),
-            ));
-        }
-        Ok(Self {
-            target: target.as_str().to_owned(),
-            agent_id,
-            workspace,
-        })
-    }
-
-    /// Whether a durable task binding still belongs to this configured target.
-    fn serves(&self, binding: &TargetBinding) -> bool {
-        binding.target == self.target
-            && binding.agent_id == agent_uuid(self.agent_id)
-            && binding.workspace == self.workspace
-    }
-}
-
-fn agent_uuid(agent_id: AgentId) -> Uuid {
-    Uuid::parse_str(&agent_id.to_string()).expect("a kernel AgentId always formats as a UUID")
-}
-
 /// A durable RCP execution node backed by Renoa's real local Host.
 pub struct RenoaNode {
     endpoint: String,
     credentials: DeviceCredentials,
     runtime: Arc<NodeRuntime>,
+    automations: Option<AutomationLink>,
 }
 
 impl RenoaNode {
-    /// Opens the node ledger and validates every configured Host target,
-    /// including that each target's agent is provisioned in the Host.
-    ///
-    /// The agent check runs before the ledger opens, so a refused startup
-    /// creates no node ledger.
+    /// Opens the node ledger in the Host's installation root. Every Host agent
+    /// becomes an advertised target, so there is no target configuration.
     ///
     /// # Errors
     ///
-    /// Returns an error for an invalid endpoint, target configuration, an
-    /// unprovisioned target agent, or a durable binding mismatch.
-    pub async fn open(
+    /// Returns an error for an invalid endpoint, an unreadable ledger, or a
+    /// recorded task binding that no longer names a Host agent workspace.
+    pub fn open(
         endpoint: impl Into<String>,
         credentials: DeviceCredentials,
-        ledger_path: impl AsRef<Path>,
         host: Arc<LocalHost>,
-        targets: Vec<HostTarget>,
     ) -> Result<Self, NodeError> {
         let endpoint = endpoint.into();
         endpoint
             .clone()
             .into_client_request()
             .map_err(NodeError::Endpoint)?;
-        let targets = validate_targets(targets)?;
-        preflight_agents(&host, &targets).await?;
-        let state = NodeStore::open(ledger_path)?;
-        state.validate_configured_targets(|binding| {
-            targets
-                .get(&binding.target)
-                .is_some_and(|target| target.serves(binding))
-        })?;
+        let state = NodeStore::open(host.home().node_database())?;
+        state.validate_configured_targets(|binding| agent_targets::serves(host.home(), binding))?;
         let (commits, _) = watch::channel(0_u64);
         Ok(Self {
             endpoint,
             credentials,
             runtime: Arc::new(NodeRuntime {
                 host,
-                targets,
                 state,
                 commits,
             }),
+            automations: None,
         })
     }
 
-    /// Runs durable Host work and reconnects its outbound coordinator session.
+    /// Runs the Host's automation schedule on this node. Each run is submitted
+    /// through the surface enrolled with `credentials`, whose principal and
+    /// surface name the run's command carries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when another process owns the Host's schedule.
+    pub fn with_automations(mut self, credentials: DeviceCredentials) -> Result<Self, NodeError> {
+        let scheduler = self
+            .runtime
+            .host
+            .automation_scheduler()
+            .map_err(|error| NodeError::Configuration(error.to_string()))?;
+        self.automations = Some(AutomationLink {
+            endpoint: self.endpoint.clone(),
+            credentials,
+            scheduler,
+        });
+        Ok(self)
+    }
+
+    /// Runs durable Host work and, when configured, the Host's automation
+    /// schedule, reconnecting both outbound coordinator links.
     ///
     /// # Errors
     ///
     /// Returns an error for authentication, protocol, local durability, or a
     /// failed execution task. Ordinary socket loss is retried.
-    pub async fn run(self, shutdown: CancellationToken) -> Result<(), NodeError> {
+    pub async fn run(mut self, shutdown: CancellationToken) -> Result<(), NodeError> {
         let mut tasks = JoinSet::new();
         let mut running_tasks = HashSet::new();
         schedule_pending(Arc::clone(&self.runtime), &mut tasks, &mut running_tasks).await?;
         let mut commits = self.runtime.commits.subscribe();
-        let result = self
-            .run_connections(&shutdown, &mut commits, &mut tasks, &mut running_tasks)
-            .await;
+        // Boxed: the schedule's future is large and lives as long as the node.
+        let schedule = self.automations.take().map(|link| {
+            Box::pin(automations::run(
+                Arc::clone(&self.runtime),
+                link,
+                shutdown.clone(),
+            ))
+        });
+        let connections =
+            self.run_connections(&shutdown, &mut commits, &mut tasks, &mut running_tasks);
+        let result = match schedule {
+            None => connections.await,
+            Some(schedule) => tokio::select! {
+                result = connections => result,
+                result = schedule => result,
+            },
+        };
 
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
@@ -241,46 +207,18 @@ impl RenoaNode {
 
 pub(crate) struct NodeRuntime {
     pub(crate) host: Arc<LocalHost>,
-    targets: BTreeMap<String, HostTarget>,
     pub(crate) state: NodeStore,
     pub(crate) commits: watch::Sender<u64>,
 }
 
 impl NodeRuntime {
-    /// The configured targets this node offers for new tasks.
-    pub(crate) fn advertised_targets(&self) -> Vec<TargetRef> {
-        self.targets.keys().cloned().map(TargetRef::new).collect()
+    /// The Host agents this node offers for new tasks.
+    pub(crate) async fn advertised_targets(&self) -> Result<Vec<TargetRef>, NodeError> {
+        agent_targets::advertised(&self.host).await
     }
 
-    /// Proposes the binding for a task's first command on `target`. The ledger
-    /// keeps an existing task's recorded session instead of this fresh one.
     pub(crate) fn proposed_binding(&self, target: &TargetRef) -> Result<TargetBinding, NodeError> {
-        self.targets
-            .get(target.as_str())
-            .map(|target| TargetBinding {
-                target: target.target.clone(),
-                agent_id: agent_uuid(target.agent_id),
-                session_id: Uuid::new_v4(),
-                workspace: target.workspace.clone(),
-            })
-            .ok_or_else(|| {
-                NodeError::Protocol(format!(
-                    "coordinator requested unconfigured target `{}`",
-                    target.as_str()
-                ))
-            })
-    }
-
-    fn target_for(&self, binding: &TargetBinding) -> Result<&HostTarget, NodeError> {
-        self.targets
-            .get(&binding.target)
-            .filter(|target| target.serves(binding))
-            .ok_or_else(|| {
-                NodeError::Configuration(format!(
-                    "durable target `{}` no longer matches node configuration",
-                    binding.target
-                ))
-            })
+        agent_targets::proposed_binding(self.host.home(), target)
     }
 
     pub(crate) fn signal_commit(&self) {
@@ -291,7 +229,7 @@ impl NodeRuntime {
 
     async fn execute(self: Arc<Self>, record: ExecutionRecord) -> Result<(), NodeError> {
         let command_id = record.command.command_id;
-        let agent_id = self.target_for(&record.binding)?.agent_id;
+        let agent_id = AgentId::from_uuid(record.binding.agent_id);
         node_log::event(
             "info",
             "execution_started",
@@ -303,15 +241,21 @@ impl NodeRuntime {
                 "session_id": record.binding.session_id,
             }),
         );
-        let session = match self
-            .host
-            .ensure_agent_session(
-                agent_id,
-                &record.binding.workspace,
-                record.binding.session_id,
-            )
-            .await
-        {
+        // The workspace call also refuses an agent that no longer exists, which
+        // ends this execution as failed instead of stopping the node.
+        let session = match self.host.agent_workspace(agent_id).await {
+            Ok(_) => {
+                self.host
+                    .ensure_agent_session(
+                        agent_id,
+                        &record.binding.workspace,
+                        record.binding.session_id,
+                    )
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        let session = match session {
             Ok(session) => session,
             Err(error) => {
                 self.finish_host_error(command_id, &error).await?;
@@ -320,13 +264,29 @@ impl NodeRuntime {
         };
         self.state.append_turn_started(command_id).await?;
         self.signal_commit();
+        let cancellation = CancellationToken::new();
+        let (setup_events, setup) =
+            operator::setup_sink(self.host.home(), command_id.as_uuid(), &cancellation);
+        let events =
+            Arc::new(LiveEvents::start(Arc::clone(&self), command_id, setup_events).await?);
+        let observation =
+            TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
         let result = session
-            .execute_turn(
+            .execute_turn_observed_with_cancellation(
                 command_id.as_uuid(),
                 vec![ContentBlock::text(record.command.input.text())],
-                Arc::new(NoopEvents),
+                observation,
+                events,
+                cancellation,
+                Some(record.command.principal_id.as_uuid()),
             )
             .await;
+        // A setup link that could not be delivered stopped the turn; its
+        // reason is the command's outcome.
+        let setup_failure = match &setup {
+            Some(setup) => setup.take_error().await,
+            None => None,
+        };
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -336,7 +296,12 @@ impl NodeRuntime {
             }
         };
         let mut events = session_events(&session, command_id)?;
-        events.push(terminal_event(outcome));
+        events.push(match setup_failure {
+            Some(error) => ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Failed { error },
+            },
+            None => terminal_event(outcome),
+        });
         self.state.finish(command_id, events).await?;
         self.signal_commit();
         Ok(())
@@ -450,45 +415,4 @@ async fn wait_to_reconnect(
             }
         }
     }
-}
-
-async fn preflight_agents(
-    host: &LocalHost,
-    targets: &BTreeMap<String, HostTarget>,
-) -> Result<(), NodeError> {
-    for (name, target) in targets {
-        let provisioned = host
-            .agent_definition(target.agent_id)
-            .await
-            .map_err(|error| NodeError::Store(error.to_string()))?;
-        if provisioned.is_some() {
-            continue;
-        }
-        return Err(NodeError::Configuration(format!(
-            "Host target `{name}` names agent {}, which is not provisioned in this node's \
-             private Host data root; provision it with \
-             `renoa-host <node-host-config.json> provision <provision-document.json>` \
-             before starting the node",
-            target.agent_id
-        )));
-    }
-    Ok(())
-}
-
-fn validate_targets(targets: Vec<HostTarget>) -> Result<BTreeMap<String, HostTarget>, NodeError> {
-    if targets.is_empty() {
-        return Err(NodeError::Configuration(
-            "at least one Host target must be configured".to_owned(),
-        ));
-    }
-    let mut by_name = BTreeMap::new();
-    for target in targets {
-        let name = target.target.clone();
-        if by_name.insert(name.clone(), target).is_some() {
-            return Err(NodeError::Configuration(format!(
-                "Host target `{name}` is configured more than once"
-            )));
-        }
-    }
-    Ok(by_name)
 }

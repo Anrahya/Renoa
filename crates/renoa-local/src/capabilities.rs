@@ -42,8 +42,8 @@ define_built_in_capabilities! {
 
 pub(crate) const PLUGIN_MANAGE: &str = "plugin_manage";
 pub(crate) const AGENT_MANAGE: &str = "agent_manage";
-pub(crate) const ROUTINE_MANAGE: &str = "routine_manage";
-pub(crate) const ROUTINE_RESULTS: &str = "routine_results";
+pub(crate) const AUTOMATION_MANAGE: &str = "automation_manage";
+pub(crate) const AUTOMATION_RESULTS: &str = "automation_results";
 pub(crate) const PLUGIN_SEARCH: &str = "plugin_search";
 pub(crate) const TOOL_EXECUTE: &str = "tool_execute";
 pub(crate) const SKILL_SEARCH: &str = "skill_search";
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn selection_accepts_known_names_and_rejects_names_outside_the_catalog() {
         assert!(!is_selectable(super::AGENT_MANAGE));
-        assert!(!is_selectable(super::ROUTINE_MANAGE));
+        assert!(!is_selectable(super::AUTOMATION_MANAGE));
         assert!(is_selectable("bash"));
         assert!(!is_selectable("renoa.bot.manage"));
         assert!(!is_selectable("all"));

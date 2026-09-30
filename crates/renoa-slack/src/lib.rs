@@ -1,13 +1,13 @@
 mod actions;
 mod agents;
 mod api;
+mod automations;
 mod channels;
 mod commands;
 mod config;
 mod controls;
 mod events;
 mod formatting;
-mod routines;
 mod service;
 mod socket;
 mod store;

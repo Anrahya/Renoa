@@ -32,8 +32,9 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), String> {
     let (state, port) = parse(env::args_os())?;
+    // The registry keeps only its own store inside the Renoa home; it is not a
+    // Host, so it validates the home without creating the Host's directories.
     let home = renoa_home::RenoaHome::at(state).map_err(|error| error.to_string())?;
-    home.initialize().map_err(|error| error.to_string())?;
     let registry =
         Registry::open(home.path().join("state/registry")).map_err(|error| error.to_string())?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))

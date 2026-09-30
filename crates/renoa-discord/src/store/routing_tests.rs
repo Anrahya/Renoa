@@ -14,7 +14,7 @@ fn request(agent: Uuid, revision: i64) -> DiscordBindingRequest {
 }
 
 #[test]
-fn reassignment_preserves_queued_targets_and_starts_a_separate_conversation() {
+fn reassignment_keeps_queued_messages_on_their_task_and_starts_a_new_one() {
     let files = tempfile::tempdir().unwrap();
     let store = SurfaceStore::open(files.path()).unwrap();
     let original = Uuid::new_v4();
@@ -35,15 +35,12 @@ fn reassignment_preserves_queued_targets_and_starts_a_separate_conversation() {
     store
         .enqueue(&snow("102"), &snow("202"), &snow("20"), b"second", "second")
         .unwrap();
-    store.recover().unwrap();
+
     assert_eq!(store.next_queued().unwrap().unwrap().agent_id, original);
-    store.mark_running("101").unwrap();
-    store
-        .mark_ready("101", "answer", &["answer".into()])
-        .unwrap();
+    store.answer_locally("101", "answer").unwrap();
     let after = store.next_queued().unwrap().unwrap();
     assert_eq!(after.agent_id, child);
-    assert_ne!(before.session_id, after.session_id);
+    assert_ne!(before.task_id, after.task_id);
     assert_eq!(
         store
             .enqueue(&snow("101"), &snow("202"), &snow("20"), b"first", "first")
@@ -53,7 +50,10 @@ fn reassignment_preserves_queued_targets_and_starts_a_separate_conversation() {
     drop(store);
     let reopened = SurfaceStore::open(files.path()).unwrap();
     reopened.recover().unwrap();
-    assert_eq!(reopened.next_queued().unwrap().unwrap().agent_id, child);
+    assert_eq!(
+        reopened.next_queued().unwrap().unwrap().task_id,
+        after.task_id
+    );
     assert_eq!(reopened.bindings().unwrap()[0].revision, 2);
     let mut changed = second;
     changed.agent_id = original;
@@ -61,12 +61,10 @@ fn reassignment_preserves_queued_targets_and_starts_a_separate_conversation() {
 }
 
 #[test]
-fn schema_one_migrates_admitted_targets_without_changing_request_or_session_identity() {
+fn schema_one_reaches_schema_four_keeping_its_identity_and_message_deduplication() {
     let files = tempfile::tempdir().unwrap();
     let database = files.path().join("surface.sqlite3");
     let original = Uuid::new_v4().to_string();
-    let session = Uuid::new_v4().to_string();
-    let request = Uuid::new_v4().to_string();
     let connection = rusqlite::Connection::open(&database).unwrap();
     connection
         .execute_batch(include_str!("tests/schema_v1.sql"))
@@ -76,30 +74,49 @@ fn schema_one_migrates_admitted_targets_without_changing_request_or_session_iden
         .execute("INSERT INTO messages VALUES ('101','202','20',x'01',0)", [])
         .unwrap();
     connection
-        .execute("INSERT INTO conversations VALUES ('202',?1)", [&session])
+        .execute(
+            "INSERT INTO conversations VALUES ('202',?1)",
+            [Uuid::new_v4().to_string()],
+        )
         .unwrap();
     connection
         .execute(
             "INSERT INTO turns VALUES ('101',?1,?2,'task',NULL,'queued')",
-            rusqlite::params![session, request],
+            rusqlite::params![Uuid::new_v4().to_string(), Uuid::new_v4().to_string()],
         )
         .unwrap();
     connection.pragma_update(None, "user_version", 1).unwrap();
     drop(connection);
+
     let upgraded = schema::open(&database).unwrap();
-    let fields: (String, String, String) = upgraded
-        .query_row(
-            "SELECT session_id, request_id, agent_id FROM turns",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .unwrap();
-    assert_eq!(fields, (session, request, original));
     assert_eq!(
         upgraded
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        3
+        5
+    );
+    let progress: i64 = upgraded
+        .query_row("SELECT count(*) FROM progress_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(progress, 0);
+    let agent: String = upgraded
+        .query_row("SELECT agent_id FROM identity", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(agent, original);
+    let counts: (i64, i64, i64) = upgraded
+        .query_row(
+            "SELECT (SELECT count(*) FROM messages), (SELECT count(*) FROM turns),
+                    (SELECT count(*) FROM tasks)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        counts,
+        (1, 0, 0),
+        "in-process turns do not carry into RCP tasks"
     );
     drop(upgraded);
     schema::open(&database).unwrap();

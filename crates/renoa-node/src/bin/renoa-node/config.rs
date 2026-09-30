@@ -1,19 +1,14 @@
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use renoa_control::{DeviceCredential, DeviceCredentials, DeviceId};
-use renoa_kernel::AgentId;
 use renoa_local::{
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider, validate_code_mode_worker,
 };
-use renoa_node::HostTarget;
-use renoa_protocol::TargetRef;
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
-use uuid::Uuid;
 
 use crate::{
     error::ServiceError,
@@ -23,17 +18,19 @@ use crate::{
 /// The config document shape this runtime reads.
 ///
 /// Version 2 renamed each target's required `profile` to `agentId`. Version 3
-/// removed each target's `sessionId`: every task opened on a target receives
-/// its own Host session, recorded in the node ledger. An earlier document is
-/// refused by version instead of failing as an unknown field.
-const CONFIG_SCHEMA_VERSION: u32 = 3;
+/// removed each target's `sessionId`. Version 4 removed `targets`: every agent
+/// in the node's Host is advertised as a target. Version 5 added the required
+/// `automationCredentials`: the node runs the Host's automation schedule. An
+/// earlier document is refused by version instead of failing as an unknown
+/// field.
+const CONFIG_SCHEMA_VERSION: u32 = 5;
 
 pub(crate) struct LoadedConfig {
     pub(crate) endpoint: String,
     pub(crate) credentials: DeviceCredentials,
+    /// The surface credential that submits the Host's automation runs.
+    pub(crate) automation_credentials: DeviceCredentials,
     pub(crate) host: Arc<LocalHost>,
-    pub(crate) targets: Vec<HostTarget>,
-    pub(crate) state_directory: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -41,10 +38,10 @@ pub(crate) struct LoadedConfig {
 struct ConfigDocument {
     schema_version: u32,
     endpoint: String,
+    automation_credentials: PathBuf,
     model: ModelDocument,
     #[serde(default)]
     adapters: AdapterDocument,
-    targets: Vec<TargetDocument>,
 }
 
 /// The schema a config document declares, read without this runtime's target
@@ -73,14 +70,16 @@ struct AdapterDocument {
     code_mode_worker: Option<PathBuf>,
     mcp_registry: Option<PathBuf>,
     shared_plugin_registry: Option<String>,
+    oauth_relay: Option<OAuthRelayDocument>,
 }
 
+/// The Host's OAuth callback relay, needed when a plugin authorizes through a
+/// browser on another device.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct TargetDocument {
-    target: String,
-    agent_id: Uuid,
-    workspace: PathBuf,
+struct OAuthRelayDocument {
+    origin: String,
+    credentials: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -97,6 +96,18 @@ pub(crate) fn load(
 ) -> Result<LoadedConfig, ServiceError> {
     let config = decode_config(config_path)?;
     let credentials = decode_credentials(credentials_path)?;
+    require_absolute(
+        &config.automation_credentials,
+        "automation surface credential",
+    )?;
+    let automation_credentials = decode_credentials(&config.automation_credentials)?;
+    if automation_credentials.device_id == credentials.device_id {
+        return Err(ServiceError::Configuration(
+            "automationCredentials must name a surface credential enrolled for automations, \
+             not the node's own credential"
+                .to_owned(),
+        ));
+    }
     validate_model(&config.model)?;
     validate_adapters(&config.adapters)?;
     config
@@ -106,9 +117,14 @@ pub(crate) fn load(
         .map_err(|error| {
             ServiceError::Configuration(format!("invalid coordinator endpoint: {error}"))
         })?;
-    validate_target_uniqueness(&config.targets)?;
-    let targets = build_targets(config.targets)?;
     let state_directory = prepare_state_directory(state_directory)?;
+    let mut adapters = LocalHostAdapters::new(config.adapters.mcp.as_deref())
+        .with_code_mode_worker(config.adapters.code_mode_worker.as_deref())
+        .with_mcp_registry(config.adapters.mcp_registry.as_deref())
+        .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref());
+    if let Some(relay) = &config.adapters.oauth_relay {
+        adapters = adapters.with_oauth_relay(&relay.origin, &relay.credentials);
+    }
 
     let host = Arc::new(LocalHost::new(
         &state_directory,
@@ -119,17 +135,13 @@ pub(crate) fn load(
             config.model.default_model,
             &config.model.credential_store,
         ),
-        LocalHostAdapters::new(config.adapters.mcp.as_deref())
-            .with_code_mode_worker(config.adapters.code_mode_worker.as_deref())
-            .with_mcp_registry(config.adapters.mcp_registry.as_deref())
-            .with_shared_plugin_registry(config.adapters.shared_plugin_registry.as_deref()),
+        adapters,
     )?);
     Ok(LoadedConfig {
         endpoint: config.endpoint,
         credentials,
+        automation_credentials,
         host,
-        targets,
-        state_directory,
     })
 }
 
@@ -173,9 +185,14 @@ fn unsupported_schema(version: u32) -> String {
             "; version 1 selected each target with `profile`, and the current schema selects it \
              with `agentId`"
         }
-        2 => {
-            "; version 2 bound each target to one `sessionId`, and the current schema gives every \
-             task its own Host session: remove each target's `sessionId`"
+        2 | 3 => {
+            "; the current schema advertises every agent in the node's Host as a target: remove \
+             `targets`"
+        }
+        4 => {
+            "; the node now runs the Host's automation schedule: enroll a surface named \
+             `automations` for the Host's owner, claim it with `renoa-node enroll`, and name its \
+             credential file in `automationCredentials`"
         }
         _ => "",
     };
@@ -203,38 +220,6 @@ fn prepare_state_directory(path: &Path) -> Result<PathBuf, ServiceError> {
     Ok(home.path().to_path_buf())
 }
 
-fn validate_target_uniqueness(targets: &[TargetDocument]) -> Result<(), ServiceError> {
-    if targets.is_empty() {
-        return Err(ServiceError::Configuration(
-            "at least one Host target must be configured".to_owned(),
-        ));
-    }
-    let mut target_names = HashSet::new();
-    for target in targets {
-        if !target_names.insert(target.target.as_str()) {
-            return Err(ServiceError::Configuration(format!(
-                "Host target `{}` is configured more than once",
-                target.target
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn build_targets(targets: Vec<TargetDocument>) -> Result<Vec<HostTarget>, ServiceError> {
-    targets
-        .into_iter()
-        .map(|target| {
-            HostTarget::new(
-                &TargetRef::new(target.target),
-                AgentId::from_uuid(target.agent_id),
-                target.workspace,
-            )
-            .map_err(ServiceError::from)
-        })
-        .collect()
-}
-
 fn validate_model(model: &ModelDocument) -> Result<(), ServiceError> {
     require_regular_absolute(&model.bridge, "model bridge")?;
     require_regular_absolute(&model.credential_store, "model credential store")?;
@@ -255,6 +240,9 @@ fn validate_adapters(adapters: &AdapterDocument) -> Result<(), ServiceError> {
     }
     if let Some(path) = &adapters.mcp_registry {
         require_regular_absolute(path, "MCP Registry adapter")?;
+    }
+    if let Some(relay) = &adapters.oauth_relay {
+        require_regular_absolute(&relay.credentials, "OAuth relay device credential")?;
     }
     Ok(())
 }

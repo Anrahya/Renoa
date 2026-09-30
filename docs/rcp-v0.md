@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 10 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 11 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -356,9 +356,10 @@ outside the lock.
 The node's local harness ledger is responsible for deduplicating that execution
 identity before model inference or side effects begin.
 
-The reference `renoa-node` bridge now binds each RCP task to one exact local
-Host profile, session identity, target, and canonical workspace. A Host session
-cannot be silently shared by two tasks. The node stores the exact command and
+The reference `renoa-node` bridge advertises every agent in its Host as the
+opaque target `agent:<agent-uuid>` and binds each RCP task to that agent, its
+Host workspace, and one Host session recorded at the task's first command. A
+Host session cannot be silently shared by two tasks. The node stores the exact command and
 its `ExecutionStarted` record in an owner-only SQLite ledger before
 acknowledging execution. The RCP command UUID is reused as the kernel command
 UUID, so recovery crosses the protocol, Host, and kernel boundaries under one
@@ -375,9 +376,17 @@ parallel.
 After node-process restart, every non-terminal node admission is driven again
 with its exact command and Host session. The kernel checkpoint decides what is
 safe: an interrupted model effect can replay inside the same operation, while
-an effect whose outcome is unknown is not repeated. Once the kernel settles,
-the node derives assistant and tool records from durable Host history and
-commits that projection with the terminal RCP event in one transaction.
+an effect whose outcome is unknown is not repeated.
+
+While the turn runs, the node records each tool start and tool result as it
+happens, and the text of each model response that calls a tool, so attached
+surfaces see progress before the terminal event. Once the kernel settles, the
+node derives assistant and tool records from durable Host history and commits
+the records not already recorded, with the terminal RCP event, in one
+transaction. A tool record is identified by its call id and an assistant record
+by its text, and occurrences are counted per identity: a message the turn
+repeats is recorded again in its place, while a re-driven turn does not repeat
+what the node recorded live.
 
 ### Harness adapter boundary
 
@@ -625,7 +634,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 10 JSON/WebSocket shape with binding-level conformance
+- a documented version 11 JSON/WebSocket shape with binding-level conformance
   assertions;
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
@@ -695,6 +704,13 @@ The current implementation demonstrates:
   reopened the same Host session: a fresh surface replayed the first turn and
   continued it, while the original surface later received only the missing
   suffix.
+- a Rust node that runs its Host's automation schedule through a second,
+  surface-enrolled link named `automations`. Each due run is a command under
+  the run's identity, carrying that surface's principal, on the task of the
+  conversation its automation was created in, or else on a task of the
+  automation's own. Attached surfaces see the run and its result through the
+  journal with no automation-specific code, and a node restart during a run
+  resubmits the same command, which the coordinator keeps once.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 
@@ -702,12 +718,12 @@ The proof deliberately does not yet satisfy the full RCP architecture:
 2. The coordinator listener is plaintext and loopback-only. Public WSS is
    currently supplied by an outbound Cloudflare Tunnel, so the protocol does
    not depend on the tunnel provider and no public origin port is exposed.
-3. Rust Host targets are statically supplied when the node starts. The owner
-   can open any number of tasks on them at runtime, each with its own Host
-   session, but remote target provisioning, configuration revisions, and
-   mutation APIs for the targets themselves remain unimplemented.
+3. A Rust node's targets are its Host's agents, found by polling the Host every
+   five seconds. The owner can open any number of tasks on them at runtime,
+   each with its own Host session. Configuration revisions and per-target
+   workspaces other than the agent's own remain unimplemented.
    The separate personal Host management adapter provides authenticated observation
-   plus narrow routine and review-policy mutations, not RCP node provisioning.
+   plus narrow automation mutations, not RCP node provisioning.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
@@ -821,7 +837,9 @@ assumption after context compaction:
 - Execution generations and safe rebinding messages
 - Task-list pagination and live directory updates
 - Cancellation, steering, approval, and queued-follow-up semantics
-- Snapshot, retention, compaction, artifact, and blob behavior
+- Snapshot, automatic retention, compaction, artifact, and blob behavior. An
+  owner deleting one of its tasks is defined: `DeleteTask` in
+  [RCP operations](rcp-operations-v0.md).
 - HTTP/SSE and webhook transport bindings
 - Sender-constrained device authentication
 - Trusted-device enrollment approval, identity recovery, passkey revocation,

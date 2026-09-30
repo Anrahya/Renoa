@@ -24,6 +24,8 @@ const prompt=request.messages[lastUser].content[0].text;
 if(prompt==="Check current review guidance.") {
  if((JSON.stringify(request).match(/PINNED_REVIEW_INSTRUCTION/g)??[]).length!==1) throw Error("Duplicated or missing active skill body");
  finish([{type:"text",text:"Review guidance appears once."}]);
+} else if(prompt==="Which profile do you see?") {
+ finish([{type:"text",text:(JSON.stringify(request).match(/PROFILE_[A-Z]+/g)??["none"]).join(",")}]);
 } else if(results.length===0) call("targeted-search","plugin_search",{query:prompt==="Activate a review skill."?"skill_load":"agent_manage"});
 else {
  const last=results.at(-1);if(last.is_error) throw Error(JSON.stringify(last));

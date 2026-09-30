@@ -1,0 +1,480 @@
+#!/usr/bin/env python3
+"""Install a Renoa release built by CI on this host.
+
+    renoa-deploy install <tag>            download, verify and install a GitHub release
+    renoa-deploy install --archive FILE   install a local release archive
+    renoa-deploy status                   show the installed and previous release
+
+/opt/renoa/releases/<tag>/ holds one release. /opt/renoa/current points at the
+running release and /opt/renoa/previous at the single backup: the release it
+replaced, with SQLite snapshots and configuration taken just before the switch.
+The binaries in /usr/local/bin, /opt/renoa/adapters and /opt/renoa/control-room
+are symlinks through current, so switching releases is one rename. The first
+install adopts a hand-installed layout as releases/legacy.
+
+Only services installed on this host are updated, and only those whose
+binaries, unit files, adapters or Control Room changed are restarted, after
+running agent turns finish. There is no automatic rollback: a failed health
+check leaves the new release running, keeps the backup, and says so.
+"""
+
+import argparse
+import contextlib
+import fcntl
+import hashlib
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPOSITORY = "Anrahya/Renoa"
+SERVICE_USER = "renoa-arcee"
+HOME = "/home/renoa/.renoa"
+DATABASES = (
+    "state/host.sqlite3",
+    "state/coordinator.sqlite3",
+    "state/node.sqlite3",
+    "state/surfaces/discord/discord.sqlite3",
+)
+# Restarting these interrupts agent turns, so they wait for turns to finish.
+TURN_SERVICES = ("renoa-node.service",)
+DRAIN_TIMEOUT = 600
+SETTLE_SECONDS = 10
+
+
+class DeployError(Exception):
+    pass
+
+
+class Host:
+    """Every effect outside the file tree. Tests replace it."""
+
+    def __init__(self, root: Path = Path("/")):
+        self.root = root
+
+    def path(self, absolute: str) -> Path:
+        return self.root / absolute.lstrip("/")
+
+    def run(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(args, capture_output=True, text=True, check=False)
+
+    def download(self, url: str, destination: Path) -> None:
+        with urllib.request.urlopen(url, timeout=120) as response, open(destination, "wb") as out:
+            shutil.copyfileobj(response, out)
+
+    def http_status(self, url: str, method: str = "GET", headers: dict | None = None) -> int:
+        request = urllib.request.Request(url, method=method, headers=headers or {}, data=b"{}" if method == "POST" else None)
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            return error.code
+        except OSError:
+            return 0
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
+
+class Layout:
+    def __init__(self, host: Host):
+        opt = host.path("/opt/renoa")
+        self.opt = opt
+        self.releases = opt / "releases"
+        self.current = opt / "current"
+        self.previous = opt / "previous"
+        self.adapters = opt / "adapters"
+        self.control_room = opt / "control-room"
+        self.manifest = opt / "current-release.json"
+        self.old_backup = opt / "previous-release"
+        self.lock = opt / ".deploy.lock"
+        self.bin = host.path("/usr/local/bin")
+        self.units = host.path("/etc/systemd/system")
+        self.tool = host.path("/usr/local/sbin/renoa-deploy")
+        self.home = host.path(HOME)
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def tree_digest(root: Path) -> str | None:
+    """A digest of every path and content under root, or None if it is absent."""
+    if not root.exists():
+        return None
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        digest.update(str(path.relative_to(root)).encode() + b"\0")
+        if path.is_symlink():
+            digest.update(b"link:" + os.readlink(path).encode())
+        elif path.is_file():
+            digest.update(sha256(path).encode())
+    return digest.hexdigest()
+
+
+def read_manifest(release: Path) -> dict:
+    return json.loads((release / "release.json").read_text())
+
+
+def link(target: Path, at: Path) -> None:
+    """Points `at` at `target` with a relative symlink, replacing it atomically."""
+    temporary = at.with_name(f".{at.name}.new")
+    if temporary.is_symlink() or temporary.exists():
+        temporary.unlink()
+    temporary.symlink_to(os.path.relpath(target, at.parent))
+    if at.is_dir() and not at.is_symlink():
+        displaced = at.with_name(f".{at.name}.old")
+        shutil.rmtree(displaced, ignore_errors=True)
+        at.rename(displaced)
+        temporary.rename(at)
+        shutil.rmtree(displaced)
+    else:
+        os.replace(temporary, at)
+
+
+def stage(host: Host, layout: Layout, archive: Path) -> Path:
+    """Unpacks and verifies a release. Returns its directory under releases/.
+    A failure leaves nothing behind."""
+    staging = layout.releases / f".staging-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    try:
+        with tarfile.open(archive) as bundle:
+            bundle.extractall(staging, filter="data")
+        entries = list(staging.iterdir())
+        if len(entries) != 1 or not (entries[0] / "release.json").is_file():
+            raise DeployError("the archive is not a Renoa release")
+        top = entries[0]
+        if os.geteuid() == 0:
+            for path in [top, *top.rglob("*")]:
+                os.lchown(path, 0, 0)
+        manifest = read_manifest(top)
+        for name, expected in manifest["binaries"].items():
+            if sha256(top / "bin" / name) != expected:
+                raise DeployError(f"binary {name} does not match the release manifest")
+        release = layout.releases / manifest["tag"]
+        if release.exists():
+            if layout.current.resolve() == release.resolve():
+                return release
+            shutil.rmtree(release)
+        top.rename(release)
+        return release
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def adopt_legacy(layout: Layout, services: list[dict]) -> None:
+    """Moves a hand-installed layout into releases/legacy without changing
+    what runs: every installed path becomes a symlink to identical content."""
+    legacy = layout.releases / "legacy"
+    shutil.rmtree(legacy, ignore_errors=True)
+    (legacy / "bin").mkdir(parents=True)
+    (legacy / "units").mkdir()
+    binaries = {}
+    for service in services:
+        for name in service["binaries"]:
+            installed = layout.bin / name
+            if installed.is_file() and not installed.is_symlink():
+                shutil.copy2(installed, legacy / "bin" / name)
+                binaries[name] = sha256(installed)
+        for unit in [service["unit"], *service.get("companion_units", [])]:
+            if (layout.units / unit).is_file():
+                shutil.copy2(layout.units / unit, legacy / "units" / unit)
+    for name, source in (("adapters", layout.adapters), ("control-room", layout.control_room)):
+        if source.is_dir() and not source.is_symlink():
+            shutil.copytree(source, legacy / name, symlinks=True)
+    (legacy / "release.json").write_text(json.dumps({"tag": "legacy", "binaries": binaries}, indent=2))
+    link(legacy, layout.current)
+    point_install_paths(layout, legacy)
+
+
+def point_install_paths(layout: Layout, release: Path) -> None:
+    """Routes the installed paths through current and removes links to
+    binaries the running release no longer ships."""
+    for name in read_manifest(release)["binaries"]:
+        link(layout.current / "bin" / name, layout.bin / name)
+    for path in layout.bin.glob("renoa-*"):
+        if path.is_symlink() and not path.exists():
+            path.unlink()
+    for name, at in (("adapters", layout.adapters), ("control-room", layout.control_room)):
+        if (release / name).exists():
+            link(layout.current / name, at)
+
+
+def installed_services(layout: Layout, services: list[dict]) -> list[dict]:
+    return [service for service in services if (layout.units / service["unit"]).is_file()]
+
+
+def changed_services(layout: Layout, services: list[dict], old: Path, new: Path) -> list[str]:
+    adapters_changed = tree_digest(old / "adapters") != tree_digest(new / "adapters")
+    room_changed = tree_digest(old / "control-room") != tree_digest(new / "control-room")
+    old_binaries = read_manifest(old).get("binaries", {})
+    new_binaries = read_manifest(new)["binaries"]
+    changed = []
+    for service in installed_services(layout, services):
+        units = [service["unit"], *service.get("companion_units", [])]
+        if (
+            any(old_binaries.get(name) != new_binaries.get(name) for name in service["binaries"])
+            or any(unit_differs(layout, new, unit) for unit in units)
+            or (service.get("adapters") and adapters_changed)
+            or (service.get("control_room") and room_changed)
+        ):
+            changed.append(service["unit"])
+    return changed
+
+
+def unit_differs(layout: Layout, release: Path, unit: str) -> bool:
+    shipped, installed = release / "units" / unit, layout.units / unit
+    return shipped.is_file() and (not installed.is_file() or shipped.read_bytes() != installed.read_bytes())
+
+
+def running_turns(host: Host) -> int:
+    inspected = host.run("runuser", "-u", SERVICE_USER, "--", "/usr/local/bin/renoa-host", "inspect", HOME)
+    if inspected.returncode != 0:
+        raise DeployError(f"renoa-host inspect failed: {inspected.stderr.strip()}")
+    sessions = json.loads(inspected.stdout).get("sessions", [])
+    return sum(1 for session in sessions if session.get("active_operation"))
+
+
+def drain(host: Host, timeout: float) -> None:
+    waited = 0.0
+    while (turns := running_turns(host)) > 0:
+        if waited >= timeout:
+            raise DeployError(f"{turns} agent turn(s) still running after {int(timeout)}s; nothing was changed, retry later")
+        print(f"waiting for {turns} running agent turn(s) to finish")
+        host.sleep(10)
+        waited += 10
+
+
+def snapshot(layout: Layout, old: Path) -> None:
+    """Snapshots the databases and configuration into the release being
+    replaced, which becomes the one backup."""
+    target = old / "snapshot"
+    shutil.rmtree(target, ignore_errors=True)
+    target.mkdir(mode=0o700)
+    for relative in DATABASES:
+        source = layout.home / relative
+        if not source.exists():
+            continue
+        destination = target / relative
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with (
+            contextlib.closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as reader,
+            contextlib.closing(sqlite3.connect(destination)) as writer,
+        ):
+            reader.backup(writer)
+            if writer.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise DeployError(f"snapshot of {relative} failed its integrity check")
+    config = layout.home / "config"
+    if config.is_dir():
+        shutil.copytree(config, target / "config")
+
+
+CARRIED = "control-room-carried.txt"
+
+
+def carry_assets(old: Path, new: Path) -> None:
+    """Keeps the previous Control Room's own hashed assets, so a browser
+    holding the previous page can still load it. Assets it carried from the
+    release before are not carried again."""
+    source, destination = old / "control-room" / "assets", new / "control-room" / "assets"
+    if not (source.is_dir() and destination.is_dir()):
+        return
+    inherited = set((old / CARRIED).read_text().split()) if (old / CARRIED).is_file() else set()
+    carried = []
+    for asset in sorted(source.iterdir()):
+        if asset.name not in inherited and not (destination / asset.name).exists():
+            shutil.copy2(asset, destination / asset.name)
+            carried.append(asset.name)
+    (new / CARRIED).write_text("".join(f"{name}\n" for name in carried))
+
+
+def install_units(host: Host, layout: Layout, services: list[dict], release: Path) -> None:
+    changed = False
+    for service in installed_services(layout, services):
+        for unit in [service["unit"], *service.get("companion_units", [])]:
+            if unit_differs(layout, release, unit):
+                shutil.copy2(release / "units" / unit, layout.units / unit)
+                changed = True
+    if changed:
+        host.run("systemctl", "daemon-reload")
+
+
+def unit_state(host: Host, unit: str) -> tuple[str, str]:
+    """A unit's state and when it last became active; a changed timestamp
+    means it restarted."""
+    shown = host.run("systemctl", "show", unit, "-p", "ActiveState", "-p", "ActiveEnterTimestampMonotonic")
+    values = dict(line.split("=", 1) for line in shown.stdout.splitlines() if "=" in line)
+    return values.get("ActiveState", ""), values.get("ActiveEnterTimestampMonotonic", "")
+
+
+def health(host: Host, layout: Layout, active: list[str]) -> list[str]:
+    """Checks every service that was running before the deploy."""
+    first = {unit: unit_state(host, unit) for unit in active}
+    host.sleep(SETTLE_SECONDS)
+    failures = []
+    for unit in active:
+        state = unit_state(host, unit)
+        if state[0] != "active":
+            failures.append(f"{unit} is {state[0] or 'unknown'}")
+        elif state != first[unit]:
+            failures.append(f"{unit} restarted during the settle window")
+    if "renoa-management.service" in active:
+        if (status := host.http_status("http://127.0.0.1:7819/v1/host/discord")) != 401:
+            failures.append(f"management answered {status} to an unauthenticated request, not 401")
+        forged = host.http_status(
+            "http://127.0.0.1:7819/v1/host/discord/inspection",
+            "POST",
+            {"Origin": "https://example.invalid", "Content-Type": "application/json"},
+        )
+        if forged != 403:
+            failures.append(f"management answered {forged} to a foreign origin, not 403")
+    if "renoa-node.service" in active:
+        try:
+            running_turns(host)
+        except (DeployError, json.JSONDecodeError) as error:
+            failures.append(f"Host inspection failed: {error}")
+    return failures
+
+
+def prune(layout: Layout, keep: list[Path]) -> None:
+    kept = {path.resolve() for path in keep}
+    for release in layout.releases.iterdir():
+        if release.resolve() not in kept:
+            shutil.rmtree(release)
+    shutil.rmtree(layout.old_backup, ignore_errors=True)
+
+
+def install(host: Host, archive: Path, drain_timeout: float = DRAIN_TIMEOUT) -> int:
+    layout = Layout(host)
+    layout.releases.mkdir(parents=True, exist_ok=True)
+    release = stage(host, layout, archive)
+    manifest = read_manifest(release)
+    services = manifest["services"]
+    if layout.current.exists() and layout.current.resolve() == release.resolve():
+        print(f"{manifest['tag']} is already installed")
+        return 0
+    if not layout.current.exists():
+        adopt_legacy(layout, services)
+    old = layout.current.resolve()
+    try:
+        for service in installed_services(layout, services):
+            missing = [name for name in service["binaries"] if name not in manifest["binaries"]]
+            if missing:
+                raise DeployError(f"{service['unit']} is installed but the release has no {', '.join(missing)}")
+        restart = changed_services(layout, services, old, release)
+        active = [
+            service["unit"]
+            for service in installed_services(layout, services)
+            if host.run("systemctl", "is-active", service["unit"]).stdout.strip() == "active"
+        ]
+        if any(unit in TURN_SERVICES for unit in restart):
+            drain(host, drain_timeout)
+        snapshot(layout, old)
+        carry_assets(old, release)
+    except BaseException:
+        # Nothing has switched yet: the running release stays as it was.
+        shutil.rmtree(release)
+        raise
+    install_units(host, layout, services, release)
+    link(release, layout.current)
+    link(old, layout.previous)
+    point_install_paths(layout, release)
+    for unit in restart:
+        print(f"restarting {unit}")
+        host.run("systemctl", "try-restart", unit)
+    failures = health(host, layout, active)
+    record = {
+        "tag": manifest["tag"],
+        "commit": manifest.get("commit"),
+        "built_at": manifest.get("built_at"),
+        "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "previous": read_manifest(old).get("tag"),
+        "binaries": manifest["binaries"],
+        "restarted": restart,
+        "health": failures or "ok",
+    }
+    layout.manifest.write_text(json.dumps(record, indent=2) + "\n")
+    if failures:
+        print("health checks failed; the new release is running and the previous release is kept:", file=sys.stderr)
+        for failure in failures:
+            print(f"  - {failure}", file=sys.stderr)
+        print(f"inspect with: journalctl -u {' -u '.join(restart or active)} -n 100", file=sys.stderr)
+        return 1
+    prune(layout, [release, old])
+    if (release / "renoa-deploy").is_file():
+        layout.tool.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(release / "renoa-deploy", layout.tool)
+    print(f"installed {manifest['tag']}; restarted {', '.join(restart) or 'nothing'}; previous release {record['previous']}")
+    return 0
+
+
+def fetch(host: Host, tag: str, directory: Path) -> Path:
+    name = f"renoa-{tag}-linux-x86_64.tar.gz"
+    base = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
+    archive, sums = directory / name, directory / "SHA256SUMS"
+    host.download(f"{base}/{name}", archive)
+    host.download(f"{base}/SHA256SUMS", sums)
+    expected = {line.split()[1]: line.split()[0] for line in sums.read_text().splitlines() if line.strip()}
+    if expected.get(name) != sha256(archive):
+        raise DeployError(f"{name} does not match the release's SHA256SUMS")
+    return archive
+
+
+def status(host: Host) -> int:
+    layout = Layout(host)
+    if layout.manifest.exists():
+        print(layout.manifest.read_text(), end="")
+    for label, path in (("current", layout.current), ("previous", layout.previous)):
+        print(f"{label}: {path.resolve().name if path.exists() else 'none'}")
+    return 0
+
+
+def main(argv: list[str], host: Host | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="renoa-deploy", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    installing = commands.add_parser("install", help="install a release")
+    installing.add_argument("tag", nargs="?")
+    installing.add_argument("--archive", type=Path)
+    installing.add_argument("--drain-timeout", type=float, default=DRAIN_TIMEOUT)
+    commands.add_parser("status", help="show the installed release")
+    arguments = parser.parse_args(argv)
+    host = host or Host()
+    if arguments.command == "status":
+        return status(host)
+    if (arguments.tag is None) == (arguments.archive is None):
+        parser.error("install takes a tag or --archive, not both")
+    layout = Layout(host)
+    layout.opt.mkdir(parents=True, exist_ok=True)
+    with open(layout.lock, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise DeployError("another renoa-deploy is running") from None
+        downloads = layout.opt / ".downloads"
+        shutil.rmtree(downloads, ignore_errors=True)
+        downloads.mkdir()
+        try:
+            archive = arguments.archive or fetch(host, arguments.tag, downloads)
+            return install(host, archive, arguments.drain_timeout)
+        finally:
+            shutil.rmtree(downloads, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except DeployError as error:
+        print(f"renoa-deploy: {error}", file=sys.stderr)
+        sys.exit(2)

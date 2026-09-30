@@ -7,6 +7,7 @@ use std::{
 use thiserror::Error;
 
 pub(crate) mod agents;
+pub(crate) mod automations;
 pub(crate) mod catalog;
 pub(crate) mod definition;
 mod extensions;
@@ -15,9 +16,8 @@ mod lease;
 mod mcp;
 mod models;
 pub(crate) mod observation;
+pub(crate) mod profiles;
 mod reset;
-pub(crate) mod reviews;
-pub(crate) mod routines;
 mod runtime;
 mod sessions;
 #[cfg(all(test, unix))]
@@ -222,9 +222,7 @@ pub enum LocalHostError {
     #[error(transparent)]
     Definition(#[from] crate::AgentDefinitionError),
     #[error(transparent)]
-    Routine(#[from] routines::RoutineError),
-    #[error(transparent)]
-    GitHubReview(#[from] reviews::GitHubReviewError),
+    Automation(#[from] automations::AutomationError),
     #[error("local Host trace failed: {0}")]
     Trace(String),
     #[error("session creation failed: {source}; staging cleanup also failed: {cleanup}")]

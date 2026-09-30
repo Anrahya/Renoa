@@ -30,6 +30,12 @@ impl LocalHost {
         }
     }
 
+    /// Returns the installation root this Host owns.
+    #[must_use]
+    pub fn home(&self) -> &renoa_home::RenoaHome {
+        &self.config.home
+    }
+
     /// Returns the durable identity of this Host data root.
     ///
     /// # Errors

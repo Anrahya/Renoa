@@ -11,6 +11,11 @@ use crate::{
     schema::{OPERATION_STATE_VERSION, SCHEMA_VERSION, sqlite_error},
 };
 
+/// The oldest schema whose sessions and operations tables match the current
+/// ones. Observation reads nothing else and never migrates, so a session not
+/// opened since schema 4 released requests is still observed.
+const OBSERVED_SINCE: u32 = 3;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationObservation {
     pub operation_id: OperationId,
@@ -48,7 +53,7 @@ pub fn observe_session(
     let version: u32 = tx
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(sqlite_error)?;
-    if version != SCHEMA_VERSION {
+    if !(OBSERVED_SINCE..=SCHEMA_VERSION).contains(&version) {
         return Err(KernelError::UnsupportedSchema {
             found: version,
             supported: SCHEMA_VERSION,
@@ -275,6 +280,33 @@ mod tests {
             db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .expect("version"),
             1
+        );
+    }
+
+    #[test]
+    fn a_schema_three_session_is_observed_without_being_upgraded() {
+        let dir = tempfile::tempdir().expect("directory");
+        let path = dir.path().join("kernel.sqlite3");
+        let session = SessionId::new();
+        let agent = AgentId::new();
+        let kernel = Kernel::open(&path).expect("initialize");
+        kernel.create_agent(agent).expect("agent");
+        kernel.create_session(session, agent).expect("session");
+        drop(kernel);
+        let db = Connection::open(&path).expect("fixture");
+        db.pragma_update(None, "user_version", 3)
+            .expect("schema whose observed tables are unchanged");
+
+        assert_eq!(
+            observe_session(&path, session)
+                .expect("observe schema 3")
+                .agent_id,
+            agent
+        );
+        assert_eq!(
+            db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .expect("version"),
+            3
         );
     }
 }

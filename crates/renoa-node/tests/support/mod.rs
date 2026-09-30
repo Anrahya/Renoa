@@ -12,10 +12,9 @@ use renoa_control::{
 };
 use renoa_kernel::{AgentId, Kernel, SessionId};
 use renoa_local::{
-    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, LocalHost,
-    LocalHostAdapters, LocalModelConfiguration, ModelProvider,
+    AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
+    LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
-use renoa_node::HostTarget;
 use renoa_protocol::{
     CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, PrincipalId, SurfaceRef, TargetRef,
 };
@@ -58,16 +57,8 @@ impl TestSystem {
         let task_id = TaskId::new();
         let node_id = NodeId::new();
         let principal_id = PrincipalId::new();
-        let target = TargetRef::new("workspace:live");
-        coordinator
-            .create_task(TaskSpec {
-                task_id,
-                principal_id,
-                node_id,
-                target: target.clone(),
-            })
-            .await
-            .expect("create task");
+        // `HostFixture::install` names the provisioned agent and creates the task.
+        let target = TargetRef::new("agent:unprovisioned");
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind coordinator");
@@ -103,6 +94,11 @@ impl TestSystem {
 
     pub(crate) const fn node_id(&self) -> NodeId {
         self.node_id
+    }
+
+    /// The principal that owns the system's node and submits its commands.
+    pub(crate) const fn principal_id(&self) -> PrincipalId {
+        self.principal_id
     }
 
     pub(crate) async fn create_task(&self, target: TargetRef) -> TaskId {
@@ -192,36 +188,91 @@ impl TestSystem {
 
 pub(crate) struct HostFixture {
     pub(crate) data: PathBuf,
+    /// Where the fixture model bridge records starts and waits for releases.
     pub(crate) workspace: PathBuf,
     pub(crate) agent_id: AgentId,
     bridge: PathBuf,
     credentials: PathBuf,
-    target: TargetRef,
     task_id: TaskId,
     ledger: PathBuf,
 }
 
 impl HostFixture {
-    pub(crate) async fn install(system: &TestSystem) -> Self {
+    /// Provisions Alpha, gives its Host workspace a proof file, and creates the
+    /// system's task on Alpha's advertised target.
+    pub(crate) async fn install(system: &mut TestSystem) -> Self {
         let data = system.files.path().join("host");
-        let workspace = system.files.path().join("workspace");
+        let workspace = system.files.path().join("model-control");
         let bridge = system.files.path().join("model-bridge.mjs");
         let credentials = system.files.path().join("credentials.sqlite3");
-        fs::create_dir(&workspace).expect("create Host workspace");
-        fs::write(workspace.join("proof.txt"), "durable proof\n").expect("write proof file");
+        fs::create_dir(&workspace).expect("create model control directory");
         fs::write(&bridge, bridge_script(&workspace)).expect("write model bridge");
         fs::write(&credentials, "").expect("write credential placeholder");
         let agent_id = provision_alpha(&data, &bridge, &credentials).await;
-        Self {
+        let fixture = Self {
+            ledger: data.join("state/node.sqlite3"),
             data,
             workspace,
             agent_id,
             bridge,
             credentials,
-            target: system.target.clone(),
             task_id: system.task_id,
-            ledger: system.files.path().join("node.sqlite"),
-        }
+        };
+        let agent_workspace = fixture
+            .host()
+            .agent_workspace(agent_id)
+            .await
+            .expect("open Alpha's Host workspace");
+        fs::write(agent_workspace.join("proof.txt"), "durable proof\n").expect("write proof file");
+        system.target = agent_target(agent_id);
+        system
+            .coordinator
+            .create_task(TaskSpec {
+                task_id: system.task_id,
+                principal_id: system.principal_id,
+                node_id: system.node_id,
+                target: system.target.clone(),
+            })
+            .await
+            .expect("create task");
+        fixture
+    }
+
+    /// Provisions another agent in the same Host.
+    pub(crate) async fn provision_agent(&self) -> AgentId {
+        provision_alpha(&self.data, &self.bridge, &self.credentials).await
+    }
+
+    /// Provisions an agent that reads the speaking person's `USER.md`, and
+    /// records `profile` as that file for `principal`.
+    pub(crate) async fn provision_profiled_agent(
+        &self,
+        principal: PrincipalId,
+        profile: &str,
+    ) -> AgentId {
+        let directory = self
+            .data
+            .join("users")
+            .join(principal.as_uuid().to_string());
+        fs::create_dir_all(&directory).expect("create profile directory");
+        fs::write(directory.join("USER.md"), profile).expect("write profile");
+        let mut request = AgentCreateRequest::new(Uuid::new_v4(), "Profiled", "Answer the person.");
+        request.documents = Some(AgentDocuments {
+            soul: false,
+            user: true,
+        });
+        self.host()
+            .create_agent(
+                AgentCreator::System {
+                    component: "node-test".to_owned(),
+                },
+                AgentCreationOrigin::Provisioning,
+                request,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("provision profiled agent")
+            .id
     }
 
     pub(crate) fn host(&self) -> Arc<LocalHost> {
@@ -239,24 +290,6 @@ impl HostFixture {
             )
             .expect("assemble local Host"),
         )
-    }
-
-    pub(crate) fn target(&self) -> HostTarget {
-        Self::target_for(&self.target, self.agent_id, &self.workspace)
-    }
-
-    pub(crate) fn target_for(
-        target: &TargetRef,
-        agent_id: AgentId,
-        workspace: &std::path::Path,
-    ) -> HostTarget {
-        HostTarget::new(target, agent_id, workspace).expect("configure Host target")
-    }
-
-    pub(crate) fn additional_workspace(&self) -> PathBuf {
-        let workspace = self.workspace.with_file_name("workspace-two");
-        fs::create_dir(&workspace).expect("create second Host workspace");
-        workspace
     }
 
     pub(crate) fn started(&self) -> PathBuf {
@@ -286,6 +319,18 @@ impl HostFixture {
             )
             .expect("read the task's Host session");
         session_id.parse().expect("stored session id")
+    }
+
+    /// Whether the node ledger still records `task_id`.
+    pub(crate) fn ledger_has_task(&self, task_id: TaskId) -> bool {
+        rusqlite::Connection::open(&self.ledger)
+            .expect("open node ledger")
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM host_node_tasks WHERE task_id = ?1)",
+                [task_id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("read the node ledger")
     }
 
     pub(crate) fn operation_count_for(&self, task_id: TaskId) -> usize {
@@ -466,9 +511,37 @@ pub(crate) async fn attach_after(
     through_sequence
 }
 
+/// Whether the coordinator still holds `task_id`, asked on a fresh socket so
+/// an attachment never interleaves with the caller's.
+pub(crate) async fn coordinator_has_task(system: &TestSystem, task_id: TaskId) -> bool {
+    let mut socket = system.connect_surface().await;
+    send(
+        &mut socket,
+        &ClientMessage::Attach {
+            request_id: 1,
+            task_id,
+            after_sequence: None,
+        },
+    )
+    .await;
+    match receive(&mut socket).await {
+        ServerMessage::Attached { .. } => true,
+        ServerMessage::Error {
+            code: ErrorCode::NotFound,
+            ..
+        } => false,
+        other => panic!("unexpected reply to attaching to {task_id}: {other:?}"),
+    }
+}
+
+pub(crate) fn agent_target(agent_id: AgentId) -> TargetRef {
+    TargetRef::new(format!("agent:{agent_id}"))
+}
+
 /// Polls until the node's advertisement reaches the coordinator.
 pub(crate) async fn wait_for_targets(surface: &mut Socket, expected: usize) -> Vec<TargetSummary> {
-    for request_id in 900..1000 {
+    // The node polls its Host for agents every five seconds.
+    for request_id in 900..1400 {
         send(surface, &ClientMessage::ListTargets { request_id }).await;
         let ServerMessage::TargetList { targets, .. } = receive(surface).await else {
             panic!("expected a target list");
@@ -550,7 +623,7 @@ pub(crate) async fn collect_through_terminal(socket: &mut Socket) -> Vec<TaskEve
     .await
 }
 
-async fn collect_until(
+pub(crate) async fn collect_until(
     socket: &mut Socket,
     complete: impl Fn(&ExecutionEvent) -> bool,
 ) -> Vec<TaskEvent> {

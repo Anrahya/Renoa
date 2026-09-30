@@ -15,7 +15,7 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
         OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if !matches!(version, 1..=8) {
+    if !matches!(version, 1..=9) {
         return Err(SlackError::Invalid(format!(
             "unsupported Slack schema {version}"
         )));
@@ -43,8 +43,14 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
     } else {
         Vec::new()
     };
-    let routines = if version >= 6 {
-        let mut query=connection.prepare("SELECT run_id,chunk,channel,state,slack_ts,error FROM routine_deliveries ORDER BY rowid DESC LIMIT 50")?;
+    let automations = if version >= 6 {
+        // Schemas 6 through 8 named this table for routines; schema 9 renamed it.
+        let table = if version >= 9 {
+            "automation_deliveries"
+        } else {
+            "routine_deliveries"
+        };
+        let mut query=connection.prepare(&format!("SELECT run_id,chunk,channel,state,slack_ts,error FROM {table} ORDER BY rowid DESC LIMIT 50"))?;
         query.query_map([],|row|Ok(json!({"run_id":row.get::<_,String>(0)?,"chunk":row.get::<_,i64>(1)?,"channel":row.get::<_,Option<String>>(2)?,"state":row.get::<_,String>(3)?,"slack_ts":row.get::<_,Option<String>>(4)?,"error":row.get::<_,Option<String>>(5)?})))?.collect::<Result<Vec<_>,_>>()?
     } else {
         Vec::new()
@@ -56,6 +62,6 @@ pub fn inspect(config: &Config) -> Result<Value, SlackError> {
         Vec::new()
     };
     Ok(
-        json!({"requests":requests,"delivery_problems":failures,"bot_channels":channels,"setup_actions":actions,"routine_deliveries":routines,"channel_labels":labels}),
+        json!({"requests":requests,"delivery_problems":failures,"bot_channels":channels,"setup_actions":actions,"automation_deliveries":automations,"channel_labels":labels}),
     )
 }

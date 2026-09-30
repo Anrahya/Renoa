@@ -17,11 +17,20 @@ enum SessionCommand {
     Prompt {
         content: Vec<ContentBlock>,
         observation: TurnObservation,
+        principal: Option<Uuid>,
     },
     Compact,
 }
 
 impl SessionCommand {
+    /// The person this turn talks to, whose `USER.md` it reads and may edit.
+    const fn principal(&self) -> Option<Uuid> {
+        match self {
+            Self::Prompt { principal, .. } => *principal,
+            Self::Compact => None,
+        }
+    }
+
     fn content(&self) -> Option<&[ContentBlock]> {
         match self {
             Self::Prompt { content, .. } => Some(content),
@@ -87,6 +96,7 @@ impl AgentSession {
             observation,
             events,
             CancellationToken::new(),
+            None,
         )
         .await
     }
@@ -95,6 +105,8 @@ impl AgentSession {
     ///
     /// The token may be cancelled before startup and remains the active turn's
     /// token until settlement. The caller must durably retain pre-start cancellation.
+    /// `principal` names the person the prompt comes from: the turn reads and may
+    /// edit that person's `USER.md`, and without one it has no `USER.md`.
     ///
     /// # Errors
     ///
@@ -106,12 +118,14 @@ impl AgentSession {
         observation: TurnObservation,
         events: Arc<dyn AgentEventSink>,
         cancellation: CancellationToken,
+        principal: Option<Uuid>,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
         self.execute(
             request_id,
             SessionCommand::Prompt {
                 content,
                 observation,
+                principal,
             },
             events,
             cancellation,
@@ -311,7 +325,7 @@ impl AgentSession {
         }
         let resolved = async {
             let workspace = LocalWorkspace::open(&self.workspace)?;
-            let definition = self.definition().await?;
+            let definition = self.definition().await?.with_principal(command.principal());
             resolve_runtime(
                 &self.host,
                 RuntimeRequest {
@@ -343,6 +357,7 @@ impl AgentSession {
             SessionCommand::Prompt {
                 content,
                 observation,
+                ..
             } if definition.behavior().uses_turn_timing() => Ok(self
                 .kernel
                 .execute_observed_turn(command_id, content, observation, &runtime, cancellation)

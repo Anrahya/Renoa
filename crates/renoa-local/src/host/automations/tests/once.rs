@@ -1,0 +1,273 @@
+use super::*;
+
+fn once(agent: AgentId, at: &str) -> AutomationSpec {
+    AutomationSpec {
+        schedule: AutomationSchedule::Once { at: at.to_owned() },
+        ..spec(agent)
+    }
+}
+async fn change(
+    h: &LocalHost,
+    actor: AgentId,
+    mutation: AutomationMutation,
+    now: i64,
+) -> Result<AutomationRecord, LocalHostError> {
+    h.manage_automation(
+        actor,
+        Uuid::new_v4(),
+        mutation,
+        now,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn model_creates_once_and_restart_hands_on_its_only_admitted_run() {
+    let (d, h, parent, child) = fixture().await;
+    let workspace = d.path().join("workspace");
+    fs::create_dir(&workspace).expect("workspace");
+    let session = h
+        .ensure_agent_session(parent, &workspace, Uuid::new_v4())
+        .await
+        .expect("session");
+    session
+        .execute_turn(
+            Uuid::new_v4(),
+            vec![ContentBlock::text(format!(
+                "create once {child} 2100-01-01T14:00:00+05:30"
+            ))],
+            Arc::new(Quiet),
+        )
+        .await
+        .expect("model schedules once");
+    let record = h
+        .list_automations(parent, child, None)
+        .await
+        .expect("automations")
+        .remove(0);
+    let expected = "2100-01-01T08:30:00Z"
+        .parse::<jiff::Timestamp>()
+        .expect("UTC")
+        .as_millisecond();
+    assert_eq!(record.next_due_ms, expected);
+    assert!(
+        runs::next(&h.config.database, expected - 1)
+            .expect("not due")
+            .is_none()
+    );
+    let run = runs::next(&h.config.database, expected + 60_000)
+        .expect("late catchup")
+        .expect("run");
+    let disarmed = h.automation(parent, record.id).await.expect("disarmed");
+    assert!(!disarmed.spec.enabled);
+    assert_eq!(disarmed.revision, record.revision + 1);
+    assert!(
+        change(
+            &h,
+            child,
+            AutomationMutation::Update {
+                id: record.id,
+                expected_revision: record.revision,
+                spec: record.spec
+            },
+            expected + 60_000
+        )
+        .await
+        .is_err()
+    );
+    drop(session);
+    drop(h);
+    let restarted = host(d.path());
+    let pending = runs::next(&restarted.config.database, expected + 120_000)
+        .expect("restart")
+        .expect("same run");
+    assert_eq!(
+        pending, run,
+        "a restart hands on the admitted run unchanged"
+    );
+    runs::finish(
+        &restarted.config.database,
+        run.id,
+        &succeeded("Digest saved: digest.md"),
+        0,
+    )
+    .expect("result");
+    assert!(
+        runs::next(&restarted.config.database, expected + 86_400_000)
+            .expect("no recurrence")
+            .is_none()
+    );
+    assert_eq!(
+        restarted
+            .completed_automation_runs(0)
+            .await
+            .expect("inbox")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn once_rejects_ambiguous_invalid_or_elapsed_dates() {
+    let (_d, h, parent, child) = fixture().await;
+    for at in [
+        "1970-01-01T00:00:01",
+        "not a date",
+        "1969-12-31T23:59:59Z",
+        "1970-01-01T00:00:01Z",
+    ] {
+        assert!(
+            change(
+                &h,
+                parent,
+                AutomationMutation::Create {
+                    spec: once(child, at)
+                },
+                1000
+            )
+            .await
+            .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn once_allows_pausing_and_rescheduling_and_manual_run_disarms() {
+    let (_d, h, parent, child) = fixture().await;
+    let record = change(
+        &h,
+        parent,
+        AutomationMutation::Create {
+            spec: once(child, "1970-01-01T00:00:02Z"),
+        },
+        1000,
+    )
+    .await
+    .expect("future date");
+    let mut paused = record.spec;
+    paused.enabled = false;
+    let paused = change(
+        &h,
+        child,
+        AutomationMutation::Update {
+            id: record.id,
+            expected_revision: record.revision,
+            spec: paused,
+        },
+        3000,
+    )
+    .await
+    .expect("pause even after deadline");
+    assert!(
+        runs::next(&h.config.database, 3000)
+            .expect("paused")
+            .is_none()
+    );
+    let mut rearmed = paused.spec;
+    rearmed.enabled = true;
+    assert!(
+        change(
+            &h,
+            child,
+            AutomationMutation::Update {
+                id: record.id,
+                expected_revision: paused.revision,
+                spec: rearmed.clone()
+            },
+            3000
+        )
+        .await
+        .is_err()
+    );
+    rearmed.schedule = AutomationSchedule::Once {
+        at: "1970-01-01T00:00:05Z".to_owned(),
+    };
+    let rearmed = change(
+        &h,
+        child,
+        AutomationMutation::Update {
+            id: record.id,
+            expected_revision: paused.revision,
+            spec: rearmed,
+        },
+        3000,
+    )
+    .await
+    .expect("reschedule");
+    let op = Uuid::new_v4();
+    let manual = AutomationMutation::RunNow { id: record.id };
+    let receipt = h
+        .manage_automation(child, op, manual.clone(), 4000, CancellationToken::new())
+        .await
+        .expect("run early");
+    assert!(!receipt.spec.enabled);
+    assert_eq!(receipt.revision, rearmed.revision + 1);
+    assert_eq!(
+        receipt,
+        h.manage_automation(child, op, manual, 6000, CancellationToken::new())
+            .await
+            .expect("manual replay")
+    );
+    let run = runs::next(&h.config.database, 6000)
+        .expect("pending")
+        .expect("manual");
+    assert_eq!(run.id, op);
+    runs::finish(&h.config.database, op, &succeeded("done"), 0).expect("finish");
+    assert!(
+        runs::next(&h.config.database, 7000)
+            .expect("no timed duplicate")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_schema_seventeen_root_is_refused_until_reset_and_then_starts_fresh() {
+    let (d, h, parent, child) = fixture().await;
+    let record = change(
+        &h,
+        parent,
+        AutomationMutation::Create { spec: spec(child) },
+        0,
+    )
+    .await
+    .expect("automation");
+    let db = crate::host::catalog::open_verified(&h.config.database).expect("db");
+    crate::host::catalog::restore_routine_tables(&db);
+    db.execute_batch("UPDATE host_metadata SET schema_version=17; PRAGMA user_version=17;")
+        .expect("old schema");
+    drop(db);
+    drop(h);
+    let refused = try_host(d.path());
+    assert!(
+        matches!(&refused, Err(LocalHostError::HostCatalog(crate::HostCatalogError::Invalid(message))) if message.contains("reset")),
+        "an earlier data root must be refused until it is reset: {:?}",
+        refused.as_ref().err()
+    );
+    crate::reset_host_data_root(&d.path().join("data")).expect("cutover reset");
+    let restored = host(d.path());
+    assert!(
+        restored.automation(parent, record.id).await.is_err(),
+        "the cutover discards the legacy automation and its receipts"
+    );
+    let (parent, child) = provisioned(&restored).await;
+    let record = change(
+        &restored,
+        parent,
+        AutomationMutation::Create { spec: spec(child) },
+        0,
+    )
+    .await
+    .expect("interval after the cutover");
+    let replay = restored
+        .manage_automation(
+            parent,
+            record.id,
+            AutomationMutation::Create { spec: record.spec },
+            9999,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("receipt after the cutover");
+    assert_eq!(replay.next_due_ms, record.next_due_ms);
+}
