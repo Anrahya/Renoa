@@ -124,7 +124,12 @@ async fn submit_queued(link: &Link, connection: &Connection) -> Result<(), Disco
         let task_id = TaskId::from_uuid(turn.task_id);
         let command_id = CommandId::from_uuid(turn.command_id);
         match connection
-            .submit(task_id, command_id, turn.prompt.clone())
+            .submit(
+                task_id,
+                command_id,
+                turn.prompt.clone(),
+                turn.context.clone(),
+            )
             .await
         {
             Ok(()) => {

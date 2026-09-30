@@ -312,12 +312,19 @@ in one SQLite transaction; stale edits and reused operation IDs return 409.
 An exact retry returns its original receipt before contacting Discord again.
 Every write requires the owner cookie and exact Origin.
 
-Discord owns `state/surfaces/discord/discord.sqlite3` (schema 5). The worker
+Discord owns `state/surfaces/discord/discord.sqlite3` (schema 6). The worker
 runs no agents: each channel's conversation is an RCP task on its routed agent's
-target, `agent:<uuid>`, opened on the node that advertises it. Channel routing,
-the task, and a stable command identity are persisted when a message is
-admitted, and the message is submitted under that identity, so a reconnect
-retries it exactly. Reassignment starts a new task for subsequent messages;
+target, `agent:<uuid>`, opened on the node that advertises it. A thread is its
+own conversation on its parent channel's agent, and a thread of a bound channel
+answers without a mention. The worker keeps a directory of the server's
+channels and threads from gateway events. It asks Discord about a channel it
+has not seen when a thread message arrives, or when a message from any other
+channel is a turn; if Discord cannot say, the message is routed by its own
+channel, the failure is logged, and that channel is not asked about again for a
+minute. Channel routing, the task, a stable command
+identity, and the message's context (the server, channel, and thread ids and
+names) are persisted when a message is admitted, and the message is submitted
+under that identity with that context, so a reconnect retries it exactly. Reassignment starts a new task for subsequent messages;
 already admitted work keeps its original task. Unbound channels still require a
 mention, reply, or active thread, and only the operator (the application owner)
 can use DMs. Task records apply once under a per-task cursor; each finished
@@ -925,7 +932,9 @@ composition, and cancellation coordination.
 
 Every prompt an agent session admits records when the Host admitted it. A
 direct caller observes the Host clock once; a queue-backed surface supplies the receive time it already
-persisted. Before admission, the Host also asks each enabled compiled plugin
+persisted. A surface may also say where the message was written, such as an
+RCP command's `context`, which the node passes on; it becomes the first entry,
+attributed to `surface`. Before admission, the Host also asks each enabled compiled plugin
 that contributes message context for one entry, and freezes the observation
 and the entries into the exact command. A retry with the same command identity
 reuses the admitted command without recomputing either, even if the process

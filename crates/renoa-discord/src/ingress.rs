@@ -104,7 +104,8 @@ struct ReferencedMessage {
 /// The channel and reply target needed before the surface store is consulted.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Route {
-    pub(crate) channel_id: String,
+    pub(crate) guild_id: Option<Snowflake>,
+    pub(crate) channel_id: Snowflake,
     pub(crate) reference_id: Option<String>,
     pub(crate) in_thread: bool,
 }
@@ -112,7 +113,12 @@ pub(crate) struct Route {
 pub(crate) fn route(payload: &[u8]) -> Result<Route, DiscordError> {
     let message: MessageCreate = serde_json::from_slice(payload)?;
     Ok(Route {
-        channel_id: message.channel_id,
+        guild_id: message
+            .guild_id
+            .as_deref()
+            .map(Snowflake::parse)
+            .transpose()?,
+        channel_id: Snowflake::parse(&message.channel_id)?,
         reference_id: message
             .message_reference
             .and_then(|reference| reference.message_id),

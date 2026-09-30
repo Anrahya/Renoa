@@ -269,8 +269,11 @@ impl NodeRuntime {
             operator::setup_sink(self.host.home(), command_id.as_uuid(), &cancellation);
         let events =
             Arc::new(LiveEvents::start(Arc::clone(&self), command_id, setup_events).await?);
-        let observation =
+        let mut observation =
             TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
+        if let Some(context) = record.command.input.context() {
+            observation = observation.with_surface_context(context);
+        }
         let result = session
             .execute_turn_observed_with_cancellation(
                 command_id.as_uuid(),

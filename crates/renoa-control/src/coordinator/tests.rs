@@ -63,6 +63,7 @@ async fn a_lagging_surface_is_told_to_replay() {
         target,
         input: CommandInput::Text {
             text: "fill the live buffer".to_owned(),
+            context: None,
         },
     };
     // The blocked delivery can hold one queued event and one in-flight event.

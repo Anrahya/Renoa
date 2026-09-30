@@ -632,11 +632,12 @@ plugin exhaustively, so the compiler checks each new plugin against both.
 breaking the prompt cache:
 
 1. Every prompt an agent session admits records when the Host admitted it.
-   For a new command, the Host
+   For a new command, the Host first takes the receiving surface's own
+   description of where the message was written, if it sent one, then
    asks each enabled contributor for at most one entry, passing the agent, the
    admission time, the previous admitted prompt's time, and its own stored
    settings.
-2. Each entry is attributed to its source (`plugin:<id>`), validated as short
+2. Each entry is attributed to its source (`surface` or `plugin:<id>`), validated as short
    text with no control character but a line break, and bounded individually
    and in total. A contributor that fails, or whose entry would exceed the
    bound, is left out while the others stay; the omission is traced and never

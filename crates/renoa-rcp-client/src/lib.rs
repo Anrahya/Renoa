@@ -250,8 +250,10 @@ impl Connection {
         }
     }
 
-    /// Submits one text command under a stable identity. An exact retry of an
-    /// admitted command is accepted again without a second record.
+    /// Submits one text command under a stable identity, with the surface's
+    /// description of where it was written, if any. An exact retry of an
+    /// admitted command, context included, is accepted again without a second
+    /// record.
     ///
     /// # Errors
     ///
@@ -262,13 +264,14 @@ impl Connection {
         task_id: TaskId,
         command_id: CommandId,
         text: String,
+        context: Option<String>,
     ) -> Result<(), ClientError> {
         match self
             .request(|request_id| ClientMessage::Submit {
                 request_id,
                 task_id,
                 command_id,
-                input: CommandInput::Text { text },
+                input: CommandInput::Text { text, context },
             })
             .await?
         {

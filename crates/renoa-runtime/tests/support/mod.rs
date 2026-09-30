@@ -226,6 +226,7 @@ pub fn test_command() -> CommandEnvelope {
         target: TargetRef::new("local:test-workspace"),
         input: CommandInput::Text {
             text: "Read hello.txt, add a second line, verify it, and report back.".to_owned(),
+            context: None,
         },
     }
 }

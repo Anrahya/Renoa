@@ -37,14 +37,28 @@ impl TargetRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CommandInput {
-    Text { text: String },
+    Text {
+        text: String,
+        /// Where the surface received the text, such as the conversation it
+        /// was written in, described by that surface for the agent. The executor decides whether
+        /// to show it; RCP only carries it with the command.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<String>,
+    },
 }
 
 impl CommandInput {
     #[must_use]
     pub fn text(&self) -> &str {
         match self {
-            Self::Text { text } => text,
+            Self::Text { text, .. } => text,
+        }
+    }
+
+    #[must_use]
+    pub fn context(&self) -> Option<&str> {
+        match self {
+            Self::Text { context, .. } => context.as_deref(),
         }
     }
 }

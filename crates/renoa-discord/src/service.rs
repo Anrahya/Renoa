@@ -207,6 +207,7 @@ mod tests {
                 &snowflake("20"),
                 b"message",
                 "task",
+                None,
             )
             .expect("enqueue");
         store.answer_locally("101", "answer").expect("answer");

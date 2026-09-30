@@ -628,6 +628,7 @@ mod delivery {
                 command_id: CommandId::new(),
                 input: CommandInput::Text {
                     text: "Run whenever the node returns.".to_owned(),
+                    context: None,
                 },
             },
         )
@@ -656,6 +657,7 @@ mod delivery {
         let command_id = CommandId::new();
         let input = CommandInput::Text {
             text: "Accept this command once.".to_owned(),
+            context: None,
         };
 
         send(
@@ -845,6 +847,7 @@ mod delivery {
                 command_id,
                 input: CommandInput::Text {
                     text: "Do not strand me between nodes.".to_owned(),
+                    context: None,
                 },
             },
         )
@@ -890,6 +893,7 @@ mod delivery {
                 command_id: sentinel_id,
                 input: CommandInput::Text {
                     text: "Expose any stranded predecessor.".to_owned(),
+                    context: None,
                 },
             },
         )
@@ -1013,6 +1017,52 @@ mod delivery {
             } if command.command_id == next_command_id
         ));
 
+        system.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_command_retry_must_repeat_its_context_exactly() {
+        let system = TestSystem::start("workspace:context").await;
+        let _node = system.connect(&system.enroll_node().await).await;
+        let mut surface = system
+            .connect(&system.enroll_surface("discord").await)
+            .await;
+        let command_id = CommandId::new();
+        let submitted = |context: Option<&str>| ClientMessage::Submit {
+            request_id: 2,
+            task_id: system.task_id,
+            command_id,
+            input: CommandInput::Text {
+                text: "Post it here.".to_owned(),
+                context: context.map(str::to_owned),
+            },
+        };
+        let accepted = ServerMessage::CommandAccepted {
+            request_id: 2,
+            command_id,
+        };
+        for attempt in [Some("channel #desk (202)"), Some("channel #desk (202)")] {
+            send(&mut surface, &submitted(attempt)).await;
+            assert_eq!(
+                receive(&mut surface).await,
+                accepted,
+                "an exact retry converges"
+            );
+        }
+        for changed in [Some("channel #other (303)"), None] {
+            send(&mut surface, &submitted(changed)).await;
+            assert!(
+                matches!(
+                    receive(&mut surface).await,
+                    ServerMessage::Error {
+                        request_id: Some(2),
+                        code: ErrorCode::Conflict,
+                        ..
+                    }
+                ),
+                "{changed:?} changes the admitted command"
+            );
+        }
         system.stop().await;
     }
 }
@@ -1563,6 +1613,7 @@ async fn submit(socket: &mut Socket, task_id: TaskId, command_id: CommandId, tex
             command_id,
             input: CommandInput::Text {
                 text: text.to_owned(),
+                context: None,
             },
         },
     )

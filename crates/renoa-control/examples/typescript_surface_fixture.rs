@@ -165,6 +165,7 @@ async fn seed_journal(
             command_id: seed_command_id,
             input: CommandInput::Text {
                 text: "seed the replay journal".to_owned(),
+                context: None,
             },
         },
     )

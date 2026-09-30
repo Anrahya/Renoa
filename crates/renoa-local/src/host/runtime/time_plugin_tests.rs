@@ -98,11 +98,30 @@ async fn agent(host: &LocalHost, preset: &str) -> renoa_kernel::AgentId {
 }
 
 async fn say(session: &AgentSession, prompt: &str, at: i64) -> String {
+    let observation = TurnObservation::from_unix_milliseconds(at).expect("observation");
+    say_observed(session, prompt, observation).await
+}
+
+async fn say_observed(
+    session: &AgentSession,
+    prompt: &str,
+    observation: TurnObservation,
+) -> String {
+    say_as(session, Uuid::new_v4(), prompt, observation).await
+}
+
+/// One prompt under a caller-chosen command identity, as a retry sends it.
+async fn say_as(
+    session: &AgentSession,
+    command: Uuid,
+    prompt: &str,
+    observation: TurnObservation,
+) -> String {
     match session
         .execute_turn_observed(
-            Uuid::new_v4(),
+            command,
             vec![ContentBlock::text(prompt)],
-            TurnObservation::from_unix_milliseconds(at).expect("observation"),
+            observation,
             Arc::new(Quiet),
         )
         .await
@@ -226,6 +245,73 @@ async fn each_message_keeps_the_time_it_was_admitted_with_in_the_agent_zone() {
     let off = contexts(&session, T0 + 5 * HOUR).await;
     assert_eq!(off[..5], later[..], "turning it off rewrites nothing");
     assert_eq!(off[5], "", "a message admitted while it is off has no time");
+}
+
+#[tokio::test]
+async fn the_surface_says_where_a_message_was_written_ahead_of_every_plugin() {
+    let directory = tempfile::tempdir().expect("directory");
+    let host = host(directory.path());
+    let general = agent(&host, crate::presets::GENERAL_PRESET_ID).await;
+    let untimed = agent(&host, crate::presets::ALPHA_PRESET_ID).await;
+    let workspace = directory.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("workspace");
+    let session = |agent| host.ensure_agent_session(agent, &workspace, Uuid::new_v4());
+    let general = session(general).await.expect("general session");
+    let untimed = session(untimed).await.expect("untimed session");
+    let placed = |at: i64, place: &str| {
+        TurnObservation::from_unix_milliseconds(at)
+            .expect("observation")
+            .with_surface_context(place)
+    };
+    let shown =
+        |output: String| -> Vec<String> { serde_json::from_str(&output).expect("context list") };
+
+    assert_eq!(say(&general, "set zone UTC", T0).await, "configured");
+    let desk = "Discord server 10\nchannel #desk & <tools> (202)";
+    let first = shown(say_observed(&general, "show", placed(T0 + HOUR, desk)).await);
+    assert_eq!(
+        first[1],
+        "<turn_context>\n<context source=\"surface\">\nDiscord server 10\nchannel #desk &amp; &lt;tools&gt; (202)\n</context>\n<context source=\"plugin:renoa.time\">\ncurrent_time: 2026-08-31T19:04:05+00:00[UTC]\nelapsed_since_previous_user_message: 1h\n</context>\n</turn_context>"
+    );
+    let unfit = shown(say_observed(&general, "show", placed(T0 + 2 * HOUR, "bell\u{7}")).await);
+    assert_eq!(unfit[..2], first[..], "earlier messages keep their bytes");
+    assert_eq!(
+        unfit[2],
+        time("2026-08-31T20:04:05+00:00[UTC]", Some("1h")),
+        "a surface context that does not fit is left out and the plugins stay"
+    );
+
+    assert_eq!(
+        shown(
+            say_observed(
+                &untimed,
+                "show",
+                placed(T0, "Discord direct message (channel 404)")
+            )
+            .await
+        ),
+        [
+            "<turn_context>\n<context source=\"surface\">\nDiscord direct message (channel 404)\n</context>\n</turn_context>"
+        ],
+        "the surface entry does not depend on any plugin"
+    );
+
+    let command = Uuid::new_v4();
+    let first = say_as(&untimed, command, "show", placed(T0, "channel #desk (202)")).await;
+    let retried = say_as(
+        &untimed,
+        command,
+        "show",
+        placed(T0, "channel #other (303)"),
+    )
+    .await;
+    assert_eq!(retried, first, "a retry of a finished command replays it");
+    let history = shown(say_observed(&untimed, "show", placed(T0, "channel #desk (202)")).await);
+    assert_eq!(
+        history[1],
+        "<turn_context>\n<context source=\"surface\">\nchannel #desk (202)\n</context>\n</turn_context>",
+        "the replayed command keeps the context it was admitted with"
+    );
 }
 
 #[tokio::test]

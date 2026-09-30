@@ -136,3 +136,20 @@ async fn secure_gateway_urls_reach_a_tls_handshake() {
         "Discord's gateway is wss-only: {error}"
     );
 }
+
+#[test]
+fn other_dispatches_reach_the_channel_directory() {
+    let mut state = SocketState::new(None, None, None);
+    let step = state
+        .receive(
+            r#"{"op":0,"s":4,"t":"THREAD_CREATE","d":{"id":"303","guild_id":"10","type":11,"parent_id":"202"}}"#,
+            "token",
+        )
+        .expect("dispatch");
+    let Step::Dispatch { kind, data } = step else {
+        panic!("a channel event is passed on");
+    };
+    assert_eq!(kind, "THREAD_CREATE");
+    assert_eq!(data["parent_id"], "202");
+    assert_eq!(state.sequence, Some(4));
+}

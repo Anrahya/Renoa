@@ -55,6 +55,26 @@ async fn a_bound_channel_reaches_its_agent_without_a_mention() {
 }
 
 #[tokio::test]
+async fn a_thread_reaches_its_parent_channels_agent_with_where_it_was_written() {
+    let observed = run(Scenario::Thread).await;
+    let [answer] = observed.posted.as_slice() else {
+        panic!("expected one answer: {:?}", observed.posted);
+    };
+    assert!(
+        answer.starts_with("POST /channels/303/messages"),
+        "{answer}"
+    );
+    assert!(
+        answer.contains(&format!("agent:{DESK} answered")),
+        "{answer}"
+    );
+    assert!(
+        answer.contains(r#"Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)"#),
+        "{answer}"
+    );
+}
+
+#[tokio::test]
 async fn an_agent_without_an_online_node_gets_a_not_sent_reply() {
     let bodies = run(Scenario::Offline).await.posted;
     assert_eq!(bodies.len(), 1, "{bodies:?}");
@@ -106,6 +126,8 @@ async fn a_running_command_shows_typing_and_its_tool_calls_before_the_answer() {
 enum Scenario {
     Mention,
     Bound,
+    /// An unmentioned message in a thread of the bound channel.
+    Thread,
     Offline,
     /// The node reports a tool call, pauses, then answers.
     Tools,
@@ -135,7 +157,7 @@ async fn run(scenario: Scenario) -> Observed {
         endpoint: coordinator.url.clone(),
         credentials: coordinator.surface().await,
     };
-    if scenario == Scenario::Bound {
+    if matches!(scenario, Scenario::Bound | Scenario::Thread) {
         bind_desk(&data);
     }
 
@@ -150,7 +172,7 @@ async fn run(scenario: Scenario) -> Observed {
     let http_addr = http.local_addr().expect("http port");
     let recorded = Arc::clone(&requests);
     tokio::spawn(async move { serve_http(http, gateway_port, recorded).await });
-    tokio::spawn(async move { serve_gateway(gateway, scenario == Scenario::Bound).await });
+    tokio::spawn(async move { serve_gateway(gateway, scenario).await });
 
     let shutdown = CancellationToken::new();
     let task_shutdown = shutdown.clone();
@@ -374,7 +396,11 @@ async fn scripted_node(mut node: Socket, executions: Arc<Mutex<usize>>, tools: b
         }
         batches.last_mut().expect("batch").extend([
             ExecutionEventKind::AssistantMessage {
-                text: format!("{} answered", command.target.as_str()),
+                text: format!(
+                    "{} answered from {}",
+                    command.target.as_str(),
+                    command.input.context().unwrap_or("nowhere")
+                ),
             },
             ExecutionEventKind::ExecutionTerminated {
                 terminal: ExecutionTerminal::Completed,
@@ -459,7 +485,7 @@ pub(crate) async fn serve_http(
     }
 }
 
-async fn serve_gateway(listener: tokio::net::TcpListener, bound: bool) {
+async fn serve_gateway(listener: tokio::net::TcpListener, scenario: Scenario) {
     let Ok((stream, _)) = listener.accept().await else {
         return;
     };
@@ -479,10 +505,24 @@ async fn serve_gateway(listener: tokio::net::TcpListener, bound: bool) {
         ))
         .await
         .expect("ready");
-    let message = if bound {
-        r#"{"op":0,"s":2,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"Do the real task.","author":{"id":"99"},"mentions":[]}}"#
-    } else {
-        r#"{"op":0,"s":2,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> Do the real task.","author":{"id":"99"},"mentions":[{"id":"50"}]}}"#
+    if scenario == Scenario::Thread {
+        socket
+            .send(Message::Text(
+                r#"{"op":0,"s":2,"t":"GUILD_CREATE","d":{"id":"10","channels":[{"id":"202","type":0,"name":"desk"}],"threads":[{"id":"303","type":11,"name":"plan","parent_id":"202"}]}}"#.into(),
+            ))
+            .await
+            .expect("guild");
+    }
+    let message = match scenario {
+        Scenario::Bound => {
+            r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"Do the real task.","author":{"id":"99"},"mentions":[]}}"#
+        }
+        Scenario::Thread => {
+            r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"303","guild_id":"10","content":"Plan it here.","author":{"id":"99"},"mentions":[]}}"#
+        }
+        Scenario::Mention | Scenario::Offline | Scenario::Tools => {
+            r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> Do the real task.","author":{"id":"99"},"mentions":[{"id":"50"}]}}"#
+        }
     };
     socket
         .send(Message::Text(message.into()))

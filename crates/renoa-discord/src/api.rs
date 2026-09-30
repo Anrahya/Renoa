@@ -33,6 +33,15 @@ impl Channel {
         self.kind == 4
     }
 
+    /// Announcement, public, and private threads belong to a parent channel.
+    pub(crate) fn is_thread(&self) -> bool {
+        matches!(self.kind, 10..=12)
+    }
+
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
     pub(crate) fn display_name(&self) -> &str {
         self.name.as_deref().unwrap_or("Discord channel")
     }

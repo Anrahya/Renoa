@@ -2,13 +2,15 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use thiserror::Error;
 
-/// Wall-clock instant at which a Host admitted one user message.
+/// When a Host admitted one user message and, if its surface said so, where
+/// the message was written.
 ///
 /// Surfaces with durable inboxes should construct this from their persisted
 /// receive time. Direct callers may use [`Self::now`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnObservation {
     unix_milliseconds: i64,
+    surface_context: Option<String>,
 }
 
 impl TurnObservation {
@@ -24,7 +26,10 @@ impl TurnObservation {
             .map_err(TurnObservationError::Clock)?;
         let unix_milliseconds =
             i64::try_from(elapsed.as_millis()).map_err(|_| TurnObservationError::OutOfRange)?;
-        Ok(Self { unix_milliseconds })
+        Ok(Self {
+            unix_milliseconds,
+            surface_context: None,
+        })
     }
 
     /// Restores a persisted surface receive time.
@@ -38,12 +43,29 @@ impl TurnObservation {
         if unix_milliseconds < 0 {
             return Err(TurnObservationError::BeforeUnixEpoch);
         }
-        Ok(Self { unix_milliseconds })
+        Ok(Self {
+            unix_milliseconds,
+            surface_context: None,
+        })
+    }
+
+    /// Adds the surface's own description of where the message was written.
+    /// A new command admits it as the `surface` context entry; one that does
+    /// not fit that entry's bounds is left out and traced.
+    #[must_use]
+    pub fn with_surface_context(mut self, context: impl Into<String>) -> Self {
+        self.surface_context = Some(context.into());
+        self
     }
 
     #[must_use]
-    pub const fn unix_milliseconds(self) -> i64 {
+    pub const fn unix_milliseconds(&self) -> i64 {
         self.unix_milliseconds
+    }
+
+    #[must_use]
+    pub fn surface_context(&self) -> Option<&str> {
+        self.surface_context.as_deref()
     }
 }
 

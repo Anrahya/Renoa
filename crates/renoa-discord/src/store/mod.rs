@@ -10,6 +10,7 @@ mod actions;
 mod bindings;
 mod deliveries;
 mod gateway;
+mod places;
 mod progress;
 mod replies;
 mod schema;

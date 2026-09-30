@@ -2390,6 +2390,7 @@ dependencies = [
  "axum",
  "futures-util",
  "renoa-agent",
+ "renoa-agent-loop",
  "renoa-control",
  "renoa-kernel",
  "renoa-local",

@@ -33,6 +33,7 @@ fn enqueue(store: &SurfaceStore, message_id: &str, prompt: &str) {
                 &snowflake("99"),
                 message_id.as_bytes(),
                 prompt,
+                None,
             )
             .expect("enqueue"),
         Enqueue::Fresh
@@ -47,6 +48,7 @@ fn command(command_id: Uuid, surface: &str, text: &str) -> CommandEnvelope {
         target: TargetRef::new(format!("agent:{}", agent())),
         input: CommandInput::Text {
             text: text.to_owned(),
+            context: None,
         },
     }
 }
@@ -88,18 +90,18 @@ fn same_message_is_queued_once_and_a_changed_copy_conflicts() {
     let (message, channel, author) = (snowflake("101"), snowflake("202"), snowflake("99"));
     assert_eq!(
         store
-            .enqueue(&message, &channel, &author, b"same", "hello")
+            .enqueue(&message, &channel, &author, b"same", "hello", None)
             .expect("enqueue"),
         Enqueue::Fresh
     );
     assert_eq!(
         store
-            .enqueue(&message, &channel, &author, b"same", "hello")
+            .enqueue(&message, &channel, &author, b"same", "hello", None)
             .expect("duplicate"),
         Enqueue::Duplicate
     );
     let conflict = store
-        .enqueue(&message, &channel, &author, b"different", "other")
+        .enqueue(&message, &channel, &author, b"different", "other", None)
         .expect_err("different bytes");
     assert!(
         conflict.to_string().contains("different content"),

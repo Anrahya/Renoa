@@ -1,9 +1,10 @@
 //! The `message_context` point: the entries a newly admitted prompt carries.
 //!
-//! They are computed once, before admission, and frozen into the command, so a
-//! retry or recovery reuses them and enabling, disabling, or reconfiguring a
-//! plugin later cannot change them. A contributor that fails is skipped and
-//! reported; it never blocks the message.
+//! The receiving surface's own entry comes first, then one per enabled
+//! plugin. They are computed once, before admission, and frozen into the
+//! command, so a retry or recovery reuses them and enabling, disabling, or
+//! reconfiguring a plugin later cannot change them. An entry that fails is
+//! skipped and reported; it never blocks the message.
 
 use std::path::Path;
 
@@ -13,57 +14,74 @@ use renoa_kernel::AgentId;
 use super::{HostPluginId, settings, state, time::TimeSettings};
 use crate::{host::catalog, plugins::PluginError};
 
-/// A contributor left out of one message, and why.
+/// A contributor left out of one message, and why: `surface`, a plugin id,
+/// or `*` when no plugin could be asked.
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Skipped {
-    pub(crate) plugin_id: &'static str,
+    pub(crate) source: &'static str,
     pub(crate) reason: String,
 }
 
 /// The context for a prompt admitted at `observed_at_ms`, after a previous
-/// prompt admitted at `previous_ms`.
+/// prompt admitted at `previous_ms`, whose surface described where it was
+/// written as `surface`.
 pub(crate) fn admit(
     database: &Path,
     agent: AgentId,
+    surface: Option<&str>,
     observed_at_ms: i64,
     previous_ms: Option<i64>,
 ) -> (TurnContext, Vec<Skipped>) {
+    let mut context = TurnContext::default();
+    let mut skipped = Vec::new();
+    if let Some(text) = surface {
+        let added = ContextContribution::surface(text)
+            .map_err(|error| PluginError::Invalid(error.to_string()))
+            .map(Some);
+        add(&mut context, &mut skipped, "surface", added);
+    }
     let db = match catalog::open_verified(database) {
         Ok(db) => db,
         Err(error) => {
-            return (
-                TurnContext::default(),
-                vec![Skipped {
-                    plugin_id: "*",
-                    reason: error.to_string(),
-                }],
-            );
+            skipped.push(Skipped {
+                source: "*",
+                reason: error.to_string(),
+            });
+            return (context, skipped);
         }
     };
-    let mut context = TurnContext::default();
-    let mut skipped = Vec::new();
     for plugin in HostPluginId::ALL {
-        let added =
-            contribution(&db, agent, plugin, observed_at_ms, previous_ms).and_then(|entry| {
-                entry.map_or(Ok(None), |entry| {
-                    let mut entries = context.entries().to_vec();
-                    entries.push(entry);
-                    TurnContext::new(entries)
-                        .map(Some)
-                        .map_err(|error| PluginError::Invalid(error.to_string()))
-                })
-            });
-        match added {
-            Ok(Some(grown)) => context = grown,
-            Ok(None) => {}
-            // Only this contributor is left out; the entries before it stay.
-            Err(error) => skipped.push(Skipped {
-                plugin_id: plugin.id(),
-                reason: error.to_string(),
-            }),
-        }
+        let added = contribution(&db, agent, plugin, observed_at_ms, previous_ms);
+        add(&mut context, &mut skipped, plugin.id(), added);
     }
     (context, skipped)
+}
+
+/// Appends one contributor's entry, or records why it is left out. Only that
+/// contributor is left out; the entries before it stay.
+fn add(
+    context: &mut TurnContext,
+    skipped: &mut Vec<Skipped>,
+    source: &'static str,
+    entry: Result<Option<ContextContribution>, PluginError>,
+) {
+    let grown = entry.and_then(|entry| {
+        entry.map_or(Ok(None), |entry| {
+            let mut entries = context.entries().to_vec();
+            entries.push(entry);
+            TurnContext::new(entries)
+                .map(Some)
+                .map_err(|error| PluginError::Invalid(error.to_string()))
+        })
+    });
+    match grown {
+        Ok(Some(grown)) => *context = grown,
+        Ok(None) => {}
+        Err(error) => skipped.push(Skipped {
+            source,
+            reason: error.to_string(),
+        }),
+    }
 }
 
 /// One plugin's entry, or none when it contributes nothing to this message.

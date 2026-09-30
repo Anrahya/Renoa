@@ -226,6 +226,14 @@ server or default agent, stop `renoa-discord.path` and `renoa-discord.service`,
 then remove `credentials/discord.json` and `state/surfaces/discord`; the latter
 pins the previous identity and holds its bindings and task cursors.
 
+Discord store schema 6 keeps the server's channel directory, so a thread
+answers as its parent channel's agent, and each queued message's context.
+Upgrading from schema 5 adds an empty directory; it fills from gateway events
+and from a lookup the first time a turn, or any message in a thread, comes from
+a channel it has not seen. A failed lookup is retried after a minute. Messages queued before the upgrade are
+submitted without context. This release also moves RCP to binding version 12,
+so the coordinator, node, and every surface must be upgraded together.
+
 Discord store schema 5 records posted progress messages, so a restart still
 deletes them; upgrading from schema 4 adds the empty table.
 
@@ -760,7 +768,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 10; the recorded version-8 proof establishes only the deployment
+binding version 12; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

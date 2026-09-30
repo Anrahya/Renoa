@@ -38,6 +38,42 @@ test("execution task records preserve stable command causation", () => {
   assert.equal(message.event.kind.event.executionId, EXECUTION_ID);
 });
 
+test("submitted commands keep the surface's context when it has one", () => {
+  const submitted = (input: unknown) => {
+    const message = parseServerMessage(
+      JSON.stringify({
+        type: "task_event",
+        event: {
+          eventId: TASK_EVENT_ID,
+          taskId: TASK_ID,
+          sequence: 9,
+          kind: {
+            type: "command_submitted",
+            command: {
+              commandId: COMMAND_ID,
+              principalId: EXECUTION_ID,
+              surface: "discord",
+              target: "agent:x",
+              input,
+            },
+          },
+        },
+      }),
+    );
+    assert.equal(message.type, "task_event");
+    assert.equal(message.event.kind.type, "command_submitted");
+    return message.event.kind.command.input;
+  };
+
+  assert.deepEqual(submitted({ type: "text", text: "hi" }), { type: "text", text: "hi" });
+  assert.deepEqual(submitted({ type: "text", text: "hi", context: "channel #general" }), {
+    type: "text",
+    text: "hi",
+    context: "channel #general",
+  });
+  assert.throws(() => submitted({ type: "text", text: "hi", context: 1 }), /command context/);
+});
+
 test("execution task records without command causation are rejected", () => {
   assert.throws(
     () =>

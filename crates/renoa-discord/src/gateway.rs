@@ -12,9 +12,10 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     DiscordError,
     api::{ApiError, DiscordApi},
-    ingress,
+    places,
+    routing::{self, Inbox},
     snowflake::Snowflake,
-    store::{Enqueue, GatewayCursor, SurfaceStore},
+    store::{GatewayCursor, SurfaceStore},
 };
 
 pub(crate) const INTENTS: i64 = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
@@ -32,7 +33,14 @@ pub(crate) struct SocketState {
 pub(crate) enum Step {
     Send(Value),
     Message(Vec<u8>),
-    Reconnect { fresh: bool },
+    /// Any other dispatch, such as a channel or thread change.
+    Dispatch {
+        kind: String,
+        data: Value,
+    },
+    Reconnect {
+        fresh: bool,
+    },
     Ready,
     Ack,
 }
@@ -140,7 +148,11 @@ impl SocketState {
                 })?;
                 Ok(Step::Message(serde_json::to_vec(&payload)?))
             }
-            _ => Ok(Step::Send(Value::Null)),
+            Some(kind) => Ok(Step::Dispatch {
+                kind: kind.to_owned(),
+                data: frame.get("d").cloned().unwrap_or(Value::Null),
+            }),
+            None => Ok(Step::Send(Value::Null)),
         }
     }
 }
@@ -196,10 +208,14 @@ pub(crate) async fn maintain(
             shutdown,
             &url,
             &mut Drive {
-                store,
-                wake,
-                guild_id,
-                operator_user_id,
+                inbox: Inbox {
+                    store,
+                    api,
+                    wake,
+                    guild_id,
+                    operator_user_id,
+                    failed_lookups: std::collections::HashMap::new(),
+                },
                 token,
                 state: &mut state,
             },
@@ -230,10 +246,7 @@ enum End {
 }
 
 struct Drive<'a> {
-    store: &'a SurfaceStore,
-    wake: &'a Notify,
-    guild_id: &'a Snowflake,
-    operator_user_id: &'a Snowflake,
+    inbox: Inbox<'a>,
     token: &'a str,
     state: &'a mut SocketState,
 }
@@ -342,11 +355,30 @@ async fn handle_text(
             return Ok(None);
         }
         Step::Ready => remember_bot(drive)?,
-        Step::Message(payload) => accept_message(drive, &payload).map_err(End::Failed)?,
+        Step::Message(payload) => {
+            routing::accept(
+                &mut drive.inbox,
+                drive.state.bot_user_id.as_deref(),
+                &payload,
+            )
+            .await
+            .map_err(End::Failed)?;
+        }
+        Step::Dispatch { kind, data } => {
+            match places::changes(&kind, &data, drive.inbox.guild_id) {
+                Ok(Some(changes)) => drive
+                    .inbox
+                    .store
+                    .apply_places(&changes)
+                    .map_err(End::Failed)?,
+                Ok(None) => {}
+                Err(error) => eprintln!("renoa-discord: ignored unreadable {kind}: {error}"),
+            }
+        }
         Step::Reconnect { fresh } => return Err(End::Reconnect { fresh }),
         Step::Send(_) => {}
     }
-    persist_cursor(drive.store, drive.state).map_err(End::Failed)?;
+    persist_cursor(drive.inbox.store, drive.state).map_err(End::Failed)?;
     Ok(heartbeat)
 }
 
@@ -355,7 +387,11 @@ fn remember_bot(drive: &Drive<'_>) -> Result<(), End> {
         return Ok(());
     };
     let bot_user_id = Snowflake::parse(&bot_user_id).map_err(End::Failed)?;
-    drive.store.remember_bot(&bot_user_id).map_err(End::Failed)
+    drive
+        .inbox
+        .store
+        .remember_bot(&bot_user_id)
+        .map_err(End::Failed)
 }
 
 fn close_end(frame: Option<&tokio_tungstenite::tungstenite::protocol::CloseFrame>) -> End {
@@ -392,53 +428,6 @@ fn starts_session(step: &Step) -> bool {
         frame.get("op").and_then(serde_json::Value::as_i64),
         Some(2 | 6)
     )
-}
-
-fn accept_message(drive: &Drive<'_>, payload: &[u8]) -> Result<(), DiscordError> {
-    let Some(bot_user_id) = drive.state.bot_user_id.as_deref() else {
-        return Ok(());
-    };
-    let route = match ingress::route(payload) {
-        Ok(route) => route,
-        Err(error) => {
-            eprintln!("renoa-discord: ignored unreadable Discord message: {error}");
-            return Ok(());
-        }
-    };
-    let replies_to_bot = match route.reference_id.as_deref() {
-        Some(message_id) => drive.store.has_reply(message_id)?,
-        None => false,
-    };
-    let active_conversation = drive.store.channel_binding(&route.channel_id)?.is_some()
-        || (route.in_thread && drive.store.has_conversation(&route.channel_id)?);
-    let addressed = match ingress::addressed(
-        payload,
-        &Snowflake::parse(bot_user_id)?,
-        drive.guild_id,
-        drive.operator_user_id,
-        replies_to_bot,
-        active_conversation,
-    ) {
-        Ok(addressed) => addressed,
-        Err(error) => {
-            eprintln!("renoa-discord: ignored unreadable Discord message: {error}");
-            return Ok(());
-        }
-    };
-    let Some(addressed) = addressed else {
-        return Ok(());
-    };
-    match drive.store.enqueue(
-        &addressed.message_id,
-        &addressed.channel_id,
-        &addressed.author_id,
-        &addressed.canonical,
-        &addressed.prompt,
-    )? {
-        Enqueue::Fresh => drive.wake.notify_one(),
-        Enqueue::Duplicate => {}
-    }
-    Ok(())
 }
 
 fn persist_cursor(store: &SurfaceStore, state: &SocketState) -> Result<(), DiscordError> {

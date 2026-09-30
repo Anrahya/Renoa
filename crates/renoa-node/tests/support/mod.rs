@@ -582,6 +582,17 @@ pub(crate) async fn submit_when_node_is_online(
     command_id: CommandId,
     text: &str,
 ) {
+    submit_placed_when_node_is_online(socket, task_id, command_id, text, None).await;
+}
+
+/// Submits text with the surface's description of where it was written.
+pub(crate) async fn submit_placed_when_node_is_online(
+    socket: &mut Socket,
+    task_id: TaskId,
+    command_id: CommandId,
+    text: &str,
+    context: Option<&str>,
+) {
     loop {
         send(
             socket,
@@ -591,6 +602,7 @@ pub(crate) async fn submit_when_node_is_online(
                 command_id,
                 input: CommandInput::Text {
                     text: text.to_owned(),
+                    context: context.map(str::to_owned),
                 },
             },
         )
