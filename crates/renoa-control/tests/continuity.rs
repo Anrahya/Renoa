@@ -628,6 +628,7 @@ mod delivery {
                 command_id: CommandId::new(),
                 input: CommandInput::Text {
                     text: "Run whenever the node returns.".to_owned(),
+                    context: None,
                 },
             },
         )
@@ -656,6 +657,7 @@ mod delivery {
         let command_id = CommandId::new();
         let input = CommandInput::Text {
             text: "Accept this command once.".to_owned(),
+            context: None,
         };
 
         send(
@@ -845,6 +847,7 @@ mod delivery {
                 command_id,
                 input: CommandInput::Text {
                     text: "Do not strand me between nodes.".to_owned(),
+                    context: None,
                 },
             },
         )
@@ -890,6 +893,7 @@ mod delivery {
                 command_id: sentinel_id,
                 input: CommandInput::Text {
                     text: "Expose any stranded predecessor.".to_owned(),
+                    context: None,
                 },
             },
         )
@@ -1563,6 +1567,7 @@ async fn submit(socket: &mut Socket, task_id: TaskId, command_id: CommandId, tex
             command_id,
             input: CommandInput::Text {
                 text: text.to_owned(),
+                context: None,
             },
         },
     )

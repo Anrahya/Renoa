@@ -142,6 +142,10 @@ if (prompt === "Read proof." && toolResults.length === 0) {{
     await new Promise(resolve => setTimeout(resolve, 10));
   }}
   content = [{{ type: "text", text: `Finished parallel ${{suffix}}.` }}];
+}} else if (prompt === "Where am I?") {{
+  const seen = user.content.map(block => block.text ?? "").join("\n")
+    .match(/<context source="surface">\n([\s\S]*?)\n<\/context>/);
+  content = [{{ type: "text", text: seen ? seen[1] : "nowhere" }}];
 }} else if (prompt === "Which profile do you see?") {{
   const seen = JSON.stringify(request).match(/PROFILE_[A-Z]+/g) ?? ["none"];
   content = [{{ type: "text", text: seen.join(",") }}];

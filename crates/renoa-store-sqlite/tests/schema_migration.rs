@@ -53,6 +53,7 @@ async fn opening_a_legacy_ledger_backfills_command_identity() {
     let mut changed = command;
     changed.input = CommandInput::Text {
         text: "changed".to_owned(),
+        context: None,
     };
     let conflict = store
         .admit_run(changed, agent)
@@ -69,6 +70,7 @@ fn command() -> CommandEnvelope {
         target: TargetRef::new("local:legacy-test"),
         input: CommandInput::Text {
             text: "original".to_owned(),
+            context: None,
         },
     }
 }

@@ -399,7 +399,13 @@ impl AgentSession {
                 let observed_at = observation.unix_milliseconds();
                 // Reading plugin state is blocking catalog I/O.
                 let (entries, skipped) = tokio::task::spawn_blocking(move || {
-                    message_context::admit(&database, agent, observed_at, previous_observed_at)
+                    message_context::admit(
+                        &database,
+                        agent,
+                        observation.surface_context(),
+                        observed_at,
+                        previous_observed_at,
+                    )
                 })
                 .await?;
                 let command = AgentCommand::observed(content.to_vec(), observed_at, entries)

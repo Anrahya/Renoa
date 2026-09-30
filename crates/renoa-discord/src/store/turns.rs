@@ -1,7 +1,7 @@
 use rusqlite::{OptionalExtension as _, params};
 use uuid::Uuid;
 
-use super::SurfaceStore;
+use super::{SurfaceStore, places};
 use crate::{DiscordError, ingress::pages, snowflake::Snowflake, store::schema};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -18,12 +18,17 @@ pub(crate) struct QueuedTurn {
     pub(crate) agent_id: Uuid,
     pub(crate) command_id: Uuid,
     pub(crate) prompt: String,
+    /// Where the message was written, submitted with it for the agent.
+    pub(crate) context: Option<String>,
     pub(crate) opened: bool,
 }
 
 impl SurfaceStore {
     /// Records one addressed Discord message as a queued command on its
-    /// channel's current task. A channel whose agent changed starts a new task.
+    /// channel's current task, with the description of where it was written.
+    /// The agent is the one bound to the channel, or to a thread's parent
+    /// channel, else the default. A channel whose agent changed starts a new
+    /// task.
     pub(crate) fn enqueue(
         &self,
         message_id: &Snowflake,
@@ -31,6 +36,7 @@ impl SurfaceStore {
         author_id: &Snowflake,
         canonical: &[u8],
         prompt: &str,
+        context: Option<&str>,
     ) -> Result<Enqueue, DiscordError> {
         if canonical.is_empty() {
             return Err(DiscordError::Invalid(
@@ -42,6 +48,7 @@ impl SurfaceStore {
         let author_id = author_id.as_str().to_owned();
         let canonical = canonical.to_vec();
         let prompt = prompt.to_owned();
+        let context = context.map(str::to_owned);
         self.access(move |connection| {
             let transaction = schema::immediate_transaction(connection)?;
             let existing = transaction
@@ -69,13 +76,14 @@ impl SurfaceStore {
                 transaction.commit()?;
                 return Ok(Enqueue::Duplicate);
             }
-            let agent_id: String = transaction.query_row(
-                "SELECT COALESCE(
-                    (SELECT agent_id FROM channel_bindings WHERE channel_id = ?1), agent_id
-                 ) FROM identity WHERE singleton = 1",
-                [&channel_id],
-                |row| row.get(0),
-            )?;
+            let agent_id = match places::bound_agent(&transaction, &channel_id)? {
+                Some(agent_id) => agent_id,
+                None => transaction.query_row(
+                    "SELECT agent_id FROM identity WHERE singleton = 1",
+                    [],
+                    |row| row.get(0),
+                )?,
+            };
             let task_id = current_task(&transaction, &channel_id, &agent_id)?;
             transaction.execute(
                 "INSERT INTO messages(
@@ -90,9 +98,15 @@ impl SurfaceStore {
                 ],
             )?;
             transaction.execute(
-                "INSERT INTO turns(message_id, task_id, command_id, prompt, state)
-                 VALUES (?1, ?2, ?3, ?4, 'queued')",
-                params![message_id, task_id, Uuid::new_v4().to_string(), prompt],
+                "INSERT INTO turns(message_id, task_id, command_id, prompt, context, state)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'queued')",
+                params![
+                    message_id,
+                    task_id,
+                    Uuid::new_v4().to_string(),
+                    prompt,
+                    context
+                ],
             )?;
             transaction.commit()?;
             Ok(Enqueue::Fresh)
@@ -104,7 +118,7 @@ impl SurfaceStore {
             connection
                 .query_row(
                     "SELECT turns.message_id, turns.task_id, tasks.agent_id, turns.command_id,
-                            turns.prompt, tasks.opened
+                            turns.prompt, turns.context, tasks.opened
                      FROM turns JOIN tasks ON tasks.task_id = turns.task_id
                      WHERE turns.state = 'queued'
                      ORDER BY length(turns.message_id), turns.message_id LIMIT 1",
@@ -116,7 +130,8 @@ impl SurfaceStore {
                             agent_id: parse_uuid(&row.get::<_, String>(2)?)?,
                             command_id: parse_uuid(&row.get::<_, String>(3)?)?,
                             prompt: row.get(4)?,
-                            opened: row.get(5)?,
+                            context: row.get(5)?,
+                            opened: row.get(6)?,
                         })
                     },
                 )

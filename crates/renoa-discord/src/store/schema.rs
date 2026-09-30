@@ -6,7 +6,7 @@ use crate::DiscordError;
 
 pub(super) const DATABASE_FILE: &str = "discord.sqlite3";
 const LEASE_FILE: &str = ".discord.lock";
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
     let connection = Connection::open(path)?;
@@ -24,12 +24,18 @@ pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
             migrate_v1(&connection)?;
             migrate_v3(&connection)?;
             migrate_v4(&connection)?;
+            migrate_v5(&connection)?;
         }
         3 => {
             migrate_v3(&connection)?;
             migrate_v4(&connection)?;
+            migrate_v5(&connection)?;
         }
-        4 => migrate_v4(&connection)?,
+        4 => {
+            migrate_v4(&connection)?;
+            migrate_v5(&connection)?;
+        }
+        5 => migrate_v5(&connection)?,
         SCHEMA_VERSION => {}
         other => {
             return Err(DiscordError::Invalid(format!(
@@ -120,11 +126,13 @@ fn initialize(connection: &Connection) -> Result<(), DiscordError> {
 
          {conversations}
          {progress}
+         {places}
          {GATEWAY_SCHEMA}
          {ACTION_SCHEMA}
          {CONTROL_SCHEMA}",
         conversations = conversation_schema(),
         progress = progress_schema(),
+        places = places_schema(),
     ))?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -194,6 +202,21 @@ fn progress_schema() -> String {
             channel_id TEXT NOT NULL CHECK ({channel}),
             message_id TEXT NOT NULL CHECK ({message})
          ) STRICT;"
+    )
+}
+
+/// The server's channels and threads as gateway events describe them, and the
+/// description of its place that each queued message is submitted with.
+fn places_schema() -> String {
+    let channel = SNOWFLAKE.replace("{0}", "channel_id");
+    let parent = SNOWFLAKE.replace("{0}", "thread_parent_id");
+    format!(
+        "CREATE TABLE channels (
+            channel_id TEXT PRIMARY KEY CHECK ({channel}),
+            name TEXT,
+            thread_parent_id TEXT CHECK (thread_parent_id IS NULL OR ({parent}))
+         ) STRICT;
+         ALTER TABLE turns ADD COLUMN context TEXT;"
     )
 }
 
@@ -272,6 +295,17 @@ fn migrate_v3(connection: &Connection) -> Result<(), DiscordError> {
 fn migrate_v4(connection: &Connection) -> Result<(), DiscordError> {
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch(&progress_schema())?;
+    transaction.pragma_update(None, "user_version", 5)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Schema 6 keeps the channel directory and each turn's surface context.
+/// Messages already queued keep no context; the directory fills from the
+/// gateway and from lookups as messages arrive.
+fn migrate_v5(connection: &Connection) -> Result<(), DiscordError> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(&places_schema())?;
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())

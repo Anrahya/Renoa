@@ -1,4 +1,4 @@
-export const RCP_VERSION = 11;
+export const RCP_VERSION = 12;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -15,6 +15,8 @@ export interface TaskSummary {
 export interface TextCommandInput {
   readonly type: "text";
   readonly text: string;
+  /** Where the submitting surface received the text, in its own words. */
+  readonly context?: string;
 }
 
 export interface CommandEnvelope {
@@ -207,7 +209,14 @@ function parseCommand(value: unknown): CommandEnvelope {
     principalId: uuid(command.principalId, "principalId"),
     surface: string(command.surface, "surface"),
     target: string(command.target, "target"),
-    input: { type: inputType, text: string(input.text, "command text") },
+    input:
+      input.context === undefined
+        ? { type: inputType, text: string(input.text, "command text") }
+        : {
+            type: inputType,
+            text: string(input.text, "command text"),
+            context: string(input.context, "command context"),
+          },
   };
 }
 

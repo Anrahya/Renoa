@@ -124,7 +124,7 @@ the time the Host admitted it and the context it computed then:
 AgentCommand {
   content: Vec<ContentBlock>,
   observed_at_unix_ms?: i64,
-  context?: [{ source: "plugin:<id>", text: String }]
+  context?: [{ source: "surface" | "plugin:<id>", text: String }]
 }
 ```
 

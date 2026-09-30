@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use support::{
     CuttableProxy, HostFixture, TestSystem, agent_target, attach, attach_after,
     collect_through_terminal, collect_through_turn_started, collect_until, open_task,
-    submit_when_node_is_online, wait_for_path, wait_for_targets,
+    submit_placed_when_node_is_online, submit_when_node_is_online, wait_for_path, wait_for_targets,
 };
 
 #[tokio::test]
@@ -203,6 +203,50 @@ async fn a_turn_reads_the_user_profile_of_the_principal_that_sent_the_command() 
     })
     .await
     .expect("user profile test timed out");
+}
+
+#[tokio::test]
+async fn the_surface_context_of_a_command_reaches_the_model_with_that_message() {
+    timeout(Duration::from_secs(10), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+        let mut surface = system.connect_surface().await;
+        attach(&mut surface, system.task_id).await;
+
+        let place = "Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)";
+        let command_id = CommandId::new();
+        submit_placed_when_node_is_online(
+            &mut surface,
+            system.task_id,
+            command_id,
+            "Where am I?",
+            Some(place),
+        )
+        .await;
+        let events = collect_through_terminal(&mut surface).await;
+        assert_execution_event(
+            &events,
+            command_id,
+            |kind| matches!(kind, ExecutionEventKind::AssistantMessage { text } if text == place),
+        );
+
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("surface context test timed out");
 }
 
 #[tokio::test]

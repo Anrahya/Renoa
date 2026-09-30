@@ -171,6 +171,7 @@ async fn reused_command_id_rejects_changed_command_or_agent_content() {
     let mut changed_input = command.clone();
     changed_input.input = CommandInput::Text {
         text: "Different request.".to_owned(),
+        context: None,
     };
     let mut changed_target = command.clone();
     changed_target.target = TargetRef::new("remote:other-workspace");

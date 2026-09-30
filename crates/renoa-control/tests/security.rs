@@ -356,6 +356,7 @@ mod security_behaviors {
                 command_id,
                 input: CommandInput::Text {
                     text: "continue".to_owned(),
+                    context: None,
                 },
             },
         )
@@ -715,6 +716,7 @@ mod security_behaviors {
                 command_id: CommandId::new(),
                 input: CommandInput::Text {
                     text: "steal this task".to_owned(),
+                    context: None,
                 },
             },
         )

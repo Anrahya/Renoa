@@ -29,7 +29,7 @@ async fn a_surface_opens_a_task_submits_and_receives_its_execution_in_order() {
     assert_eq!(surface.attach(task_id, None).await, Ok(None));
     let command_id = CommandId::new();
     surface
-        .submit(task_id, command_id, "Summarize today.".to_owned())
+        .submit(task_id, command_id, "Summarize today.".to_owned(), None)
         .await
         .expect("submit command");
     execute(&mut node, task_id, command_id).await;
@@ -77,7 +77,7 @@ async fn refusals_carry_the_coordinator_error_code() {
     wait_for_targets(&surface, 0).await;
 
     let refused = surface
-        .submit(task_id, CommandId::new(), "Are you there?".to_owned())
+        .submit(task_id, CommandId::new(), "Are you there?".to_owned(), None)
         .await
         .expect_err("an offline node refuses new work");
     assert_eq!(refused.code(), Some(ErrorCode::NodeOffline));

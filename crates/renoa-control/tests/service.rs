@@ -200,6 +200,7 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
     let command_id = CommandId::from_uuid(Uuid::from_u128(4));
     let input = CommandInput::Text {
         text: "continue".to_owned(),
+        context: None,
     };
     send(
         &mut surface,

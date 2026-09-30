@@ -25,6 +25,7 @@ fn command(id: u128) -> CommandEnvelope {
         target: TargetRef::new("agent:alpha"),
         input: CommandInput::Text {
             text: "continue".to_owned(),
+            context: None,
         },
     }
 }

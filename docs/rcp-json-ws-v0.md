@@ -3,10 +3,10 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `11`.
+first implemented transport binding. The current binding version is `12`.
 
-The binding is a candidate contract, not a stable public release. Version `10`
-is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
+The binding is a candidate contract, not a stable public release. The current
+version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
 browser surfaces, and a TypeScript Pi node. Cross-language tests cover both authenticated roles,
 discovery and authorization, replay, live reattachment, offline-node rejection,
 lost acknowledgements, `replay_required`, JavaScript's exact integer limit, and
@@ -53,14 +53,18 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `11` with `version_mismatch` and ends the session.
+rejects any value other than `12` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `11` supersedes version `10` by adding task deletion by the task's
+Version `12` supersedes version `11` by adding an optional `context` to text
+command input: the surface's own description of where the text was written.
+A version `11` peer is rejected at authentication.
+
+Version `11` superseded version `10` by adding task deletion by the task's
 owner (`delete_task`). A version `10` peer is rejected at authentication.
 
 Version `10` superseded version `9` by adding node target advertisement
@@ -89,7 +93,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 11,
+  "version": 12,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -99,7 +103,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 11,
+  "version": 12,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -112,7 +116,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 11,
+  "version": 12,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -125,7 +129,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 11,
+  "version": 12,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -141,7 +145,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 11
+  "version": 12
 }
 ```
 
@@ -306,9 +310,15 @@ Successful durable admission:
 }
 ```
 
+Text input may carry an optional `context` string, written by the surface to
+say where the text was written, for example
+`"context": "Discord server 1\nchannel #general (2)"`. It is omitted when
+absent. RCP stores and delivers it with the command and gives it no other
+meaning; the executor decides whether to show it to the agent.
+
 `request_id` correlates one connection attempt. `command_id` is the durable
-idempotency identity and must be reused with identical content after an
-uncertain response.
+idempotency identity and must be reused with identical content, `context`
+included, after an uncertain response.
 
 ### Task event
 

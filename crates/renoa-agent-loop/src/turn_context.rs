@@ -12,8 +12,10 @@ use thiserror::Error;
 
 use crate::turn_timing::TurnTiming;
 
-/// The only source kind with a producer: a Host plugin.
+/// A Host plugin's entry is `plugin:<id>`.
 const PLUGIN_SOURCE: &str = "plugin:";
+/// The surface that received the message, such as where it was written.
+const SURFACE_SOURCE: &str = "surface";
 const MAX_SOURCE_BYTES: usize = 64;
 const MAX_TEXT_BYTES: usize = 256;
 const MAX_TOTAL_TEXT_BYTES: usize = 1_024;
@@ -37,17 +39,29 @@ impl ContextContribution {
         Self::new(format!("{PLUGIN_SOURCE}{plugin_id}"), text.into())
     }
 
+    /// Creates the entry the receiving surface supplied with the message.
+    ///
+    /// # Errors
+    ///
+    /// Rejects text that is blank, longer than 256 bytes, or holds a control
+    /// character other than a line break.
+    pub fn surface(text: impl Into<String>) -> Result<Self, TurnContextError> {
+        Self::new(SURFACE_SOURCE.to_owned(), text.into())
+    }
+
     fn new(source: String, text: String) -> Result<Self, TurnContextError> {
-        let name = source
-            .strip_prefix(PLUGIN_SOURCE)
-            .ok_or(TurnContextError::InvalidSource)?;
-        if source.len() > MAX_SOURCE_BYTES
-            || !name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
-            || !name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
-        {
-            return Err(TurnContextError::InvalidSource);
+        if source != SURFACE_SOURCE {
+            let name = source
+                .strip_prefix(PLUGIN_SOURCE)
+                .ok_or(TurnContextError::InvalidSource)?;
+            if source.len() > MAX_SOURCE_BYTES
+                || !name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+            {
+                return Err(TurnContextError::InvalidSource);
+            }
         }
         if text.trim().is_empty()
             || text.len() > MAX_TEXT_BYTES
@@ -171,11 +185,13 @@ impl TurnAnnotation {
     }
 }
 
-/// Invalid Host-provided turn context.
+/// Invalid turn context.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum TurnContextError {
-    #[error("context source must be `plugin:` and a lowercase plugin id of at most 64 bytes")]
+    #[error(
+        "context source must be `surface`, or `plugin:` and a lowercase plugin id of at most 64 bytes"
+    )]
     InvalidSource,
     #[error(
         "context text must be 1-{MAX_TEXT_BYTES} bytes with no control character but a line break"
@@ -263,7 +279,9 @@ mod tests {
         let decode = |value| serde_json::from_value::<TurnContext>(value);
         assert!(decode(json!([{"source": "plugin:renoa.time", "text": "now"}])).is_ok());
         assert!(decode(json!([])).is_err());
+        assert!(decode(json!([{"source": "surface", "text": "Discord channel 1"}])).is_ok());
         assert!(decode(json!([{"source": "surface:discord", "text": "now"}])).is_err());
+        assert!(decode(json!([{"source": "surface", "text": "a\u{7}"}])).is_err());
         assert!(decode(json!([{"source": "plugin:renoa.time", "text": "a\u{0}"}])).is_err());
         assert!(
             decode(json!([{"source": "plugin:renoa.time", "text": "now", "extra": 1}])).is_err()

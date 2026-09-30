@@ -104,6 +104,7 @@ struct ReferencedMessage {
 /// The channel and reply target needed before the surface store is consulted.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Route {
+    pub(crate) guild_id: Option<String>,
     pub(crate) channel_id: String,
     pub(crate) reference_id: Option<String>,
     pub(crate) in_thread: bool,
@@ -112,6 +113,7 @@ pub(crate) struct Route {
 pub(crate) fn route(payload: &[u8]) -> Result<Route, DiscordError> {
     let message: MessageCreate = serde_json::from_slice(payload)?;
     Ok(Route {
+        guild_id: message.guild_id,
         channel_id: message.channel_id,
         reference_id: message
             .message_reference
