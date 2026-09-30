@@ -10,6 +10,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Renoa control-room decisions
 
+- On 2026-09-28 the owner restarted the redesign from the public landing page: it must be very visually appealing and explain what Renoa is. Agent-page design is deferred. Control Center screens stay uncluttered at a glance; detail lives in nested, settings-style pages. The owner rejected the dark agent-card roster ("crew deck") home concept.
+
 - On 2026-09-28 the owner said the current Control Room aesthetic and UI do not work and will be redesigned as a whole. Until that redesign, new UI (starting with Discord onboarding on the agent Configure page) is deliberately bare-minimum and functional: plain shadcn forms, no visual polish. Do not treat the present look as an approved baseline for the redesign.
 
 - The owner requested finishing the entire Host design pass before backend work. Keep the Agents map as the primary surface, enlarge it to use the viewport, and remove the duplicate selected-agent block below it. Portraits open the agent workspace directly. Finish Connections, Work, and System within the approved shadcn foundation, sharing tab-local preview data and adding destinations only when an existing page cannot contain the function. Backend integration and deployment remain separate work.

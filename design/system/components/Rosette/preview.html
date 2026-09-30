@@ -1,0 +1,12 @@
+<!-- @dsCard group="Parts" height=300 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans)} .wrap{padding:20px 24px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px}</style>
+<div class="wrap" style="align-items:flex-end;gap:28px">
+  <div id="r1"></div><div id="r2"></div><div id="r3"></div><div id="r4"></div>
+</div>
+<script>
+Renoa.Rosette('#r1',{size:28,name:'Agent A'});
+Renoa.Rosette('#r2',{size:64,plugins:2,name:'Agent B'});
+Renoa.Rosette('#r3',{size:120,parts:['model','loop','tools','profile'],plugins:1,proposed:1,name:'New agent'});
+Renoa.Rosette('#r4',{size:300,labels:true,plugins:['Web search','Calendar'],proposed:1,versions:{model:'v3',loop:'v2',context:'v4',tools:'v6',skills:'v2',profile:'v3'},name:'Agent A'});
+</script>
