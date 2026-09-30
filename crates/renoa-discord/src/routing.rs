@@ -6,7 +6,6 @@
 
 use std::{
     collections::HashMap,
-    sync::{Mutex, PoisonError},
     time::{Duration, Instant},
 };
 
@@ -33,14 +32,15 @@ pub(crate) struct Inbox<'a> {
     pub(crate) wake: &'a Notify,
     pub(crate) guild_id: &'a Snowflake,
     pub(crate) operator_user_id: &'a Snowflake,
-    /// When each channel's last lookup failed.
-    pub(crate) failed_lookups: Mutex<HashMap<String, Instant>>,
+    /// When each channel's lookup failed within the last
+    /// [`RETRY_LOOKUP_AFTER`]; older entries are dropped as new ones arrive.
+    pub(crate) failed_lookups: HashMap<Snowflake, Instant>,
 }
 
 /// Queues one `MESSAGE_CREATE` payload when it is a turn. An unreadable
 /// payload is ignored, since Discord's event stream is external input.
 pub(crate) async fn accept(
-    inbox: &Inbox<'_>,
+    inbox: &mut Inbox<'_>,
     bot_user_id: Option<&str>,
     payload: &[u8],
 ) -> Result<(), DiscordError> {
@@ -54,7 +54,7 @@ pub(crate) async fn accept(
             return Ok(());
         }
     };
-    let in_guild = route.guild_id.as_deref() == Some(inbox.guild_id.as_str());
+    let in_guild = route.guild_id.as_ref() == Some(inbox.guild_id);
     let mut place = if in_guild {
         inbox.store.place(&route.channel_id)?
     } else {
@@ -74,7 +74,7 @@ pub(crate) async fn accept(
         None => false,
     };
     let active_conversation = inbox.store.is_bound(&route.channel_id)?
-        || (in_thread && inbox.store.has_conversation(&route.channel_id)?);
+        || (in_thread && inbox.store.has_conversation(route.channel_id.as_str())?);
     let addressed = match ingress::addressed(
         payload,
         &Snowflake::parse(bot_user_id)?,
@@ -99,11 +99,12 @@ pub(crate) async fn accept(
                 Some(parent_id) => inbox.store.place(parent_id)?,
                 None => None,
             };
-            places::describe(Some(inbox.guild_id.as_str()), place, parent.as_ref())
+            let parent_name = parent.as_ref().and_then(|parent| parent.name.as_deref());
+            places::describe(Some(inbox.guild_id), place, parent_name)
         }
         None => places::describe(
-            in_guild.then_some(inbox.guild_id.as_str()),
-            &unknown(&route.channel_id),
+            in_guild.then_some(inbox.guild_id),
+            &Place::unknown(route.channel_id.clone()),
             None,
         ),
     };
@@ -123,23 +124,22 @@ pub(crate) async fn accept(
 
 /// Asks Discord about a server channel the directory has not seen, and
 /// remembers the answer. If Discord cannot say, the message is placed by its
-/// own channel alone, and the channel is not asked about again for a minute.
-async fn locate(inbox: &Inbox<'_>, channel_id: &str) -> Result<Option<Place>, DiscordError> {
-    let recently_failed = |failures: &HashMap<String, Instant>| {
-        failures
-            .get(channel_id)
-            .is_some_and(|at| at.elapsed() < RETRY_LOOKUP_AFTER)
-    };
-    if recently_failed(
-        &inbox
-            .failed_lookups
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner),
-    ) {
+/// own channel alone, and the channel is not asked about again for
+/// [`RETRY_LOOKUP_AFTER`].
+async fn locate(
+    inbox: &mut Inbox<'_>,
+    channel_id: &Snowflake,
+) -> Result<Option<Place>, DiscordError> {
+    if inbox
+        .failed_lookups
+        .get(channel_id)
+        .is_some_and(|at| at.elapsed() < RETRY_LOOKUP_AFTER)
+    {
         return Ok(None);
     }
-    let failure = match tokio::time::timeout(LOOKUP_TIMEOUT, inbox.api.channel(channel_id)).await {
-        Ok(Ok(channel)) if channel.id.as_str() == channel_id => {
+    let lookup = inbox.api.channel(channel_id.as_str());
+    let failure = match tokio::time::timeout(LOOKUP_TIMEOUT, lookup).await {
+        Ok(Ok(channel)) if &channel.id == channel_id => {
             let place = Place::of(&channel);
             inbox.store.remember_place(&place)?;
             return Ok(Some(place));
@@ -150,9 +150,10 @@ async fn locate(inbox: &Inbox<'_>, channel_id: &str) -> Result<Option<Place>, Di
     };
     inbox
         .failed_lookups
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(channel_id.to_owned(), Instant::now());
+        .retain(|_, at| at.elapsed() < RETRY_LOOKUP_AFTER);
+    inbox
+        .failed_lookups
+        .insert(channel_id.clone(), Instant::now());
     renoa_telemetry::event(
         "renoa.discord",
         "warn",
@@ -160,14 +161,6 @@ async fn locate(inbox: &Inbox<'_>, channel_id: &str) -> Result<Option<Place>, Di
         &serde_json::json!({ "channel_id": channel_id, "error": failure }),
     );
     Ok(None)
-}
-
-fn unknown(channel_id: &str) -> Place {
-    Place {
-        channel_id: channel_id.to_owned(),
-        name: None,
-        thread_parent_id: None,
-    }
 }
 
 #[cfg(test)]

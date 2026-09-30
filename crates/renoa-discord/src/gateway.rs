@@ -214,7 +214,7 @@ pub(crate) async fn maintain(
                     wake,
                     guild_id,
                     operator_user_id,
-                    failed_lookups: std::sync::Mutex::default(),
+                    failed_lookups: std::collections::HashMap::new(),
                 },
                 token,
                 state: &mut state,
@@ -356,12 +356,16 @@ async fn handle_text(
         }
         Step::Ready => remember_bot(drive)?,
         Step::Message(payload) => {
-            routing::accept(&drive.inbox, drive.state.bot_user_id.as_deref(), &payload)
-                .await
-                .map_err(End::Failed)?;
+            routing::accept(
+                &mut drive.inbox,
+                drive.state.bot_user_id.as_deref(),
+                &payload,
+            )
+            .await
+            .map_err(End::Failed)?;
         }
         Step::Dispatch { kind, data } => {
-            match places::changes(&kind, &data, drive.inbox.guild_id.as_str()) {
+            match places::changes(&kind, &data, drive.inbox.guild_id) {
                 Ok(Some(changes)) => drive
                     .inbox
                     .store

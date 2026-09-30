@@ -8,7 +8,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{DiscordError, api::Channel, snowflake::Snowflake};
+use crate::{api::Channel, snowflake::Snowflake};
 
 /// Longest channel or thread name, in bytes, quoted in a description. Two
 /// names, three ids and the labels stay within the 256-byte context entry.
@@ -17,21 +17,27 @@ const MAX_NAME_BYTES: usize = 60;
 /// One channel or thread as the directory keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Place {
-    pub(crate) channel_id: String,
+    pub(crate) channel_id: Snowflake,
     pub(crate) name: Option<String>,
     /// The channel a thread belongs to.
-    pub(crate) thread_parent_id: Option<String>,
+    pub(crate) thread_parent_id: Option<Snowflake>,
 }
 
 impl Place {
     pub(crate) fn of(channel: &Channel) -> Self {
         Self {
-            channel_id: channel.id.as_str().to_owned(),
+            channel_id: channel.id.clone(),
             name: channel.name().map(str::to_owned),
-            thread_parent_id: channel
-                .is_thread()
-                .then(|| channel.parent_id.as_ref().map(|id| id.as_str().to_owned()))
-                .flatten(),
+            thread_parent_id: channel.parent_id.clone().filter(|_| channel.is_thread()),
+        }
+    }
+
+    /// A channel known only by its id.
+    pub(crate) const fn unknown(channel_id: Snowflake) -> Self {
+        Self {
+            channel_id,
+            name: None,
+            thread_parent_id: None,
         }
     }
 }
@@ -40,7 +46,7 @@ impl Place {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Changes {
     pub(crate) known: Vec<Place>,
-    pub(crate) gone: Vec<String>,
+    pub(crate) gone: Vec<Snowflake>,
 }
 
 /// The directory changes in a gateway dispatch about the connected server.
@@ -52,11 +58,11 @@ pub(crate) struct Changes {
 pub(crate) fn changes(
     kind: &str,
     data: &Value,
-    guild_id: &str,
-) -> Result<Option<Changes>, DiscordError> {
+    guild_id: &Snowflake,
+) -> Result<Option<Changes>, serde_json::Error> {
     #[derive(Deserialize)]
     struct Guild {
-        id: String,
+        id: Snowflake,
         #[serde(default)]
         channels: Vec<Channel>,
         #[serde(default)]
@@ -64,7 +70,7 @@ pub(crate) fn changes(
     }
     #[derive(Deserialize)]
     struct ThreadList {
-        guild_id: String,
+        guild_id: Snowflake,
         #[serde(default)]
         threads: Vec<Channel>,
     }
@@ -72,17 +78,16 @@ pub(crate) fn changes(
         known: channels.iter().map(Place::of).collect(),
         gone: Vec::new(),
     };
-    let ours =
-        |channel: &Channel| channel.guild_id.as_ref().map(Snowflake::as_str) == Some(guild_id);
+    let ours = |channel: &Channel| channel.guild_id.as_ref() == Some(guild_id);
     Ok(match kind {
         "GUILD_CREATE" => {
             let guild = Guild::deserialize(data)?;
-            (guild.id == guild_id)
+            (&guild.id == guild_id)
                 .then(|| known(guild.channels.into_iter().chain(guild.threads).collect()))
         }
         "THREAD_LIST_SYNC" => {
             let list = ThreadList::deserialize(data)?;
-            (list.guild_id == guild_id).then(|| known(list.threads))
+            (&list.guild_id == guild_id).then(|| known(list.threads))
         }
         "CHANNEL_CREATE" | "CHANNEL_UPDATE" | "THREAD_CREATE" | "THREAD_UPDATE" => {
             let channel = Channel::deserialize(data)?;
@@ -92,7 +97,7 @@ pub(crate) fn changes(
             let channel = Channel::deserialize(data)?;
             ours(&channel).then(|| Changes {
                 known: Vec::new(),
-                gone: vec![channel.id.as_str().to_owned()],
+                gone: vec![channel.id],
             })
         }
         _ => None,
@@ -100,29 +105,39 @@ pub(crate) fn changes(
 }
 
 /// The surface context for a message: the server, the channel, and the thread
-/// when there is one. A direct message has no server. Names the directory
-/// does not know are left out; ids are always present.
-pub(crate) fn describe(guild_id: Option<&str>, place: &Place, parent: Option<&Place>) -> String {
+/// when there is one, whose parent channel is named `parent_name`. A direct
+/// message has no server. Names the directory does not know are left out; ids
+/// are always present.
+pub(crate) fn describe(
+    guild_id: Option<&Snowflake>,
+    place: &Place,
+    parent_name: Option<&str>,
+) -> String {
     let Some(guild_id) = guild_id else {
-        return format!("Discord direct message (channel {})", place.channel_id);
+        return format!(
+            "Discord direct message (channel {})",
+            place.channel_id.as_str()
+        );
     };
-    let channel = |place: &Place| match place.name.as_deref() {
-        Some(name) => format!("channel #{} ({})", label(name), place.channel_id),
-        None => format!("channel {}", place.channel_id),
+    let channel = |id: &Snowflake, name: Option<&str>| match name {
+        Some(name) => format!("channel #{} ({})", label(name), id.as_str()),
+        None => format!("channel {}", id.as_str()),
     };
+    let server = guild_id.as_str();
     match &place.thread_parent_id {
-        None => format!("Discord server {guild_id}\n{}", channel(place)),
+        None => format!(
+            "Discord server {server}\n{}",
+            channel(&place.channel_id, place.name.as_deref())
+        ),
         Some(parent_id) => {
-            let parent = parent.cloned().unwrap_or_else(|| Place {
-                channel_id: parent_id.clone(),
-                name: None,
-                thread_parent_id: None,
-            });
             let thread = match place.name.as_deref() {
-                Some(name) => format!("thread \"{}\" ({})", label(name), place.channel_id),
-                None => format!("thread {}", place.channel_id),
+                Some(name) => format!("thread \"{}\" ({})", label(name), place.channel_id.as_str()),
+                None => format!("thread {}", place.channel_id.as_str()),
             };
-            format!("Discord server {guild_id}\n{}\n{thread}", channel(&parent))
+            format!(
+                "Discord server {server}\n{}\n{thread}",
+                channel(parent_id, parent_name)
+            )
         }
     }
 }
@@ -161,12 +176,17 @@ mod tests {
     use serde_json::json;
 
     use super::{Changes, Place, changes, describe};
+    use crate::snowflake::Snowflake;
 
-    fn place(id: &str, name: Option<&str>, parent: Option<&str>) -> Place {
+    fn id(value: &str) -> Snowflake {
+        Snowflake::parse(value).expect("snowflake")
+    }
+
+    fn place(channel: &str, name: Option<&str>, parent: Option<&str>) -> Place {
         Place {
-            channel_id: id.to_owned(),
+            channel_id: id(channel),
             name: name.map(str::to_owned),
-            thread_parent_id: parent.map(str::to_owned),
+            thread_parent_id: parent.map(id),
         }
     }
 
@@ -181,7 +201,7 @@ mod tests {
             "threads": [{"id": "303", "type": 11, "name": "plan", "parent_id": "202"}]
         });
         assert_eq!(
-            changes("GUILD_CREATE", &guild, "10").expect("guild"),
+            changes("GUILD_CREATE", &guild, &id("10")).expect("guild"),
             Some(Changes {
                 known: vec![
                     place("200", Some("Work"), None),
@@ -191,50 +211,54 @@ mod tests {
                 gone: Vec::new(),
             })
         );
-        assert_eq!(changes("GUILD_CREATE", &guild, "11").expect("other"), None);
+        assert_eq!(
+            changes("GUILD_CREATE", &guild, &id("11")).expect("other"),
+            None
+        );
         let thread = json!({"id": "304", "guild_id": "10", "type": 12, "name": "private", "parent_id": "202"});
         assert_eq!(
-            changes("THREAD_CREATE", &thread, "10")
+            changes("THREAD_CREATE", &thread, &id("10"))
                 .expect("thread")
                 .expect("ours")
                 .known,
             vec![place("304", Some("private"), Some("202"))]
         );
         assert_eq!(
-            changes("THREAD_DELETE", &thread, "10")
+            changes("THREAD_DELETE", &thread, &id("10"))
                 .expect("deleted")
                 .expect("ours")
                 .gone,
-            vec!["304".to_owned()]
+            vec![id("304")]
         );
         assert_eq!(
-            changes("THREAD_UPDATE", &thread, "11").expect("other"),
+            changes("THREAD_UPDATE", &thread, &id("11")).expect("other"),
             None
         );
         assert_eq!(
-            changes("MESSAGE_CREATE", &thread, "10").expect("not ours"),
+            changes("MESSAGE_CREATE", &thread, &id("10")).expect("not ours"),
             None
         );
-        assert!(changes("CHANNEL_UPDATE", &json!({"id": "x", "type": 0}), "10").is_err());
+        assert!(changes("CHANNEL_UPDATE", &json!({"id": "x", "type": 0}), &id("10")).is_err());
     }
 
     #[test]
     fn a_description_names_the_server_channel_and_thread() {
+        let server = id("10");
         let desk = place("202", Some("desk"), None);
         assert_eq!(
-            describe(Some("10"), &desk, None),
+            describe(Some(&server), &desk, None),
             "Discord server 10\nchannel #desk (202)"
         );
         assert_eq!(
             describe(
-                Some("10"),
+                Some(&server),
                 &place("303", Some("plan"), Some("202")),
-                Some(&desk)
+                desk.name.as_deref()
             ),
             "Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)"
         );
         assert_eq!(
-            describe(Some("10"), &place("303", None, Some("202")), None),
+            describe(Some(&server), &place("303", None, Some("202")), None),
             "Discord server 10\nchannel 202\nthread 303"
         );
         assert_eq!(
@@ -251,17 +275,20 @@ mod tests {
             Some("202"),
         );
         assert_eq!(
-            describe(Some("10"), &forged, None),
+            describe(Some(&id("10")), &forged, None),
             "Discord server 10\nchannel 202\nthread \"plan' (999) thread \" (303)"
         );
     }
 
     #[test]
     fn the_longest_description_fits_one_context_entry() {
-        let id = "18446744073709551615";
+        let max = "18446744073709551615";
         let long = "é\u{7}".repeat(80);
-        let parent = place(id, Some(&long), None);
-        let text = describe(Some(id), &place(id, Some(&long), Some(id)), Some(&parent));
+        let text = describe(
+            Some(&id(max)),
+            &place(max, Some(&long), Some(max)),
+            Some(&long),
+        );
         assert!(text.len() <= 256, "{} bytes", text.len());
         assert!(!text.chars().any(|c| c.is_control() && c != '\n'));
         renoa_agent_loop::ContextContribution::surface(text).expect("a valid surface entry");

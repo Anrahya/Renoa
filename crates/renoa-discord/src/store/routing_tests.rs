@@ -184,13 +184,12 @@ fn schema_five_keeps_queued_messages_and_gains_the_directory_and_context() {
     );
     store
         .remember_place(&crate::places::Place {
-            channel_id: "303".into(),
+            channel_id: snow("303"),
             name: Some("plan".into()),
-            thread_parent_id: Some("202".into()),
+            thread_parent_id: Some(snow("202")),
         })
         .unwrap();
-    assert_eq!(
-        store.place("303").unwrap().unwrap().name.as_deref(),
-        Some("plan")
-    );
+    let thread = store.place(&snow("303")).unwrap().unwrap();
+    assert_eq!(thread.name.as_deref(), Some("plan"));
+    assert_eq!(thread.thread_parent_id, Some(snow("202")));
 }

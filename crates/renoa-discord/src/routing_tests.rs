@@ -59,7 +59,7 @@ fn message(id: &str, channel: &str, guild: Option<&str>, mention: bool) -> Vec<u
 }
 
 /// The turn one message queued, answered so the next one is visible.
-async fn turn(inbox: &Inbox<'_>, payload: &[u8]) -> Option<QueuedTurn> {
+async fn turn(inbox: &mut Inbox<'_>, payload: &[u8]) -> Option<QueuedTurn> {
     accept(inbox, Some(BOT), payload).await.expect("accept");
     let queued = inbox.store.next_queued().expect("queue")?;
     inbox
@@ -112,7 +112,7 @@ impl Fixture {
         });
         store
             .apply_places(
-                &places::changes("GUILD_CREATE", &guild, "10")
+                &places::changes("GUILD_CREATE", &guild, &snowflake("10"))
                     .expect("guild")
                     .expect("ours"),
             )
@@ -146,7 +146,7 @@ impl Fixture {
             wake: &self.wake,
             guild_id: &self.guild_id,
             operator_user_id: &self.operator,
-            failed_lookups: std::sync::Mutex::default(),
+            failed_lookups: std::collections::HashMap::new(),
         }
     }
 
@@ -158,9 +158,9 @@ impl Fixture {
 #[tokio::test]
 async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_written() {
     let fixture = Fixture::new().await;
-    let inbox = fixture.inbox();
+    let mut inbox = fixture.inbox();
 
-    let bound = turn(&inbox, &message("1001", "202", Some("10"), false))
+    let bound = turn(&mut inbox, &message("1001", "202", Some("10"), false))
         .await
         .expect("a bound channel answers without a mention");
     assert_eq!(bound.agent_id, fixture.desk);
@@ -169,7 +169,7 @@ async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_wr
         Some("Discord server 10\nchannel #desk (202)")
     );
 
-    let thread = turn(&inbox, &message("1002", "303", Some("10"), false))
+    let thread = turn(&mut inbox, &message("1002", "303", Some("10"), false))
         .await
         .expect("a thread of a bound channel answers without a mention");
     assert_eq!(
@@ -182,7 +182,7 @@ async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_wr
         Some("Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)")
     );
 
-    let unseen = turn(&inbox, &message("1003", "304", Some("10"), false))
+    let unseen = turn(&mut inbox, &message("1003", "304", Some("10"), false))
         .await
         .expect("an unseen thread is looked up");
     assert_eq!(unseen.agent_id, fixture.desk);
@@ -190,7 +190,7 @@ async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_wr
         unseen.context.as_deref(),
         Some("Discord server 10\nchannel #desk (202)\nthread \"late\" (304)")
     );
-    turn(&inbox, &message("1004", "304", Some("10"), false))
+    turn(&mut inbox, &message("1004", "304", Some("10"), false))
         .await
         .expect("again");
     assert_eq!(fixture.lookups(), 1, "Discord is asked once");
@@ -199,15 +199,15 @@ async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_wr
 #[tokio::test]
 async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
     let fixture = Fixture::new().await;
-    let inbox = fixture.inbox();
+    let mut inbox = fixture.inbox();
 
     assert!(
-        turn(&inbox, &message("1005", "505", Some("10"), false))
+        turn(&mut inbox, &message("1005", "505", Some("10"), false))
             .await
             .is_none(),
         "an unbound channel needs a mention"
     );
-    let unbound = turn(&inbox, &message("1006", "505", Some("10"), true))
+    let unbound = turn(&mut inbox, &message("1006", "505", Some("10"), true))
         .await
         .expect("mentioned");
     assert_eq!(unbound.agent_id, fixture.default);
@@ -215,12 +215,12 @@ async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
         unbound.context.as_deref(),
         Some("Discord server 10\nchannel #lounge (505)")
     );
-    let unbound_thread = turn(&inbox, &message("1007", "606", Some("10"), true))
+    let unbound_thread = turn(&mut inbox, &message("1007", "606", Some("10"), true))
         .await
         .expect("mentioned in a thread");
     assert_eq!(unbound_thread.agent_id, fixture.default);
 
-    let unknown = turn(&inbox, &message("1008", "808", Some("10"), true))
+    let unknown = turn(&mut inbox, &message("1008", "808", Some("10"), true))
         .await
         .expect("a channel Discord cannot describe still answers");
     assert_eq!(unknown.agent_id, fixture.default);
@@ -228,17 +228,17 @@ async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
         unknown.context.as_deref(),
         Some("Discord server 10\nchannel 808")
     );
-    turn(&inbox, &message("1010", "808", Some("10"), true))
+    turn(&mut inbox, &message("1010", "808", Some("10"), true))
         .await
         .expect("mentioned again");
     assert!(
-        turn(&inbox, &message("1011", "909", Some("10"), false))
+        turn(&mut inbox, &message("1011", "909", Some("10"), false))
             .await
             .is_none(),
         "unaddressed chatter in an unseen channel is not looked up"
     );
 
-    let direct = turn(&inbox, &message("1009", "707", None, false))
+    let direct = turn(&mut inbox, &message("1009", "707", None, false))
         .await
         .expect("the operator's direct message");
     assert_eq!(direct.agent_id, fixture.default);
@@ -250,5 +250,31 @@ async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
         fixture.lookups(),
         1,
         "only the unseen server channel was looked up"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_lookup_is_retried_after_a_minute_and_then_forgotten() {
+    let fixture = Fixture::new().await;
+    let mut inbox = fixture.inbox();
+    let stale = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(61))
+        .expect("a minute ago");
+    let snowflake = |value: &str| Snowflake::parse(value).expect("snowflake");
+    inbox.failed_lookups.insert(snowflake("808"), stale);
+    inbox.failed_lookups.insert(snowflake("909"), stale);
+
+    turn(&mut inbox, &message("1001", "808", Some("10"), true))
+        .await
+        .expect("mentioned");
+    assert_eq!(
+        fixture.lookups(),
+        1,
+        "an expired failure is asked about again"
+    );
+    assert_eq!(
+        inbox.failed_lookups.keys().collect::<Vec<_>>(),
+        [&snowflake("808")],
+        "expired failures are dropped"
     );
 }
