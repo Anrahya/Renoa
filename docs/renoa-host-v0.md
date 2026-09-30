@@ -317,9 +317,11 @@ runs no agents: each channel's conversation is an RCP task on its routed agent's
 target, `agent:<uuid>`, opened on the node that advertises it. A thread is its
 own conversation on its parent channel's agent, and a thread of a bound channel
 answers without a mention. The worker keeps a directory of the server's
-channels and threads from gateway events, and asks Discord once for a channel
-it has not seen; if Discord cannot say, the message is routed by its own
-channel and the failure is logged. Channel routing, the task, a stable command
+channels and threads from gateway events. It asks Discord about a channel it
+has not seen when a thread message arrives, or when a message from any other
+channel is a turn; if Discord cannot say, the message is routed by its own
+channel, the failure is logged, and that channel is not asked about again for a
+minute. Channel routing, the task, a stable command
 identity, and the message's context (the server, channel, and thread ids and
 names) are persisted when a message is admitted, and the message is submitted
 under that identity with that context, so a reconnect retries it exactly. Reassignment starts a new task for subsequent messages;

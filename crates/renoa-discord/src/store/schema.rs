@@ -306,7 +306,7 @@ fn migrate_v4(connection: &Connection) -> Result<(), DiscordError> {
 fn migrate_v5(connection: &Connection) -> Result<(), DiscordError> {
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch(&places_schema())?;
-    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.pragma_update(None, "user_version", 6)?;
     transaction.commit()?;
     Ok(())
 }

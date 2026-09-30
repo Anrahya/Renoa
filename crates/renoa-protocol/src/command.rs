@@ -39,8 +39,8 @@ impl TargetRef {
 pub enum CommandInput {
     Text {
         text: String,
-        /// Where the surface received the text, such as a Discord channel,
-        /// written by that surface for the agent. The executor decides whether
+        /// Where the surface received the text, such as the conversation it
+        /// was written in, described by that surface for the agent. The executor decides whether
         /// to show it; RCP only carries it with the command.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<String>,

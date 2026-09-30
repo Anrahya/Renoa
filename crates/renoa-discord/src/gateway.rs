@@ -214,6 +214,7 @@ pub(crate) async fn maintain(
                     wake,
                     guild_id,
                     operator_user_id,
+                    failed_lookups: std::sync::Mutex::default(),
                 },
                 token,
                 state: &mut state,

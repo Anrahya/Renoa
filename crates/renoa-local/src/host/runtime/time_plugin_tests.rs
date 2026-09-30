@@ -107,9 +107,19 @@ async fn say_observed(
     prompt: &str,
     observation: TurnObservation,
 ) -> String {
+    say_as(session, Uuid::new_v4(), prompt, observation).await
+}
+
+/// One prompt under a caller-chosen command identity, as a retry sends it.
+async fn say_as(
+    session: &AgentSession,
+    command: Uuid,
+    prompt: &str,
+    observation: TurnObservation,
+) -> String {
     match session
         .execute_turn_observed(
-            Uuid::new_v4(),
+            command,
             vec![ContentBlock::text(prompt)],
             observation,
             Arc::new(Quiet),
@@ -284,6 +294,23 @@ async fn the_surface_says_where_a_message_was_written_ahead_of_every_plugin() {
             "<turn_context>\n<context source=\"surface\">\nDiscord direct message (channel 404)\n</context>\n</turn_context>"
         ],
         "the surface entry does not depend on any plugin"
+    );
+
+    let command = Uuid::new_v4();
+    let first = say_as(&untimed, command, "show", placed(T0, "channel #desk (202)")).await;
+    let retried = say_as(
+        &untimed,
+        command,
+        "show",
+        placed(T0, "channel #other (303)"),
+    )
+    .await;
+    assert_eq!(retried, first, "a retry of a finished command replays it");
+    let history = shown(say_observed(&untimed, "show", placed(T0, "channel #desk (202)")).await);
+    assert_eq!(
+        history[1],
+        "<turn_context>\n<context source=\"surface\">\nchannel #desk (202)\n</context>\n</turn_context>",
+        "the replayed command keeps the context it was admitted with"
     );
 }
 

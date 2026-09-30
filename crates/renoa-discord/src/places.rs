@@ -127,11 +127,24 @@ pub(crate) fn describe(guild_id: Option<&str>, place: &Place, parent: Option<&Pl
     }
 }
 
-/// A name as a description quotes it: one line, at most [`MAX_NAME_BYTES`].
+/// A name as a description quotes it: one line of visible text, at most
+/// [`MAX_NAME_BYTES`], that cannot close its own quotes. Anyone who can name a
+/// thread writes this text.
 fn label(name: &str) -> String {
     let line: String = name
         .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| match c {
+            '"' => '\'',
+            // Line and paragraph separators, zero-width and direction marks.
+            '\u{2028}'
+            | '\u{2029}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}' => ' ',
+            c if c.is_control() => ' ',
+            c => c,
+        })
         .collect();
     if line.len() <= MAX_NAME_BYTES {
         return line;
@@ -227,6 +240,19 @@ mod tests {
         assert_eq!(
             describe(None, &place("404", None, None), None),
             "Discord direct message (channel 404)"
+        );
+    }
+
+    #[test]
+    fn a_name_cannot_forge_another_line_or_close_its_quotes() {
+        let forged = place(
+            "303",
+            Some("plan\" (999)\u{2028}thread\u{202e}"),
+            Some("202"),
+        );
+        assert_eq!(
+            describe(Some("10"), &forged, None),
+            "Discord server 10\nchannel 202\nthread \"plan' (999) thread \" (303)"
         );
     }
 

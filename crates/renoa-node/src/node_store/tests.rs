@@ -25,7 +25,7 @@ fn command(id: u128) -> CommandEnvelope {
         target: TargetRef::new("agent:alpha"),
         input: CommandInput::Text {
             text: "continue".to_owned(),
-            context: None,
+            context: Some("channel #desk (202)".to_owned()),
         },
     }
 }
@@ -52,6 +52,27 @@ async fn a_task_keeps_the_session_recorded_by_its_first_command() {
     assert_eq!(first.binding.session_id, Uuid::from_u128(100));
     assert_eq!(redelivered, first);
     assert_eq!(second.binding.session_id, Uuid::from_u128(100));
+}
+
+#[tokio::test]
+async fn an_unfinished_command_keeps_its_surface_context_across_a_restart() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let path = files.path().join("node.sqlite");
+    let task_id = TaskId::from_uuid(Uuid::from_u128(3));
+    NodeStore::open(&path)
+        .expect("open node ledger")
+        .admit(task_id, command(10), proposal(100))
+        .await
+        .expect("admit");
+
+    let reopened = NodeStore::open(&path).expect("reopen node ledger");
+    let unfinished = reopened.load_unfinished().await.expect("recover");
+    assert_eq!(unfinished.len(), 1);
+    assert_eq!(unfinished[0].command, command(10));
+    assert_eq!(
+        unfinished[0].command.input.context(),
+        Some("channel #desk (202)")
+    );
 }
 
 #[tokio::test]

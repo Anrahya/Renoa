@@ -51,6 +51,10 @@ fn message(id: &str, channel: &str, guild: Option<&str>, mention: bool) -> Vec<u
     if let Some(guild) = guild {
         message["guild_id"] = json!(guild);
     }
+    // Discord numbers the messages of a thread.
+    if ["303", "304", "606"].contains(&channel) {
+        message["position"] = json!(1);
+    }
     serde_json::to_vec(&message).expect("payload")
 }
 
@@ -142,6 +146,7 @@ impl Fixture {
             wake: &self.wake,
             guild_id: &self.guild_id,
             operator_user_id: &self.operator,
+            failed_lookups: std::sync::Mutex::default(),
         }
     }
 
@@ -222,6 +227,15 @@ async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
     assert_eq!(
         unknown.context.as_deref(),
         Some("Discord server 10\nchannel 808")
+    );
+    turn(&inbox, &message("1010", "808", Some("10"), true))
+        .await
+        .expect("mentioned again");
+    assert!(
+        turn(&inbox, &message("1011", "909", Some("10"), false))
+            .await
+            .is_none(),
+        "unaddressed chatter in an unseen channel is not looked up"
     );
 
     let direct = turn(&inbox, &message("1009", "707", None, false))

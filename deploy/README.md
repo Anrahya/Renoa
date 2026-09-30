@@ -229,7 +229,8 @@ pins the previous identity and holds its bindings and task cursors.
 Discord store schema 6 keeps the server's channel directory, so a thread
 answers as its parent channel's agent, and each queued message's context.
 Upgrading from schema 5 adds an empty directory; it fills from gateway events
-and from one lookup per unseen channel. Messages queued before the upgrade are
+and from a lookup the first time a turn, or any message in a thread, comes from
+a channel it has not seen. A failed lookup is retried after a minute. Messages queued before the upgrade are
 submitted without context. This release also moves RCP to binding version 12,
 so the coordinator, node, and every surface must be upgraded together.
 
