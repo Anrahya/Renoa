@@ -6,6 +6,7 @@ use renoa_kernel::{AgentId, CommandId, EventCursor, Kernel, KernelError, Operati
 use thiserror::Error;
 
 mod execution;
+pub(crate) use execution::PromptAdmission;
 #[cfg(test)]
 mod timing_tests;
 

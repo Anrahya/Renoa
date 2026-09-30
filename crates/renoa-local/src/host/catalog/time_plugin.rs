@@ -1,7 +1,8 @@
 //! Schema 41 moves turn timing from agent behavior to the `renoa.time` plugin.
 //!
-//! Behavior loses `turn_timing` in every agent row and in every receipt that
-//! stores a whole definition. An agent that had timing off gets `renoa.time`
+//! Behavior loses `turn_timing` in every agent row, in every receipt that
+//! stores a whole definition, and in every stored creation request, so a
+//! creation retried with the new request shape still replays. An agent that had timing off gets `renoa.time`
 //! turned off; every other agent keeps the plugin's default, on, in the Host's
 //! zone as before. The compiled-plugin table is rebuilt to accept
 //! `renoa.time`, and the plugin settings table is created.
@@ -26,11 +27,17 @@ pub(super) fn move_turn_timing_to_plugin(
             SELECT agent_id, 'renoa.time', 0 FROM host_agents
             WHERE json_extract(operational_json, '$.behavior.turn_timing') = 'off';
          UPDATE host_agents
-            SET operational_json = json_remove(operational_json, '$.behavior.turn_timing');
+            SET operational_json = json_remove(operational_json, '$.behavior.turn_timing')
+            WHERE json_type(operational_json, '$.behavior.turn_timing') IS NOT NULL;
          UPDATE host_agent_creations
-            SET result_json = json_remove(result_json, '$.operational.behavior.turn_timing');
+            SET result_json = json_remove(result_json, '$.operational.behavior.turn_timing')
+            WHERE json_type(result_json, '$.operational.behavior.turn_timing') IS NOT NULL;
+         UPDATE host_agent_creations
+            SET request_json = json_remove(request_json, '$.behavior.turn_timing')
+            WHERE json_type(request_json, '$.behavior.turn_timing') IS NOT NULL;
          UPDATE host_agent_renames
-            SET result_json = json_remove(result_json, '$.operational.behavior.turn_timing');",
+            SET result_json = json_remove(result_json, '$.operational.behavior.turn_timing')
+            WHERE json_type(result_json, '$.operational.behavior.turn_timing') IS NOT NULL;",
     )?;
     transaction.execute_batch(SETTINGS_TABLE)?;
     Ok(())

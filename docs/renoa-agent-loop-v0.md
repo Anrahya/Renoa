@@ -228,7 +228,9 @@ compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 12 adds Code Mode phases and a validated pending-call
+Loop binding revision 13 adds prompt commands observed with attributed
+per-message context and the `renoa.agent.turn-context.v1` event; stored
+`turn_timing` commands still decode. Revision 12 adds Code Mode phases and a validated pending-call
 queue, and balances an already-recorded assistant call when a tool adapter
 fails definitively. Revision 11 validates a candidate checkpoint against its own
 budget, so fixed request overhead is charged exactly once instead of once as

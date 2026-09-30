@@ -25,7 +25,7 @@ use crate::{
 };
 
 const TOOL_NAME: &str = capabilities::AGENT_MANAGE;
-const BINDING_REVISION: &str = "renoa-agent-manage-v1";
+const BINDING_REVISION: &str = "renoa-agent-manage-v2";
 const CREATE_OPERATION_DOMAIN: &str = "renoa.agent.create.operation.v1";
 const RENAME_OPERATION_DOMAIN: &str = "renoa.agent.rename.operation.v1";
 

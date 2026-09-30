@@ -631,14 +631,16 @@ plugin exhaustively, so the compiler checks each new plugin against both.
 `message_context` is the point that lets a plugin shape every message without
 breaking the prompt cache:
 
-1. Every prompt records when the Host admitted it. For a new command, the Host
+1. Every prompt an agent session admits records when the Host admitted it.
+   For a new command, the Host
    asks each enabled contributor for at most one entry, passing the agent, the
    admission time, the previous admitted prompt's time, and its own stored
    settings.
 2. Each entry is attributed to its source (`plugin:<id>`), validated as short
    text with no control character but a line break, and bounded individually
-   and in total. A contributor that fails is left out and the omission is
-   traced; it never blocks the message.
+   and in total. A contributor that fails, or whose entry would exceed the
+   bound, is left out while the others stay; the omission is traced and never
+   blocks the message.
 3. The entries are frozen into the admitted command. A retry reuses the stored
    command; it never recomputes context, so enabling, disabling, or
    reconfiguring a plugin mid-operation cannot change or reject it.

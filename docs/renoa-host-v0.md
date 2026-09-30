@@ -923,15 +923,17 @@ produced an assistant message. `AgentSession` is the complete surface-facing
 Host boundary: it also owns runtime selection, persistence, fresh per-turn
 composition, and cancellation coordination.
 
-Every prompt records when the Host admitted it. A direct caller observes the
-Host clock once; a queue-backed surface supplies the receive time it already
+Every prompt an agent session admits records when the Host admitted it. A
+direct caller observes the Host clock once; a queue-backed surface supplies the receive time it already
 persisted. Before admission, the Host also asks each enabled compiled plugin
 that contributes message context for one entry, and freezes the observation
 and the entries into the exact command. A retry with the same command identity
 reuses the admitted command without recomputing either, even if the process
 restarts, the caller now observes a different time, or the plugin was since
-turned off or reconfigured. A contributor that fails is left out, recorded as
-a `message_context_skipped` trace event, and never blocks the message.
+turned off or reconfigured. A contributor that fails, or whose entry would
+exceed the context bound, is left out while the others stay, recorded as a
+`message_context_skipped` trace event once the message is admitted, and never
+blocks the message.
 
 `renoa.time` contributes the current time and the time since the previous
 admitted prompt. It uses the agent's `timezone` setting, or else the operating
@@ -1502,7 +1504,8 @@ purges automations deleted before deletion removed their data.
 Schema 40 records the deleted automations whose own conversation is still to be
 deleted. A schema 39 catalog marks the automations it already purged.
 Schema 41 moves turn timing from agent behavior to `renoa.time`: behavior loses
-`turn_timing` in every agent and in every stored definition receipt, an agent
+`turn_timing` in every agent, in every stored definition receipt, and in every
+stored creation request, so a retried creation still replays; an agent
 that had it off gets `renoa.time` turned off, and per-agent plugin settings gain
 their table.
 

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use renoa_agent::{AgentEventSink, ContentBlock};
+use renoa_agent_loop::AgentCommand;
 use renoa_kernel::{CancellationId, CommandId};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -11,6 +12,7 @@ use crate::{
     agent_trace::finish_trace,
     host::{RuntimeRequest, resolve_runtime},
     plugins::host::message_context,
+    session::PromptAdmission,
     trace::{ObservedEventSink, TraceRun},
 };
 
@@ -387,31 +389,46 @@ impl AgentSession {
         cancellation: CancellationToken,
         trace: &TraceRun,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let mut skipped = Vec::new();
-        let prompt = self
+        let (prompt, skipped) = match self.kernel.prompt_admission(command_id, content)? {
+            PromptAdmission::Admitted(command) => (command, Vec::new()),
+            PromptAdmission::New {
+                previous_observed_at,
+            } => {
+                let database = self.host.database.clone();
+                let agent = self.agent;
+                let observed_at = observation.unix_milliseconds();
+                // Reading plugin state is blocking catalog I/O.
+                let (entries, skipped) = tokio::task::spawn_blocking(move || {
+                    message_context::admit(&database, agent, observed_at, previous_observed_at)
+                })
+                .await?;
+                let command = AgentCommand::observed(content.to_vec(), observed_at, entries)
+                    .map_err(crate::LocalSessionError::from)?;
+                (command, skipped)
+            }
+        };
+        let outcome = self
             .kernel
-            .prompt_command(command_id, content, observation, |previous| {
-                let (entries, left_out) = message_context::admit(
-                    &self.host.database,
-                    self.agent,
-                    observation.unix_milliseconds(),
-                    previous,
-                );
-                skipped = left_out;
-                entries
-            })?;
-        if !skipped.is_empty() {
-            trace
+            .execute_prompt(command_id, prompt, runtime, cancellation)
+            .await?;
+        // Recorded once the message is admitted; a trace failure never costs
+        // the turn its outcome.
+        if !skipped.is_empty()
+            && let Err(error) = trace
                 .record_host(
                     "message_context_skipped",
                     Some("degraded"),
                     serde_json::json!({ "command_id": command_id, "skipped": skipped }),
                 )
-                .await?;
+                .await
+        {
+            renoa_telemetry::event(
+                "renoa.host",
+                "warn",
+                "message_context_untraced",
+                &serde_json::json!({ "command_id": command_id, "error": error.to_string() }),
+            );
         }
-        Ok(self
-            .kernel
-            .execute_prompt(command_id, prompt, runtime, cancellation)
-            .await?)
+        Ok(outcome)
     }
 }

@@ -290,14 +290,20 @@ Set `public_origin` to the exact external HTTPS origin, such as
 authenticated owner cookie; the server does not trust forwarded headers to select
 the origin. The only development exception is HTTP `localhost`.
 
-This release requires Host schema 40. A schema 28–39 catalog upgrades in place
+This release requires Host schema 41. A schema 28–40 catalog upgrades in place
 when the Host opens it: it drops the retired GitHub review tables, renames the
 routine tables and `renoa.routines` plugin activations to automations, moves
 automation runs onto RCP tasks (see
 [RCP execution node](#rcp-execution-node)), adds the record of a failing
 shared-registry synchronization, gives finished automation runs a status, and
-moves automations to cron schedules, and bounds automation run history; it
-refuses to upgrade while a daily or interval automation remains. Each session's
+moves automations to cron schedules, bounds automation run history, and moves
+each agent's turn timing onto the `renoa.time` plugin; it
+refuses to upgrade while a daily or interval automation remains. `renoa.time`
+shows the time in an agent's `timezone` setting, or else in the zone `TZ` sets
+for the service that runs the Host (`renoa-node.service` sets `Asia/Kolkata`).
+Drain active turns before the upgrade: the plugin API, the `agent_manage`
+schema, and the agent loop revision changed, so an operation started by the
+previous release cannot resume under this one. Each session's
 `trace.sqlite3` drops its stored requests, responses and tool content the first
 time it opens (the owner's main Discord session shrinks from about 200 MB), so
 the first start after the upgrade takes a few seconds longer. An earlier
@@ -812,7 +818,7 @@ pnpm --dir adapters/model-provider-node build
 ```
 
 Stop the node, Slack and Telegram services and back up the consistent Host data
-root before the new Host brings it to schema 40. Install the new binaries
+root before the new Host brings it to schema 41. Install the new binaries
 atomically and replace the model adapter's built `dist` files. Do not resume an
 older reader against the upgraded database. Keep the matching database snapshot and binaries
 inside the single previous-release backup. Any owner-requested recovery must

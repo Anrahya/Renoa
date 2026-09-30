@@ -46,7 +46,9 @@ impl TimeSettings {
             || Ok(TimeZone::try_system().unwrap_or(TimeZone::UTC)),
             |name| {
                 TimeZone::get(name).map_err(|_| {
-                    PluginError::Invalid(format!("`{name}` is not an IANA time zone name"))
+                    PluginError::Invalid(format!(
+                        "`{name}` is not an IANA time zone name known to this Host"
+                    ))
                 })
             },
         )

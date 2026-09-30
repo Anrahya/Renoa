@@ -261,10 +261,15 @@ async fn schema_41_moves_stored_turn_timing_onto_the_time_plugin() {
             "Migrated",
         )
     };
-    let (untimed, timed) = (
-        request(crate::presets::ALPHA_PRESET_ID),
-        request(crate::presets::GENERAL_PRESET_ID),
-    );
+    let untimed = request(crate::presets::ALPHA_PRESET_ID);
+    // An explicit behavior is part of the stored request, and the retry below
+    // compares that request byte for byte.
+    let mut timed = request(crate::presets::GENERAL_PRESET_ID)
+        .with_instructions("Line one.\nZone: Asia/Kolkata — “quoted” ✓");
+    timed.behavior = Some(crate::AgentBehavior {
+        workspace_instructions: crate::WorkspaceInstructions::Off,
+        automatic_compaction: None,
+    });
     let mut ids = Vec::new();
     for request in [untimed.clone(), timed.clone()] {
         ids.push(
@@ -288,6 +293,9 @@ async fn schema_41_moves_stored_turn_timing_onto_the_time_plugin() {
                 '$.behavior.turn_timing', CASE agent_id WHEN '{0}' THEN 'off' ELSE 'host_clock' END);
              UPDATE host_agent_creations SET result_json = json_set(result_json,
                 '$.operational.behavior.turn_timing', CASE agent_id WHEN '{0}' THEN 'off' ELSE 'host_clock' END);
+             UPDATE host_agent_creations SET request_json = json_set(request_json,
+                '$.behavior.turn_timing', 'host_clock')
+                WHERE json_type(request_json, '$.behavior') = 'object';
              INSERT INTO host_agent_renames(operation_id, agent_id, actor_agent_id,
                 request_json, result_json)
                 SELECT 'rename', agent_id, agent_id, '{{}}', result_json
@@ -309,6 +317,7 @@ async fn schema_41_moves_stored_turn_timing_onto_the_time_plugin() {
         .query_row(
             "SELECT (SELECT count(*) FROM host_agents WHERE operational_json LIKE '%turn_timing%')
                   + (SELECT count(*) FROM host_agent_creations WHERE result_json LIKE '%turn_timing%')
+                  + (SELECT count(*) FROM host_agent_creations WHERE request_json LIKE '%turn_timing%')
                   + (SELECT count(*) FROM host_agent_renames WHERE result_json LIKE '%turn_timing%')",
             [],
             |row| row.get(0),
@@ -327,4 +336,66 @@ async fn schema_41_moves_stored_turn_timing_onto_the_time_plugin() {
             .expect("a creation retried after the upgrade replays its receipt");
         assert_eq!(replayed.id, id);
     }
+}
+
+#[tokio::test]
+async fn every_compiled_plugin_fits_its_tables_and_configure_replays_its_receipt() {
+    let directory = tempfile::tempdir().expect("directory");
+    let host = host(directory.path());
+    let agent = agent(&host, crate::presets::GENERAL_PRESET_ID).await;
+    let database = &host.config.database;
+    let connection = rusqlite::Connection::open(database).expect("catalog");
+    for plugin in HostPluginId::ALL {
+        connection
+            .execute(
+                "INSERT OR REPLACE INTO host_agent_builtin_plugins(agent_id, plugin_id, enabled)
+                 VALUES (?1, ?2, 1)",
+                rusqlite::params![agent.to_string(), plugin.id()],
+            )
+            .unwrap_or_else(|error| panic!("{} is missing from the CHECK: {error}", plugin.id()));
+        let stored = connection.execute(
+            "INSERT OR REPLACE INTO host_agent_plugin_settings(agent_id, plugin_id, settings_json)
+             VALUES (?1, ?2, '{}')",
+            rusqlite::params![agent.to_string(), plugin.id()],
+        );
+        assert_eq!(
+            stored.is_ok(),
+            settings::configurable(plugin),
+            "the settings CHECK and the plugin's validator disagree on {}",
+            plugin.id()
+        );
+    }
+    connection
+        .execute_batch(
+            "DELETE FROM host_agent_plugin_settings; DELETE FROM host_agent_builtin_plugins;",
+        )
+        .expect("clear the probe rows");
+    drop(connection);
+
+    let seoul = json!({"timezone": "Asia/Seoul"});
+    let first = settings::configure(database, agent, HostPluginId::Time, seoul.clone(), "op")
+        .expect("configure");
+    let before = receipts(&host);
+    assert_eq!(
+        settings::configure(database, agent, HostPluginId::Time, seoul, "op").expect("replay"),
+        first
+    );
+    assert_eq!(receipts(&host), before, "a replay writes nothing");
+    assert!(matches!(
+        settings::configure(database, agent, HostPluginId::Time, json!({}), "op"),
+        Err(crate::plugins::PluginError::Conflict(_))
+    ));
+    state::change(database, agent, HostPluginId::Time, false, "toggle").expect("turn off");
+    assert!(matches!(
+        settings::configure(database, agent, HostPluginId::Time, json!({}), "toggle"),
+        Err(crate::plugins::PluginError::Conflict(_))
+    ));
+    assert!(matches!(
+        state::change(database, agent, HostPluginId::Time, true, "op"),
+        Err(crate::plugins::PluginError::Conflict(_))
+    ));
+    assert!(
+        settings::configure(database, agent, HostPluginId::Git, json!({}), "git").is_err(),
+        "a plugin without settings refuses them"
+    );
 }

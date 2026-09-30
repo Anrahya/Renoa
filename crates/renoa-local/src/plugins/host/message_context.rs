@@ -40,31 +40,30 @@ pub(crate) fn admit(
             );
         }
     };
-    let mut entries = Vec::new();
+    let mut context = TurnContext::default();
     let mut skipped = Vec::new();
     for plugin in HostPluginId::ALL {
-        let entry = match contribution(&db, agent, plugin, observed_at_ms, previous_ms) {
-            Ok(entry) => entry,
-            Err(error) => {
-                skipped.push(Skipped {
-                    plugin_id: plugin.id(),
-                    reason: error.to_string(),
-                });
-                continue;
-            }
-        };
-        entries.extend(entry);
-    }
-    match TurnContext::new(entries) {
-        Ok(context) => (context, skipped),
-        Err(error) => {
-            skipped.push(Skipped {
-                plugin_id: "*",
-                reason: error.to_string(),
+        let added =
+            contribution(&db, agent, plugin, observed_at_ms, previous_ms).and_then(|entry| {
+                entry.map_or(Ok(None), |entry| {
+                    let mut entries = context.entries().to_vec();
+                    entries.push(entry);
+                    TurnContext::new(entries)
+                        .map(Some)
+                        .map_err(|error| PluginError::Invalid(error.to_string()))
+                })
             });
-            (TurnContext::default(), skipped)
+        match added {
+            Ok(Some(grown)) => context = grown,
+            Ok(None) => {}
+            // Only this contributor is left out; the entries before it stay.
+            Err(error) => skipped.push(Skipped {
+                plugin_id: plugin.id(),
+                reason: error.to_string(),
+            }),
         }
     }
+    (context, skipped)
 }
 
 /// One plugin's entry, or none when it contributes nothing to this message.
