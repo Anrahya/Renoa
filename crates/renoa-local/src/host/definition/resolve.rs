@@ -12,8 +12,7 @@ use renoa_kernel::AgentId;
 
 use super::store;
 use crate::{
-    AgentBehavior, AgentDefinition, AgentDefinitionError, AgentToolSelection, AutomaticCompaction,
-    ModelProvider,
+    AgentDefinition, AgentDefinitionError, AgentToolSelection, AutomaticCompaction, ModelProvider,
     documents::AgentDocumentStore,
     host::{HostConfig, LocalHostError, catalog},
 };
@@ -32,11 +31,6 @@ impl ResolvedAgentDefinition {
     #[must_use]
     pub(crate) fn agent_id(&self) -> AgentId {
         self.definition.id
-    }
-
-    #[must_use]
-    pub(crate) fn behavior(&self) -> AgentBehavior {
-        self.definition.operational.behavior
     }
 
     #[must_use]

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use renoa_agent::{AgentEventSink, ContentBlock};
+use renoa_agent_loop::AgentCommand;
 use renoa_kernel::{CancellationId, CommandId};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -10,6 +11,8 @@ use crate::{
     LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, TurnObservation,
     agent_trace::finish_trace,
     host::{RuntimeRequest, resolve_runtime},
+    plugins::host::message_context,
+    session::PromptAdmission,
     trace::{ObservedEventSink, TraceRun},
 };
 
@@ -352,24 +355,80 @@ impl AgentSession {
                 return Err(error);
             }
         };
-        let definition = self.definition().await?;
         match command {
             SessionCommand::Prompt {
                 content,
                 observation,
                 ..
-            } if definition.behavior().uses_turn_timing() => Ok(self
-                .kernel
-                .execute_observed_turn(command_id, content, observation, &runtime, cancellation)
-                .await?),
-            SessionCommand::Prompt { content, .. } => Ok(self
-                .kernel
-                .execute_turn(command_id, content, &runtime, cancellation)
-                .await?),
+            } => {
+                self.admit_prompt(
+                    command_id,
+                    &content,
+                    observation,
+                    &runtime,
+                    cancellation,
+                    trace,
+                )
+                .await
+            }
             SessionCommand::Compact => Ok(self
                 .kernel
                 .execute_compaction(command_id, &runtime, cancellation)
                 .await?),
         }
+    }
+
+    /// Admits a prompt with the context its enabled plugins contribute, or
+    /// resumes the one already admitted under `command_id`, and drives it.
+    async fn admit_prompt(
+        &self,
+        command_id: CommandId,
+        content: &[ContentBlock],
+        observation: TurnObservation,
+        runtime: &renoa_kernel::Runtime,
+        cancellation: CancellationToken,
+        trace: &TraceRun,
+    ) -> Result<LocalTurnOutcome, LocalHostError> {
+        let (prompt, skipped) = match self.kernel.prompt_admission(command_id, content)? {
+            PromptAdmission::Admitted(command) => (command, Vec::new()),
+            PromptAdmission::New {
+                previous_observed_at,
+            } => {
+                let database = self.host.database.clone();
+                let agent = self.agent;
+                let observed_at = observation.unix_milliseconds();
+                // Reading plugin state is blocking catalog I/O.
+                let (entries, skipped) = tokio::task::spawn_blocking(move || {
+                    message_context::admit(&database, agent, observed_at, previous_observed_at)
+                })
+                .await?;
+                let command = AgentCommand::observed(content.to_vec(), observed_at, entries)
+                    .map_err(crate::LocalSessionError::from)?;
+                (command, skipped)
+            }
+        };
+        let outcome = self
+            .kernel
+            .execute_prompt(command_id, prompt, runtime, cancellation)
+            .await?;
+        // Recorded once the message is admitted; a trace failure never costs
+        // the turn its outcome.
+        if !skipped.is_empty()
+            && let Err(error) = trace
+                .record_host(
+                    "message_context_skipped",
+                    Some("degraded"),
+                    serde_json::json!({ "command_id": command_id, "skipped": skipped }),
+                )
+                .await
+        {
+            renoa_telemetry::event(
+                "renoa.host",
+                "warn",
+                "message_context_untraced",
+                &serde_json::json!({ "command_id": command_id, "error": error.to_string() }),
+            );
+        }
+        Ok(outcome)
     }
 }

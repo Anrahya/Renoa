@@ -9,7 +9,8 @@ use std::sync::LazyLock;
 
 use crate::{
     AgentBehavior, AgentDefinitionError, AgentDocuments, AgentPresetId, AutomaticCompaction,
-    ModelProvider, TurnTiming, WorkspaceInstructions, capabilities::BuiltInCapability,
+    ModelProvider, WorkspaceInstructions, capabilities::BuiltInCapability,
+    plugins::host::HostPluginId,
 };
 
 /// Renoa's built-in coding agent seed.
@@ -56,6 +57,8 @@ pub(crate) struct AgentPreset {
     soul_default: Option<&'static str>,
     provider_restriction: Option<ModelProvider>,
     capability_baseline: &'static [BuiltInCapability],
+    /// Compiled Host plugins a new agent starts with turned off.
+    host_plugins_off: &'static [HostPluginId],
 }
 
 impl AgentPreset {
@@ -92,6 +95,11 @@ impl AgentPreset {
     }
 
     #[must_use]
+    pub(crate) const fn host_plugins_off(&self) -> &'static [HostPluginId] {
+        self.host_plugins_off
+    }
+
+    #[must_use]
     pub(crate) const fn capability_baseline(&self) -> &'static [BuiltInCapability] {
         self.capability_baseline
     }
@@ -110,7 +118,6 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             description: "Renoa's coding agent for this workspace: curated coding instructions, project instructions, and the Host workspace tools.",
             instructions: ALPHA_INSTRUCTIONS,
             behavior: AgentBehavior {
-                turn_timing: TurnTiming::Off,
                 workspace_instructions: WorkspaceInstructions::ProjectAgentsFile,
                 automatic_compaction: None,
             },
@@ -118,13 +125,13 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             soul_default: None,
             provider_restriction: None,
             capability_baseline: ALPHA_CAPABILITY_BASELINE,
+            host_plugins_off: &[HostPluginId::Time],
         },
         AgentPreset {
             id: preset_id(ARCEE_PRESET_ID),
-            description: "Renoa's personal operator: curation-owned instructions with SOUL and USER documents, Host turn timing, automatic compaction, and the OpenCode Go provider.",
+            description: "Renoa's personal operator: curation-owned instructions with SOUL and USER documents, automatic compaction, and the OpenCode Go provider.",
             instructions: ARCEE_INSTRUCTIONS,
             behavior: AgentBehavior {
-                turn_timing: TurnTiming::HostClock,
                 workspace_instructions: WorkspaceInstructions::ProjectAgentsFile,
                 automatic_compaction: Some(AutomaticCompaction {
                     trigger_input_tokens: non_zero(ARCEE_COMPACTION_TRIGGER),
@@ -138,13 +145,13 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             soul_default: Some(ARCEE_SOUL),
             provider_restriction: Some(ModelProvider::OpenCodeGo),
             capability_baseline: ARCEE_CAPABILITY_BASELINE,
+            host_plugins_off: &[],
         },
         AgentPreset {
             id: preset_id(GENERAL_PRESET_ID),
             description: "A general purpose agent with helpful assistant instructions and no machine tools. Explicit settings replace template defaults.",
             instructions: "You are a helpful assistant. Complete the assigned task and report the result clearly.",
             behavior: AgentBehavior {
-                turn_timing: TurnTiming::HostClock,
                 workspace_instructions: WorkspaceInstructions::Off,
                 automatic_compaction: None,
             },
@@ -152,6 +159,7 @@ static PRESETS: LazyLock<BTreeMap<AgentPresetId, AgentPreset>> = LazyLock::new(|
             soul_default: None,
             provider_restriction: None,
             capability_baseline: GENERAL_CAPABILITY_BASELINE,
+            host_plugins_off: &[],
         },
     ];
     presets
@@ -219,7 +227,7 @@ mod tests {
         let id = AgentPresetId::new(ARCEE_PRESET_ID).expect("portable preset id");
         let preset = preset(&id).expect("registered preset");
         let behavior = preset.behavior();
-        assert!(behavior.uses_turn_timing());
+        assert!(preset.host_plugins_off().is_empty());
         assert!(behavior.loads_project_instructions());
         assert!(behavior.automatic_compaction.is_some());
         assert_eq!(
@@ -235,7 +243,7 @@ mod tests {
     fn the_general_template_has_no_machine_access() {
         let id = AgentPresetId::new(GENERAL_PRESET_ID).expect("portable preset id");
         let preset = preset(&id).expect("registered preset");
-        assert!(preset.behavior().uses_turn_timing());
+        assert!(preset.host_plugins_off().is_empty());
         assert!(!preset.behavior().loads_project_instructions());
         assert!(preset.documents().is_none());
         assert_eq!(preset.provider_restriction(), None);

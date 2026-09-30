@@ -25,7 +25,7 @@ use crate::{
     context::{ContextPreparation, ContextStrategy},
     format::{
         AgentCommandKind, LoopPhase, ModelEffectOutput, checkpoint, context_input, message_event,
-        message_events, turn_timing_event,
+        message_events, observation_event,
     },
     pending_tools::PendingToolCalls,
 };
@@ -88,12 +88,10 @@ impl AgentLoop {
         match command.into_kind() {
             AgentCommandKind::Prompt {
                 content,
-                turn_timing,
+                observation,
             } => {
                 let mut events = vec![message_event(Message::User { content })?];
-                if let Some(turn_timing) = turn_timing {
-                    events.push(turn_timing_event(turn_timing)?);
-                }
+                events.extend(observation_event(observation)?);
                 Ok(LoopDecision::AppendEventsAndContinue {
                     checkpoint: checkpoint(LoopPhase::NeedModel { model_turns: 0 })?,
                     events,

@@ -1,5 +1,6 @@
 //! Compiled Host capabilities use the same discovery and invocation boundary as MCP plugins.
 //! Imported manifests cannot register implementations or grant machine access.
+//! A compiled plugin contributes tools, per-message context, or both.
 
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
@@ -9,7 +10,10 @@ use renoa_kernel::AgentId;
 use serde::Serialize;
 
 pub(crate) mod executor;
+pub(crate) mod message_context;
+pub(crate) mod settings;
 pub(crate) mod state;
+pub(crate) mod time;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum HostPluginId {
@@ -18,15 +22,17 @@ pub(crate) enum HostPluginId {
     Documents,
     Skills,
     Git,
+    Time,
 }
 
 impl HostPluginId {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Agents,
         Self::Automations,
         Self::Documents,
         Self::Skills,
         Self::Git,
+        Self::Time,
     ];
     pub(crate) const fn id(self) -> &'static str {
         match self {
@@ -35,6 +41,7 @@ impl HostPluginId {
             Self::Documents => "renoa.documents",
             Self::Skills => "renoa.skills",
             Self::Git => "renoa.git",
+            Self::Time => time::PLUGIN_ID,
         }
     }
     pub(crate) fn parse(id: &str) -> Option<Self> {
@@ -51,6 +58,7 @@ impl HostPluginId {
             Self::Git => {
                 "Inspect local Git changes, diffs, and pinned commits without shell access."
             }
+            Self::Time => time::DESCRIPTION,
         }
     }
     pub(crate) fn owner(tool: &str) -> Option<Self> {

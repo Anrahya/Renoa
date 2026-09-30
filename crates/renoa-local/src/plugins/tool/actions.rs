@@ -18,6 +18,7 @@ pub(super) fn render(outcome: PluginOutcome) -> Result<ToolOutput, ToolError> {
         PluginOutcome::Listed(page) => json_output(&page),
         PluginOutcome::Activation(activation) => json_output(&activation),
         PluginOutcome::HostActivation(activation) => json_output(&activation),
+        PluginOutcome::HostSettings(settings) => json_output(&settings),
         PluginOutcome::Added(added) => render_added(*added),
         PluginOutcome::Connected {
             package_digest,

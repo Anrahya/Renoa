@@ -414,7 +414,7 @@ if (request.system_prompt.includes("current_time:")) {
 }
 const user = request.messages.at(-1);
 if (user?.role !== "user" || user.content.length !== 2 ||
-    !user.content[1]?.text?.includes("<turn_context>\ncurrent_time:")) {
+    !user.content[1]?.text?.includes('<turn_context>\n<context source="plugin:renoa.time">\ncurrent_time:')) {
   process.stderr.write("Telegram receive time did not reach Arcee's model turn");
   process.exit(6);
 }

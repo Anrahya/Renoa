@@ -1,89 +1,124 @@
 use renoa_agent::ContentBlock;
+use renoa_agent_loop::{AgentCommand, ContextContribution, TurnContext};
 use renoa_kernel::{AgentId, Command, CommandId, SessionId};
 use tempfile::tempdir;
 
-use super::{LocalSession, LocalSessionError};
-use crate::TurnObservation;
+use super::{LocalSession, LocalSessionError, PromptAdmission};
 
-#[test]
-fn retry_reuses_admitted_timing_and_next_turn_uses_it_for_elapsed_time() {
-    let directory = tempdir().expect("temporary directory");
-    let session = LocalSession::create(
-        directory.path().join("kernel.sqlite3"),
+fn session(directory: &std::path::Path) -> LocalSession {
+    LocalSession::create(
+        directory.join("kernel.sqlite3"),
         AgentId::new(),
         SessionId::new(),
     )
-    .expect("create local session");
-    let command_id = CommandId::new();
-    let content = vec![ContentBlock::text("hello")];
-    let first = session
-        .observed_command(command_id, &content, observation(1_000))
-        .expect("create first timed command");
+    .expect("create local session")
+}
+
+fn admit(session: &LocalSession, command_id: CommandId, command: &serde_json::Value) {
     session
         .kernel
         .submit(
             session.session_id,
-            Command::new(
-                command_id,
-                serde_json::to_value(&first).expect("encode first command"),
-            ),
+            Command::new(command_id, command.clone()),
         )
-        .expect("admit first command");
+        .expect("admit command");
+}
 
-    let replayed = session
-        .observed_command(command_id, &content, observation(99_000))
-        .expect("recover admitted command");
-    let next = session
-        .observed_command(CommandId::new(), &content, observation(6_000))
-        .expect("create next command");
-
-    assert_eq!(replayed, first);
+#[test]
+fn a_retry_gets_the_admitted_command_and_a_new_prompt_gets_the_previous_time() {
+    let directory = tempdir().expect("temporary directory");
+    let session = session(directory.path());
+    let command_id = CommandId::new();
+    let content = vec![ContentBlock::text("hello")];
     assert_eq!(
-        next.turn_timing()
-            .expect("next turn timing")
-            .elapsed_since_previous_user_message_ms(),
-        Some(5_000)
+        session
+            .prompt_admission(command_id, &content)
+            .expect("first"),
+        PromptAdmission::New {
+            previous_observed_at: None
+        }
+    );
+    let entries = TurnContext::new(vec![
+        ContextContribution::plugin("renoa.time", "first").expect("entry"),
+    ])
+    .expect("context");
+    let first = AgentCommand::observed(content.clone(), 1_000, entries).expect("command");
+    admit(
+        &session,
+        command_id,
+        &serde_json::to_value(&first).expect("encode"),
+    );
+
+    assert_eq!(
+        session
+            .prompt_admission(command_id, &content)
+            .expect("retry"),
+        PromptAdmission::Admitted(first)
+    );
+    assert_eq!(
+        session
+            .prompt_admission(CommandId::new(), &content)
+            .expect("next"),
+        PromptAdmission::New {
+            previous_observed_at: Some(1_000)
+        }
+    );
+}
+
+#[test]
+fn a_command_stored_with_turn_timing_is_reused_and_times_the_next_prompt() {
+    let directory = tempdir().expect("temporary directory");
+    let session = session(directory.path());
+    let command_id = CommandId::new();
+    let stored = serde_json::json!({
+        "content": [{"type": "text", "text": "hello"}],
+        "turn_timing": {
+            "observed_at": "1970-01-01T00:00:02Z[UTC]",
+            "observed_at_unix_ms": 2_000,
+        },
+    });
+    admit(&session, command_id, &stored);
+
+    let PromptAdmission::Admitted(replayed) = session
+        .prompt_admission(command_id, &[ContentBlock::text("hello")])
+        .expect("recover the stored command")
+    else {
+        panic!("a retry must reuse the stored command");
+    };
+    assert_eq!(
+        serde_json::to_value(&replayed).expect("re-encode"),
+        stored,
+        "the stored command is reused byte for byte"
+    );
+    assert_eq!(
+        session
+            .prompt_admission(CommandId::new(), &[ContentBlock::text("next")])
+            .expect("next"),
+        PromptAdmission::New {
+            previous_observed_at: Some(2_000)
+        }
     );
 }
 
 #[test]
 fn reused_command_id_with_different_prompt_still_conflicts() {
     let directory = tempdir().expect("temporary directory");
-    let session = LocalSession::create(
-        directory.path().join("kernel.sqlite3"),
-        AgentId::new(),
-        SessionId::new(),
-    )
-    .expect("create local session");
+    let session = session(directory.path());
     let command_id = CommandId::new();
-    let first = session
-        .observed_command(
-            command_id,
-            &[ContentBlock::text("first")],
-            observation(1_000),
-        )
-        .expect("create first command");
-    session
-        .kernel
-        .submit(
-            session.session_id,
-            Command::new(
-                command_id,
-                serde_json::to_value(first).expect("encode command"),
-            ),
-        )
-        .expect("admit command");
+    let first = AgentCommand::observed(
+        vec![ContentBlock::text("first")],
+        1_000,
+        TurnContext::default(),
+    )
+    .expect("command");
+    admit(
+        &session,
+        command_id,
+        &serde_json::to_value(first).expect("encode"),
+    );
 
     assert!(matches!(
-        session.observed_command(
-            command_id,
-            &[ContentBlock::text("different")],
-            observation(2_000)
-        ),
+        session.prompt_admission(command_id, &[ContentBlock::text("different")]),
         Err(LocalSessionError::CommandConflict { .. })
     ));
-}
-
-fn observation(milliseconds: i64) -> TurnObservation {
-    TurnObservation::from_unix_milliseconds(milliseconds).expect("valid observation")
 }

@@ -11,7 +11,6 @@ use renoa_kernel::{
 use tokio_util::sync::CancellationToken;
 
 use super::{LocalSession, LocalSessionError, LocalTurnOutcome};
-use crate::TurnObservation;
 
 impl LocalSession {
     /// Returns a settled durable prompt result without resolving a runtime.
@@ -125,15 +124,14 @@ impl LocalSession {
         .await
     }
 
-    pub(crate) async fn execute_observed_turn(
+    /// Admits and drives a prompt after [`Self::prompt_admission`].
+    pub(crate) async fn execute_prompt(
         &self,
         command_id: CommandId,
-        content: Vec<ContentBlock>,
-        observation: TurnObservation,
+        command: AgentCommand,
         runtime: &Runtime,
         cancellation: CancellationToken,
     ) -> Result<LocalTurnOutcome, LocalSessionError> {
-        let command = self.observed_command(command_id, &content, observation)?;
         self.execute_command(command_id, command, runtime, cancellation)
             .await
     }
@@ -258,12 +256,14 @@ impl LocalSession {
         }
     }
 
-    pub(super) fn observed_command(
+    /// Whether `command_id` was already admitted. A retry gets the stored
+    /// command, so it never recomputes its time or context; a new prompt gets
+    /// the previous prompt's observation time to compute them from.
+    pub(crate) fn prompt_admission(
         &self,
         command_id: CommandId,
         content: &[ContentBlock],
-        observation: TurnObservation,
-    ) -> Result<AgentCommand, LocalSessionError> {
+    ) -> Result<PromptAdmission, LocalSessionError> {
         let snapshot = self.kernel.inspect(self.session_id)?;
         if let Some(operation) = snapshot
             .operations
@@ -274,22 +274,21 @@ impl LocalSession {
             if command.prompt_content() != Some(content) {
                 return Err(command_conflict(operation));
             }
-            return Ok(command);
+            return Ok(PromptAdmission::Admitted(command));
         }
-        let previous = snapshot
+        let previous_observed_at = snapshot
             .operations
             .iter()
             .rev()
             .map(decode_command)
             .find_map(|command| match command {
-                Ok(command) => command
-                    .turn_timing()
-                    .map(|timing| Ok(timing.observed_at_unix_ms())),
+                Ok(command) => command.observed_at_unix_ms().map(Ok),
                 Err(error) => Some(Err(error)),
             })
             .transpose()?;
-        let timing = observation.turn_timing(previous)?;
-        Ok(AgentCommand::timed(content.to_vec(), timing))
+        Ok(PromptAdmission::New {
+            previous_observed_at,
+        })
     }
 
     /// Returns the newest durable provider usage or post-compaction estimate.
@@ -469,4 +468,13 @@ fn context_tokens(usage: TokenUsage) -> Option<u64> {
         .checked_add(usage.cache_read)?
         .checked_add(usage.cache_write)?
         .checked_add(usage.output)
+}
+
+/// What admitting one prompt starts from.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PromptAdmission {
+    /// The command stored when this identity was first admitted.
+    Admitted(AgentCommand),
+    /// A new prompt, after one observed at `previous_observed_at`.
+    New { previous_observed_at: Option<i64> },
 }

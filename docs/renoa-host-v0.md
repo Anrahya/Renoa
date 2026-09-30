@@ -432,8 +432,9 @@ permission system.
 
 Creation presets are code-owned, versioned, immutable seeds: a stable validated
 identity, base instructions, an optional exact model-provider restriction, the
-workspace-instruction and turn-timing policy, an optional document set, and an
-optional automatic-compaction policy. Creation copies the applicable values into
+workspace-instruction policy, an optional document set, an optional
+automatic-compaction policy, and the compiled Host plugins a new agent starts
+with off. Creation copies the applicable values into
 the agent's own operational document, so a preset change requires a new preset id
 and never rewrites an existing agent. A session manifest persists the exact agent
 id; Host catalog storage holds the definition. Loading fails closed when the agent
@@ -506,8 +507,9 @@ machine tools for a child; it exposes no operation to grant tools to its caller.
 owner operations. Their revision-checked receipts remain independent of the
 original creation receipt. Active operations retain their frozen grants.
 
-Five compiled Host plugins use the same discovery, exact-schema lookup, and
-invocation boundary as external MCP tools:
+Six compiled Host plugins use the same discovery and management boundary as
+external plugins. Five contribute tools, invoked through the same exact-schema
+lookup as external MCP tools; `renoa.time` contributes context to each message:
 
 | Plugin | Capabilities |
 | --- | --- |
@@ -516,10 +518,13 @@ invocation boundary as external MCP tools:
 | `renoa.documents` | Edit this agent's SOUL and the speaking person's USER file |
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
 | `renoa.git` | Inspect local changes, diffs, and commits |
+| `renoa.time` | Show the current time and the time since the previous message |
 
-These plugins start enabled; document tools exist only for definitions that enable
+These plugins start enabled, except that an agent created from the Alpha preset
+starts with `renoa.time` off; document tools exist only for definitions that enable
 documents, and `USER.md` is editable only in a turn that names a principal. `plugin_manage` can enable or deactivate a compiled plugin for its
-caller. Stored state is checked again on discovery and dispatch. Imported
+caller, and `configure_plugin` replaces the caller's settings for one that takes
+them. Stored state is checked again on discovery and dispatch. Imported
 manifests cannot register native implementations or change machine grants.
 References bind the real schema and implementation revision; stale references
 fail and require a fresh search. External packages continue to use immutable
@@ -918,22 +923,29 @@ produced an assistant message. `AgentSession` is the complete surface-facing
 Host boundary: it also owns runtime selection, persistence, fresh per-turn
 composition, and cancellation coordination.
 
-Agent definitions may opt into Host turn timing. A direct caller observes the Host clock
-once; a queue-backed surface supplies the receive time it already persisted.
-That observation is serialized in the exact command before admission. A retry
-with the same command identity reuses the admitted value, even if the process
-restarts or the caller now observes a different time. The next timed prompt
-computes elapsed time from the newest admitted timed user message. If the clock
-moves backward, elapsed time is omitted instead of fabricating a duration.
+Every prompt an agent session admits records when the Host admitted it. A
+direct caller observes the Host clock once; a queue-backed surface supplies the receive time it already
+persisted. Before admission, the Host also asks each enabled compiled plugin
+that contributes message context for one entry, and freezes the observation
+and the entries into the exact command. A retry with the same command identity
+reuses the admitted command without recomputing either, even if the process
+restarts, the caller now observes a different time, or the plugin was since
+turned off or reconfigured. A contributor that fails, or whose entry would
+exceed the context bound, is left out while the others stay, recorded as a
+`message_context_skipped` trace event once the message is admitted, and never
+blocks the message.
 
-The Host formats the observation in the operating system's configured time
-zone. `TZ` may override it for one service, with UTC as a safe fallback. The
-loop appends it to the matching user message as
-`<turn_context>` for the model. It is not inserted into the changing system
-prompt and it is not copied into surface history. Every later request rebuilds
-each prior turn with the same durable suffix, which preserves the exact prompt
-prefix used by provider caches. Alpha remains content-only; Arcee opts into
-this behavior.
+`renoa.time` contributes the current time and the time since the previous
+admitted prompt. It uses the agent's `timezone` setting, or else the operating
+system's zone, which `TZ` may override for one service, with UTC as a fallback.
+If the clock moves backward, elapsed time is omitted instead of fabricating a
+duration. The loop appends the entries to the matching user message as one
+`<turn_context>` block, each attributed to its plugin with its text escaped. It
+is not inserted into the changing system prompt and it is not copied into
+surface history. Every later request rebuilds each prior turn with the same
+durable suffix, which preserves the exact prompt prefix used by provider
+caches. A command admitted before schema 41 keeps its stored `turn_timing` and
+is projected as it was.
 
 `LocalHost::ensure_agent_session` accepts a caller-chosen UUID for durable surface
 admission. Repeating it resolves the already-published session with its stored
@@ -1049,7 +1061,7 @@ explicit reset instruction. The canonical agent definition replaces the earlier
 profile and bot records rather than reading both shapes. Ordinary startup never
 deletes broad filesystem state.
 
-Catalogs at the canonical database path with schema 28–31 upgrade to schema 40
+Catalogs at the canonical database path with schema 28–31 upgrade to schema 41
 by retaining exact machine grants, removing former Host and plugin protocol
 tool selections (including the `routine_manage` and `routine_results` names),
 dropping the retired GitHub review tables, renaming routines to automations,
@@ -1491,6 +1503,11 @@ indexes on `(automation_id, sequence)` and `(agent_id, sequence)`. The upgrade
 purges automations deleted before deletion removed their data.
 Schema 40 records the deleted automations whose own conversation is still to be
 deleted. A schema 39 catalog marks the automations it already purged.
+Schema 41 moves turn timing from agent behavior to `renoa.time`: behavior loses
+`turn_timing` in every agent, in every stored definition receipt, and in every
+stored creation request, so a retried creation still replays; an agent
+that had it off gets `renoa.time` turned off, and per-agent plugin settings gain
+their table.
 
 ## Local CLI
 
@@ -1748,6 +1765,6 @@ plugin selections require the explicit Host reset; unselected library revisions
 migrate with verified MCP ownership and require explicit current admission
 through install or activate before their retained accounts can be selected.
 
-The canonical plugin API binding is `renoa-plugin-api-v3`; source-contract
+The canonical plugin API binding is `renoa-plugin-api-v4`; source-contract
 changes cannot replay under an older frozen management manifest. The full
 source and lifecycle contract is in `renoa-extensions-north-star.md`.

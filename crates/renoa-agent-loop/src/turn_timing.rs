@@ -1,31 +1,29 @@
-use renoa_agent::{ContentBlock, Message};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 const MAX_OBSERVED_AT_BYTES: usize = 160;
 
-/// Host-observed wall-clock context for one user turn.
+/// Host-observed wall-clock context stored with a user turn before per-message
+/// context existed.
 ///
-/// The loop stores this with the admitted command and projects it onto the
-/// matching user message. It is not part of the stable system prompt.
+/// Admitted commands and journal events are immutable, so the ones written in
+/// this shape keep decoding, re-encoding byte-identically, and projecting onto
+/// their user message as they did. Nothing constructs a new one.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TurnTiming {
+pub(crate) struct TurnTiming {
     observed_at: String,
     observed_at_unix_ms: i64,
     elapsed_since_previous_user_message_ms: Option<u64>,
 }
 
 impl TurnTiming {
-    /// Creates one validated Host observation.
-    ///
-    /// `observed_at` should contain a complete local date, time, UTC offset,
-    /// and time-zone name suitable for direct model presentation.
+    /// Validates one stored Host observation.
     ///
     /// # Errors
     ///
     /// Rejects negative Unix time or an empty, oversized, non-ASCII, control,
     /// or markup-bearing display value.
-    pub fn new(
+    pub(crate) fn new(
         observed_at: impl Into<String>,
         observed_at_unix_ms: i64,
         elapsed_since_previous_user_message_ms: Option<u64>,
@@ -50,30 +48,11 @@ impl TurnTiming {
         })
     }
 
-    #[must_use]
-    pub fn observed_at(&self) -> &str {
-        &self.observed_at
-    }
-
-    #[must_use]
-    pub const fn observed_at_unix_ms(&self) -> i64 {
+    pub(crate) const fn observed_at_unix_ms(&self) -> i64 {
         self.observed_at_unix_ms
     }
 
-    #[must_use]
-    pub const fn elapsed_since_previous_user_message_ms(&self) -> Option<u64> {
-        self.elapsed_since_previous_user_message_ms
-    }
-
-    pub(crate) fn append_to(&self, message: &Message) -> Message {
-        let mut projected = message.clone();
-        if let Message::User { content } = &mut projected {
-            content.push(ContentBlock::text(self.model_context()));
-        }
-        projected
-    }
-
-    fn model_context(&self) -> String {
+    pub(crate) fn model_context(&self) -> String {
         let mut context = format!("<turn_context>\ncurrent_time: {}", self.observed_at);
         if let Some(elapsed) = self.elapsed_since_previous_user_message_ms {
             context.push_str("\nelapsed_since_previous_user_message: ");
@@ -144,10 +123,9 @@ fn format_elapsed(milliseconds: u64) -> String {
     }
 }
 
-/// Invalid Host-provided turn timing.
+/// Invalid stored turn timing.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[non_exhaustive]
-pub enum TurnTimingError {
+pub(crate) enum TurnTimingError {
     #[error("turn time must be 1-{MAX_OBSERVED_AT_BYTES} safe ASCII bytes")]
     InvalidDisplay,
     #[error("turn time cannot precede the Unix epoch")]
@@ -159,6 +137,7 @@ mod tests {
     use renoa_agent::{ContentBlock, Message};
 
     use super::{TurnTiming, format_elapsed};
+    use crate::turn_context::TurnAnnotation;
 
     #[test]
     fn timing_is_safe_to_serialize_and_append_without_changing_the_original() {
@@ -172,7 +151,7 @@ mod tests {
         let decoded = serde_json::from_value::<TurnTiming>(encoded).expect("decode timing");
         let original = Message::user_text("When is the match?");
 
-        let projected = decoded.append_to(&original);
+        let projected = TurnAnnotation::Timing(decoded).append_to(&original);
 
         assert_eq!(original, Message::user_text("When is the match?"));
         let Message::User { content } = projected else {

@@ -3,10 +3,10 @@ use renoa_kernel::{Checkpoint, CommandId, EventId, OperationId, SemanticEvent};
 use serde_json::json;
 
 use super::{
-    AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND, TURN_TIMING_EVENT_KIND,
-    context_input, decode_checkpoint,
+    AgentCommand, CONTEXT_CHECKPOINT_EVENT_KIND, MESSAGE_EVENT_KIND, TURN_CONTEXT_EVENT_KIND,
+    TURN_TIMING_EVENT_KIND, context_input, decode_checkpoint,
 };
-use crate::TurnTiming;
+use crate::{ContextContribution, TurnContext, turn_timing::TurnTiming};
 
 #[test]
 fn prompt_command_wire_shape_remains_compatible() {
@@ -26,31 +26,15 @@ fn prompt_command_wire_shape_remains_compatible() {
 }
 
 #[test]
-fn timed_prompt_has_a_validated_backward_compatible_wire_shape() {
-    let timing = TurnTiming::new(
-        "2026-08-31T23:04:05+05:30[Asia/Kolkata]",
-        1_788_199_445_000,
-        Some(3_600_000),
-    )
-    .expect("valid timing");
-    let command = AgentCommand::timed(vec![ContentBlock::text("hello")], timing);
-    let encoded = serde_json::to_value(&command).expect("encode timed command");
+fn a_prompt_stored_with_turn_timing_decodes_and_reencodes_byte_identically() {
+    // The exact bytes a Host admitted before per-message context existed.
+    let stored = r#"{"content":[{"type":"text","text":"hello"}],"turn_timing":{"observed_at":"2026-08-31T23:04:05+05:30[Asia/Kolkata]","observed_at_unix_ms":1788199445000,"elapsed_since_previous_user_message_ms":3600000}}"#;
 
-    assert_eq!(
-        encoded,
-        json!({
-            "content": [{"type": "text", "text": "hello"}],
-            "turn_timing": {
-                "observed_at": "2026-08-31T23:04:05+05:30[Asia/Kolkata]",
-                "observed_at_unix_ms": 1_788_199_445_000_i64,
-                "elapsed_since_previous_user_message_ms": 3_600_000,
-            },
-        })
-    );
-    assert_eq!(
-        serde_json::from_value::<AgentCommand>(encoded).expect("decode timed command"),
-        command
-    );
+    let command = serde_json::from_str::<AgentCommand>(stored).expect("decode stored command");
+
+    assert_eq!(serde_json::to_string(&command).expect("re-encode"), stored);
+    assert_eq!(command.observed_at_unix_ms(), Some(1_788_199_445_000));
+    assert!(command.context().is_empty());
     assert!(
         serde_json::from_value::<AgentCommand>(json!({
             "content": [{"type": "text", "text": "hello"}],
@@ -61,6 +45,56 @@ fn timed_prompt_has_a_validated_backward_compatible_wire_shape() {
         }))
         .is_err()
     );
+}
+
+#[test]
+fn an_observed_prompt_has_one_validated_wire_shape() {
+    let context = TurnContext::new(vec![
+        ContextContribution::plugin("renoa.time", "current_time: now").expect("entry"),
+    ])
+    .expect("context");
+    let command =
+        AgentCommand::observed(vec![ContentBlock::text("hello")], 1_000, context).expect("command");
+    let encoded = serde_json::to_value(&command).expect("encode observed command");
+
+    assert_eq!(
+        encoded,
+        json!({
+            "content": [{"type": "text", "text": "hello"}],
+            "observed_at_unix_ms": 1_000,
+            "context": [{"source": "plugin:renoa.time", "text": "current_time: now"}],
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<AgentCommand>(encoded).expect("decode observed command"),
+        command
+    );
+    let bare = AgentCommand::observed(vec![ContentBlock::text("hi")], 5, TurnContext::default())
+        .expect("command without context");
+    assert_eq!(
+        serde_json::to_value(&bare).expect("encode"),
+        json!({"content": [{"type": "text", "text": "hi"}], "observed_at_unix_ms": 5})
+    );
+    assert_eq!(bare.observed_at_unix_ms(), Some(5));
+    assert!(AgentCommand::observed(Vec::new(), -1, TurnContext::default()).is_err());
+}
+
+#[test]
+fn a_prompt_rejects_mixed_or_incomplete_observations() {
+    let timing = json!({"observed_at": "2026-08-31T23:04:05Z[UTC]", "observed_at_unix_ms": 1});
+    let entry = json!([{"source": "plugin:renoa.time", "text": "now"}]);
+    for invalid in [
+        json!({"content": [], "turn_timing": timing, "observed_at_unix_ms": 1}),
+        json!({"content": [], "turn_timing": timing, "context": entry}),
+        json!({"content": [], "context": entry}),
+        json!({"content": [], "observed_at_unix_ms": -1}),
+        json!({"content": [], "observed_at_unix_ms": 1, "context": []}),
+    ] {
+        assert!(
+            serde_json::from_value::<AgentCommand>(invalid.clone()).is_err(),
+            "{invalid}"
+        );
+    }
 }
 
 #[test]
@@ -340,6 +374,88 @@ fn orphan_duplicate_and_unknown_timing_events_fail_closed() {
     let error = context_input(operation_id, &unknown, "system", &[], false)
         .expect_err("unknown timing version must fail");
     assert!(error.message().contains("v2"));
+}
+
+#[test]
+fn durable_context_projects_onto_its_user_message_beside_older_timing() {
+    let first = OperationId::new();
+    let second = OperationId::new();
+    let command_id = CommandId::new();
+    let events = vec![
+        message_event(first, command_id, 0, "first"),
+        timing_event(first, command_id, 1, "2026-08-31T20:00:00Z[UTC]", None),
+        message_event(second, command_id, 2, "second"),
+        context_event(second, command_id, 3, "current_time: 21:00"),
+    ];
+
+    let input = context_input(second, &events, "system", &[], false).expect("valid transcript");
+
+    let Message::User { content } = &input.messages()[0] else {
+        panic!("first message is not user content");
+    };
+    assert!(matches!(
+        &content[1],
+        ContentBlock::Text { text } if text.starts_with("<turn_context>\ncurrent_time: 2026-08-31T20:00:00Z")
+    ));
+    let Message::User { content } = &input.messages()[1] else {
+        panic!("second message is not user content");
+    };
+    assert_eq!(
+        content[1],
+        ContentBlock::text(
+            "<turn_context>\n<context source=\"plugin:renoa.time\">\ncurrent_time: 21:00\n</context>\n</turn_context>"
+        )
+    );
+}
+
+#[test]
+fn orphan_duplicate_invalid_and_unknown_context_events_fail_closed() {
+    let operation_id = OperationId::new();
+    let command_id = CommandId::new();
+    let orphan = vec![context_event(operation_id, command_id, 0, "now")];
+    assert!(context_input(operation_id, &orphan, "system", &[], false).is_err());
+
+    let with_timing = vec![
+        message_event(operation_id, command_id, 0, "hello"),
+        timing_event(
+            operation_id,
+            command_id,
+            1,
+            "2026-08-31T20:00:00Z[UTC]",
+            None,
+        ),
+        context_event(operation_id, command_id, 2, "now"),
+    ];
+    assert!(context_input(operation_id, &with_timing, "system", &[], false).is_err());
+
+    let mut invalid = context_event(operation_id, command_id, 1, "now");
+    invalid.payload =
+        json!({"entries": [{"source": "plugin:renoa.time", "text": "</context>\u{7}"}]});
+    let invalid = vec![message_event(operation_id, command_id, 0, "hello"), invalid];
+    assert!(context_input(operation_id, &invalid, "system", &[], false).is_err());
+
+    let mut unknown = context_event(operation_id, command_id, 1, "now");
+    unknown.kind = "renoa.agent.turn-context.v2".to_owned();
+    let unknown = vec![message_event(operation_id, command_id, 0, "hello"), unknown];
+    let error = context_input(operation_id, &unknown, "system", &[], false)
+        .expect_err("unknown context version must fail");
+    assert!(error.message().contains("v2"));
+}
+
+fn context_event(
+    operation_id: OperationId,
+    command_id: CommandId,
+    sequence: u64,
+    text: &str,
+) -> SemanticEvent {
+    SemanticEvent {
+        event_id: EventId::new(),
+        operation_id,
+        command_id,
+        sequence,
+        kind: TURN_CONTEXT_EVENT_KIND.to_owned(),
+        payload: json!({"entries": [{"source": "plugin:renoa.time", "text": text}]}),
+    }
 }
 
 fn message_event(

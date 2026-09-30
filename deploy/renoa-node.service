@@ -8,6 +8,7 @@ Type=simple
 User=renoa-arcee
 Group=renoa-arcee
 Environment=HOME=/home/renoa
+Environment=TZ=Asia/Kolkata
 WorkingDirectory=/home/renoa/.renoa
 LoadCredential=node-config:/home/renoa/.renoa/config/node.json
 LoadCredential=rcp-device:/home/renoa/.renoa/credentials/node-device.json

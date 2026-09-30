@@ -202,6 +202,8 @@ pub(crate) fn protocol_bindings(
 
 #[cfg(test)]
 mod execution_tests;
+#[cfg(test)]
+mod time_plugin_tests;
 
 #[cfg(test)]
 mod tests {

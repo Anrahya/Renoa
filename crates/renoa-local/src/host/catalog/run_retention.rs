@@ -22,6 +22,7 @@ pub(super) fn bound_run_history(
 /// Turns a current catalog back into the schema 39 shape.
 #[cfg(test)]
 pub(crate) fn restore_schema_39(connection: &rusqlite::Connection) {
+    super::restore_schema_40(connection);
     connection
         .execute_batch("DROP TABLE host_automation_conversation_deletions;")
         .expect("restore the schema 39 automation tables");

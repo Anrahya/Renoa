@@ -20,7 +20,7 @@ pub use super::host::state::HostPluginActivation;
 pub use dispatch::{PluginInvocation, PluginOutcome};
 pub(crate) use schema::{manage_tool_spec, model_schema};
 
-pub const PLUGIN_API_REVISION: &str = "renoa-plugin-api-v3";
+pub const PLUGIN_API_REVISION: &str = "renoa-plugin-api-v4";
 pub const MAX_PLUGIN_PAGE: usize = 200;
 
 /// One operation on the shared library or on the caller's agent bindings.
@@ -98,9 +98,7 @@ pub enum PluginRequest {
         /// Exact `plugin_id`, a 64-character external identity or a renoa.* Host plugin identity from activation or `plugin_search`; not the display name.
         #[schemars(
             length(min = 1, max = 64),
-            regex(
-                pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|automations|documents|skills|git))$"
-            )
+            regex(pattern = "^(?:[a-f0-9]{64}|renoa\\.[a-z]+)$")
         )]
         plugin_id: String,
     },
@@ -109,9 +107,7 @@ pub enum PluginRequest {
         /// Exact `plugin_id`, a 64-character external identity or a renoa.* Host plugin identity from activation or `plugin_search`; not the display name.
         #[schemars(
             length(min = 1, max = 64),
-            regex(
-                pattern = "^(?:[a-f0-9]{64}|renoa\\.(?:agents|automations|documents|skills|git))$"
-            )
+            regex(pattern = "^(?:[a-f0-9]{64}|renoa\\.[a-z]+)$")
         )]
         plugin_id: String,
     },
@@ -136,6 +132,15 @@ pub enum PluginRequest {
         /// Copy the exact `required_scope` returned by Renoa after `oauth_insufficient_scope`.
         #[serde(default, deserialize_with = "deserialize_optional_oauth_scope")]
         required_scope: Option<String>,
+    },
+    /// Replace this agent's settings for a compiled Host plugin. The change applies to
+    /// messages sent after it. Pass {} to return to the plugin's defaults.
+    ConfigurePlugin {
+        /// Exact renoa.* `plugin_id` of a compiled Host plugin that takes settings.
+        #[schemars(length(min = 1, max = 64), regex(pattern = "^renoa\\.[a-z]+$"))]
+        plugin_id: String,
+        /// The plugin's settings object, as its description states.
+        settings: serde_json::Map<String, Value>,
     },
     /// Remove this agent's access to a connection while retaining its shared catalog.
     Disconnect { connection: String },

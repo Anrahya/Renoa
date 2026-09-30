@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::protocol_bindings;
+use crate::plugins::host::HostPluginId;
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
     LocalHost, LocalHostAdapters, LocalModelConfiguration, LocalTurnOutcome, ModelProvider,
@@ -127,7 +128,7 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             .await
             .expect("browse"),
     );
-    assert_eq!(browse["total"], 5);
+    assert_eq!(browse["total"], HostPluginId::ALL.len());
     assert!(
         browse["items"]
             .as_array()
