@@ -10,6 +10,7 @@ use crate::{
     LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, TurnObservation,
     agent_trace::finish_trace,
     host::{RuntimeRequest, resolve_runtime},
+    plugins::host::message_context,
     trace::{ObservedEventSink, TraceRun},
 };
 
@@ -352,24 +353,65 @@ impl AgentSession {
                 return Err(error);
             }
         };
-        let definition = self.definition().await?;
         match command {
             SessionCommand::Prompt {
                 content,
                 observation,
                 ..
-            } if definition.behavior().uses_turn_timing() => Ok(self
-                .kernel
-                .execute_observed_turn(command_id, content, observation, &runtime, cancellation)
-                .await?),
-            SessionCommand::Prompt { content, .. } => Ok(self
-                .kernel
-                .execute_turn(command_id, content, &runtime, cancellation)
-                .await?),
+            } => {
+                self.admit_prompt(
+                    command_id,
+                    &content,
+                    observation,
+                    &runtime,
+                    cancellation,
+                    trace,
+                )
+                .await
+            }
             SessionCommand::Compact => Ok(self
                 .kernel
                 .execute_compaction(command_id, &runtime, cancellation)
                 .await?),
         }
+    }
+
+    /// Admits a prompt with the context its enabled plugins contribute, or
+    /// resumes the one already admitted under `command_id`, and drives it.
+    async fn admit_prompt(
+        &self,
+        command_id: CommandId,
+        content: &[ContentBlock],
+        observation: TurnObservation,
+        runtime: &renoa_kernel::Runtime,
+        cancellation: CancellationToken,
+        trace: &TraceRun,
+    ) -> Result<LocalTurnOutcome, LocalHostError> {
+        let mut skipped = Vec::new();
+        let prompt = self
+            .kernel
+            .prompt_command(command_id, content, observation, |previous| {
+                let (entries, left_out) = message_context::admit(
+                    &self.host.database,
+                    self.agent,
+                    observation.unix_milliseconds(),
+                    previous,
+                );
+                skipped = left_out;
+                entries
+            })?;
+        if !skipped.is_empty() {
+            trace
+                .record_host(
+                    "message_context_skipped",
+                    Some("degraded"),
+                    serde_json::json!({ "command_id": command_id, "skipped": skipped }),
+                )
+                .await?;
+        }
+        Ok(self
+            .kernel
+            .execute_prompt(command_id, prompt, runtime, cancellation)
+            .await?)
     }
 }

@@ -568,14 +568,16 @@ of the same skill name.
 ## Compiled Host plugins
 
 The same protocol also discovers compiled `renoa.agents`, `renoa.automations`,
-`renoa.documents`, `renoa.skills`, and `renoa.git` plugins. Their implementations
-are registered by the Host and cannot be loaded from an imported package.
-`plugin_manage` enables or deactivates them for its caller using durable receipts;
-discovery and invocation read current state. Host references bind a real tool's
-schema and revision. Machine grants remain owner-controlled and cannot be added
-to the caller by plugin management. Every created agent receives the plugin
-protocol regardless of its machine selection. Schema 32 owns these activation
-records alongside external plugin lifecycle state.
+`renoa.documents`, `renoa.skills`, `renoa.git`, and `renoa.time` plugins. Their
+implementations are registered by the Host and cannot be loaded from an
+imported package. `plugin_manage` enables or deactivates them for its caller
+using durable receipts, and `configure_plugin` replaces the caller's settings
+for one that takes them; discovery, invocation, and message admission read
+current state. Host references bind a real tool's schema and revision. Machine
+grants remain owner-controlled and cannot be added to the caller by plugin
+management. Every created agent receives the plugin protocol regardless of its
+machine selection. Schema 32 owns these activation records alongside external
+plugin lifecycle state; schema 41 adds `renoa.time` and per-agent settings.
 
 ## Contribution model
 
@@ -584,24 +586,20 @@ agent is aware of, a private owner channel, a surface-supplied Discord
 capability, not only skills and MCP servers. The model that carries this has
 three independent axes. None of them is a universal plugin trait (locked 5).
 
-The identity registry, settings, message context, and `renoa.time` below are
-the contract that #99 implements. Until it lands, the closed compiled-plugin
-list and the built-in turn timing remain the code.
-
 ### Contribution points: what a plugin adds
 
 A contribution point is one Host module that owns one kind of contribution:
 its contract types, the single place in the operation pipeline where it runs,
 its budget and failure policy, its effect on the model's prompt cache, the
-implementation kinds and message origins it accepts, and its own table of
-contributors. There is no descriptor with one field per point; a new point is a
-new module, not a new field on every plugin.
+implementation kinds it accepts, and its own table of contributors. There is
+no descriptor with one field per point; a new point is a new module, not a new
+field on every plugin.
 
 | Point | State |
 |---|---|
 | `tools`, `skills`, `mcp_servers` | implemented |
-| `settings`: typed, per-agent values with a Host-wide default | planned in #99, for `renoa.time` |
-| `message_context`: short text admitted with each user message | planned in #99, for `renoa.time` |
+| `settings`: validated per-agent values of a compiled plugin | implemented, for `renoa.time` |
+| `message_context`: attributed text admitted with each user message | implemented, for `renoa.time` |
 | `delivery`: private owner channels offered by surfaces | planned, for #104 and #86 |
 
 Other points (session context, triggers, views) are named only as direction.
@@ -623,64 +621,61 @@ declared replay class.
 
 ### Identity: which plugin it is
 
-One identity registry, built once and passed explicitly, holds each plugin's
-id, revision, description, and whether it is enabled by default. Compiled ids
-are `renoa.*`; package ids are content digests. Per-point tables key on that
-id. The registry is not a service locator: nothing looks up a point's
-implementation through it.
+Compiled plugins are one closed list in the Host, each with a `renoa.*` id and
+a description; packages are identified by content digest. Per-point storage
+keys on that id. The settings and message-context points match every compiled
+plugin exhaustively, so the compiler checks each new plugin against both.
 
 ### Message context
 
 `message_context` is the point that lets a plugin shape every message without
 breaking the prompt cache:
 
-1. When a new prompt command is admitted, the Host records its own
-   `observed_at` and asks each enabled contributor for at most one entry. The
-   contributor receives the agent, `observed_at`, the previous prompt's
-   `observed_at`, the message origin (owner or automation), and its resolved
+1. Every prompt records when the Host admitted it. For a new command, the Host
+   asks each enabled contributor for at most one entry, passing the agent, the
+   admission time, the previous admitted prompt's time, and its own stored
    settings.
-2. Each entry is attributed to its source (`plugin:renoa.time`, later
-   `surface:discord`), validated as short printable text, and escaped. Entries
-   are bounded individually and in total. A contributor that fails, times
-   out, or still needs setup is skipped and the skip is traced; it never blocks
-   the message.
+2. Each entry is attributed to its source (`plugin:<id>`), validated as short
+   text with no control character but a line break, and bounded individually
+   and in total. A contributor that fails is left out and the omission is
+   traced; it never blocks the message.
 3. The entries are frozen into the admitted command. A retry reuses the stored
    command; it never recomputes context, so enabling, disabling, or
    reconfiguring a plugin mid-operation cannot change or reject it.
-4. The loop renders the entries inside one delimited block on that user
-   message only. Earlier messages keep their bytes, so the cached prefix
-   survives.
+4. The loop renders the entries inside one `<turn_context>` block on that user
+   message only, each in an attributed element with its text escaped. Earlier
+   messages keep their bytes, so the cached prefix survives.
 
-A contributor declares which origins it serves. Guest messages (#91) are served
-only by contributors that opt in.
+Contributors see no message origin yet. Guest messages (#91) will add one, and
+a contributor will serve guests only if it opts in.
 
 ### Settings
 
-Settings are typed values validated against the plugin's schema, stored per
-agent with an optional Host-wide default, and changed through
-`plugin_manage` and the management API with a receipt and a revision check.
-Only the value types a consumer reads exist. A required value with no agent
-setting and no Host default leaves the plugin enabled but in `needs_setup`.
-Settings are outside the runtime digest because message context reads them only
-at admission and freezes the result. A later point that reads settings after
-admission must pin the settings revision it read.
+A compiled plugin validates its own settings before anything is stored; they
+are kept per agent and replaced through `plugin_manage configure_plugin` with a
+receipt, and `{}` returns to the plugin's defaults. Inventory reports each
+agent's settings. Settings are outside the runtime digest because message
+context reads them only at admission and freezes the result. A later point that
+reads settings after admission must pin the settings it read.
 
 ### `renoa.time`
 
-The first plugin built on both points. It is compiled, disabled by default, and
-takes one required `timezone` setting. It contributes the current time in that
-zone and the time since the previous user message. It replaces the built-in
-turn-timing behavior; commands and events stored under that behavior remain
-readable.
+The first plugin built on both points. It is compiled, enabled by default, and
+takes an optional `timezone` setting; without one it uses the Host's system
+zone, which `TZ` sets for the service. It contributes the current time in that
+zone and the time since the previous admitted prompt. It replaces the built-in
+turn-timing behavior: an agent that had timing off starts with `renoa.time`
+off, and so does a new agent from the Alpha preset. Commands and events stored
+under the earlier behavior remain readable.
 
 ### What stays closed
 
-A new admission-time context contributor or setting type is cheap. Anything
-else still needs a new loop event kind, a Host catalog migration, and a
-management verb, and `plugin_manage`'s request and outcome types grow a variant
-per verb. Package-declared settings and context, and unifying the separate
-activation records for packages and compiled plugins, wait for their first
-package consumer.
+A new admission-time context contributor is cheap: one plugin, one match arm.
+Anything else still needs a new loop event kind, a Host catalog migration for
+the compiled-plugin `CHECK`, and a management verb, and `plugin_manage`'s
+request and outcome types grow a variant per verb. Package-declared settings
+and context, a Host-wide settings default, and unifying the separate activation
+records for packages and compiled plugins wait for their first consumer.
 
 ## Physical ownership
 

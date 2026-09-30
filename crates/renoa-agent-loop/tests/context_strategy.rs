@@ -13,9 +13,9 @@ use renoa_agent::{
     ModelRequest, ModelResponse, StopReason,
 };
 use renoa_agent_loop::{
-    AgentCommand, AgentLoopBuildError, AgentLoopConfig, ContextBinding, ContextInput,
-    ContextStrategy, ContextStrategyError, MESSAGE_EVENT_KIND, ModelBinding, TurnTiming,
-    build_runtime,
+    AgentCommand, AgentLoopBuildError, AgentLoopConfig, ContextBinding, ContextContribution,
+    ContextInput, ContextStrategy, ContextStrategyError, MESSAGE_EVENT_KIND, ModelBinding,
+    TurnContext, build_runtime,
 };
 use renoa_kernel::{
     AgentId, Command, CommandId, DriveResult, EffectRecovery, EffectStatus, EventCursor, Kernel,
@@ -88,28 +88,35 @@ async fn timed_history_preserves_the_provider_prefix_and_clean_durable_messages(
             Arc::clone(&requests),
         )),
     );
-    let first = AgentCommand::timed(
-        vec![renoa_agent::ContentBlock::text("First question.")],
-        TurnTiming::new("2026-08-31T20:00:00+05:30[Asia/Kolkata]", 10_000, None)
-            .expect("first timing"),
-    );
-    let second = AgentCommand::timed(
-        vec![renoa_agent::ContentBlock::text("Second question.")],
-        TurnTiming::new(
-            "2026-08-31T21:00:00+05:30[Asia/Kolkata]",
-            3_610_000,
-            Some(3_600_000),
+    // A prompt admitted before per-message context existed, as stored.
+    let first = serde_json::from_value::<AgentCommand>(serde_json::json!({
+        "content": [{"type": "text", "text": "First question."}],
+        "turn_timing": {
+            "observed_at": "2026-08-31T20:00:00+05:30[Asia/Kolkata]",
+            "observed_at_unix_ms": 10_000,
+        },
+    }))
+    .expect("stored timed command");
+    let observed = |text: &str, at: i64, time: &str| {
+        AgentCommand::observed(
+            vec![renoa_agent::ContentBlock::text(text)],
+            at,
+            TurnContext::new(vec![
+                ContextContribution::plugin("renoa.time", time).expect("time entry"),
+            ])
+            .expect("context"),
         )
-        .expect("second timing"),
+        .expect("observed command")
+    };
+    let second = observed(
+        "Second question.",
+        3_610_000,
+        "current_time: 2026-08-31T21:00:00+05:30[Asia/Kolkata]",
     );
-    let third = AgentCommand::timed(
-        vec![renoa_agent::ContentBlock::text("Third question.")],
-        TurnTiming::new(
-            "2026-08-31T22:00:00+05:30[Asia/Kolkata]",
-            7_210_000,
-            Some(3_600_000),
-        )
-        .expect("third timing"),
+    let third = observed(
+        "Third question.",
+        7_210_000,
+        "current_time: 2026-08-31T22:00:00+05:30[Asia/Kolkata]",
     );
 
     submit_command_and_drive(&kernel, session_id, &runtime, first).await;
@@ -128,7 +135,15 @@ async fn timed_history_preserves_the_provider_prefix_and_clean_durable_messages(
     };
     assert!(matches!(
         &content[1],
-        renoa_agent::ContentBlock::Text { text } if text.contains("<turn_context>")
+        renoa_agent::ContentBlock::Text { text } if text.contains("current_time: 2026-08-31T20:00:00")
+    ));
+    let Message::User { content } = &requests[2].messages[2] else {
+        panic!("second user message is not a user message");
+    };
+    assert!(matches!(
+        &content[1],
+        renoa_agent::ContentBlock::Text { text }
+            if text.contains("<context source=\"plugin:renoa.time\">\ncurrent_time: 2026-08-31T21:00:00")
     ));
     drop(requests);
 

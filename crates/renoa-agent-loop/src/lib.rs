@@ -8,6 +8,7 @@ mod context;
 mod decision;
 mod format;
 mod pending_tools;
+mod turn_context;
 mod turn_timing;
 
 pub use code_mode::{
@@ -30,8 +31,8 @@ pub use context::{
 };
 pub use format::{
     AgentCommand, COMPACTION_RESULT_EVENT_KIND, CONTEXT_CHECKPOINT_EVENT_KIND, CompactionResult,
-    MESSAGE_EVENT_KIND, TURN_TIMING_EVENT_KIND,
+    MESSAGE_EVENT_KIND, TURN_CONTEXT_EVENT_KIND, TURN_TIMING_EVENT_KIND,
 };
-pub use turn_timing::{TurnTiming, TurnTimingError};
+pub use turn_context::{ContextContribution, TurnContext, TurnContextError};
 mod usage;
 pub use usage::recorded_token_usage;

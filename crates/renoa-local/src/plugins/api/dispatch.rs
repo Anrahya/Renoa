@@ -28,6 +28,7 @@ pub enum PluginOutcome {
     Listed(PluginInventoryPage),
     Activation(crate::plugins::PluginActivation),
     HostActivation(crate::plugins::host::state::HostPluginActivation),
+    HostSettings(crate::plugins::host::settings::HostPluginSettings),
     Connected {
         package_digest: String,
         server: String,
@@ -174,19 +175,51 @@ impl PluginManager {
                     &crate::plugins::host::HostPluginId::ALL
                         .into_iter()
                         .map(|plugin| {
-                            Ok(crate::plugins::host::state::HostPluginActivation {
+                            let catalog = self.mcp_catalog();
+                            let database = catalog.path();
+                            let activation = crate::plugins::host::state::HostPluginActivation {
                                 plugin_id: plugin.id().to_owned(),
                                 enabled: crate::plugins::host::state::enabled(
-                                    self.mcp_catalog().path(),
-                                    *agent_id,
-                                    plugin,
+                                    database, *agent_id, plugin,
                                 )?,
-                            })
+                            };
+                            let settings = crate::plugins::host::settings::configurable(plugin)
+                                .then(|| {
+                                    crate::plugins::host::settings::read(
+                                        database, *agent_id, plugin,
+                                    )
+                                })
+                                .transpose()?;
+                            Ok((activation, settings))
                         })
                         .collect::<Result<Vec<_>, PluginError>>()?,
                     cursor.as_deref(),
                     limit,
                 )?))
+            }
+            PluginRequest::ConfigurePlugin {
+                plugin_id,
+                settings,
+            } => {
+                let plugin =
+                    crate::plugins::host::HostPluginId::parse(&plugin_id).ok_or_else(|| {
+                        PluginError::Invalid(format!("{plugin_id} is not a compiled Host plugin"))
+                    })?;
+                let database = self.mcp_catalog().path().to_path_buf();
+                let agent = *agent_id;
+                let operation = invocation.operation_id.to_owned();
+                Ok(PluginOutcome::HostSettings(
+                    tokio::task::spawn_blocking(move || {
+                        crate::plugins::host::settings::configure(
+                            &database,
+                            agent,
+                            plugin,
+                            serde_json::Value::Object(settings),
+                            &operation,
+                        )
+                    })
+                    .await??,
+                ))
             }
             PluginRequest::Activate { package_digest } => Ok(PluginOutcome::Activation(
                 self.change_activation(

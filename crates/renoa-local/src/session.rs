@@ -5,8 +5,6 @@ use renoa_agent_loop::MESSAGE_EVENT_KIND;
 use renoa_kernel::{AgentId, CommandId, EventCursor, Kernel, KernelError, OperationId, SessionId};
 use thiserror::Error;
 
-use crate::TurnObservationError;
-
 mod execution;
 #[cfg(test)]
 mod timing_tests;
@@ -59,7 +57,7 @@ pub enum LocalSessionError {
         source: serde_json::Error,
     },
     #[error(transparent)]
-    TurnObservation(#[from] TurnObservationError),
+    TurnContext(#[from] renoa_agent_loop::TurnContextError),
     #[error("admitted operation {0} is absent from its kernel session")]
     AdmissionMissing(OperationId),
     #[error(

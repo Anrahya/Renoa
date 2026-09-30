@@ -15,7 +15,9 @@ use super::{
     CompactionCheckpoint, CompactionLimits, CompactionPlan, CompactionPlanner,
     CompactionPlanningError, ContextSizer, validate_plan,
 };
-use crate::{ContextInput, TurnTiming, context::ContextOrigin};
+use crate::{
+    ContextInput, context::ContextOrigin, turn_context::TurnAnnotation, turn_timing::TurnTiming,
+};
 
 #[test]
 fn plan_cuts_only_after_a_complete_tool_group_and_preserves_the_active_user() {
@@ -123,7 +125,7 @@ fn summary_input_keeps_the_durable_time_of_each_user_turn() {
                 Message::user_text("continue"),
             ),
         ],
-        &HashMap::from([(prior, timing)]),
+        &HashMap::from([(prior, TurnAnnotation::Timing(timing))]),
         None,
         "system",
         &[],

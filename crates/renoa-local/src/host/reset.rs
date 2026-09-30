@@ -32,6 +32,7 @@ const AGENT_OWNED_TABLES: &[&str] = &[
     "host_agent_plugin_revisions",
     "host_agent_plugins",
     "host_builtin_plugin_operations",
+    "host_agent_plugin_settings",
     "host_agent_builtin_plugins",
     "host_agent_tool_selections",
     "host_agent_mcp_connections",

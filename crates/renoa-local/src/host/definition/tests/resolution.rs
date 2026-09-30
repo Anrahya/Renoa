@@ -68,7 +68,6 @@ async fn resolution_composes_the_stored_definition_with_workspace_rules() {
         .await
         .expect("resolve the stored definition");
     assert_eq!(resolved.agent_id(), specialist.id);
-    assert!(resolved.behavior().uses_turn_timing());
     assert_eq!(resolved.provider_restriction(), None);
     assert!(resolved.document_binding().is_none());
     assert_eq!(

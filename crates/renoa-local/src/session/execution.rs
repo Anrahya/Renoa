@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use renoa_agent::{AssistantContent, ContentBlock, Message, TokenUsage};
 use renoa_agent_loop::{
-    AgentCommand, COMPACTION_RESULT_EVENT_KIND, CompactionResult, MESSAGE_EVENT_KIND,
+    AgentCommand, COMPACTION_RESULT_EVENT_KIND, CompactionResult, MESSAGE_EVENT_KIND, TurnContext,
 };
 use renoa_kernel::{
     CancellationId, Command, CommandId, DriveResult, EventCursor, KernelError, OperationId,
@@ -125,15 +125,14 @@ impl LocalSession {
         .await
     }
 
-    pub(crate) async fn execute_observed_turn(
+    /// Admits and drives a prompt built by [`Self::prompt_command`].
+    pub(crate) async fn execute_prompt(
         &self,
         command_id: CommandId,
-        content: Vec<ContentBlock>,
-        observation: TurnObservation,
+        command: AgentCommand,
         runtime: &Runtime,
         cancellation: CancellationToken,
     ) -> Result<LocalTurnOutcome, LocalSessionError> {
-        let command = self.observed_command(command_id, &content, observation)?;
         self.execute_command(command_id, command, runtime, cancellation)
             .await
     }
@@ -258,11 +257,16 @@ impl LocalSession {
         }
     }
 
-    pub(super) fn observed_command(
+    /// The command for one prompt: the stored one when `command_id` was
+    /// already admitted, so a retry never recomputes its time or context;
+    /// otherwise a new command observed at `observation`, carrying the context
+    /// `compute_context` derives from the previous prompt's observation time.
+    pub(crate) fn prompt_command(
         &self,
         command_id: CommandId,
         content: &[ContentBlock],
         observation: TurnObservation,
+        compute_context: impl FnOnce(Option<i64>) -> TurnContext,
     ) -> Result<AgentCommand, LocalSessionError> {
         let snapshot = self.kernel.inspect(self.session_id)?;
         if let Some(operation) = snapshot
@@ -282,14 +286,16 @@ impl LocalSession {
             .rev()
             .map(decode_command)
             .find_map(|command| match command {
-                Ok(command) => command
-                    .turn_timing()
-                    .map(|timing| Ok(timing.observed_at_unix_ms())),
+                Ok(command) => command.observed_at_unix_ms().map(Ok),
                 Err(error) => Some(Err(error)),
             })
             .transpose()?;
-        let timing = observation.turn_timing(previous)?;
-        Ok(AgentCommand::timed(content.to_vec(), timing))
+        let observed_at = observation.unix_milliseconds();
+        Ok(AgentCommand::observed(
+            content.to_vec(),
+            observed_at,
+            compute_context(previous),
+        )?)
     }
 
     /// Returns the newest durable provider usage or post-compaction estimate.

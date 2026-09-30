@@ -118,14 +118,6 @@ impl AgentCreationOrigin {
     }
 }
 
-/// Whether a turn carries durable Host time and elapsed-message context.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnTiming {
-    Off,
-    HostClock,
-}
-
 /// Whether the workspace-root project instruction file joins the prompt.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -146,17 +138,11 @@ pub struct AutomaticCompaction {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentBehavior {
-    pub turn_timing: TurnTiming,
     pub workspace_instructions: WorkspaceInstructions,
     pub automatic_compaction: Option<AutomaticCompaction>,
 }
 
 impl AgentBehavior {
-    #[must_use]
-    pub const fn uses_turn_timing(self) -> bool {
-        matches!(self.turn_timing, TurnTiming::HostClock)
-    }
-
     #[must_use]
     pub const fn loads_project_instructions(self) -> bool {
         matches!(

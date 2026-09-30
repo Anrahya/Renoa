@@ -118,23 +118,28 @@ as a semantic event.
 ## Durable formats
 
 The loop accepts two strict versioned JSON command shapes. A prompt may carry
-one optional Host observation:
+the time the Host admitted it and the context it computed then:
 
 ```text
 AgentCommand {
   content: Vec<ContentBlock>,
-  turn_timing?: {
-    observed_at: String,
-    observed_at_unix_ms: i64,
-    elapsed_since_previous_user_message_ms?: u64
-  }
+  observed_at_unix_ms?: i64,
+  context?: [{ source: "plugin:<id>", text: String }]
 }
 ```
 
-The old content-only shape remains valid. Timing text must be bounded safe
-ASCII and the Unix value cannot precede the epoch. The observation is part of
-the admitted command, so retry and restart cannot read a newer clock value for
-the same command.
+The content-only shape remains valid, and `context` requires
+`observed_at_unix_ms`. Each source contributes at most once, each text is 1–256
+bytes with no control character but a line break, and all texts together hold
+at most 1 KiB. An empty context is stored by omission. The observation is part
+of the admitted command, so retry and restart cannot read a newer clock value
+or recompute context for the same command.
+
+A prompt admitted before per-message context may instead carry
+`turn_timing: { observed_at, observed_at_unix_ms,
+elapsed_since_previous_user_message_ms? }`. It still decodes and re-encodes
+byte-identically; it cannot be combined with the newer fields, and no new
+command uses it.
 
 The control shape currently has one value:
 
@@ -157,16 +162,20 @@ semantic event kinds are ignored because they may belong to observers or other
 runtime features. An unknown version under the `renoa.agent.message.` namespace
 fails closed instead of silently changing model history.
 
-A timed prompt records a separate semantic event:
+A prompt with context records a separate semantic event:
 
 ```text
-renoa.agent.turn-timing.v1
+renoa.agent.turn-context.v1   { entries: [{ source, text }] }
 ```
 
-It belongs to exactly one user message from the same operation. Duplicate,
-orphaned, malformed, or unknown-version timing events fail closed. Context
-preparation appends the same `<turn_context>` block to that user message for
-every normal request, size estimate, and compaction summary. The durable
+A prompt admitted with `turn_timing` records `renoa.agent.turn-timing.v1`
+instead. Either event belongs to exactly one user message from the same
+operation, and an operation has at most one of them. Duplicate, orphaned,
+malformed, or unknown-version events fail closed. Context preparation appends
+the same `<turn_context>` block to that user message for every normal request,
+size estimate, and compaction summary: each entry sits in a
+`<context source="...">` element with `&`, `<`, and `>` escaped, so entry text
+cannot open or close a tag. The durable
 message payload itself stays unchanged, so surface replay does not show Host
 bookkeeping. Reconstructing old turns with their original observations also
 keeps prior model-message prefixes byte-stable when a new turn is appended.
@@ -254,7 +263,7 @@ One admitted operation advances as follows:
 ```text
 command
   -> commit user-message event
-  -> when supplied, commit its Host turn-timing event
+  -> when supplied, commit its turn-context or turn-timing event
   -> prepare the durable transcript
        -> if oversized: persist exact summary request
           -> model effect

@@ -90,6 +90,7 @@ fn extension_schema_is_provider_compatible_without_weakening_typed_inputs() {
             "enable_plugin",
             "replace_plugin",
             "authorize",
+            "configure_plugin",
             "disconnect",
             "enable"
         ]
@@ -264,8 +265,9 @@ async fn one_agent_tool_inspects_installs_and_lists_an_exact_package() {
     .await;
     assert_eq!(installed["digest"], digest);
     let listed = call(&tool, json!({"action": "list"})).await;
-    assert_eq!(listed["total"], 6);
-    assert_eq!(listed["returned"], 6);
+    let total = 1 + crate::plugins::host::HostPluginId::ALL.len();
+    assert_eq!(listed["total"], total);
+    assert_eq!(listed["returned"], total);
     assert_eq!(super::inventory_items(&listed)[0]["kind"], "package");
     assert_eq!(super::inventory_items(&listed)[0]["name"], "fixture");
 }

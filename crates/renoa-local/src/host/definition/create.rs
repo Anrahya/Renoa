@@ -123,6 +123,7 @@ impl LocalHost {
                 )
             }),
             automation,
+            host_plugins_off: preset.map_or(&[], presets::AgentPreset::host_plugins_off),
             cancellation,
         };
         tokio::task::spawn_blocking(move || create_blocking(&commit)).await?
@@ -145,7 +146,6 @@ fn operational_definition(
         behavior: request.behavior.unwrap_or_else(|| {
             preset.map_or(
                 crate::AgentBehavior {
-                    turn_timing: crate::TurnTiming::HostClock,
                     workspace_instructions: crate::WorkspaceInstructions::Off,
                     automatic_compaction: None,
                 },
@@ -173,6 +173,7 @@ struct CreateCommit {
     result_json: String,
     documents: Option<(AgentDocuments, &'static str)>,
     automation: Option<(Uuid, automations::AutomationSpec)>,
+    host_plugins_off: &'static [crate::plugins::host::HostPluginId],
     cancellation: CancellationToken,
 }
 
@@ -186,6 +187,7 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         result_json,
         documents,
         automation,
+        host_plugins_off,
         cancellation,
     } = commit;
     let mut connection = catalog::open_verified(database)?;
@@ -219,6 +221,10 @@ fn create_blocking(commit: &CreateCommit) -> Result<AgentDefinition, LocalHostEr
         crate::mcp::McpCatalogStore::require_complete_catalog(&transaction, connection_id)?;
     }
     store::insert(&transaction, definition)?;
+    for plugin in *host_plugins_off {
+        crate::plugins::host::state::turn_off(&transaction, definition.id, *plugin)
+            .map_err(catalog_error)?;
+    }
     if let Some((automation_id, spec)) = automation {
         automations::store::insert_first_automation(
             &transaction,

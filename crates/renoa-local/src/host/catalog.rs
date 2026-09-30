@@ -13,6 +13,7 @@ mod migrations;
 mod registry_sync;
 mod run_retention;
 mod selection_migration;
+mod time_plugin;
 
 #[cfg(test)]
 pub(crate) use automation_delivery::restore_schema_34_automations;
@@ -29,8 +30,10 @@ pub(crate) use cutover::{cutover, fail_next_clear_before_commit};
 pub(crate) use registry_sync::restore_schema_35;
 #[cfg(test)]
 pub(crate) use run_retention::{restore_schema_38, restore_schema_39};
+#[cfg(test)]
+pub(crate) use time_plugin::restore_schema_40;
 
-const SCHEMA_VERSION: u32 = 40;
+const SCHEMA_VERSION: u32 = 41;
 pub(crate) use renoa_home::HOST_DATABASE_PATH as HOST_DATABASE;
 
 #[derive(Debug, Error)]
@@ -271,7 +274,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             transaction.commit()?;
             Ok(())
         }
-        28..=39 => {
+        28..=40 => {
             let metadata = transaction.query_row(
                 "SELECT schema_version FROM host_metadata WHERE singleton = 1",
                 [],
@@ -304,7 +307,14 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), HostCatalogE
             if version < 38 {
                 cron_schedules::adopt_cron_schedules(&transaction)?;
             }
-            let purged = run_retention::bound_run_history(&transaction)?;
+            let purged = if version < 40 {
+                run_retention::bound_run_history(&transaction)?
+            } else {
+                Vec::new()
+            };
+            if version < 41 {
+                time_plugin::move_turn_timing_to_plugin(&transaction)?;
+            }
             transaction.execute(
                 "UPDATE host_metadata SET schema_version=?1 WHERE singleton=1",
                 [SCHEMA_VERSION],

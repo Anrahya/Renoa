@@ -194,7 +194,7 @@ async fn typed_inventory_pages_cover_exactly_the_requested_facts() {
             break;
         }
     }
-    assert_eq!(total, 9);
+    assert_eq!(total, 4 + crate::plugins::host::HostPluginId::ALL.len());
     assert_eq!(returned, total);
     assert_eq!(names, ["review", "review"]);
 }

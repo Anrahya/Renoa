@@ -5,8 +5,8 @@ use renoa_kernel::OperationId;
 use thiserror::Error;
 
 use crate::{
-    TurnTiming,
     compaction::{CompactionCheckpoint, CompactionPlan},
+    turn_context::TurnAnnotation,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -76,7 +76,7 @@ impl ContextInput {
     pub(crate) fn new(
         active_operation_id: OperationId,
         entries: Vec<(ContextOrigin, Message)>,
-        turn_timings: &HashMap<OperationId, TurnTiming>,
+        annotations: &HashMap<OperationId, TurnAnnotation>,
         checkpoint: Option<ActivatedCheckpoint>,
         system_prompt: &str,
         tools: &[ToolSpec],
@@ -85,8 +85,8 @@ impl ContextInput {
         let (origins, messages) = entries
             .into_iter()
             .map(|(origin, message)| {
-                let message = match turn_timings.get(&origin.operation_id) {
-                    Some(timing) => timing.append_to(&message),
+                let message = match annotations.get(&origin.operation_id) {
+                    Some(annotation) => annotation.append_to(&message),
                     None => message,
                 };
                 (origin, message)
@@ -111,7 +111,7 @@ impl ContextInput {
 
     /// Returns the complete model-facing transcript.
     ///
-    /// Durable Host timing is reattached to its matching user message here.
+    /// Durable Host context is reattached to its matching user message here.
     #[must_use]
     pub fn messages(&self) -> &[Message] {
         &self.messages

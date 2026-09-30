@@ -71,7 +71,10 @@ async fn extension_inventory_is_bounded_and_complete() {
 
     let listed = call(&fixture.tool, json!({"action": "list", "limit": 2})).await;
     assert_eq!(listed["returned"], 2);
-    assert_eq!(listed["total"], 9);
+    assert_eq!(
+        listed["total"],
+        4 + crate::plugins::host::HostPluginId::ALL.len()
+    );
     let cursor = listed["next_cursor"]
         .as_str()
         .expect("a partial inventory page has a cursor");
@@ -99,7 +102,7 @@ async fn extension_inventory_is_bounded_and_complete() {
         assert!(listed["returned"].as_u64().expect("count") <= 2);
         returned += listed["returned"].as_u64().expect("count");
     }
-    assert_eq!(returned, 9);
+    assert_eq!(returned, listed["total"].as_u64().expect("total"));
 }
 
 #[tokio::test]

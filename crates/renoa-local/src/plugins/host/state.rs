@@ -13,17 +13,21 @@ pub struct HostPluginActivation {
     pub enabled: bool,
 }
 
-pub(crate) fn initialize(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
-    tx.execute_batch("CREATE TABLE IF NOT EXISTS host_agent_builtin_plugins (
+/// Which compiled plugins each agent turned on or off; no row is the default, on.
+pub(crate) const BUILTIN_PLUGINS_TABLE: &str = "CREATE TABLE IF NOT EXISTS host_agent_builtin_plugins (
         agent_id TEXT NOT NULL REFERENCES host_agents(agent_id),
-        plugin_id TEXT NOT NULL CHECK(plugin_id IN ('renoa.agents','renoa.automations','renoa.documents','renoa.skills','renoa.git')),
+        plugin_id TEXT NOT NULL CHECK(plugin_id IN ('renoa.agents','renoa.automations','renoa.documents','renoa.skills','renoa.git','renoa.time')),
         enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), PRIMARY KEY(agent_id,plugin_id)
-    ) STRICT;
-    CREATE TABLE IF NOT EXISTS host_builtin_plugin_operations (
+    ) STRICT;";
+
+pub(crate) fn initialize(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(BUILTIN_PLUGINS_TABLE)?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS host_builtin_plugin_operations (
         agent_id TEXT NOT NULL REFERENCES host_agents(agent_id), operation_id TEXT NOT NULL,
         request_json TEXT NOT NULL CHECK(json_valid(request_json)), result_json TEXT NOT NULL CHECK(json_valid(result_json)),
         PRIMARY KEY(agent_id,operation_id)
-    ) STRICT;")
+    ) STRICT;")?;
+    tx.execute_batch(super::settings::SETTINGS_TABLE)
 }
 
 pub(crate) fn enabled(
@@ -48,6 +52,19 @@ pub(crate) fn enabled_in(
         )
         .optional()?;
     Ok(value.unwrap_or(true))
+}
+
+/// Starts a new agent with `plugin` turned off, inside its creation.
+pub(crate) fn turn_off(
+    tx: &rusqlite::Transaction<'_>,
+    agent: AgentId,
+    plugin: HostPluginId,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO host_agent_builtin_plugins(agent_id,plugin_id,enabled) VALUES(?1,?2,0)",
+        params![agent.to_string(), plugin.id()],
+    )
+    .map(drop)
 }
 
 pub(crate) fn change(

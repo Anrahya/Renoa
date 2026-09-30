@@ -48,7 +48,7 @@ mod test_agents;
 pub use agent_definition::{
     AgentBehavior, AgentCreationOrigin, AgentCreator, AgentDefinition, AgentDefinitionError,
     AgentDocuments, AgentOperationalDefinition, AgentPresetId, AgentToolSelection,
-    AutomaticCompaction, TurnTiming, WorkspaceInstructions,
+    AutomaticCompaction, WorkspaceInstructions,
 };
 pub use agent_model::AgentModelSelection;
 pub use agent_session::{AgentSession, AgentSessionConfiguration};

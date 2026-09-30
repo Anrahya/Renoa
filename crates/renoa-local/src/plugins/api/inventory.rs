@@ -42,7 +42,10 @@ impl PluginInventoryPage {
         connections: &[McpConnectionStatus],
         skill_sources: &[SkillSourceReport],
         activations: &[crate::plugins::PluginActivation],
-        host_plugins: &[crate::plugins::host::state::HostPluginActivation],
+        host_plugins: &[(
+            crate::plugins::host::state::HostPluginActivation,
+            Option<serde_json::Value>,
+        )],
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<Self, PluginError> {
@@ -58,12 +61,12 @@ impl PluginInventoryPage {
                 .cloned()
                 .map(|activation| PluginInventoryItem::Activation { activation }),
         );
-        inventory.extend(
-            host_plugins
-                .iter()
-                .cloned()
-                .map(|activation| PluginInventoryItem::HostPlugin { activation }),
-        );
+        inventory.extend(host_plugins.iter().cloned().map(|(activation, settings)| {
+            PluginInventoryItem::HostPlugin {
+                activation,
+                settings,
+            }
+        }));
         let total = inventory.len();
         let encoded = serde_json::to_vec(&inventory).map_err(|error| {
             PluginError::Unavailable(format!(
@@ -144,6 +147,9 @@ pub enum PluginInventoryItem {
     HostPlugin {
         #[serde(flatten)]
         activation: crate::plugins::host::state::HostPluginActivation,
+        /// This agent's settings, for a plugin that takes them; `{}` is the defaults.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        settings: Option<serde_json::Value>,
     },
     Activation {
         #[serde(flatten)]
