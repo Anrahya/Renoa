@@ -577,6 +577,111 @@ to the caller by plugin management. Every created agent receives the plugin
 protocol regardless of its machine selection. Schema 32 owns these activation
 records alongside external plugin lifecycle state.
 
+## Contribution model
+
+Renoa's ambition is that almost any feature can be a plugin: a time zone the
+agent is aware of, a private owner channel, a surface-supplied Discord
+capability, not only skills and MCP servers. The model that carries this has
+three independent axes. None of them is a universal plugin trait (locked 5).
+
+The identity registry, settings, message context, and `renoa.time` below are
+the contract that #99 implements. Until it lands, the closed compiled-plugin
+list and the built-in turn timing remain the code.
+
+### Contribution points: what a plugin adds
+
+A contribution point is one Host module that owns one kind of contribution:
+its contract types, the single place in the operation pipeline where it runs,
+its budget and failure policy, its effect on the model's prompt cache, the
+implementation kinds and message origins it accepts, and its own table of
+contributors. There is no descriptor with one field per point; a new point is a
+new module, not a new field on every plugin.
+
+| Point | State |
+|---|---|
+| `tools`, `skills`, `mcp_servers` | implemented |
+| `settings`: typed, per-agent values with a Host-wide default | planned in #99, for `renoa.time` |
+| `message_context`: short text admitted with each user message | planned in #99, for `renoa.time` |
+| `delivery`: private owner channels offered by surfaces | planned, for #104 and #86 |
+
+Other points (session context, triggers, views) are named only as direction.
+They get no type, table, or field until a consumer and a test prove their
+shape.
+
+### Implementation kinds: how a contribution runs
+
+- **Declarative**: data in a package manifest, interpreted by the Host.
+- **Remote**: an out-of-process MCP server behind the existing adapter.
+- **Compiled**: first-party Rust registered by the Host. A node-supplied Host
+  plugin (#84) is a provenance of this kind, not a separate point.
+
+Third-party code never runs in a Renoa process. A point declares which kinds it
+accepts. `message_context` accepts compiled contributors only; a remote
+contributor would call a third party before admission, outside the effect
+journal, so it waits until it can run as a journaled loop effect with a
+declared replay class.
+
+### Identity: which plugin it is
+
+One identity registry, built once and passed explicitly, holds each plugin's
+id, revision, description, and whether it is enabled by default. Compiled ids
+are `renoa.*`; package ids are content digests. Per-point tables key on that
+id. The registry is not a service locator: nothing looks up a point's
+implementation through it.
+
+### Message context
+
+`message_context` is the point that lets a plugin shape every message without
+breaking the prompt cache:
+
+1. When a new prompt command is admitted, the Host records its own
+   `observed_at` and asks each enabled contributor for at most one entry. The
+   contributor receives the agent, `observed_at`, the previous prompt's
+   `observed_at`, the message origin (owner or automation), and its resolved
+   settings.
+2. Each entry is attributed to its source (`plugin:renoa.time`, later
+   `surface:discord`), validated as short printable text, and escaped. Entries
+   are bounded individually and in total. A contributor that fails, times
+   out, or still needs setup is skipped and the skip is traced; it never blocks
+   the message.
+3. The entries are frozen into the admitted command. A retry reuses the stored
+   command; it never recomputes context, so enabling, disabling, or
+   reconfiguring a plugin mid-operation cannot change or reject it.
+4. The loop renders the entries inside one delimited block on that user
+   message only. Earlier messages keep their bytes, so the cached prefix
+   survives.
+
+A contributor declares which origins it serves. Guest messages (#91) are served
+only by contributors that opt in.
+
+### Settings
+
+Settings are typed values validated against the plugin's schema, stored per
+agent with an optional Host-wide default, and changed through
+`plugin_manage` and the management API with a receipt and a revision check.
+Only the value types a consumer reads exist. A required value with no agent
+setting and no Host default leaves the plugin enabled but in `needs_setup`.
+Settings are outside the runtime digest because message context reads them only
+at admission and freezes the result. A later point that reads settings after
+admission must pin the settings revision it read.
+
+### `renoa.time`
+
+The first plugin built on both points. It is compiled, disabled by default, and
+takes one required `timezone` setting. It contributes the current time in that
+zone and the time since the previous user message. It replaces the built-in
+turn-timing behavior; commands and events stored under that behavior remain
+readable.
+
+### What stays closed
+
+A new admission-time context contributor or setting type is cheap. Anything
+else still needs a new loop event kind, a Host catalog migration, and a
+management verb, and `plugin_manage`'s request and outcome types grow a variant
+per verb. Package-declared settings and context, and unifying the separate
+activation records for packages and compiled plugins, wait for their first
+package consumer.
+
 ## Physical ownership
 
 Installed state resolves to one `~/.renoa` home by default, with `RENOA_HOME`
@@ -913,7 +1018,8 @@ remain later work and must preserve `rcp-v0.md`.
 13. Capability changes never mutate the active runtime. Static bindings change
     at a future operation; fixed registry tools may read later committed state
     and must reject stale exact references.
-14. Only effective instructions and tool definitions enter model context.
+14. Only effective instructions, tool definitions, and the validated,
+    attributed context entries admitted with each message enter model context.
 15. Secrets remain behind a dedicated credential boundary and are referenced,
     not copied, by Host records.
 16. Possibly dispatched external calls are not automatically replayed without
@@ -943,6 +1049,17 @@ remain later work and must preserve `rcp-v0.md`.
     Hosts independently validate packages and retain ownership of connections,
     credentials, profile selection, runtime assembly, and sessions. A registry
     URL is a route; the durable registry UUID is its identity.
+25. A plugin contributes through contribution points, each owned by one Host
+    module with its own contract, pipeline position, budget, and failure policy.
+    There is no per-plugin descriptor with a field for every point.
+26. Third-party code runs out of process behind a Host adapter; only
+    first-party compiled code runs in a Renoa process.
+27. Per-message context is computed once at admission, attributed to its
+    source, bounded, and frozen into the command. Retries and recovery reuse the
+    frozen entries.
+28. Core plugins and contribution points are surface-neutral. A surface may
+    contribute surface-specific capabilities; no core capability may depend on
+    one surface.
 
 ## Open decisions
 
@@ -969,8 +1086,13 @@ remain later work and must preserve `rcp-v0.md`.
 - compatibility policy beyond the SDK-supported legacy MCP revisions;
 - process lifetime and multiplexing for the MCP adapter;
 - node capability advertisement, placement, and cross-node Host configuration
-  beyond immutable package availability; and
-- stronger service-specific idempotency, reconciliation, or callback contracts.
+  beyond immutable package availability;
+- stronger service-specific idempotency, reconciliation, or callback contracts;
+- the reverse-domain namespace for Renoa data under a package manifest's
+  `extensions` object, and how packages declare settings and context;
+- remote message context as a journaled loop effect, and its replay class;
+- whether settings sync across nodes; they are node-local now; and
+- the `delivery` contract for #104 and #86.
 
 The first vertical proof is complete. These remain boundaries against guessing
 beyond the next real consumer.
