@@ -42,63 +42,16 @@ impl SurfaceStore {
         author: Author,
         context: Option<&str>,
     ) -> Result<Enqueue, DiscordError> {
-        if message.canonical.is_empty() {
-            return Err(DiscordError::Invalid(
-                "Discord message canonical payload must not be empty".to_owned(),
-            ));
-        }
         let message_id = message.message_id.as_str();
         let channel_id = message.channel_id.as_str();
-        let author_id = message.author_id.as_str();
-        let canonical = message.canonical.as_slice();
         self.access(|connection| {
             let transaction = schema::immediate_transaction(connection)?;
-            let existing = transaction
-                .query_row(
-                    "SELECT channel_id, author_id, canonical FROM messages WHERE message_id = ?1",
-                    [message_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, Vec<u8>>(2)?,
-                        ))
-                    },
-                )
-                .optional()?;
-            if let Some((stored_channel, stored_author, stored_canonical)) = existing {
-                if stored_channel != channel_id
-                    || stored_author != author_id
-                    || stored_canonical.as_slice() != canonical
-                {
-                    return Err(DiscordError::Invalid(format!(
-                        "Discord reused message {message_id} with different content"
-                    )));
-                }
+            if record_message(&transaction, message)? == Enqueue::Duplicate {
                 transaction.commit()?;
                 return Ok(Enqueue::Duplicate);
             }
-            let agent_id = match places::bound_agent(&transaction, channel_id)? {
-                Some(agent_id) => agent_id,
-                None => transaction.query_row(
-                    "SELECT agent_id FROM identity WHERE singleton = 1",
-                    [],
-                    |row| row.get(0),
-                )?,
-            };
+            let agent_id = channel_agent(&transaction, channel_id)?;
             let task_id = current_task(&transaction, channel_id, &agent_id)?;
-            transaction.execute(
-                "INSERT INTO messages(
-                    message_id, channel_id, author_id, canonical, created_at_ms
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    message_id,
-                    channel_id,
-                    author_id,
-                    canonical,
-                    schema::now_ms()?
-                ],
-            )?;
             transaction.execute(
                 "INSERT INTO turns(message_id, task_id, command_id, prompt, context, author, state)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued')",
@@ -113,6 +66,47 @@ impl SurfaceStore {
             )?;
             transaction.commit()?;
             Ok(Enqueue::Fresh)
+        })
+    }
+
+    /// Starts a new conversation in the channel for the operator's `/new`
+    /// message and answers it: the channel's next message goes to a new task
+    /// on its agent. The ended task is kept; a current task nothing has used
+    /// yet is reused rather than followed by another. A redelivered message
+    /// changes nothing.
+    pub(crate) fn start_conversation(&self, message: &Addressed) -> Result<Enqueue, DiscordError> {
+        let message_id = message.message_id.as_str();
+        let channel_id = message.channel_id.as_str();
+        self.access(|connection| {
+            let transaction = schema::immediate_transaction(connection)?;
+            let recorded = record_message(&transaction, message)?;
+            if recorded == Enqueue::Fresh {
+                let agent_id = channel_agent(&transaction, channel_id)?;
+                let used: Option<bool> = transaction
+                    .query_row(
+                        "SELECT opened OR EXISTS (
+                             SELECT 1 FROM turns WHERE turns.task_id = tasks.task_id
+                         )
+                         FROM tasks WHERE channel_id = ?1 AND current = 1",
+                        [channel_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if used.unwrap_or(false) {
+                    new_task(&transaction, channel_id, &agent_id)?;
+                } else {
+                    current_task(&transaction, channel_id, &agent_id)?;
+                }
+                insert_pages(
+                    &transaction,
+                    &Uuid::new_v4().to_string(),
+                    channel_id,
+                    Some(message_id),
+                    "Started a new conversation.",
+                )?;
+            }
+            transaction.commit()?;
+            Ok(recorded)
         })
     }
 
@@ -233,6 +227,59 @@ impl SurfaceStore {
     }
 }
 
+/// Records an addressed message once. A redelivery with the same content is a
+/// duplicate; Discord reusing the id for other content is an error.
+fn record_message(
+    connection: &rusqlite::Connection,
+    message: &Addressed,
+) -> Result<Enqueue, DiscordError> {
+    if message.canonical.is_empty() {
+        return Err(DiscordError::Invalid(
+            "Discord message canonical payload must not be empty".to_owned(),
+        ));
+    }
+    let message_id = message.message_id.as_str();
+    let channel_id = message.channel_id.as_str();
+    let author_id = message.author_id.as_str();
+    let canonical = message.canonical.as_slice();
+    let existing = connection
+        .query_row(
+            "SELECT channel_id, author_id, canonical FROM messages WHERE message_id = ?1",
+            [message_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((stored_channel, stored_author, stored_canonical)) = existing {
+        if stored_channel != channel_id
+            || stored_author != author_id
+            || stored_canonical.as_slice() != canonical
+        {
+            return Err(DiscordError::Invalid(format!(
+                "Discord reused message {message_id} with different content"
+            )));
+        }
+        return Ok(Enqueue::Duplicate);
+    }
+    connection.execute(
+        "INSERT INTO messages(message_id, channel_id, author_id, canonical, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            message_id,
+            channel_id,
+            author_id,
+            canonical,
+            schema::now_ms()?
+        ],
+    )?;
+    Ok(Enqueue::Fresh)
+}
+
 /// The channel's current task on `agent_id`, starting a new one when the
 /// channel has none or its agent changed.
 fn current_task(
@@ -252,6 +299,16 @@ fn current_task(
     {
         return Ok(task_id.clone());
     }
+    new_task(connection, channel_id, agent_id)
+}
+
+/// Makes a new task on `agent_id` the channel's current one; the previous
+/// current task is kept.
+fn new_task(
+    connection: &rusqlite::Connection,
+    channel_id: &str,
+    agent_id: &str,
+) -> Result<String, DiscordError> {
     connection.execute(
         "UPDATE tasks SET current = 0 WHERE channel_id = ?1 AND current = 1",
         [channel_id],
@@ -262,6 +319,22 @@ fn current_task(
         params![task_id, channel_id, agent_id],
     )?;
     Ok(task_id)
+}
+
+/// The agent bound to the channel, or to a thread's parent channel, else the
+/// default.
+fn channel_agent(
+    connection: &rusqlite::Connection,
+    channel_id: &str,
+) -> Result<String, DiscordError> {
+    match places::bound_agent(connection, channel_id)? {
+        Some(agent_id) => Ok(agent_id),
+        None => Ok(connection.query_row(
+            "SELECT agent_id FROM identity WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )?),
+    }
 }
 
 pub(super) fn insert_pages(

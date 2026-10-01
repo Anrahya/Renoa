@@ -452,3 +452,36 @@ fn a_recorded_progress_message_is_finished_once_its_command_is() {
         .expect("clear progress");
     assert!(store.shown_progress().expect("shown progress").is_empty());
 }
+
+#[test]
+fn repeated_new_conversations_keep_one_unused_task_on_the_channels_agent() {
+    let files = tempfile::tempdir().expect("directory");
+    let store = bound_store(&files);
+    enqueue(&store, "301", "first");
+    for id in ["302", "303"] {
+        let new = crate::ingress::Addressed::for_test(
+            &snowflake(id),
+            &snowflake("202"),
+            &snowflake("20"),
+            id.as_bytes(),
+            "/new",
+        );
+        assert_eq!(store.start_conversation(&new).expect("new"), Enqueue::Fresh);
+    }
+    let connection =
+        rusqlite::Connection::open(files.path().join("state/surfaces/discord/discord.sqlite3"))
+            .expect("inspect");
+    let mut statement = connection
+        .prepare("SELECT agent_id, current FROM tasks WHERE channel_id = '202' ORDER BY rowid")
+        .expect("tasks");
+    let tasks: Vec<(String, bool)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("rows")
+        .collect::<Result<_, _>>()
+        .expect("tasks");
+    assert_eq!(
+        tasks,
+        [(agent().to_string(), false), (agent().to_string(), true)],
+        "the used task is kept and one unused task waits on the default agent"
+    );
+}

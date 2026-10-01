@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::{Value, json};
-use tokio::sync::Notify;
 use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{Message, protocol::WebSocketConfig},
@@ -13,7 +12,7 @@ use crate::{
     DiscordError,
     api::{ApiError, DiscordApi},
     places,
-    routing::{self, Inbox},
+    routing::{self, Inbox, Wake},
     snowflake::Snowflake,
     store::{GatewayCursor, SurfaceStore},
 };
@@ -160,7 +159,7 @@ impl SocketState {
 pub(crate) async fn maintain(
     api: &DiscordApi,
     store: &SurfaceStore,
-    wake: &Notify,
+    wake: Wake<'_>,
     shutdown: &CancellationToken,
     guild_id: &Snowflake,
     operator_user_id: &Snowflake,
