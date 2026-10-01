@@ -201,6 +201,7 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
     let input = CommandInput::Text {
         text: "continue".to_owned(),
         context: None,
+        author: renoa_protocol::Author::Principal,
     };
     send(
         &mut surface,

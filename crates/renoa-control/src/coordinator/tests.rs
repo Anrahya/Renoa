@@ -64,6 +64,7 @@ async fn a_lagging_surface_is_told_to_replay() {
         input: CommandInput::Text {
             text: "fill the live buffer".to_owned(),
             context: None,
+            author: renoa_protocol::Author::Principal,
         },
     };
     // The blocked delivery can hold one queued event and one in-flight event.

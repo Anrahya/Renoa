@@ -95,7 +95,7 @@ async fn cancellation_without_a_runtime_keeps_unfinished_work_durable_and_owned(
                         renoa_local::TurnObservation::now().expect("time"),
                         Arc::new(NoopEvents),
                         token,
-                        None,
+                        renoa_local::Speaker::Unidentified,
                     )
                     .await
                     .is_err(),

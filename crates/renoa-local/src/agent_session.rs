@@ -16,6 +16,7 @@ use crate::{
         resolve_runtime, selected_model_by_selection_id,
     },
     selection::{RuntimeSelection, append_selection},
+    speaker::ToolAccess,
     trace::TraceStore,
 };
 
@@ -374,6 +375,7 @@ impl AgentSession {
                 reasoning,
                 workspace: &workspace,
                 events: None,
+                tools: ToolAccess::Granted,
             },
         )
         .await?;

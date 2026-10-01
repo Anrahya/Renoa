@@ -16,7 +16,8 @@ use renoa_local::{
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use renoa_protocol::{
-    CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, PrincipalId, SurfaceRef, TargetRef,
+    Author, CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, PrincipalId, SurfaceRef,
+    TargetRef,
 };
 use tempfile::TempDir;
 use tokio::{
@@ -243,8 +244,8 @@ impl HostFixture {
         provision_alpha(&self.data, &self.bridge, &self.credentials).await
     }
 
-    /// Provisions an agent that reads the speaking person's `USER.md`, and
-    /// records `profile` as that file for `principal`.
+    /// Provisions an agent that reads the speaking person's `USER.md` and may
+    /// read files, and records `profile` as that file for `principal`.
     pub(crate) async fn provision_profiled_agent(
         &self,
         principal: PrincipalId,
@@ -256,7 +257,8 @@ impl HostFixture {
             .join(principal.as_uuid().to_string());
         fs::create_dir_all(&directory).expect("create profile directory");
         fs::write(directory.join("USER.md"), profile).expect("write profile");
-        let mut request = AgentCreateRequest::new(Uuid::new_v4(), "Profiled", "Answer the person.");
+        let mut request = AgentCreateRequest::new(Uuid::new_v4(), "Profiled", "Answer the person.")
+            .with_tools(["read_file".to_owned()]);
         request.documents = Some(AgentDocuments {
             soul: false,
             user: true,
@@ -593,6 +595,26 @@ pub(crate) async fn submit_placed_when_node_is_online(
     text: &str,
     context: Option<&str>,
 ) {
+    submit_input_when_node_is_online(
+        socket,
+        task_id,
+        command_id,
+        CommandInput::Text {
+            text: text.to_owned(),
+            context: context.map(str::to_owned),
+            author: Author::Principal,
+        },
+    )
+    .await;
+}
+
+/// Submits one command input once its node is online.
+pub(crate) async fn submit_input_when_node_is_online(
+    socket: &mut Socket,
+    task_id: TaskId,
+    command_id: CommandId,
+    input: CommandInput,
+) {
     loop {
         send(
             socket,
@@ -600,10 +622,7 @@ pub(crate) async fn submit_placed_when_node_is_online(
                 request_id: 2,
                 task_id,
                 command_id,
-                input: CommandInput::Text {
-                    text: text.to_owned(),
-                    context: context.map(str::to_owned),
-                },
+                input: input.clone(),
             },
         )
         .await;

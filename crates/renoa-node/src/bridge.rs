@@ -3,8 +3,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalHostError, TurnObservation};
-use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
+use renoa_local::{AgentSession, LocalHost, LocalHostError, Speaker, TurnObservation};
+use renoa_protocol::{Author, CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use thiserror::Error;
 use tokio::{
     sync::watch,
@@ -281,7 +281,10 @@ impl NodeRuntime {
                 observation,
                 events,
                 cancellation,
-                Some(record.command.principal_id.as_uuid()),
+                match record.command.input.author() {
+                    Author::Principal => Speaker::Principal(record.command.principal_id.as_uuid()),
+                    Author::Guest => Speaker::Guest,
+                },
             )
             .await;
         // A setup link that could not be delivered stopped the turn; its

@@ -377,6 +377,7 @@ function encodeCommand(command: ExecuteCommand): string {
     surface: command.surface,
     target: command.target,
     text: command.text,
+    ...(command.guest === true ? { guest: true } : {}),
   });
 }
 

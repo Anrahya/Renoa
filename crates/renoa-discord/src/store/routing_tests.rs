@@ -26,11 +26,14 @@ fn reassignment_keeps_queued_messages_on_their_task_and_starts_a_new_one() {
     let receipt = store.bind_channel(&first, "desk").unwrap();
     store
         .enqueue(
-            &snow("101"),
-            &snow("202"),
-            &snow("20"),
-            b"first",
-            "first",
+            &crate::ingress::Addressed::for_test(
+                &snow("101"),
+                &snow("202"),
+                &snow("20"),
+                b"first",
+                "first",
+            ),
+            renoa_protocol::Author::Principal,
             None,
         )
         .unwrap();
@@ -41,11 +44,14 @@ fn reassignment_keeps_queued_messages_on_their_task_and_starts_a_new_one() {
     assert!(store.bind_channel(&request(original, 1), "desk").is_err());
     store
         .enqueue(
-            &snow("102"),
-            &snow("202"),
-            &snow("20"),
-            b"second",
-            "second",
+            &crate::ingress::Addressed::for_test(
+                &snow("102"),
+                &snow("202"),
+                &snow("20"),
+                b"second",
+                "second",
+            ),
+            renoa_protocol::Author::Principal,
             None,
         )
         .unwrap();
@@ -58,11 +64,14 @@ fn reassignment_keeps_queued_messages_on_their_task_and_starts_a_new_one() {
     assert_eq!(
         store
             .enqueue(
-                &snow("101"),
-                &snow("202"),
-                &snow("20"),
-                b"first",
-                "first",
+                &crate::ingress::Addressed::for_test(
+                    &snow("101"),
+                    &snow("202"),
+                    &snow("20"),
+                    b"first",
+                    "first"
+                ),
+                renoa_protocol::Author::Principal,
                 None
             )
             .unwrap(),
@@ -114,7 +123,7 @@ fn schema_one_reaches_the_current_schema_keeping_its_identity_and_message_dedupl
         upgraded
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .unwrap(),
-        6
+        7
     );
     let progress: i64 = upgraded
         .query_row("SELECT count(*) FROM progress_messages", [], |row| {
@@ -157,6 +166,7 @@ fn schema_five_keeps_queued_messages_and_gains_the_directory_and_context() {
         .execute_batch(
             "DROP TABLE channels;
              ALTER TABLE turns DROP COLUMN context;
+             ALTER TABLE turns DROP COLUMN author;
              PRAGMA user_version = 5;",
         )
         .unwrap();
@@ -192,4 +202,54 @@ fn schema_five_keeps_queued_messages_and_gains_the_directory_and_context() {
     let thread = store.place(&snow("303")).unwrap().unwrap();
     assert_eq!(thread.name.as_deref(), Some("plan"));
     assert_eq!(thread.thread_parent_id, Some(snow("202")));
+}
+
+#[test]
+fn schema_six_classifies_queued_messages_and_keeps_submitted_ones_as_sent() {
+    let files = tempfile::tempdir().unwrap();
+    let store = SurfaceStore::open(files.path()).unwrap();
+    store
+        .bind_identity(&snow("10"), &snow("20"), Uuid::new_v4())
+        .unwrap();
+    for (message, author) in [("101", "20"), ("102", "30"), ("103", "30")] {
+        store
+            .enqueue(
+                &crate::ingress::Addressed::for_test(
+                    &snow(message),
+                    &snow("202"),
+                    &snow(author),
+                    message.as_bytes(),
+                    message,
+                ),
+                renoa_protocol::Author::Principal,
+                None,
+            )
+            .unwrap();
+    }
+    store.mark_submitted("103").unwrap();
+    drop(store);
+    let database = files.path().join("state/surfaces/discord/discord.sqlite3");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch("ALTER TABLE turns DROP COLUMN author; PRAGMA user_version = 6;")
+        .unwrap();
+    drop(connection);
+
+    let connection = super::schema::open(&database).unwrap();
+    let authors: Vec<(String, String)> = connection
+        .prepare("SELECT message_id, author FROM turns ORDER BY message_id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        authors,
+        [
+            ("101".to_owned(), "principal".to_owned()),
+            ("102".to_owned(), "guest".to_owned()),
+            ("103".to_owned(), "principal".to_owned()),
+        ],
+        "a queued guest message becomes a guest's; a submitted one stays as it was sent"
+    );
 }

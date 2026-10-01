@@ -152,6 +152,11 @@ impl AgentToolBinding {
         Arc::clone(&self.tool)
     }
 
+    #[must_use]
+    pub const fn recovery(&self) -> EffectRecovery {
+        self.recovery
+    }
+
     /// Returns the model-visible name of the bound tool.
     #[must_use]
     pub fn tool_name(&self) -> &str {

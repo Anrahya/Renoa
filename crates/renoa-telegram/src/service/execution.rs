@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use renoa_agent::{AgentEventSink, ContentBlock};
-use renoa_local::{AgentSession, TurnObservation};
+use renoa_local::{AgentSession, Speaker, TurnObservation};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -81,7 +81,7 @@ impl Worker {
                         sink,
                         cancellation,
                         // Chat identities here are not RCP principals, so no USER.md is read.
-                        None,
+                        Speaker::Unidentified,
                     )
                     .await
             }

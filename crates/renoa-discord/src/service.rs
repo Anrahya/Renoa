@@ -202,11 +202,14 @@ mod tests {
             .expect("identity");
         store
             .enqueue(
-                &snowflake("101"),
-                &snowflake("202"),
-                &snowflake("20"),
-                b"message",
-                "task",
+                &crate::ingress::Addressed::for_test(
+                    &snowflake("101"),
+                    &snowflake("202"),
+                    &snowflake("20"),
+                    b"message",
+                    "task",
+                ),
+                renoa_protocol::Author::Principal,
                 None,
             )
             .expect("enqueue");

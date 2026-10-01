@@ -46,6 +46,14 @@ export class PiHarness {
       );
       return;
     }
+    if (execution.guest === true) {
+      state.finish(
+        execution.commandId,
+        { status: "failed", error: "Pi harness runs only its principal's commands, not a guest's" },
+        state.loadMessages<AgentMessage>(execution.taskId),
+      );
+      return;
+    }
     const agent = new Agent({
       initialState: {
         systemPrompt: this.#instructions,

@@ -51,10 +51,7 @@ async fn opening_a_legacy_ledger_backfills_command_identity() {
     assert_eq!(retry, RunAdmission::Existing(original_run_id));
 
     let mut changed = command;
-    changed.input = CommandInput::Text {
-        text: "changed".to_owned(),
-        context: None,
-    };
+    changed.input = CommandInput::from_text("changed");
     let conflict = store
         .admit_run(changed, agent)
         .await
@@ -68,10 +65,7 @@ fn command() -> CommandEnvelope {
         principal_id: PrincipalId::new(),
         surface: SurfaceRef::new("legacy-test"),
         target: TargetRef::new("local:legacy-test"),
-        input: CommandInput::Text {
-            text: "original".to_owned(),
-            context: None,
-        },
+        input: CommandInput::from_text("original"),
     }
 }
 

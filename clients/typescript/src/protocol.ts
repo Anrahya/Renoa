@@ -1,4 +1,4 @@
-export const RCP_VERSION = 12;
+export const RCP_VERSION = 13;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -17,6 +17,8 @@ export interface TextCommandInput {
   readonly text: string;
   /** Where the submitting surface received the text, in its own words. */
   readonly context?: string;
+  /** Present when someone other than the principal wrote the text. */
+  readonly author?: "guest";
 }
 
 export interface CommandEnvelope {
@@ -209,15 +211,22 @@ function parseCommand(value: unknown): CommandEnvelope {
     principalId: uuid(command.principalId, "principalId"),
     surface: string(command.surface, "surface"),
     target: string(command.target, "target"),
-    input:
-      input.context === undefined
-        ? { type: inputType, text: string(input.text, "command text") }
-        : {
-            type: inputType,
-            text: string(input.text, "command text"),
-            context: string(input.context, "command context"),
-          },
+    input: {
+      type: inputType,
+      text: string(input.text, "command text"),
+      ...(input.context === undefined
+        ? {}
+        : { context: string(input.context, "command context") }),
+      ...(input.author === undefined ? {} : { author: guestAuthor(input.author) }),
+    },
   };
+}
+
+function guestAuthor(value: unknown): "guest" {
+  if (value !== "guest") {
+    throw new Error(`unsupported command author ${String(value)}`);
+  }
+  return value;
 }
 
 function parseExecutionEvent(value: unknown): ExecutionEvent {

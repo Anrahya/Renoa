@@ -69,6 +69,23 @@ const AUTOMATION_TURNS: &str = r#"} else if (prompt.startsWith("Schedule for "))
 } else if (prompt === "Read the missing notes.") {
   content = [{ type: "text", text: "The notes are missing." }];"#;
 
+/// Turns that report what the Host showed the model for one speaker.
+const SPEAKER_TURNS: &str = r#"} else if (prompt === "Read the proof for me." && toolResults.length === 0) {
+  content = [{ type: "tool_call", id: "read-for", name: "read_file", arguments: { path: "proof.txt" } }];
+  stopReason = "tool_use";
+} else if (prompt === "Read the proof for me.") {
+  const result = toolResults.at(-1).result;
+  const profile = JSON.stringify(request).match(/PROFILE_[A-Z]+/g) ?? ["none"];
+  content = [{ type: "text", text: `${result.is_error ? "refused" : "read"}; profile ${profile.join(",")}` }];
+} else if (prompt === "Where am I?") {
+  const seen = user.content.map(block => block.text ?? "").join("\n")
+    .match(/<context source="surface">\n([\s\S]*?)\n<\/context>/);
+  content = [{ type: "text", text: seen ? seen[1] : "nowhere" }];
+} else if (prompt === "Which profile do you see?") {
+  const seen = JSON.stringify(request).match(/PROFILE_[A-Z]+/g) ?? ["none"];
+  content = [{ type: "text", text: seen.join(",") }];
+"#;
+
 pub(super) fn bridge_script(workspace: &Path) -> String {
     let workspace = serde_json::to_string(&workspace.to_string_lossy()).expect("encode workspace");
     format!(
@@ -142,14 +159,7 @@ if (prompt === "Read proof." && toolResults.length === 0) {{
     await new Promise(resolve => setTimeout(resolve, 10));
   }}
   content = [{{ type: "text", text: `Finished parallel ${{suffix}}.` }}];
-}} else if (prompt === "Where am I?") {{
-  const seen = user.content.map(block => block.text ?? "").join("\n")
-    .match(/<context source="surface">\n([\s\S]*?)\n<\/context>/);
-  content = [{{ type: "text", text: seen ? seen[1] : "nowhere" }}];
-}} else if (prompt === "Which profile do you see?") {{
-  const seen = JSON.stringify(request).match(/PROFILE_[A-Z]+/g) ?? ["none"];
-  content = [{{ type: "text", text: seen.join(",") }}];
-{AUTOMATION_TURNS}}} else if (prompt === "First.") {{
+{SPEAKER_TURNS}{AUTOMATION_TURNS}}} else if (prompt === "First.") {{
   content = [{{ type: "text", text: "First response." }}];
 }} else if (prompt === "Second.") {{
   content = [{{ type: "text", text: "Second response." }}];

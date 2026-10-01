@@ -224,10 +224,9 @@ pub fn test_command() -> CommandEnvelope {
         principal_id: PrincipalId::new(),
         surface: SurfaceRef::new("test"),
         target: TargetRef::new("local:test-workspace"),
-        input: CommandInput::Text {
-            text: "Read hello.txt, add a second line, verify it, and report back.".to_owned(),
-            context: None,
-        },
+        input: CommandInput::from_text(
+            "Read hello.txt, add a second line, verify it, and report back.",
+        ),
     }
 }
 

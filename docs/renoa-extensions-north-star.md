@@ -649,8 +649,9 @@ breaking the prompt cache:
    message only, each in an attributed element with its text escaped. Earlier
    messages keep their bytes, so the cached prefix survives.
 
-Contributors see no message origin yet. Guest messages (#91) will add one, and
-a contributor will serve guests only if it opts in.
+Contributors see no message origin. A guest's message (someone other than the
+owner in a shared conversation) gets the surface entry and no plugin context;
+a contributor would have to opt in to serve guests.
 
 ### Settings
 

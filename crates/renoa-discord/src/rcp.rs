@@ -8,7 +8,7 @@
 use std::{sync::Arc, time::Duration};
 
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
-use renoa_protocol::{CommandId, TargetRef};
+use renoa_protocol::{CommandId, CommandInput, TargetRef};
 use renoa_rcp_client::{ClientError, Connection, Events};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -127,8 +127,11 @@ async fn submit_queued(link: &Link, connection: &Connection) -> Result<(), Disco
             .submit(
                 task_id,
                 command_id,
-                turn.prompt.clone(),
-                turn.context.clone(),
+                CommandInput::Text {
+                    text: turn.prompt.clone(),
+                    context: turn.context.clone(),
+                    author: turn.author,
+                },
             )
             .await
         {

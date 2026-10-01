@@ -8,42 +8,53 @@ use uuid::Uuid;
 
 use super::AgentSession;
 use crate::{
-    LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, TurnObservation,
+    LocalHostError, LocalTurnOutcome, LocalWorkspace, ModelChoice, Speaker, TurnObservation,
     agent_trace::finish_trace,
     host::{RuntimeRequest, resolve_runtime},
     plugins::host::message_context,
     session::PromptAdmission,
+    speaker::ToolAccess,
     trace::{ObservedEventSink, TraceRun},
 };
 
 enum SessionCommand {
-    Prompt {
-        content: Vec<ContentBlock>,
-        observation: TurnObservation,
-        principal: Option<Uuid>,
-    },
+    Prompt(Prompt),
     Compact,
+}
+
+/// One user message, with when and where it was received and who sent it.
+struct Prompt {
+    content: Vec<ContentBlock>,
+    observation: TurnObservation,
+    speaker: Speaker,
 }
 
 impl SessionCommand {
     /// The person this turn talks to, whose `USER.md` it reads and may edit.
     const fn principal(&self) -> Option<Uuid> {
         match self {
-            Self::Prompt { principal, .. } => *principal,
+            Self::Prompt(prompt) => prompt.speaker.principal(),
             Self::Compact => None,
+        }
+    }
+
+    const fn tool_access(&self) -> ToolAccess {
+        match self {
+            Self::Prompt(prompt) => prompt.speaker.tool_access(),
+            Self::Compact => ToolAccess::Granted,
         }
     }
 
     fn content(&self) -> Option<&[ContentBlock]> {
         match self {
-            Self::Prompt { content, .. } => Some(content),
+            Self::Prompt(prompt) => Some(&prompt.content),
             Self::Compact => None,
         }
     }
 
     const fn name(&self) -> &'static str {
         match self {
-            Self::Prompt { .. } => "prompt",
+            Self::Prompt(_) => "prompt",
             Self::Compact => "compact",
         }
     }
@@ -99,7 +110,7 @@ impl AgentSession {
             observation,
             events,
             CancellationToken::new(),
-            None,
+            Speaker::Unidentified,
         )
         .await
     }
@@ -108,8 +119,8 @@ impl AgentSession {
     ///
     /// The token may be cancelled before startup and remains the active turn's
     /// token until settlement. The caller must durably retain pre-start cancellation.
-    /// `principal` names the person the prompt comes from: the turn reads and may
-    /// edit that person's `USER.md`, and without one it has no `USER.md`.
+    /// `speaker` decides the `USER.md` the turn reads and may edit, the plugin
+    /// context it is admitted with, and whether its tool calls run.
     ///
     /// # Errors
     ///
@@ -121,15 +132,15 @@ impl AgentSession {
         observation: TurnObservation,
         events: Arc<dyn AgentEventSink>,
         cancellation: CancellationToken,
-        principal: Option<Uuid>,
+        speaker: Speaker,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
         self.execute(
             request_id,
-            SessionCommand::Prompt {
+            SessionCommand::Prompt(Prompt {
                 content,
                 observation,
-                principal,
-            },
+                speaker,
+            }),
             events,
             cancellation,
         )
@@ -233,7 +244,7 @@ impl AgentSession {
         }
         let compact_trace = [ContentBlock::text("/compact")];
         let trace_content = match &command {
-            SessionCommand::Prompt { content, .. } => content.as_slice(),
+            SessionCommand::Prompt(prompt) => prompt.content.as_slice(),
             SessionCommand::Compact => compact_trace.as_slice(),
         };
         let trace = match self
@@ -308,9 +319,9 @@ impl AgentSession {
                 .ok_or_else(|| error.into());
         }
         let replay = match &command {
-            SessionCommand::Prompt { content, .. } => {
-                self.kernel.replay_settled_turn(command_id, content)?
-            }
+            SessionCommand::Prompt(prompt) => self
+                .kernel
+                .replay_settled_turn(command_id, &prompt.content)?,
             SessionCommand::Compact => self.kernel.replay_settled_compaction(command_id)?,
         };
         if let Some(outcome) = replay {
@@ -339,6 +350,7 @@ impl AgentSession {
                     reasoning,
                     workspace: &workspace,
                     events: Some(events),
+                    tools: command.tool_access(),
                 },
             )
             .await
@@ -356,20 +368,9 @@ impl AgentSession {
             }
         };
         match command {
-            SessionCommand::Prompt {
-                content,
-                observation,
-                ..
-            } => {
-                self.admit_prompt(
-                    command_id,
-                    &content,
-                    observation,
-                    &runtime,
-                    cancellation,
-                    trace,
-                )
-                .await
+            SessionCommand::Prompt(prompt) => {
+                self.admit_prompt(command_id, prompt, &runtime, cancellation, trace)
+                    .await
             }
             SessionCommand::Compact => Ok(self
                 .kernel
@@ -378,18 +379,23 @@ impl AgentSession {
         }
     }
 
-    /// Admits a prompt with the context its enabled plugins contribute, or
-    /// resumes the one already admitted under `command_id`, and drives it.
+    /// Admits a prompt with the context its surface and enabled plugins
+    /// contribute, or resumes the one already admitted under `command_id`, and
+    /// drives it.
     async fn admit_prompt(
         &self,
         command_id: CommandId,
-        content: &[ContentBlock],
-        observation: TurnObservation,
+        prompt: Prompt,
         runtime: &renoa_kernel::Runtime,
         cancellation: CancellationToken,
         trace: &TraceRun,
     ) -> Result<LocalTurnOutcome, LocalHostError> {
-        let (prompt, skipped) = match self.kernel.prompt_admission(command_id, content)? {
+        let Prompt {
+            content,
+            observation,
+            speaker,
+        } = prompt;
+        let (prompt, skipped) = match self.kernel.prompt_admission(command_id, &content)? {
             PromptAdmission::Admitted(command) => (command, Vec::new()),
             PromptAdmission::New {
                 previous_observed_at,
@@ -402,13 +408,14 @@ impl AgentSession {
                     message_context::admit(
                         &database,
                         agent,
+                        speaker,
                         observation.surface_context(),
                         observed_at,
                         previous_observed_at,
                     )
                 })
                 .await?;
-                let command = AgentCommand::observed(content.to_vec(), observed_at, entries)
+                let command = AgentCommand::observed(content, observed_at, entries)
                     .map_err(crate::LocalSessionError::from)?;
                 (command, skipped)
             }

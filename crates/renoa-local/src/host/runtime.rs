@@ -12,6 +12,7 @@ use crate::{
     plugins::agent_plugin_binding,
     runtime::build_composed_local_runtime,
     skills::{agent_skill_bindings, runtime_context},
+    speaker::ToolAccess,
 };
 
 pub(crate) struct RuntimeRequest<'a> {
@@ -22,6 +23,8 @@ pub(crate) struct RuntimeRequest<'a> {
     pub(crate) reasoning: ReasoningLevel,
     pub(crate) workspace: &'a LocalWorkspace,
     pub(crate) events: Option<Arc<dyn AgentEventSink>>,
+    /// Whether the turn's tool calls run; see [`ToolAccess`].
+    pub(crate) tools: ToolAccess,
 }
 
 /// Resolves one agent's runtime from its stored definition.
@@ -40,8 +43,11 @@ pub(crate) async fn resolve_runtime(
         reasoning,
         workspace,
         events,
+        tools,
     } = request;
-    let offered = offered_tool_bindings(host, definition, workspace, session_id, command_id)?;
+    let offered = tools.apply(offered_tool_bindings(
+        host, definition, workspace, session_id, command_id,
+    )?);
     let (extension_tools, code_mode) = bind_code_mode(host, offered)?;
     let skills = host.skill_store.clone();
     let skill_context =
@@ -57,7 +63,8 @@ pub(crate) async fn resolve_runtime(
     )?
     .with_discovered_model(model)
     .with_session(session_id)
-    .with_reasoning(reasoning);
+    .with_reasoning(reasoning)
+    .with_tool_access(tools);
     if let Some(code_mode) = code_mode {
         config = config.with_code_mode(code_mode);
     }

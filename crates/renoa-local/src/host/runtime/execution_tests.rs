@@ -12,7 +12,7 @@ use crate::plugins::host::HostPluginId;
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
     LocalHost, LocalHostAdapters, LocalModelConfiguration, LocalTurnOutcome, ModelProvider,
-    ReasoningLevel, TurnObservation,
+    ReasoningLevel, Speaker, TurnObservation,
 };
 
 struct Quiet;
@@ -413,10 +413,11 @@ async fn a_turn_reads_the_profile_of_the_person_it_comes_from() {
     fs::create_dir_all(&profile).expect("profile directory");
     fs::write(profile.join("USER.md"), "PROFILE_OWNER\n").expect("profile");
     let workspace = host.agent_workspace(agent.id).await.unwrap();
-    for (principal, seen) in [
-        (Some(owner), "PROFILE_OWNER"),
-        (Some(Uuid::new_v4()), "none"),
-        (None, "none"),
+    for (speaker, seen) in [
+        (Speaker::Principal(owner), "PROFILE_OWNER"),
+        (Speaker::Principal(Uuid::new_v4()), "none"),
+        (Speaker::Unidentified, "none"),
+        (Speaker::Guest, "none"),
     ] {
         // One session per person, as RCP gives each task a single principal.
         let session = host
@@ -430,13 +431,13 @@ async fn a_turn_reads_the_profile_of_the_person_it_comes_from() {
                 TurnObservation::now().expect("time"),
                 Arc::new(Quiet),
                 CancellationToken::new(),
-                principal,
+                speaker,
             )
             .await
             .expect("execute");
         assert!(
             matches!(&outcome, LocalTurnOutcome::Completed { output, .. } if output == seen),
-            "{principal:?} saw {outcome:?}"
+            "{speaker:?} saw {outcome:?}"
         );
     }
 }

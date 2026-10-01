@@ -22,7 +22,7 @@ use std::{
 
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_local::{AutomationScheduler, RunOutcome, RunStatus, ScheduledRun, TurnObservation};
-use renoa_protocol::{CommandId, ExecutionTerminal};
+use renoa_protocol::{CommandId, CommandInput, ExecutionTerminal};
 use renoa_rcp_client::{ClientError, Connection};
 use tokio_util::sync::CancellationToken;
 
@@ -207,7 +207,11 @@ async fn deliver(
     let command_id = CommandId::from_uuid(run.id);
     loop {
         match connection
-            .submit(task_id, command_id, run.submission.clone(), None)
+            .submit(
+                task_id,
+                command_id,
+                CommandInput::from_text(run.submission.clone()),
+            )
             .await
         {
             Ok(()) => break,

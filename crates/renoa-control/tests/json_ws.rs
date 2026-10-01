@@ -10,8 +10,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v12_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 12);
+fn json_websocket_v13_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 13);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -24,7 +24,7 @@ fn json_websocket_v12_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 12,
+            "version": 13,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -91,7 +91,7 @@ fn json_websocket_v12_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v12_text_input_carries_the_surface_context_only_when_present() {
+fn json_websocket_v13_text_input_carries_context_and_a_guest_author_only_when_present() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let submit = ClientMessage::Submit {
@@ -101,6 +101,7 @@ fn json_websocket_v12_text_input_carries_the_surface_context_only_when_present()
         input: CommandInput::Text {
             text: "continue here".to_owned(),
             context: None,
+            author: renoa_protocol::Author::Principal,
         },
     };
     let submit_json = json!({
@@ -128,6 +129,7 @@ fn json_websocket_v12_text_input_carries_the_surface_context_only_when_present()
         input: CommandInput::Text {
             text: "post it here".to_owned(),
             context: Some("Discord channel #general (5)".to_owned()),
+            author: renoa_protocol::Author::Principal,
         },
     };
     let placed_json = json!({
@@ -149,10 +151,48 @@ fn json_websocket_v12_text_input_carries_the_surface_context_only_when_present()
         serde_json::from_value::<ClientMessage>(placed_json).expect("deserialize with context"),
         placed
     );
+    let guest = ClientMessage::Submit {
+        request_id: 10,
+        task_id,
+        command_id,
+        input: CommandInput::Text {
+            text: "hi".to_owned(),
+            context: None,
+            author: renoa_protocol::Author::Guest,
+        },
+    };
+    let guest_json = json!({
+        "type": "submit",
+        "request_id": 10,
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002",
+        "input": {"type": "text", "text": "hi", "author": "guest"}
+    });
+    assert_eq!(
+        serde_json::to_value(&guest).expect("serialize a guest's text"),
+        guest_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(guest_json).expect("deserialize a guest's text"),
+        guest
+    );
+    for author in ["owner", "principal"] {
+        assert!(
+            serde_json::from_value::<ClientMessage>(json!({
+                "type": "submit",
+                "request_id": 10,
+                "task_id": "00000000-0000-0000-0000-000000000001",
+                "command_id": "00000000-0000-0000-0000-000000000002",
+                "input": {"type": "text", "text": "hi", "author": author}
+            }))
+            .is_err(),
+            "{author:?} is rejected: the principal is never named on the wire"
+        );
+    }
 }
 
 #[test]
-fn json_websocket_v12_encodes_task_discovery() {
+fn json_websocket_v13_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -194,7 +234,7 @@ fn json_websocket_v12_encodes_task_discovery() {
 }
 
 #[test]
-fn json_websocket_v12_encodes_target_discovery_and_task_opening() {
+fn json_websocket_v13_encodes_target_discovery_and_task_opening() {
     let node_id = NodeId::from_uuid(Uuid::from_u128(3));
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let cases = [
@@ -258,7 +298,7 @@ fn json_websocket_v12_encodes_target_discovery_and_task_opening() {
 }
 
 #[test]
-fn json_websocket_v12_encodes_harness_neutral_execution_events() {
+fn json_websocket_v13_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {
@@ -354,6 +394,7 @@ fn execute_delivery_contains_only_continuity_data() {
             input: CommandInput::Text {
                 text: "continue".to_owned(),
                 context: None,
+                author: renoa_protocol::Author::Principal,
             },
         },
     };

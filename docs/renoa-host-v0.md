@@ -53,7 +53,18 @@ agents talking to the same person share one profile, and one person never sees
 another's. An automation run is a command of the node's `automations` surface,
 so it reads the file of the principal that surface is enrolled for, the Host's
 owner. A turn with no principal (a Telegram or Slack message, the CLI) has no
-`USER.md`. A person with no file reads as an empty profile. The
+`USER.md`, and keeps every tool. A guest's turn has no `USER.md` either. It is
+an RCP command whose `author` is `guest`: text a shared surface received from
+someone other than its principal. It is admitted with no plugin context, and
+every tool call it makes, including a Code Mode step's nested calls, is refused.
+The tool definitions stay offered, so a history holding earlier tool calls
+stays valid for the provider.
+
+A guest's turn shares its conversation with the owner's. The model still sees
+the earlier messages in that task, including the owner's and their tool
+results, and the agent's `SOUL.md`, workspace instructions and active skills.
+A guest's text stays in the history, so the owner's later turns, which can use
+tools, read it too. A person with no file reads as an empty profile. The
 first edit creates the file and its private directory, and an edit rejected for
 a stale revision creates nothing.
 
@@ -312,7 +323,7 @@ in one SQLite transaction; stale edits and reused operation IDs return 409.
 An exact retry returns its original receipt before contacting Discord again.
 Every write requires the owner cookie and exact Origin.
 
-Discord owns `state/surfaces/discord/discord.sqlite3` (schema 6). The worker
+Discord owns `state/surfaces/discord/discord.sqlite3` (schema 7). The worker
 runs no agents: each channel's conversation is an RCP task on its routed agent's
 target, `agent:<uuid>`, opened on the node that advertises it. A thread is its
 own conversation on its parent channel's agent, and a thread of a bound channel
@@ -322,9 +333,10 @@ has not seen when a thread message arrives, or when a message from any other
 channel is a turn; if Discord cannot say, the message is routed by its own
 channel, the failure is logged, and that channel is not asked about again for a
 minute. Channel routing, the task, a stable command
-identity, and the message's context (the server, channel, and thread ids and
-names) are persisted when a message is admitted, and the message is submitted
-under that identity with that context, so a reconnect retries it exactly. Reassignment starts a new task for subsequent messages;
+identity, the message's context (the server, channel, and thread ids and
+names, and the sender's server name marked owner or guest), and its author are
+persisted when a message is admitted, and the message is submitted
+under that identity with that context and author, so a reconnect retries it exactly. Reassignment starts a new task for subsequent messages;
 already admitted work keeps its original task. Unbound channels still require a
 mention, reply, or active thread, and only the operator (the application owner)
 can use DMs. Task records apply once under a per-task cursor; each finished

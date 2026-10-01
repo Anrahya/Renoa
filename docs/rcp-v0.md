@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 12 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 13 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -634,7 +634,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 12 JSON/WebSocket shape with binding-level conformance
+- a documented version 13 JSON/WebSocket shape with binding-level conformance
   assertions;
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser

@@ -8,6 +8,9 @@ pub(crate) struct Addressed {
     pub(crate) message_id: Snowflake,
     pub(crate) channel_id: Snowflake,
     pub(crate) author_id: Snowflake,
+    /// What the server calls the author: their nickname, else their display
+    /// name, else their username.
+    pub(crate) author_name: String,
     pub(crate) canonical: Vec<u8>,
     pub(crate) prompt: String,
 }
@@ -60,9 +63,38 @@ pub(crate) fn addressed(
         message_id: Snowflake::parse(&message.id)?,
         channel_id: Snowflake::parse(&message.channel_id)?,
         author_id: Snowflake::parse(&message.author.id)?,
+        author_name: [
+            message.member.and_then(|member| member.nick),
+            message.author.global_name,
+            Some(message.author.username),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|name| !name.trim().is_empty())
+        .unwrap_or(message.author.id),
         canonical: payload.to_vec(),
         prompt,
     }))
+}
+
+#[cfg(test)]
+impl Addressed {
+    pub(crate) fn for_test(
+        message_id: &Snowflake,
+        channel_id: &Snowflake,
+        author_id: &Snowflake,
+        canonical: &[u8],
+        prompt: &str,
+    ) -> Self {
+        Self {
+            message_id: message_id.clone(),
+            channel_id: channel_id.clone(),
+            author_id: author_id.clone(),
+            author_name: format!("user {}", author_id.as_str()),
+            canonical: canonical.to_vec(),
+            prompt: prompt.to_owned(),
+        }
+    }
 }
 
 fn strip_mention(content: &str, bot_user_id: &str) -> String {
@@ -81,6 +113,8 @@ struct MessageCreate {
     #[serde(default)]
     content: String,
     author: Author,
+    #[serde(default)]
+    member: Option<Member>,
     #[serde(default)]
     mentions: Vec<Mention>,
     #[serde(default)]
@@ -130,6 +164,16 @@ pub(crate) fn route(payload: &[u8]) -> Result<Route, DiscordError> {
 struct Author {
     id: String,
     bot: Option<bool>,
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    global_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Member {
+    #[serde(default)]
+    nick: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -11,6 +11,7 @@ use axum::{
     http::StatusCode,
     routing::get,
 };
+use renoa_protocol::Author;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -40,12 +41,23 @@ async fn channel(
     }
 }
 
+/// A message from the operator, Yash.
 fn message(id: &str, channel: &str, guild: Option<&str>, mention: bool) -> Vec<u8> {
+    let mut message: Value =
+        serde_json::from_slice(&guest_message(id, channel, guild, mention)).expect("message");
+    message["author"] = json!({"id": "20", "username": "yash", "global_name": "Yash"});
+    message.as_object_mut().expect("object").remove("member");
+    serde_json::to_vec(&message).expect("payload")
+}
+
+/// A message from Mira, a guest in the server, under her server nickname.
+fn guest_message(id: &str, channel: &str, guild: Option<&str>, mention: bool) -> Vec<u8> {
     let mut message = json!({
         "id": id,
         "channel_id": channel,
         "content": if mention { format!("<@{BOT}> hello") } else { "hello".to_owned() },
-        "author": {"id": "20"},
+        "author": {"id": "30", "username": "mira_k", "global_name": "Mira K"},
+        "member": {"nick": "Mira"},
         "mentions": if mention { json!([{"id": BOT}]) } else { json!([]) },
     });
     if let Some(guild) = guild {
@@ -164,9 +176,10 @@ async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_wr
         .await
         .expect("a bound channel answers without a mention");
     assert_eq!(bound.agent_id, fixture.desk);
+    assert_eq!(bound.author, Author::Principal, "the operator is the owner");
     assert_eq!(
         bound.context.as_deref(),
-        Some("Discord server 10\nchannel #desk (202)")
+        Some("Discord server 10\nchannel #desk (202)\nfrom Yash (owner)")
     );
 
     let thread = turn(&mut inbox, &message("1002", "303", Some("10"), false))
@@ -179,7 +192,17 @@ async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_wr
     assert_ne!(thread.task_id, bound.task_id, "each thread is its own task");
     assert_eq!(
         thread.context.as_deref(),
-        Some("Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)")
+        Some("Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)\nfrom Yash (owner)")
+    );
+
+    let guest = turn(&mut inbox, &guest_message("1010", "202", Some("10"), false))
+        .await
+        .expect("anyone in a bound channel is answered");
+    assert_eq!(guest.agent_id, fixture.desk);
+    assert_eq!(guest.author, Author::Guest, "anyone else is a guest");
+    assert_eq!(
+        guest.context.as_deref(),
+        Some("Discord server 10\nchannel #desk (202)\nfrom Mira (guest)")
     );
 
     let unseen = turn(&mut inbox, &message("1003", "304", Some("10"), false))
@@ -188,7 +211,7 @@ async fn a_bound_channel_and_its_threads_reach_its_agent_with_where_they_were_wr
     assert_eq!(unseen.agent_id, fixture.desk);
     assert_eq!(
         unseen.context.as_deref(),
-        Some("Discord server 10\nchannel #desk (202)\nthread \"late\" (304)")
+        Some("Discord server 10\nchannel #desk (202)\nthread \"late\" (304)\nfrom Yash (owner)")
     );
     turn(&mut inbox, &message("1004", "304", Some("10"), false))
         .await
@@ -213,7 +236,7 @@ async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
     assert_eq!(unbound.agent_id, fixture.default);
     assert_eq!(
         unbound.context.as_deref(),
-        Some("Discord server 10\nchannel #lounge (505)")
+        Some("Discord server 10\nchannel #lounge (505)\nfrom Yash (owner)")
     );
     let unbound_thread = turn(&mut inbox, &message("1007", "606", Some("10"), true))
         .await
@@ -226,7 +249,7 @@ async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
     assert_eq!(unknown.agent_id, fixture.default);
     assert_eq!(
         unknown.context.as_deref(),
-        Some("Discord server 10\nchannel 808")
+        Some("Discord server 10\nchannel 808\nfrom Yash (owner)")
     );
     turn(&mut inbox, &message("1010", "808", Some("10"), true))
         .await
@@ -244,7 +267,7 @@ async fn unbound_unknown_and_direct_messages_reach_the_default_agent() {
     assert_eq!(direct.agent_id, fixture.default);
     assert_eq!(
         direct.context.as_deref(),
-        Some("Discord direct message (channel 707)")
+        Some("Discord direct message (channel 707)\nfrom Yash (owner)")
     );
     assert_eq!(
         fixture.lookups(),

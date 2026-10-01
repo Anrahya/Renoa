@@ -2,20 +2,22 @@
 //!
 //! A message in a bound channel, or in a thread of one, goes to that
 //! channel's agent; any other goes to the default agent. Each queued message
-//! keeps a description of where it was written, which is submitted with it.
+//! keeps whether the operator or a guest wrote it and a description of where
+//! and by whom, which are submitted with it.
 
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
 
+use renoa_protocol::Author;
 use tokio::sync::Notify;
 
 use crate::{
     DiscordError,
     api::DiscordApi,
     ingress,
-    places::{self, Place},
+    places::{self, Place, Sender},
     snowflake::Snowflake,
     store::{Enqueue, SurfaceStore},
 };
@@ -93,6 +95,16 @@ pub(crate) async fn accept(
     if in_guild && place.is_none() {
         place = locate(inbox, &route.channel_id).await?;
     }
+    // Only the operator speaks as the owner; anyone else in a shared channel
+    // is a guest, whose turn reads no `USER.md` and runs no tools.
+    let sender = Sender {
+        name: &addressed.author_name,
+        author: if &addressed.author_id == inbox.operator_user_id {
+            Author::Principal
+        } else {
+            Author::Guest
+        },
+    };
     let context = match &place {
         Some(place) => {
             let parent = match &place.thread_parent_id {
@@ -100,22 +112,19 @@ pub(crate) async fn accept(
                 None => None,
             };
             let parent_name = parent.as_ref().and_then(|parent| parent.name.as_deref());
-            places::describe(Some(inbox.guild_id), place, parent_name)
+            places::describe(Some(inbox.guild_id), place, parent_name, &sender)
         }
         None => places::describe(
             in_guild.then_some(inbox.guild_id),
             &Place::unknown(route.channel_id.clone()),
             None,
+            &sender,
         ),
     };
-    match inbox.store.enqueue(
-        &addressed.message_id,
-        &addressed.channel_id,
-        &addressed.author_id,
-        &addressed.canonical,
-        &addressed.prompt,
-        Some(&context),
-    )? {
+    match inbox
+        .store
+        .enqueue(&addressed, sender.author, Some(&context))?
+    {
         Enqueue::Fresh => inbox.wake.notify_one(),
         Enqueue::Duplicate => {}
     }
