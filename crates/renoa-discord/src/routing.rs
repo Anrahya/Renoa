@@ -3,7 +3,8 @@
 //! A message in a bound channel, or in a thread of one, goes to that
 //! channel's agent; any other goes to the default agent. Each queued message
 //! keeps whether the operator or a guest wrote it and a description of where
-//! and by whom, which are submitted with it.
+//! and by whom, which are submitted with it. The operator's `/new` starts a new
+//! conversation in the channel instead of becoming a turn.
 
 use std::{
     collections::HashMap,
@@ -27,11 +28,20 @@ const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a channel Discord could not describe is not asked about again.
 const RETRY_LOOKUP_AFTER: Duration = Duration::from_secs(60);
 
+/// Who the gateway wakes for the work it records.
+#[derive(Clone, Copy)]
+pub(crate) struct Wake<'a> {
+    /// The coordinator link, for a queued turn.
+    pub(crate) turns: &'a Notify,
+    /// Reply delivery, for an answer the surface gives itself.
+    pub(crate) replies: &'a Notify,
+}
+
 /// What the gateway needs to accept a message.
 pub(crate) struct Inbox<'a> {
     pub(crate) store: &'a SurfaceStore,
     pub(crate) api: &'a DiscordApi,
-    pub(crate) wake: &'a Notify,
+    pub(crate) wake: Wake<'a>,
     pub(crate) guild_id: &'a Snowflake,
     pub(crate) operator_user_id: &'a Snowflake,
     /// When each channel's lookup failed within the last
@@ -92,18 +102,25 @@ pub(crate) async fn accept(
             return Ok(());
         }
     };
+    // Only the operator speaks as the owner; anyone else in a shared channel
+    // is a guest, whose turn reads no `USER.md` and runs no tools.
+    let author = if &addressed.author_id == inbox.operator_user_id {
+        Author::Principal
+    } else {
+        Author::Guest
+    };
     if in_guild && place.is_none() {
         place = locate(inbox, &route.channel_id).await?;
     }
-    // Only the operator speaks as the owner; anyone else in a shared channel
-    // is a guest, whose turn reads no `USER.md` and runs no tools.
+    if author == Author::Principal && addressed.prompt.eq_ignore_ascii_case("/new") {
+        if inbox.store.start_conversation(&addressed)? == Enqueue::Fresh {
+            inbox.wake.replies.notify_one();
+        }
+        return Ok(());
+    }
     let sender = Sender {
         name: &addressed.author_name,
-        author: if &addressed.author_id == inbox.operator_user_id {
-            Author::Principal
-        } else {
-            Author::Guest
-        },
+        author,
     };
     let context = match &place {
         Some(place) => {
@@ -125,7 +142,7 @@ pub(crate) async fn accept(
         .store
         .enqueue(&addressed, sender.author, Some(&context))?
     {
-        Enqueue::Fresh => inbox.wake.notify_one(),
+        Enqueue::Fresh => inbox.wake.turns.notify_one(),
         Enqueue::Duplicate => {}
     }
     Ok(())

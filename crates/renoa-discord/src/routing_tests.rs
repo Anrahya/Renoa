@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::{Inbox, accept};
+use super::{Inbox, Wake, accept};
 use crate::{
     api::DiscordApi,
     control::DiscordBindingRequest,
@@ -86,6 +86,7 @@ struct Fixture {
     store: SurfaceStore,
     api: DiscordApi,
     wake: Notify,
+    replies: Notify,
     guild_id: Snowflake,
     operator: Snowflake,
     lookups: Arc<AtomicUsize>,
@@ -143,6 +144,7 @@ impl Fixture {
             store,
             api: DiscordApi::with_origin("token".into(), origin).expect("api"),
             wake: Notify::new(),
+            replies: Notify::new(),
             guild_id: snowflake("10"),
             operator: snowflake("20"),
             lookups,
@@ -155,7 +157,10 @@ impl Fixture {
         Inbox {
             store: &self.store,
             api: &self.api,
-            wake: &self.wake,
+            wake: Wake {
+                turns: &self.wake,
+                replies: &self.replies,
+            },
             guild_id: &self.guild_id,
             operator_user_id: &self.operator,
             failed_lookups: std::collections::HashMap::new(),
@@ -299,5 +304,134 @@ async fn a_failed_lookup_is_retried_after_a_minute_and_then_forgotten() {
         inbox.failed_lookups.keys().collect::<Vec<_>>(),
         [&snowflake("808")],
         "expired failures are dropped"
+    );
+}
+
+/// The same message with other text.
+fn saying(payload: &[u8], content: &str) -> Vec<u8> {
+    let mut message: Value = serde_json::from_slice(payload).expect("message");
+    message["content"] = json!(content);
+    serde_json::to_vec(&message).expect("payload")
+}
+
+/// The turn one message queued, marked sent so the next one is visible.
+async fn submitted(inbox: &mut Inbox<'_>, payload: &[u8]) -> Option<QueuedTurn> {
+    accept(inbox, Some(BOT), payload).await.expect("accept");
+    let queued = inbox.store.next_queued().expect("queue")?;
+    inbox
+        .store
+        .mark_submitted(&queued.message_id)
+        .expect("submitted");
+    Some(queued)
+}
+
+#[tokio::test]
+async fn the_operators_new_starts_a_new_conversation_with_the_same_agent() {
+    let fixture = Fixture::new().await;
+    let mut inbox = fixture.inbox();
+    let first = submitted(&mut inbox, &message("1101", "606", Some("10"), true))
+        .await
+        .expect("mentioned in a thread");
+
+    let new = saying(&message("1102", "606", Some("10"), false), "/new");
+    for _ in 0..2 {
+        assert!(
+            submitted(&mut inbox, &new).await.is_none(),
+            "/new runs no turn"
+        );
+    }
+    let reply = inbox
+        .store
+        .next_outbound()
+        .expect("outbound")
+        .expect("/new is answered");
+    assert_eq!(
+        (
+            reply.channel_id.as_str(),
+            reply.reply_to.as_deref(),
+            reply.body.as_str()
+        ),
+        ("606", Some("1102"), "Started a new conversation.")
+    );
+    inbox
+        .store
+        .mark_sending(&reply.command_id, reply.chunk)
+        .expect("sending");
+    assert!(
+        inbox.store.next_outbound().expect("outbound").is_none(),
+        "a redelivered /new is answered once"
+    );
+
+    let next = submitted(&mut inbox, &message("1103", "606", Some("10"), false))
+        .await
+        .expect("the thread still answers without a mention");
+    assert_ne!(next.task_id, first.task_id, "a new task");
+    assert_eq!(next.agent_id, first.agent_id, "with the same agent");
+    let later = submitted(&mut inbox, &message("1104", "606", Some("10"), false))
+        .await
+        .expect("continues");
+    assert_eq!(
+        later.task_id, next.task_id,
+        "the new conversation continues"
+    );
+
+    let guest = submitted(
+        &mut inbox,
+        &saying(&guest_message("1105", "606", Some("10"), false), "/new"),
+    )
+    .await
+    .expect("a guest's /new is an ordinary message");
+    assert_eq!(
+        (guest.prompt.as_str(), guest.author, guest.task_id),
+        ("/new", Author::Guest, next.task_id)
+    );
+}
+
+#[tokio::test]
+async fn a_new_conversation_leaves_queued_work_and_other_text_alone() {
+    let fixture = Fixture::new().await;
+    let mut inbox = fixture.inbox();
+    let mention = |id: &str, text: &str| saying(&message(id, "505", Some("10"), true), text);
+
+    accept(&mut inbox, Some(BOT), &mention("1201", "<@900> first"))
+        .await
+        .expect("queued");
+    accept(&mut inbox, Some(BOT), &mention("1202", "<@900>  /NEW "))
+        .await
+        .expect("/new");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        fixture.replies.notified(),
+    )
+    .await
+    .expect("reply delivery is woken");
+    let queued = inbox
+        .store
+        .next_queued()
+        .expect("queue")
+        .expect("the earlier message is still queued");
+    assert_eq!(queued.message_id, "1201");
+    inbox
+        .store
+        .mark_submitted(&queued.message_id)
+        .expect("submitted");
+
+    let more = submitted(&mut inbox, &mention("1203", "<@900> /new please"))
+        .await
+        .expect("/new with more text is an ordinary message");
+    assert_eq!(more.prompt, "/new please");
+    assert_ne!(
+        more.task_id, queued.task_id,
+        "it starts the new conversation"
+    );
+
+    assert!(
+        submitted(
+            &mut inbox,
+            &saying(&message("1204", "707", None, false), "/new")
+        )
+        .await
+        .is_none(),
+        "a direct message's /new runs no turn"
     );
 }

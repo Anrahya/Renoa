@@ -10,6 +10,7 @@ use crate::{
     gateway,
     progress::{self, Progress},
     rcp,
+    routing::Wake,
     snowflake::Snowflake,
     store::{Outbound, SurfaceStore},
 };
@@ -38,9 +39,10 @@ pub(crate) async fn run(
     let api = Arc::new(api);
     let mut tasks = tokio::task::JoinSet::new();
     {
-        let (store, turns, shutdown, api) = (
+        let (store, turns, replies, shutdown, api) = (
             Arc::clone(&store),
             Arc::clone(&turns),
+            Arc::clone(&deliveries),
             shutdown.clone(),
             Arc::clone(&api),
         );
@@ -51,7 +53,10 @@ pub(crate) async fn run(
             gateway::maintain(
                 &api,
                 &store,
-                &turns,
+                Wake {
+                    turns: &turns,
+                    replies: &replies,
+                },
                 &shutdown,
                 &guild_id,
                 &operator_user_id,
