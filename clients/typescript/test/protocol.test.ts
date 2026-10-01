@@ -72,6 +72,15 @@ test("submitted commands keep the surface's context when it has one", () => {
     context: "channel #general",
   });
   assert.throws(() => submitted({ type: "text", text: "hi", context: 1 }), /command context/);
+  assert.deepEqual(submitted({ type: "text", text: "hi", author: "guest" }), {
+    type: "text",
+    text: "hi",
+    author: "guest",
+  });
+  assert.throws(
+    () => submitted({ type: "text", text: "hi", author: "principal" }),
+    /command author/,
+  );
 });
 
 test("execution task records without command causation are rejected", () => {

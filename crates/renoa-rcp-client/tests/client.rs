@@ -6,7 +6,7 @@ use renoa_control::{
     PeerIdentity, ServerMessage, TaskEvent, TaskEventKind, TaskId,
 };
 use renoa_protocol::{
-    CommandId, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
+    CommandId, CommandInput, ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId,
     ExecutionTerminal, PrincipalId, SurfaceRef, TargetRef,
 };
 use renoa_rcp_client::{ClientError, Connection, Events};
@@ -29,7 +29,11 @@ async fn a_surface_opens_a_task_submits_and_receives_its_execution_in_order() {
     assert_eq!(surface.attach(task_id, None).await, Ok(None));
     let command_id = CommandId::new();
     surface
-        .submit(task_id, command_id, "Summarize today.".to_owned(), None)
+        .submit(
+            task_id,
+            command_id,
+            CommandInput::from_text("Summarize today."),
+        )
         .await
         .expect("submit command");
     execute(&mut node, task_id, command_id).await;
@@ -77,7 +81,11 @@ async fn refusals_carry_the_coordinator_error_code() {
     wait_for_targets(&surface, 0).await;
 
     let refused = surface
-        .submit(task_id, CommandId::new(), "Are you there?".to_owned(), None)
+        .submit(
+            task_id,
+            CommandId::new(),
+            CommandInput::from_text("Are you there?"),
+        )
         .await
         .expect_err("an offline node refuses new work");
     assert_eq!(refused.code(), Some(ErrorCode::NodeOffline));

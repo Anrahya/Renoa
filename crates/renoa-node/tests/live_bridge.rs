@@ -9,14 +9,17 @@ use std::time::Duration;
 use renoa_control::{TargetSummary, TaskEventKind};
 use renoa_kernel::AgentId;
 use renoa_node::RenoaNode;
-use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, SurfaceRef};
+use renoa_protocol::{
+    Author, CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, SurfaceRef,
+};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use support::{
     CuttableProxy, HostFixture, TestSystem, agent_target, attach, attach_after,
     collect_through_terminal, collect_through_turn_started, collect_until, open_task,
-    submit_placed_when_node_is_online, submit_when_node_is_online, wait_for_path, wait_for_targets,
+    submit_input_when_node_is_online, submit_placed_when_node_is_online,
+    submit_when_node_is_online, wait_for_path, wait_for_targets,
 };
 
 #[tokio::test]
@@ -247,6 +250,69 @@ async fn the_surface_context_of_a_command_reaches_the_model_with_that_message() 
     })
     .await
     .expect("surface context test timed out");
+}
+
+#[tokio::test]
+async fn a_guest_command_reads_no_profile_and_runs_no_tool_while_the_owners_does() {
+    timeout(Duration::from_secs(15), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let profiled = fixture
+            .provision_profiled_agent(system.principal_id(), "PROFILE_OWNER\n")
+            .await;
+        let workspace = fixture
+            .host()
+            .agent_workspace(profiled)
+            .await
+            .expect("profiled agent workspace");
+        std::fs::write(workspace.join("proof.txt"), "proof\n").expect("proof file");
+        let node_shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node");
+        let node_task = tokio::spawn(node.run(node_shutdown.clone()));
+        let mut surface = system.connect_surface().await;
+        wait_for_targets(&mut surface, 2).await;
+
+        // Separate tasks, so the owner's profile cannot reach the guest's
+        // request through shared history: a real shared channel does show the
+        // guest the owner's earlier messages.
+        for (author, answer) in [
+            (Author::Principal, "read; profile PROFILE_OWNER"),
+            (Author::Guest, "refused; profile none"),
+        ] {
+            let task = open_task(&mut surface, system.node_id(), agent_target(profiled)).await;
+            attach(&mut surface, task).await;
+            let command_id = CommandId::new();
+            submit_input_when_node_is_online(
+                &mut surface,
+                task,
+                command_id,
+                CommandInput::Text {
+                    text: "Read the proof for me.".to_owned(),
+                    context: None,
+                    author,
+                },
+            )
+            .await;
+            let events = collect_through_terminal(&mut surface).await;
+            assert_execution_event(&events, command_id, |kind| {
+                matches!(kind, ExecutionEventKind::AssistantMessage { text } if text == answer)
+            });
+        }
+
+        node_shutdown.cancel();
+        node_task
+            .await
+            .expect("node task")
+            .expect("node shuts down cleanly");
+        system.stop().await;
+    })
+    .await
+    .expect("guest test timed out");
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-export const RCP_VERSION = 12;
+export const RCP_VERSION = 13;
 
 export interface DeviceCredentials {
   readonly deviceId: string;
@@ -12,6 +12,8 @@ export interface ExecuteCommand {
   readonly surface: string;
   readonly target: string;
   readonly text: string;
+  /** Written by someone other than the principal in a shared conversation. */
+  readonly guest?: true;
 }
 
 export interface QueuedExecution extends ExecuteCommand {
@@ -115,7 +117,18 @@ function parseExecute(message: Record<string, unknown>): ExecuteCommand {
     surface: string(command.surface, "surface"),
     target: string(command.target, "target"),
     text: string(input.text, "command text"),
+    ...guest(input.author),
   };
+}
+
+function guest(author: unknown): { readonly guest?: true } {
+  if (author === undefined) {
+    return {};
+  }
+  if (author === "guest") {
+    return { guest: true };
+  }
+  throw new Error(`unsupported command author ${String(author)}`);
 }
 
 function record(value: unknown, name: string): Record<string, unknown> {

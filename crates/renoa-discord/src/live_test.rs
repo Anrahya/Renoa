@@ -33,14 +33,15 @@ const ARCEE: &str = "11111111-1111-4111-8111-111111111111";
 const DESK: &str = "22222222-2222-4222-8222-222222222222";
 
 #[tokio::test]
-async fn a_mention_reaches_the_default_agent_through_rcp_and_posts_one_reply() {
+async fn the_operators_mention_reaches_the_default_agent_as_the_owner_and_posts_one_reply() {
     let bodies = run(Scenario::Mention).await.posted;
     assert_eq!(bodies.len(), 1, "{bodies:?}");
     assert!(
-        bodies[0].contains(&format!("agent:{ARCEE} answered")),
+        bodies[0].contains(&format!("agent:{ARCEE} answered Principal")),
         "{}",
         bodies[0]
     );
+    assert!(bodies[0].contains(r"\nfrom yash (owner)"), "{}", bodies[0]);
 }
 
 #[tokio::test]
@@ -55,7 +56,7 @@ async fn a_bound_channel_reaches_its_agent_without_a_mention() {
 }
 
 #[tokio::test]
-async fn a_thread_reaches_its_parent_channels_agent_with_where_it_was_written() {
+async fn a_members_thread_message_reaches_its_parent_channels_agent_as_a_guest() {
     let observed = run(Scenario::Thread).await;
     let [answer] = observed.posted.as_slice() else {
         panic!("expected one answer: {:?}", observed.posted);
@@ -69,8 +70,14 @@ async fn a_thread_reaches_its_parent_channels_agent_with_where_it_was_written() 
         "{answer}"
     );
     assert!(
-        answer.contains(r#"Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)"#),
+        answer.contains(
+            r#"Discord server 10\nchannel #desk (202)\nthread \"plan\" (303)\nfrom 99 (guest)"#
+        ),
         "{answer}"
+    );
+    assert!(
+        answer.contains(&format!("agent:{DESK} answered Guest")),
+        "a member who is not the operator is submitted as a guest: {answer}"
     );
 }
 
@@ -356,7 +363,8 @@ impl CoordinatorFixture {
     }
 }
 
-/// Answers every command with `<target> answered`; with `tools`, first
+/// Answers every command with `<target> answered <author> from <context>`;
+/// with `tools`, first
 /// reports an intermediate message and a tool call, then pauses.
 async fn scripted_node(mut node: Socket, executions: Arc<Mutex<usize>>, tools: bool) {
     loop {
@@ -397,8 +405,9 @@ async fn scripted_node(mut node: Socket, executions: Arc<Mutex<usize>>, tools: b
         batches.last_mut().expect("batch").extend([
             ExecutionEventKind::AssistantMessage {
                 text: format!(
-                    "{} answered from {}",
+                    "{} answered {:?} from {}",
                     command.target.as_str(),
+                    command.input.author(),
                     command.input.context().unwrap_or("nowhere")
                 ),
             },
@@ -521,7 +530,7 @@ async fn serve_gateway(listener: tokio::net::TcpListener, scenario: Scenario) {
             r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"303","guild_id":"10","content":"Plan it here.","author":{"id":"99"},"mentions":[]}}"#
         }
         Scenario::Mention | Scenario::Offline | Scenario::Tools => {
-            r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> Do the real task.","author":{"id":"99"},"mentions":[{"id":"50"}]}}"#
+            r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> Do the real task.","author":{"id":"20","username":"yash"},"mentions":[{"id":"50"}]}}"#
         }
     };
     socket

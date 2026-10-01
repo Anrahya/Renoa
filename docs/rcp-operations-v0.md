@@ -144,7 +144,9 @@ Inputs:
 - `command_id`: a stable identity generated before the first send;
 - `input`: the command payload. The current profile supports text input only,
   with an optional `context`: the surface's own description of where the text
-  was written. RCP carries it with the command and gives it no other meaning.
+  was written, and an optional guest `author` for text the surface received
+  from someone other than its principal. RCP carries both with the command and
+  gives them no other meaning.
 
 The coordinator derives principal and surface identity from the authenticated
 session and target and execution node from durable task state. A surface cannot

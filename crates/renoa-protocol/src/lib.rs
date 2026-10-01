@@ -4,6 +4,6 @@ mod command;
 mod execution;
 mod ids;
 
-pub use command::{CommandEnvelope, CommandInput, SurfaceRef, TargetRef};
+pub use command::{Author, CommandEnvelope, CommandInput, SurfaceRef, TargetRef};
 pub use execution::{ExecutionEvent, ExecutionEventKind, ExecutionTerminal};
 pub use ids::{CommandId, ExecutionEventId, ExecutionId, PrincipalId};

@@ -33,6 +33,7 @@ mod selection;
 mod session;
 mod shared_registry;
 mod skills;
+mod speaker;
 mod stable_id;
 mod tool_error;
 mod tool_input;
@@ -97,6 +98,7 @@ pub use session::{LocalHistoryEntry, LocalSession, LocalSessionError, LocalTurnO
 pub use shared_registry::SharedPluginSyncReport;
 pub use skills::SkillError;
 pub use skills::store::{SkillComponentRejection, SkillComponentReport};
+pub use speaker::Speaker;
 pub use turn_observation::{TurnObservation, TurnObservationError};
 pub use workspace::{LocalWorkspace, LocalWorkspaceError};
 

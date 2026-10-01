@@ -629,6 +629,7 @@ mod delivery {
                 input: CommandInput::Text {
                     text: "Run whenever the node returns.".to_owned(),
                     context: None,
+                    author: renoa_protocol::Author::Principal,
                 },
             },
         )
@@ -658,6 +659,7 @@ mod delivery {
         let input = CommandInput::Text {
             text: "Accept this command once.".to_owned(),
             context: None,
+            author: renoa_protocol::Author::Principal,
         };
 
         send(
@@ -848,6 +850,7 @@ mod delivery {
                 input: CommandInput::Text {
                     text: "Do not strand me between nodes.".to_owned(),
                     context: None,
+                    author: renoa_protocol::Author::Principal,
                 },
             },
         )
@@ -894,6 +897,7 @@ mod delivery {
                 input: CommandInput::Text {
                     text: "Expose any stranded predecessor.".to_owned(),
                     context: None,
+                    author: renoa_protocol::Author::Principal,
                 },
             },
         )
@@ -1021,36 +1025,43 @@ mod delivery {
     }
 
     #[tokio::test]
-    async fn a_command_retry_must_repeat_its_context_exactly() {
+    async fn a_command_retry_must_repeat_its_context_and_author_exactly() {
         let system = TestSystem::start("workspace:context").await;
         let _node = system.connect(&system.enroll_node().await).await;
         let mut surface = system
             .connect(&system.enroll_surface("discord").await)
             .await;
         let command_id = CommandId::new();
-        let submitted = |context: Option<&str>| ClientMessage::Submit {
+        let submitted = |context: Option<&str>, author| ClientMessage::Submit {
             request_id: 2,
             task_id: system.task_id,
             command_id,
             input: CommandInput::Text {
                 text: "Post it here.".to_owned(),
                 context: context.map(str::to_owned),
+                author,
             },
         };
+        let desk = Some("channel #desk (202)");
+        let guest = renoa_protocol::Author::Guest;
         let accepted = ServerMessage::CommandAccepted {
             request_id: 2,
             command_id,
         };
-        for attempt in [Some("channel #desk (202)"), Some("channel #desk (202)")] {
-            send(&mut surface, &submitted(attempt)).await;
+        for _ in 0..2 {
+            send(&mut surface, &submitted(desk, guest)).await;
             assert_eq!(
                 receive(&mut surface).await,
                 accepted,
                 "an exact retry converges"
             );
         }
-        for changed in [Some("channel #other (303)"), None] {
-            send(&mut surface, &submitted(changed)).await;
+        for changed in [
+            (Some("channel #other (303)"), guest),
+            (None, guest),
+            (desk, renoa_protocol::Author::Principal),
+        ] {
+            send(&mut surface, &submitted(changed.0, changed.1)).await;
             assert!(
                 matches!(
                     receive(&mut surface).await,
@@ -1614,6 +1625,7 @@ async fn submit(socket: &mut Socket, task_id: TaskId, command_id: CommandId, tex
             input: CommandInput::Text {
                 text: text.to_owned(),
                 context: None,
+                author: renoa_protocol::Author::Principal,
             },
         },
     )

@@ -357,6 +357,7 @@ mod security_behaviors {
                 input: CommandInput::Text {
                     text: "continue".to_owned(),
                     context: None,
+                    author: renoa_protocol::Author::Principal,
                 },
             },
         )
@@ -717,6 +718,7 @@ mod security_behaviors {
                 input: CommandInput::Text {
                     text: "steal this task".to_owned(),
                     context: None,
+                    author: renoa_protocol::Author::Principal,
                 },
             },
         )

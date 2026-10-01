@@ -6,7 +6,7 @@ use crate::DiscordError;
 
 pub(super) const DATABASE_FILE: &str = "discord.sqlite3";
 const LEASE_FILE: &str = ".discord.lock";
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
     let connection = Connection::open(path)?;
@@ -25,17 +25,24 @@ pub(super) fn open(path: &Path) -> Result<Connection, DiscordError> {
             migrate_v3(&connection)?;
             migrate_v4(&connection)?;
             migrate_v5(&connection)?;
+            migrate_v6(&connection)?;
         }
         3 => {
             migrate_v3(&connection)?;
             migrate_v4(&connection)?;
             migrate_v5(&connection)?;
+            migrate_v6(&connection)?;
         }
         4 => {
             migrate_v4(&connection)?;
             migrate_v5(&connection)?;
+            migrate_v6(&connection)?;
         }
-        5 => migrate_v5(&connection)?,
+        5 => {
+            migrate_v5(&connection)?;
+            migrate_v6(&connection)?;
+        }
+        6 => migrate_v6(&connection)?,
         SCHEMA_VERSION => {}
         other => {
             return Err(DiscordError::Invalid(format!(
@@ -127,6 +134,7 @@ fn initialize(connection: &Connection) -> Result<(), DiscordError> {
          {conversations}
          {progress}
          {places}
+         {AUTHOR_SCHEMA}
          {GATEWAY_SCHEMA}
          {ACTION_SCHEMA}
          {CONTROL_SCHEMA}",
@@ -220,6 +228,10 @@ fn places_schema() -> String {
     )
 }
 
+/// Whether each queued message is the operator's or a guest's.
+const AUTHOR_SCHEMA: &str = "ALTER TABLE turns ADD COLUMN author TEXT NOT NULL
+    DEFAULT 'principal' CHECK (author IN ('principal', 'guest'));";
+
 const GATEWAY_SCHEMA: &str = "
 CREATE TABLE gateway (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -307,6 +319,24 @@ fn migrate_v5(connection: &Connection) -> Result<(), DiscordError> {
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch(&places_schema())?;
     transaction.pragma_update(None, "user_version", 6)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Schema 7 records whether each message is the operator's or a guest's. A
+/// message still queued is classified from its author; one already submitted
+/// keeps `principal`, as it was sent, so its retry repeats it exactly.
+fn migrate_v6(connection: &Connection) -> Result<(), DiscordError> {
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute_batch(AUTHOR_SCHEMA)?;
+    transaction.execute(
+        "UPDATE turns SET author = 'guest'
+         WHERE state = 'queued'
+           AND (SELECT author_id FROM messages WHERE messages.message_id = turns.message_id)
+               IS NOT (SELECT operator_user_id FROM identity WHERE singleton = 1)",
+        [],
+    )?;
+    transaction.pragma_update(None, "user_version", 7)?;
     transaction.commit()?;
     Ok(())
 }

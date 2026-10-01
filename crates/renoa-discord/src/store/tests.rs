@@ -28,12 +28,15 @@ fn enqueue(store: &SurfaceStore, message_id: &str, prompt: &str) {
     assert_eq!(
         store
             .enqueue(
-                &snowflake(message_id),
-                &snowflake("202"),
-                &snowflake("99"),
-                message_id.as_bytes(),
-                prompt,
-                None,
+                &crate::ingress::Addressed::for_test(
+                    &snowflake(message_id),
+                    &snowflake("202"),
+                    &snowflake("99"),
+                    message_id.as_bytes(),
+                    prompt
+                ),
+                renoa_protocol::Author::Principal,
+                None
             )
             .expect("enqueue"),
         Enqueue::Fresh
@@ -49,6 +52,7 @@ fn command(command_id: Uuid, surface: &str, text: &str) -> CommandEnvelope {
         input: CommandInput::Text {
             text: text.to_owned(),
             context: None,
+            author: renoa_protocol::Author::Principal,
         },
     }
 }
@@ -90,18 +94,36 @@ fn same_message_is_queued_once_and_a_changed_copy_conflicts() {
     let (message, channel, author) = (snowflake("101"), snowflake("202"), snowflake("99"));
     assert_eq!(
         store
-            .enqueue(&message, &channel, &author, b"same", "hello", None)
+            .enqueue(
+                &crate::ingress::Addressed::for_test(&message, &channel, &author, b"same", "hello"),
+                renoa_protocol::Author::Principal,
+                None
+            )
             .expect("enqueue"),
         Enqueue::Fresh
     );
     assert_eq!(
         store
-            .enqueue(&message, &channel, &author, b"same", "hello", None)
+            .enqueue(
+                &crate::ingress::Addressed::for_test(&message, &channel, &author, b"same", "hello"),
+                renoa_protocol::Author::Principal,
+                None
+            )
             .expect("duplicate"),
         Enqueue::Duplicate
     );
     let conflict = store
-        .enqueue(&message, &channel, &author, b"different", "other", None)
+        .enqueue(
+            &crate::ingress::Addressed::for_test(
+                &message,
+                &channel,
+                &author,
+                b"different",
+                "other",
+            ),
+            renoa_protocol::Author::Principal,
+            None,
+        )
         .expect_err("different bytes");
     assert!(
         conflict.to_string().contains("different content"),

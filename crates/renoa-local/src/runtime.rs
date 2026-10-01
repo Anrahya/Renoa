@@ -17,7 +17,7 @@ use thiserror::Error;
 
 use crate::{
     AgentDefinitionError, AutomaticCompaction, BridgeModel, LocalWorkspace, ModelBridgeError,
-    ModelChoice, ReasoningLevel, skills::SkillRuntimeContext,
+    ModelChoice, ReasoningLevel, skills::SkillRuntimeContext, speaker::ToolAccess,
 };
 
 const MODEL_ROUND_LIMIT: NonZeroU32 = NonZeroU32::new(100).unwrap();
@@ -41,6 +41,7 @@ pub struct LocalRuntimeConfig {
     selected_tools: Option<std::collections::BTreeSet<String>>,
     session_id: Option<renoa_kernel::SessionId>,
     code_mode: Option<CodeModeBinding>,
+    tool_access: ToolAccess,
 }
 
 impl LocalRuntimeConfig {
@@ -71,6 +72,7 @@ impl LocalRuntimeConfig {
             selected_tools: Some(definition.selected_tools().tools.clone()),
             session_id: None,
             code_mode: None,
+            tool_access: ToolAccess::Granted,
         })
     }
 
@@ -97,6 +99,13 @@ impl LocalRuntimeConfig {
     #[must_use]
     pub const fn with_session(mut self, session_id: renoa_kernel::SessionId) -> Self {
         self.session_id = Some(session_id);
+        self
+    }
+
+    /// Refuses the workspace tools of a turn that may not run them. The Host
+    /// applies the same access to the tools it offers besides these.
+    pub(crate) const fn with_tool_access(mut self, access: ToolAccess) -> Self {
+        self.tool_access = access;
         self
     }
 
@@ -179,6 +188,7 @@ async fn build_local_runtime_inner(
     extension_tools: Vec<AgentToolBinding>,
     events: Option<Arc<dyn renoa_agent::AgentEventSink>>,
 ) -> Result<Runtime, LocalRuntimeError> {
+    let tool_access = config.tool_access;
     let resolved = resolve_model(config).await?;
     let context = context_binding(
         &resolved.model,
@@ -195,7 +205,8 @@ async fn build_local_runtime_inner(
     );
     let config = AgentLoopConfig::new(resolved.instructions, MODEL_ROUND_LIMIT, TOOL_CALL_LIMIT);
     let model = ModelBinding::new(model_revision, resolved.model, EffectRecovery::SafeToReplay);
-    let mut tools = workspace.selected_kernel_tool_bindings(resolved.selected_tools.as_ref());
+    let mut tools = tool_access
+        .apply(workspace.selected_kernel_tool_bindings(resolved.selected_tools.as_ref()));
     tools.extend(extension_tools);
     match (resolved.code_mode, events) {
         (Some(code_mode), Some(events)) => {

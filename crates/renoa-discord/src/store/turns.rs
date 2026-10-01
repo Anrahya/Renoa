@@ -1,8 +1,13 @@
+use renoa_protocol::Author;
 use rusqlite::{OptionalExtension as _, params};
 use uuid::Uuid;
 
 use super::{SurfaceStore, places};
-use crate::{DiscordError, ingress::pages, snowflake::Snowflake, store::schema};
+use crate::{
+    DiscordError,
+    ingress::{Addressed, pages},
+    store::schema,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Enqueue {
@@ -20,41 +25,38 @@ pub(crate) struct QueuedTurn {
     pub(crate) prompt: String,
     /// Where the message was written, submitted with it for the agent.
     pub(crate) context: Option<String>,
+    /// The operator's own message, or a guest's in a shared channel.
+    pub(crate) author: Author,
     pub(crate) opened: bool,
 }
 
 impl SurfaceStore {
     /// Records one addressed Discord message as a queued command on its
-    /// channel's current task, with the description of where it was written.
+    /// channel's current task, with who wrote it and the description of where.
     /// The agent is the one bound to the channel, or to a thread's parent
     /// channel, else the default. A channel whose agent changed starts a new
     /// task.
     pub(crate) fn enqueue(
         &self,
-        message_id: &Snowflake,
-        channel_id: &Snowflake,
-        author_id: &Snowflake,
-        canonical: &[u8],
-        prompt: &str,
+        message: &Addressed,
+        author: Author,
         context: Option<&str>,
     ) -> Result<Enqueue, DiscordError> {
-        if canonical.is_empty() {
+        if message.canonical.is_empty() {
             return Err(DiscordError::Invalid(
                 "Discord message canonical payload must not be empty".to_owned(),
             ));
         }
-        let message_id = message_id.as_str().to_owned();
-        let channel_id = channel_id.as_str().to_owned();
-        let author_id = author_id.as_str().to_owned();
-        let canonical = canonical.to_vec();
-        let prompt = prompt.to_owned();
-        let context = context.map(str::to_owned);
-        self.access(move |connection| {
+        let message_id = message.message_id.as_str();
+        let channel_id = message.channel_id.as_str();
+        let author_id = message.author_id.as_str();
+        let canonical = message.canonical.as_slice();
+        self.access(|connection| {
             let transaction = schema::immediate_transaction(connection)?;
             let existing = transaction
                 .query_row(
                     "SELECT channel_id, author_id, canonical FROM messages WHERE message_id = ?1",
-                    [&message_id],
+                    [message_id],
                     |row| {
                         Ok((
                             row.get::<_, String>(0)?,
@@ -67,7 +69,7 @@ impl SurfaceStore {
             if let Some((stored_channel, stored_author, stored_canonical)) = existing {
                 if stored_channel != channel_id
                     || stored_author != author_id
-                    || stored_canonical != canonical
+                    || stored_canonical.as_slice() != canonical
                 {
                     return Err(DiscordError::Invalid(format!(
                         "Discord reused message {message_id} with different content"
@@ -76,7 +78,7 @@ impl SurfaceStore {
                 transaction.commit()?;
                 return Ok(Enqueue::Duplicate);
             }
-            let agent_id = match places::bound_agent(&transaction, &channel_id)? {
+            let agent_id = match places::bound_agent(&transaction, channel_id)? {
                 Some(agent_id) => agent_id,
                 None => transaction.query_row(
                     "SELECT agent_id FROM identity WHERE singleton = 1",
@@ -84,7 +86,7 @@ impl SurfaceStore {
                     |row| row.get(0),
                 )?,
             };
-            let task_id = current_task(&transaction, &channel_id, &agent_id)?;
+            let task_id = current_task(&transaction, channel_id, &agent_id)?;
             transaction.execute(
                 "INSERT INTO messages(
                     message_id, channel_id, author_id, canonical, created_at_ms
@@ -98,14 +100,15 @@ impl SurfaceStore {
                 ],
             )?;
             transaction.execute(
-                "INSERT INTO turns(message_id, task_id, command_id, prompt, context, state)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'queued')",
+                "INSERT INTO turns(message_id, task_id, command_id, prompt, context, author, state)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued')",
                 params![
                     message_id,
                     task_id,
                     Uuid::new_v4().to_string(),
-                    prompt,
-                    context
+                    message.prompt,
+                    context,
+                    stored_author(author)
                 ],
             )?;
             transaction.commit()?;
@@ -118,7 +121,7 @@ impl SurfaceStore {
             connection
                 .query_row(
                     "SELECT turns.message_id, turns.task_id, tasks.agent_id, turns.command_id,
-                            turns.prompt, turns.context, tasks.opened
+                            turns.prompt, turns.context, tasks.opened, turns.author
                      FROM turns JOIN tasks ON tasks.task_id = turns.task_id
                      WHERE turns.state = 'queued'
                      ORDER BY length(turns.message_id), turns.message_id LIMIT 1",
@@ -132,6 +135,7 @@ impl SurfaceStore {
                             prompt: row.get(4)?,
                             context: row.get(5)?,
                             opened: row.get(6)?,
+                            author: read_author(&row.get::<_, String>(7)?)?,
                         })
                     },
                 )
@@ -283,6 +287,26 @@ pub(super) fn insert_pages(
         )?;
     }
     Ok(())
+}
+
+const fn stored_author(author: Author) -> &'static str {
+    match author {
+        Author::Principal => "principal",
+        Author::Guest => "guest",
+    }
+}
+
+fn read_author(value: &str) -> Result<Author, rusqlite::Error> {
+    [Author::Principal, Author::Guest]
+        .into_iter()
+        .find(|author| stored_author(*author) == value)
+        .ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                7,
+                rusqlite::types::Type::Text,
+                format!("unknown turn author {value:?}").into(),
+            )
+        })
 }
 
 fn parse_uuid(value: &str) -> Result<Uuid, rusqlite::Error> {

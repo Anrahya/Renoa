@@ -1,7 +1,9 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalTurnOutcome, MAX_AGENT_PAGE, TurnObservation};
+use renoa_local::{
+    AgentSession, LocalHost, LocalTurnOutcome, MAX_AGENT_PAGE, Speaker, TurnObservation,
+};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -150,7 +152,7 @@ impl Worker {
                             event_sink,
                             cancellation,
                             // Chat identities here are not RCP principals, so no USER.md is read.
-                            None,
+                            Speaker::Unidentified,
                         )
                         .await
                 }

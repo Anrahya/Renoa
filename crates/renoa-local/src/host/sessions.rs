@@ -17,6 +17,7 @@ use crate::{
         open_session_storage,
     },
     selection::{RuntimeSelection, SELECTION_FILE, read_selection},
+    speaker::ToolAccess,
     trace::{TRACE_DATABASE, TraceStore},
 };
 
@@ -86,6 +87,7 @@ impl LocalHost {
                 reasoning,
                 workspace: &workspace,
                 events: None,
+                tools: ToolAccess::Granted,
             },
         )
         .await?;

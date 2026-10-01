@@ -12,7 +12,7 @@ use renoa_agent_loop::{ContextContribution, TurnContext};
 use renoa_kernel::AgentId;
 
 use super::{HostPluginId, settings, state, time::TimeSettings};
-use crate::{host::catalog, plugins::PluginError};
+use crate::{Speaker, host::catalog, plugins::PluginError};
 
 /// A contributor left out of one message, and why: `surface`, a plugin id,
 /// or `*` when no plugin could be asked.
@@ -22,12 +22,14 @@ pub(crate) struct Skipped {
     pub(crate) reason: String,
 }
 
-/// The context for a prompt admitted at `observed_at_ms`, after a previous
-/// prompt admitted at `previous_ms`, whose surface described where it was
-/// written as `surface`.
+/// The context for a prompt from `speaker` admitted at `observed_at_ms`, after
+/// a previous prompt admitted at `previous_ms`, whose surface described where
+/// it was written as `surface`. Plugins contribute only when the speaker
+/// admits plugin context.
 pub(crate) fn admit(
     database: &Path,
     agent: AgentId,
+    speaker: Speaker,
     surface: Option<&str>,
     observed_at_ms: i64,
     previous_ms: Option<i64>,
@@ -39,6 +41,9 @@ pub(crate) fn admit(
             .map_err(|error| PluginError::Invalid(error.to_string()))
             .map(Some);
         add(&mut context, &mut skipped, "surface", added);
+    }
+    if !speaker.admits_plugin_context() {
+        return (context, skipped);
     }
     let db = match catalog::open_verified(database) {
         Ok(db) => db,

@@ -7,7 +7,7 @@ use crate::{
     operations::{NodeOperation, SurfaceOperation},
 };
 
-pub const JSON_WS_VERSION: u32 = 12;
+pub const JSON_WS_VERSION: u32 = 13;
 const MAX_INTEROPERABLE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_INTEROPERABLE_SIGNED_INTEGER: i64 = 9_007_199_254_740_991;
 

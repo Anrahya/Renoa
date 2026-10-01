@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `12`.
+first implemented transport binding. The current binding version is `13`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -53,14 +53,18 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `12` with `version_mismatch` and ends the session.
+rejects any value other than `13` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `12` supersedes version `11` by adding an optional `context` to text
+Version `13` supersedes version `12` by adding an optional `author` to text
+command input, which marks text written by a guest rather than the
+authenticated principal. A version `12` peer is rejected at authentication.
+
+Version `12` superseded version `11` by adding an optional `context` to text
 command input: the surface's own description of where the text was written.
 A version `11` peer is rejected at authentication.
 
@@ -93,7 +97,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 12,
+  "version": 13,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -103,7 +107,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 12,
+  "version": 13,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -116,7 +120,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 12,
+  "version": 13,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -129,7 +133,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 12,
+  "version": 13,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -145,7 +149,7 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 12
+  "version": 13
 }
 ```
 
@@ -316,9 +320,17 @@ say where the text was written, for example
 absent. RCP stores and delivers it with the command and gives it no other
 meaning; the executor decides whether to show it to the agent.
 
+Text input may also carry `"author": "guest"` when the surface received the
+text from someone other than its principal, such as another member of a shared
+Discord channel. It is omitted for the principal's own text; any other value,
+`"principal"` included, is rejected. The coordinator authenticates only the surface's principal
+and carries the author as the surface asserts it; the executor decides what a
+guest's command may do. The Renoa Host runs it with no `USER.md`, no plugin
+context, and every tool call refused; the Pi node fails it without running.
+
 `request_id` correlates one connection attempt. `command_id` is the durable
 idempotency identity and must be reused with identical content, `context`
-included, after an uncertain response.
+and `author` included, after an uncertain response.
 
 ### Task event
 

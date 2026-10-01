@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentPresetId, AgentSession,
-    LocalTurnOutcome, ModelProvider, TurnObservation,
+    LocalTurnOutcome, ModelProvider, Speaker, TurnObservation,
     host::{HostInitialization, LocalHost},
     plugins::{
         api::{PluginInventoryItem, PluginInvocation, PluginOutcome, PluginRequest},
@@ -117,12 +117,24 @@ async fn say_as(
     prompt: &str,
     observation: TurnObservation,
 ) -> String {
+    say_by(session, command, Speaker::Unidentified, prompt, observation).await
+}
+
+async fn say_by(
+    session: &AgentSession,
+    command: Uuid,
+    speaker: Speaker,
+    prompt: &str,
+    observation: TurnObservation,
+) -> String {
     match session
-        .execute_turn_observed(
+        .execute_turn_observed_with_cancellation(
             command,
             vec![ContentBlock::text(prompt)],
             observation,
             Arc::new(Quiet),
+            CancellationToken::new(),
+            speaker,
         )
         .await
         .unwrap_or_else(|error| panic!("{prompt} failed: {error}"))
@@ -248,6 +260,38 @@ async fn each_message_keeps_the_time_it_was_admitted_with_in_the_agent_zone() {
 }
 
 #[tokio::test]
+async fn a_guest_cannot_reconfigure_a_plugin() {
+    let directory = tempfile::tempdir().expect("directory");
+    let host = host(directory.path());
+    let general = agent(&host, crate::presets::GENERAL_PRESET_ID).await;
+    let workspace = directory.path().join("workspace");
+    fs::create_dir_all(&workspace).expect("workspace");
+    let general = host
+        .ensure_agent_session(general, &workspace, Uuid::new_v4())
+        .await
+        .expect("session");
+
+    assert_eq!(say(&general, "set zone UTC", T0).await, "configured");
+    let observed = TurnObservation::from_unix_milliseconds(T0 + HOUR).expect("observation");
+    assert_eq!(
+        say_by(
+            &general,
+            Uuid::new_v4(),
+            Speaker::Guest,
+            "set zone Asia/Seoul",
+            observed
+        )
+        .await,
+        "refused"
+    );
+    assert_eq!(
+        contexts(&general, T0 + 2 * HOUR).await.last(),
+        Some(&time("2026-08-31T20:04:05+00:00[UTC]", Some("1h"))),
+        "the owner's zone stands"
+    );
+}
+
+#[tokio::test]
 async fn the_surface_says_where_a_message_was_written_ahead_of_every_plugin() {
     let directory = tempfile::tempdir().expect("directory");
     let host = host(directory.path());
@@ -273,10 +317,26 @@ async fn the_surface_says_where_a_message_was_written_ahead_of_every_plugin() {
         first[1],
         "<turn_context>\n<context source=\"surface\">\nDiscord server 10\nchannel #desk &amp; &lt;tools&gt; (202)\n</context>\n<context source=\"plugin:renoa.time\">\ncurrent_time: 2026-08-31T19:04:05+00:00[UTC]\nelapsed_since_previous_user_message: 1h\n</context>\n</turn_context>"
     );
+    let guest = shown(
+        say_by(
+            &general,
+            Uuid::new_v4(),
+            Speaker::Guest,
+            "show",
+            placed(T0 + HOUR, "from Mira (guest)"),
+        )
+        .await,
+    );
+    assert_eq!(
+        guest[2],
+        "<turn_context>\n<context source=\"surface\">\nfrom Mira (guest)\n</context>\n</turn_context>",
+        "no plugin contributes to a guest's message"
+    );
+    let first = guest[..2].to_vec();
     let unfit = shown(say_observed(&general, "show", placed(T0 + 2 * HOUR, "bell\u{7}")).await);
     assert_eq!(unfit[..2], first[..], "earlier messages keep their bytes");
     assert_eq!(
-        unfit[2],
+        unfit[3],
         time("2026-08-31T20:04:05+00:00[UTC]", Some("1h")),
         "a surface context that does not fit is left out and the plugins stay"
     );
