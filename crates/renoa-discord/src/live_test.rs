@@ -82,6 +82,17 @@ async fn a_members_thread_message_reaches_its_parent_channels_agent_as_a_guest()
 }
 
 #[tokio::test]
+async fn the_operators_new_is_answered_once_without_running_a_command() {
+    let bodies = run(Scenario::New).await.posted;
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    assert!(
+        bodies[0].contains("Started a new conversation."),
+        "{}",
+        bodies[0]
+    );
+}
+
+#[tokio::test]
 async fn an_agent_without_an_online_node_gets_a_not_sent_reply() {
     let bodies = run(Scenario::Offline).await.posted;
     assert_eq!(bodies.len(), 1, "{bodies:?}");
@@ -138,6 +149,8 @@ enum Scenario {
     Offline,
     /// The node reports a tool call, pauses, then answers.
     Tools,
+    /// The operator's `/new`.
+    New,
 }
 
 struct Observed {
@@ -201,9 +214,11 @@ async fn run(scenario: Scenario) -> Observed {
     });
 
     let settled = |requests: &[String]| {
-        let answered = posted(requests)
-            .iter()
-            .any(|body| body.contains("answered") || body.contains("offline"));
+        let answered = posted(requests).iter().any(|body| {
+            ["answered", "offline", "Started a new conversation."]
+                .iter()
+                .any(|text| body.contains(text))
+        });
         let cleared = scenario != Scenario::Tools
             || requests
                 .iter()
@@ -221,8 +236,10 @@ async fn run(scenario: Scenario) -> Observed {
     // nor a second reply may follow.
     tokio::time::sleep(Duration::from_millis(500)).await;
     let requests = requests.lock().expect("requests").clone();
-    if scenario != Scenario::Offline {
-        assert_eq!(*executions.lock().expect("executions"), 1);
+    match scenario {
+        Scenario::Offline => {}
+        Scenario::New => assert_eq!(*executions.lock().expect("executions"), 0),
+        _ => assert_eq!(*executions.lock().expect("executions"), 1),
     }
     shutdown.cancel();
     task.await.expect("service task").expect("service");
@@ -528,6 +545,9 @@ async fn serve_gateway(listener: tokio::net::TcpListener, scenario: Scenario) {
         }
         Scenario::Thread => {
             r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"303","guild_id":"10","content":"Plan it here.","author":{"id":"99"},"mentions":[]}}"#
+        }
+        Scenario::New => {
+            r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> /new","author":{"id":"20","username":"yash"},"mentions":[{"id":"50"}]}}"#
         }
         Scenario::Mention | Scenario::Offline | Scenario::Tools => {
             r#"{"op":0,"s":3,"t":"MESSAGE_CREATE","d":{"id":"101","channel_id":"202","guild_id":"10","content":"<@50> Do the real task.","author":{"id":"20","username":"yash"},"mentions":[{"id":"50"}]}}"#

@@ -336,7 +336,11 @@ minute. Channel routing, the task, a stable command
 identity, the message's context (the server, channel, and thread ids and
 names, and the sender's server name marked owner or guest), and its author are
 persisted when a message is admitted, and the message is submitted
-under that identity with that context and author, so a reconnect retries it exactly. Reassignment starts a new task for subsequent messages;
+under that identity with that context and author, so a reconnect retries it exactly.
+A message from the operator that is exactly `/new` (ignoring case and the
+mention) starts a new task on the channel's agent and is answered without
+running a turn; the earlier task is kept. Anything else, including `/new` with
+more text or a guest's `/new`, is an ordinary message. Reassignment starts a new task for subsequent messages;
 already admitted work keeps its original task. Unbound channels still require a
 mention, reply, or active thread, and only the operator (the application owner)
 can use DMs. Task records apply once under a per-task cursor; each finished
