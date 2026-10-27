@@ -5,6 +5,7 @@
 /adapters/mcp-client-node/dist/
 /adapters/mcp-registry-node/dist/
 /surfaces/control-room/dist/
+/surfaces/control-room/public/design/
 node_modules/
 # Persistent coordination files used by Renoa's atomic file updates.
 .renoa-lock-*

@@ -1,0 +1,1195 @@
+<title>Renoa Control Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Renoa Design System: Paper by day, Graphite at night. */
+:root {
+  color-scheme: light;
+  --background: #F5F6F3; --foreground: #14161A; --foreground-soft: #464B51; --card: #FFFFFF;
+  --muted: #ECEDE8; --muted-foreground: #5B5F66; --accent: #ECEDE8; --border: #D6D8D2; --input: #878B85; --ring: #14161A;
+  --primary: #14161A; --primary-foreground: #F5F6F3; --core-side: #000;
+  --part-model: #C4553F; --part-model-tint: #F7E9E6; --part-loop: #B37B22; --part-loop-tint: #F5EEE2;
+  --part-context: #8E8229; --part-context-tint: #F0EFE3; --part-tools: #2F8B69; --part-tools-tint: #E4F0EC;
+  --part-skills: #3B61AC; --part-skills-tint: #E6EAF4; --part-profile: #7A58A3; --part-profile-tint: #EEE9F3;
+  --state-running: #1E7A57; --state-failed: #B3321E; --state-failed-wash: #F7EBE8; --state-needs-you-wash: #EDEEEA;
+  --board-line: #DDDFD9; --trace: #14161A;
+  --shadow-pop: 0 1px 2px rgba(20,22,26,0.06), 0 8px 24px rgba(20,22,26,0.10);
+  --font-sans: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --hex: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #111312; --foreground: #ECEEE9; --foreground-soft: #C9CCC6; --card: #191C1A;
+    --muted: #202321; --muted-foreground: #9DA29B; --accent: #232724; --border: #2B2F2C; --input: #646964; --ring: #ECEEE9;
+    --primary: #ECEEE9; --primary-foreground: #111312; --core-side: #9DA29B;
+    --part-model: #E27B63; --part-model-tint: #412F29; --part-loop: #D9A24B; --part-loop-tint: #3F3724;
+    --part-context: #C4B654; --part-context-tint: #3B3B26; --part-tools: #52B58E; --part-tools-tint: #243B31;
+    --part-skills: #7298DE; --part-skills-tint: #2B3541; --part-profile: #A98BD2; --part-profile-tint: #36323F;
+    --state-running: #5EC29A; --state-failed: #F08770; --state-failed-wash: #3B2D28; --state-needs-you-wash: #1A1D1B;
+    --board-line: #232624; --trace: #ECEEE9;
+    --shadow-pop: 0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.50);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #111312; --foreground: #ECEEE9; --foreground-soft: #C9CCC6; --card: #191C1A;
+  --muted: #202321; --muted-foreground: #9DA29B; --accent: #232724; --border: #2B2F2C; --input: #646964; --ring: #ECEEE9;
+  --primary: #ECEEE9; --primary-foreground: #111312; --core-side: #9DA29B;
+  --part-model: #E27B63; --part-model-tint: #412F29; --part-loop: #D9A24B; --part-loop-tint: #3F3724;
+  --part-context: #C4B654; --part-context-tint: #3B3B26; --part-tools: #52B58E; --part-tools-tint: #243B31;
+  --part-skills: #7298DE; --part-skills-tint: #2B3541; --part-profile: #A98BD2; --part-profile-tint: #36323F;
+  --state-running: #5EC29A; --state-failed: #F08770; --state-failed-wash: #3B2D28; --state-needs-you-wash: #1A1D1B;
+  --board-line: #232624; --trace: #ECEEE9;
+  --shadow-pop: 0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.50);
+}
+[data-part="model"] { --pig: var(--part-model); --tint: var(--part-model-tint); }
+[data-part="loop"] { --pig: var(--part-loop); --tint: var(--part-loop-tint); }
+[data-part="context"] { --pig: var(--part-context); --tint: var(--part-context-tint); }
+[data-part="tools"] { --pig: var(--part-tools); --tint: var(--part-tools-tint); }
+[data-part="skills"] { --pig: var(--part-skills); --tint: var(--part-skills-tint); }
+[data-part="profile"] { --pig: var(--part-profile); --tint: var(--part-profile-tint); }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground); font: 400 15px/1.55 var(--font-sans); -webkit-font-smoothing: antialiased; }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.mono { font: 500 11px/1.3 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+
+/* ---------- top bar ---------- */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; align-items: center; gap: 18px; height: 56px; padding-inline: 20px; background: var(--background); border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 9px; font: 600 18px/1 var(--font-sans); letter-spacing: -0.02em; white-space: nowrap; }
+.brand svg { width: 24px; height: 24px; color: var(--foreground); }
+.brand small { margin-left: 2px; font: 500 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); }
+.host { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px 0 9px; border: 1px solid var(--border); border-radius: 999px; font: 500 11.5px/1 var(--font-mono); color: var(--foreground-soft); white-space: nowrap; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1.5px solid currentColor; }
+.dot.run { color: var(--state-running); background: currentColor; animation: beat 1.8s ease-out infinite; }
+.dot.idle { color: var(--muted-foreground); }
+.dot.you { color: var(--foreground); background: currentColor; }
+.dot.fail { color: var(--state-failed); background: currentColor; }
+@keyframes beat { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+.tabs { display: flex; gap: 2px; }
+.tabs button { height: 34px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted-foreground); font-weight: 500; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.tabs button:hover { background: var(--accent); color: var(--foreground); }
+.tabs button[aria-current="page"] { background: var(--muted); color: var(--foreground); }
+.bar-end { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.search { display: flex; align-items: center; gap: 28px; height: 34px; padding: 0 7px 0 12px; border: 1px solid var(--input); border-radius: 6px; background: var(--card); color: var(--muted-foreground); font-size: 13.5px; cursor: pointer; white-space: nowrap; }
+kbd { padding: 3px 5px; border: 1px solid var(--border); border-radius: 3px; font: 500 11px/1 var(--font-mono); color: var(--muted-foreground); }
+.me { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; background: var(--foreground); color: var(--primary-foreground); font: 600 12px/1 var(--font-sans); }
+
+/* ---------- needs you: the one list that asks for you ---------- */
+.needs { display: flex; align-items: center; gap: 16px; min-height: 53px; padding: 8px 20px; border-bottom: 1px solid var(--border); background: var(--state-needs-you-wash); overflow-x: auto; scrollbar-width: none; }
+.needs-k { display: flex; align-items: center; gap: 8px; flex: none; font: 500 11.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.needs-k b { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 4px; background: var(--foreground); color: var(--primary-foreground); font: 600 11px/1 var(--font-sans); letter-spacing: 0; }
+.needs-k.clear b { background: var(--muted); color: var(--muted-foreground); }
+#needs { display: flex; flex-wrap: wrap; gap: 8px 10px; margin: 0; padding: 0; list-style: none; }
+#needs li { display: flex; align-items: center; gap: 10px; flex: none; height: 36px; padding: 0 5px 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); font-size: 13.5px; color: var(--foreground-soft); white-space: nowrap; transition: opacity .3s ease, transform .3s var(--ease); }
+#needs li b { color: var(--foreground); font-weight: 600; }
+#needs li.fail { border-color: color-mix(in oklab, var(--state-failed) 50%, var(--border)); }
+#needs li.gone { opacity: 0; transform: translateY(-6px); }
+#needs li svg { width: 16px; height: 16px; flex: none; }
+.needs-empty { font-size: 13.5px; color: var(--muted-foreground); white-space: nowrap; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 14px; border: 1px solid transparent; border-radius: 6px; background: var(--primary); color: var(--primary-foreground); font: 500 14px/1 var(--font-sans); white-space: nowrap; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
+.btn:hover { background: color-mix(in oklab, var(--primary) 86%, var(--background)); }
+.btn:active { transform: translateY(1px); }
+.btn.sm { height: 26px; padding: 0 10px; border-radius: 4px; font-size: 12.5px; }
+.btn.line { background: var(--card); color: var(--foreground); border-color: var(--input); }
+.btn.line:hover { background: var(--accent); border-color: var(--foreground); }
+.btn.ghost { background: transparent; color: var(--muted-foreground); }
+.btn.ghost:hover { background: var(--accent); color: var(--foreground); }
+.btn:disabled { opacity: .45; pointer-events: none; }
+
+/* ---------- home: the live board beside the group chat ---------- */
+/* The top bar, Needs you and the home fill one screen; Blueprints follow below. */
+.shell { display: flex; flex-direction: column; height: calc(100svh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); min-height: 700px; }
+.home { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 380px; }
+.board-wrap { position: relative; min-width: 0; min-height: 0; }
+.board-head { position: absolute; z-index: 3; top: 18px; left: 22px; right: 22px; display: flex; justify-content: space-between; gap: 16px; pointer-events: none; }
+.board-head h1 { margin: 0; font: 600 28px/1.05 var(--font-sans); font-stretch: 86%; font-variation-settings: "wdth" 86; letter-spacing: -0.025em; }
+.board-head p { margin: 6px 0 0; }
+.stage { position: absolute; inset: 0; overflow: hidden; }
+.board-foot { position: absolute; z-index: 3; left: 22px; right: 22px; bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.lg-line { width: 18px; height: 2px; background: var(--foreground); }
+.lg-hex { width: 12px; height: 10.4px; background: var(--pig); clip-path: var(--hex); }
+.lg-hex.skill { background: var(--part-skills); }
+.lg-hex.core { background: var(--foreground); }
+.foot-end { display: flex; align-items: center; gap: 12px; }
+
+#board { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.sock { fill: none; stroke: var(--board-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.trace { fill: none; stroke: var(--trace); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; opacity: .38; transition: opacity .5s ease, stroke-width .3s ease; }
+.trace.dim { opacity: .1; }
+.trace.hot { opacity: 1; stroke-width: 2.25; transition-duration: .15s; }
+.trace.gone { opacity: 0; }
+.tile { cursor: default; }
+.tile.pick { cursor: pointer; }
+.hex, .side { stroke-width: 1.25; vector-effect: non-scaling-stroke; stroke-linejoin: round; transition: fill .5s ease, stroke .5s ease; }
+.hex { fill: var(--card); stroke: var(--input); }
+.side { fill: var(--border); stroke: var(--input); }
+.shd { fill: var(--foreground); opacity: 0; }
+.tile[data-kind="core"] .hex { fill: var(--foreground); stroke: var(--foreground); }
+.tile[data-kind="core"] .side { fill: var(--core-side); stroke: var(--core-side); }
+.tile[data-kind="part"] .hex { fill: var(--tint); stroke: var(--pig); }
+.tile[data-kind="part"] .side { fill: var(--pig); stroke: var(--pig); }
+.tile[data-kind="plugin"] .hex { fill: var(--card); stroke: var(--part-tools); }
+.tile[data-kind="plugin"] .side { fill: var(--part-tools-tint); stroke: var(--part-tools); }
+.tile[data-kind="skill"] .hex { fill: var(--card); stroke: var(--part-skills); }
+.tile[data-kind="skill"] .side { fill: var(--part-skills-tint); stroke: var(--part-skills); }
+.tile[data-kind="proposed"] .hex, .tile[data-kind="more"] .hex, .tile.off .hex { fill: var(--background); stroke: var(--input); stroke-dasharray: 5 4; }
+.tile[data-kind="proposed"] .hex { stroke: var(--foreground); }
+.tile[data-kind="proposed"] .side, .tile[data-kind="more"] .side, .tile.off .side { opacity: 0; }
+.tile[data-kind="surface"] .hex { fill: var(--card); stroke: var(--foreground); }
+.tile[data-kind="surface"] .side { fill: var(--input); stroke: var(--foreground); }
+.tile[data-kind="control"] .hex { fill: var(--card); stroke: var(--foreground); stroke-width: 2.25; }
+.tile[data-kind="control"] .side { fill: var(--foreground); stroke: var(--foreground); }
+.tile.ping .hex { stroke: var(--foreground); stroke-width: 2.5; }
+.tile.failed .hex { stroke: var(--state-failed); stroke-width: 2.5; }
+.stat { fill: var(--state-running); stroke: var(--foreground); stroke-width: 2; vector-effect: non-scaling-stroke; transition: fill .3s ease; }
+.tile[data-st="idle"] .stat { fill: var(--foreground); stroke: var(--primary-foreground); stroke-width: 1.5; }
+.tile[data-st="fail"] .stat { fill: var(--state-failed); }
+.ask { fill: var(--foreground); stroke: var(--background); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.ico path { fill: var(--foreground); transition: fill .4s ease; }
+.ico path.gl { fill: none; stroke: var(--foreground); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ico use { color: var(--foreground); }
+.tile.off .ico path, .tile[data-kind="more"] .ico path.gl { fill: var(--input); }
+.tile.off .ico path.gl, .tile[data-kind="more"] .ico path.gl { fill: none; stroke: var(--input); }
+.branch { fill: none; stroke: var(--pig); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.pad { fill: var(--background); stroke: var(--pig); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.pkt { fill: var(--foreground); stroke: var(--background); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trail { fill: none; stroke: var(--foreground); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; opacity: .85; }
+.ringfx { fill: none; stroke: var(--foreground); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.sockfx { fill: none; stroke: var(--foreground); stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+#labels { position: absolute; inset: 0; pointer-events: none; }
+.lab { position: absolute; left: 0; top: 0; white-space: nowrap; opacity: 0; will-change: transform, opacity; }
+.lab.agent { pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 5px 9px 6px; border: 0; border-radius: 6px; background: color-mix(in srgb, var(--background) 86%, transparent); font: 600 15px/1.1 var(--font-sans); color: var(--foreground); cursor: pointer; transition: background-color .16s ease, box-shadow .16s ease; }
+.lab.agent:hover, .lab.agent[aria-pressed="true"] { background: var(--card); box-shadow: 0 0 0 1px var(--foreground); }
+.lab.agent small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; font: 500 10px/1.1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); }
+.lab.agent.tight small { display: none; }
+.st { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font: 500 12.5px/1.2 var(--font-sans); color: var(--foreground-soft); }
+.st { align-items: flex-start; }
+.st .dot { margin-top: 4px; }
+.st span { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; text-align: left; }
+.lab.chip { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--foreground); border-radius: 3px; background: var(--card); font: 500 10.5px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--foreground); }
+.lab.chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--state-running); }
+.lab.chip.off { border-style: dashed; border-color: var(--input); color: var(--muted-foreground); }
+.lab.chip.off i { background: none; box-shadow: inset 0 0 0 1.5px var(--input); }
+.lab.chip.ctl { background: var(--foreground); border-color: var(--foreground); color: var(--primary-foreground); }
+.lab.chip.lib { border-color: var(--part-tools); }
+.lab.chip.lib i { border-radius: 0; width: 8px; height: 7px; background: var(--part-tools); clip-path: var(--hex); }
+
+/* An opened agent: a floating sheet beside its cluster. */
+.peek { position: absolute; z-index: 4; top: 76px; right: 22px; width: 304px; max-height: calc(100% - 150px); overflow: auto; padding: 16px 16px 14px; border: 1px solid var(--foreground); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-pop); }
+.pk-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pk-h h3 { margin: 0; font: 600 20px/1.15 var(--font-sans); letter-spacing: -0.01em; }
+.pk-h p { margin: 4px 0 0; }
+.x { display: grid; place-items: center; width: 30px; height: 30px; margin: -4px -6px 0 0; border: 0; border-radius: 6px; background: none; color: var(--muted-foreground); cursor: pointer; }
+.x:hover { background: var(--accent); color: var(--foreground); }
+.pk-st { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--muted); font-size: 13.5px; color: var(--foreground); }
+.pk-parts { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; margin: 14px 0 0; font-size: 13.5px; }
+.pk-parts dt { display: flex; align-items: center; gap: 7px; color: var(--muted-foreground); }
+.pk-parts dt::before { content: ""; width: 11px; height: 9.5px; background: var(--pig); clip-path: var(--hex); }
+.pk-parts dd { margin: 0; color: var(--foreground); }
+.pk-sec { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.pk-lib { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.pk-lib li { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 12.5px; }
+.pk-lib li::before { content: ""; width: 9px; height: 8px; background: var(--part-tools); clip-path: var(--hex); }
+.pk-lib li.skill::before { background: var(--part-skills); }
+.pk-apps { margin: 6px 0 0; font-size: 13.5px; color: var(--foreground); }
+.pk-act { display: flex; gap: 8px; margin-top: 16px; }
+
+/* ---------- the group chat: every agent and you, over RCP ---------- */
+.rail { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--card); }
+.rail-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 14px; border-bottom: 1px solid var(--border); }
+.rail-h h2 { margin: 0; font: 600 17px/1.2 var(--font-sans); letter-spacing: -0.01em; }
+.rail-h p { margin: 4px 0 0; }
+.faces { display: flex; }
+.face { display: grid; place-items: center; width: 25px; height: 21.7px; margin-left: -3px; background: var(--foreground); color: var(--primary-foreground); clip-path: var(--hex); font: 600 10.5px/1 var(--font-sans); }
+.face.you { margin-left: 4px; width: 22px; height: 22px; border-radius: 5px; clip-path: none; background: var(--muted); color: var(--foreground); }
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 16px; margin: 0; padding: 16px 18px; overflow-y: auto; list-style: none; }
+.m { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; animation: m-in .45s var(--ease); }
+@keyframes m-in { from { opacity: 0; transform: translateY(8px); } }
+.who { display: grid; place-items: center; width: 26px; height: 22.5px; margin-top: 1px; background: var(--foreground); color: var(--primary-foreground); clip-path: var(--hex); font: 600 11px/1 var(--font-sans); }
+.m.you .who { width: 24px; height: 24px; border-radius: 5px; clip-path: none; background: var(--muted); color: var(--foreground); }
+.m.ev .who { width: 26px; height: 22.5px; background: var(--border); color: var(--muted-foreground); }
+.hd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 13.5px; }
+.hd b { font-weight: 600; }
+.hd .to { display: inline-flex; align-items: baseline; gap: 6px; }
+.hd .to::before { content: "→"; color: var(--muted-foreground); }
+.hd time, .rcp { font: 500 10.5px/1 var(--font-mono); letter-spacing: .04em; color: var(--muted-foreground); }
+.rcp { padding: 3px 4px; border: 1px solid var(--border); border-radius: 3px; text-transform: uppercase; letter-spacing: .08em; }
+.m p { margin: 3px 0 0; font-size: 14px; line-height: 1.45; color: var(--foreground-soft); overflow-wrap: anywhere; }
+.m.a2a p { padding: 8px 10px; border-radius: 6px; background: var(--muted); color: var(--foreground); }
+.m.ev p { margin-top: 3px; font-size: 13px; color: var(--muted-foreground); }
+.composer { display: flex; gap: 8px; padding: 12px 14px 14px; border-top: 1px solid var(--border); }
+.composer input { flex: 1; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid var(--input); border-radius: 6px; background: var(--background); font-size: 14.5px; }
+.composer input::placeholder { color: var(--muted-foreground); }
+.composer input:focus { outline: none; border-color: var(--foreground); box-shadow: 0 0 0 1px var(--foreground); }
+.composer .btn { height: 40px; }
+
+/* ---------- blueprints: what the same kit can become ---------- */
+.builds { max-width: 1440px; margin: 0 auto; padding: 72px 24px 88px; }
+.builds h2 { margin: 12px 0 0; font: 600 clamp(30px, 3vw, 44px)/1.06 var(--font-sans); font-stretch: 86%; font-variation-settings: "wdth" 86; letter-spacing: -0.028em; text-wrap: balance; }
+.builds h2 b { font-weight: inherit; color: var(--foreground); }
+.builds > p { max-width: 40em; margin: 14px 0 0; font-size: 16.5px; color: var(--foreground-soft); }
+.bp { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin: 36px 0 0; padding: 0; list-style: none; }
+.bp li { display: flex; flex-direction: column; gap: 14px; min-width: 0; padding: 16px 18px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.bp li.own { border-style: dashed; border-color: var(--input); background: transparent; }
+.ros { display: block; width: 100%; height: 156px; padding: 12px 0; border-radius: 6px; background: var(--background); }
+.bp h3 { margin: 0; font: 600 18px/1.2 var(--font-sans); letter-spacing: -0.01em; }
+.bp p { margin: -6px 0 0; font-size: 14px; color: var(--foreground-soft); }
+.bp dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: 13px; }
+.bp dt { font: 500 10.5px/1.7 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); }
+.bp dd { margin: 0; color: var(--foreground); }
+.bp .btn { align-self: flex-start; margin-top: auto; }
+.bp-next { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 22px 0 0; font-size: 14px; color: var(--foreground-soft); }
+
+.toast { position: fixed; z-index: 30; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid var(--foreground); border-radius: 6px; background: var(--card); box-shadow: var(--shadow-pop); font-size: 14px; opacity: 0; transform: translate(-50%, 8px); pointer-events: none; transition: opacity .25s ease, transform .25s var(--ease); }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 1180px) { .home { grid-template-columns: minmax(0, 1fr) 330px; } .search .t { display: none; } .search { gap: 0; } }
+@media (max-width: 860px) {
+  .bar { flex-wrap: wrap; height: auto; gap: 10px 14px; padding: 10px 16px 6px; }
+  .host { display: none; }
+  .tabs { order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .search { display: none; }
+  .needs { padding-inline: 16px; }
+  #needs { flex-wrap: nowrap; }
+  .shell { height: auto; min-height: 0; }
+  .home { grid-template-columns: minmax(0, 1fr); }
+  .lab.chip.app { display: none; }
+  .board-head { left: 16px; right: 16px; top: 14px; }
+  .board-head h1 { font-size: 24px; }
+  .board-foot { left: 16px; right: 16px; bottom: 12px; }
+  .legend, .hint { display: none; }
+  .board-wrap { height: auto; }
+  .stage { position: relative; height: 60svh; min-height: 420px; }
+  .peek { position: relative; top: auto; right: auto; width: auto; max-height: none; margin: 12px 16px 16px; }
+  .rail { height: 72svh; border-left: 0; border-top: 1px solid var(--border); }
+  .builds { padding: 52px 16px 64px; }
+  .lab.agent { font-size: 13px; padding: 3px 6px 4px; }
+  .lab.agent small, .st { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .m, .dot.run { animation: none; }
+  .trace, .hex, .side, .toast, #needs li { transition: none; }
+}
+</style>
+
+<div class="shell">
+<header class="bar">
+  <span class="brand"><svg aria-hidden="true"><use href="#rn-mark"/></svg>Renoa<small>Control Center</small></span>
+  <span class="host" title="The server your Renoa runs on"><i class="dot run"></i>home-server · online</span>
+  <nav class="tabs" aria-label="Control Center">
+    <button type="button" aria-current="page">Home</button>
+    <button type="button" data-soon="Agents">Agents</button>
+    <button type="button" data-soon="Library">Library</button>
+    <button type="button" data-soon="Work">Work</button>
+    <button type="button" data-soon="Connections">Connections</button>
+  </nav>
+  <div class="bar-end">
+    <button class="search" type="button" data-soon="Search"><span class="t">Search or run a command</span><kbd>⌘K</kbd></button>
+    <span class="me" aria-label="You">Y</span>
+  </div>
+</header>
+
+<section class="needs" aria-label="Needs you">
+  <span class="needs-k" id="needs-k">Needs you <b id="need-n">3</b></span>
+  <ul id="needs">
+    <li data-need="notion"><svg viewBox="0 0 24 24" aria-hidden="true" data-icon="Notion"></svg><span><b>Agent A</b> wants to add Notion to the library</span><button class="btn sm" type="button" data-act="approve">Approve</button><button class="btn sm ghost" type="button" data-act="dismiss">Not now</button></li>
+    <li data-need="calendar"><svg viewBox="0 0 24 24" aria-hidden="true" data-icon="Calendar"></svg><span><b>Google Calendar</b> needs a new sign-in</span><button class="btn sm" type="button" data-act="signin">Sign in</button></li>
+    <li data-need="restart" class="fail"><i class="dot fail"></i><span><b>Agent B</b> stopped at 02:14, mid-review</span><button class="btn sm" type="button" data-act="restart">Restart</button></li>
+  </ul>
+</section>
+
+<main class="home" id="home">
+  <section class="board-wrap" aria-labelledby="board-h">
+    <div class="stage" id="stage">
+      <svg id="board" role="img" aria-label="Your Renoa drawn as hexagonal tiles. Each agent is a dark core with six coloured parts around it. Lines, which are RCP, join each agent to its app and to Control Center in the middle. The shared library of plugins and skills sits along the bottom, and lines show which agents use each one.">
+        <g id="world"><g id="sockets"></g><g id="traces"></g><g id="tiles"></g><g id="fx"></g></g>
+      </svg>
+      <div id="labels"></div>
+      <div class="board-head"><div><h1 id="board-h">Your Renoa</h1><p class="mono" id="sum"></p></div></div>
+      <div class="board-foot">
+        <div class="legend mono"><span><i class="lg-hex core"></i>Agent core</span><span><i class="lg-line"></i>RCP line</span><span><i class="lg-hex" data-part="tools"></i>Plugin</span><span><i class="lg-hex skill"></i>Skill</span></div>
+        <div class="foot-end"><span class="mono hint">Select an agent to open it</span><button class="btn sm line" type="button" id="pause" aria-pressed="false">Pause</button></div>
+      </div>
+    </div>
+    <aside class="peek" id="peek" hidden aria-labelledby="pk-name">
+      <div class="pk-h"><div><h3 id="pk-name"></h3><p class="mono" id="pk-role"></p></div><button class="x" type="button" id="pk-x" aria-label="Close agent"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+      <p class="pk-st" id="pk-st"></p>
+      <dl class="pk-parts" id="pk-parts"></dl>
+      <div class="pk-sec"><span class="mono">From the shared library</span><ul class="pk-lib" id="pk-lib"></ul></div>
+      <div class="pk-sec"><span class="mono">Apps on its line</span><p class="pk-apps" id="pk-apps"></p></div>
+      <div class="pk-act"><button class="btn sm" type="button" id="pk-open">Open agent</button><button class="btn sm line" type="button" id="pk-msg">Message</button></div>
+    </aside>
+  </section>
+
+  <aside class="rail" aria-labelledby="chat-h">
+    <header class="rail-h">
+      <div><h2 id="chat-h">Everyone</h2><p class="mono" id="chat-sub">3 agents and you, over RCP</p></div>
+      <span class="faces" id="faces" aria-hidden="true"></span>
+    </header>
+    <ol class="chat" id="chat" aria-live="polite"></ol>
+    <form class="composer" id="composer">
+      <label class="sr" for="msg">Message everyone</label>
+      <input id="msg" autocomplete="off" placeholder="Message everyone, or @A to ask one agent">
+      <button class="btn" type="submit">Send</button>
+    </form>
+  </aside>
+</main>
+</div>
+
+<section class="builds" id="builds" aria-labelledby="bp-h">
+  <span class="mono">Blueprints</span>
+  <h2 id="bp-h">What will you build next?</h2>
+  <p>Every agent is the same kit: a core that keeps the record, six parts you can swap, plugins and skills from the shared library, and apps on the line. A blueprint snaps them together for a job. Start from one, or build your own piece by piece.</p>
+  <ul class="bp" id="bp"></ul>
+  <p class="bp-next"><span class="mono">Next in Blueprints</span> Research agent · Support desk · Home control · Tutor · Sales follow-up</p>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="rn-mark" viewBox="0 0 32 32"><path fill="currentColor" d="M19.72 16.21Q19.95 16.60 19.72 16.99L17.80 20.32Q17.57 20.71 17.12 20.71L13.27 20.71Q12.82 20.71 12.60 20.32L10.67 16.99Q10.45 16.60 10.67 16.21L12.60 12.88Q12.82 12.49 13.270 12.49L17.12 12.49Q17.57 12.49 17.80 12.88Z"/><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M19.07 6.77Q19.25 7.07 19.07 7.38L17.40 10.28Q17.23 10.58 16.88 10.58L13.53 10.58Q13.18 10.58 13.00 10.28L11.32 7.38Q11.150 7.07 11.32 6.77L13.00 3.87Q13.17 3.57 13.52 3.57L16.88 3.57Q17.23 3.57 17.40 3.87Z"/><path d="M28.94 10.60Q29.12 10.90 28.94 11.20L27.27 14.11Q27.09 14.41 26.74 14.41L23.39 14.41Q23.04 14.41 22.87 14.11L21.19 11.20Q21.02 10.90 21.19 10.60L22.87 7.70Q23.04 7.39 23.39 7.39L26.74 7.39Q27.09 7.39 27.27 7.70Z"/><path d="M27.32 21.06Q27.50 21.36 27.32 21.67L25.65 24.57Q25.48 24.87 25.12 24.87L21.78 24.87Q21.43 24.87 21.25 24.57L19.57 21.67Q19.40 21.36 19.57 21.06L21.25 18.16Q21.42 17.86 21.77 17.86L25.12 17.86Q25.48 17.86 25.65 18.16Z"/><path d="M19.07 25.82Q19.25 26.13 19.07 26.43L17.40 29.33Q17.23 29.63 16.88 29.63L13.53 29.63Q13.18 29.63 13.00 29.33L11.32 26.43Q11.15 26.13 11.32 25.82L13.00 22.92Q13.17 22.62 13.52 22.62L16.88 22.62Q17.23 22.62 17.40 22.92Z"/><path d="M10.82 21.06Q11.00 21.36 10.82 21.67L9.15 24.57Q8.97 24.87 8.62 24.87L5.28 24.87Q4.93 24.87 4.75 24.57L3.07 21.67Q2.90 21.36 3.07 21.06L4.75 18.16Q4.92 17.86 5.27 17.86L8.62 17.86Q8.97 17.86 9.15 18.16Z"/><path d="M10.82 11.53Q11.00 11.84 10.82 12.14L9.15 15.04Q8.97 15.34 8.62 15.34L5.28 15.34Q4.93 15.34 4.75 15.04L3.07 12.14Q2.90 11.84 3.07 11.53L4.75 8.63Q4.92 8.33 5.27 8.33L8.62 8.33Q8.97 8.33 9.15 8.63Z"/></g></symbol></svg>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const NS = 'http://www.w3.org/2000/svg';
+  const S3 = Math.sqrt(3), R = 60, GROUT = 5, DEPTH = 4, LIFT = 18, PX_SPEED = 300, TRAIL_PX = 48;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const stage = $('#stage'), board = $('#board'), world = $('#world');
+  const gSock = $('#sockets'), gTrace = $('#traces'), gTiles = $('#tiles'), gFx = $('#fx'), labelsEl = $('#labels');
+  let T = 0, paused = reduce, dirty = true, phone = false, visible = true;
+
+  const axial = (q, r) => [R * 1.5 * q, R * S3 * (r + q / 2)];
+  function hexPath(cx, cy, r, corner) {
+    const c = Math.min(corner || 0, r * 0.3), p = [];
+    for (let i = 0; i < 6; i++) p.push([cx + r * Math.cos(Math.PI / 3 * i), cy + r * Math.sin(Math.PI / 3 * i)]);
+    let d = '';
+    for (let i = 0; i < 6; i++) {
+      const a = p[(i + 5) % 6], b = p[i], n = p[(i + 1) % 6];
+      const s = [b[0] + (a[0] - b[0]) * c / r, b[1] + (a[1] - b[1]) * c / r], e = [b[0] + (n[0] - b[0]) * c / r, b[1] + (n[1] - b[1]) * c / r];
+      d += (i ? 'L' : 'M') + s[0].toFixed(1) + ' ' + s[1].toFixed(1) + 'Q' + b[0].toFixed(1) + ' ' + b[1].toFixed(1) + ' ' + e[0].toFixed(1) + ' ' + e[1].toFixed(1);
+    }
+    return d + 'Z';
+  }
+  const HEX = hexPath(0, 0, R - GROUT / 2, 3);
+  function el(tag, attrs, parent) {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) if (attrs[k] !== undefined && attrs[k] !== null) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  /* ---------- marks ---------- */
+  // Brand marks from Simple Icons 16.33.0 (CC0-1.0, https://simpleicons.org), drawn on a 24-unit square.
+  const ICONS = {
+    Discord: 'M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z',
+    GitHub: 'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12',
+    Telegram: 'M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z',
+    WhatsApp: 'M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z',
+    Gmail: 'M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z',
+    Calendar: 'M18.316 5.684H24v12.632h-5.684V5.684zM5.684 24h12.632v-5.684H5.684V24zM18.316 5.684V0H1.895A1.894 1.894 0 0 0 0 1.895v16.421h5.684V5.684h12.632zm-7.207 6.25v-.065c.272-.144.5-.349.687-.617s.279-.595.279-.982c0-.379-.099-.72-.3-1.025a2.05 2.05 0 0 0-.832-.714 2.703 2.703 0 0 0-1.197-.257c-.6 0-1.094.156-1.481.467-.386.311-.65.671-.793 1.078l1.085.452c.086-.249.224-.461.413-.633.189-.172.445-.257.767-.257.33 0 .602.088.816.264a.86.86 0 0 1 .322.703c0 .33-.12.589-.36.778-.24.19-.535.284-.886.284h-.567v1.085h.633c.407 0 .748.109 1.02.327.272.218.407.499.407.843 0 .336-.129.614-.387.832s-.565.327-.924.327c-.351 0-.651-.103-.897-.311-.248-.208-.422-.502-.521-.881l-1.096.452c.178.616.505 1.082.977 1.401.472.319.984.478 1.538.477a2.84 2.84 0 0 0 1.293-.291c.382-.193.684-.458.902-.794.218-.336.327-.72.327-1.149 0-.429-.115-.797-.344-1.105a2.067 2.067 0 0 0-.881-.689zm2.093-1.931l.602.913L15 10.045v5.744h1.187V8.446h-.827l-2.158 1.557zM22.105 0h-3.289v5.184H24V1.895A1.894 1.894 0 0 0 22.105 0zm-3.289 23.5l4.684-4.684h-4.684V23.5zM0 22.105C0 23.152.848 24 1.895 24h3.289v-5.184H0v3.289z',
+    "Google Drive": 'M12.01 1.485c-2.082 0-3.754.02-3.743.047.01.02 1.708 3.001 3.774 6.62l3.76 6.574h3.76c2.081 0 3.753-.02 3.742-.047-.005-.02-1.708-3.001-3.775-6.62l-3.76-6.574zm-4.76 1.73a789.828 789.861 0 0 0-3.63 6.319L0 15.868l1.89 3.298 1.885 3.297 3.62-6.335 3.618-6.33-1.88-3.287C8.1 4.704 7.255 3.22 7.25 3.214zm2.259 12.653-.203.348c-.114.198-.96 1.672-1.88 3.287a423.93 423.948 0 0 1-1.698 2.97c-.01.026 3.24.042 7.222.042h7.244l1.796-3.157c.992-1.734 1.85-3.23 1.906-3.323l.104-.167h-7.249z',
+    Figma: 'M15.852 8.981h-4.588V0h4.588c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.491-4.49 4.491zM12.735 7.51h3.117c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-3.117V7.51zm0 1.471H8.148c-2.476 0-4.49-2.014-4.49-4.49S5.672 0 8.148 0h4.588v8.981zm-4.587-7.51c-1.665 0-3.019 1.355-3.019 3.019s1.354 3.02 3.019 3.02h3.117V1.471H8.148zm4.587 15.019H8.148c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h4.588v8.98zM8.148 8.981c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h3.117V8.981H8.148zM8.172 24c-2.489 0-4.515-2.014-4.515-4.49s2.014-4.49 4.49-4.49h4.588v4.441c0 2.503-2.047 4.539-4.563 4.539zm-.024-7.51a3.023 3.023 0 0 0-3.019 3.019c0 1.665 1.365 3.019 3.044 3.019 1.705 0 3.093-1.376 3.093-3.068v-2.97H8.148zm7.704 0h-.098c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h.098c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.49-4.49 4.49zm-.097-7.509c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h.098c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-.098z',
+    Notion: 'M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z',
+  };
+  // Plain marks drawn for this page, on the same 24-unit square: strokes, not fills.
+  const GLYPHS = {
+    Skill: null,
+    Phone: 'M7.5 3.5h2.8l1.4 4.3-2.1 1.4a11 11 0 0 0 5.2 5.2l1.4-2.1 4.3 1.4v2.8a2 2 0 0 1-2.1 2A15.9 15.9 0 0 1 5.5 5.6a2 2 0 0 1 2-2.1z',
+    Globe: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM3.5 12h17M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9M12 3c-2.4 2.5-3.6 5.5-3.6 9s1.2 6.5 3.6 9',
+    Voice: 'M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4',
+    Speaker: 'M4 9.5h3.5L12 5.5v13l-4.5-4H4zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11',
+    Chart: 'M4 20h16M7 16.5v-5M12 16.5V7M17 16.5v-8',
+    Plus: 'M12 5v14M5 12h14',
+  };
+  ICONS.Skill = 'M4 20l1.2-4.4L15.6 5.2a1.4 1.4 0 0 1 2 0l1.2 1.2a1.4 1.4 0 0 1 0 2L8.4 18.8zM3 22h18v-1.6H3z';
+  function drawMark(g, name) {
+    if (name === 'mark') return el('use', { href: '#rn-mark', width: 24, height: 24 }, g);
+    if (GLYPHS[name]) return el('path', { class: 'gl', d: GLYPHS[name] }, g);
+    return el('path', { d: ICONS[name] }, g);
+  }
+  // The same marks as small inline icons in the page's text.
+  document.querySelectorAll('svg[data-icon]').forEach((s) => { const n = s.dataset.icon; const p = el('path', { d: GLYPHS[n] || ICONS[n] }, s); if (GLYPHS[n]) p.setAttribute('fill', 'none'), p.setAttribute('stroke', 'currentColor'), p.setAttribute('stroke-width', '1.9'); else p.setAttribute('fill', 'currentColor'); });
+
+  /* ---------- what is on the board ---------- */
+  const PARTS = [
+    { id: 'model', name: 'Model', q: 0, r: -1 }, { id: 'loop', name: 'Workflow', q: 1, r: -1 }, { id: 'context', name: 'Context', q: 1, r: 0 },
+    { id: 'tools', name: 'Tools', q: 0, r: 1 }, { id: 'skills', name: 'Skills', q: -1, r: 1 }, { id: 'profile', name: 'Profile', q: -1, r: 0 },
+  ];
+  const LIBRARY = [
+    { id: 'gmail', name: 'Gmail', kind: 'plugin', icon: 'Gmail' },
+    { id: 'calendar', name: 'Google Calendar', kind: 'plugin', icon: 'Calendar', off: true },
+    { id: 'drive', name: 'Google Drive', kind: 'plugin', icon: 'Google Drive' },
+    { id: 'figma', name: 'Figma', kind: 'plugin', icon: 'Figma' },
+    { id: 'github', name: 'GitHub', kind: 'plugin', icon: 'GitHub' },
+    { id: 'writing', name: 'Writing style', kind: 'skill', icon: 'Skill' },
+    { id: 'audit', name: 'Audit', kind: 'skill', icon: 'Skill' },
+    { id: 'notes', name: 'Meeting notes', kind: 'skill', icon: 'Skill' },
+  ];
+  const AGENT_DEFS = {
+    agentA: { name: 'Agent A', letter: 'A', role: 'Assistant · Discord', q: -4, r: 1, parts: { model: 'Claude', loop: 'Plan first', context: 'Memory + 3', profile: 'Assistant' }, lib: ['gmail', 'calendar', 'drive', 'figma', 'writing', 'notes'], st: ['run', 'Planning your week · 3 of 5'], job: 'Morning inbox summary',
+      replies: ['Planning your week: step 3 of 5. I’ll post it in Discord by six.', 'Your dentist moved to Thursday at 4. The calendar is updated.', 'Inbox is down to 4. Two need a reply from you.'] },
+    agentB: { name: 'Agent B', letter: 'B', role: 'Code review · GitHub', q: 0, r: -1, parts: { model: 'GPT', loop: 'Double-check', context: 'Repo + 2', profile: 'Reviewer' }, lib: ['github', 'audit'], st: ['fail', 'Stopped at 02:14'], job: 'Hourly PR check',
+      replies: ['No reviews waiting. I check new pull requests every hour.', 'PR #42 needs one small fix before it can merge.'] },
+    agentC: { name: 'Agent C', letter: 'C', role: 'Family group · Telegram', q: 4, r: -3, parts: { model: 'Gemini', loop: 'Quick reply', context: 'Memory', profile: 'Companion' }, lib: ['calendar', 'writing'], st: ['idle', 'Idle · last active 09:33'], job: 'Sunday family digest',
+      replies: ['The family is set for Friday at 7.', 'Nothing new in the family group since this morning.'] },
+  };
+  const APPS = [
+    { id: 'discord', name: 'Discord', q: -8, r: 1, agent: 'agentA', icon: 'Discord' },
+    { id: 'github', name: 'GitHub', q: 0, r: -5, agent: 'agentB', icon: 'GitHub', up: true },
+    { id: 'telegram', name: 'Telegram', q: 8, r: -7, agent: 'agentC', icon: 'Telegram' },
+    { id: 'whatsapp', name: 'WhatsApp', q: -7, r: -1, agent: null, icon: 'WhatsApp', up: true },
+  ];
+  // Where blueprints put new agents, and their apps.
+  const SLOTS = [{ q: -8, r: 6, app: [-11, 6] }, { q: 8, r: -2, app: [11, -5] }];
+  const BLUEPRINTS = [
+    { id: 'assistant', name: 'Personal assistant', text: 'Looks after your inbox, calendar and files, in the chat app you already use.', model: 'Claude', loop: 'Plan first', profile: 'Assistant', lib: ['gmail', 'calendar', 'drive', 'writing'], add: [], app: 'whatsapp', role: 'Assistant · WhatsApp', job: 'Morning inbox summary',
+      hello: 'Hi, I’m set up in WhatsApp with your Gmail, Calendar and Drive. Message me there any time.', recipe: [['Library', 'Gmail, Calendar, Drive, Writing style'], ['App', 'WhatsApp, Discord or Telegram']] },
+    { id: 'reviewer', name: 'GitHub reviewer', text: 'Reads every pull request and leaves clear review notes where your team works.', model: 'GPT', loop: 'Double-check', profile: 'Reviewer', lib: ['github', 'audit'], add: [], app: 'github', role: 'Review · GitHub', job: 'Hourly PR check',
+      hello: 'Watching your repositories. I’ll leave notes on each new pull request.', recipe: [['Library', 'GitHub, Audit'], ['App', 'GitHub']] },
+    { id: 'voice', name: 'Voice agent', text: 'Takes and makes phone calls in a natural voice, then tells the others what was said.', model: 'Gemini', loop: 'Quick reply', profile: 'Secretary', lib: ['calendar'], add: [{ id: 'pipecat', name: 'Pipecat', kind: 'plugin', icon: 'Voice' }, { id: 'tts', name: 'Text to speech', kind: 'plugin', icon: 'Speaker' }], app: { id: 'phone', name: 'Phone', icon: 'Phone' }, role: 'Voice · Phone', job: 'Missed-call follow-up',
+      hello: 'I can take calls through Pipecat and answer in a natural voice. Give me a number to start.', recipe: [['Library', 'Pipecat or LiveKit, Text to speech'], ['App', 'A phone number']] },
+    { id: 'website', name: 'Website agent', text: 'Lives on a small business’s website: answers visitors, and reports what they ask for.', model: 'Claude', loop: 'Research', profile: 'Assistant', lib: ['writing'], add: [{ id: 'widget', name: 'Site widget', kind: 'plugin', icon: 'Globe' }, { id: 'analytics', name: 'Analytics', kind: 'plugin', icon: 'Chart' }], app: { id: 'site', name: 'Your website', icon: 'Globe' }, role: 'Website · your site', job: 'Weekly visitor report',
+      hello: 'Paste one line into your site and I’ll start answering visitors. I’ll report what they ask each week.', recipe: [['Library', 'Site widget, Analytics'], ['App', 'Your website']] },
+    { id: 'own', own: true, name: 'Your own', text: 'Pick a model, a way of working, plugins and apps, piece by piece.', model: 'Any model', loop: 'Your own', profile: 'Your own', lib: [], add: [], app: null, role: 'Your own', job: 'Daily check-in',
+      hello: 'I’m a blank agent. Give me a job, and pick my parts in the Agents tab.', recipe: [['Library', 'Anything in it'], ['App', 'Any app on RCP']] },
+  ];
+
+  /* ---------- tiles ---------- */
+  const tiles = [];
+  function mkTile(o) {
+    const [hx, hy] = axial(o.q, o.r);
+    const t = Object.assign({ hx, hy, x: hx, y: hy, tx: hx, ty: hy, s: 1, ts: 1, o: 1, to: 1, f: 1, ft: 1, lift: 0, tl: 0, kp: 6, ks: 6, ko: 6, kl: 7, hold: 0, down: false, lastT: '', lastO: '', lastL: '' }, o);
+    t.g = el('g', { class: 'tile' + (o.pick ? ' pick' : ''), 'data-kind': o.kind, 'data-part': o.part }, gTiles);
+    t.g.__t = t;
+    t.shd = el('path', { class: 'shd', d: HEX, transform: 'translate(0 ' + (DEPTH + 3) + ')' }, t.g);
+    t.body = el('g', null, t.g);
+    el('path', { class: 'side', d: HEX, transform: 'translate(0 ' + DEPTH + ')' }, t.body);
+    t.hex = el('path', { class: 'hex', d: HEX }, t.body);
+    if (o.icon) { const ig = el('g', { class: 'ico' }, t.body); drawMark(el('g', { transform: 'translate(-18 -18) scale(1.5)' }, ig), o.icon); }
+    if (o.role === 'core') t.stat = el('circle', { class: 'stat', r: 9 }, t.body);
+    if (o.ask) t.askDot = el('circle', { class: 'ask', cx: 29, cy: -31, r: 6 }, t.body);
+    tiles.push(t);
+    return t;
+  }
+  const setKind = (t, k) => { t.kind = k; t.g.setAttribute('data-kind', k); };
+  const bury = (t) => { t.role = 'old'; t.to = 0; };
+  function killTile(t) { const i = tiles.indexOf(t); if (i >= 0) tiles.splice(i, 1); t.g.remove(); }
+  function moveTile(t, q, r) { const [hx, hy] = axial(q, r); t.q = q; t.r = r; t.hx = hx; t.hy = hy; t.tx = hx; t.ty = hy; }
+
+  // Empty sockets: the board itself, with room to extend in every direction.
+  (() => {
+    let d = '';
+    for (let q = -14; q <= 14; q++) for (let r = -14; r <= 16; r++) {
+      const [x, y] = axial(q, r);
+      if (Math.abs(x) > 1260 || y < -760 || y > 900) continue;
+      d += hexPath(x, y, R - GROUT / 2, 3);
+    }
+    el('path', { class: 'sock', d }, gSock);
+  })();
+
+  const agents = {};
+  function buildAgent(id, def, fresh) {
+    const A = agents[id] = { id, def, parts: {}, present: true, down: false, st: def.st.slice(), n: 0 };
+    const pick = true;
+    A.core = mkTile({ kind: 'core', q: def.q, r: def.r, agent: id, role: 'core', pick });
+    PARTS.forEach((d) => { A.parts[d.id] = mkTile({ kind: 'part', part: d.id, q: def.q + d.q, r: def.r + d.r, agent: id, role: 'part', pick }); });
+    A.tiles = [A.core].concat(PARTS.map((d) => A.parts[d.id]));
+    if (fresh) A.tiles.forEach((t, i) => { t.hold = T + 0.35 + i * 0.09; t.o = 0; t.lift = 1.6; t.kl = 8; });
+    return A;
+  }
+  Object.keys(AGENT_DEFS).forEach((id) => buildAgent(id, AGENT_DEFS[id]));
+  const cc = mkTile({ kind: 'control', q: 0, r: 2, role: 'control', icon: 'mark' });
+  const apps = {};
+  function addApp(a) {
+    a.tile = mkTile({ kind: 'surface', q: a.q, r: a.r, role: 'app', app: a, icon: a.icon });
+    if (!a.agent) a.tile.g.classList.add('off');
+    return (apps[a.id] = a);
+  }
+  APPS.forEach(addApp);
+
+  // The shared library: one row of plugins and skills that every agent draws on.
+  const shelf = [];
+  function libTile(item, extra) {
+    const t = mkTile(Object.assign({ kind: item.kind, q: 0, r: 4, role: 'lib', lib: item, icon: item.icon, pick: false }, extra));
+    if (item.off) t.g.classList.add('off');
+    return t;
+  }
+  LIBRARY.forEach((it) => shelf.push(libTile(it)));
+  const notion = libTile({ id: 'notion', name: 'Notion', kind: 'proposed', icon: 'Notion' }, { ask: true });
+  shelf.push(notion);
+  const more = libTile({ id: 'more', name: 'Add to the library', kind: 'more', icon: 'Plus' });
+  shelf.push(more);
+  function layoutShelf(snap) {
+    const live = shelf.filter((t) => t.role !== 'old'), n = live.length;
+    live.forEach((t, i) => {
+      const q = i - Math.floor(n / 2), r = 5 - Math.ceil(q / 2);
+      moveTile(t, q, r);
+      if (snap) { t.x = t.tx; t.y = t.ty; }
+    });
+  }
+  layoutShelf(true);
+
+  /* ---------- RCP is the line between two things, drawn along the seams ---------- */
+  const V = new Map();
+  const vkey = (x, y) => Math.round(x * 2) + ',' + Math.round(y * 2);
+  const vtx = (cx, cy, i) => [cx + R * Math.cos(Math.PI / 3 * i), cy + R * Math.sin(Math.PI / 3 * i)];
+  for (let q = -14; q <= 14; q++) for (let r = -14; r <= 16; r++) {
+    const [cx, cy] = axial(q, r);
+    if (Math.abs(cx) > 1300 || cy < -800 || cy > 940) continue;
+    const vs = [];
+    for (let i = 0; i < 6; i++) { const [x, y] = vtx(cx, cy, i), k = vkey(x, y); if (!V.has(k)) V.set(k, { k, x, y, n: new Set() }); vs.push(V.get(k)); }
+    for (let i = 0; i < 6; i++) { vs[i].n.add(vs[(i + 1) % 6].k); vs[(i + 1) % 6].n.add(vs[i].k); }
+  }
+  function nearestVertex(t, toward) {
+    let best = null, bd = 1e9;
+    for (let i = 0; i < 6; i++) { const [x, y] = vtx(t.hx, t.hy, i), d = Math.hypot(x - toward.hx, y - toward.hy); if (d < bd) { bd = d; best = V.get(vkey(x, y)); } }
+    return best;
+  }
+  // A line keeps clear of every agent it does not join, so it never reads as part of one.
+  function blocked(a, b) {
+    const out = new Set();
+    for (const t of tiles) {
+      if (!t.agent || t.agent === a.agent || t.agent === b.agent || !agents[t.agent] || !agents[t.agent].present) continue;
+      for (let i = 0; i < 6; i++) { const [x, y] = vtx(t.hx, t.hy, i); out.add(vkey(x, y)); }
+    }
+    return out;
+  }
+  function route(a, b, open) {
+    const s = nearestVertex(a, b), g = nearestVertex(b, a), avoid = open ? new Set() : blocked(a, b);
+    const dist = new Map([[g.k, 0]]), queue = [g];
+    for (let i = 0; i < queue.length; i++) {
+      const v = queue[i]; if (v === s) break;
+      for (const nk of v.n) if (!dist.has(nk) && (!avoid.has(nk) || nk === s.k)) { dist.set(nk, dist.get(v.k) + 1); queue.push(V.get(nk)); }
+    }
+    if (!dist.has(s.k)) return route(a, b, true);
+    const lx = g.x - s.x, ly = g.y - s.y, ll = Math.hypot(lx, ly) || 1;
+    const off = (v) => Math.abs((v.x - s.x) * ly - (v.y - s.y) * lx) / ll;
+    const pts = [[s.x, s.y]];
+    let cur = s;
+    while (cur !== g) {
+      let nx = null;
+      for (const nk of cur.n) if (dist.get(nk) === dist.get(cur.k) - 1) { const v = V.get(nk); if (!nx || off(v) < off(nx)) nx = v; }
+      if (!nx) break;
+      cur = nx; pts.push([cur.x, cur.y]);
+    }
+    return pts;
+  }
+  const measure = (pts) => { const seg = []; let len = 0; for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); len += l; } return { seg, len }; };
+  const links = {};
+  // A line to an agent meets the edge of its cluster, so it stays out in the open board.
+  const edgeOf = (t, toward) => {
+    if (t.role !== 'core') return t;
+    let best = t, bd = Infinity;
+    PARTS.forEach((d) => { const p = agents[t.agent].parts[d.id], dd = Math.hypot(p.hx - toward.hx, p.hy - toward.hy); if (dd < bd) { bd = dd; best = p; } });
+    return best;
+  };
+  function link(id, a, b, cls) {
+    const pts = route(edgeOf(a, b), edgeOf(b, a)), m = measure(pts);
+    const path = el('path', { class: 'trace' + (cls ? ' ' + cls : ''), 'data-link': id, d: 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L') }, gTrace);
+    return (links[id] = Object.assign({ id, a, b, pts, path, hot: 0 }, m));
+  }
+  function linkAgent(id) {
+    const A = agents[id];
+    link('cc-' + id, cc, A.core);
+    APPS.forEach((a) => { if (a.agent === id || (a.agents && a.agents.includes(id))) link(a.id + '-' + id, a.tile, A.core); });
+  }
+  Object.keys(agents).forEach(linkAgent);
+  function hop(a, b, cb) {
+    for (const id in links) {
+      const L = links[id];
+      if (L.dying) continue;
+      if (L.a === a && L.b === b) return { id, dir: 1, cb };
+      if (L.a === b && L.b === a) return { id, dir: -1, cb };
+    }
+    return null;
+  }
+  function pointAt(L, u) {
+    for (let i = 0; i < L.seg.length; i++) {
+      if (u <= L.seg[i] || i === L.seg.length - 1) { const f = L.seg[i] ? clamp(u / L.seg[i], 0, 1) : 0, a = L.pts[i], b = L.pts[i + 1]; return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]; }
+      u -= L.seg[i];
+    }
+    return L.pts[L.pts.length - 1];
+  }
+  function slice(L, a, b) {
+    a = clamp(a, 0, L.len); b = clamp(b, 0, L.len);
+    const out = [pointAt(L, a)];
+    let acc = 0;
+    for (let i = 0; i < L.seg.length; i++) { acc += L.seg[i]; if (acc > a && acc < b) out.push(L.pts[i + 1]); }
+    out.push(pointAt(L, b));
+    return out;
+  }
+  const heat = (L, d) => { L.hot = Math.max(0, L.hot + d); L.path.classList.toggle('hot', L.hot > 0); };
+
+  // Library lines: in the part's colour, from one library tile to an agent that uses it.
+  const wires = [];
+  let wireN = 0;
+  function wire(from, A, part) {
+    const to = A.parts[part], pts = route(from, to), m = measure(pts), id = 'w' + wireN++;
+    const L = Object.assign({ id, a: from, b: to, pts, draw: 0, go: true, dying: false, lastD: '', hot: 0,
+      path: el('path', { class: 'branch', 'data-part': part }, gTrace), pad: el('circle', { class: 'pad', 'data-part': part, r: 3 }, gTrace) }, m);
+    L.pad.style.opacity = '0';
+    links[id] = L; wires.push(L);
+    return L;
+  }
+  const dropWire = (L) => { L.dying = true; };
+  const partFor = (t) => (t.kind === 'skill' ? 'skills' : 'tools');
+
+  /* ---------- timers, pulses, packets ---------- */
+  const timers = [];
+  const after = (s, fn) => timers.push({ at: T + s, fn });
+  const rings = [];
+  function pulse(t, big) {
+    const p = el('path', { class: 'ringfx', d: HEX }, gFx);
+    rings.push({ p, t, a: 0, dur: big ? 1.4 : 0.9, s1: big ? 1.55 : 1.3 });
+    t.g.classList.add('ping'); after(0.45, () => t.g.classList.remove('ping'));
+  }
+  const movers = [];
+  function send(legs, fin) {
+    legs = legs.filter(Boolean);
+    if (!legs.length) { if (fin) fin(); return; }
+    const m = { legs, i: 0, s: 0, fin, x: 0, y: 0, trail: el('path', { class: 'trail' }, gFx), dot: el('circle', { class: 'pkt', r: 4 }, gFx) };
+    const L = links[legs[0].id];
+    heat(L, 1); movers.push(m);
+    const p = pointAt(L, legs[0].dir > 0 ? 0 : L.len); m.x = p[0]; m.y = p[1];
+  }
+  function wave(q0, r0, d0, d1, delay) {
+    const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+    const occ = new Set(tiles.filter((t) => t.role !== 'old').map((t) => t.q + ',' + t.r));
+    for (let d = d0; d <= d1; d++) {
+      let q = q0 + DIRS[4][0] * d, r = r0 + DIRS[4][1] * d;
+      for (let side = 0; side < 6; side++) for (let j = 0; j < d; j++) {
+        if (!occ.has(q + ',' + r)) {
+          const [x, y] = axial(q, r);
+          const pth = el('path', { class: 'sockfx', d: HEX, transform: 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')' }, gSock);
+          pth.style.opacity = '0';
+          rings.push({ p: pth, flat: true, a: -((delay || 0) + (d - d0) * 0.12), dur: 0.95 });
+        }
+        q += DIRS[side][0]; r += DIRS[side][1];
+      }
+    }
+  }
+  function think(A, then) {
+    pulse(A.core);
+    after(0.4, () => pulse(A.parts.loop)); after(0.8, () => pulse(A.parts.model)); after(1.2, () => pulse(A.parts.tools));
+    after(1.6, then);
+  }
+
+  /* ---------- labels over the board ---------- */
+  const labels = [];
+  function addLabel(o) {
+    const e = document.createElement(o.button ? 'button' : 'div');
+    e.className = 'lab ' + o.cls; if (o.button) e.type = 'button';
+    e.innerHTML = o.html; labelsEl.appendChild(e);
+    const L = Object.assign({ el: e, pad: 8, w: 0, h: 0, lastO: '', op: () => o.tile.o * o.tile.f }, o);
+    labels.push(L); L.w = e.offsetWidth; L.h = e.offsetHeight;
+    return L;
+  }
+  const stText = (A) => '<i class="dot ' + A.st[0] + '"></i><span>' + esc(A.st[1]) + '</span>';
+  function agentLabel(A) {
+    A.lab = addLabel({ tile: A.core, button: true, cls: 'agent', side: 'above', pad: 10, at: () => [A.core.hx, A.core.hy - 1.5 * R * S3],
+      html: '<b>' + esc(A.def.name) + '</b><small>' + esc(A.def.role) + '</small><span class="st">' + stText(A) + '</span>' });
+    A.lab.el.setAttribute('aria-pressed', 'false');
+    A.lab.el.addEventListener('click', () => (sel === A.id ? closePeek() : openPeek(A.id)));
+  }
+  Object.values(agents).forEach(agentLabel);
+  function appLabel(a) { const up = a.up; a.lab = addLabel({ tile: a.tile, cls: 'chip app' + (a.agent || a.agents ? '' : ' off'), side: up ? 'above' : 'below', at: () => [a.tile.hx, a.tile.hy + (up ? -1 : 1) * R * S3 / 2], html: '<i></i>' + (a.agent || a.agents ? esc(a.name) : 'Add ' + esc(a.name)) }); }
+  Object.values(apps).forEach(appLabel);
+  addLabel({ tile: cc, cls: 'chip ctl', side: 'below', at: () => [cc.hx, cc.hy + R * S3 / 2], html: '<i></i>You · Control Center' });
+  const shelfLab = addLabel({ tile: more, cls: 'chip lib', side: 'below', op: () => 1, at: () => [0, 5 * R * S3 + R * S3 / 2 + 6], html: '<i></i><span id="lib-n"></span>' });
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function setStatus(id, s, text) {
+    const A = agents[id]; if (!A) return;
+    A.st = [s, text];
+    A.lab.el.querySelector('.st').innerHTML = stText(A);
+    A.core.g.setAttribute('data-st', s);
+    A.lab.w = A.lab.el.offsetWidth; A.lab.h = A.lab.el.offsetHeight;
+    if (sel === id) fillPeek();
+  }
+  Object.values(agents).forEach((A) => A.core.g.setAttribute('data-st', A.st[0]));
+
+  function summary() {
+    const n = Object.values(agents).length, lib = shelf.filter((t) => t.role !== 'old' && t.lib.id !== 'more' && t.kind !== 'proposed').length;
+    const ap = Object.values(apps).filter((a) => a.agent || a.agents).length;
+    $('#sum').textContent = n + ' agents · ' + lib + ' in the library · ' + ap + ' apps · all on RCP';
+    $('#lib-n').textContent = 'Shared library · ' + lib;
+    $('#chat-sub').textContent = n + ' agents and you, over RCP';
+    $('#faces').innerHTML = Object.values(agents).map((A) => '<span class="face">' + A.def.letter + '</span>').join('') + '<span class="face you">Y</span>';
+    shelfLab.w = shelfLab.el.offsetWidth;
+  }
+
+  /* ---------- focus: an opened agent, or a library item you point at ---------- */
+  let sel = null, hl = null, hoverAgent = null;
+  const uses = (A, libId) => A.def.lib.includes(libId);
+  function focusFor(t) {
+    if (t.agent && !agents[t.agent].present) return 0;
+    if (sel) {
+      const A = agents[sel];
+      if (t.agent === sel || t === cc) return 1;
+      if (t.role === 'lib' && uses(A, t.lib.id)) return 1;
+      if (t.role === 'app' && (t.app.agent === sel || (t.app.agents && t.app.agents.includes(sel)))) return 1;
+      return 0.2;
+    }
+    if (hl) {
+      if (t === hl.tile) return 1;
+      if (t.agent && hl.agents.includes(t.agent)) return 1;
+      return 0.28;
+    }
+    if (t.agent && agents[t.agent].down) return t.role === 'core' ? 1 : 0.35;
+    return 1;
+  }
+  function showUse(t) {
+    if (sel || !t.lib || t.lib.id === 'more') return;
+    clearUse();
+    const users = Object.values(agents).filter((A) => uses(A, t.lib.id));
+    hl = { tile: t, agents: users.map((A) => A.id), wires: users.map((A) => wire(t, A, partFor(t))) };
+    dirty = true;
+  }
+  function clearUse() { if (!hl) return; hl.wires.forEach(dropWire); hl = null; dirty = true; }
+
+  const peek = $('#peek');
+  let peekWires = [];
+  function openPeek(id) {
+    clearUse();
+    if (sel) { agents[sel].lab.el.setAttribute('aria-pressed', 'false'); peekWires.forEach(dropWire); }
+    sel = id; const A = agents[id];
+    A.lab.el.setAttribute('aria-pressed', 'true');
+    peekWires = shelf.filter((t) => t.role !== 'old' && t.lib && uses(A, t.lib.id)).map((t) => wire(t, A, partFor(t)));
+    fillPeek(); peek.hidden = false; dirty = true;
+    if (phone) peek.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+  }
+  function closePeek() {
+    if (!sel) return;
+    agents[sel].lab.el.setAttribute('aria-pressed', 'false');
+    peekWires.forEach(dropWire); peekWires = []; sel = null; peek.hidden = true; dirty = true;
+  }
+  function fillPeek() {
+    const A = agents[sel], d = A.def;
+    $('#pk-name').textContent = d.name; $('#pk-role').textContent = d.role;
+    $('#pk-st').innerHTML = stText(A);
+    $('#pk-parts').innerHTML = [['model', 'Model'], ['loop', 'Workflow'], ['context', 'Context'], ['profile', 'Profile']].map(([k, n]) => '<dt data-part="' + k + '">' + n + '</dt><dd>' + esc(d.parts[k]) + '</dd>').join('');
+    const libs = shelf.filter((t) => t.role !== 'old' && t.lib && uses(A, t.lib.id));
+    $('#pk-lib').innerHTML = libs.length ? libs.map((t) => '<li class="' + (t.kind === 'skill' ? 'skill' : '') + '">' + esc(t.lib.name) + '</li>').join('') : '<li>Nothing yet</li>';
+    const ap = Object.values(apps).filter((a) => a.agent === sel || (a.agents && a.agents.includes(sel))).map((a) => a.name);
+    $('#pk-apps').textContent = (ap.length ? ap.join(', ') : 'None yet') + ' · Control Center';
+  }
+  $('#pk-x').addEventListener('click', closePeek);
+  $('#pk-msg').addEventListener('click', () => { const A = agents[sel]; input.value = '@' + A.def.letter + ' '; input.focus(); });
+  $('#pk-open').addEventListener('click', () => toast('The agent page is the next design.'));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePeek(); });
+
+  gTiles.addEventListener('pointerover', (e) => {
+    const g = e.target.closest('.tile'), t = g && g.__t; if (!t) return;
+    if (t.role === 'lib') showUse(t);
+    const ha = t.agent || null; if (ha !== hoverAgent) { hoverAgent = ha; dirty = true; }
+  });
+  gTiles.addEventListener('pointerout', (e) => {
+    const g = e.target.closest('.tile'); if (!g || (e.relatedTarget && g.contains(e.relatedTarget))) return;
+    if (hl && hl.tile === g.__t) clearUse();
+    if (hoverAgent && g.__t.agent === hoverAgent) { hoverAgent = null; dirty = true; }
+  });
+  gTiles.addEventListener('click', (e) => {
+    const g = e.target.closest('.tile'), t = g && g.__t; if (!t) return;
+    if (t.agent) openPeek(t.agent);
+    else if (t === notion) toast('Approve or dismiss Notion in Needs you, above.');
+    else if (t === more) toast('Agents add plugins as they need them. You can also add one from the Library tab.');
+  });
+  stage.addEventListener('click', (e) => { if (!e.target.closest('.tile, .lab, button')) closePeek(); });
+
+  /* ---------- the group chat ---------- */
+  const chat = $('#chat'), input = $('#msg');
+  // The preview's day starts at 09:41 and runs a minute every 12 seconds.
+  const clock = (min) => { const m = Math.round(min === undefined ? 581 + T / 12 : min); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+  function say(m) {
+    const li = document.createElement('li'), who = m.from === 'you' ? null : agents[m.from];
+    li.className = 'm' + (m.to ? ' a2a' : '') + (m.ev ? ' ev' : '') + (m.from === 'you' ? ' you' : '');
+    const letter = m.ev ? '' : m.from === 'you' ? 'Y' : who ? who.def.letter : '';
+    const name = m.ev ? 'Renoa' : m.from === 'you' ? 'You' : who.def.name;
+    let hd = '<b>' + esc(name) + '</b>';
+    if (m.to) hd += '<span class="to"><b>' + esc(agents[m.to].def.name) + '</b></span><span class="rcp">RCP</span>';
+    hd += '<time>' + clock(m.at) + '</time>';
+    li.innerHTML = '<span class="who" aria-hidden="true">' + letter + '</span><div><div class="hd">' + hd + '</div><p></p></div>';
+    li.querySelector('p').textContent = m.text;
+    const near = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+    chat.appendChild(li);
+    while (chat.children.length > 60) chat.firstChild.remove();
+    if (near || m.from === 'you') chat.scrollTop = chat.scrollHeight;
+  }
+  const at = (h, m) => h * 60 + m;
+  [
+    { from: 'agentB', text: 'Reviewed PR #41 overnight. Two notes are on GitHub.', at: at(1, 52) },
+    { ev: true, text: 'Agent B stopped at 02:14 in the middle of PR #42. Its record is safe.', at: at(2, 14) },
+    { from: 'you', text: '@A what’s on today?', at: at(9, 12) },
+    { from: 'agentA', text: 'Standup at 10, dentist at 4. I moved the gym to 6.', at: at(9, 12) },
+    { from: 'agentA', to: 'agentC', text: 'Can the family do dinner on Friday?', at: at(9, 31) },
+    { from: 'agentC', to: 'agentA', text: 'Friday at 7 works for everyone.', at: at(9, 33) },
+  ].forEach(say);
+
+  function mentions(text) {
+    const out = [];
+    text.replace(/@\s*(?:agent\s*)?([a-e])\b/gi, (_, l) => { const id = 'agent' + l.toUpperCase(); if (agents[id] && !out.includes(id)) out.push(id); return _; });
+    return out;
+  }
+  $('#composer').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = input.value.trim(); if (!text) return;
+    input.value = '';
+    say({ from: 'you', text });
+    const named = mentions(text), list = named.length ? named : Object.keys(agents);
+    list.forEach((id, i) => after(0.18 * i, () => {
+      const A = agents[id];
+      send([hop(cc, A.core)], () => {
+        if (A.down) { say({ ev: true, text: A.def.name + ' is stopped, so it can’t answer. Restart it from Needs you.' }); return; }
+        think(A, () => send([hop(A.core, cc)], () => { pulse(cc); say({ from: id, text: A.def.replies[A.n++ % A.def.replies.length] }); }));
+      });
+    }));
+  });
+
+  /* ---------- needs you ---------- */
+  const needsEl = $('#needs');
+  function resolve(key) {
+    const li = needsEl.querySelector('[data-need="' + key + '"]'); if (!li) return;
+    li.classList.add('gone'); setTimeout(() => { li.remove(); countNeeds(); }, reduce ? 0 : 300);
+  }
+  function countNeeds() {
+    const n = needsEl.children.length;
+    $('#need-n').textContent = n; $('#needs-k').classList.toggle('clear', !n);
+    if (!n && !$('.needs-empty')) needsEl.insertAdjacentHTML('afterend', '<span class="needs-empty">Nothing needs you right now.</span>');
+  }
+  needsEl.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const act = b.dataset.act;
+    if (act === 'approve') {
+      setKind(notion, 'plugin'); notion.lib.kind = 'plugin'; if (notion.askDot) notion.askDot.remove();
+      AGENT_DEFS.agentA.lib.push('notion');
+      pulse(notion, true); wave(notion.q, notion.r, 1, 2);
+      const w = wire(notion, agents.agentA, 'tools'); after(0.9, () => send([hop(notion, agents.agentA.parts.tools)], () => pulse(agents.agentA.parts.tools))); after(3.2, () => dropWire(w));
+      say({ ev: true, text: 'You approved Notion. It’s in the shared library now, and any agent can turn it on.' });
+      resolve('notion'); summary();
+    } else if (act === 'dismiss') {
+      bury(notion); after(0.4, () => { layoutShelf(); summary(); });
+      say({ ev: true, text: 'Notion was not added. Agent A will ask again if it needs it.' });
+      resolve('notion');
+    } else if (act === 'signin') {
+      const cal = shelf.find((t) => t.lib.id === 'calendar'); cal.g.classList.remove('off'); cal.lib.off = false;
+      pulse(cal, true);
+      ['agentA', 'agentC'].forEach((id, i) => { const w = wire(cal, agents[id], 'tools'); after(0.6 + i * 0.2, () => send([hop(cal, agents[id].parts.tools)])); after(3.2, () => dropWire(w)); });
+      say({ ev: true, text: 'Google Calendar is signed in again. Agents A and C can use it.' });
+      resolve('calendar');
+    } else if (act === 'restart') {
+      const B = agents.agentB;
+      send([hop(cc, B.core)], () => {
+        B.down = false; B.core.g.classList.remove('failed');
+        B.tiles.forEach((t, i) => after(i * 0.1, () => { t.lift = 0.8; }));
+        pulse(B.core, true); wave(B.def.q, B.def.r, 2, 3, 0.2);
+        setStatus('agentB', 'run', 'Picking up PR #42');
+        say({ from: 'agentB', text: 'Back up, with my record intact. Picking up PR #42 where I stopped.' });
+        after(5, () => setStatus('agentB', 'idle', 'Idle · PR #42 reviewed'));
+      });
+      resolve('restart');
+    }
+  });
+  // Agent B starts the day stopped: it waits for you in Needs you.
+  agents.agentB.down = true; agents.agentB.core.g.classList.add('failed');
+
+  /* ---------- the live system: what each agent is doing ---------- */
+  const DM = [['Plan my week', 'Planning your week · 3 of 5'], ['Summarise my inbox', 'Summarising your inbox'], ['Find the lease PDF', 'Looking through Drive']];
+  const A2A = [['Is Saturday morning free for a family call?', 'Saturday at 10 works. Grandma will join.'], ['Can you ask the family about the trip dates?', 'Everyone can do the 14th to the 18th.']];
+  const PRN = ['Looks good to merge.', 'One small fix before it can merge.', 'Two notes about tests.'];
+  let dmN = 0, a2aN = 0, prN = 43, jobN = 0;
+  const flashUse = (libId, id) => {
+    const t = shelf.find((s) => s.role !== 'old' && s.lib.id === libId), A = agents[id]; if (!t || !A || t.lib.off) return;
+    const w = wire(t, A, partFor(t)); after(0.7, () => send([hop(t, A.parts[partFor(t)])], () => pulse(A.parts[partFor(t)]))); after(3, () => dropWire(w));
+  };
+  const SCENES = {
+    dm(done) {
+      const A = agents.agentA, d = apps.discord.tile, [ask, st] = DM[dmN++ % DM.length];
+      setStatus('agentA', 'run', 'Replying in Discord');
+      send([hop(d, A.core)], () => think(A, () => {
+        flashUse(ask === 'Plan my week' ? 'calendar' : ask === 'Summarise my inbox' ? 'gmail' : 'drive', 'agentA');
+        after(0.8, () => send([hop(A.core, d)], () => { pulse(d); setStatus('agentA', 'run', st); done(); }));
+      }));
+    },
+    a2a(done) {
+      const A = agents.agentA, C = agents.agentC, tg = apps.telegram.tile, [q, a] = A2A[a2aN++ % A2A.length];
+      // Agents talk in the room everyone shares, so each message passes through Control Center.
+      send([hop(A.core, cc, () => { pulse(cc); say({ from: 'agentA', to: 'agentC', text: q }); }), hop(cc, C.core)], () => {
+        setStatus('agentC', 'run', 'Asking the family group');
+        send([hop(C.core, tg)], () => { pulse(tg); after(1.6, () => send([hop(tg, C.core)], () => {
+          send([hop(C.core, cc, () => { pulse(cc); say({ from: 'agentC', to: 'agentA', text: a }); }), hop(cc, A.core)], () => { pulse(A.core); setStatus('agentC', 'idle', 'Idle · just now'); done(); });
+        })); });
+      });
+    },
+    pr(done) {
+      const B = agents.agentB, g = apps.github.tile; if (B.down) return done();
+      const n = prN++;
+      setStatus('agentB', 'run', 'Reviewing PR #' + n);
+      send([hop(g, B.core)], () => think(B, () => { flashUse('audit', 'agentB'); after(0.8, () => send([hop(B.core, g)], () => {
+        pulse(g); say({ from: 'agentB', text: 'Reviewed PR #' + n + '. ' + PRN[n % PRN.length] }); setStatus('agentB', 'idle', 'Idle · reviewed PR #' + n); done();
+      })); }));
+    },
+    lib(done) {
+      setStatus('agentC', 'run', 'Drafting the family newsletter'); flashUse('writing', 'agentC');
+      after(3.4, () => { setStatus('agentC', 'idle', 'Idle · newsletter drafted'); done(); });
+    },
+    job(done) {
+      const up = Object.values(agents).filter((A) => !A.down), A = up[jobN++ % up.length];
+      const job = A.def.job;
+      setStatus(A.id, 'run', 'Scheduled · ' + job);
+      send([hop(cc, A.core)], () => think(A, () => send([hop(A.core, cc)], () => { pulse(cc); say({ ev: true, text: 'Scheduled job “' + job + '” ran on time for ' + A.def.name + '.' }); setStatus(A.id, 'idle', 'Idle · ' + job.toLowerCase() + ' done'); done(); })));
+    },
+  };
+  const ORDER = ['dm', 'a2a', 'pr', 'lib', 'job'];
+  let orderN = 0, busy = false, nextAt = 2.2;
+  function runScene() {
+    busy = true;
+    SCENES[ORDER[orderN++ % ORDER.length]](() => { busy = false; nextAt = T + 2.4; });
+  }
+  const pauseBtn = $('#pause');
+  function setPaused(p) { paused = p; pauseBtn.textContent = p ? 'Play' : 'Pause'; pauseBtn.setAttribute('aria-pressed', String(p)); }
+  pauseBtn.addEventListener('click', () => setPaused(!paused));
+  setPaused(paused);
+
+  /* ---------- blueprints: the same kit, snapped together for a new job ---------- */
+  const bpEl = $('#bp');
+  function rosette(svg, bp) {
+    const r = 15, ax = (q, rr) => [r * 1.5 * q, r * S3 * (rr + q / 2)], H = hexPath(0, 0, r - 1.5, 1.5);
+    const put = (q, rr, cls, part, icon) => {
+      const [x, y] = ax(q, rr), g = el('g', { transform: 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')', class: 'tile', 'data-kind': cls, 'data-part': part }, svg);
+      el('path', { class: 'side', d: H, transform: 'translate(0 2)' }, g); el('path', { class: 'hex', d: H }, g);
+      if (icon) { const ig = el('g', { class: 'ico' }, g); drawMark(el('g', { transform: 'translate(-6 -6) scale(.5)' }, ig), icon); }
+      return [x, y];
+    };
+    const own = !!bp.own;
+    const libs = LIBRARY.filter((l) => bp.lib.includes(l.id)).concat(bp.add).slice(0, 3);
+    const app = typeof bp.app === 'string' ? APPS.find((a) => a.id === bp.app) : bp.app;
+    if (app) { const [x, y] = ax(3, -1); el('path', { class: 'trace', d: 'M' + (x - 14) + ' ' + y + 'L' + 16 + ' ' + (y + 10), style: 'opacity:.5' }, svg); put(3, -1, own ? 'more' : 'surface', null, app.icon); }
+    else put(3, -1, 'more', null, 'Plus');
+    put(0, 0, own ? 'proposed' : 'core');
+    PARTS.forEach((d) => put(d.q, d.r, own ? 'more' : 'part', d.id));
+    const spots = [[0, 2], [1, 1], [-1, 2]];
+    (libs.length ? libs : [{ kind: 'more', icon: 'Plus' }]).forEach((l, i) => put(spots[i][0], spots[i][1], own ? 'more' : l.kind, null, l.icon));
+    svg.setAttribute('viewBox', '-44 -46 134 118');
+  }
+  BLUEPRINTS.forEach((bp) => {
+    const li = document.createElement('li'); if (bp.own) li.className = 'own';
+    li.innerHTML = '<svg class="ros" aria-hidden="true"></svg><h3></h3><p></p><dl></dl><button class="btn' + (bp.own ? ' line' : '') + '" type="button">' + (bp.own ? 'Start from scratch' : 'Use blueprint') + '</button>';
+    li.querySelector('h3').textContent = bp.name; li.querySelector('p').textContent = bp.text;
+    li.querySelector('dl').innerHTML = [['Model', bp.model], ['Profile', bp.profile]].concat(bp.recipe).map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
+    rosette(li.querySelector('svg'), bp);
+    li.querySelector('button').addEventListener('click', () => build(bp));
+    bpEl.appendChild(li);
+  });
+  function build(bp) {
+    if (!SLOTS.length) return toast('This preview has room for two new agents.');
+    // A new agent takes the free spot nearest the app it will use.
+    const near = typeof bp.app === 'string' ? apps[bp.app].tile : null, far = (sl) => (near ? Math.hypot(axial(sl.q, sl.r)[0] - near.hx, axial(sl.q, sl.r)[1] - near.hy) : 0);
+    const slot = SLOTS.splice(SLOTS.reduce((b, sl, i) => (far(sl) < far(SLOTS[b]) ? i : b), 0), 1)[0];
+    const letter = String.fromCharCode(65 + Object.keys(agents).length), id = 'agent' + letter;
+    const def = { name: 'Agent ' + letter, letter, role: bp.role, q: slot.q, r: slot.r, parts: { model: bp.model, loop: bp.loop, context: 'Memory', profile: bp.profile }, lib: bp.lib.concat(bp.add.map((a) => a.id)), st: ['idle', 'New · ' + bp.name.toLowerCase()], replies: [bp.hello], job: bp.job };
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+    closePeek();
+    const A = buildAgent(id, def, true);
+    agentLabel(A);
+    A.core.g.setAttribute('data-st', 'idle');
+    // New plugins join the one shared library, not the agent.
+    bp.add.forEach((it, i) => { if (shelf.some((t) => t.lib.id === it.id)) return; const t = libTile(it); t.o = 0; t.hold = T + 1.2 + i * 0.2; shelf.splice(shelf.length - 1, 0, t); });
+    layoutShelf();
+    let app = null;
+    if (typeof bp.app === 'string') {
+      app = apps[bp.app];
+      if (!app.agent && !app.agents) { app.agent = id; app.tile.g.classList.remove('off'); app.lab.el.classList.remove('off'); app.lab.el.innerHTML = '<i></i>' + esc(app.name); app.lab.w = app.lab.el.offsetWidth; }
+      else app.agents = (app.agents || []).concat(id);
+    } else if (bp.app) {
+      app = addApp({ id: bp.app.id, name: bp.app.name, icon: bp.app.icon, q: slot.app[0], r: slot.app[1], agent: id });
+      app.tile.o = 0; app.tile.hold = T + 1.1; APPS.push(app); appLabel(app);
+    }
+    after(0.3, () => { linkAgent(id); links['cc-' + id].path.style.opacity = '0'; after(1.4, () => { Object.values(links).forEach((L) => { if (L.b === A.core || L.a === A.core) L.path.style.opacity = ''; }); }); });
+    after(0.35, () => pulse(A.core, true)); after(1.3, () => wave(slot.q, slot.r, 2, 3));
+    after(1.8, () => {
+      say({ ev: true, text: def.name + ' joined, built from the ' + bp.name + ' blueprint.' });
+      send([hop(A.core, cc)], () => { pulse(cc); say({ from: id, text: bp.hello }); });
+      summary();
+    });
+    if (!SLOTS.length) bpEl.querySelectorAll('.btn').forEach((b) => { b.disabled = true; b.textContent = 'Board full in this preview'; });
+  }
+
+  const toastEl = $('#toast');
+  let toastT = 0;
+  function toast(text) { toastEl.textContent = text; toastEl.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('on'), 2800); }
+  document.querySelectorAll('[data-soon]').forEach((b) => b.addEventListener('click', () => toast(b.dataset.soon + ' comes after the home page.')));
+
+  /* ---------- camera ---------- */
+  const view = { W: 800, H: 600, left: 0, right: 800, top: 80, bot: 540, cx: 400, cy: 300 };
+  const cam = { x: 0, y: 0, U: 1 }, camV = { x: 0, y: 0, z: 0 };
+  function damp(cur, to, key, st, dt) {
+    const w = 2 / st, x = w * dt, e = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+    const ch = cur - to, tmp = (camV[key] + w * ch) * dt;
+    camV[key] = (camV[key] - w * tmp) * e;
+    return to + (ch + tmp) * e;
+  }
+  function boxOf(pred) {
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const t of tiles) { if (t.role === 'old' || !pred(t)) continue; x0 = Math.min(x0, t.hx - R); x1 = Math.max(x1, t.hx + R); y0 = Math.min(y0, t.hy - R * S3 / 2); y1 = Math.max(y1, t.hy + R * S3 / 2); }
+    return { x0, x1, y0, y1 };
+  }
+  function camTarget() {
+    let b, pt = phone ? 44 : 96, pb = phone ? 24 : 64, px = phone ? 12 : 24, maxU = 1.05, right = view.right, bot = view.bot;
+    if (sel) {
+      const A = agents[sel];
+      b = boxOf((t) => t.agent === sel || t === cc || (t.role === 'app' && (t.app.agent === sel || (t.app.agents && t.app.agents.includes(sel)))) || (t.role === 'lib' && uses(A, t.lib.id)));
+      if (!phone) right = view.right - 330;
+      maxU = 1.1;
+    } else b = boxOf((t) => !t.agent || agents[t.agent].present);
+    const vw = right - view.left, vh = bot - view.top;
+    const U = clamp(Math.min((vw - 2 * px) / (b.x1 - b.x0), (vh - pt - pb) / (b.y1 - b.y0)), 0.1, maxU);
+    const cx = (view.left + right) / 2, cy = (view.top + bot) / 2;
+    return { x: (b.x0 + b.x1) / 2 - (cx - view.cx) / U, y: (b.y0 + b.y1) / 2 - (cy - view.cy) / U + (pb - pt) / 2 / U, U };
+  }
+  function layout() {
+    const r = stage.getBoundingClientRect();
+    view.W = Math.max(r.width, 200); view.H = Math.max(r.height, 200);
+    phone = window.innerWidth < 860;
+    view.left = 0; view.right = view.W; view.top = phone ? 60 : 70; view.bot = view.H - (phone ? 44 : 52);
+    view.cx = (view.left + view.right) / 2; view.cy = (view.top + view.bot) / 2;
+    labels.forEach((L) => { L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; });
+    const t = camTarget(); cam.x = t.x; cam.y = t.y; cam.U = t.U; camV.x = camV.y = camV.z = 0;
+    dirty = true;
+  }
+  const toScreen = (x, y) => [view.cx + (x - cam.x) * cam.U, view.cy + (y - cam.y) * cam.U];
+
+  /* ---------- update and render ---------- */
+  function update(dt) {
+    T += dt;
+    for (let i = timers.length - 1; i >= 0; i--) if (timers[i] && timers[i].at <= T) { const t = timers.splice(i, 1)[0]; t.fn(); }
+    if (!paused && !busy && T >= nextAt) runScene();
+    const k = (s) => 1 - Math.exp(-dt * s);
+    for (const t of tiles) {
+      const held = t.hold && T < t.hold, down = t.agent && agents[t.agent].down && t.role !== 'core';
+      const to = held ? 0 : t.to, ts = down ? 0.94 : t.ts;
+      const tl = held ? 1.6 : down ? 0 : Math.max(t.tl, (t.agent && t.agent === hoverAgent && !sel) || (hl && t === hl.tile) ? 0.3 : 0);
+      t.x += (t.tx - t.x) * k(t.kp); t.y += (t.ty - t.y) * k(t.kp);
+      t.s += (ts - t.s) * k(t.ks); t.o += (to - t.o) * k(t.ko); t.lift += (tl - t.lift) * k(t.kl);
+      if (!held && t.tl > 0 && Math.abs(t.lift - t.tl) < 0.05) t.tl = 0;
+      t.ft = focusFor(t); t.f += (t.ft - t.f) * k(5);
+    }
+    for (let i = tiles.length - 1; i >= 0; i--) { const t = tiles[i]; if (t.role === 'old' && t.to === 0 && t.o < 0.02) { killTile(t); const si = shelf.indexOf(t); if (si >= 0) shelf.splice(si, 1); } }
+    for (let i = wires.length - 1; i >= 0; i--) {
+      const L = wires[i];
+      L.draw += ((L.dying ? 0 : 1) - L.draw) * k(L.dying ? 7 : 4.4);
+      if (L.dying && L.draw < 0.02) { L.path.remove(); L.pad.remove(); delete links[L.id]; wires.splice(i, 1); }
+    }
+    const c = camTarget(), st = 0.62;
+    cam.x = damp(cam.x, c.x, 'x', st, dt); cam.y = damp(cam.y, c.y, 'y', st, dt);
+    cam.U = Math.exp(damp(Math.log(cam.U), Math.log(c.U), 'z', st, dt));
+    const speed = PX_SPEED / cam.U;
+    for (let i = movers.length - 1; i >= 0; i--) {
+      const m = movers[i]; m.s += speed * dt;
+      let L = links[m.legs[m.i].id];
+      if (!L) { m.dot.remove(); m.trail.remove(); movers.splice(i, 1); continue; }
+      while (m.s >= L.len) {
+        m.s -= L.len; heat(L, -1);
+        const cb = m.legs[m.i].cb; if (cb) cb();
+        m.i++; if (m.i >= m.legs.length) break;
+        L = links[m.legs[m.i].id]; heat(L, 1);
+      }
+      if (m.i >= m.legs.length) { m.dot.remove(); m.trail.remove(); movers.splice(i, 1); if (m.fin) m.fin(); continue; }
+      const leg = m.legs[m.i], u = leg.dir > 0 ? m.s : L.len - m.s, p = pointAt(L, u);
+      m.x = p[0]; m.y = p[1]; m.L = L; m.u = u; m.dir = leg.dir;
+    }
+    for (let i = rings.length - 1; i >= 0; i--) { const r = rings[i]; r.a += dt / r.dur; if (r.a >= 1) { r.p.remove(); rings.splice(i, 1); } }
+  }
+  let lastW = '';
+  function render() {
+    const wt = 'translate(' + view.cx.toFixed(1) + ' ' + view.cy.toFixed(1) + ') scale(' + cam.U.toFixed(4) + ') translate(' + (-cam.x).toFixed(1) + ' ' + (-cam.y).toFixed(1) + ')';
+    if (wt !== lastW) { world.setAttribute('transform', wt); lastW = wt; }
+    for (const t of tiles) {
+      const ts = 'translate(' + t.x.toFixed(1) + ' ' + t.y.toFixed(1) + ') scale(' + t.s.toFixed(3) + ')';
+      if (ts !== t.lastT) { t.g.setAttribute('transform', ts); t.lastT = ts; }
+      const op = (t.o * t.f).toFixed(3);
+      if (op !== t.lastO) { t.g.style.opacity = op; t.g.style.pointerEvents = op < 0.1 ? 'none' : ''; t.lastO = op; }
+      const lf = Math.max(0, t.lift).toFixed(2);
+      if (lf !== t.lastL) { t.body.setAttribute('transform', 'translate(0 ' + (-lf * LIFT).toFixed(1) + ')'); t.shd.style.opacity = Math.min(0.2, lf * 0.13).toFixed(3); t.lastL = lf; }
+    }
+    for (const id in links) {
+      const L = links[id]; if (L.draw !== undefined || L.dying) continue;
+      const gone = (L.a.agent && !agents[L.a.agent].present) || (L.b.agent && !agents[L.b.agent].present);
+      L.path.classList.toggle('gone', !!gone);
+      const fa = Math.min(L.a.f, L.b.f);
+      L.path.classList.toggle('dim', fa < 0.5);
+    }
+    for (const L of wires) {
+      const dd = L.draw > 0.995 ? 1 : L.draw, key = dd.toFixed(3);
+      if (key !== L.lastD) {
+        const pts = slice(L, 0, dd * L.len), e = L.pts[L.pts.length - 1];
+        L.path.setAttribute('d', 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L'));
+        L.pad.setAttribute('cx', e[0].toFixed(1)); L.pad.setAttribute('cy', e[1].toFixed(1));
+        L.pad.style.opacity = dd > 0.96 ? '1' : '0';
+        L.lastD = key;
+      }
+      L.pad.setAttribute('r', (3.2 / cam.U).toFixed(2));
+    }
+    for (const m of movers) {
+      m.dot.setAttribute('cx', m.x.toFixed(1)); m.dot.setAttribute('cy', m.y.toFixed(1)); m.dot.setAttribute('r', (4.2 / cam.U).toFixed(2));
+      if (!m.L) continue;
+      const tl = TRAIL_PX / cam.U, pts = m.dir > 0 ? slice(m.L, m.u - tl, m.u) : slice(m.L, m.u, m.u + tl);
+      m.trail.setAttribute('d', 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L'));
+    }
+    for (const r of rings) {
+      if (r.flat) { r.p.style.opacity = r.a <= 0 ? '0' : (Math.sin(Math.PI * r.a) * 0.6).toFixed(3); continue; }
+      const e = 1 - Math.pow(1 - r.a, 3), s = r.t.s * (1 + (r.s1 - 1) * e);
+      r.p.setAttribute('transform', 'translate(' + r.t.x.toFixed(1) + ' ' + (r.t.y - r.t.lift * LIFT).toFixed(1) + ') scale(' + s.toFixed(3) + ')');
+      r.p.style.opacity = (0.7 * (1 - r.a)).toFixed(3);
+    }
+    fitAgentLabels();
+    for (const L of labels) {
+      const op = Math.max(0, Math.min(1, L.op())).toFixed(2);
+      if (op !== L.lastO) { L.el.style.opacity = op; L.el.style.visibility = op < 0.05 ? 'hidden' : ''; L.lastO = op; }
+      if (op === '0.00') continue;
+      const p = L.at(), [sx, sy] = toScreen(p[0], p[1]);
+      let x = sx - L.w / 2, y = sy - L.h / 2;
+      if (L.side === 'above') y = sy - L.pad - L.h; else if (L.side === 'below') y = sy + L.pad * Math.min(1, cam.U * 1.4);
+      L.el.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px)';
+    }
+  }
+  // Agent labels share a row, so each one gets the room to its nearest neighbour.
+  let roomKey = '';
+  function fitAgentLabels() {
+    const on = Object.values(agents).filter((A) => A.present);
+    let room = 220;
+    for (const A of on) for (const B of on) {
+      if (A === B) continue;
+      const dx = Math.abs(A.core.x - B.core.x) * cam.U, dy = Math.abs(A.core.y - B.core.y) * cam.U;
+      if (dy < 64) room = Math.min(room, dx - 12);
+    }
+    room = Math.max(84, Math.round(room / 6) * 6);
+    const key = String(room);
+    if (key === roomKey) return;
+    roomKey = key;
+    on.forEach((A) => { A.lab.el.style.maxWidth = room + 'px'; A.lab.el.classList.toggle('tight', room < 150); A.lab.w = A.lab.el.offsetWidth; A.lab.h = A.lab.el.offsetHeight; });
+  }
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (visible) { update(dt); render(); dirty = false; }
+    requestAnimationFrame(frame);
+  }
+  new ResizeObserver(layout).observe(stage);
+  document.addEventListener('visibilitychange', () => { visible = !document.hidden; last = performance.now(); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { labels.forEach((L) => { L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; }); });
+  summary();
+  layout();
+  requestAnimationFrame(frame);
+})();
+</script>
