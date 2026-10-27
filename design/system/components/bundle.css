@@ -1,0 +1,170 @@
+/* Renoa reference components. Every colour, size and radius reads a token.
+   Class prefix rn-. Pair with tokens.css; fonts come from Google Fonts. */
+
+.rn-condensed { font-stretch: 86%; font-variation-settings: "wdth" 86; }
+
+/* ---------- Button ---------- */
+.rn-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  height: 40px; padding: 0 16px; border: 1px solid transparent; border-radius: var(--radius-md);
+  font: 500 14px/1 var(--font-sans); letter-spacing: 0; text-decoration: none; white-space: nowrap;
+  background: var(--primary); color: var(--primary-foreground); cursor: pointer;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, transform .16s ease;
+}
+.rn-btn:hover { background: color-mix(in oklab, var(--primary) 86%, var(--background)); }
+.rn-btn:active { transform: translateY(1px); }
+.rn-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.rn-btn[data-variant="secondary"] { background: var(--card); color: var(--foreground); border-color: var(--input); }
+.rn-btn[data-variant="secondary"]:hover { background: var(--accent); border-color: var(--foreground); }
+.rn-btn[data-variant="ghost"] { background: transparent; color: var(--foreground); }
+.rn-btn[data-variant="ghost"]:hover { background: var(--accent); }
+.rn-btn[data-variant="destructive"] { background: var(--card); color: var(--state-failed); border-color: var(--state-failed); }
+.rn-btn[data-variant="destructive"]:hover { background: var(--state-failed-wash); }
+.rn-btn[data-size="sm"] { height: 32px; padding: 0 12px; font-size: 13px; border-radius: var(--radius-sm); }
+.rn-btn:disabled, .rn-btn[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+.rn-btn svg { width: 16px; height: 16px; flex: none; }
+
+.rn-link { color: var(--foreground); font-weight: 600; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+.rn-link:hover { text-decoration-thickness: 2px; }
+
+/* ---------- Tabs ---------- */
+.rn-tabs { display: flex; gap: var(--space-6); border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.rn-tab {
+  position: relative; display: inline-flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0;
+  border: 0; background: none; color: var(--muted-foreground); font: 500 14px/1 var(--font-sans); white-space: nowrap; cursor: pointer; text-decoration: none;
+}
+.rn-tab:hover { color: var(--foreground); }
+.rn-tab[aria-selected="true"], .rn-tab[aria-current="page"] { color: var(--foreground); }
+.rn-tab[aria-selected="true"]::after, .rn-tab[aria-current="page"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--primary); }
+.rn-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.rn-tab .rn-count { font: 500 11px/1 var(--font-mono); color: var(--muted-foreground); }
+
+/* ---------- Field ---------- */
+.rn-field { display: grid; gap: 6px; min-width: 0; }
+.rn-field > label { font: 500 14px/1.4 var(--font-sans); color: var(--foreground); }
+.rn-field .rn-hint { font: 400 13px/1.45 var(--font-sans); color: var(--muted-foreground); }
+.rn-field .rn-error { font: 500 13px/1.45 var(--font-sans); color: var(--state-failed); }
+.rn-input {
+  width: 100%; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid var(--input); border-radius: var(--radius-md);
+  background: var(--card); color: var(--foreground); font: 400 15px/1.2 var(--font-sans);
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+textarea.rn-input { height: auto; min-height: 96px; padding: 10px 12px; line-height: 1.5; resize: vertical; }
+select.rn-input { appearance: none; padding-right: 36px; background-image: linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%), linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%); background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+.rn-input:hover { border-color: var(--foreground); }
+.rn-input:focus { outline: none; border-color: var(--foreground); box-shadow: 0 0 0 1px var(--foreground); }
+.rn-input.rn-mono { font: 400 13px/1.2 var(--font-mono); }
+.rn-field[data-invalid] .rn-input { border-color: var(--state-failed); }
+.rn-input::placeholder { color: var(--muted-foreground); }
+
+/* ---------- Switch ---------- */
+.rn-switch { display: inline-flex; align-items: center; gap: var(--space-3); font: 500 14px/1.4 var(--font-sans); color: var(--foreground); cursor: pointer; }
+.rn-switch input { appearance: none; position: relative; flex: none; width: 36px; height: 20px; margin: 0; border: 1px solid var(--input); border-radius: var(--radius-md); background: var(--card); cursor: pointer; transition: background-color .18s ease, border-color .18s ease; }
+.rn-switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: var(--radius-xs); background: var(--muted-foreground); transition: transform .22s cubic-bezier(.2,.8,.2,1), background-color .18s ease; }
+.rn-switch input:checked { background: var(--primary); border-color: var(--primary); }
+.rn-switch input:checked::after { transform: translateX(16px); background: var(--primary-foreground); }
+.rn-switch input:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.rn-switch input:disabled { opacity: .45; cursor: default; }
+
+/* ---------- State badge: a circle means live state ---------- */
+.rn-state { display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px 0 8px; border-radius: var(--radius-pill); font: 500 12.5px/1 var(--font-sans); white-space: nowrap; color: var(--state-idle); background: transparent; }
+.rn-state::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid currentColor; }
+.rn-state[data-state="needs-you"] { background: var(--state-needs-you); color: var(--primary-foreground); }
+.rn-state[data-state="needs-you"]::before { background: currentColor; }
+.rn-state[data-state="running"] { color: var(--state-running); }
+.rn-state[data-state="running"]::before { background: currentColor; animation: rn-beat 1.8s ease-out infinite; }
+.rn-state[data-state="failed"] { color: var(--state-failed); background: var(--state-failed-wash); }
+.rn-state[data-state="failed"]::before { background: currentColor; }
+.rn-state[data-state="done"] { color: var(--muted-foreground); }
+.rn-state[data-state="done"]::before { border: 0; width: 9px; height: 9px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2l2.3 2.3 4.7-5' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5.2l2.3 2.3 4.7-5' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat; }
+@keyframes rn-beat { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+
+/* ---------- Part chip: a hex means a part ---------- */
+.rn-part { display: inline-flex; align-items: center; gap: 7px; font: 500 14px/1.2 var(--font-sans); color: var(--foreground); white-space: nowrap; }
+.rn-part::before { content: ""; flex: none; width: 13px; height: 11.3px; background: var(--pig, var(--foreground)); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.rn-part .rn-ver { font: 400 12px/1 var(--font-mono); color: var(--muted-foreground); }
+.rn-part[data-kind="plugin"]::before { background: none; outline: 0; box-shadow: inset 0 0 0 1.5px var(--foreground); }
+.rn-part[data-kind="core"]::before { background: var(--foreground); }
+
+[data-part="model"] { --pig: var(--part-model); --tint: var(--part-model-tint); }
+[data-part="loop"] { --pig: var(--part-loop); --tint: var(--part-loop-tint); }
+[data-part="context"] { --pig: var(--part-context); --tint: var(--part-context-tint); }
+[data-part="tools"] { --pig: var(--part-tools); --tint: var(--part-tools-tint); }
+[data-part="skills"] { --pig: var(--part-skills); --tint: var(--part-skills-tint); }
+[data-part="profile"] { --pig: var(--part-profile); --tint: var(--part-profile-tint); }
+
+/* ---------- Tile and Rosette (SVG drawn by Renoa.Tile / Renoa.Rosette) ---------- */
+.rn-tile, .rn-rosette { display: block; overflow: visible; max-width: 100%; height: auto; }
+.rn-hex { fill: var(--card); stroke: var(--input); stroke-width: var(--tile-stroke); vector-effect: non-scaling-stroke; stroke-linejoin: round; transition: fill .4s ease, stroke .4s ease; }
+.rn-side { fill: var(--border); stroke: var(--input); stroke-width: var(--tile-stroke); vector-effect: non-scaling-stroke; stroke-linejoin: round; transition: fill .4s ease, stroke .4s ease; }
+[data-kind="core"] > .rn-side { fill: color-mix(in oklab, var(--foreground) 70%, #000); stroke: color-mix(in oklab, var(--foreground) 70%, #000); }
+[data-kind="part"] > .rn-side { fill: var(--pig); stroke: var(--pig); }
+[data-kind="plugin"] > .rn-side { fill: var(--part-tools-tint); stroke: var(--part-tools); }
+[data-kind="surface"] > .rn-side { fill: var(--input); stroke: var(--foreground); }
+[data-kind="control"] > .rn-side { fill: var(--foreground); stroke: var(--foreground); }
+[data-kind="retiring"] > .rn-side { stroke: var(--border); }
+.rn-socket { fill: none; stroke: var(--board-line); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+[data-kind="core"] > .rn-hex { fill: var(--foreground); stroke: var(--foreground); }
+[data-kind="part"] > .rn-hex { fill: var(--tint); stroke: var(--pig); }
+[data-kind="plugin"] > .rn-hex { fill: var(--card); stroke: var(--part-tools); }
+[data-kind="proposed"] > .rn-hex { fill: transparent; stroke: var(--foreground); stroke-dasharray: 5 4; }
+[data-kind="surface"] > .rn-hex { fill: var(--card); stroke: var(--foreground); }
+[data-kind="control"] > .rn-hex { fill: var(--card); stroke: var(--foreground); stroke-width: 2px; }
+[data-kind="retiring"] > .rn-hex { fill: var(--muted); stroke: var(--border); }
+.rn-tname { font: 600 13.5px/1 var(--font-sans); fill: var(--foreground); text-anchor: middle; dominant-baseline: central; }
+.rn-tmeta { font: 500 9.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; fill: var(--muted-foreground); text-anchor: middle; dominant-baseline: central; }
+[data-kind="core"] > .rn-tname, [data-kind="core"] > .rn-tmeta { fill: var(--primary-foreground); }
+[data-kind="core"] > .rn-tmeta { opacity: .7; }
+[data-kind="proposed"] > .rn-tname, [data-kind="retiring"] > .rn-tname { fill: var(--muted-foreground); }
+[data-kind="retiring"] > .rn-tname { text-decoration: line-through; }
+.rn-ask { fill: var(--state-needs-you); }
+
+/* ---------- Record row ---------- */
+.rn-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.rn-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-4); padding: 14px 8px; border-bottom: 1px solid var(--border); color: var(--foreground); text-decoration: none; transition: background-color .16s ease; }
+a.rn-row:hover, button.rn-row:hover { background: var(--accent); }
+.rn-row[data-attention] { background: var(--state-needs-you-wash); }
+.rn-row-main { display: grid; gap: 3px; min-width: 0; }
+.rn-row-title { font: 500 15px/1.35 var(--font-sans); overflow-wrap: anywhere; }
+.rn-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font: 400 13px/1.45 var(--font-sans); color: var(--muted-foreground); }
+.rn-row-meta code { font: 400 12px/1.4 var(--font-mono); }
+.rn-row-end { display: flex; align-items: center; gap: var(--space-3); }
+
+/* ---------- Kicker ---------- */
+.rn-kicker { display: flex; align-items: center; gap: 10px; font: 500 11.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted-foreground); }
+.rn-kicker .rn-fig { display: inline-grid; place-items: center; flex: none; width: 24px; height: 21px; color: var(--foreground); font-size: 11px; letter-spacing: 0; background: var(--muted-foreground); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.rn-kicker .rn-fig > span { display: grid; place-items: center; width: 22px; height: 19px; background: var(--background); clip-path: inherit; }
+.rn-kicker .rn-rule { flex: 1; min-width: 24px; height: 1px; background: var(--border); }
+
+/* ---------- Plate and board ---------- */
+.rn-plate { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 240px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--background); overflow: hidden; }
+.rn-plate-stage { position: relative; min-height: 0; display: grid; place-items: center; padding: var(--space-6); }
+.rn-plate-cap { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); padding: 12px var(--space-4) 14px; border-top: 1px solid var(--border); background: var(--background); }
+.rn-plate-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font: 500 11px/1 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+.rn-plate-meta b { font-weight: 500; color: var(--foreground); }
+.rn-plate-text { margin: 6px 0 0; font: 500 15px/1.4 var(--font-sans); color: var(--foreground); text-wrap: pretty; }
+.rn-board { position: relative; isolation: isolate; }
+.rn-board::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: var(--board-line);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='51.96'%3E%3Cpath d='M30 0H60M30 0L15 25.98M15 25.98L30 51.96M30 51.96H60M60 51.96L75 25.98M75 25.98L60 0M75 25.98H90M0 25.98H15' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") 0 0 / 90px 51.96px repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='51.96'%3E%3Cpath d='M30 0H60M30 0L15 25.98M15 25.98L30 51.96M30 51.96H60M60 51.96L75 25.98M75 25.98L60 0M75 25.98H90M0 25.98H15' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") 0 0 / 90px 51.96px repeat; }
+
+/* ---------- Note, cue and tag: how a diagram and its text point at each other ---------- */
+.rn-note { width: max-content; max-width: 256px; padding: 9px 12px 10px; border: 1px solid var(--foreground); border-radius: var(--radius-sm); background: var(--card); color: var(--foreground); }
+.rn-note-head { display: flex; align-items: center; gap: var(--space-2); font: 500 10.5px/1.3 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+.rn-note-text { margin: 4px 0 0; font: 600 14.5px/1.35 var(--font-sans); letter-spacing: -.005em; text-wrap: pretty; }
+.rn-note-rows { list-style: none; margin: 7px 0 0; padding: 6px 0 0; border-top: 1px solid var(--border); display: grid; gap: 2px; min-width: 196px; }
+.rn-note-rows li { display: flex; justify-content: space-between; gap: 20px; font: 500 11px/1.5 var(--font-mono); letter-spacing: .03em; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.rn-note-rows li:last-child { color: var(--foreground); }
+.rn-leader { fill: none; stroke: var(--foreground); stroke-width: 1px; }
+.rn-leader-dot { fill: var(--foreground); stroke: var(--background); stroke-width: 1.5px; }
+.rn-tag { display: inline-flex; align-items: center; flex: none; height: 20px; padding: 0 7px; border: 1px dashed var(--foreground); border-radius: 3px; font: 500 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--foreground); white-space: nowrap; }
+.rn-cue { text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, var(--foreground) 45%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 4px; border-radius: 3px; cursor: pointer;
+  background: linear-gradient(color-mix(in srgb, var(--foreground) 8.5%, transparent), color-mix(in srgb, var(--foreground) 8.5%, transparent)) 0 0 / 0% 100% no-repeat; -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background-size .8s cubic-bezier(.2, .8, .2, 1); }
+.rn-cue:hover, .rn-cue[aria-current] { text-decoration-style: solid; }
+.rn-cue[aria-current] { background-size: 100% 100%; }
+.rn-cue:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rn-btn, .rn-switch input, .rn-switch input::after, .rn-hex, .rn-side, .rn-row, .rn-cue { transition: none; }
+  .rn-state[data-state="running"]::before { animation: none; }
+}

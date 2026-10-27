@@ -1,0 +1,1861 @@
+<title>Renoa Landing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Renoa Design System, Paper theme. The landing page commits to Paper only. */
+:root {
+  color-scheme: light;
+  --background: #F5F6F3;
+  --foreground: #14161A;
+  --card: #FFFFFF;
+  --muted: #ECEDE8;
+  --muted-foreground: #5B5F66;
+  --foreground-soft: #464B51;
+  --accent: #ECEDE8;
+  --border: #D6D8D2;
+  --input: #878B85;
+  --ring: #14161A;
+  --primary: #14161A;
+  --primary-foreground: #F5F6F3;
+  --part-model: #C4553F; --part-model-tint: #F7E9E6;
+  --part-loop: #B37B22; --part-loop-tint: #F5EEE2;
+  --part-context: #8E8229; --part-context-tint: #F0EFE3;
+  --part-tools: #2F8B69; --part-tools-tint: #E4F0EC;
+  --part-skills: #3B61AC; --part-skills-tint: #E6EAF4;
+  --part-profile: #7A58A3; --part-profile-tint: #EEE9F3;
+  --state-needs-you: #14161A;
+  --state-running: #1E7A57;
+  --state-failed: #B3321E;
+  --board-line: #DDDFD9;
+  --trace: #14161A;
+  --highlight: rgba(20, 22, 26, 0.11);
+  --font-sans: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --gutter: clamp(16px, 3vw, 40px);
+  --edge: max(var(--gutter), calc((100vw - 1360px) / 2));
+}
+[data-part="model"] { --pig: var(--part-model); --tint: var(--part-model-tint); }
+[data-part="loop"] { --pig: var(--part-loop); --tint: var(--part-loop-tint); }
+[data-part="context"] { --pig: var(--part-context); --tint: var(--part-context-tint); }
+[data-part="tools"] { --pig: var(--part-tools); --tint: var(--part-tools-tint); }
+[data-part="skills"] { --pig: var(--part-skills); --tint: var(--part-skills-tint); }
+[data-part="profile"] { --pig: var(--part-profile); --tint: var(--part-profile-tint); }
+[data-part="team"] { --pig: var(--foreground); --tint: var(--muted); }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground); font: 400 17px/1.6 var(--font-sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+a:focus-visible, button:focus-visible, [data-ref]:focus-visible, [data-cue]:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 3px; }
+
+.top { position: absolute; z-index: 6; top: 0; left: var(--edge); right: var(--gutter); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 20px; }
+.brand { display: flex; align-items: center; gap: 10px; font: 600 21px/1 var(--font-sans); letter-spacing: -0.02em; text-decoration: none; }
+.brand svg { width: 28px; height: 28px; }
+.nav { display: flex; gap: 22px; font: 500 12px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.nav a { text-decoration: none; }
+.nav a:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+.story { display: grid; grid-template-columns: calc(var(--edge) + min(40vw, 520px)) minmax(0, 1fr); }
+.hero { grid-column: 1; grid-row: 1; z-index: 2; min-height: 94svh; padding-block: 140px 48px; padding-left: var(--edge); display: flex; flex-direction: column; justify-content: center; gap: 24px; }
+.stage { grid-column: 1 / -1; grid-row: 1 / span 2; position: sticky; top: env(safe-area-inset-top, 0px); height: 100svh; min-height: 560px; align-self: start; overflow: hidden; }
+.beats { grid-column: 1; grid-row: 2; z-index: 2; padding-left: var(--edge); }
+
+.eyebrow { font: 500 11.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); }
+/* The headline's two promises are ink; the words around them step back. */
+h1 b { font-weight: inherit; color: var(--foreground); }
+h1 { color: var(--muted-foreground); margin: 0; font: 600 clamp(44px, 5vw, 72px)/1 var(--font-sans); font-stretch: 86%; font-variation-settings: "wdth" 86; letter-spacing: -0.035em; text-wrap: balance; }
+.lede { margin: 0; font-size: clamp(17px, 1.3vw, 18px); line-height: 1.6; max-width: 31em; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border-radius: 6px; background: var(--primary); color: var(--primary-foreground); font-weight: 600; font-size: 16px; text-decoration: none; transition: background-color .16s ease, transform .16s ease; }
+.btn:hover { background: color-mix(in oklab, var(--primary) 86%, var(--background)); }
+.btn:active { transform: translateY(1px); }
+.link { font-weight: 600; font-size: 16px; text-underline-offset: 4px; }
+.link:hover { text-decoration-thickness: 2px; }
+.hint { font: 500 11.5px/1.4 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); }
+
+/* Words that point at the diagram. A dotted underline means "this is on the board". */
+.ref, .cue { color: var(--foreground); text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, var(--pig, var(--foreground)) 55%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 4px; border-radius: 3px; }
+.ref { cursor: default; }
+.ref:hover, .ref.hot { text-decoration-style: solid; }
+.cue { cursor: pointer; background: linear-gradient(var(--tint, var(--highlight)), var(--tint, var(--highlight))) 0 0 / 0% 100% no-repeat; -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background-size .8s var(--ease); }
+.cue:hover { text-decoration-style: solid; }
+.cue.now { background-size: 100% 100%; text-decoration-style: solid; }
+
+.beat { min-height: 90svh; display: flex; flex-direction: column; justify-content: center; gap: 18px; padding-block: 48px; padding-right: 8px; }
+.kicker { display: flex; align-items: center; gap: 10px; font: 500 11.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); }
+.kicker .fig { display: inline-grid; place-items: center; flex: none; width: 26px; height: 22.5px; background: var(--muted-foreground); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.kicker .fig span { display: grid; place-items: center; width: 23.6px; height: 20.4px; background: var(--background); color: var(--foreground); clip-path: inherit; font-size: 11px; letter-spacing: 0; }
+.kicker .rule { flex: 1; min-width: 24px; height: 1px; background: var(--border); }
+.beat h2 { margin: 0; font: 600 clamp(30px, 3vw, 44px)/1.06 var(--font-sans); font-stretch: 86%; font-variation-settings: "wdth" 86; letter-spacing: -0.028em; text-wrap: balance; max-width: 14em; }
+.beat p { margin: 0; max-width: 31em; }
+/* Running text is a softer ink, so headings and the item being shown lead. */
+.lede, .beat p { color: var(--foreground-soft); }
+.beat .rule-quote { color: var(--foreground); }
+.beat .fine { color: var(--muted-foreground); }
+
+
+.steps { list-style: none; counter-reset: s; margin: 4px 0 0; padding: 0; display: grid; gap: 10px; max-width: 31em; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 2.2em minmax(0, 1fr); gap: 8px; align-items: baseline; cursor: pointer; border-radius: 3px; transition: color .35s ease; }
+.steps li::before { content: counter(s, decimal-leading-zero); font: 500 12px/1 var(--font-mono); color: var(--muted-foreground); transition: color .35s ease; }
+.steps.run li { color: var(--muted-foreground); }
+.steps li:hover, .steps.run li.now, .steps li.now::before { color: var(--foreground); }
+.steps li span { background: linear-gradient(var(--pig, var(--foreground)), var(--pig, var(--foreground))) 0 100% / 0% 2px no-repeat; transition: background-size .6s var(--ease); }
+.steps li.now span { background-size: 100% 2px; }
+.steps.plain li { grid-template-columns: 1.4em minmax(0, 1fr); }
+.steps.plain li::before { content: ""; width: 10px; height: 8.7px; background: var(--foreground); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+
+.rule-quote { margin: 6px 0 0; padding-top: 14px; border-top: 1px solid var(--border); font: 500 clamp(21px, 1.8vw, 25px)/1.25 var(--font-sans); letter-spacing: -0.012em; max-width: 19em; }
+.rule-quote small { display: block; margin-top: 8px; font: 500 11px/1.4 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); }
+.fine { color: var(--muted-foreground); font-size: 14px; }
+
+/* Sections that step: the text holds still while scrolling moves through its items, one at a time.
+   The item being shown is ink and marked; the others wait in grey. */
+.beat.stepped { display: block; padding-block: 0; }
+.beat.stepped > .pin { display: flex; flex-direction: column; justify-content: center; gap: 18px; padding-block: 48px; padding-right: 8px; }
+.beat.stepped.pinned { min-height: 0; }
+.beat.stepped.pinned > .pin { position: sticky; padding-block: 16px; gap: 15px; }
+.dots { display: flex; gap: 5px; flex: none; }
+.dots i { width: 9px; height: 7.8px; background: var(--border); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); transition: background-color .3s ease; }
+.dots i.done { background: var(--input); }
+.dots i.on { background: var(--foreground); }
+.stepped .steps li[data-step] { color: var(--muted-foreground); }
+.stepped .steps li[data-step].on, .stepped .steps li[data-step].on::before { color: var(--foreground); }
+.stepped .steps.plain li[data-step]::before { background: var(--input); transition: background-color .35s ease; }
+.stepped .steps.plain li[data-step].on::before { background: var(--pig, var(--foreground)); }
+.steps li.on span { background-size: 100% 2px; }
+
+/* ---------- board ---------- */
+#board { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: hidden; pointer-events: none; }
+.sock { fill: none; stroke: var(--board-line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.trace { fill: none; stroke: var(--trace); stroke-width: 1.25; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; opacity: .42; transition: opacity .5s ease, stroke-width .3s ease; }
+.trace.dim { opacity: .12; }
+.stage[data-scene="eco"] .trace { stroke-width: 1.5; }
+.trace.off { stroke-dasharray: 3 5; opacity: .22; }
+.trace.hot, .stage[data-scene="eco"] .trace.hot { opacity: 1; stroke-width: 2; transition-duration: .15s; }
+.trace.gone { opacity: 0; }
+.stage[data-scene="agent"] .trace:not([data-link="discord"]) { opacity: 0; }
+.tile { pointer-events: auto; }
+.stage[data-scene="agent"] .tile:is([data-kind="part"], [data-kind="option"], [data-kind="plugin"], [data-kind="team"], [data-kind="mate"], [data-kind="more"]) { cursor: pointer; }
+.hex, .side { stroke-width: 1.25; vector-effect: non-scaling-stroke; stroke-linejoin: round; transition: fill .5s ease, stroke .5s ease, opacity .4s ease; }
+.hex { fill: var(--card); stroke: var(--input); }
+.side { fill: var(--border); stroke: var(--input); }
+.shd { fill: var(--foreground); opacity: 0; }
+.tile[data-kind="core"] .hex { fill: var(--foreground); stroke: var(--foreground); }
+.tile[data-kind="core"] .side { fill: #000; stroke: #000; }
+.tile[data-kind="part"] .hex { fill: var(--tint); stroke: var(--pig); }
+.tile[data-kind="part"] .side { fill: var(--pig); stroke: var(--pig); }
+/* A plugin adds to Tools, so it wears the Tools edge. */
+.tile[data-kind="plugin"] .hex { fill: var(--card); stroke: var(--part-tools); }
+.tile[data-kind="plugin"] .side { fill: var(--part-tools-tint); stroke: var(--part-tools); }
+.tile[data-kind="proposed"] .hex { fill: var(--background); stroke: var(--foreground); stroke-dasharray: 5 4; }
+.tile[data-kind="proposed"] .side { opacity: 0; }
+.tile[data-kind="surface"] .hex { fill: var(--card); stroke: var(--foreground); }
+.tile[data-kind="surface"] .side { fill: var(--input); stroke: var(--foreground); }
+.tile[data-kind="surface"].off .hex { fill: var(--background); stroke-dasharray: 4 4; stroke: var(--input); }
+.tile[data-kind="surface"].off .side { opacity: 0; }
+.tile[data-kind="control"] .hex { fill: var(--card); stroke: var(--foreground); stroke-width: 2.25; }
+.tile[data-kind="control"] .side { fill: var(--foreground); stroke: var(--foreground); }
+.stat { opacity: 0; fill: var(--state-failed); stroke: var(--background); stroke-width: 2; vector-effect: non-scaling-stroke; transition: opacity .3s ease; }
+.tile.failed .stat { opacity: 1; }
+.tile.failed .hex { stroke: var(--state-failed); stroke-width: 2.5; }
+.tile[data-kind="retiring"] .hex { fill: var(--muted); stroke: var(--border); }
+.tile[data-kind="retiring"] .side { fill: var(--border); stroke: var(--border); }
+.tile.ping .hex { stroke: var(--foreground); stroke-width: 2.5; }
+/* An opened part stands up as a block. What it holds fans out around it, joined by lines in its colour. */
+.tile.open .hex { fill: var(--card); stroke-width: 2.25; }
+.wall { stroke: var(--pig); stroke-width: 1; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.wall.wf { fill: var(--pig); }
+.wall.wl { fill: color-mix(in oklab, var(--pig) 70%, var(--card)); }
+.wall.wr { fill: color-mix(in oklab, var(--pig) 76%, var(--foreground)); }
+.tile[data-kind="option"] .hex { fill: var(--card); stroke: var(--pig); }
+.tile[data-kind="option"] .side { fill: var(--tint); stroke: var(--pig); }
+.tile[data-kind="option"].on .hex { fill: var(--tint); stroke-width: 2.25; }
+.tile[data-kind="option"].on .tm { fill: var(--foreground); }
+.branch { fill: none; stroke: var(--pig); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; transition: stroke-width .2s ease; }
+.branch.hot { stroke-width: 2.75; }
+.pad { fill: var(--background); stroke: var(--pig); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+/* Room for more: a dashed tile at the end of every fan. */
+.tile[data-kind="more"] .hex { fill: var(--background); stroke: var(--pig); stroke-dasharray: 5 4; }
+.tile[data-kind="more"] .side { opacity: 0; }
+.tile[data-kind="more"] .tn { fill: var(--muted-foreground); }
+.plus { fill: none; stroke: var(--pig); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linecap: round; }
+/* Team: other agents Agent A can work with. */
+.tile[data-kind="team"] .hex { fill: var(--card); stroke: var(--foreground); }
+.tile[data-kind="team"] .side { fill: var(--muted); stroke: var(--foreground); }
+.glyph { fill: var(--card); stroke: var(--foreground); stroke-width: 1.25; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.glyph.me { fill: var(--foreground); }
+.tile[data-kind="mate"] .hex { fill: var(--foreground); stroke: var(--foreground); }
+.tile[data-kind="mate"] .side { fill: #000; stroke: #000; }
+.tile[data-kind="mate"] .tn { fill: var(--primary-foreground); }
+.tile[data-kind="mate"] .tm { fill: var(--primary-foreground); opacity: .7; }
+/* Brand marks: small above a tile's name, or large on a tile that has no name. */
+.ti { fill: var(--foreground); }
+.tile[data-kind="proposed"] .ti { fill: var(--muted-foreground); }
+.ico { transform: scale(var(--k, 1)); }
+.ico path { fill: var(--foreground); transition: fill .4s ease; }
+.ico use { color: var(--foreground); }
+.tile.off .ico path { fill: var(--input); }
+/* Plugin and skill marks that only show once the board zooms out, where names are too small to read. */
+.stage:not([data-scene="eco"]) .ico.eco { opacity: 0; }
+.tile[data-kind="skill"] .hex { fill: var(--card); stroke: var(--part-skills); }
+.tile[data-kind="skill"] .side { fill: var(--part-skills-tint); stroke: var(--part-skills); }
+.lbl { transform: scale(var(--k, 1)); transition: opacity .45s ease; }
+.tn { font: 600 13.5px/1 var(--font-sans); fill: var(--foreground); text-anchor: middle; dominant-baseline: central; }
+.tm { font: 500 9.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; fill: var(--muted-foreground); text-anchor: middle; dominant-baseline: central; transition: fill .4s ease; }
+.tile[data-kind="core"] .tn { fill: var(--primary-foreground); }
+.tile[data-kind="core"] .tm { fill: var(--primary-foreground); opacity: .7; }
+.tile[data-kind="proposed"] .tn, .tile[data-kind="retiring"] .tn { fill: var(--muted-foreground); }
+.tile[data-kind="retiring"] .tn { text-decoration: line-through; }
+.tile.fresh .tm { fill: var(--foreground); }
+.ask { fill: var(--state-needs-you); opacity: 0; transition: opacity .3s ease; }
+.tile.asking .ask { opacity: 1; }
+.pkt { fill: var(--foreground); stroke: var(--background); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trail { fill: none; stroke: var(--foreground); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; opacity: .85; }
+.ringfx { fill: none; stroke: var(--foreground); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.sockfx { fill: none; stroke: var(--foreground); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.stage[data-scene="eco"] .lbl, .stage[data-far] .lbl { opacity: 0; }
+.stage[data-tight] .tm { opacity: 0; }
+
+#labels { position: absolute; inset: 0; pointer-events: none; }
+.lab { position: absolute; left: 0; top: 0; white-space: nowrap; opacity: 0; will-change: transform, opacity; }
+.lab.crew { display: flex; flex-direction: column; align-items: center; gap: 4px; font: 600 15px/1.1 var(--font-sans); text-shadow: 0 0 3px var(--background), 0 0 6px var(--background); }
+.lab.crew small { font: 500 10px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); }
+.lab.chip { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--foreground); border-radius: 3px; background: var(--card); font: 500 10.5px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; transition: color .4s ease, border-color .4s ease; }
+.lab.chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--state-running); }
+.lab.chip.off { border-style: dashed; border-color: var(--input); color: var(--muted-foreground); }
+.lab.chip.off i { background: none; box-shadow: inset 0 0 0 1.5px var(--input); }
+.lab.chip.ctl { background: var(--foreground); border-color: var(--foreground); color: var(--primary-foreground); }
+.lab.wire { padding: 2px 4px; border-radius: 2px; background: var(--background); font: 500 9.5px/1 var(--font-mono); letter-spacing: .1em; color: var(--foreground); transition: opacity .4s ease; }
+
+/* Callout: a leader line from a tile to a short note about what it is doing. */
+#leader { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; opacity: 0; }
+#leader path { fill: none; stroke: var(--foreground); stroke-width: 1; }
+#leader circle { fill: var(--foreground); stroke: var(--background); stroke-width: 1.5; }
+.note { position: absolute; left: 0; top: 0; width: max-content; max-width: 256px; padding: 9px 12px 10px; background: var(--card); border: 1px solid var(--foreground); border-radius: 4px; pointer-events: none; opacity: 0; will-change: transform, opacity; }
+.note.in { animation: note-in .45s var(--ease); }
+@keyframes note-in { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.nh { display: flex; align-items: center; gap: 8px; }
+.nk { font: 500 10.5px/1.3 var(--font-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+.nt { margin: 4px 0 0; font: 600 14.5px/1.35 var(--font-sans); letter-spacing: -.005em; text-wrap: pretty; }
+.nt:empty { display: none; }
+.nr { list-style: none; margin: 7px 0 0; padding: 6px 0 0; border-top: 1px solid var(--border); display: grid; gap: 2px; min-width: 196px; }
+.nr:empty { display: none; }
+.nr li { display: flex; justify-content: space-between; gap: 20px; font: 500 11px/1.5 var(--font-mono); letter-spacing: .03em; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.nr li:last-child { color: var(--foreground); }
+
+.cap { position: absolute; left: 0; right: var(--gutter); bottom: 24px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 12px; border-top: 1px solid var(--border); background: var(--background); }
+.cap-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; font: 500 11px/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted-foreground); }
+#fig { color: var(--foreground); }
+.live { display: inline-flex; align-items: center; gap: 6px; }
+.live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--state-running); }
+.stage.paused .live::before { background: var(--border); }
+#count { font-variant-numeric: tabular-nums; }
+#pause { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 4px; border: 1px solid var(--input); background: var(--card); color: var(--foreground); font: 500 11px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; transition: border-color .16s ease, background-color .16s ease; }
+#pause:hover { border-color: var(--foreground); background: var(--accent); }
+#pause svg { width: 10px; height: 10px; }
+
+#tether { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; opacity: 0; }
+#tether .tl, #tether .th { fill: none; stroke: var(--pig, var(--foreground)); stroke-width: 1; stroke-linejoin: round; }
+#tether .td { fill: var(--pig, var(--foreground)); }
+
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding: 36px var(--gutter) 44px var(--edge); border-top: 1px solid var(--border); font: 500 11px/1.5 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); }
+
+@media (max-width: 859px) {
+  .story { display: block; }
+  .hero { min-height: 0; padding: 88px var(--gutter) 32px; gap: 18px; }
+  .stage { top: env(safe-area-inset-top, 0px); z-index: 3; height: clamp(380px, 58svh, 520px); min-height: 0; background: var(--background); overflow: visible; }
+  .stage > #board, .stage > #labels { overflow: hidden; }
+  .stage::after { content: ""; position: absolute; left: 0; right: 0; bottom: -18px; height: 18px; background: linear-gradient(var(--background), rgba(245, 246, 243, 0)); pointer-events: none; }
+  .beats { padding-inline: var(--gutter); }
+  .beat { min-height: 72svh; justify-content: flex-start; padding-block: 40px 56px; gap: 16px; }
+  .beat.stepped > .pin { justify-content: flex-start; padding-block: 40px 56px; gap: 16px; }
+  /* On a phone the text is not pinned, so give each item its own stretch of scrolling. */
+  .stepped .steps { gap: 22px; }
+  .cap { left: 16px; right: 16px; bottom: 10px; gap: 10px; padding-top: 8px; }
+  .cap-meta { gap: 4px 10px; font-size: 10px; }
+  .note { max-width: calc(100% - 24px); padding: 7px 10px 8px; }
+  .nt { font-size: 13.5px; }
+  .lab.crew { font-size: 12.5px; }
+  .lab.crew small { display: none; }
+  .lab.chip { font-size: 9.5px; padding: 4px 6px; }
+  .nav { gap: 16px; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hex, .side, .lbl, .tm, .lab, .steps li, .steps li span, .cue, .trace, .dots i { transition: none; }
+  .note.in { animation: none; }
+}
+</style>
+
+<header class="top">
+  <a class="brand" href="#top" aria-label="Renoa">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M19.72 16.21Q19.95 16.60 19.72 16.99L17.80 20.32Q17.57 20.71 17.12 20.71L13.27 20.71Q12.82 20.71 12.60 20.32L10.67 16.99Q10.45 16.60 10.67 16.21L12.60 12.88Q12.82 12.49 13.27 12.49L17.12 12.49Q17.57 12.49 17.80 12.88Z"/><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M19.07 6.77Q19.25 7.07 19.07 7.38L17.40 10.28Q17.23 10.58 16.88 10.58L13.53 10.58Q13.18 10.58 13.00 10.28L11.32 7.38Q11.150 7.07 11.32 6.77L13.00 3.87Q13.17 3.57 13.52 3.57L16.88 3.57Q17.23 3.57 17.40 3.87Z"/><path d="M28.94 10.60Q29.12 10.90 28.94 11.20L27.27 14.11Q27.09 14.41 26.74 14.41L23.39 14.41Q23.04 14.41 22.87 14.11L21.19 11.20Q21.02 10.90 21.19 10.60L22.87 7.70Q23.04 7.39 23.39 7.39L26.74 7.39Q27.09 7.39 27.27 7.70Z"/><path d="M27.32 21.06Q27.50 21.36 27.32 21.67L25.65 24.57Q25.48 24.87 25.12 24.87L21.78 24.87Q21.43 24.87 21.25 24.57L19.57 21.67Q19.40 21.36 19.57 21.06L21.25 18.16Q21.42 17.86 21.77 17.86L25.12 17.86Q25.48 17.86 25.65 18.16Z"/><path d="M19.07 25.82Q19.25 26.13 19.07 26.43L17.40 29.33Q17.23 29.63 16.88 29.63L13.53 29.63Q13.18 29.63 13.00 29.33L11.32 26.43Q11.15 26.13 11.32 25.82L13.00 22.92Q13.17 22.62 13.52 22.62L16.88 22.62Q17.23 22.62 17.40 22.92Z"/><path d="M10.82 21.06Q11.00 21.36 10.82 21.67L9.15 24.57Q8.97 24.87 8.62 24.87L5.28 24.87Q4.93 24.87 4.75 24.57L3.07 21.67Q2.90 21.36 3.07 21.06L4.75 18.16Q4.92 17.86 5.27 17.86L8.62 17.86Q8.97 17.86 9.15 18.16Z"/><path d="M10.82 11.53Q11.00 11.84 10.82 12.14L9.15 15.04Q8.97 15.34 8.62 15.34L5.28 15.34Q4.93 15.34 4.75 15.04L3.07 12.14Q2.90 11.84 3.07 11.53L4.75 8.63Q4.92 8.33 5.27 8.33L8.62 8.33Q8.97 8.33 9.15 8.63Z"/></g></svg>
+    Renoa
+  </a>
+  <nav class="nav" aria-label="Main">
+    <a href="https://github.com/Anrahya/Renoa">GitHub</a>
+    <a href="https://renoa.live/?host">Control Center</a>
+  </nav>
+</header>
+
+<main class="story" id="top">
+  <section class="hero" data-beat="0">
+    <span class="eyebrow">Open source · Self-hosted · AI agents</span>
+    <h1>Your agents share <b>one library</b> and talk over <b>one line</b>.</h1>
+    <p class="lede">Renoa is an open-source system for running AI agents on your own server. <span class="ref cue" data-ref="plugins" data-cue="grow" data-part="tools" tabindex="0">Add a plugin or skill once</span>, and every agent can use it. <span class="ref cue" data-ref="core" data-cue="message" tabindex="0">RCP, Renoa’s own protocol,</span> is the line between your apps and your agents, and between the agents themselves.</p>
+    <div class="actions">
+      <a class="btn" href="https://renoa.live/?host">Open Control Center</a>
+      <a class="link" href="https://github.com/Anrahya/Renoa">See the code on GitHub</a>
+    </div>
+    <span class="hint">Scroll to see how it works ↓ · Select a tile to open it</span>
+  </section>
+
+  <div class="stage" id="stage" data-scene="agent" role="img" aria-label="An animated diagram drawn as hexagonal tiles on a board. One agent sits at the centre: a dark core tile, six coloured part tiles around it, and plugin tiles under its Tools tile. Selecting a part opens it to show what it holds. The agent finds a new plugin, you approve it, and it joins its tools. The board then zooms out to three agents that share one library, where a plugin and a skill are added once and used by every agent. Apps and Control Center join the agents along lines labelled RCP. A task moves from Discord to Control Center, and one agent asks another for help over the same line. Notes beside the tiles say what is happening.">
+    <svg id="board" aria-hidden="true">
+      <g id="world"><g id="sockets"></g><g id="traces"></g><g id="tiles"></g><g id="fx"></g></g>
+    </svg>
+    <div id="labels" aria-hidden="true"></div>
+    <svg id="leader" aria-hidden="true"><path/><circle r="2.75"/></svg>
+    <div id="note" class="note" aria-hidden="true"><div class="nh"><span class="nk"></span></div><p class="nt"></p><ol class="nr"></ol></div>
+    <div class="cap" id="cap">
+      <div class="cap-meta"><span id="fig">Fig. 1 · One Renoa agent</span><span class="live">Illustration</span><span id="count"></span></div>
+      <button id="pause" type="button" aria-pressed="false"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="1" width="3" height="10" rx="0.5" fill="currentColor"/><rect x="7" y="1" width="3" height="10" rx="0.5" fill="currentColor"/></svg><span>Pause</span></button>
+    </div>
+  </div>
+
+  <div class="beats" id="beats">
+    <section class="beat" data-beat="1">
+      <div class="kicker"><span class="fig"><span>A</span></span>Extending<span class="rule"></span></div>
+      <h2>When an agent needs something new, it adds it.</h2>
+      <p>Ask an agent for something it can’t do yet, like reading a Figma file, and it goes looking for a <span class="ref" data-ref="plugins" data-part="tools" tabindex="0">plugin</span> that can.</p>
+      <ol class="steps" id="steps">
+        <li data-cue="grow-1" data-ref="plugins" data-part="tools" data-step tabindex="0"><span>It searches the official MCP Registry for a plugin.</span></li>
+        <li data-cue="grow-2" data-ref="plugins" data-part="tools" data-step tabindex="0"><span>It checks the provider’s own documentation before going further.</span></li>
+        <li data-cue="grow-3" data-ref="plugins" data-part="tools" data-step tabindex="0"><span>It asks you to approve the connection, and to sign in.</span></li>
+        <li data-cue="grow-4" data-ref="plugins" data-part="tools" data-step tabindex="0"><span>It adds the plugin to its tools and to the shared library.</span></li>
+      </ol>
+    </section>
+
+    <section class="beat" data-beat="2">
+      <div class="kicker"><span class="fig"><span>B</span></span>Shared library<span class="rule"></span></div>
+      <h2>Add it once. Every agent can use it.</h2>
+      <p>Run as many agents as you need, each with its own job. Plugins and skills live in the host’s <span class="ref" data-ref="library" data-part="tools" tabindex="0">shared library</span>, not inside any one agent.</p>
+      <ol class="steps" id="lib">
+        <li data-cue="lib-1" data-ref="library" data-part="tools" data-step tabindex="0"><span>Agent A adds Figma. It goes into the library, once.</span></li>
+        <li data-cue="lib-2" data-ref="agentB" data-part="tools" data-step tabindex="0"><span>The other agents use it too. No second install, no second sign-in.</span></li>
+        <li data-cue="lib-3" data-ref="library" data-part="skills" data-step tabindex="0"><span>Skills are shared the same way: written once, used by any agent.</span></li>
+        <li data-cue="lib-4" data-ref="agentA" data-part="profile" data-step tabindex="0"><span>What they learn about you follows you from agent to agent.</span></li>
+      </ol>
+    </section>
+
+    <section class="beat" data-beat="3">
+      <div class="kicker"><span class="fig"><span>C</span></span>RCP<span class="rule"></span></div>
+      <h2>One line between your apps and agents.</h2>
+      <p>RCP is Renoa’s own protocol. Discord, Telegram, GitHub and Control Center all connect the same way, and a task is never kept inside the app you started it in.</p>
+      <ol class="steps" id="rcp">
+        <li data-cue="relay" data-ref="discord" data-step tabindex="0"><span>A message in Discord reaches Agent A over RCP, and the reply comes back.</span></li>
+        <li data-cue="switch" data-ref="cc" data-step tabindex="0"><span>Start in Discord and carry on in Control Center, right where you left off.</span></li>
+      </ol>
+      <p>Other apps, like <span class="ref" data-ref="whatsapp" tabindex="0">WhatsApp</span>, can be added the same way.</p>
+      <p class="rule-quote">“Connections are temporary. The task is not.”<small>The rule RCP is built on</small></p>
+    </section>
+
+    <section class="beat" data-beat="4">
+      <div class="kicker"><span class="fig"><span>D</span></span>Agent to agent<span class="rule"></span></div>
+      <h2>The same line runs between agents.</h2>
+      <p>Each agent works where its job is: <span class="ref" data-ref="agentA" tabindex="0">Agent A</span> in your Discord, <span class="ref" data-ref="agentC" tabindex="0">Agent C</span> in your family’s Telegram group. When one needs another, it asks over RCP, the same way you do.</p>
+      <ol class="steps" id="chain">
+        <li data-cue="chain-1" data-ref="discord" data-step tabindex="0"><span>You ask Agent A in Discord to plan Friday dinner with your family.</span></li>
+        <li data-cue="chain-2" data-ref="agentC" data-step tabindex="0"><span>Agent A asks Agent C, which looks after the family group.</span></li>
+        <li data-cue="chain-3" data-ref="telegram" data-step tabindex="0"><span>Agent C checks with everyone in Telegram and finds a time.</span></li>
+        <li data-cue="chain-4" data-ref="agentA" data-step tabindex="0"><span>Agent A brings the plan back to you in Discord.</span></li>
+      </ol>
+    </section>
+
+    <section class="beat" data-beat="5">
+      <div class="kicker"><span class="fig"><span>E</span></span>Control Center<span class="rule"></span></div>
+      <h2>Run all of it from one place.</h2>
+      <p>Control Center is one more app on the line: every agent, what it is doing, and everything in the shared library.</p>
+      <ul class="steps plain" id="controls">
+        <li data-cue="watch" data-ref="cc" data-step tabindex="0"><span>See what every agent is doing, and talk to it.</span></li>
+        <li data-cue="jobs" data-ref="cc" data-step tabindex="0"><span>Check scheduled jobs, and pause or resume them.</span></li>
+        <li data-cue="breakFix" data-ref="agentB" data-step tabindex="0"><span>Restart an agent from here when something breaks.</span></li>
+      </ul>
+    </section>
+
+    <section class="beat" data-beat="6">
+      <div class="kicker">Get started<span class="rule"></span></div>
+      <h2>Start with one agent and one app.</h2>
+      <p>Renoa is open source under MIT or Apache 2.0, and runs on your own server. Every agent and app you add after that shares the same library and the same line.</p>
+      <div class="actions">
+        <a class="btn" href="https://renoa.live/?host">Open Control Center</a>
+        <a class="link" href="https://github.com/Anrahya/Renoa">See the code on GitHub</a>
+      </div>
+      <p class="fine">The diagram on this page is an illustration, not a live view of a real Renoa.</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span>Renoa · MIT or Apache 2.0</span>
+  <span>One library. One line.</span>
+</footer>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="rn-mark" viewBox="0 0 32 32"><path fill="currentColor" d="M19.72 16.21Q19.95 16.60 19.72 16.99L17.80 20.32Q17.57 20.71 17.12 20.71L13.27 20.71Q12.82 20.71 12.60 20.32L10.67 16.99Q10.45 16.60 10.67 16.21L12.60 12.88Q12.82 12.49 13.270 12.49L17.12 12.49Q17.57 12.49 17.80 12.88Z"/><g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M19.07 6.77Q19.25 7.07 19.07 7.38L17.40 10.28Q17.23 10.58 16.88 10.58L13.53 10.58Q13.18 10.58 13.00 10.28L11.32 7.38Q11.150 7.07 11.32 6.77L13.00 3.87Q13.17 3.57 13.52 3.57L16.88 3.57Q17.23 3.57 17.40 3.87Z"/><path d="M28.94 10.60Q29.12 10.90 28.94 11.20L27.27 14.11Q27.09 14.41 26.74 14.41L23.39 14.41Q23.04 14.41 22.87 14.11L21.19 11.20Q21.02 10.90 21.19 10.60L22.87 7.70Q23.04 7.39 23.39 7.39L26.74 7.39Q27.09 7.39 27.27 7.70Z"/><path d="M27.32 21.06Q27.50 21.36 27.32 21.67L25.65 24.57Q25.48 24.87 25.12 24.87L21.78 24.87Q21.43 24.87 21.25 24.57L19.57 21.67Q19.40 21.36 19.57 21.06L21.25 18.16Q21.42 17.86 21.77 17.86L25.12 17.86Q25.48 17.86 25.65 18.16Z"/><path d="M19.07 25.82Q19.25 26.13 19.07 26.43L17.40 29.33Q17.23 29.63 16.88 29.63L13.53 29.63Q13.18 29.63 13.00 29.33L11.32 26.43Q11.15 26.13 11.32 25.82L13.00 22.92Q13.17 22.62 13.52 22.62L16.88 22.62Q17.23 22.62 17.40 22.92Z"/><path d="M10.82 21.06Q11.00 21.36 10.82 21.67L9.15 24.57Q8.97 24.87 8.62 24.87L5.28 24.87Q4.93 24.87 4.75 24.57L3.07 21.67Q2.90 21.36 3.07 21.06L4.75 18.16Q4.92 17.86 5.27 17.86L8.62 17.86Q8.97 17.86 9.15 18.16Z"/><path d="M10.82 11.53Q11.00 11.84 10.82 12.14L9.15 15.04Q8.97 15.34 8.62 15.34L5.28 15.34Q4.93 15.34 4.75 15.04L3.07 12.14Q2.90 11.84 3.07 11.53L4.75 8.63Q4.92 8.33 5.27 8.33L8.62 8.33Q8.97 8.33 9.15 8.63Z"/></g></symbol></svg>
+
+<svg id="tether" aria-hidden="true"><path class="tl"/><path class="th"/><circle class="td" r="2.5"/></svg>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const stage = $('#stage'), board = $('#board'), world = $('#world');
+  const gSock = $('#sockets'), gTrace = $('#traces'), gTiles = $('#tiles'), gFx = $('#fx');
+  const labelsEl = $('#labels'), countEl = $('#count'), figEl = $('#fig'), pauseBtn = $('#pause'), capEl = $('#cap'), beatsEl = $('#beats');
+  const noteEl = $('#note'), noteK = noteEl.querySelector('.nk'), noteT = noteEl.querySelector('.nt'), noteR = noteEl.querySelector('.nr');
+  const leader = $('#leader'), lLine = leader.querySelector('path'), lDot = leader.querySelector('circle');
+  const tether = $('#tether'), tLine = tether.querySelector('.tl'), tHex = tether.querySelector('.th'), tDot = tether.querySelector('.td');
+  const stepsEl = $('#steps'), chainEl = $('#chain');
+  const NS = 'http://www.w3.org/2000/svg';
+  const S3 = Math.sqrt(3), R = 60, GROUT = 5, DEPTH = 4, LIFT = 18, PX_SPEED = 330, TRAIL_PX = 56, NOTE_ROOM = 280, NOTE_TOP = 104;
+  const rand = (a) => a[Math.floor(Math.random() * a.length)];
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  let T = 0, beat = -1, scene = 'agent', frameName = 'agent', paused = false, visible = true, hover = null, dirty = true, phone = false;
+  let tileHover = null, wantBeat = -1, wantAt = 0;
+
+  const axial = (q, r) => [R * 1.5 * q, R * S3 * (r + q / 2)];
+  function hexPath(cx, cy, r, corner) {
+    const c = Math.min(corner || 0, r * 0.3), p = [];
+    for (let i = 0; i < 6; i++) p.push([cx + r * Math.cos(Math.PI / 3 * i), cy + r * Math.sin(Math.PI / 3 * i)]);
+    let d = '';
+    for (let i = 0; i < 6; i++) {
+      const a = p[(i + 5) % 6], b = p[i], n = p[(i + 1) % 6];
+      const s = [b[0] + (a[0] - b[0]) * c / r, b[1] + (a[1] - b[1]) * c / r], e = [b[0] + (n[0] - b[0]) * c / r, b[1] + (n[1] - b[1]) * c / r];
+      d += (i ? 'L' : 'M') + s[0].toFixed(1) + ' ' + s[1].toFixed(1) + 'Q' + b[0].toFixed(1) + ' ' + b[1].toFixed(1) + ' ' + e[0].toFixed(1) + ' ' + e[1].toFixed(1);
+    }
+    return d + 'Z';
+  }
+  const HEX = hexPath(0, 0, R - GROUT / 2, 3);
+  function el(tag, attrs, parent) {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) if (attrs[k] !== undefined && attrs[k] !== null) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  /* ---------- the board ---------- */
+  const PARTS = [
+    { id: 'model', name: 'Model', q: 0, r: -1, v: 3 },
+    { id: 'loop', name: 'Workflow', q: 1, r: -1, v: 2 },
+    { id: 'context', name: 'Context', q: 1, r: 0, v: 4 },
+    { id: 'tools', name: 'Tools', q: 0, r: 1, v: 6 },
+    { id: 'skills', name: 'Skills', q: -1, r: 1, v: 2 },
+    { id: 'profile', name: 'Profile', q: -1, r: 0, v: 3 },
+  ];
+  // Plugins add to Tools, so they gather under the Tools tile.
+  const GROW = [[0, 2], [1, 1], [-1, 2], [1, 2], [-1, 3]];
+  // What each part holds. Model, Workflow and Profile use one at a time; the rest hold several.
+  // Every fan ends in a dashed tile for adding more, with what adding one means.
+  const OPT = {
+    model: { pick: true, more: ['Any model', 'Add another model, and it can take this seat between tasks.'], items: [{ n: 'Claude', icon: 'Claude' }, { n: 'GPT', icon: 'GPT' }, { n: 'Gemini', icon: 'Gemini' }] },
+    loop: { pick: true, more: ['Your own', 'Describe your own way of working, and it can take this seat.'], items: [{ n: 'Quick reply', d: 'Answers straight away.' }, { n: 'Plan first', d: 'Makes a plan, then works through it.' }, { n: 'Research', d: 'Reads around the topic before it answers.' }, { n: 'Double-check', d: 'Checks its own work before it replies.' }] },
+    context: { unit: 'sources', more: ['Any source', 'Connect another place for it to look things up.'], items: [{ n: 'Memory', d: 'Remembers what matters about you, across chats.' }, { n: 'Recent chat', d: 'Keeps the latest messages in view.' }, { n: 'Summaries', d: 'Sums up long chats, so nothing important is lost.' }, { n: 'Your files', d: 'Reads the notes and files you share with it.' }] },
+    tools: { unit: 'plugins', more: ['Any app', 'When it needs a new app, it finds a plugin and asks you first.'] },
+    skills: { unit: 'skills', more: ['Your own', 'Write a skill in plain words, and any of your agents can use it.'], items: [{ n: 'Writing style', d: 'Writes the way you do.' }, { n: 'Audit', d: 'Checks work against a list, line by line.' }, { n: 'Meeting notes', d: 'Turns a call into notes and next steps.' }, { n: 'Trip planning', d: 'Plans a trip around your calendar.' }] },
+    profile: { pick: true, more: ['Your own', 'Describe who you want it to be.'], items: [{ n: 'Assistant', d: 'Helps with whatever you ask.' }, { n: 'Secretary', d: 'Looks after your inbox and calendar.' }, { n: 'Companion', d: 'Talks things through with you.' }, { n: 'Coach', d: 'Keeps you to the goals you set.' }] },
+    team: { team: true, unit: 'agents', more: ['Any agent', 'Add another agent whenever a job deserves its own.'], items: [{ n: 'Researcher', d: 'Finds and reads the sources.' }, { n: 'Writer', d: 'Drafts from what was found.' }, { n: 'Reviewer', d: 'Checks the work before it goes out.' }] },
+  };
+  const OPT_ON = { model: 0, loop: 1, profile: 0 };
+  const TOOL_INFO = { Gmail: 'Reads, sorts and drafts your email.', Calendar: 'Checks your day and books meetings.', 'Google Drive': 'Finds and reads your files.', Figma: 'Reads your design files.', Notion: 'Searches and updates your notes.', Spotify: 'Plays music and podcasts for you.' };
+  // Brand marks from Simple Icons 16.33.0 (CC0-1.0, https://simpleicons.org), drawn on a 24-unit square.
+  const ICONS = {
+    Discord: 'M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z',
+    GitHub: 'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12',
+    Telegram: 'M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z',
+    WhatsApp: 'M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z',
+    Gmail: 'M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z',
+    Calendar: 'M18.316 5.684H24v12.632h-5.684V5.684zM5.684 24h12.632v-5.684H5.684V24zM18.316 5.684V0H1.895A1.894 1.894 0 0 0 0 1.895v16.421h5.684V5.684h12.632zm-7.207 6.25v-.065c.272-.144.5-.349.687-.617s.279-.595.279-.982c0-.379-.099-.72-.3-1.025a2.05 2.05 0 0 0-.832-.714 2.703 2.703 0 0 0-1.197-.257c-.6 0-1.094.156-1.481.467-.386.311-.65.671-.793 1.078l1.085.452c.086-.249.224-.461.413-.633.189-.172.445-.257.767-.257.33 0 .602.088.816.264a.86.86 0 0 1 .322.703c0 .33-.12.589-.36.778-.24.19-.535.284-.886.284h-.567v1.085h.633c.407 0 .748.109 1.02.327.272.218.407.499.407.843 0 .336-.129.614-.387.832s-.565.327-.924.327c-.351 0-.651-.103-.897-.311-.248-.208-.422-.502-.521-.881l-1.096.452c.178.616.505 1.082.977 1.401.472.319.984.478 1.538.477a2.84 2.84 0 0 0 1.293-.291c.382-.193.684-.458.902-.794.218-.336.327-.72.327-1.149 0-.429-.115-.797-.344-1.105a2.067 2.067 0 0 0-.881-.689zm2.093-1.931l.602.913L15 10.045v5.744h1.187V8.446h-.827l-2.158 1.557zM22.105 0h-3.289v5.184H24V1.895A1.894 1.894 0 0 0 22.105 0zm-3.289 23.5l4.684-4.684h-4.684V23.5zM0 22.105C0 23.152.848 24 1.895 24h3.289v-5.184H0v3.289z',
+    "Google Drive": 'M12.01 1.485c-2.082 0-3.754.02-3.743.047.01.02 1.708 3.001 3.774 6.62l3.76 6.574h3.76c2.081 0 3.753-.02 3.742-.047-.005-.02-1.708-3.001-3.775-6.62l-3.76-6.574zm-4.76 1.73a789.828 789.861 0 0 0-3.63 6.319L0 15.868l1.89 3.298 1.885 3.297 3.62-6.335 3.618-6.33-1.88-3.287C8.1 4.704 7.255 3.22 7.25 3.214zm2.259 12.653-.203.348c-.114.198-.96 1.672-1.88 3.287a423.93 423.948 0 0 1-1.698 2.97c-.01.026 3.24.042 7.222.042h7.244l1.796-3.157c.992-1.734 1.85-3.23 1.906-3.323l.104-.167h-7.249z',
+    Figma: 'M15.852 8.981h-4.588V0h4.588c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.491-4.49 4.491zM12.735 7.51h3.117c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-3.117V7.51zm0 1.471H8.148c-2.476 0-4.49-2.014-4.49-4.49S5.672 0 8.148 0h4.588v8.981zm-4.587-7.51c-1.665 0-3.019 1.355-3.019 3.019s1.354 3.02 3.019 3.02h3.117V1.471H8.148zm4.587 15.019H8.148c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h4.588v8.98zM8.148 8.981c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h3.117V8.981H8.148zM8.172 24c-2.489 0-4.515-2.014-4.515-4.49s2.014-4.49 4.49-4.49h4.588v4.441c0 2.503-2.047 4.539-4.563 4.539zm-.024-7.51a3.023 3.023 0 0 0-3.019 3.019c0 1.665 1.365 3.019 3.044 3.019 1.705 0 3.093-1.376 3.093-3.068v-2.97H8.148zm7.704 0h-.098c-2.476 0-4.49-2.014-4.49-4.49s2.014-4.49 4.49-4.49h.098c2.476 0 4.49 2.014 4.49 4.49s-2.014 4.49-4.49 4.49zm-.097-7.509c-1.665 0-3.019 1.355-3.019 3.019s1.355 3.019 3.019 3.019h.098c1.665 0 3.019-1.355 3.019-3.019s-1.355-3.019-3.019-3.019h-.098z',
+    Notion: 'M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z',
+    Claude: 'm4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z',
+    GPT: 'M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z',
+    Gemini: 'M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81',
+    Spotify: 'M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z',
+  };
+  // An opened part lays out what it holds two steps away, one empty socket apart; a second row sits further out. Drawn for Tools, turned for the rest.
+  ICONS.Skill = 'M4 20l1.2-4.4L15.6 5.2a1.4 1.4 0 0 1 2 0l1.2 1.2a1.4 1.4 0 0 1 0 2L8.4 18.8zM3 22h18v-1.6H3z';
+  const SLOTS = {
+    4: [[-2, 2], [-1, 3], [1, 2], [2, 0]],
+    5: [[-2, 2], [-1, 3], [1, 2], [2, 0], [0, 4]],
+    6: [[-2, 2], [-1, 3], [1, 2], [2, 0], [-2, 5], [2, 3]],
+    7: [[-2, 2], [-1, 3], [1, 2], [2, 0], [-2, 5], [0, 4], [2, 3]],
+  };
+  const TURNS = { tools: 0, skills: 1, profile: 2, model: 3, loop: 4, context: 5 };
+  // The Team tile sits to the right of the agent, so its fan opens to the right.
+  const TEAM_AT = [2, -1], TEAM_SLOTS = [[2, -3], [4, -3], [4, -1], [2, 1]];
+  const hexDist = (a, b) => (Math.abs(a.q - b.q) + Math.abs(a.r - b.r) + Math.abs(a.q + a.r - b.q - b.r)) / 2;
+  const turn = (q, r, k) => { for (let i = 0; i < k; i++) [q, r] = [-r, q + r]; return [q, r]; };
+  const AGENTS = [
+    { id: 'agentA', name: 'Agent A', role: 'Works with you in Discord', q: 0, r: 0, side: 'above' },
+    { id: 'agentB', name: 'Agent B', role: 'Reviews code on GitHub', q: -3, r: 7, side: 'below' },
+    { id: 'agentC', name: 'Agent C', role: 'Runs the family group on Telegram', q: 3, r: 4, side: 'below' },
+  ];
+  const SURF = [
+    { id: 'discord', name: 'Discord', q: -4, r: 2, agent: 'agentA', on: true },
+    { id: 'github', name: 'GitHub', q: -6, r: 8, agent: 'agentB', on: true },
+    { id: 'telegram', name: 'Telegram', q: 6, r: 2, agent: 'agentC', on: true },
+    // Not built: shown dashed, as an app that could connect the same way.
+    { id: 'whatsapp', name: 'WhatsApp', q: 4, r: -2, agent: 'agentA', on: false, soon: true },
+  ];
+  const surf = {};
+  SURF.forEach((s) => { surf[s.id] = s; });
+
+  // A tile is a face on a short body. Lifting it raises the face off its socket and shows a shadow.
+  const tiles = [];
+  function mkTile(o) {
+    const [hx, hy] = axial(o.q, o.r);
+    const t = Object.assign({ hx, hy, x: hx, y: hy, tx: hx, ty: hy, s: 1, ts: 1, o: 1, to: 1, f: 1, lift: 0, tl: 0, dp: DEPTH, td: DEPTH, kp: 7, ks: 6, ko: 6, kl: 7, down: false, hold: 0, lastT: '', lastO: '', lastL: '', lastD: '' }, o);
+    t.g = el('g', { class: 'tile', 'data-kind': o.kind, 'data-part': o.part, 'data-ref': o.ref }, gTiles);
+    t.g.__t = t;
+    t.shd = el('path', { class: 'shd', d: HEX, transform: 'translate(0 ' + (DEPTH + 3) + ')' }, t.g);
+    t.body = el('g', null, t.g);
+    el('path', { class: 'side', d: HEX, transform: 'translate(0 ' + DEPTH + ')' }, t.body);
+    t.hex = el('path', { class: 'hex', d: HEX }, t.body);
+    if (o.label !== undefined) {
+      t.lbl = el('g', { class: 'lbl' }, t.body);
+      if (o.icon) {
+        const ig = el('g', { transform: 'translate(-9 -30) scale(.75)' }, t.lbl);
+        if (o.icon === '+') el('path', { class: 'plus', d: 'M12 5v14M5 12h14' }, ig);
+        else if (o.icon === 'team') [[12, 6.5, 1], [6.5, 16], [17.5, 16]].forEach(([x, y, me]) => el('path', { class: 'glyph' + (me ? ' me' : ''), d: hexPath(x, y, 5.6, 1) }, ig));
+        else el('path', { class: 'ti', d: ICONS[o.icon] }, ig);
+      }
+      t.nm = el('text', { class: 'tn', y: nameY(t, !!o.meta) }, t.lbl); t.nm.textContent = o.label;
+      t.mt = el('text', { class: 'tm', y: o.icon ? 20 : 11 }, t.lbl); t.mt.textContent = o.meta || '';
+    }
+    // A tile with no name carries a large mark instead: an app's logo, or Renoa's on Control Center.
+    if (o.big) {
+      const ig = el('g', { class: 'ico' + (o.ecoOnly ? ' eco' : '') }, t.body), g2 = el('g', { transform: 'translate(-18 -18) scale(1.5)' }, ig);
+      if (o.big === 'mark') el('use', { href: '#rn-mark', width: 24, height: 24 }, g2); else el('path', { d: ICONS[o.big] }, g2);
+    }
+    if (o.role === 'plugin') el('circle', { class: 'ask', cx: 29, cy: -31, r: 4.5 }, t.body);
+    if (o.role === 'core') el('circle', { class: 'stat', cx: 29, cy: -31, r: 5.5 }, t.body);
+    tiles.push(t);
+    return t;
+  }
+  const setKind = (t, k) => { t.kind = k; t.g.setAttribute('data-kind', k); };
+  const nameY = (t, meta) => (t.icon ? (meta ? 5 : 8) : meta ? -7 : 0);
+  const setMeta = (t, m) => { if (!t.mt) return; t.mt.textContent = m; t.nm.setAttribute('y', nameY(t, !!m)); };
+  const optName = (id, i) => OPT[id].items[i == null ? OPT_ON[id] : i].n;
+  function partMeta(id) {
+    if (OPT[id].pick) return optName(id);
+    if (id === 'tools') return agentA.seats.filter((p) => p && p.kind === 'plugin').length + ' plugins';
+    return OPT[id].items.length + ' ' + OPT[id].unit;
+  }
+  const baseMeta = (t) => (t.kind === 'part' ? (t.agent === 'agentA' ? partMeta(t.def.id) : 'v' + t.v) : t.base);
+  const toFront = (t) => gTiles.appendChild(t.g);
+  function killTile(t) { const i = tiles.indexOf(t); if (i >= 0) tiles.splice(i, 1); t.g.remove(); }
+  // A tile on its way out fades first; the loop removes it once it is gone from view.
+  const bury = (t) => { t.role = 'old'; t.to = 0; };
+
+  // Empty sockets: the board itself, with room to extend in every direction.
+  (() => {
+    let d = '';
+    for (let q = -10; q <= 10; q++) for (let r = -10; r <= 16; r++) {
+      const [x, y] = axial(q, r);
+      if (x < -760 || x > 760 || y < -470 || y > 1080) continue;
+      d += hexPath(x, y, R - GROUT / 2, 3);
+    }
+    el('path', { class: 'sock', d }, gSock);
+  })();
+
+  const agents = {};
+  AGENTS.forEach((a, ai) => {
+    const main = a.id === 'agentA';
+    const A = agents[a.id] = { def: a, parts: {}, present: a.id !== 'agentC' };
+    A.core = mkTile({ kind: 'core', q: a.q, r: a.r, label: main ? 'Core' : undefined, meta: 'never changes', base: 'never changes', ref: main ? 'core' : a.id, agent: a.id, role: 'core' });
+    PARTS.forEach((d, j) => {
+      const v = main ? d.v : 1 + ((j + ai * 2) % 4);
+      A.parts[d.id] = mkTile({ kind: 'part', part: d.id, q: a.q + d.q, r: a.r + d.r, label: main ? d.name : undefined, meta: main && OPT[d.id].pick ? optName(d.id) : 'v' + v, v, ref: main ? d.id : a.id, agent: a.id, role: 'part', def: d });
+    });
+  });
+  const agentA = agents.agentA;
+  agentA.seats = GROW.map(() => null);
+  function plugin(i, name, kind, meta) {
+    const t = mkTile({ kind, q: GROW[i][0], r: GROW[i][1], label: name, meta, base: 'plugin', ref: 'plugins', agent: 'agentA', role: 'plugin', name, icon: ICONS[name] ? name : undefined, big: ICONS[name] ? name : undefined, ecoOnly: true, seat: i, born: T - 3 + i });
+    agentA.seats[i] = t;
+    return t;
+  }
+  ['Gmail', 'Calendar', 'Google Drive'].forEach((n, i) => plugin(i, n, 'plugin', 'plugin'));
+  PARTS.forEach((d) => setMeta(agentA.parts[d.id], partMeta(d.id)));
+  // Beside the agent: the other agents it can hand work to.
+  agentA.team = mkTile({ kind: 'team', part: 'team', q: TEAM_AT[0], r: TEAM_AT[1], label: 'Team', meta: 'agents', base: 'agents', icon: 'team', ref: 'team', agent: 'agentA', role: 'team' });
+  // Control Center sits in the middle, joined to every agent.
+  const cc = mkTile({ kind: 'control', q: 0, r: 5, ref: 'cc', role: 'control', big: 'mark' });
+  SURF.forEach((s) => { s.tile = mkTile({ kind: 'surface', q: s.q, r: s.r, ref: s.id, role: 'surface', big: s.name }); });
+
+  /* ---------- RCP is the line between two things, drawn along the seams ---------- */
+  const V = new Map();
+  const vkey = (x, y) => Math.round(x * 2) + ',' + Math.round(y * 2);
+  const vtx = (cx, cy, i) => [cx + R * Math.cos(Math.PI / 3 * i), cy + R * Math.sin(Math.PI / 3 * i)];
+  for (let q = -10; q <= 10; q++) for (let r = -10; r <= 16; r++) {
+    const [cx, cy] = axial(q, r);
+    if (cx < -800 || cx > 800 || cy < -500 || cy > 1100) continue;
+    const vs = [];
+    for (let i = 0; i < 6; i++) {
+      const [x, y] = vtx(cx, cy, i), k = vkey(x, y);
+      if (!V.has(k)) V.set(k, { k, x, y, n: new Set() });
+      vs.push(V.get(k));
+    }
+    for (let i = 0; i < 6; i++) { vs[i].n.add(vs[(i + 1) % 6].k); vs[(i + 1) % 6].n.add(vs[i].k); }
+  }
+  function nearestVertex(t, toward) {
+    let best = null, bd = 1e9;
+    for (let i = 0; i < 6; i++) { const [x, y] = vtx(t.hx, t.hy, i), d = Math.hypot(x - toward.hx, y - toward.hy); if (d < bd) { bd = d; best = V.get(vkey(x, y)); } }
+    return best;
+  }
+  function route(a, b) {
+    const s = nearestVertex(a, b), g = nearestVertex(b, a);
+    const dist = new Map([[g.k, 0]]), queue = [g];
+    for (let i = 0; i < queue.length; i++) {
+      const v = queue[i]; if (v === s) break;
+      for (const nk of v.n) if (!dist.has(nk)) { dist.set(nk, dist.get(v.k) + 1); queue.push(V.get(nk)); }
+    }
+    const lx = g.x - s.x, ly = g.y - s.y, ll = Math.hypot(lx, ly) || 1;
+    const off = (v) => Math.abs((v.x - s.x) * ly - (v.y - s.y) * lx) / ll;
+    const pts = [[s.x, s.y]];
+    let cur = s;
+    while (cur !== g) {
+      let nx = null;
+      for (const nk of cur.n) if (dist.get(nk) === dist.get(cur.k) - 1) { const v = V.get(nk); if (!nx || off(v) < off(nx)) nx = v; }
+      if (!nx) break;
+      cur = nx; pts.push([cur.x, cur.y]);
+    }
+    return pts;
+  }
+  const links = {};
+  // A line to an agent meets the edge of its cluster, so it stays out in the open board.
+  const edgeOf = (t, toward) => {
+    if (t.role !== 'core') return t;
+    let best = t, bd = Infinity;
+    PARTS.forEach((d) => { const p = agents[t.agent].parts[d.id], dd = Math.hypot(p.hx - toward.hx, p.hy - toward.hy); if (dd < bd) { bd = dd; best = p; } });
+    return best;
+  };
+  function link(id, a, b, future) {
+    const pts = route(edgeOf(a, b), edgeOf(b, a)), seg = [];
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); len += l; }
+    const path = el('path', { class: 'trace' + (future ? ' future' : ''), 'data-link': id, d: 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L') }, gTrace);
+    links[id] = { id, a, b, future, pts, seg, len, path, hot: 0 };
+  }
+  SURF.forEach((s) => link(s.id, s.tile, agents[s.agent].core));
+  AGENTS.forEach((a) => link('cc-' + a.id, cc, agents[a.id].core));
+  link('ab', agentA.core, agents.agentB.core, true);
+  link('ac', agentA.core, agents.agentC.core, true);
+  // One leg of a packet's trip: the line between two tiles, in the direction of travel.
+  function hop(a, b, cb) {
+    for (const id in links) {
+      const L = links[id];
+      if (L.dying) continue;
+      if (L.a === a && L.b === b) return { id, dir: 1, cb };
+      if (L.a === b && L.b === a) return { id, dir: -1, cb };
+    }
+    throw new Error('No line between these tiles');
+  }
+  function pointAt(L, u) {
+    for (let i = 0; i < L.seg.length; i++) {
+      if (u <= L.seg[i] || i === L.seg.length - 1) { const f = L.seg[i] ? clamp(u / L.seg[i], 0, 1) : 0, a = L.pts[i], b = L.pts[i + 1]; return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]; }
+      u -= L.seg[i];
+    }
+    return L.pts[L.pts.length - 1];
+  }
+  function slice(L, a, b) {
+    a = clamp(a, 0, L.len); b = clamp(b, 0, L.len);
+    const out = [pointAt(L, a)];
+    let acc = 0;
+    for (let i = 0; i < L.seg.length; i++) { acc += L.seg[i]; if (acc > a && acc < b) out.push(L.pts[i + 1]); }
+    out.push(pointAt(L, b));
+    return out;
+  }
+  const heat = (L, d) => { L.hot = Math.max(0, L.hot + d); L.path.classList.toggle('hot', L.hot > 0); };
+  const linkGone = (L) => (!!L.a.agent && !agents[L.a.agent].present) || (!!L.b.agent && !agents[L.b.agent].present) || (L.future && beat < 4);
+
+  /* ---------- screen labels for the zoomed-out system ---------- */
+  const labels = [];
+  function addLabel(o) {
+    const e = document.createElement('div'); e.className = 'lab ' + o.cls; e.innerHTML = o.html; labelsEl.appendChild(e);
+    const L = Object.assign({ el: e, pad: 0, w: 0, h: 0, lastO: '', op: () => (scene === 'eco' ? o.tile.o * o.tile.f : 0) }, o); labels.push(L); return L;
+  }
+  AGENTS.forEach((a) => { const c = agents[a.id].core; addLabel({ tile: c, at: () => [c.hx, c.hy + (a.side === 'above' ? -1 : 1) * 1.5 * R * S3], side: a.side, pad: 10, cls: 'crew', html: '<b>' + a.name + '</b><small>' + a.role + '</small>' }); });
+  SURF.forEach((s) => { s.lab = addLabel({ tile: s.tile, at: () => [s.tile.hx, s.tile.hy + R * S3 / 2], side: 'below', pad: 8, cls: 'chip', html: '<i></i>' + s.name }); });
+  addLabel({ tile: cc, at: () => [cc.hx, cc.hy + R * S3 / 2], side: 'below', pad: 8, cls: 'chip ctl', html: '<i></i>Control Center' });
+  SURF.forEach((s) => { if (!s.on) setOn(s, false); });
+  // In the connections sections, each line is labelled for what it is.
+  for (const id in links) {
+    const Ln = links[id];
+    addLabel({ tile: cc, inside: true, at: () => pointAt(Ln, Ln.len / 2), side: 'center', cls: 'wire', html: 'RCP',
+      op: () => (scene === 'eco' && (beat === 3 || beat === 4) && !linkGone(Ln) && !Ln.path.classList.contains('dim') ? 1 : 0) });
+  }
+
+  /* ---------- timers, pulses, packets ---------- */
+  // Event timers are dropped when the section changes; cleanup timers always run.
+  const timers = [];
+  const after = (s, fn) => timers.push({ at: T + s, fn });
+  const cleanup = (s, fn) => timers.push({ at: T + s, fn, keep: true });
+  const rings = [];
+  function pulse(t, big) {
+    const p = el('path', { class: 'ringfx', d: HEX }, gFx);
+    rings.push({ p, t, a: 0, dur: big ? 1.4 : 0.9, s1: big ? 1.55 : 1.3 });
+    t.g.classList.add('ping'); cleanup(0.45, () => t.g.classList.remove('ping'));
+  }
+  const movers = [];
+  function send(legs, fin) {
+    const m = { legs, i: 0, s: 0, fin, x: 0, y: 0, trail: el('path', { class: 'trail' }, gFx), dot: el('circle', { class: 'pkt', r: 4 }, gFx) };
+    const L = links[legs[0].id];
+    heat(L, 1); movers.push(m);
+    const p = pointAt(L, legs[0].dir > 0 ? 0 : L.len); m.x = p[0]; m.y = p[1];
+    return m;
+  }
+  // Packets cut short by a change of section fade out instead of vanishing.
+  const ghosts = [];
+  const ghost = (...els) => ghosts.push({ els, a: 1 });
+  const sparks = [];
+  const spark = (a, b) => sparks.push({ a, b, t: 0, dur: 0.45, dot: el('circle', { class: 'pkt', r: 3 }, gFx) });
+
+  // The board answers: empty sockets light up in rings around a new tile.
+  const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+  function wave(q0, r0, d0, d1, delay) {
+    const occ = new Set(tiles.filter((t) => t.role !== 'old').map((t) => t.q + ',' + t.r));
+    for (let d = d0; d <= d1; d++) {
+      let q = q0 + DIRS[4][0] * d, r = r0 + DIRS[4][1] * d;
+      for (let side = 0; side < 6; side++) for (let j = 0; j < d; j++) {
+        if (!occ.has(q + ',' + r)) {
+          const [x, y] = axial(q, r);
+          const pth = el('path', { class: 'sockfx', d: HEX, transform: 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')' }, gSock);
+          pth.style.opacity = '0';
+          rings.push({ p: pth, flat: true, a: -((delay || 0) + (d - d0) * 0.12), dur: 0.95 });
+        }
+        q += DIRS[side][0]; r += DIRS[side][1];
+      }
+    }
+  }
+
+  /* ---------- the note beside the board, and the words it matches ---------- */
+  const note = { tile: null, want: 0, a: 0, x: 0, y: 0, w: 0, h: 0, cand: -1, jump: true, lastA: '' };
+  let changes = 0;
+  function say(tile, k, text, opt) {
+    opt = opt || {};
+    // The same words on the same tile stay put instead of wiping in again.
+    if (note.tile === tile && note.want && note.a > 0.5 && noteK.textContent === k && noteT.textContent === (text || '') && !opt.rows && !opt.count) return;
+    noteK.textContent = k; noteT.textContent = text || '';
+    noteR.textContent = '';
+    (opt.rows || []).forEach((row) => {
+      const li = document.createElement('li'); if (row[2]) li.className = row[2];
+      row.slice(0, 2).forEach((c) => { const s = document.createElement('span'); s.textContent = c; li.appendChild(s); });
+      noteR.appendChild(li);
+    });
+    noteEl.classList.remove('in'); void noteEl.offsetWidth; noteEl.classList.add('in');
+    note.w = noteEl.offsetWidth; note.h = noteEl.offsetHeight;
+    if (note.tile !== tile) note.cand = -1;
+    if (note.a < 0.05) note.jump = true;
+    note.tile = tile; note.want = 1;
+    if (opt.count) { changes++; countEl.textContent = changes + (changes === 1 ? ' change' : ' changes') + ' so far'; }
+    dirty = true;
+  }
+  const hush = () => { note.want = 0; };
+
+  const sections = {};
+  document.querySelectorAll('[data-beat]').forEach((s) => { sections[+s.dataset.beat] = s; });
+  // A section with marked items steps through them as you scroll. On a wide screen its text is pinned
+  // while the page moves on, so every item gets its turn on the board without pointing at anything.
+  const STEP_VH = 0.5, STEPPED = {};
+  document.querySelectorAll('.beat').forEach((sec) => {
+    const items = [...sec.querySelectorAll('[data-step]')];
+    if (!items.length) return;
+    const pin = document.createElement('div'); pin.className = 'pin';
+    while (sec.firstChild) pin.appendChild(sec.firstChild);
+    sec.appendChild(pin); sec.classList.add('stepped');
+    const dots = document.createElement('span'); dots.className = 'dots'; dots.setAttribute('aria-hidden', 'true');
+    items.forEach(() => dots.appendChild(document.createElement('i')));
+    const kk = pin.querySelector('.kicker'); if (kk) kk.appendChild(dots);
+    STEPPED[+sec.dataset.beat] = { sec, pin, items, dots: [...dots.children], n: items.length, pinned: false, pinTop: 0, pinH: 0 };
+  });
+  let step = -1, stepToken = null, wantStep = -1, wantStepAt = 0;
+  let cueEl = null, cueTile = null;
+  function cue(name, tile) {
+    const sec = sections[beat];
+    let e = null;
+    if (sec && name) e = sec.querySelector('[data-cue~="' + name + '"]') || sec.querySelector('[data-cue~="' + name.split('-')[0] + '"]');
+    if (cueEl && cueEl !== e) cueEl.classList.remove('now');
+    cueEl = e; if (e) e.classList.add('now');
+    cueTile = tile || null;
+    dirty = true;
+  }
+  const live = (list, on) => list.classList.toggle('run', on && sections[beat] && sections[beat].contains(list));
+
+  /* ---------- events ---------- */
+  let running = false, runStarted = 0, nextAt = 2.4, planIdx = 0;
+  function done(pause) { running = false; nextAt = T + (pause == null ? 1.6 : pause); }
+
+  const POOL = ['Figma', 'Notion', 'Spotify'];
+  let growing = false;
+  function grow() {
+    if (growing) return done(0.2);
+    const free = agentA.seats.indexOf(null);
+    if (free < 0) return retirePlugin();
+    growing = true;
+    const name = POOL.shift(), t = plugin(free, name, 'proposed', 'searching');
+    t.o = 0; t.to = 1; t.lift = 1.4; t.tl = 0.6; t.born = T;
+    live(stepsEl, true); cue('grow-1', t);
+    say(t, 'Step 1 · MCP Registry', 'Agent A needs ' + name + '. It searches the official registry.');
+    after(1.8, () => { setMeta(t, 'checking'); cue('grow-2', t); say(t, 'Step 2 · Provider docs', 'It checks ' + name + '’s own documentation.'); });
+    after(3.6, () => { setMeta(t, 'approve?'); t.g.classList.add('asking'); cue('grow-3', t); say(t, 'Step 3 · Needs you', 'Approve the ' + name + ' connection, then sign in once.'); });
+    after(5.4, () => {
+      t.g.classList.remove('asking'); setKind(t, 'plugin'); setMeta(t, 'plugin'); t.tl = 0; t.kl = 9;
+      cue('grow-4', t); say(t, 'Step 4 · Added to Tools', name + ' joins its tools, and the shared library.', { count: true });
+    });
+    after(5.75, () => { pulse(t); wave(t.q, t.r, 1, 3); });
+    after(6.0, () => spark(t, agentA.parts.tools));
+    after(6.45, () => { const tools = agentA.parts.tools; pulse(tools); setMeta(tools, '+ ' + name); cleanup(2.6, () => setMeta(tools, partMeta('tools'))); });
+    after(7.6, () => { live(stepsEl, false); growing = false; done(1.2); });
+  }
+  // Extending, one step at a time: the same proposed tile moves through each step as you scroll, both ways.
+  let growT = null;
+  function growStep(k) {
+    if (!growT || !growT.g.isConnected || growT.role === 'old') {
+      let free = agentA.seats.indexOf(null);
+      if (free < 0) {
+        let oldest = null;
+        agentA.seats.forEach((p) => { if (p && (!oldest || p.born < oldest.born)) oldest = p; });
+        agentA.seats[oldest.seat] = null; POOL.push(oldest.name); bury(oldest); free = oldest.seat;
+      }
+      growT = plugin(free, POOL.shift(), 'proposed', 'searching');
+      growT.o = 0; growT.to = 1; growT.lift = 1.4; growT.born = T;
+    }
+    const t = growT, name = t.name, tools = agentA.parts.tools, was = t.kind;
+    t.g.classList.toggle('asking', k === 3);
+    cue('grow-' + k, t);
+    if (k < 4) {
+      setKind(t, 'proposed'); setMeta(t, ['searching', 'checking', 'approve?'][k - 1]); t.tl = 0.6; t.kl = 7;
+      if (k === 1) { say(t, 'Step 1 · MCP Registry', 'Agent A needs ' + name + '. It searches the official registry.'); wave(t.q, t.r, 1, 3); }
+      if (k === 2) { say(t, 'Step 2 · Provider docs', 'It checks ' + name + '’s own documentation.'); spark(agentA.core, t); }
+      if (k === 3) { say(t, 'Step 3 · Needs you', 'Approve the ' + name + ' connection, then sign in once.'); t.tl = 0.9; }
+      pulse(t, k === 3);
+      after(2.4, () => done(1.8));
+      return;
+    }
+    setKind(t, 'plugin'); setMeta(t, 'plugin'); t.tl = 0; t.kl = 9;
+    say(t, 'Step 4 · Added to Tools', name + ' joins its tools, and the shared library.', { count: was !== 'plugin' });
+    pulse(t); wave(t.q, t.r, 1, 3);
+    after(0.25, () => spark(t, tools));
+    after(0.7, () => { pulse(tools); setMeta(tools, '+ ' + name); cleanup(2.6, () => setMeta(tools, partMeta('tools'))); });
+    after(3.2, () => done(2.4));
+  }
+  function retirePlugin() {
+    let oldest = null;
+    agentA.seats.forEach((p) => { if (p && (!oldest || p.born < oldest.born)) oldest = p; });
+    agentA.seats[oldest.seat] = null; POOL.push(oldest.name);
+    const L = Math.hypot(oldest.hx, oldest.hy) || 1;
+    oldest.role = 'old'; toFront(oldest); oldest.tl = 0.9; oldest.kl = 10;
+    after(0.3, () => { setKind(oldest, 'retiring'); oldest.tx = oldest.hx + oldest.hx / L * R * 0.6; oldest.ty = oldest.hy + oldest.hy / L * R * 0.6; oldest.to = 0; oldest.kp = 2.6; oldest.ko = 2; });
+    cleanup(2.2, () => bury(oldest));
+    setMeta(agentA.parts.tools, partMeta('tools'));
+    cue('grow', oldest);
+    say(oldest, 'Removed', 'The ' + oldest.name + ' plugin left its tools. Nothing else noticed.', { count: true });
+    after(2.6, () => done(1.2));
+  }
+
+  function think(id, then) {
+    const A = agents[id];
+    pulse(A.core);
+    after(0.45, () => pulse(A.parts.loop)); after(0.9, () => pulse(A.parts.model)); after(1.35, () => pulse(A.parts.tools));
+    after(1.9, then);
+  }
+  function message() {
+    const dc = surf.discord.tile;
+    cue('message', agentA.core);
+    say(agentA.core, 'New message · Discord', 'It arrives over RCP, and Agent A gets to work.');
+    send([hop(dc, agentA.core)], () => think('agentA', () => {
+      say(agentA.core, 'Agent A · Reply', 'The reply goes back to Discord over the same line.');
+      send([hop(agentA.core, dc)]);
+      after(2.4, () => done(1.2));
+    }));
+  }
+
+  /* ---------- opening a part: it stands up as a block, and what it holds fans out around it ---------- */
+  const open = { id: null, part: null, kids: [], slots: [], occ: new Set(), manual: false, hold: false, busy: false, touch: 0 };
+  const branches = [];
+  let branchN = 0, openIdx = 0;
+  const OPEN_ORDER = ['tools', 'model', 'team', 'context', 'skills', 'profile', 'loop'];
+  const nextOpen = () => OPEN_ORDER[openIdx++ % OPEN_ORDER.length];
+  const WR = R - GROUT / 2 - 0.5, WH = WR * S3 / 2;
+  function walls(t) {
+    if (t.walls) return;
+    t.walls = ['wr', 'wf', 'wl'].map((c) => { const w = el('path', { class: 'wall ' + c }); t.body.insertBefore(w, t.hex); return w; });
+  }
+  function wallPaths(t, d) {
+    const q = (ps) => 'M' + ps.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L') + 'Z', dn = (p) => [p[0], p[1] + d];
+    const v0 = [WR, 0], v1 = [WR / 2, WH], v2 = [-WR / 2, WH], v3 = [-WR, 0];
+    t.walls[0].setAttribute('d', q([v0, v1, dn(v1), dn(v0)]));
+    t.walls[1].setAttribute('d', q([v1, v2, dn(v2), dn(v1)]));
+    t.walls[2].setAttribute('d', q([v2, v3, dn(v3), dn(v2)]));
+  }
+  // A line in the part's colour, along the seams, from the block to one thing it holds.
+  function branch(a, t) {
+    const pts = route(a, t.slot), seg = [];
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); len += l; }
+    const id = 'br' + branchN++;
+    const L = { id, a, b: t, pts, seg, len, hot: 0, br: true, draw: 0, go: false, dying: false, lastD: '',
+      path: el('path', { class: 'branch', 'data-part': open.id }, gTrace), pad: el('circle', { class: 'pad', 'data-part': open.id, r: 3 }, gTrace) };
+    L.pad.style.opacity = '0';
+    links[id] = L; branches.push(L);
+    return L;
+  }
+  const listOf = (names) => (names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0] || '');
+
+  const titleOf = (id) => (id === 'team' ? 'Team' : agentA.parts[id].def.name);
+  const kidName = (t) => t.name;
+  function openPart(id, mode) {
+    const manual = mode === true, hold = mode === 'hold';
+    if (scene !== 'agent' || !OPT[id]) return done(0.2);
+    const part = id === 'team' ? agentA.team : agentA.parts[id], core = agentA.core, o = OPT[id], title = titleOf(id);
+    const ox = part.hx - core.hx, oy = part.hy - core.hy;
+    const ang = (x, y) => { const vx = x - part.hx, vy = y - part.hy; return Math.atan2(ox * vy - oy * vx, ox * vx + oy * vy); };
+    const named = id === 'tools' ? agentA.seats.filter((p) => p && p.kind === 'plugin').sort((a, b) => ang(a.hx, a.hy) - ang(b.hx, b.hy)) : o.items;
+    const n = named.length + 1;
+    const cells = id === 'team' ? TEAM_SLOTS.slice(0, n) : SLOTS[clamp(n, 4, 7)].slice(0, n).map(([q, r]) => turn(q, r, TURNS[id]));
+    // Nearest row first, swept around the block; the dashed tile for adding more takes the last, outermost place.
+    const slots = cells.map(([a, b]) => {
+      const q = core.q + a, r = core.r + b, [x, y] = axial(q, r);
+      return { q, r, hx: x, hy: y };
+    }).map((sl) => Object.assign(sl, { far: hexDist(sl, part) > 2 ? 1 : 0 })).sort((a, b) => a.far - b.far || ang(a.hx, a.hy) - ang(b.hx, b.hy));
+    Object.assign(open, { id, part, slots, manual, hold, busy: false, touch: T, occ: new Set(slots.map((sl) => sl.q + ',' + sl.r)) });
+    const fresh = (sl, props) => {
+      const t = mkTile(Object.assign({ part: id, q: sl.q, r: sl.r, ref: id, agent: 'agentA', role: 'kid' }, props));
+      t.x = t.tx = part.hx; t.y = t.ty = part.hy; t.s = 0.55; t.ts = 0.55; t.o = 0; t.to = 0;
+      return t;
+    };
+    open.kids = named.map((it, i) => {
+      let t = it;
+      if (id !== 'tools') {
+        const on = o.pick && i === OPT_ON[id];
+        t = fresh(slots[i], { kind: o.team ? 'mate' : 'option', label: it.n, name: it.n, icon: it.icon, meta: on ? 'in use' : o.team ? 'agent' : '', opt: i });
+        if (on) t.g.classList.add('on');
+      }
+      t.slot = slots[i];
+      return t;
+    });
+    const more = fresh(slots[n - 1], { kind: 'more', label: o.more[0], name: o.more[0], icon: '+', meta: '' });
+    more.slot = slots[n - 1];
+    open.kids.push(more);
+    open.kids.forEach((t) => branch(part, t));
+    // The block rises on its own socket, then everything it holds slides out from under it.
+    toFront(part); walls(part);
+    part.g.classList.add('open'); part.td = DEPTH + LIFT * 1.3; part.tl = 1.3; part.kl = 5;
+    pulse(part);
+    open.kids.forEach((t, i) => after(0.22 + i * 0.08, () => {
+      t.tx = t.slot.hx; t.ty = t.slot.hy; t.to = 1; t.ts = 1; t.kp = 4.6; t.ko = 5; t.ks = 5; t.tl = 0.5; t.kl = 5;
+      branches.forEach((L) => { if (L.b === t && !L.dying) L.go = true; });
+      after(0.55, () => { t.tl = 0; });
+    }));
+    // The sockets past the last tile light up: there is room for as many more as you add.
+    after(0.3 + n * 0.08, () => wave(more.slot.q, more.slot.r, 1, 2));
+    cue('open-' + id, part);
+    if (o.pick) say(part, title + ' · Using ' + optName(id), manual ? 'Select another to swap it in.' : 'It uses one at a time. Another can take over between tasks.');
+    else if (o.team) say(part, 'Team', manual ? 'Agent A can hand parts of a big job to other agents. Select one to ask it.' : 'A big job, split between agents, one step at a time.');
+    else if (id === 'tools') say(part, 'Tools · ' + named.length + ' plugins', listOf(named.map((t) => t.name)) + '. ' + (manual ? 'Select one to use it.' : 'Plugins add more.'));
+    else say(part, title + ' · ' + named.length + ' ' + o.unit, manual ? 'Select one to see what it does.' : listOf(named.map((it) => it.n)) + '.');
+    const real = open.kids.filter((k) => k.kind !== 'more');
+    if (manual || hold) { running = true; runStarted = T; nextAt = Infinity; }
+    if (manual) return;
+    if (hold) {
+      // Held open: keep showing what it holds, one after another, until the section moves on or you take over.
+      const held = () => open.id === id && open.hold;
+      let j = 0;
+      const tick = () => {
+        if (!held()) return;
+        if (o.pick) { choose(real[(OPT_ON[id] + 1) % real.length]); after(3.6, tick); }
+        else if (o.team) askMate(real[j % real.length], j % real.length + 1, () => { j++; after(0.8, tick); });
+        else { useItem(real[j++ % real.length]); after(2.6, tick); }
+      };
+      after(o.pick ? 1.3 : 1.0, tick);
+      return;
+    }
+    const shut = () => { closePart(); after(0.9, () => done(0.8)); };
+    if (o.pick) {
+      after(2.0, () => choose(real[(OPT_ON[id] + 1) % real.length]));
+      after(5.6, shut);
+    } else if (o.team) {
+      let i = 0;
+      const step = () => {
+        if (open.id !== id) return;
+        if (i >= real.length) { say(part, 'Team · Done', real.length + ' agents, one job, one step at a time.'); after(2.4, shut); return; }
+        askMate(real[i++], i, step);
+      };
+      after(1.8, step);
+    } else {
+      real.forEach((t, i) => after(1.6 + i * 0.4, () => useItem(t, true)));
+      after(1.6 + real.length * 0.4 + 2.4, shut);
+    }
+  }
+  function closePart() {
+    if (!open.id) return;
+    const part = open.part;
+    part.g.classList.remove('open'); part.td = DEPTH; part.tl = 0; part.kl = 6;
+    for (const t of open.kids) {
+      if (t.role === 'kid') { t.role = 'old'; t.tx = part.hx; t.ty = part.hy; t.ts = 0.55; t.to = 0; t.kp = 5; t.ko = 4; t.g.classList.remove('on'); }
+      else { t.tx = t.hx; t.ty = t.hy; t.kp = 5; }
+    }
+    for (let i = movers.length - 1; i >= 0; i--) {
+      const m = movers[i];
+      if (m.legs.some((lg) => links[lg.id] && links[lg.id].br)) { ghost(m.dot, m.trail); movers.splice(i, 1); }
+    }
+    branches.forEach((L) => { if (L.lib) return; L.dying = true; L.hot = 0; L.path.classList.remove('hot'); });
+    setMeta(part, baseMeta(part));
+    Object.assign(open, { id: null, part: null, kids: [], slots: [], occ: new Set(), manual: false, hold: false, busy: false });
+    cue(null); hush();
+  }
+  function closeByUser() { closePart(); done(1.6); }
+  // Parts that use one thing at a time: the chosen one travels to the block and takes over.
+  function choose(t) {
+    const id = open.id;
+    if (!id || open.busy || !open.kids.includes(t)) return;
+    const part = open.part, title = titleOf(id), was = optName(id), now = optName(id, t.opt);
+    open.touch = T;
+    if (t.opt === OPT_ON[id]) { pulse(t); say(part, title + ' · Using ' + was, was + ' is already in use.'); return; }
+    open.busy = true;
+    t.tl = 0.35;
+    send([hop(t, part)], () => {
+      t.tl = 0;
+      OPT_ON[id] = t.opt; part.v++;
+      open.kids.forEach((k) => { if (k.kind === 'more') return; k.g.classList.toggle('on', k === t); setMeta(k, k === t ? 'in use' : ''); });
+      pulse(part, true); setMeta(part, now);
+      say(part, 'Swapped between tasks', title + ': ' + was + ' → ' + now + '. ' + (OPT[id].items[t.opt].d || 'Nothing else had to change.'), { count: true });
+      open.busy = false;
+    });
+  }
+  // Parts that hold several things: the block reaches out and uses one.
+  function useItem(t, quiet) {
+    const id = open.id;
+    if (!id || !open.kids.includes(t)) return;
+    open.touch = T;
+    const info = id === 'tools' ? TOOL_INFO[t.name] : OPT[id].items[t.opt].d;
+    if (!quiet) say(t, titleOf(id) + ' · ' + kidName(t), info || '');
+    send([hop(open.part, t)], () => { pulse(t); t.g.classList.add('fresh'); cleanup(1.2, () => t.g.classList.remove('fresh')); });
+  }
+  // Team: Agent A asks another agent, and the answer comes back.
+  function askMate(t, n, then) {
+    const part = open.part;
+    open.touch = T;
+    say(t, (n ? 'Step ' + n + ' · ' : 'Team · ') + t.name, OPT.team.items[t.opt].d);
+    send([hop(part, t, () => pulse(t)), hop(t, part)], () => { pulse(part); if (then) after(0.35, then); });
+  }
+  // The dashed tile: how more of this kind get added.
+  function addMore(t) {
+    open.touch = T;
+    pulse(t); wave(t.slot.q, t.slot.r, 1, 2);
+    say(t, titleOf(open.id) + ' · ' + t.name, OPT[open.id].more[1]);
+  }
+
+  function refreshLinks() {
+    const tf = TRACE_FOCUS[beat];
+    for (const id in links) {
+      const L = links[id];
+      L.path.classList.toggle('gone', linkGone(L));
+      L.path.classList.toggle('dim', !!tf && !tf.includes(id));
+    }
+    dirty = true;
+  }
+  function setPresent(id, on) {
+    agents[id].present = on;
+    if (!on && shared[id]) { if (lastShared === shared[id]) lastShared = null; bury(shared[id]); shared[id] = null; }
+    refreshLinks();
+  }
+  // Plugins live in the host's library: an ability Agent A added can join another agent's tools.
+  const SEAT = { agentB: [1, 1], agentC: [1, 1] }, shared = { agentB: null, agentC: null };
+  let shareTo = 'agentB', lastShared = null;
+  const newestSeat = (kind) => { let t = null; agentA.seats.forEach((p) => { if (p && (!kind || p.kind === kind) && (!t || p.born > t.born)) t = p; }); return t; };
+  function share() {
+    const src = newestSeat('plugin');
+    if (!src) return done(0.2);
+    const to = agents[shareTo].present ? shareTo : 'agentB';
+    shareTo = to === 'agentB' ? 'agentC' : 'agentB';
+    const A = agents[to], seat = SEAT[to], prev = shared[to];
+    if (prev) { bury(prev); prev.tl = 0.6; }
+    const t = mkTile({ kind: 'plugin', q: A.def.q + seat[0], r: A.def.r + seat[1], agent: to, role: 'shared', ref: 'library', name: src.name, base: 'plugin', big: ICONS[src.name] ? src.name : undefined, born: T });
+    t.x = src.x; t.y = src.y; t.o = 0; t.to = 1; t.lift = 0.3; t.tl = 1.4; t.kp = 1.5; t.ko = 5; t.kl = 5;
+    shared[to] = t; lastShared = t;
+    cue('share', t);
+    say(t, 'Shared library', 'Agent A’s ' + src.name + ' plugin joins ' + A.def.name + '’s tools. Not installed twice.', { count: true });
+    after(1.9, () => { t.tl = 0; t.kl = 8; });
+    after(2.3, () => { pulse(t); wave(t.q, t.r, 1, 2); });
+    after(2.7, () => pulse(A.parts.tools));
+    after(3.6, () => done(1.4));
+  }
+
+  /* ---------- the shared library: one plugin or skill, turned on by many agents ---------- */
+  // Each agent that turns a library item on gets its own tile for it, joined to the one installed copy by a line.
+  const LIB_BEAT = 2, LIB_SEAT = { plugin: [1, 1], skill: [-2, 2] };
+  const lib = { src: null, skill: null, att: {}, you: [] };
+  function libWire(a, b, part) {
+    const pts = route(a, b), seg = [];
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); len += l; }
+    const id = 'lw' + branchN++;
+    const L = { id, a, b, pts, seg, len, hot: 0, br: true, lib: true, draw: 0, go: true, dying: false, lastD: '',
+      path: el('path', { class: 'branch', 'data-part': part }, gTrace), pad: el('circle', { class: 'pad', 'data-part': part, r: 3 }, gTrace) };
+    L.pad.style.opacity = '0';
+    links[id] = L; branches.push(L);
+    return L;
+  }
+  function libClear() {
+    for (const k in lib.att) { bury(lib.att[k].tile); lib.att[k].wire.dying = true; }
+    lib.you.forEach((w) => { w.dying = true; });
+    if (lib.skill) bury(lib.skill);
+    Object.assign(lib, { src: null, skill: null, att: {}, you: [] });
+  }
+  function libSource() {
+    let src = agentA.seats.find((p) => p && p.kind === 'plugin' && p.name === 'Figma');
+    if (src) return src;
+    let free = agentA.seats.indexOf(null);
+    if (free < 0) {
+      let oldest = null;
+      agentA.seats.forEach((p) => { if (p && (!oldest || p.born < oldest.born)) oldest = p; });
+      agentA.seats[oldest.seat] = null; POOL.push(oldest.name); bury(oldest); free = oldest.seat;
+    }
+    const i = POOL.indexOf('Figma'); if (i >= 0) POOL.splice(i, 1);
+    src = plugin(free, 'Figma', 'plugin', 'plugin'); src.o = 0; src.born = T;
+    return src;
+  }
+  function attach(kind, agentId, on, fresh) {
+    const key = kind + '-' + agentId, cur = lib.att[key];
+    if (!on) { if (cur) { bury(cur.tile); cur.wire.dying = true; delete lib.att[key]; } return null; }
+    if (cur) return cur;
+    const A = agents[agentId], seat = LIB_SEAT[kind], src = kind === 'plugin' ? lib.src : lib.skill, part = kind === 'plugin' ? 'tools' : 'skills';
+    const t = mkTile({ kind: kind === 'plugin' ? 'plugin' : 'skill', q: A.def.q + seat[0], r: A.def.r + seat[1], agent: agentId, role: 'shared', ref: 'library', name: src.name, base: kind, big: kind === 'plugin' ? src.name : 'Skill', born: T });
+    const w = libWire(src, t, part);
+    if (fresh) { t.o = 0; t.to = 0; t.s = 0.7; t.ts = 0.7; after(0.3, () => { t.to = 1; t.ts = 1; pulse(t); pulse(A.parts[part]); }); }
+    else w.draw = 1;
+    return (lib.att[key] = { tile: t, wire: w });
+  }
+  // Shown as a pose for each step: scrolling to a step builds everything before it and animates the step itself.
+  function libStep(k) {
+    const a = agentA, B = agents.agentB, C = agents.agentC;
+    lib.src = libSource();
+    const src = lib.src, b = attach('plugin', 'agentB', k >= 2, k === 2), c = attach('plugin', 'agentC', k >= 2, k === 2);
+    if (k >= 3 && !lib.skill) {
+      lib.skill = mkTile({ kind: 'skill', q: a.def.q + LIB_SEAT.skill[0], r: a.def.r + LIB_SEAT.skill[1], label: 'Writing style', agent: 'agentA', role: 'shared', ref: 'library', name: 'Writing style', base: 'skill', big: 'Skill', born: T });
+      if (k === 3) { lib.skill.o = 0; lib.skill.lift = 1.4; }
+    }
+    if (k < 3 && lib.skill) { attach('skill', 'agentB', false); attach('skill', 'agentC', false); bury(lib.skill); lib.skill = null; }
+    const sb = attach('skill', 'agentB', k >= 3, k === 3), sc = attach('skill', 'agentC', k >= 3, k === 3);
+    if (k >= 4 && !lib.you.length) lib.you = [libWire(a.parts.profile, B.parts.profile, 'profile'), libWire(a.parts.profile, C.parts.profile, 'profile')];
+    if (k < 4 && lib.you.length) { lib.you.forEach((w) => { w.dying = true; }); lib.you = []; }
+    const fin = (s) => after(s, () => done(1.6));
+    if (k === 1) {
+      cue('lib-1', src); src.tl = 0.6; after(0.9, () => { src.tl = 0; });
+      pulse(src, true); wave(src.q, src.r, 1, 2);
+      say(src, 'Shared library · Figma', 'Installed once, with one sign-in, for the whole system.');
+      return fin(2.6);
+    }
+    if (k === 2) {
+      cue('lib-2', b.tile);
+      say(src, 'Shared library · Figma', 'Agents B and C use it too. The same install, the same sign-in.');
+      [b, c].forEach((x, i) => after(0.7 + i * 0.25, () => send([hop(src, x.tile)], () => { pulse(x.tile); pulse(agents[x.tile.agent].parts.tools); })));
+      after(2.6, () => [src, b.tile, c.tile].forEach((t) => pulse(t)));
+      return fin(3.4);
+    }
+    if (k === 3) {
+      cue('lib-3', lib.skill); lib.skill.tl = 0;
+      say(lib.skill, 'Shared library · Writing style', 'Written once, and used by every agent that needs it.');
+      after(0.8, () => [sb, sc].forEach((x) => send([hop(lib.skill, x.tile)], () => pulse(x.tile))));
+      return fin(3.2);
+    }
+    cue('lib-4', a.parts.profile);
+    say(a.parts.profile, 'Profile · About you', 'One profile per person, read by every agent you talk to.');
+    [a.parts.profile, B.parts.profile, C.parts.profile].forEach((t) => pulse(t));
+    after(0.8, () => lib.you.forEach((w) => send([hop(w.a, w.b)], () => pulse(w.b))));
+    fin(3.4);
+  }
+
+  function setOn(s, on) {
+    s.on = on;
+    s.tile.g.classList.toggle('off', !on); s.lab.el.classList.toggle('off', !on); links[s.id].path.classList.toggle('off', !on);
+  }
+  function relay() {
+    const pool = SURF.filter((x) => x.on && agents[x.agent].present);
+    const s = beat === 3 || !pool.length ? surf.discord : rand(pool), A = agents[s.agent];
+    if (!s.on) return done(0.2);
+    cue('relay', s.tile);
+    say(s.tile, s.name, 'Your message reaches ' + A.def.name + ' over RCP.');
+    send([hop(s.tile, A.core)], () => think(s.agent, () => {
+      say(A.core, A.def.name, 'Works on it and replies.');
+      send([hop(A.core, s.tile)], () => {
+        pulse(s.tile); cue('relay', s.tile);
+        say(s.tile, s.name, 'The reply arrives in ' + s.name + '.');
+        after(2, () => done(1));
+      });
+    }));
+  }
+  function switchSurface() {
+    const d = surf.discord;
+    if (!d.on) return done(0.2);
+    cue('switch', d.tile);
+    say(d.tile, 'Discord', 'You close Discord halfway through a task.');
+    after(1.4, () => { setOn(d, false); pulse(agentA.core, true); cue('switch', agentA.core); say(agentA.core, 'Agent A', 'Keeps going. The task was never inside Discord.'); });
+    after(4, () => {
+      cue('switch', cc);
+      say(cc, 'Control Center', 'You open it. The same task, right where you left it.');
+      send([hop(cc, agentA.core), hop(agentA.core, cc)], () => pulse(cc));
+    });
+    after(8.6, () => { setOn(d, true); done(1.2); });
+  }
+
+  // Control Center: watch every agent, talk to it, run its schedules, and bring it back when it breaks.
+  function watch() {
+    const on = AGENTS.filter((x) => agents[x.id].present);
+    cue('watch', cc);
+    on.forEach((x, i) => after(i * 0.3, () => send([hop(agents[x.id].core, cc)], i === on.length - 1 ? () => pulse(cc) : null)));
+    say(cc, 'Control Center · Right now', '', { rows: [['Agent A', 'Weekly plan · step 3'], ['Agent B', 'Reviewing PR #42'], ['Agent C', 'Idle']] });
+    after(3.8, () => {
+      say(cc, 'Control Center · You', '“How far along is the weekly plan?”');
+      send([hop(cc, agentA.core)], () => think('agentA', () => {
+        say(agentA.core, 'Agent A', '“Step 3 of 5. Done by six.”');
+        send([hop(agentA.core, cc)], () => { pulse(cc); after(2, () => done(1.2)); });
+      }));
+    });
+  }
+  function jobs() {
+    const b = agents.agentB, rows = [['Daily 09:00', 'Inbox summary'], ['Sun 18:00', 'Weekly plan'], ['Hourly', 'PR check']];
+    cue('jobs', cc);
+    say(cc, 'Control Center · Scheduled jobs', '', { rows });
+    after(2.4, () => { think('agentB', () => send([hop(b.core, cc)], () => pulse(cc))); say(b.core, 'Agent B · Scheduled job', 'The hourly PR check runs on time.'); });
+    after(6, () => { say(cc, 'Control Center · Scheduled jobs', 'You pause the PR check.', { rows: rows.slice(0, 2).concat([['Hourly', 'Paused']]) }); pulse(cc); });
+    after(8.6, () => done(1.2));
+  }
+  function breakFix() {
+    const b = agents.agentB, ring = PARTS.map((d) => b.parts[d.id]), ln = links['cc-agentB'];
+    cue('breakFix', b.core);
+    b.core.g.classList.add('failed'); ring.forEach((t) => { t.down = true; }); ln.path.classList.add('off');
+    say(b.core, 'Agent B · Stopped', 'Its process crashed in the middle of a task.');
+    after(2.6, () => {
+      cue('breakFix', cc); ln.path.classList.remove('off');
+      say(cc, 'Control Center', 'You see what happened, and restart Agent B.');
+      send([hop(cc, b.core)], () => {
+        pulse(b.core, true); b.core.g.classList.remove('failed');
+        ring.forEach((t, i) => after(i * 0.12, () => { t.down = false; t.lift = 0.8; }));
+        wave(b.def.q, b.def.r, 2, 3, 0.3);
+        say(b.core, 'Agent B · Running', 'Back up, with its record intact.');
+        after(3, () => done(1.4));
+      });
+    });
+  }
+
+  // Agent to agent, across apps: Agent A asks Agent C over RCP, and brings the answer back to Discord.
+  const ASK = '“Can we do dinner with the family on Friday?”', PLAN_OK = '“Friday at 7 works for everyone.”';
+  // One leg at a time as you scroll.
+  function chainStep(k) {
+    const d = surf.discord, g = surf.telegram, a = agentA, c = agents.agentC;
+    if (!d.on) setOn(d, true);
+    const fin = () => after(1.4, () => done(1.4));
+    if (k === 1) { cue('chain-1', d.tile); say(d.tile, 'Discord · You', ASK); send([hop(d.tile, a.core)], () => think('agentA', fin)); }
+    if (k === 2) { cue('chain-2', c.core); say(c.core, 'Agent to agent', 'Agent A asks Agent C, over RCP.'); send([hop(a.core, c.core)], () => think('agentC', fin)); }
+    if (k === 3) { cue('chain-3', g.tile); say(g.tile, 'Telegram · Agent C', 'Asks the family group. Everyone can do 7pm.'); send([hop(c.core, g.tile)], () => { pulse(g.tile); send([hop(g.tile, c.core)], () => { pulse(c.core); fin(); }); }); }
+    if (k === 4) {
+      cue('chain-4', a.core); say(a.core, 'Agent C → Agent A', PLAN_OK);
+      send([hop(c.core, a.core)], () => {
+        pulse(a.core); say(d.tile, 'Discord · Agent A', '“Friday at 7 works for everyone. It’s in your calendar.”');
+        send([hop(a.core, d.tile)], () => { pulse(d.tile); fin(); });
+      });
+    }
+  }
+  function chain() {
+    const d = surf.discord, g = surf.telegram, a = agentA, c = agents.agentC;
+    if (!d.on) setOn(d, true);
+    live(chainEl, true);
+    const ask = () => {
+      cue('chain-1', d.tile);
+      say(d.tile, 'Discord · You', ASK);
+      send([hop(d.tile, a.core)], () => think('agentA', delegate));
+    };
+    const delegate = () => {
+      cue('chain-2', c.core);
+      say(c.core, 'Agent to agent', 'Agent A asks Agent C, over RCP.');
+      send([hop(a.core, c.core)], () => think('agentC', check));
+    };
+    const check = () => {
+      cue('chain-3', g.tile);
+      say(g.tile, 'Telegram · Agent C', 'Asks the family group. Everyone can do 7pm.');
+      send([hop(c.core, g.tile)], () => { pulse(g.tile); send([hop(g.tile, c.core)], () => after(0.4, answer)); });
+    };
+    const answer = () => {
+      cue('chain-4', a.core);
+      say(a.core, 'Agent C → Agent A', PLAN_OK);
+      send([hop(c.core, a.core)], reply);
+    };
+    const reply = () => {
+      pulse(a.core); cue('chain-4', d.tile);
+      say(d.tile, 'Discord · Agent A', '“Friday at 7 works for everyone. It’s in your calendar.”');
+      send([hop(a.core, d.tile)], () => {
+        pulse(d.tile);
+        after(2.4, () => { live(chainEl, false); done(1.6); });
+      });
+    };
+    ask();
+  }
+
+  const EVENTS = {
+    message, share, watch, jobs, breakFix, relay, switch: switchSurface,
+    grow: (k) => (k ? growStep(+k) : grow()),
+    chain: (k) => (k ? chainStep(+k) : chain()),
+    lib: (k) => libStep(+k || 1),
+    // In a stepping section a part stays open while its item is the one being shown.
+    open: (id) => openPart(id || nextOpen(), STEPPED[beat] ? 'hold' : false),
+  };
+  const PLAN = {
+    0: ['open-tools', 'message', 'grow', 'open-skills', 'open-team', 'open-context'],
+    1: ['grow'],
+    2: ['lib-1'],
+    3: ['relay', 'switch'],
+    4: ['chain'],
+    5: ['watch', 'jobs', 'breakFix'],
+    6: ['relay', 'share', 'watch', 'chain', 'switch'],
+  };
+  const FIG = ['Fig. 1 · One Renoa agent', 'Fig. 1A · Extending', 'Fig. 2A · Shared library', 'Fig. 2B · RCP', 'Fig. 2C · Agent to agent', 'Fig. 2D · Control Center', 'Fig. 2 · One Renoa system'];
+  const BEAT_FRAME = ['agent', 'grow', 'crew', 'apps', 'a2a', 'control', 'eco'];
+  const FOCUS = { 2: ['agentA', 'agentB', 'agentC'], 3: ['agentA', 'discord', 'whatsapp', 'cc'], 4: ['agentA', 'agentC', 'discord', 'telegram'], 5: ['agentA', 'agentB', 'agentC', 'cc'] };
+  const TRACE_FOCUS = { 2: [], 3: ['discord', 'whatsapp', 'cc-agentA'], 4: ['discord', 'telegram', 'ac'], 5: ['cc-agentA', 'cc-agentB', 'cc-agentC'] };
+
+  function runNext() {
+    // A stepping section repeats the item being shown; the others follow their plan.
+    const plan = PLAN[beat] || PLAN[0], [name, arg] = (STEPPED[beat] && stepToken ? stepToken : plan[planIdx++ % plan.length]).split('-');
+    running = true; runStarted = T; nextAt = Infinity;
+    EVENTS[name](arg);
+  }
+  // Leaving a section finishes whatever was mid-way, so every section starts from a settled board.
+  function settle(stay) {
+    const keepGrow = stay === 1;
+    closePart();
+    if (stay !== LIB_BEAT) libClear();
+    for (const tm of timers.splice(0)) if (tm.keep) tm.fn();
+    for (const m of movers.splice(0)) ghost(m.dot, m.trail);
+    for (const s of sparks.splice(0)) ghost(s.dot);
+    for (const id in links) { links[id].hot = 0; links[id].path.classList.remove('hot', 'off'); }
+    growing = false;
+    // Stepping within Extending keeps its proposed tile where it is; leaving finishes it.
+    if (!keepGrow) growT = null;
+    agentA.seats.forEach((p) => { if (p && p.kind === 'proposed' && !(keepGrow && p === growT)) setKind(p, 'plugin'); });
+    for (const t of tiles.slice()) {
+      if (t.role === 'old') { t.to = 0; t.ko = Math.max(t.ko, 5); continue; }
+      if (keepGrow && t === growT) continue;
+      t.down = false; t.hold = 0; t.tl = 0; t.ts = 1; t.to = 1; t.tx = t.hx; t.ty = t.hy;
+      t.g.classList.remove('fresh', 'ping', 'asking', 'failed');
+      if (t.mt) setMeta(t, baseMeta(t));
+    }
+    SURF.forEach((s) => setOn(s, !s.soon));
+    stepsEl.classList.remove('run'); chainEl.classList.remove('run');
+    cue(null); hush();
+    running = false;
+  }
+  function play(token, manual) {
+    const [name, arg] = token.split('-');
+    if (!EVENTS[name]) return;
+    if (paused) setPaused(false);
+    settle();
+    const i = (PLAN[beat] || []).findIndex((p) => p === token || p.split('-')[0] === name);
+    if (i >= 0) planIdx = i + 1;
+    running = true; runStarted = T; nextAt = Infinity;
+    if (name === 'open') openPart(arg || nextOpen(), manual);
+    else EVENTS[name](arg);
+  }
+  function setBeat(b) {
+    if (b === beat) return;
+    const first = beat < 0;
+    beat = b; planIdx = 0;
+    settle();
+    frameName = BEAT_FRAME[b];
+    const ns = b >= 2 ? 'eco' : 'agent';
+    if (ns !== scene) { scene = ns; stage.dataset.scene = ns; }
+    figEl.textContent = FIG[b];
+    if (b < 2 && agents.agentC.present) setPresent('agentC', false);
+    if (b >= 2 && !agents.agentC.present) setPresent('agentC', true);
+    refreshLinks();
+    nextAt = T + (first ? 4.4 : 0.9);
+    for (const k in STEPPED) { STEPPED[k].items.forEach((e) => e.classList.remove('on')); STEPPED[k].dots.forEach((d) => d.classList.remove('on', 'done')); }
+    step = -1; stepToken = null;
+    if (STEPPED[b]) { wantStep = readStep(); setStep(wantStep, true); }
+    if (paused) snap();
+  }
+  // Start the item being shown now: its words, its line to the board and its first movement all appear at once.
+  function startStep() {
+    const S = STEPPED[beat], e = S && S.items[step];
+    if (!e) return;
+    cue(stepToken, refTile(e.dataset.ref));
+    if (paused) { nextAt = T; return; }
+    running = true; runStarted = T; nextAt = Infinity;
+    const [name, arg] = stepToken.split('-');
+    EVENTS[name](arg);
+  }
+  function setStep(i, entering) {
+    const S = STEPPED[beat];
+    if (!S) return;
+    step = i;
+    S.items.forEach((e, j) => e.classList.toggle('on', j === i));
+    S.dots.forEach((d, j) => { d.classList.toggle('on', j === i); d.classList.toggle('done', j < i); });
+    stepToken = S.items[i].dataset.cue.split(' ')[0];
+    if (!entering) settle(beat);
+    startStep();
+    dirty = true;
+  }
+  function readStep() {
+    const S = STEPPED[beat];
+    if (!S) return -1;
+    if (S.pinned) {
+      const r = S.sec.getBoundingClientRect();
+      return clamp(Math.floor((S.pinTop - r.top) / (r.height - S.pinH) * S.n), 0, S.n - 1);
+    }
+    const H = window.innerHeight, sb = stage.getBoundingClientRect().bottom, line = phone ? sb + (H - sb) * 0.3 : H * 0.55;
+    let i = 0;
+    S.items.forEach((e, j) => { if (e.getBoundingClientRect().top < line) i = j; });
+    return i;
+  }
+  function layoutSteps() {
+    const H = window.innerHeight;
+    for (const k in STEPPED) {
+      const S = STEPPED[k];
+      S.sec.style.height = ''; S.pin.style.top = '';
+      S.sec.classList.toggle('pinned', window.innerWidth >= 860);
+      const h = S.pin.offsetHeight;
+      S.pinned = window.innerWidth >= 860 && h <= H - 16;
+      if (!S.pinned) { S.sec.classList.remove('pinned'); continue; }
+      S.pinH = h; S.pinTop = Math.max(8, (H - h) / 2);
+      S.pin.style.top = S.pinTop + 'px';
+      S.sec.style.height = Math.round(h + S.n * H * STEP_VH) + 'px';
+    }
+  }
+
+  function hoverSet() {
+    if (!hover) return null;
+    const r = hover.ref;
+    if (r === 'core') return [agentA.core];
+    if (agentA.parts[r]) return [agentA.parts[r]];
+    if (r === 'plugins') return agentA.seats.filter(Boolean);
+    if (agents[r]) return tiles.filter((t) => t.agent === r && t.role !== 'shared');
+    if (r === 'library') return tiles.filter((t) => t.role === 'plugin' || t.role === 'shared');
+    if (r === 'cc') return [cc];
+    if (r === 'team') return [agentA.team];
+    if (surf[r]) return [surf[r].tile];
+    return null;
+  }
+  function refTile(r) {
+    if (r === 'core') return agentA.core;
+    if (agentA.parts[r]) return agentA.parts[r];
+    if (r === 'plugins') return newestSeat();
+    if (r === 'library') return lastShared || newestSeat('plugin');
+    if (r === 'cc') return cc;
+    if (r === 'team') return agentA.team;
+    if (agents[r]) return agents[r].core;
+    if (surf[r]) return surf[r].tile;
+    return null;
+  }
+  function focusFor(t, hs) {
+    if (t.agent && !agents[t.agent].present) return 0;
+    if (t.role === 'old') return 1;
+    if (scene === 'agent') {
+      if (t.agent !== 'agentA') return 0;
+      if (open.id) {
+        if (t === open.part || open.kids.includes(t)) return 1;
+        if (t.role === 'core') return 0.5;
+        return open.occ.has(t.q + ',' + t.r) ? 0 : 0.16;
+      }
+      if (hs) return hs.includes(t) || t.role === 'core' ? 1 : 0.24;
+      switch (beat) {
+        case 1: return t.role === 'plugin' || t.role === 'core' || t.ref === 'tools' || t.ref === 'skills' || t.ref === 'profile' ? 1 : 0.3;
+        default: return 1;
+      }
+    }
+    if (t.role === 'team') return 0;
+    if (hs) return hs.includes(t) ? 1 : 0.28;
+    const f = FOCUS[beat];
+    return !f || f.includes(t.agent || t.ref) ? 1 : 0.3;
+  }
+
+  /* ---------- camera ---------- */
+  const view = { W: 800, H: 700, left: 0, right: 800, top: 76, bot: 600, cx: 400, cy: 350 };
+  const cam = { x: 0, y: 0, U: 1 }, camV = { x: 0, y: 0, z: 0 };
+  // A critically damped spring: the camera keeps its speed when the target moves, so it never lurches.
+  function damp(cur, to, key, st, dt) {
+    const w = 2 / st, x = w * dt, e = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+    const ch = cur - to, tmp = (camV[key] + w * ch) * dt;
+    camV[key] = (camV[key] - w * tmp) * e;
+    return to + (ch + tmp) * e;
+  }
+  function boxOf(pred) {
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const t of tiles) { if (t.role === 'old' || t.role === 'team' || !pred(t)) continue; x0 = Math.min(x0, t.hx - R); x1 = Math.max(x1, t.hx + R); y0 = Math.min(y0, t.hy - R * S3 / 2); y1 = Math.max(y1, t.hy + R * S3 / 2); }
+    return { x0, x1, y0, y1, px: phone ? 18 : 40, pt: phone ? 30 : 44, pb: phone ? 30 : 44, max: 1 };
+  }
+  function frameBox(name) {
+    switch (name) {
+      case 'grow': return { x0: -150, x1: 150, y0: -110, y1: 316, px: phone ? 10 : 28, pt: 14, pb: 22, max: 1.35, room: true };
+      case 'crew': return boxOf((t) => !!t.agent);
+      case 'apps': return boxOf((t) => t.agent === 'agentA' || t.ref === 'discord' || t.ref === 'whatsapp' || t.ref === 'cc');
+      case 'control': return boxOf((t) => !!t.agent || t.ref === 'cc');
+      case 'a2a': return boxOf((t) => t.agent === 'agentA' || t.agent === 'agentC' || t.ref === 'discord' || t.ref === 'telegram');
+      case 'eco': return boxOf(() => true);
+      case 'open': {
+        let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+        [open.part, agentA.core].concat(open.slots).forEach((p) => { x0 = Math.min(x0, p.hx - R); x1 = Math.max(x1, p.hx + R); y0 = Math.min(y0, p.hy - R * S3 / 2 - (p === open.part ? LIFT * 1.3 : 0)); y1 = Math.max(y1, p.hy + R * S3 / 2); });
+        return { x0, x1, y0, y1, px: phone ? 10 : 28, pt: 16, pb: 20, max: 1.15, room: true };
+      }
+      default: return { x0: -150, x1: 245, y0: -160, y1: 316, px: phone ? 8 : 28, pt: 16, pb: 20, max: 1.3, room: true };
+    }
+  }
+  // Frames that carry notes keep a clear band for them: above the agent when the view is wide, beside it when tall.
+  function camTarget() {
+    const b = frameBox(open.id ? 'open' : frameName), vw = view.right - view.left, vh = view.bot - view.top;
+    const fit = (w, h) => clamp(Math.min((w - 2 * b.px) / (b.x1 - b.x0), (h - b.pt - b.pb) / (b.y1 - b.y0)), 0.12, b.max);
+    let rx = 0, ry = 0;
+    if (b.room && !phone) { if (fit(vw, vh - NOTE_TOP) >= fit(vw - NOTE_ROOM, vh)) ry = NOTE_TOP; else rx = NOTE_ROOM; }
+    const U = fit(vw - rx, vh - ry);
+    return { x: (b.x0 + b.x1) / 2 + rx / 2 / U, y: (b.y0 + b.y1) / 2 + (b.pb - b.pt - ry) / 2 / U, U };
+  }
+  function layout() {
+    layoutSteps();
+    const r = stage.getBoundingClientRect();
+    view.W = Math.max(r.width, 200); view.H = Math.max(r.height, 200);
+    phone = window.innerWidth < 860;
+    if (phone) {
+      view.left = 0; view.right = view.W; view.top = 74;
+      capEl.style.left = '';
+      board.style.maskImage = board.style.webkitMaskImage = '';
+    } else {
+      const colRight = beatsEl.getBoundingClientRect().right - r.left;
+      view.left = Math.min(colRight + 48, view.W * 0.62); view.right = view.W - parseFloat(getComputedStyle(capEl).right || '32'); view.top = 76;
+      capEl.style.left = view.left + 'px';
+      const m = 'linear-gradient(90deg, transparent ' + Math.max(0, view.left - 150) + 'px, #000 ' + Math.max(0, view.left - 20) + 'px)';
+      board.style.maskImage = board.style.webkitMaskImage = m;
+    }
+    view.bot = view.H - (capEl.offsetHeight || 48) - (phone ? 16 : 40);
+    view.cx = (view.left + view.right) / 2; view.cy = (view.top + view.bot) / 2;
+    labels.forEach((L) => { L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; });
+    if (note.tile) { note.w = noteEl.offsetWidth; note.h = noteEl.offsetHeight; }
+    const t = camTarget(); cam.x = t.x; cam.y = t.y; cam.U = t.U; camV.x = camV.y = camV.z = 0;
+  }
+  const toScreen = (x, y) => [view.cx + (x - cam.x) * cam.U, view.cy + (y - cam.y) * cam.U];
+
+  /* ---------- update ---------- */
+  function snap() {
+    const hs = hoverSet();
+    for (const t of tiles) { t.hold = 0; t.x = t.tx; t.y = t.ty; t.s = t.down ? 0.94 : t.ts; t.o = t.down ? 0.12 : t.to; t.lift = t.down ? 0 : t.tl; t.dp = t.td; t.f = t.ft = focusFor(t, hs); }
+    for (const L of branches) L.draw = L.dying ? 0 : L.go ? 1 : 0;
+    const c = camTarget(); cam.x = c.x; cam.y = c.y; cam.U = c.U; camV.x = camV.y = camV.z = 0;
+  }
+  function update(dt) {
+    T += dt;
+    for (let i = timers.length - 1; i >= 0; i--) if (timers[i] && timers[i].at <= T) { const t = timers.splice(i, 1)[0]; t.fn(); }
+    if (!running && T >= nextAt) runNext();
+    if (running && !open.manual && !open.hold && T - runStarted > 40) { settle(); nextAt = T + 1; }
+    if (open.manual && T - open.touch > 18) closeByUser();
+    const k = (s) => 1 - Math.exp(-dt * s), hs = hoverSet();
+    for (const t of tiles) {
+      const held = t.hold && T < t.hold, back = open.id && t.agent === 'agentA' && t.ft < 0.6 && t.role !== 'old';
+      const to = held ? 0 : t.down ? 0.12 : t.to, ts = t.down || back ? 0.94 : t.ts;
+      const tl = held ? 1.6 : t.down || back ? 0 : Math.max(t.tl, hs && hs.includes(t) ? 0.3 : 0, t === tileHover && scene === 'agent' ? 0.3 : 0);
+      t.x += (t.tx - t.x) * k(t.kp); t.y += (t.ty - t.y) * k(t.kp);
+      t.s += (ts - t.s) * k(t.ks); t.o += (to - t.o) * k(t.ko); t.lift += (tl - t.lift) * k(t.kl); t.dp += (t.td - t.dp) * k(6);
+      t.ft = focusFor(t, hs); t.f += (t.ft - t.f) * k(5);
+    }
+    for (let i = tiles.length - 1; i >= 0; i--) { const t = tiles[i]; if (t.role === 'old' && t.to === 0 && t.o < 0.02) killTile(t); }
+    for (let i = branches.length - 1; i >= 0; i--) {
+      const L = branches[i];
+      L.draw += ((L.dying ? 0 : L.go ? 1 : 0) - L.draw) * k(L.dying ? 7 : 4.4);
+      if (L.dying && L.draw < 0.02) { L.path.remove(); L.pad.remove(); delete links[L.id]; branches.splice(i, 1); }
+    }
+    for (let i = ghosts.length - 1; i >= 0; i--) {
+      const g = ghosts[i]; g.a -= dt / 0.3;
+      if (g.a <= 0) { g.els.forEach((e) => e.remove()); ghosts.splice(i, 1); } else g.els.forEach((e) => { e.style.opacity = g.a.toFixed(3); });
+    }
+    const c = camTarget(), st = 0.62;
+    cam.x = damp(cam.x, c.x, 'x', st, dt); cam.y = damp(cam.y, c.y, 'y', st, dt);
+    cam.U = Math.exp(damp(Math.log(cam.U), Math.log(c.U), 'z', st, dt));
+    const speed = PX_SPEED / cam.U;
+    for (let i = movers.length - 1; i >= 0; i--) {
+      const m = movers[i]; m.s += speed * dt;
+      let L = links[m.legs[m.i].id];
+      while (m.s >= L.len) {
+        m.s -= L.len; heat(L, -1);
+        const cb = m.legs[m.i].cb; if (cb) cb();
+        m.i++; if (m.i >= m.legs.length) break;
+        L = links[m.legs[m.i].id]; heat(L, 1);
+      }
+      if (m.i >= m.legs.length) { m.dot.remove(); m.trail.remove(); movers.splice(i, 1); if (m.fin) m.fin(); continue; }
+      const leg = m.legs[m.i], u = leg.dir > 0 ? m.s : L.len - m.s, p = pointAt(L, u);
+      m.x = p[0]; m.y = p[1]; m.L = L; m.u = u; m.dir = leg.dir;
+    }
+    for (let i = sparks.length - 1; i >= 0; i--) { const s = sparks[i]; s.t += dt / s.dur; if (s.t >= 1) { s.dot.remove(); sparks.splice(i, 1); } }
+    for (let i = rings.length - 1; i >= 0; i--) { const r = rings[i]; r.a += dt / r.dur; if (r.a >= 1) { r.p.remove(); rings.splice(i, 1); } }
+  }
+
+  /* ---------- render ---------- */
+  let lastW = '', lastK = '';
+  const rects = [];
+  const overlap = (x, y, w, h, r) => { const ox = Math.min(x + w, r[2]) - Math.max(x, r[0]), oy = Math.min(y + h, r[3]) - Math.max(y, r[1]); return ox > 0 && oy > 0 ? ox * oy : 0; };
+  function render(dt) {
+    const wt = 'translate(' + view.cx.toFixed(1) + ' ' + view.cy.toFixed(1) + ') scale(' + cam.U.toFixed(4) + ') translate(' + (-cam.x).toFixed(1) + ' ' + (-cam.y).toFixed(1) + ')';
+    if (wt !== lastW) { world.setAttribute('transform', wt); lastW = wt; }
+    const kk = Math.min(1.25, Math.max(0.7, 1 / cam.U)).toFixed(3);
+    if (kk !== lastK) { board.style.setProperty('--k', kk); lastK = kk; }
+    const tr = R * cam.U;
+    if ((tr < 34) !== stage.hasAttribute('data-far')) stage.toggleAttribute('data-far');
+    if ((tr < 50) !== stage.hasAttribute('data-tight')) stage.toggleAttribute('data-tight');
+    rects.length = 0;
+    for (const t of tiles) {
+      const ts = 'translate(' + t.x.toFixed(1) + ' ' + t.y.toFixed(1) + ') scale(' + t.s.toFixed(3) + ')';
+      if (ts !== t.lastT) { t.g.setAttribute('transform', ts); t.lastT = ts; }
+      const op = (t.o * t.f).toFixed(3);
+      if (op !== t.lastO) { t.g.style.opacity = op; t.g.style.pointerEvents = op < 0.1 ? 'none' : ''; t.lastO = op; }
+      if (t.walls) {
+        const dk = t.dp.toFixed(1);
+        if (dk !== t.lastD) { wallPaths(t, t.dp); t.lastD = dk; }
+        if (!t.g.classList.contains('open') && t.dp < DEPTH + 0.3) { t.walls.forEach((w) => w.remove()); t.walls = null; t.lastD = ''; }
+      }
+      const lf = Math.max(0, t.lift).toFixed(2);
+      if (lf !== t.lastL) { t.body.setAttribute('transform', 'translate(0 ' + (-lf * LIFT).toFixed(1) + ')'); t.shd.style.opacity = Math.min(0.2, lf * 0.13).toFixed(3); t.lastL = lf; }
+      // Tiles still arriving count as taken, so a note never lands where one is about to drop.
+      if (Math.max(op, t.to * (t.ft || 0)) > 0.25) { const [sx, sy] = toScreen(t.x, t.y - t.lift * LIFT), rp = R * cam.U * t.s; rects.push([sx - rp, sy - rp * 0.87, sx + rp, sy + rp * 0.87]); }
+    }
+    for (const L of branches) {
+      const dd = L.draw > 0.995 ? 1 : L.draw, key = dd.toFixed(3);
+      if (key !== L.lastD) {
+        const pts = slice(L, 0, dd * L.len), e = L.pts[L.pts.length - 1];
+        L.path.setAttribute('d', 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L'));
+        L.pad.setAttribute('cx', e[0].toFixed(1)); L.pad.setAttribute('cy', e[1].toFixed(1));
+        L.pad.style.opacity = dd > 0.96 ? '1' : '0';
+        L.lastD = key;
+      }
+      L.pad.setAttribute('r', (3.2 / cam.U).toFixed(2));
+      // Keep notes off the lines too, not just the tiles.
+      if (!L.dying) for (const p of L.pts) { const [sx, sy] = toScreen(p[0], p[1]); rects.push([sx - 20, sy - 20, sx + 20, sy + 20]); }
+    }
+    for (const m of movers) {
+      m.dot.setAttribute('cx', m.x.toFixed(1)); m.dot.setAttribute('cy', m.y.toFixed(1)); m.dot.setAttribute('r', (4.2 / cam.U).toFixed(2));
+      if (!m.L) continue;
+      const tl = TRAIL_PX / cam.U, pts = m.dir > 0 ? slice(m.L, m.u - tl, m.u) : slice(m.L, m.u, m.u + tl);
+      m.trail.setAttribute('d', 'M' + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L'));
+    }
+    for (const s of sparks) {
+      const e = 1 - Math.pow(1 - s.t, 2), ay = s.a.y - s.a.lift * LIFT, by = s.b.y - s.b.lift * LIFT;
+      s.dot.setAttribute('cx', (s.a.x + (s.b.x - s.a.x) * e).toFixed(1)); s.dot.setAttribute('cy', (ay + (by - ay) * e).toFixed(1)); s.dot.setAttribute('r', (3.4 / cam.U).toFixed(2));
+    }
+    for (const r of rings) {
+      if (r.flat) { r.p.style.opacity = r.a <= 0 ? '0' : (Math.sin(Math.PI * r.a) * 0.6).toFixed(3); continue; }
+      const e = 1 - Math.pow(1 - r.a, 3), s = r.t.s * (1 + (r.s1 - 1) * e);
+      r.p.setAttribute('transform', 'translate(' + r.t.x.toFixed(1) + ' ' + (r.t.y - r.t.lift * LIFT).toFixed(1) + ') scale(' + s.toFixed(3) + ')');
+      r.p.style.opacity = (0.7 * (1 - r.a)).toFixed(3);
+    }
+    for (const L of labels) {
+      const op = L.op().toFixed(2);
+      if (op !== L.lastO) { L.el.style.opacity = op; L.lastO = op; }
+      if (op === '0') continue;
+      const p = L.at(), [sx, sy] = toScreen(p[0], p[1]);
+      let x = sx - L.w / 2, y = sy - L.h / 2;
+      if (L.side === 'above') y = sy - L.pad - L.h;
+      else if (L.side === 'below') y = sy + L.pad;
+      L.el.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px)';
+      if (!L.inside && op > 0.25) rects.push([x, y, x + L.w, y + L.h]);
+    }
+    placeNote(dt);
+  }
+
+  // The note sits in the emptiest nearby spot, and slides when the action moves.
+  function placeNote(dt) {
+    const t = note.tile;
+    const on = t && t.g.isConnected && t.o * t.f > 0.15 ? note.want : 0;
+    note.a += (on - note.a) * (dt > 0 ? 1 - Math.exp(-dt * 10) : 1);
+    if (note.a < 0.01 || !t) {
+      if (note.lastA !== '0') { noteEl.style.opacity = '0'; leader.style.opacity = '0'; note.lastA = '0'; }
+      note.jump = true; return;
+    }
+    const [sx, sy] = toScreen(t.x, t.y - t.lift * LIFT), rp = R * cam.U * t.s, w = note.w, h = note.h;
+    const x0 = view.left + 6, x1 = Math.max(x0, view.right - w - 6), y0 = phone ? 12 : view.top + 4, y1 = Math.max(y0, view.bot - h - 4);
+    let x = 12, y = 12;
+    if (!phone) {
+      const g = 30, C = [
+        [sx + rp + g, sy - h / 2], [sx - rp - g - w, sy - h / 2],
+        [sx + rp * 0.3, sy - rp - g - h], [sx + rp * 0.3, sy + rp + g],
+        [sx - rp * 0.3 - w, sy - rp - g - h], [sx - rp * 0.3 - w, sy + rp + g],
+        [sx + rp * 0.3, y0], [sx - rp * 0.3 - w, y0], [x1, sy - h / 2],
+      ];
+      const sc = C.map((c) => {
+        const cx = clamp(c[0], x0, x1), cy = clamp(c[1], y0, y1);
+        let v = (Math.abs(cx - c[0]) + Math.abs(cy - c[1])) * 30;
+        for (const r of rects) v += overlap(cx, cy, w, h, r);
+        return [v, cx, cy];
+      });
+      let pick = 0;
+      sc.forEach((v, i) => { if (v[0] + i * 400 < sc[pick][0] + pick * 400) pick = i; });
+      // Stay put unless the current spot has become clearly worse, so the note does not hop while the camera moves.
+      if (note.cand >= 0 && sc[note.cand][0] < sc[pick][0] + w * h * 0.22) pick = note.cand;
+      note.cand = pick; x = sc[pick][1]; y = sc[pick][2];
+    }
+    if (note.jump || dt <= 0) { note.x = x; note.y = y; note.jump = false; }
+    else { const kk = 1 - Math.exp(-dt * 7); note.x += (x - note.x) * kk; note.y += (y - note.y) * kk; }
+    const a = note.a.toFixed(3);
+    noteEl.style.transform = 'translate(' + note.x.toFixed(1) + 'px,' + note.y.toFixed(1) + 'px)';
+    noteEl.style.opacity = a; note.lastA = a;
+    const nx = clamp(sx, note.x, note.x + w), ny = clamp(sy, note.y, note.y + h), dx = nx - sx, dy = ny - sy, d = Math.hypot(dx, dy);
+    if (d > rp * 1.1) {
+      const px = sx + dx / d * rp * 0.72, py = sy + dy / d * rp * 0.72;
+      lLine.setAttribute('d', 'M' + px.toFixed(1) + ' ' + py.toFixed(1) + 'L' + nx.toFixed(1) + ' ' + ny.toFixed(1));
+      lDot.setAttribute('cx', px.toFixed(1)); lDot.setAttribute('cy', py.toFixed(1));
+      leader.style.opacity = a;
+    } else leader.style.opacity = '0';
+  }
+
+  /* ---------- tether: from the words to the tile they describe ---------- */
+  const tet = { x: 0, y: 0, r: 0, a: 0, ax: 0, ay: 0, ex: 0, ey: 0 };
+  function updateTether(dt) {
+    let src = null, t = null;
+    if (hover) { src = hover.el; t = refTile(hover.ref); } else if (cueEl) { src = cueEl; t = cueTile; }
+    if (t && (!t.g.isConnected || t.o * t.f < 0.2)) t = null;
+    const pp = src && src.closest('[data-part]'), part = pp ? pp.dataset.part : '';
+    if (part !== (tether.dataset.part || '')) { if (part) tether.dataset.part = part; else delete tether.dataset.part; }
+    let want = 0;
+    const sr = stage.getBoundingClientRect(), H = window.innerHeight;
+    if (t && src && visible) {
+      const [sx, sy] = toScreen(t.x, t.y - t.lift * LIFT);
+      const inView = sx > view.left - 16 && sx < view.right + 16 && sy > view.top - 40 && sy < view.bot + 16;
+      // Start at the right edge of the paragraph, level with the words, so the line never crosses text.
+      const rs = src.getClientRects(), rc = rs.length ? rs[rs.length - 1] : src.getBoundingClientRect();
+      const block = src.closest('p, li') || src;
+      const ax = Math.max(rc.right, block.getBoundingClientRect().right) + 10, ay = rc.top + Math.min(rc.height / 2, 14);
+      want = inView && (phone ? ay > sr.bottom + 20 && ay < H - 12 : ay > 56 && ay < H - 32) ? 1 : 0;
+      const tx = sr.left + sx, ty = sr.top + sy, rpx = (R + 4) * cam.U * t.s;
+      const kk = dt > 0 && tet.a > 0.02 ? 1 - Math.exp(-dt * 10) : 1;
+      tet.x += (tx - tet.x) * kk; tet.y += (ty - tet.y) * kk; tet.r += (rpx - tet.r) * kk;
+      tet.ax = ax; tet.ay = ay;
+      if (phone) { tet.ex = Math.min(ax, sr.right - 16); tet.ey = sr.bottom + 10; tet.ax = Math.min(ax, sr.right - 16); }
+      else { tet.ex = Math.max(sr.left + view.left - 30, ax + 16); tet.ey = ay; }
+    }
+    tet.a += (want - tet.a) * (dt > 0 ? 1 - Math.exp(-dt * 7) : 1);
+    if (tet.a < 0.01) { tether.style.opacity = '0'; return; }
+    tether.style.opacity = (tet.a * (hover ? 0.85 : 0.55)).toFixed(3);
+    const dx = tet.ex - tet.x, dy = tet.ey - tet.y, L = Math.hypot(dx, dy) || 1;
+    const hr = tet.r * 0.93, px = tet.x + dx / L * hr, py = tet.y + dy / L * hr;
+    tLine.setAttribute('d', 'M' + tet.ax.toFixed(1) + ' ' + tet.ay.toFixed(1) + 'L' + tet.ex.toFixed(1) + ' ' + tet.ey.toFixed(1) + 'L' + px.toFixed(1) + ' ' + py.toFixed(1));
+    tHex.setAttribute('d', hexPath(tet.x, tet.y, Math.max(1, tet.r), 3));
+    tDot.setAttribute('cx', tet.ax.toFixed(1)); tDot.setAttribute('cy', tet.ay.toFixed(1));
+  }
+
+  /* ---------- input: words and tiles point at each other, and play on select ---------- */
+  function setHover(h) {
+    if (hover && hover.el) hover.el.classList.remove('hot');
+    hover = h; if (h && h.el) h.el.classList.add('hot');
+    dirty = true;
+  }
+  document.querySelectorAll('[data-ref]').forEach((e) => {
+    if (e.closest('#board')) return;
+    const on = () => setHover({ el: e, ref: e.dataset.ref });
+    const off = () => { if (hover && hover.el === e) setHover(null); };
+    e.addEventListener('pointerenter', on); e.addEventListener('pointerleave', off);
+    e.addEventListener('focus', on); e.addEventListener('blur', off);
+  });
+  document.querySelectorAll('[data-cue]').forEach((e) => {
+    const go = () => {
+      const sec = e.closest('[data-beat]'); if (!sec || +sec.dataset.beat !== beat) return;
+      play(e.dataset.cue.split(' ')[0]);
+    };
+    e.addEventListener('click', go);
+    e.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); } });
+  });
+  gTiles.addEventListener('pointerover', (e) => {
+    const g = e.target.closest('.tile[data-ref]'); if (!g) return;
+    const ht = g.__t && g.__t.agent === 'agentA' && g.__t.role !== 'core' ? g.__t : null;
+    if (ht !== tileHover) { tileHover = ht; dirty = true; }
+    const sec = sections[beat], txt = sec && sec.querySelector('[data-ref="' + g.dataset.ref + '"]');
+    if (txt && (!hover || hover.el !== txt)) setHover({ el: txt, ref: g.dataset.ref, tile: true });
+  });
+  gTiles.addEventListener('pointerout', (e) => {
+    const g = e.target.closest('.tile[data-ref]'); if (!g || (e.relatedTarget && g.contains(e.relatedTarget))) return;
+    if (tileHover && tileHover.g === g) { tileHover = null; dirty = true; }
+    if (hover && hover.tile) setHover(null);
+  });
+  // On the board, a part opens; what it holds can be swapped in or used; the block or the core closes it again.
+  gTiles.addEventListener('click', (e) => {
+    const g = e.target.closest('.tile'), t = g && g.__t;
+    if (!t || scene !== 'agent' || t.agent !== 'agentA') return;
+    if (open.id) {
+      if (open.hold) { open.hold = false; open.manual = true; }
+      if (t === open.part || t.role === 'core') return closeByUser();
+      if (open.kids.includes(t)) return t.kind === 'more' ? addMore(t) : OPT[open.id].pick ? choose(t) : OPT[open.id].team ? askMate(t, 0) : useItem(t);
+    }
+    const id = t.role === 'part' ? t.def.id : t.role === 'plugin' ? 'tools' : t.role === 'team' ? 'team' : null;
+    if (id && beat <= 1) play('open-' + id, true);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open.id) closeByUser(); });
+
+  /* ---------- loop ---------- */
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
+    // A section changes only after the reading line has rested in it briefly, so a fast scroll skips straight through.
+    if (wantBeat >= 0 && wantBeat !== beat && (beat < 0 || performance.now() - wantAt > 90)) setBeat(wantBeat);
+    else if (STEPPED[beat] && wantStep >= 0 && wantStep !== step && performance.now() - wantStepAt > 60) setStep(wantStep);
+    if (visible && (!paused || dirty)) {
+      if (!paused) update(dt); else snap();
+      render(paused ? 0 : dt); updateTether(paused ? 0 : dt); dirty = false;
+    } else if (!visible && tet.a > 0) { tet.a = 0; tether.style.opacity = '0'; }
+    requestAnimationFrame(frame);
+  }
+  function readBeat() {
+    const H = window.innerHeight, sb = stage.getBoundingClientRect().bottom;
+    const line = phone ? sb + (H - sb) * 0.3 : H * 0.55;
+    let b = 0;
+    document.querySelectorAll('[data-beat]').forEach((e) => { if (e.getBoundingClientRect().top < line) b = +e.dataset.beat; });
+    // Going back one section takes a clear move up, so small scrolls near a boundary do not flip it back and forth.
+    if (beat > 0 && b === beat - 1 && sections[beat].getBoundingClientRect().top < line + H * 0.1) b = beat;
+    if (b !== wantBeat) { wantBeat = b; wantAt = performance.now(); }
+    const ws = b === beat ? readStep() : -1;
+    if (ws !== wantStep) { wantStep = ws; wantStepAt = performance.now(); }
+    dirty = true;
+  }
+  let sq = false;
+  window.addEventListener('scroll', () => {
+    if (!sq) { sq = true; requestAnimationFrame(() => { sq = false; readBeat(); }); }
+  }, { passive: true });
+
+  function setPaused(p) {
+    paused = p; stage.classList.toggle('paused', p);
+    pauseBtn.setAttribute('aria-pressed', String(p));
+    pauseBtn.querySelector('span').textContent = p ? 'Play' : 'Pause';
+    pauseBtn.querySelector('svg').innerHTML = p ? '<path d="M3 1.5v9l7.5-4.5z" fill="currentColor"/>' : '<rect x="2" y="1" width="3" height="10" rx="0.5" fill="currentColor"/><rect x="7" y="1" width="3" height="10" rx="0.5" fill="currentColor"/>';
+    if (p) snap();
+    dirty = true;
+  }
+  pauseBtn.addEventListener('click', () => setPaused(!paused));
+
+  // A new window size changes how tall the stepping sections are, so read the section again.
+  new ResizeObserver(() => { layout(); readBeat(); dirty = true; }).observe(stage);
+  if ('IntersectionObserver' in window) new IntersectionObserver((es) => { visible = es[0].isIntersecting; if (visible) dirty = true; }).observe(stage);
+  document.addEventListener('visibilitychange', () => { visible = !document.hidden; last = performance.now(); dirty = true; });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { layout(); readBeat(); dirty = true; });
+
+  // Opening: the agent assembles itself, core first, then its parts, then what it has added.
+  function assemble() {
+    const order = [agentA.core].concat(PARTS.map((d) => agentA.parts[d.id]), [agentA.team], agentA.seats.filter(Boolean));
+    order.forEach((t, i) => { t.hold = T + 0.3 + i * 0.09; t.o = 0; t.lift = 1.6; t.kl = 8; });
+    after(0.3, () => pulse(agentA.core, true));
+    after(1.4, () => { wave(0, 0, 3, 6); say(agentA.core, 'Fig. 1 · Agent A', 'One agent: a core, six parts, and three plugins that extend its tools.'); });
+  }
+
+  layout();
+  readBeat(); setBeat(wantBeat);
+  for (let i = 0; i < 30; i++) update(1 / 60);
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    setPaused(true);
+    say(agentA.core, 'Motion paused', 'Your system asks for less motion. Press Play, or select an underlined phrase, to watch.');
+  } else assemble();
+  requestAnimationFrame(frame);
+})();
+</script>

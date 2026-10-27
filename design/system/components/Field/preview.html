@@ -1,0 +1,10 @@
+<!-- @dsCard group="Forms" height=250 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans)} .wrap{padding:20px 24px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px}</style>
+<div class="wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));align-items:start;gap:20px 24px">
+  <div class="rn-field"><label for="f1">Model</label><select class="rn-input" id="f1"><option>claude-opus-5-5</option><option>claude-sonnet-5</option></select><span class="rn-hint">Swapping the model leaves every other part as it is.</span></div>
+  <div class="rn-field"><label for="f2">Preset</label><input class="rn-input rn-mono" id="f2" value="renoa.personal.assistant.v3"></div>
+  <div class="rn-field" data-invalid><label for="f3">Discord channel</label><input class="rn-input" id="f3" value="#general-chat" aria-invalid="true" aria-describedby="f3e"><span class="rn-error" id="f3e">Agent A can't see this channel. Invite it to the server, then try again.</span></div>
+  <div class="rn-field"><label for="f4">Instructions</label><textarea class="rn-input" id="f4" placeholder="How should this agent sound?"></textarea></div>
+</div>
+<script></script>

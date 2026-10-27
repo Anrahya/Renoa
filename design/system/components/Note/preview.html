@@ -1,0 +1,32 @@
+<!-- @dsCard group="Parts" height=250 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans)} .wrap{position:relative;padding:20px 24px;display:flex;flex-wrap:wrap;align-items:center;gap:28px 40px} .pair{position:relative;display:flex;align-items:center;gap:36px} .pair svg.ln{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none} p{margin:0;max-width:26em;font-size:15px;line-height:1.6}</style>
+<div class="wrap">
+  <div class="pair" id="a">
+    <div id="ta"></div>
+    <div class="rn-note"><div class="rn-note-head">Step 3 · Needs you</div><p class="rn-note-text">Approve the Figma connection?</p></div>
+  </div>
+  <div class="pair" id="b">
+    <div id="tb"></div>
+    <div class="rn-note"><div class="rn-note-head">Task 7F3A · Picked up again</div><ol class="rn-note-rows"><li><span>Step 13</span><span>Saved</span></li><li><span>Restart</span><span>Step 14</span></li><li><span>Step 14</span><span>Picked up</span></li></ol></div>
+  </div>
+  <div class="pair" id="c">
+    <div id="tc"></div>
+    <div class="rn-note"><div class="rn-note-head">Agent to agent <span class="rn-tag">Being built</span></div><p class="rn-note-text">Agent A asks Agent B, over RCP.</p></div>
+  </div>
+  <p>Agent A checks the provider first. <span class="rn-cue" tabindex="0" aria-current="true">It asks you to approve the connection.</span> Then it <span class="rn-cue" tabindex="0">adds the plugin</span>.</p>
+</div>
+<script>
+Renoa.Tile(document.getElementById('ta'), { kind: 'proposed', label: 'Figma', meta: 'approve?', size: 44 });
+Renoa.Tile(document.getElementById('tb'), { kind: 'core', label: 'Core', meta: 'never changes', size: 44 });
+Renoa.Tile(document.getElementById('tc'), { kind: 'core', label: 'Core', size: 44 });
+['a', 'b', 'c'].forEach(function (id) {
+  var pair = document.getElementById(id), tile = pair.firstElementChild, note = pair.querySelector('.rn-note');
+  var NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg'); svg.setAttribute('class', 'ln');
+  var p = pair.getBoundingClientRect(), t = tile.getBoundingClientRect(), n = note.getBoundingClientRect();
+  var x0 = t.left - p.left + t.width * 0.82, y = t.top - p.top + t.height / 2 - 2, x1 = n.left - p.left;
+  var line = document.createElementNS(NS, 'path'); line.setAttribute('class', 'rn-leader'); line.setAttribute('d', 'M' + x0 + ' ' + y + 'L' + x1 + ' ' + y);
+  var dot = document.createElementNS(NS, 'circle'); dot.setAttribute('class', 'rn-leader-dot'); dot.setAttribute('cx', x0); dot.setAttribute('cy', y); dot.setAttribute('r', 2.75);
+  svg.appendChild(line); svg.appendChild(dot); pair.appendChild(svg);
+});
+</script>
