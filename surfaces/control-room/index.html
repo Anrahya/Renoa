@@ -6,6 +6,12 @@
     <meta name="theme-color" content="#181714" />
     <meta name="description" content="Renoa is a modular AI system for configuring agents, models, and tools through one shared Host." />
     <title>Renoa — A modular AI system</title>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has("host") && !params.has("tasks") && !params.has("preview")) {
+        window.location.replace("/design/landing.html");
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

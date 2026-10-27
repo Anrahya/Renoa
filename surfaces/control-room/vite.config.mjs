@@ -1,11 +1,29 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { cpSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rcpBrowserEntry = fileURLToPath(
   new URL("../../clients/typescript/src/browser.ts", import.meta.url),
 );
+
+const designSource = fileURLToPath(new URL("../../design", import.meta.url));
+const designTarget = resolve(fileURLToPath(new URL("./public", import.meta.url)), "design");
+
+function copyDesign() {
+  rmSync(designTarget, { recursive: true, force: true });
+  cpSync(designSource, designTarget, { recursive: true });
+}
+
+function designAssets() {
+  return {
+    name: "renoa-design-assets",
+    configureServer() { copyDesign(); },
+    buildStart() { copyDesign(); },
+  };
+}
 
 export default defineConfig({
   build: {
@@ -41,5 +59,5 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
   },
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), designAssets()],
 });

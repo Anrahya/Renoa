@@ -11,7 +11,6 @@ import { useControlRoom } from "./use-control-room";
 import { HostLoadingState } from "./host-loading";
 import { Workspace } from "./workspace";
 const HostPanel = lazy(async () => { const { HostPanel } = await import("./host-panel"); return { default: HostPanel }; });
-import { LandingPage } from "./landing-page";
 
 const PreviewApp = import.meta.env.DEV
   ? lazy(async () => import("./host-preview"))
@@ -26,11 +25,11 @@ export function App() {
       </Suspense>
     );
   }
-  // The public introduction never mounts management hooks or fetches Host data.
-  // Query routes also work with the Host's plain static-file server.
+  // The document shell sends a bare visit to the static landing page, and query
+  // routes work with the Host's plain static-file server.
   const params = new URLSearchParams(window.location.search);
   if (params.has("tasks")) return <LiveApp />;
-  return params.has("host") ? <Suspense fallback={<HostLoadingState />}><HostPanel /></Suspense> : <LandingPage />;
+  return params.has("host") ? <Suspense fallback={<HostLoadingState />}><HostPanel /></Suspense> : null;
 }
 
 function LiveApp() {
