@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.drawable.toDrawable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
@@ -142,13 +143,15 @@ fun RenoaTheme(
 }
 
 /**
- * Draws the status and navigation bars for [theme] rather than for the phone's setting, which the
- * owner may have overridden: icons that read on its ground, and the navigation bar over it.
+ * Draws the window and its status and navigation bars for [theme] rather than for the phone's
+ * setting, which the owner may have overridden: its ground behind the first frame, icons that read
+ * on it, and the navigation bar over it. Before the app's first frame they follow the phone.
  */
 @Composable
 fun SystemBars(theme: ThemeName) {
     val activity = LocalActivity.current as? ComponentActivity ?: return
     LaunchedEffect(activity, theme) {
+        activity.window.setBackgroundDrawable(theme.colors.background.toArgb().toDrawable())
         val scrim = theme.colors.background.copy(alpha = 0.9f).toArgb()
         if (theme.dark) {
             activity.enableEdgeToEdge(SystemBarStyle.dark(TRANSPARENT), SystemBarStyle.dark(scrim))
@@ -158,7 +161,7 @@ fun SystemBars(theme: ThemeName) {
     }
 }
 
-/** Follows the phone's animation setting while the screen shows, so turning animations off stops the loops at once. */
+/** Follows the phone's animation setting for as long as the theme is composed, so turning animations off stops the loops at once. */
 @Composable
 private fun rememberReducedMotion(): Boolean {
     val resolver = LocalContext.current.contentResolver

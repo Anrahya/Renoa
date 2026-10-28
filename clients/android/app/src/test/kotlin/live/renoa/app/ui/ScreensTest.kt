@@ -124,6 +124,7 @@ class ScreensTest : ScreenTest() {
         val model = HomeViewModel(repository)
         show(ThemeName.Paper, seconds = 3.97f) { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
         compose.waitForIdle()
+        compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
         snapshot("home-paper")
     }
 

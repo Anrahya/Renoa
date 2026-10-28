@@ -103,11 +103,27 @@ class ThemeTest {
     @Test
     fun everyColourIsTheDesignSystemsToken() {
         val blocks = mapOf(ThemeName.Paper to tokens(":root"), ThemeName.Graphite to tokens(":root[data-theme=\"dark\"]"))
+        assertTrue(RenoaColors::class.memberProperties.isNotEmpty())
         for ((theme, declared) in blocks) {
             for (token in RenoaColors::class.memberProperties) {
                 val name = token.name.replace(Regex("[A-Z]")) { "-" + it.value.lowercase() }
                 assertEquals(declared[name], token.get(theme.colors), "${theme.name} --$name")
             }
         }
+    }
+
+    /** The colours Android draws before the app's first frame, from `colors.xml` in `res/values` and `res/values-night`. */
+    private fun resourceColour(folder: String, name: String): Color {
+        val xml = File("src/main/res/$folder/colors.xml").readText()
+        val hex = Regex("""<color name="$name">#([0-9A-Fa-f]{6})</color>""").find(xml)?.groupValues?.get(1)
+        assertTrue(hex != null, "$folder/colors.xml has no $name")
+        return Color(0xFF000000 or hex.toLong(16))
+    }
+
+    @Test
+    fun theWindowAndTheIconStandOnATokenToo() {
+        assertEquals(ThemeName.Paper.colors.background, resourceColour("values", "window_background"))
+        assertEquals(ThemeName.Graphite.colors.background, resourceColour("values-night", "window_background"))
+        assertEquals(ThemeName.Graphite.colors.background, resourceColour("values", "ic_launcher_background"))
     }
 }

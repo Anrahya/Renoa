@@ -11,7 +11,7 @@ import live.renoa.app.ui.ScreenTest
 import org.junit.After
 import org.junit.Test
 import org.robolectric.annotation.Config
-import kotlin.test.assertTrue
+import kotlin.test.assertEquals
 
 /** A tablet, as wide as the owner's Xiaomi Pad held upright. */
 @Config(sdk = [36], qualifiers = "w900dp-h1440dp-xhdpi")
@@ -29,7 +29,8 @@ class TabletTest : ScreenTest() {
         val density = compose.activity.resources.displayMetrics.density
         val mark = compose.onNodeWithContentDescription("Renoa, change colours").fetchSemanticsNode().boundsInRoot
         val margin = (900 - MAX_CONTENT_WIDTH.value) / 2
-        assertTrue(mark.left / density >= margin, "Home starts ${mark.left / density}dp from the edge, inside the ${margin}dp margin")
+        // The mark sits 20dp inside the column's left edge, so the column starts at the margin: centred.
+        assertEquals(margin + 20, mark.left / density, 1f, "Home's left edge")
         snapshot("tablet-home")
     }
 }
