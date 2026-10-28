@@ -364,9 +364,9 @@ node's owning principal: the upgrade adopts the owner of a node whose existing
 tasks all belong to one principal, and a node shared by several principals keeps
 serving its tasks without an owner. Schema 13 adds the device keys of signed-in
 apps and the record of stopped commands, and leaves every existing device as it
-was. A pre-upgrade binary cannot
-open schema 13; any owner-requested recovery requires the matching identity
-snapshot and binary from that same backup. Install `renoa-management.service`, then reload systemd, restart the
+was. A pre-upgrade binary cannot open schema 13; any owner-requested recovery
+requires the matching identity snapshot and binary from that same backup.
+Install `renoa-management.service`, then reload systemd, restart the
 coordinator and enable the management service. The example runs as the existing
 Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
 
@@ -743,7 +743,8 @@ tailscale serve status
 Coordinator schema 13 also adds the table of recorded stops and a view that
 decides whether a command has settled. Opening an older database creates both and
 leaves its rows alone. RCP binding version 14 adds the status in the task
-directory, stopping a command, and live text from a running turn, so the
+directory, stopping a command, and live text from a running turn, besides the
+device-key sign-in and device operations described above, so the
 coordinator, node, Pi node, and every surface must be upgraded together; a
 peer still on version 13 is refused at authentication.
 
