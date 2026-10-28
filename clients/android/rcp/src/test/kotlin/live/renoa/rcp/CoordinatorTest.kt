@@ -28,4 +28,9 @@ abstract class CoordinatorTest {
         newCommandId: () -> Uuid = { Uuid.random() },
     ): RcpSurface =
         WebSocketRcpSurface(coordinator.endpoint, authentication, rcpState, newCommandId = newCommandId).also { clients += it }
+
+    /** Waits until the app has stored the event at [sequence], which happens only after it applied it. */
+    protected suspend fun awaitCursor(taskId: Uuid, sequence: Long) {
+        while (state.cursor(taskId) != sequence) kotlinx.coroutines.delay(10)
+    }
 }

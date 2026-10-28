@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -20,6 +21,10 @@ import mockwebserver3.RecordedRequest
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.security.PublicKey
+import java.security.SecureRandom
+import java.security.Signature
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
@@ -33,6 +38,11 @@ class FakeCoordinator : AutoCloseable {
     class TaskRecord(val nodeId: Uuid, val target: String) {
         val journal = mutableListOf<JsonObject>()
         val commands = LinkedHashMap<String, String>()
+        var status = "idle"
+
+        /** Commands whose execution has ended, and commands with a recorded stop. */
+        val ended = mutableSetOf<String>()
+        val stopped = mutableSetOf<String>()
     }
 
     val principalId: Uuid = Uuid.random()
@@ -40,7 +50,14 @@ class FakeCoordinator : AutoCloseable {
     val validTickets = mutableSetOf<String>()
     val nodeId: Uuid = Uuid.random()
     var nodeOnline = true
-    val advertised = mutableListOf("agent:arcee", "agent:alpha")
+    /** Advertised targets and the names their owner gave them. */
+    val advertised = linkedMapOf("agent:arcee" to "Arcee", "agent:alpha" to "Alpha")
+
+    /** When set, the device registered this key at sign-in and must prove it on every connection. */
+    @Volatile var deviceKey: PublicKey? = null
+
+    /** When set, the challenge carries this nonce instead of a fresh one. */
+    @Volatile var nonceOverride: String? = null
     val tasks = LinkedHashMap<Uuid, TaskRecord>()
 
     /** Every frame a client sent, in arrival order. */
@@ -60,7 +77,7 @@ class FakeCoordinator : AutoCloseable {
     @Volatile var redirectTo: String? = null
 
     /** The version the coordinator claims in `authenticated`, and whether it refuses the client's version instead. */
-    @Volatile var authenticatedVersion = 13
+    @Volatile var authenticatedVersion = 14
     @Volatile var refuseVersion = false
 
     private val sockets = CopyOnWriteArrayList<Session>()
@@ -90,6 +107,18 @@ class FakeCoordinator : AutoCloseable {
         val frame = append(taskId, kind)
         for (session in sockets) if (taskId in session.attached) session.socket.send(frame.toString())
         return frame
+    }
+
+    /** Sends a live frame to every socket attached to the task that asked for live activity. */
+    fun publishLive(taskId: Uuid, commandId: Uuid, activity: JsonObject) {
+        val frame =
+            buildJsonObject {
+                put("type", "live_activity")
+                put("task_id", taskId.toString())
+                put("command_id", commandId.toString())
+                put("activity", activity)
+            }
+        for (session in sockets) if (taskId in session.attachedLive) session.socket.send(frame.toString())
     }
 
     /** Appends without pushing, as if the event had happened while the surface was offline. */
@@ -147,7 +176,9 @@ class FakeCoordinator : AutoCloseable {
     private inner class Session : WebSocketListener() {
         lateinit var socket: WebSocket
         val attached: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
+        val attachedLive: MutableSet<Uuid> = ConcurrentHashMap.newKeySet()
         private var authenticated = false
+        private var nonce: String? = null
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
             socket = webSocket
@@ -174,6 +205,10 @@ class FakeCoordinator : AutoCloseable {
                 authenticate(frame, type)
                 return
             }
+            if (type == "device_proof" && nonce != null && !authenticated) {
+                verifyProof(frame)
+                return
+            }
             if (!authenticated) {
                 webSocket.send(error(null, "authentication_failed", "authenticate first"))
                 webSocket.close(1008, null)
@@ -187,14 +222,15 @@ class FakeCoordinator : AutoCloseable {
                 "delete_task" -> deleteTask(requestId, frame)
                 "attach" -> attach(requestId, frame)
                 "submit" -> submit(requestId, frame)
+                "stop_command" -> stopCommand(requestId, frame)
                 else -> webSocket.send(error(requestId, "invalid_message", "unsupported frame $type"))
             }
         }
 
         private fun authenticate(frame: JsonObject, type: String) {
             val version = frame.getValue("version").jsonPrimitive.long
-            if (version != 13L || refuseVersion) {
-                socket.send(error(null, "version_mismatch", "expected binding 13, received $version"))
+            if (version != 14L || refuseVersion) {
+                socket.send(error(null, "version_mismatch", "expected binding 14, received $version"))
                 socket.close(1008, null)
                 return
             }
@@ -208,6 +244,37 @@ class FakeCoordinator : AutoCloseable {
                 }
             if (!valid) {
                 socket.send(error(null, "authentication_failed", "credentials were not accepted"))
+                socket.close(1008, null)
+                return
+            }
+            if (type == "authenticate" && deviceKey != null) {
+                val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+                val challenge = nonceOverride ?: bytes.joinToString("") { "%02x".format(it) }
+                nonce = challenge
+                socket.send("""{"type":"device_challenge","nonce":"$challenge"}""")
+                return
+            }
+            authenticated = true
+            socket.send("""{"type":"authenticated","version":$authenticatedVersion}""")
+        }
+
+        /** Checks the signature over the proof text the binding defines, as the coordinator does. */
+        private fun verifyProof(frame: JsonObject) {
+            val text = "renoa device proof v1\n${credentials.deviceId}\n$nonce"
+            val valid =
+                runCatching {
+                    val encoded = frame.getValue("signature").jsonPrimitive.content
+                    // The coordinator decodes base64url without padding and refuses padding.
+                    require('=' !in encoded)
+                    val signature = Base64.getUrlDecoder().decode(encoded)
+                    Signature.getInstance("SHA256withECDSA").run {
+                        initVerify(deviceKey)
+                        update(text.toByteArray(Charsets.UTF_8))
+                        verify(signature)
+                    }
+                }.getOrDefault(false)
+            if (!valid) {
+                socket.send(error(null, "authentication_failed", "the device proof did not verify"))
                 socket.close(1008, null)
                 return
             }
@@ -228,10 +295,11 @@ class FakeCoordinator : AutoCloseable {
         private fun targetList(): JsonArray =
             JsonArray(
                 if (nodeOnline) {
-                    advertised.sorted().map { target ->
+                    advertised.keys.sorted().map { target ->
                         buildJsonObject {
                             put("nodeId", nodeId.toString())
                             put("target", target)
+                            put("name", advertised.getValue(target))
                         }
                     }
                 } else {
@@ -243,6 +311,7 @@ class FakeCoordinator : AutoCloseable {
             buildJsonObject {
                 put("taskId", id.toString())
                 put("target", record.target)
+                put("status", record.status)
             }
 
         private fun openTask(requestId: Long, frame: JsonObject) {
@@ -273,6 +342,10 @@ class FakeCoordinator : AutoCloseable {
                 socket.send(error(requestId, "not_found", "no such task"))
                 return
             }
+            val live = frame["live"]?.jsonPrimitive?.booleanOrNull ?: run {
+                socket.send(error(requestId, "invalid_message", "a version 14 attach carries live"))
+                return
+            }
             val after = frame.getValue("after_sequence").let { if (it is JsonNull) -1L else it.jsonPrimitive.long }
             val through = record.journal.size - 1L
             reply(requestId, "attached") { put("task_id", taskId.toString()); put("through_sequence", if (through < 0) JsonNull else JsonPrimitive(through)) }
@@ -280,6 +353,24 @@ class FakeCoordinator : AutoCloseable {
                 if (event.getValue("event").jsonObject.getValue("sequence").jsonPrimitive.long > after) socket.send(event.toString())
             }
             attached += taskId
+            if (live) attachedLive += taskId
+        }
+
+        private fun stopCommand(requestId: Long, frame: JsonObject) {
+            val taskId = Uuid.parse(frame.getValue("task_id").jsonPrimitive.content)
+            val commandId = frame.getValue("command_id").jsonPrimitive.content
+            val record = tasks[taskId]
+            if (record == null || commandId !in record.commands) {
+                socket.send(error(requestId, "not_found", "no such command"))
+                return
+            }
+            val outcome =
+                when {
+                    commandId in record.stopped -> "requested"
+                    commandId in record.ended -> "already_ended"
+                    else -> "requested".also { record.stopped += commandId }
+                }
+            reply(requestId, "stop_accepted") { put("command_id", commandId); put("outcome", outcome) }
         }
 
         private fun submit(requestId: Long, frame: JsonObject) {

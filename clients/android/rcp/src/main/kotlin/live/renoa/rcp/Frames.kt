@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
 /** The binding version this client speaks. The server rejects any other value. */
-const val RCP_BINDING_VERSION = 13
+const val RCP_BINDING_VERSION = 14
 
 /** The largest application message the coordinator accepts, in bytes. */
 const val MAX_FRAME_BYTES = 1 shl 20
@@ -48,6 +48,11 @@ sealed interface ClientMessage {
         override fun toString(): String = "AuthenticateTicket(version=$version, ticket=<secret>)"
     }
 
+    /** The answer to a [ServerMessage.DeviceChallenge]: an ECDSA signature, DER, base64url without padding. */
+    @Serializable
+    @SerialName("device_proof")
+    data class DeviceProof(val signature: String) : ClientMessage
+
     @Serializable
     @SerialName("list_tasks")
     data class ListTasks(@SerialName("request_id") val requestId: Long) : ClientMessage
@@ -65,13 +70,25 @@ sealed interface ClientMessage {
         val target: String,
     ) : ClientMessage
 
-    /** `afterSequence` has no default so a missing cursor is sent as `null`, as the binding requires. */
+    /**
+     * `afterSequence` has no default so a missing cursor is sent as `null`, as the binding requires.
+     * `live` asks for the task's live activity and is always sent.
+     */
     @Serializable
     @SerialName("attach")
     data class Attach(
         @SerialName("request_id") val requestId: Long,
         @SerialName("task_id") val taskId: Uuid,
         @SerialName("after_sequence") val afterSequence: Long?,
+        val live: Boolean,
+    ) : ClientMessage
+
+    @Serializable
+    @SerialName("stop_command")
+    data class StopCommand(
+        @SerialName("request_id") val requestId: Long,
+        @SerialName("task_id") val taskId: Uuid,
+        @SerialName("command_id") val commandId: Uuid,
     ) : ClientMessage
 
     @Serializable
@@ -97,6 +114,11 @@ sealed interface ServerMessage {
     @Serializable
     @SerialName("authenticated")
     data class Authenticated(val version: Int) : ServerMessage
+
+    /** Sent instead of [Authenticated] to a device that registered a key at sign-in. */
+    @Serializable
+    @SerialName("device_challenge")
+    data class DeviceChallenge(val nonce: String) : ServerMessage
 
     @Serializable
     @SerialName("task_list")
@@ -132,6 +154,23 @@ sealed interface ServerMessage {
     data class CommandAccepted(
         @SerialName("request_id") val requestId: Long,
         @SerialName("command_id") val commandId: Uuid,
+    ) : ServerMessage
+
+    @Serializable
+    @SerialName("stop_accepted")
+    data class StopAccepted(
+        @SerialName("request_id") val requestId: Long,
+        @SerialName("command_id") val commandId: Uuid,
+        val outcome: StopOutcome,
+    ) : ServerMessage
+
+    /** Advisory text of a running turn. It has no sequence in the task and is never replayed. */
+    @Serializable
+    @SerialName("live_activity")
+    data class LiveActivityFrame(
+        @SerialName("task_id") val taskId: Uuid,
+        @SerialName("command_id") val commandId: Uuid,
+        val activity: LiveActivity,
     ) : ServerMessage
 
     @Serializable

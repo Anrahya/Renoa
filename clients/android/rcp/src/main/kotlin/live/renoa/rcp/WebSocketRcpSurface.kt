@@ -15,10 +15,19 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.CoroutineContext
 import kotlin.reflect.KClass
 import kotlin.time.Duration.Companion.seconds
+import java.util.Base64
 import kotlin.uuid.Uuid
 
 private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 private val TICKET_PATTERN = Regex("^[0-9a-fA-F]{64}$")
+private val NONCE_PATTERN = Regex("^[0-9a-f]{64}$")
+
+/** The text a device signs to prove its key on one connection, as `docs/identity-v0.md` defines it. */
+internal fun deviceProofText(deviceId: Uuid, nonce: String): ByteArray =
+    "renoa device proof v1\n$deviceId\n$nonce".toByteArray(Charsets.UTF_8)
+
+/** A DER signature as the binding carries it: base64url without padding, which the coordinator requires. */
+internal fun encodeSignature(der: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(der)
 
 /** Replay of one attachment: complete once the event at [through] has been applied. */
 private class Replay {
@@ -28,7 +37,7 @@ private class Replay {
     var through: Long? = null
 }
 
-private class Attachment(val taskId: Uuid, val apply: suspend (TaskEvent) -> Unit) {
+private class Attachment(val taskId: Uuid, val live: ApplyLiveActivity?, val apply: suspend (TaskEvent) -> Unit) {
     @Volatile
     var cursor: Long? = null
 
@@ -37,10 +46,10 @@ private class Attachment(val taskId: Uuid, val apply: suspend (TaskEvent) -> Uni
 }
 
 /**
- * The binding 13 surface client over a WebSocket.
+ * The binding 14 surface client over a WebSocket.
  *
  * Frames are handled one at a time, in arrival order, on [context]; [attach] callbacks run
- * there. Retry timing after a disconnect is the caller's policy: this client never reconnects
+ * there, and so are [ApplyLiveActivity] callbacks. Retry timing after a disconnect is the caller's policy: this client never reconnects
  * on its own. [connect] re-attaches every task that finished replay on this instance.
  */
 class WebSocketRcpSurface(
@@ -134,9 +143,9 @@ class WebSocketRcpSurface(
         for (command in state.pendingCommands()) if (command.taskId == taskId) state.removeCommand(command.commandId)
     }
 
-    override suspend fun attach(taskId: Uuid, apply: suspend (TaskEvent) -> Unit) {
+    override suspend fun attach(taskId: Uuid, live: ApplyLiveActivity?, apply: suspend (TaskEvent) -> Unit) {
         connected()
-        val attachment = Attachment(taskId, apply)
+        val attachment = Attachment(taskId, live, apply)
         synchronized(attachments) {
             check(taskId !in attachments) { "task $taskId is already attached" }
             attachments[taskId] = attachment
@@ -156,6 +165,11 @@ class WebSocketRcpSurface(
         state.enqueueCommand(command)
         return CommandSubmission(command.commandId, scope.async { sendPending(command) })
     }
+
+    override suspend fun stopCommand(taskId: Uuid, commandId: Uuid): StopOutcome =
+        request(ServerMessage.StopAccepted::class, { ClientMessage.StopCommand(it, taskId, commandId) }) {
+            if (it.commandId != commandId) throw ProtocolViolation("stop answer changed the command identity")
+        }.outcome
 
     override suspend fun retryPendingCommands(): List<Uuid> {
         connected()
@@ -257,7 +271,7 @@ class WebSocketRcpSurface(
         attachment.replay = replay
         request(
             ServerMessage.Attached::class,
-            { ClientMessage.Attach(it, attachment.taskId, attachment.cursor) },
+            { ClientMessage.Attach(it, attachment.taskId, attachment.cursor, live = attachment.live != null) },
         ) {
             if (it.taskId != attachment.taskId) throw ProtocolViolation("attach response changed the task identity")
             replay.through = it.throughSequence
@@ -293,7 +307,7 @@ class WebSocketRcpSurface(
         } catch (failure: Exception) {
             val code =
                 when (failure) {
-                    is RcpException -> 1000
+                    is RcpException, is DeviceKeyRequired -> 1000
                     is ProtocolViolation -> 1002
                     else -> 1011
                 }
@@ -309,7 +323,9 @@ class WebSocketRcpSurface(
                 }
                 connection.authenticated.complete(Unit)
             }
+            is ServerMessage.DeviceChallenge -> prove(connection, message.nonce)
             is ServerMessage.TaskEventFrame -> applyTaskEvent(message.event)
+            is ServerMessage.LiveActivityFrame -> applyLiveActivity(message)
             is ServerMessage.Error -> {
                 val failure = RcpException(message.code, message.message, message.requestId)
                 val id = message.requestId ?: throw failure
@@ -322,8 +338,28 @@ class WebSocketRcpSurface(
             is ServerMessage.TaskOpened -> complete(connection, message.requestId, message)
             is ServerMessage.Attached -> complete(connection, message.requestId, message)
             is ServerMessage.CommandAccepted -> complete(connection, message.requestId, message)
+            is ServerMessage.StopAccepted -> complete(connection, message.requestId, message)
             is ServerMessage.TaskDeleted -> complete(connection, message.requestId, message)
         }
+    }
+
+    /** Answers the connection's one challenge with the device key's signature over the binding's proof text. */
+    private suspend fun prove(connection: Connection, nonce: String) {
+        if (connection.authenticated.isCompleted || connection.challenged) {
+            throw ProtocolViolation("unexpected device_challenge")
+        }
+        connection.challenged = true
+        val device =
+            authentication as? Authentication.Device
+                ?: throw ProtocolViolation("a ticket connection was sent a device_challenge")
+        if (!NONCE_PATTERN.matches(nonce)) {
+            throw ProtocolViolation("device_challenge nonce must be 64 lowercase hexadecimal characters")
+        }
+        val sign =
+            device.sign
+                ?: throw DeviceKeyRequired("this device registered a key at sign-in, and the client was given none; sign in again")
+        val signature = encodeSignature(sign(deviceProofText(device.credentials.deviceId, nonce)))
+        send(connection, encodeClientMessage(ClientMessage.DeviceProof(signature)))
     }
 
     private fun complete(connection: Connection, requestId: Long, message: ServerMessage) {
@@ -360,6 +396,20 @@ class WebSocketRcpSurface(
         if (replay != null && through != null && event.sequence >= through) {
             attachment.replay = null
             replay.done.complete(Unit)
+        }
+    }
+
+    private fun applyLiveActivity(frame: ServerMessage.LiveActivityFrame) {
+        val attachment =
+            synchronized(attachments) { attachments[frame.taskId] }
+                ?: throw ProtocolViolation("received live activity for unattached task ${frame.taskId}")
+        val live =
+            attachment.live
+                ?: throw ProtocolViolation("received live activity for task ${frame.taskId}, which did not ask for it")
+        try {
+            live(frame.commandId, frame.activity)
+        } catch (ignored: Exception) {
+            // Drawing a draft is the app's concern; the durable record carries the same text.
         }
     }
 

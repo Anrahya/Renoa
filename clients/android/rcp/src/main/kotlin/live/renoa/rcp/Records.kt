@@ -11,7 +11,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlin.uuid.Uuid
 
 /**
- * The records inside RCP frames, as binding 13 shapes them. Frame fields are snake_case and
+ * The records inside RCP frames, as binding 14 shapes them. Frame fields are snake_case and
  * live in [ClientMessage] and [ServerMessage]; the records below use the camelCase names the
  * binding gives them.
  */
@@ -22,11 +22,53 @@ data class DeviceCredentials(val deviceId: Uuid, val credential: String) {
     override fun toString(): String = "DeviceCredentials(deviceId=$deviceId, credential=<secret>)"
 }
 
+/** A task's state, from its latest command. */
 @Serializable
-data class TaskSummary(val taskId: Uuid, val target: String)
+enum class TaskStatus {
+    /** The latest command has not ended. */
+    @SerialName("working")
+    Working,
+
+    /** No command, or the latest one completed or was cancelled. */
+    @SerialName("idle")
+    Idle,
+
+    /** The latest command failed. */
+    @SerialName("failed")
+    Failed,
+}
 
 @Serializable
-data class TargetSummary(val nodeId: Uuid, val target: String)
+data class TaskSummary(val taskId: Uuid, val target: String, val status: TaskStatus)
+
+/** An agent a node offers. [name] is what the owner calls it; [target] is its identity. */
+@Serializable
+data class TargetSummary(val nodeId: Uuid, val target: String, val name: String)
+
+@Serializable
+enum class StopOutcome {
+    /** The stop is recorded; the command's terminal event tells whether it won. */
+    @SerialName("requested")
+    Requested,
+
+    /** The command had already ended before any stop, and nothing was recorded. */
+    @SerialName("already_ended")
+    AlreadyEnded,
+}
+
+/** What a running turn shows before its durable `assistant_message` supersedes it. */
+@Serializable
+sealed interface LiveActivity {
+    /** Visible text since the previous frame. [sequence] counts from zero for each message of the turn. */
+    @Serializable
+    @SerialName("text_delta")
+    data class TextDelta(val sequence: Long, val text: String) : LiveActivity
+
+    /** Drop what was shown for the message in progress. */
+    @Serializable
+    @SerialName("text_reset")
+    data object TextReset : LiveActivity
+}
 
 @Serializable
 enum class Author {
@@ -138,7 +180,7 @@ data class TaskEvent(
     val kind: TaskEventKind,
 )
 
-/** Every error code binding 13 defines. */
+/** Every error code binding 14 defines. */
 @Serializable
 enum class RcpErrorCode {
     @SerialName("authentication_failed")

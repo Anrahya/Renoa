@@ -17,16 +17,26 @@ class WireTest {
     private val bindingDoc = File(System.getProperty("renoa.docs"), "rcp-json-ws-v0.md").readText()
 
     private val clientTypes =
-        setOf("authenticate", "authenticate_ticket", "list_tasks", "list_targets", "open_task", "attach", "submit", "delete_task")
+        setOf(
+            "authenticate", "authenticate_ticket", "device_proof", "list_tasks", "list_targets", "open_task", "attach",
+            "stop_command", "submit", "delete_task",
+        )
     private val surfaceReceivedTypes =
-        setOf("authenticated", "task_list", "target_list", "task_opened", "attached", "command_accepted", "task_deleted", "task_event", "error")
+        setOf(
+            "authenticated", "device_challenge", "task_list", "target_list", "task_opened", "attached", "live_activity",
+            "stop_accepted", "command_accepted", "task_deleted", "task_event", "error",
+        )
 
     /** Frames the binding defines that a surface never sends or receives. Listing them forces a decision when the document grows. */
     private val notSurfaceFrames =
         setOf(
-            "enroll", "enrolled", "advertise_targets", "execute", "acknowledge_execution",
-            "execution_acknowledged", "publish_execution_events", "execution_events_accepted",
+            "enroll", "enrolled", "advertise_targets", "send_agent_message", "execute", "acknowledge_execution",
+            "execution_acknowledged", "publish_execution_events", "execution_events_accepted", "stop", "acknowledge_stop",
+            "publish_live_activity", "serve_host_control", "host_call", "complete_host_call",
         )
+
+    /** Surface frames this client does not offer yet: the app has no page that lists or revokes signed-in devices. */
+    private val surfaceFramesNotOffered = setOf("list_devices", "device_list", "revoke_device", "device_revoked")
 
     private fun documentFrames(): List<JsonObject> =
         Regex("```json\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL)
@@ -50,8 +60,8 @@ class WireTest {
         for (frame in frames) {
             val type = typeOf(frame)
             assertTrue(
-                type in clientTypes || type in surfaceReceivedTypes || type in notSurfaceFrames,
-                "the binding document defines \"$type\", which this client neither supports nor lists as not a surface frame",
+                type in clientTypes || type in surfaceReceivedTypes || type in notSurfaceFrames || type in surfaceFramesNotOffered,
+                "the binding document defines \"$type\", which this client neither supports nor lists as not offered",
             )
         }
     }
@@ -78,9 +88,9 @@ class WireTest {
     }
 
     @Test
-    fun aMissingCursorIsSentAsNullNotOmitted() {
-        val frame = encodeClientMessage(ClientMessage.Attach(7, Uuid.random(), null))
-        assertTrue("\"after_sequence\":null" in frame, frame)
+    fun aMissingCursorIsSentAsNullAndLiveIsAlwaysSent() {
+        val frame = encodeClientMessage(ClientMessage.Attach(7, Uuid.random(), null, live = false))
+        assertTrue("\"after_sequence\":null" in frame && "\"live\":false" in frame, frame)
     }
 
     @Test
@@ -103,7 +113,7 @@ class WireTest {
 
     @Test
     fun aFrameOutsideTheSurfaceVocabularyEndsTheSession() {
-        for (frame in listOf("""{"type":"execute"}""", """{"type":"nonsense"}""", "not json", """{"version":13}""")) {
+        for (frame in listOf("""{"type":"execute"}""", """{"type":"host_call"}""", """{"type":"stop"}""", """{"type":"nonsense"}""", "not json", """{"version":14}""")) {
             assertFailsWith<ProtocolViolation>(frame) { decodeServerMessage(frame) }
         }
     }
@@ -128,5 +138,19 @@ class WireTest {
             """{"type":"task_event","event":{"eventId":"$id","taskId":"$id","sequence":0,"kind":{"type":"command_submitted","command":
             {"commandId":"$id","principalId":"$id","surface":"d","target":"t","input":{"type":"text","text":"x","author":"principal"}}}}}"""
         assertFailsWith<ProtocolViolation> { decodeServerMessage(principal) }
+    }
+
+    @Test
+    fun anUnknownStatusOutcomeOrActivityAndAMissingVersion14FieldAreRejected() {
+        val task = "00000000-0000-0000-0000-000000000010"
+        val frames =
+            listOf(
+                """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a","status":"sleeping"}]}""",
+                """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a"}]}""",
+                """{"type":"target_list","request_id":1,"targets":[{"nodeId":"$task","target":"agent:a"}]}""",
+                """{"type":"stop_accepted","request_id":1,"command_id":"$task","outcome":"stopped"}""",
+                """{"type":"live_activity","task_id":"$task","command_id":"$task","activity":{"type":"reasoning_delta","text":"x"}}""",
+            )
+        for (frame in frames) assertFailsWith<ProtocolViolation>(frame) { decodeServerMessage(frame) }
     }
 }

@@ -5,7 +5,14 @@ import kotlin.uuid.Uuid
 
 /** How a surface proves itself on a new connection. The principal and surface role come from the enrollment. */
 sealed interface Authentication {
-    data class Device(val credentials: DeviceCredentials) : Authentication
+    /**
+     * A signed-in device. One that registered a key at sign-in also proves the key on every
+     * connection: [sign] returns an ECDSA P-256 SHA-256 signature, ASN.1 DER, over the bytes it is
+     * given, made with the key that never leaves the device. It runs before the client reads any
+     * other frame, and the coordinator ends a connection not authenticated within 10 seconds, so
+     * it must not wait for the user.
+     */
+    class Device(val credentials: DeviceCredentials, val sign: (suspend (ByteArray) -> ByteArray)? = null) : Authentication
 
     /** A one-use, 60-second connection ticket. Each connection attempt asks for a new one. */
     class Ticket(val get: suspend () -> String) : Authentication
@@ -35,7 +42,16 @@ interface RcpState {
 /** A command written to the outbox. [accepted] completes when the coordinator durably admitted it. */
 class CommandSubmission(val commandId: Uuid, val accepted: Deferred<Unit>)
 
-/** The surface side of RCP: discover, open a task, follow its journal, and submit text. */
+/**
+ * Receives one live frame of a task's running turn, called in arrival order with the task's
+ * events: a frame the node published before a record arrives before it, and one published just
+ * after may too. Frames are advisory: one may be missed and none is replayed, and the command's
+ * `assistant_message` record supersedes the text. The client ignores an exception the callback
+ * throws, so drawing a draft never ends the connection.
+ */
+typealias ApplyLiveActivity = (commandId: Uuid, activity: LiveActivity) -> Unit
+
+/** The surface side of RCP: discover, open a task, follow its journal, submit text, and stop a command. */
 interface RcpSurface {
     suspend fun connect()
 
@@ -61,10 +77,18 @@ interface RcpSurface {
      * the next connection: [apply] must tolerate a repeat, which [TaskEvent.eventId] identifies.
      * [connect] attaches the task again after a disconnect; if the coordinator then reports it
      * gone, that connect fails with `not_found` and the task is no longer followed.
+     * Passing [live] also asks for the live activity of the task's running turns, on this and
+     * every later connection.
      */
-    suspend fun attach(taskId: Uuid, apply: suspend (TaskEvent) -> Unit)
+    suspend fun attach(taskId: Uuid, live: ApplyLiveActivity? = null, apply: suspend (TaskEvent) -> Unit)
 
     suspend fun submitText(taskId: Uuid, text: String): CommandSubmission
+
+    /**
+     * Asks the task's node to stop [commandId]. Safe to repeat after an uncertain answer: a recorded
+     * stop answers [StopOutcome.Requested] again. The command's terminal event says whether it won.
+     */
+    suspend fun stopCommand(taskId: Uuid, commandId: Uuid): StopOutcome
 
     /** Resends every pending command with its original identity and returns the ones admitted. */
     suspend fun retryPendingCommands(): List<Uuid>
