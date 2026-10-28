@@ -1,0 +1,323 @@
+{
+  "$defs": {
+    "AgentBehavior": {
+      "additionalProperties": false,
+      "description": "The operational behavior a Host runtime composes from one definition.",
+      "properties": {
+        "automatic_compaction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AutomaticCompaction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workspace_instructions": {
+          "$ref": "#/$defs/WorkspaceInstructions"
+        }
+      },
+      "required": [
+        "workspace_instructions"
+      ],
+      "type": "object"
+    },
+    "AgentCreationOrigin": {
+      "description": "How the create call reached the Host. Record data only, never authority.",
+      "enum": [
+        "agent_tool",
+        "management",
+        "provisioning"
+      ],
+      "type": "string"
+    },
+    "AgentCreator": {
+      "description": "The trusted, immutable record of who created one agent.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Another agent created this agent through an agent-facing tool.",
+          "properties": {
+            "agent_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "agent_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An authenticated management principal created this agent.",
+          "properties": {
+            "host_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "principal",
+              "type": "string"
+            },
+            "principal_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "host_id",
+            "principal_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Trusted local provisioning created this agent.",
+          "properties": {
+            "component": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "system",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "component"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AgentDocuments": {
+      "additionalProperties": false,
+      "description": "Which prompt documents this agent reads: its own `SOUL.md`, and the\n`USER.md` of the person each turn is talking to.",
+      "properties": {
+        "soul": {
+          "description": "Read the agent's own SOUL.md: its identity, judgment, and voice.",
+          "type": "boolean"
+        },
+        "user": {
+          "description": "Read the USER.md of whoever talks to the agent, the profile every agent\nthat talks to that person shares. False for a job that does not need to\nknow the person, such as a scheduled report.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "soul",
+        "user"
+      ],
+      "type": "object"
+    },
+    "AgentModelSelection": {
+      "additionalProperties": false,
+      "description": "An agent's default model. Each conversation may select another enabled model.",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "#/$defs/ModelProvider"
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningLevel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "type": "object"
+    },
+    "AgentOperationalDefinition": {
+      "additionalProperties": false,
+      "description": "The core operational document. Every agent row stores exactly one.",
+      "properties": {
+        "behavior": {
+          "$ref": "#/$defs/AgentBehavior"
+        },
+        "documents": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentDocuments"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentModelSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider_restriction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelProvider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "purpose": {
+          "description": "What the owner made the agent for, in their own words. The agent reads\nit in its prompt; an app shows it instead of `instructions`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "instructions",
+        "behavior"
+      ],
+      "type": "object"
+    },
+    "AgentToolSelection": {
+      "additionalProperties": false,
+      "description": "The exact, revisioned capability names one agent may invoke.",
+      "properties": {
+        "revision": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "revision",
+        "tools"
+      ],
+      "type": "object"
+    },
+    "AutomaticCompaction": {
+      "additionalProperties": false,
+      "description": "Exact model-input boundaries for automatic context compaction.",
+      "properties": {
+        "target_input_tokens": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "trigger_input_tokens": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "trigger_input_tokens",
+        "target_input_tokens"
+      ],
+      "type": "object"
+    },
+    "ModelProvider": {
+      "description": "A model provider supported by Renoa's native process adapter.",
+      "enum": [
+        "xai",
+        "opencode-go"
+      ],
+      "type": "string"
+    },
+    "ReasoningLevel": {
+      "description": "A reasoning level understood by the provider-neutral model API.",
+      "enum": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "type": "string"
+    },
+    "WorkspaceInstructions": {
+      "description": "Whether the workspace-root project instruction file joins the prompt.",
+      "enum": [
+        "off",
+        "project_agents_file"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The canonical Host-owned definition of one durable agent.",
+  "properties": {
+    "connections": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "created_at_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "created_via": {
+      "$ref": "#/$defs/AgentCreationOrigin"
+    },
+    "creator": {
+      "$ref": "#/$defs/AgentCreator"
+    },
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "operational": {
+      "$ref": "#/$defs/AgentOperationalDefinition"
+    },
+    "preset_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tool_selection": {
+      "$ref": "#/$defs/AgentToolSelection"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "created_at_ms",
+    "creator",
+    "created_via",
+    "operational",
+    "tool_selection",
+    "connections"
+  ],
+  "title": "AgentDefinition",
+  "type": "object"
+}

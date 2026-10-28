@@ -59,6 +59,7 @@ impl ProvisionDocument {
             preset_id: self.preset_id,
             name: self.name,
             instructions: self.instructions,
+            purpose: None,
             tools: self.tools,
             connections: self.connections,
             automation: self.automation,

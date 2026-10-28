@@ -4,6 +4,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -60,6 +66,19 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     /** Targets whose open is refused, as for an agent whose node is offline. */
     val unopenable = mutableSetOf<String>()
 
+    /** When set, every open waits for it, as a slow node does. */
+    var openGate: CompletableDeferred<Unit>? = null
+
+    /** The Host's agents by id; the fake makes each one with the id of the operation that asked. */
+    val hostAgents = LinkedHashMap<String, JsonObject>()
+    val hostCalls = mutableListOf<Triple<HostMethod, String, String?>>()
+
+    /** When set, the next Host call ends with it instead of reaching the Host. */
+    var hostFailure: Exception? = null
+
+    /** When set, the Host gives this answer to the next call. */
+    var hostAnswer: HostAnswer? = null
+
     /** When set, the next attach drops the connection after applying this many events. */
     var dropAttachAfter: Int? = null
 
@@ -113,6 +132,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     override suspend fun openTask(taskId: Uuid, nodeId: Uuid, target: String) {
         check(online)
         if (target in unopenable) throw RcpException(RcpErrorCode.NodeOffline, "offline", 1)
+        openGate?.await()
         opened += taskId
         journals.getOrPut(taskId) { Journal(taskId) }
     }
@@ -162,7 +182,50 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         return StopOutcome.Requested
     }
 
-    override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer = error("unused")
+    /** The node advertises a Host agent as `agent:<id>`, as it does once it next polls the Host. */
+    fun advertise(agentId: String) {
+        targets += TargetSummary(node, "agent:$agentId", hostAgents.getValue(agentId).getValue("name").jsonPrimitive.content)
+    }
+
+    override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer {
+        check(online) { "RCP client is not connected" }
+        hostCalls += Triple(method, path, body)
+        hostFailure?.let {
+            hostFailure = null
+            throw it
+        }
+        hostAnswer?.let {
+            hostAnswer = null
+            return it
+        }
+        if (method == HostMethod.Post && path == "/v1/host/agents") {
+            val request = Json.parseToJsonElement(checkNotNull(body)).jsonObject
+            val id = request.getValue("operation_id").jsonPrimitive.content
+            val record =
+                hostAgents.getOrPut(id) {
+                    buildJsonObject {
+                        put("id", id)
+                        put("name", request.getValue("name").jsonPrimitive.content)
+                        put("created_at_ms", 1)
+                        put(
+                            "operational",
+                            buildJsonObject {
+                                put("instructions", "Help.")
+                                request["purpose"]?.let { put("purpose", it.jsonPrimitive.content) }
+                            },
+                        )
+                    }
+                }
+            val created =
+                buildJsonObject {
+                    put("operation_id", id)
+                    put("record", record)
+                }
+            return HostAnswer(201, created.toString())
+        }
+        val record = hostAgents[path.removePrefix("/v1/host/agents/")]
+        return if (method == HostMethod.Get && record != null) HostAnswer(200, record.toString()) else HostAnswer(404, "{\"error\":\"not found\"}")
+    }
 
     override suspend fun retryPendingCommands(): List<Uuid> =
         state.pendingCommands().map { command ->
@@ -368,5 +431,134 @@ class RcpAgentRepositoryTest {
         advanceTimeBy(5.seconds)
         runCurrent()
         assertTrue(opened.isCompleted)
+    }
+
+    private val kcal = Uuid.random().toString()
+    private val kcalId get() = "${surface.node}/agent:$kcal"
+
+    private fun TestScope.making(repo: RcpAgentRepository, purpose: String = "Count my calories.") =
+        backgroundScope.async { repo.create(CreateAgent(kcal, "Kcal", purpose, emptySet())) }
+
+    private fun sent() = Json.parseToJsonElement(checkNotNull(surface.hostCalls.last().third)).jsonObject
+
+    @Test
+    fun aNewAgentIsMadeOnTheHostAndFollowedOnceItsNodeOffersIt() = runTest {
+        val repo = started()
+        val made = making(repo, purpose = "  Count my calories.  ")
+        runCurrent()
+        assertEquals(HostMethod.Post to "/v1/host/agents", surface.hostCalls.single().let { it.first to it.second })
+        assertEquals(
+            mapOf("operation_id" to kcal, "preset_id" to "renoa.general.v1", "name" to "Kcal", "purpose" to "Count my calories."),
+            sent().mapValues { it.value.jsonPrimitive.content },
+        )
+        advanceTimeBy(3.seconds)
+        assertFalse(made.isCompleted, "it waits until the node offers the agent")
+
+        surface.advertise(kcal)
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        assertEquals(AgentProfile(kcalId, "Kcal", "Count my calories.", emptyList()), made.await())
+        assertEquals(listOf("Nagisa", "Kcal"), repo.agents.value.map { it.name })
+        assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$kcal") })
+    }
+
+    @Test
+    fun aBlankPurposeIsLeftOutOfTheRequest() = runTest {
+        val repo = started()
+        val made = making(repo, purpose = " \n ")
+        runCurrent()
+        assertFalse("purpose" in sent())
+        surface.advertise(kcal)
+        advanceTimeBy(1.seconds)
+        assertEquals("", made.await().purpose)
+    }
+
+    @Test
+    fun anAgentItsNodeNeverOffersIsUnavailableAndARetryFindsTheSameOne() = runTest {
+        val repo = started()
+        val request = CreateAgent(kcal, "Kcal", "Count my calories.", emptySet())
+        val waited = testScheduler.currentTime
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.create(request) }.problem)
+        assertEquals(29_000, testScheduler.currentTime - waited, "it gives the node 30 checks a second apart")
+
+        surface.advertise(kcal)
+        assertEquals(kcalId, making(repo).await().id)
+        assertEquals(listOf(kcal, kcal), surface.hostCalls.map { Json.parseToJsonElement(it.third!!).jsonObject.getValue("operation_id").jsonPrimitive.content })
+        assertEquals(1, surface.hostAgents.size)
+    }
+
+    @Test
+    fun aNewAgentAndTheRosterCheckOpenItsChatOnce() = runTest {
+        val repo = started()
+        surface.openGate = CompletableDeferred()
+        val made = making(repo)
+        runCurrent()
+        surface.advertise(kcal)
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        surface.openGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(kcalId, made.await().id)
+        assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$kcal") })
+    }
+
+    @Test
+    fun abilitiesCannotBeSwitchedOnANewAgentYet() = runTest {
+        val repo = started()
+        assertTrue(repo.starterAbilities().isEmpty())
+        val refused = assertFailsWith<RepositoryException> { repo.create(CreateAgent(kcal, "Kcal", "", setOf("calendar"))) }
+        assertEquals(Problem.Invalid, refused.problem)
+        assertTrue(surface.hostCalls.isEmpty(), "nothing reached the Host")
+    }
+
+    @Test
+    fun aProfileIsReadFromTheHost() = runTest {
+        val repo = started()
+        making(repo)
+        runCurrent()
+        surface.advertise(kcal)
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        surface.hostCalls.clear()
+
+        assertEquals(AgentProfile(kcalId, "Kcal", "Count my calories.", emptyList()), repo.profile(kcalId))
+        assertEquals(HostMethod.Get to "/v1/host/agents/$kcal", surface.hostCalls.single().let { it.first to it.second })
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.profile("${surface.node}/agent:${Uuid.random()}") }.problem)
+        surface.hostCalls.clear()
+        for (notHost in listOf(nagisa, "${surface.node}/agent:nope", "${surface.node}/$kcal", "agent:$kcal")) {
+            assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.profile(notHost) }.problem, notHost)
+        }
+        assertTrue(surface.hostCalls.isEmpty(), "an id that names no Host agent is not asked about")
+    }
+
+    @Test
+    fun theHostsRefusalsReachTheScreenAsProblems() = runTest {
+        val repo = started()
+        val answers =
+            listOf(
+                HostAnswer(409, "{}") to Problem.Conflict,
+                HostAnswer(400, "{}") to Problem.Invalid,
+                HostAnswer(422, "{}") to Problem.Invalid,
+                HostAnswer(404, "{}") to Problem.NotFound,
+                HostAnswer(503, "{}") to Problem.Unavailable,
+                HostAnswer(200, "not json") to Problem.Unavailable,
+                HostAnswer(200, "{\"id\":\"x\"}") to Problem.Unavailable,
+            )
+        for ((answer, problem) in answers) {
+            surface.hostAnswer = answer
+            assertEquals(problem, assertFailsWith<RepositoryException> { repo.profile(kcalId) }.problem, answer.toString())
+        }
+        val failures =
+            listOf(
+                RcpException(RcpErrorCode.InvalidMessage, "bad path", 1) to Problem.Invalid,
+                RcpException(RcpErrorCode.NodeOffline, "Host offline", 1) to Problem.Unavailable,
+                Disconnected("lost") to Problem.Unavailable,
+            )
+        for ((failure, problem) in failures) {
+            surface.hostFailure = failure
+            assertEquals(problem, assertFailsWith<RepositoryException> { repo.profile(kcalId) }.problem, failure.toString())
+        }
     }
 }

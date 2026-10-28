@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
@@ -30,8 +32,10 @@ import kotlin.uuid.Uuid
  * failure leaves it there, and it is sent again with the same identity after the next connect and
  * on every roster check.
  *
- * Making and editing agents is Host control, which this connection does not carry yet, so those
- * calls are refused as unavailable.
+ * Making an agent and reading its profile are Host control, carried by the same connection
+ * ([HostAgents]). A new agent is an `agent:<id>` target once its node next advertises; [create]
+ * waits for that and follows its chat. Abilities and edits are not on the Host's agent API yet,
+ * so those calls are refused as unavailable.
  */
 class RcpAgentRepository(
     private val surface: RcpSurface,
@@ -51,6 +55,10 @@ class RcpAgentRepository(
     private val lock = Any()
     private val rooms = LinkedHashMap<String, Room>()
     private val roster = MutableStateFlow<List<AgentSummary>>(emptyList())
+    private val host = HostAgents(surface)
+
+    /** One [follow] at a time, so the roster check and a new agent never open the same chat twice. */
+    private val following = Mutex()
 
     override val agents: StateFlow<List<AgentSummary>> = roster.asStateFlow()
 
@@ -116,7 +124,7 @@ class RcpAgentRepository(
      * rest. A room outlives a failed attach, because the client keeps the cursor of what it applied
      * and replays only what follows. One agent that cannot be opened does not hold up the others.
      */
-    private suspend fun follow(targets: List<TargetSummary>) {
+    private suspend fun follow(targets: List<TargetSummary>) = following.withLock {
         for (target in targets) {
             val room = synchronized(lock) { rooms.getOrPut(agentId(target)) { Room(target, chatTaskId(target.nodeId, target.target)) } }
             if (room.attached) continue
@@ -215,17 +223,45 @@ class RcpAgentRepository(
         }
     }
 
-    override suspend fun profile(agentId: String): AgentProfile = notYet()
+    override suspend fun profile(agentId: String): AgentProfile {
+        val hostId = hostAgentId(agentId) ?: throw RepositoryException(Problem.NotFound, "$agentId is not an agent on the Host")
+        return host.definition(hostId).profile(agentId)
+    }
 
-    override suspend fun starterAbilities(): List<AbilitySwitch> = notYet()
+    /** The Host's agent API does not list abilities yet, so a new agent starts with none shown. */
+    override suspend fun starterAbilities(): List<AbilitySwitch> = emptyList()
 
-    override suspend fun create(request: CreateAgent): AgentProfile = notYet()
+    /**
+     * Makes the agent on the Host, then waits for its node to advertise it and follows its chat. A
+     * retry with the same [CreateAgent.operationId] returns the same agent, so a timeout is safe to
+     * repeat.
+     */
+    override suspend fun create(request: CreateAgent): AgentProfile {
+        if (request.litAbilities.isNotEmpty()) throw RepositoryException(Problem.Invalid, "the Host cannot switch abilities yet")
+        val record = host.create(request.operationId, request.name, request.purpose.trim().ifEmpty { null })
+        val target = "$AGENT_TARGET${record.id}"
+        repeat(JOIN_CHECKS) { check ->
+            if (check > 0) delay(JOIN_EVERY)
+            val targets =
+                try {
+                    surface.listTargets()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (lost: Exception) {
+                    throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
+                }
+            val joined = targets.firstOrNull { it.target == target } ?: return@repeat
+            follow(listOf(joined))
+            return record.profile(agentId(joined))
+        }
+        throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but its node has not offered it yet")
+    }
 
     override suspend fun edit(agentId: String, edit: EditProfile): AgentProfile = notYet()
 
     override suspend fun setAbility(agentId: String, abilityId: String, lit: Boolean): AbilitySwitch = notYet()
 
-    private fun notYet(): Nothing = throw RepositoryException(Problem.Unavailable, "Host control does not reach the app yet")
+    private fun notYet(): Nothing = throw RepositoryException(Problem.Unavailable, "the Host cannot change this from the app yet")
 
     /**
      * Whether the coordinator answered this request with a refusal that a retry cannot change. An
@@ -241,16 +277,33 @@ class RcpAgentRepository(
                     -> false
                 }
 
-    private fun RcpException.asProblem(): RepositoryException {
-        val problem =
-            when (code) {
-                RcpErrorCode.NotFound -> Problem.NotFound
-                RcpErrorCode.Conflict -> Problem.Conflict
-                RcpErrorCode.InvalidMessage -> Problem.Invalid
-                else -> Problem.Unavailable
-            }
-        return RepositoryException(problem, message.orEmpty())
-    }
-
     private fun agentId(target: TargetSummary) = "${target.nodeId}/${target.target}"
+
+    private companion object {
+        /** How a node names the target of a Host agent. */
+        const val AGENT_TARGET = "agent:"
+        const val JOIN_CHECKS = 30
+        val JOIN_EVERY = 1.seconds
+
+        /** The Host's id for the agent behind [agentId], or null when it names no Host agent. */
+        fun hostAgentId(agentId: String): Uuid? {
+            val target = agentId.substringAfter('/', "")
+            if (!target.startsWith(AGENT_TARGET)) return null
+            return Uuid.parseOrNull(target.removePrefix(AGENT_TARGET))
+        }
+
+        fun AgentRecord.profile(agentId: String) = AgentProfile(agentId, name, operational.purpose.orEmpty(), abilities = emptyList())
+    }
+}
+
+/** What a coordinator refusal means to the screens. */
+internal fun RcpException.asProblem(): RepositoryException {
+    val problem =
+        when (code) {
+            RcpErrorCode.NotFound -> Problem.NotFound
+            RcpErrorCode.Conflict -> Problem.Conflict
+            RcpErrorCode.InvalidMessage -> Problem.Invalid
+            else -> Problem.Unavailable
+        }
+    return RepositoryException(problem, message.orEmpty())
 }

@@ -39,7 +39,11 @@ android {
         unitTests.isReturnDefaultValues = true
         unitTests.isIncludeAndroidResources = true
         // Robolectric reaches into the JDK's file-descriptor internals.
-        unitTests.all { it.jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED") }
+        unitTests.all {
+            it.jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
+            // The Host's published schemas, which the app's decoders are checked against.
+            it.systemProperty("renoa.docs", rootProject.file("../../docs").absolutePath)
+        }
     }
 
     lint {
