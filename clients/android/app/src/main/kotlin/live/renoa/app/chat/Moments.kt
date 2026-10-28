@@ -79,9 +79,9 @@ fun WorkingLine(color: Color, doing: String?, doingColor: Color, modifier: Modif
 
 /**
  * How fast a reply is revealed. It runs at least at [BASE_CHARS_PER_SECOND]. When words arrive
- * faster, it speeds up so each character shows within [MAX_LAG_SECONDS] of arriving (plus one
- * frame), and it never slows down while behind, so that limit holds for every character. Once the
- * reply is whole, the rest shows within [FINISH_SECONDS]. A reply already done is never held back.
+ * faster, it speeds up so each character shows within [MAX_LAG_SECONDS] of arriving, and it never
+ * slows down while behind, so that limit holds for every character. Once the reply is whole, the
+ * rest shows within [FINISH_SECONDS]. Both limits are plus one frame, the frame a catch-up starts on.
  */
 object Reveal {
     const val BASE_CHARS_PER_SECOND = 90f
@@ -126,7 +126,8 @@ fun RevealText(text: String, complete: Boolean, animate: Boolean, style: TextSty
     val target by rememberUpdatedState(end)
     val whole by rememberUpdatedState(complete)
     // One loop for the life of the text. New words do not restart it, so none of them costs a frame.
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reduced) {
+        if (reduced) return@LaunchedEffect
         while (true) {
             snapshotFlow { progress.shown < target }.first { it }
             var last = withFrameNanos { it }

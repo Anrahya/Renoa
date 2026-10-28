@@ -17,6 +17,7 @@ import live.renoa.app.agents.AgentSummary
 import live.renoa.app.agents.Ask
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Conversation
+import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
 import live.renoa.app.agents.StreamingReply
 import live.renoa.app.agents.wordsOr
@@ -84,7 +85,8 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
             try {
                 repository.answer(agentId, choice)
             } catch (refused: RepositoryException) {
-                notice.value = refused.wordsOr("That answer did not go through. Try again.")
+                // A conflict means the question was already answered, from here or elsewhere: nothing to retry.
+                if (refused.problem != Problem.Conflict) notice.value = refused.wordsOr("That answer did not go through. Try again.")
             }
         }
     }

@@ -62,7 +62,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     val agent = state.agent
     val look = remember(agent?.name) { AgentLook.forName(agent?.name ?: "?") }
     // Messages already here when the chat first loads show whole; only later ones rise, and only once.
-    val old = remember(state.loaded) { if (state.loaded) state.messages.mapTo(HashSet()) { it.id } else emptySet() }
+    val old = remember(state.loaded) { if (state.loaded) (state.messages.map { it.id } + listOfNotNull(state.streaming?.id)).toHashSet() else emptySet() }
     val risen = remember { mutableSetOf<String>() }
     // Whatever arrives while the chat is open has been read.
     LaunchedEffect(state.messages.size) { viewModel.seen() }
