@@ -7,6 +7,8 @@ mod manual;
 mod repeated_active_turn;
 #[path = "durable_compaction/replaceability.rs"]
 mod replaceability;
+#[path = "durable_compaction/summary_events.rs"]
+mod summary_events;
 
 use std::sync::{Arc, Mutex};
 

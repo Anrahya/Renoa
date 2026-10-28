@@ -21,7 +21,7 @@ use effect_input::{require_effect, require_effect_identity};
 
 use crate::{
     AgentCommand,
-    configuration::{AgentLoopConfig, MODEL_EFFECT_BINDING},
+    configuration::{AgentLoopConfig, COMPACTION_EFFECT_BINDING, MODEL_EFFECT_BINDING},
     context::{ContextPreparation, ContextStrategy},
     format::{
         AgentCommandKind, LoopPhase, ModelEffectOutput, checkpoint, context_input, message_event,

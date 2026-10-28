@@ -233,6 +233,7 @@ async fn explicit_compaction_is_projected_and_restored_as_the_latest_context_siz
             .expect("execute compaction"),
         LocalTurnOutcome::Compacted {
             estimated_input_tokens: 10,
+            summarized: true,
         }
     );
     assert_eq!(
@@ -245,6 +246,7 @@ async fn explicit_compaction_is_projected_and_restored_as_the_latest_context_siz
             .expect("replay compaction"),
         Some(LocalTurnOutcome::Compacted {
             estimated_input_tokens: 10,
+            summarized: true,
         })
     );
     assert_eq!(*calls.lock().expect("model call counter"), 2);

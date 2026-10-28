@@ -409,6 +409,12 @@ and carries the author as the surface asserts it; the executor decides what a
 guest's command may do. The Renoa Host runs it with no `USER.md`, no plugin
 context, and every tool call refused; the Pi node fails it without running.
 
+RCP reserves no words in text. The Renoa node reads the principal's text that is
+exactly `/compact` (surrounding whitespace ignored) as its compaction control
+and ends the command with one `assistant_message` notice and `completed`;
+`/compact` followed by more words ends `failed`, and a guest's is an ordinary
+message (see `rcp-v0.md`). The Pi node treats all of it as ordinary text.
+
 `request_id` correlates one connection attempt. `command_id` is the durable
 idempotency identity and must be reused with identical content, `context`
 and `author` included, after an uncertain response.

@@ -74,9 +74,10 @@ impl LiveEvents {
     ///
     /// A model response's text is recorded live only when the response also
     /// calls a tool: that text is an intermediate step. A final answer has no
-    /// tool call and is recorded by the end-of-turn projection, and a
-    /// compaction summary never offers tools, so it is never recorded as an
-    /// assistant message.
+    /// tool call and is recorded by the end-of-turn projection. A compaction
+    /// summary's end reaches the node without content (the loop's
+    /// `renoa.agent.compaction` binding drops it), so it is never recorded as
+    /// an assistant message.
     fn complete(&self, event: &AgentEvent) -> Vec<ExecutionEventKind> {
         match event {
             AgentEvent::ModelRequestEnd { response, .. }

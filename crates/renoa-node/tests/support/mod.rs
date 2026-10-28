@@ -11,7 +11,7 @@ use renoa_control::{
     NodeId, PeerIdentity, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind,
     TaskId, TaskSpec,
 };
-use renoa_kernel::{AgentId, Kernel, OperationStatus, SessionId};
+use renoa_kernel::{AgentId, EventCursor, Kernel, OperationStatus, SessionId};
 use renoa_local::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
@@ -317,6 +317,42 @@ impl HostFixture {
 
     pub(crate) fn operation_count(&self) -> usize {
         self.operation_count_for(self.task_id)
+    }
+
+    /// How many times the fixture model was asked for a context summary.
+    pub(crate) fn summary_attempts(&self) -> usize {
+        fs::read_to_string(self.workspace.join("summary-attempts")).map_or(0, |attempts| {
+            attempts.parse().expect("summary attempt count")
+        })
+    }
+
+    /// The last summary request the fixture model received.
+    pub(crate) fn summary_request(&self) -> String {
+        fs::read_to_string(self.workspace.join("summary-request.json"))
+            .expect("read the summary request")
+    }
+
+    /// The last request of any kind the fixture model received, if any.
+    pub(crate) fn last_request(&self) -> Option<String> {
+        fs::read_to_string(self.workspace.join("last-request.json")).ok()
+    }
+
+    /// How many semantic events of `kind` the task's Host session holds.
+    pub(crate) fn session_event_count(&self, task_id: TaskId, kind: &str) -> usize {
+        let session_id = self.session_for(task_id);
+        Kernel::open(
+            self.data
+                .join("sessions")
+                .join(session_id.to_string())
+                .join("kernel.sqlite3"),
+        )
+        .expect("open Host kernel")
+        .events_after(SessionId::from_uuid(session_id), EventCursor::START)
+        .expect("read Host session events")
+        .events
+        .iter()
+        .filter(|event| event.kind == kind)
+        .count()
     }
 
     /// The Host session the node ledger recorded for the task's first command.
@@ -798,7 +834,7 @@ async fn send(socket: &mut Socket, message: &ClientMessage) {
         .expect("send client message");
 }
 
-async fn receive(socket: &mut Socket) -> ServerMessage {
+pub(crate) async fn receive(socket: &mut Socket) -> ServerMessage {
     let message = socket
         .next()
         .await
