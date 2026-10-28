@@ -130,7 +130,11 @@ These decisions define RCP and are not ordinary implementation details:
 21. The same HTTPS origin may expose narrowly scoped Host-management services
     that reuse enrolled device identity. Their records, authorization rules,
     and acknowledgements remain outside the RCP task journal and cannot acquire
-    task authority by sharing a process or origin.
+    task authority by sharing a process or origin. The owner's browser reaches
+    its Host through the coordinator, which authenticates the owner and relays
+    each call over the node's existing link to the node that serves the Host;
+    the coordinator interprets no Host operation and writes no call's body or
+    answer to its files, and the Host keeps the records and receipts.
 22. A new command or task opening whose node is offline is rejected before
     admission and leaves no record. An offline node is usually a sleeping or
     unplugged device, so the sender learns immediately and resends later; the
@@ -875,8 +879,10 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    five seconds. The owner can open any number of tasks on them at runtime,
    each with its own Host session. Configuration revisions and per-target
    workspaces other than the agent's own remain unimplemented.
-   The separate personal Host management adapter provides authenticated observation
-   plus narrow automation mutations, not RCP node provisioning.
+   The owner's Host control is relayed by the coordinator to the node that serves
+   the Host (`serve_host_control`, `host_call`, `complete_host_call`): observation,
+   agent creation, the owner's profile, Discord setup, and automation pause and
+   resume. It is not RCP node provisioning, and the task journal records none of it.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
@@ -1007,14 +1013,20 @@ for a continuity protocol.
 
 ## Open decisions
 
-For the personal control panel, the management target is one explicitly selected
-Host UUID, not every node or surface sharing an origin. Local Host inventory is
-implemented outside RCP through `HostObserver`; its first consumer is the local
-`renoa-host inspect` command. The `renoa-management` HTTP adapter now binds one
-configured authenticated browser principal to that exact Host. Remembered browser
-sessions can mint fresh one-use transport tickets without another passkey ceremony;
-the remembered cookie is not an RCP wire credential. This follows locked decision 21 and does not add Host
-recipes, credentials or kernel inspection types to the continuity journal.
+For the personal control panel, the target is the Host served by the signed-in
+owner's node, not every node or surface sharing an origin. Local Host inventory
+is implemented outside RCP through `HostObserver`; it is read by the node that
+executes for that Host and relayed by the coordinator under `/v1/host`. The
+coordinator checks the browser's remembered session cookie and, for a change,
+exactly one `Origin` equal to its configured origin, then sends the call to the
+owner's one connected node that serves Host control. Two such nodes of one owner
+are refused as ambiguous; none online is unavailable. Remembered browser
+sessions can mint fresh one-use transport tickets without another passkey
+ceremony; the remembered cookie is not an RCP wire credential. This follows
+locked decision 21 and does not add Host recipes, credentials or kernel
+inspection types to the continuity journal. A Discord bot token typed into the
+panel passes through the coordinator's memory on its way to the node; the
+coordinator writes neither a call nor its answer to its database.
 
 These questions are intentionally unresolved and must not be filled in from
 assumption after context compaction:

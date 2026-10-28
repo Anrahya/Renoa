@@ -2357,6 +2357,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",
+ "tower-http",
  "url",
  "uuid",
  "webauthn-authenticator-rs",
@@ -2479,31 +2480,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "renoa-management"
-version = "0.1.0"
-dependencies = [
- "axum",
- "renoa-agent",
- "renoa-control",
- "renoa-discord",
- "renoa-kernel",
- "renoa-local",
- "renoa-protocol",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tower-http",
- "url",
- "uuid",
- "webauthn-authenticator-rs",
-]
-
-[[package]]
 name = "renoa-node"
 version = "0.1.0"
 dependencies = [
@@ -2517,6 +2493,7 @@ dependencies = [
  "renoa-protocol",
  "renoa-rcp-client",
  "renoa-telemetry",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

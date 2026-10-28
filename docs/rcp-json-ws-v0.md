@@ -62,15 +62,16 @@ The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `14` supersedes version `13` by adding two things. The device-key
+Version `14` supersedes version `13` by adding three things. The device-key
 handshake (`device_challenge`, `device_proof`) and the owner's device operations
-(`list_devices`, `revoke_device`, with `device_list` and `device_revoked`). And
-the chat essentials: a task summary carries a `status`, `attach` carries a
-required `live` flag, a surface can `stop_command`, answered by
-`stop_accepted`; the coordinator delivers `stop` to the node, which answers
-`acknowledge_stop`; and a node can `publish_live_activity`, which the
-coordinator relays to interested surfaces as `live_activity`. A version `13`
-peer is rejected at authentication.
+(`list_devices`, `revoke_device`, with `device_list` and `device_revoked`). The
+chat essentials: a task summary carries a `status`, `attach` carries a required
+`live` flag, a surface can `stop_command`, answered by `stop_accepted`; the
+coordinator delivers `stop` to the node, which answers `acknowledge_stop`; and a
+node can `publish_live_activity`, which the coordinator relays to interested
+surfaces as `live_activity`. And Host control relaying (`serve_host_control`,
+`host_call`, `complete_host_call`). A version `13` peer is rejected at
+authentication.
 
 Version `13` superseded version `12` by adding an optional `author` to text
 command input, which marks text written by a guest rather than the
@@ -704,6 +705,55 @@ owns the task, and sends no response:
 
 Node frames use `command_id` for correlation because it is already the durable
 operation identity. They do not carry `request_id`.
+
+### Host control
+
+A node whose Host the owner controls from a browser says so once per
+connection, after it authenticates:
+
+```json
+{ "type": "serve_host_control" }
+```
+
+The coordinator remembers it for that connection only; a reconnecting node says
+it again. The frame has no acknowledgement, and only a node connection may send
+it. The coordinator relays an authenticated owner's browser call to the one
+connected node of that owner that has said so:
+
+```json
+{
+  "type": "host_call",
+  "call_id": "00000000-0000-0000-0000-000000000090",
+  "principal_id": "00000000-0000-0000-0000-000000000050",
+  "method": "POST",
+  "path": "/v1/host/agents",
+  "body": "{\"name\":\"Scout\"}"
+}
+```
+
+`method` is `GET`, `POST` or `PUT`. `principal_id` is the owner the
+coordinator authenticated from the browser's session; nothing in `body` can name
+another. `body` is the request's JSON text, or `null` for a read. The node
+decides which paths exist and what each does; the coordinator interprets
+neither. The node answers on the same connection:
+
+```json
+{
+  "type": "complete_host_call",
+  "call_id": "00000000-0000-0000-0000-000000000090",
+  "status": 200,
+  "body": "{}"
+}
+```
+
+The coordinator delivers an answer to the browser only from the connection the
+call was sent on, and only once; any other answer is dropped. A `status` the
+coordinator cannot relay (anything outside 200-299 and 400-599) becomes a
+`502`. A call ends without an answer when its connection ends or after sixty
+seconds. The coordinator never retries a call and writes neither the request
+body nor the answer to its files. A change survives a lost answer because the browser repeats the same
+request under the same `operation_id` and the Host answers from the receipt it
+recorded.
 
 ## Errors
 

@@ -211,6 +211,56 @@ fn the_node_credential_cannot_also_submit_automations() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_default_reasoning_reaches_the_host_that_creates_agents() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let bridge = files.path().join("bridge.mjs");
+    let credential_store = files.path().join("model.sqlite");
+    let credentials = files.path().join("device.json");
+    let automations = files.path().join("automations.json");
+    std::fs::write(&bridge, "").expect("write bridge");
+    std::fs::write(&credential_store, "").expect("write model store");
+    write_credentials(&credentials);
+    write_credentials(&automations);
+    let reasoning_of = |name: &str, reasoning: Option<&str>| {
+        let mut model = json!({
+            "bridge": bridge,
+            "credentialStore": credential_store,
+            "providers": ["xai"],
+            "defaultProvider": "xai",
+            "defaultModel": "fixture-model"
+        });
+        if let Some(reasoning) = reasoning {
+            model["defaultReasoning"] = json!(reasoning);
+        }
+        let config = files.path().join(format!("{name}.json"));
+        std::fs::write(
+            &config,
+            serde_json::to_vec(&json!({
+                "schemaVersion": 5,
+                "endpoint": "ws://127.0.0.1:9/connect",
+                "automationCredentials": automations,
+                "model": model
+            }))
+            .expect("encode config"),
+        )
+        .expect("write config");
+        private(&config);
+        load(&config, &credentials, &files.path().join(name))
+            .expect("load config")
+            .host
+            .default_agent_model()
+            .reasoning
+    };
+
+    assert_eq!(
+        reasoning_of("high", Some("high")),
+        Some(renoa_local::ReasoningLevel::High)
+    );
+    assert_eq!(reasoning_of("unset", None), None);
+}
+
 fn write_credentials(path: &Path) {
     std::fs::write(
         path,

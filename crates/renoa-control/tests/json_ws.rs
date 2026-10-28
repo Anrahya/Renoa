@@ -1,7 +1,7 @@
 use renoa_control::{
-    ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, JSON_WS_VERSION, NodeId,
-    ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId,
-    TaskStatus, TaskSummary,
+    ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, HostMethod,
+    JSON_WS_VERSION, NodeId, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventId,
+    TaskEventKind, TaskId, TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef,
@@ -653,4 +653,73 @@ fn json_websocket_v14_encodes_live_activity() {
             .expect("deserialize relayed activity"),
         relayed
     );
+}
+
+#[test]
+fn json_websocket_v14_encodes_host_control_calls() {
+    let call_id = Uuid::from_u128(9);
+    let call = ServerMessage::HostCall {
+        call_id,
+        principal_id: PrincipalId::from_uuid(Uuid::from_u128(4)),
+        method: HostMethod::Post,
+        path: "/v1/host/agents".to_owned(),
+        body: Some("{\"name\":\"Scout\"}".to_owned()),
+    };
+    let call_json = json!({
+        "type": "host_call",
+        "call_id": "00000000-0000-0000-0000-000000000009",
+        "principal_id": "00000000-0000-0000-0000-000000000004",
+        "method": "POST",
+        "path": "/v1/host/agents",
+        "body": "{\"name\":\"Scout\"}"
+    });
+    assert_eq!(
+        serde_json::to_value(&call).expect("serialize Host call"),
+        call_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(call_json).expect("deserialize Host call"),
+        call
+    );
+    let read = ServerMessage::HostCall {
+        call_id,
+        principal_id: PrincipalId::from_uuid(Uuid::from_u128(4)),
+        method: HostMethod::Get,
+        path: "/v1/host".to_owned(),
+        body: None,
+    };
+    assert_eq!(
+        serde_json::to_value(read).expect("serialize Host read")["body"],
+        json!(null)
+    );
+
+    assert_eq!(
+        serde_json::to_value(ClientMessage::ServeHostControl).expect("serialize advertisement"),
+        json!({ "type": "serve_host_control" })
+    );
+    let complete = ClientMessage::CompleteHostCall {
+        call_id,
+        status: 200,
+        body: "{}".to_owned(),
+    };
+    let complete_json = json!({
+        "type": "complete_host_call",
+        "call_id": "00000000-0000-0000-0000-000000000009",
+        "status": 200,
+        "body": "{}"
+    });
+    assert_eq!(
+        serde_json::to_value(&complete).expect("serialize Host answer"),
+        complete_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(complete_json).expect("deserialize Host answer"),
+        complete
+    );
+    for method in ["get", "DELETE", "PATCH"] {
+        assert!(
+            serde_json::from_value::<HostMethod>(json!(method)).is_err(),
+            "{method} is not a Host control method"
+        );
+    }
 }

@@ -6,6 +6,7 @@ mod automations;
 mod backoff;
 mod bridge;
 mod control;
+mod host_control;
 mod live;
 mod live_text;
 mod node_log;

@@ -190,30 +190,41 @@ async fn assert_restored_browser(
             .expect("ticket JSON");
         assert_ne!(ticket["connectionTicket"], verification["connectionTicket"]);
     }
-    for origin in [None, Some("https://attacker.invalid")] {
+    for origins in [
+        vec![],
+        vec!["https://attacker.invalid"],
+        vec![ORIGIN, ORIGIN],
+    ] {
         let mut request = client
             .post(format!("{}/v1/identity/logout", server.url))
             .header("cookie", pair);
-        if let Some(origin) = origin {
-            request = request.header("origin", origin);
+        for origin in &origins {
+            request = request.header("origin", *origin);
         }
         assert_eq!(
             request.send().await.expect("reject forged logout").status(),
-            StatusCode::UNAUTHORIZED
+            StatusCode::UNAUTHORIZED,
+            "{origins:?}"
         );
     }
-    assert_eq!(
-        client
+    for origins in [vec!["https://attacker.invalid"], vec![ORIGIN, ORIGIN]] {
+        let mut request = client
             .post(format!("{}/v1/identity/connection-ticket", server.url))
             .header("cookie", pair)
-            .header("origin", "https://attacker.invalid")
-            .json(&json!({"surface":"control_room"}))
-            .send()
-            .await
-            .expect("reject forged ticket request")
-            .status(),
-        StatusCode::UNAUTHORIZED
-    );
+            .json(&json!({"surface":"control_room"}));
+        for origin in &origins {
+            request = request.header("origin", *origin);
+        }
+        assert_eq!(
+            request
+                .send()
+                .await
+                .expect("reject forged ticket request")
+                .status(),
+            StatusCode::UNAUTHORIZED,
+            "{origins:?}"
+        );
+    }
 }
 
 async fn assert_session_lifecycle(

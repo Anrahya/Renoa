@@ -377,6 +377,7 @@ async fn dispatch(
         | ServerMessage::ExecutionEventsAccepted { .. }
         | ServerMessage::ExecutionAcknowledged { .. }
         | ServerMessage::Execute { .. }
+        | ServerMessage::HostCall { .. }
         | ServerMessage::Stop { .. }
         | ServerMessage::LiveActivity { .. } => {
             return Err(ClientError::Protocol(

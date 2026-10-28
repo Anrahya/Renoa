@@ -3,9 +3,12 @@ use renoa_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+use renoa_protocol::PrincipalId;
+use uuid::Uuid;
+
 use crate::{
     ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
-    NodeId, StopOutcome, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
+    HostMethod, NodeId, StopOutcome, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
     operations::{NodeOperation, SurfaceOperation},
 };
 
@@ -94,6 +97,13 @@ pub enum ClientMessage {
         command_id: CommandId,
         activity: LiveActivity,
     },
+    /// The node answers Host control calls for the owner who enrolled it.
+    ServeHostControl,
+    CompleteHostCall {
+        call_id: Uuid,
+        status: u16,
+        body: String,
+    },
 }
 
 impl ClientMessage {
@@ -105,7 +115,9 @@ impl ClientMessage {
             | Self::DeviceProof { .. }
             | Self::AdvertiseTargets { .. }
             | Self::AcknowledgeExecution { .. }
-            | Self::AcknowledgeStop { .. } => true,
+            | Self::AcknowledgeStop { .. }
+            | Self::ServeHostControl
+            | Self::CompleteHostCall { .. } => true,
             Self::ListTasks { request_id }
             | Self::ListTargets { request_id }
             | Self::ListDevices { request_id }
@@ -162,6 +174,16 @@ impl ClientMessage {
                 task_id,
                 command_id,
                 activity,
+            },
+            Self::ServeHostControl => NodeOperation::ServeHostControl,
+            Self::CompleteHostCall {
+                call_id,
+                status,
+                body,
+            } => NodeOperation::CompleteHostCall {
+                call_id,
+                status,
+                body,
             },
             Self::Enroll { .. }
             | Self::Authenticate { .. }
@@ -251,7 +273,9 @@ impl ClientMessage {
             | Self::AcknowledgeExecution { .. }
             | Self::PublishExecutionEvents { .. }
             | Self::AcknowledgeStop { .. }
-            | Self::PublishLiveActivity { .. } => return None,
+            | Self::PublishLiveActivity { .. }
+            | Self::ServeHostControl
+            | Self::CompleteHostCall { .. } => return None,
         };
         Some(JsonOperation::Surface {
             request_id,
@@ -336,6 +360,14 @@ pub enum ServerMessage {
         task_id: TaskId,
         command_id: CommandId,
     },
+    /// One owner call under `/v1/host`, for the node that serves the Host.
+    HostCall {
+        call_id: Uuid,
+        principal_id: PrincipalId,
+        method: HostMethod,
+        path: String,
+        body: Option<String>,
+    },
     TaskEvent {
         event: TaskEvent,
     },
@@ -359,7 +391,8 @@ impl ServerMessage {
             | Self::DeviceChallenge { .. }
             | Self::ExecutionAcknowledged { .. }
             | Self::Execute { .. }
-            | Self::Stop { .. } => true,
+            | Self::Stop { .. }
+            | Self::HostCall { .. } => true,
             Self::TaskList { request_id, .. }
             | Self::TargetList { request_id, .. }
             | Self::DeviceRevoked { request_id, .. }
@@ -420,60 +453,4 @@ fn execution_event_has_interoperable_numbers(event: &ExecutionEvent) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    //! The directions the socket tests cannot reach: the coordinator never
-    //! receives an unsafe number it would later send back, so the outbound
-    //! checks are exercised here.
-
-    use super::*;
-
-    const LARGEST_SAFE: u64 = MAX_INTEROPERABLE_INTEGER;
-    const SMALLEST_UNSAFE: u64 = MAX_INTEROPERABLE_INTEGER + 1;
-
-    fn delta(sequence: u64) -> LiveActivity {
-        LiveActivity::TextDelta {
-            sequence,
-            text: "text".to_owned(),
-        }
-    }
-
-    #[test]
-    fn a_live_frame_numbered_beyond_what_javascript_preserves_is_not_sent_or_accepted() {
-        let published = |activity| ClientMessage::PublishLiveActivity {
-            task_id: TaskId::new(),
-            command_id: CommandId::new(),
-            activity,
-        };
-        let relayed = |activity| ServerMessage::LiveActivity {
-            task_id: TaskId::new(),
-            command_id: CommandId::new(),
-            activity,
-        };
-
-        assert!(published(delta(LARGEST_SAFE)).has_interoperable_numbers());
-        assert!(!published(delta(SMALLEST_UNSAFE)).has_interoperable_numbers());
-        assert!(published(LiveActivity::TextReset).has_interoperable_numbers());
-        assert!(relayed(delta(LARGEST_SAFE)).has_interoperable_numbers());
-        assert!(!relayed(delta(SMALLEST_UNSAFE)).has_interoperable_numbers());
-        assert!(relayed(LiveActivity::TextReset).has_interoperable_numbers());
-    }
-
-    #[test]
-    fn a_stop_request_id_beyond_what_javascript_preserves_is_not_sent_or_accepted() {
-        let requested = |request_id| ClientMessage::StopCommand {
-            request_id,
-            task_id: TaskId::new(),
-            command_id: CommandId::new(),
-        };
-        let accepted = |request_id| ServerMessage::StopAccepted {
-            request_id,
-            command_id: CommandId::new(),
-            outcome: StopOutcome::Requested,
-        };
-
-        assert!(requested(LARGEST_SAFE).has_interoperable_numbers());
-        assert!(!requested(SMALLEST_UNSAFE).has_interoperable_numbers());
-        assert!(accepted(LARGEST_SAFE).has_interoperable_numbers());
-        assert!(!accepted(SMALLEST_UNSAFE).has_interoperable_numbers());
-    }
-}
+mod tests;

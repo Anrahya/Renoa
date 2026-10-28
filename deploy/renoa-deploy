@@ -218,7 +218,6 @@ def installed_services(layout: Layout, services: list[dict]) -> list[dict]:
 
 def changed_services(layout: Layout, services: list[dict], old: Path, new: Path) -> list[str]:
     adapters_changed = tree_digest(old / "adapters") != tree_digest(new / "adapters")
-    room_changed = tree_digest(old / "control-room") != tree_digest(new / "control-room")
     old_binaries = read_manifest(old).get("binaries", {})
     new_binaries = read_manifest(new)["binaries"]
     changed = []
@@ -228,7 +227,6 @@ def changed_services(layout: Layout, services: list[dict], old: Path, new: Path)
             any(old_binaries.get(name) != new_binaries.get(name) for name in service["binaries"])
             or any(unit_differs(layout, new, unit) for unit in units)
             or (service.get("adapters") and adapters_changed)
-            or (service.get("control_room") and room_changed)
         ):
             changed.append(service["unit"])
     return changed
@@ -330,16 +328,16 @@ def health(host: Host, layout: Layout, active: list[str]) -> list[str]:
             failures.append(f"{unit} is {state[0] or 'unknown'}")
         elif state != first[unit]:
             failures.append(f"{unit} restarted during the settle window")
-    if "renoa-management.service" in active:
-        if (status := host.http_status("http://127.0.0.1:7819/v1/host/discord")) != 401:
-            failures.append(f"management answered {status} to an unauthenticated request, not 401")
+    if "renoa-coordinator.service" in active:
+        if (status := host.http_status("http://127.0.0.1:7818/v1/host/discord")) != 401:
+            failures.append(f"the coordinator answered {status} to an unauthenticated Host request, not 401")
         forged = host.http_status(
-            "http://127.0.0.1:7819/v1/host/discord/inspection",
+            "http://127.0.0.1:7818/v1/host/discord/inspection",
             "POST",
             {"Origin": "https://example.invalid", "Content-Type": "application/json"},
         )
         if forged != 403:
-            failures.append(f"management answered {forged} to a foreign origin, not 403")
+            failures.append(f"the coordinator answered {forged} to a foreign origin, not 403")
     if "renoa-node.service" in active:
         try:
             running_turns(host)

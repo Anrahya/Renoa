@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BrowserPairingToken, ControlError,
     browser_identity::parse_surface,
-    browser_identity_http::{error_response, secure_json},
+    browser_identity_http::{error_response, same_origin, secure_json},
     browser_sessions::CLEAR_COOKIE,
     coordinator::CoordinatorState,
     identity_store::timestamp_millis,
@@ -154,12 +154,4 @@ async fn ticket(
         Ok(None) => error_response(&ControlError::authentication_failed()),
         Err(error) => error_response(&error),
     }
-}
-
-fn same_origin(state: &CoordinatorState, headers: &HeaderMap) -> bool {
-    state.browser_identity.as_ref().is_some_and(|identity| {
-        headers
-            .get(header::ORIGIN)
-            .is_some_and(|origin| origin == identity.origin())
-    })
 }

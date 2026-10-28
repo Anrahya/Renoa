@@ -1,4 +1,9 @@
-use std::{collections::HashMap, path::Path, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
 
 use axum::{Router, routing::get};
 use renoa_protocol::{PrincipalId, TargetRef};
@@ -102,6 +107,7 @@ impl ControlError {
 #[derive(Clone)]
 pub struct Coordinator {
     state: Arc<CoordinatorState>,
+    control_room: Option<PathBuf>,
 }
 
 pub(crate) struct CoordinatorState {
@@ -112,6 +118,7 @@ pub(crate) struct CoordinatorState {
     pub(crate) connection_slots: Arc<Semaphore>,
     pub(crate) connection_lifecycle: Mutex<()>,
     pub(crate) store: ControlStore,
+    pub(crate) host_calls: crate::host_calls::HostCalls,
     pub(crate) nodes: Mutex<HashMap<NodeId, NodeConnection>>,
     pub(crate) sessions: Mutex<HashMap<DeviceId, HashMap<Uuid, CancellationToken>>>,
     pub(crate) task_senders: Mutex<HashMap<TaskId, broadcast::Sender<TaskEvent>>>,
@@ -125,6 +132,8 @@ pub(crate) struct NodeConnection {
     pub(crate) outgoing: mpsc::Sender<ServerMessage>,
     /// The agents this connection advertised; empty until it advertises.
     pub(crate) targets: Vec<TargetRef>,
+    /// Whether this connection said it answers Host control calls.
+    pub(crate) host_control: bool,
 }
 
 impl Coordinator {
@@ -185,6 +194,7 @@ impl Coordinator {
         let store = ControlStore::open(path)?;
         let browser_sessions = crate::BrowserSessions::open(store.path.as_ref())?;
         Ok(Self {
+            control_room: None,
             state: Arc::new(CoordinatorState {
                 browser_identity,
                 android_apps,
@@ -193,12 +203,24 @@ impl Coordinator {
                 connection_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS)),
                 connection_lifecycle: Mutex::new(()),
                 store,
+                host_calls: crate::host_calls::HostCalls::default(),
                 nodes: Mutex::new(HashMap::new()),
                 sessions: Mutex::new(HashMap::new()),
                 task_senders: Mutex::new(HashMap::new()),
                 live_channels: Mutex::new(HashMap::new()),
             }),
         })
+    }
+
+    /// Serves the built Control Room from `directory` on the coordinator's own
+    /// origin, beside the API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the directory has no `index.html`.
+    pub fn with_control_room(mut self, directory: impl AsRef<Path>) -> Result<Self, ControlError> {
+        self.control_room = Some(crate::control_room::check(directory.as_ref())?);
+        Ok(self)
     }
 
     /// Creates one durable task and its execution binding.
@@ -293,7 +315,11 @@ impl Coordinator {
                 .merge(browser_identity_http::routes())
                 .merge(crate::browser_sessions_http::routes())
                 .merge(oauth_relay_http::routes())
-                .merge(crate::credential_relay_http::routes());
+                .merge(crate::credential_relay_http::routes())
+                .merge(crate::host_control_http::routes());
+        }
+        if let Some(directory) = self.control_room {
+            app = app.fallback_service(crate::control_room::service(directory));
         }
         if !self.state.android_apps.is_empty() {
             app = app.merge(crate::android_apps::routes());

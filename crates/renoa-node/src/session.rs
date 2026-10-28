@@ -25,6 +25,9 @@ use crate::{
 };
 use publication::{Publication, refresh_publications, send_live, send_pending};
 
+mod host_calls;
+use host_calls::{HostCalls, IncomingCall};
+
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
@@ -114,6 +117,8 @@ async fn serve_session_inner(
     node_log::event("info", "coordinator_connected", &serde_json::json!({}));
     let mut advertised = None;
     advertise(&mut socket, &runtime, &mut advertised).await?;
+    send_client(&mut socket, &ClientMessage::ServeHostControl).await?;
+    let mut host_calls = HostCalls::new(Arc::clone(&runtime));
     let mut agent_refresh = tokio::time::interval(AGENT_REFRESH_INTERVAL);
     agent_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -152,6 +157,11 @@ async fn serve_session_inner(
                 }
             }
             _ = agent_refresh.tick() => advertise(&mut socket, &runtime, &mut advertised).await?,
+            answer = host_calls.finished(), if !host_calls.is_idle() => {
+                if let Some(answer) = answer {
+                    send_client(&mut socket, &answer).await?;
+                }
+            }
             message = receive_server(&mut socket) => {
                 let message = message?;
                 handle_server_message(
@@ -160,6 +170,7 @@ async fn serve_session_inner(
                     tasks,
                     running,
                     &mut publications,
+                    &mut host_calls,
                     &mut live,
                     message,
                 ).await?;
@@ -208,6 +219,25 @@ async fn advertise(
     Ok(())
 }
 
+/// Records a stop and cancels its command, then acknowledges it: the
+/// acknowledgement is sent only once the stop is durable here.
+async fn stop(
+    socket: &mut Socket,
+    runtime: &NodeRuntime,
+    task_id: TaskId,
+    command_id: CommandId,
+) -> Result<(), NodeError> {
+    runtime.stop(task_id, command_id).await?;
+    send_client(
+        socket,
+        &ClientMessage::AcknowledgeStop {
+            task_id,
+            command_id,
+        },
+    )
+    .await
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "these values are the complete state of one authenticated node session"
@@ -218,6 +248,7 @@ async fn handle_server_message(
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
     publications: &mut HashMap<CommandId, Publication>,
+    host_calls: &mut HostCalls,
     live: &mut broadcast::Receiver<LiveFrame>,
     message: ServerMessage,
 ) -> Result<(), NodeError> {
@@ -275,17 +306,22 @@ async fn handle_server_message(
         ServerMessage::Stop {
             task_id,
             command_id,
+        } => stop(socket, runtime, task_id, command_id).await?,
+        ServerMessage::HostCall {
+            call_id,
+            principal_id,
+            method,
+            path,
+            body,
         } => {
-            // Acknowledged only once the stop is durable here.
-            runtime.stop(task_id, command_id).await?;
-            send_client(
-                socket,
-                &ClientMessage::AcknowledgeStop {
-                    task_id,
-                    command_id,
-                },
-            )
-            .await?;
+            let call = IncomingCall {
+                call_id,
+                principal_id,
+                method,
+                path,
+                body,
+            };
+            host_calls.start(call);
         }
         ServerMessage::Error { code, message, .. } => {
             return Err(NodeError::Rejected { code, message });

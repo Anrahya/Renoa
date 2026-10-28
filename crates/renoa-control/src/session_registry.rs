@@ -132,6 +132,7 @@ pub(crate) async fn activate_device(
                 device_id,
                 outgoing: outgoing.clone(),
                 targets: Vec::new(),
+                host_control: false,
             },
         );
     }
