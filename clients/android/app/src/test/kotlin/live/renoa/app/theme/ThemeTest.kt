@@ -2,7 +2,6 @@ package live.renoa.app.theme
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import live.renoa.app.badge.AgentLook
 import kotlin.reflect.full.memberProperties
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -88,22 +87,5 @@ class ThemeTest {
         }
         assertEquals(ThemeName.entries.toList(), seen)
         assertEquals(ThemeName.Graphite, theme)
-    }
-
-    @Test
-    fun anAgentGetsSixTonesFromItsNameAndTheSameNameAlwaysGetsTheSame() {
-        val a = AgentLook.forName("Tifa")
-        val b = AgentLook.forName("Tifa")
-        assertEquals(6, a.tones.size)
-        assertEquals(a.tones, b.tones)
-        assertEquals('T', a.letter)
-        assertEquals(a.tones[0], a.main)
-        assertNotEquals(AgentLook.forName("Tifa").tones, AgentLook.forName("Nagisa").tones)
-    }
-
-    @Test
-    fun aMonogramSurvivesAnEmptyOrPaddedName() {
-        assertEquals('?', AgentLook.forName("").letter)
-        assertEquals('K', AgentLook.forName("  kai'sa").letter)
     }
 }

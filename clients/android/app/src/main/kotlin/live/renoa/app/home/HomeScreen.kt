@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -45,10 +45,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
-import live.renoa.app.badge.AgentLook
 import live.renoa.app.badge.Badge
 import live.renoa.app.badge.hexPath
+import live.renoa.app.theme.LocalMotionClock
+import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.Renoa
+import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.AskChoices
@@ -72,7 +74,6 @@ fun HomeScreen(
     val state by viewModel.state.collectAsState()
     val colors = Renoa.colors
     val lead = state.lead
-    val leadLook = remember(lead?.name) { lead?.let { AgentLook.forName(it.name) } }
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -87,16 +88,16 @@ fun HomeScreen(
             }
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 16.dp)) {
                 val briefing = state.briefing
-                if (briefing != null && lead != null && leadLook != null) {
-                    item(key = "briefing") { BriefingCard(lead, leadLook, briefing.text, state.people) { onOpenChat(lead.id) } }
+                if (briefing != null && lead != null) {
+                    item(key = "briefing") { BriefingCard(lead, briefing.text, state.people) { onOpenChat(lead.id) } }
                 }
-                items(state.people, key = { it.id }) { agent ->
-                    PersonRow(agent, state.agent(agent.glance.with), onOpen = { onOpenChat(agent.id) }, onAnswer = { viewModel.answer(agent.id, it) })
+                itemsIndexed(state.people, key = { _, agent -> agent.id }) { index, agent ->
+                    // On the first showing the tiles drop in one after another, as an agent assembles on the landing page.
+                    PersonRow(agent, state.agent(agent.glance.with), index * 90, onOpen = { onOpenChat(agent.id) }, onAnswer = { viewModel.answer(agent.id, it) })
                 }
                 item(key = "new") { MeetSomeoneNew(onNewAgent) }
             }
             state.notice?.let { Text(it, Modifier.padding(start = 24.dp, bottom = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
-            if (lead != null) MessageBar(lead.name) { onOpenChat(lead.id) }
         }
     }
 }
@@ -116,7 +117,7 @@ private fun nameColoured(text: String, people: List<AgentSummary>, base: SpanSty
     }
 
 @Composable
-private fun BriefingCard(lead: AgentSummary, look: AgentLook, text: String, people: List<AgentSummary>, onOpen: () -> Unit) {
+private fun BriefingCard(lead: AgentSummary, text: String, people: List<AgentSummary>, onOpen: () -> Unit) {
     val colors = Renoa.colors
     val shape = RoundedCornerShape(RenoaShapes.Card)
     Row(
@@ -130,15 +131,14 @@ private fun BriefingCard(lead: AgentSummary, look: AgentLook, text: String, peop
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Badge(look, lead.state, 48.dp, mini = true, label = lead.name)
+        Badge(lead.name, lead.state, 52.dp, primary = lead.primary, arriveAfterMillis = 0)
         Text(nameColoured(text, people, SpanStyle(color = colors.foregroundSoft), colors.foreground), Modifier.weight(1f).padding(top = 2.dp), style = RenoaType.Body)
     }
 }
 
 @Composable
-private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, onOpen: () -> Unit, onAnswer: (String) -> Unit) {
+private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, arriveAfterMillis: Int, onOpen: () -> Unit, onAnswer: (String) -> Unit) {
     val colors = Renoa.colors
-    val look = remember(agent.name) { AgentLook.forName(agent.name) }
     val glance = agent.glance
     Row(
         Modifier
@@ -150,10 +150,9 @@ private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, onOpen: () ->
         verticalAlignment = Alignment.Top,
     ) {
         Box(Modifier.size(54.dp)) {
-            Badge(look, agent.state, 54.dp, mini = true, label = agent.name)
+            Badge(agent.name, agent.state, 54.dp, primary = agent.primary, arriveAfterMillis = arriveAfterMillis)
             if (partner != null) {
-                val partnerLook = remember(partner.name) { AgentLook.forName(partner.name) }
-                Badge(partnerLook, partner.state, 26.dp, Modifier.align(Alignment.BottomEnd).offset(6.dp, 6.dp), mini = true)
+                Badge(partner.name, partner.state, 26.dp, Modifier.align(Alignment.BottomEnd).offset(6.dp, 6.dp), label = "")
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -168,7 +167,8 @@ private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, onOpen: () ->
                         listOfNotNull(partner?.let { "With ${it.name}" }, glance.doing?.let { "$it…" }).joinToString(" · ").ifEmpty { "Working on it…" }
                     else -> glance.line
                 }
-            if (line != null) {
+            if (line != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (agent.state == AgentState.Working && partner != null) Seam(Modifier.size(22.dp, 10.dp))
                 Text(
                     line,
                     style = RowLine,
@@ -209,24 +209,21 @@ private fun MeetSomeoneNew(onNewAgent: () -> Unit) {
     }
 }
 
-/** Looks like the chat composer, and opens the lead agent's chat. */
+/**
+ * RCP drawn the landing page's way: a line between two agents with a packet running along it,
+ * trailing a short tail. It holds still when motion is reduced.
+ */
 @Composable
-private fun MessageBar(name: String, onOpen: () -> Unit) {
+private fun Seam(modifier: Modifier) {
     val colors = Renoa.colors
-    Row(
-        Modifier
-            .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)
-            .fillMaxWidth()
-            .background(colors.card, RoundedCornerShape(RenoaShapes.Control))
-            .border(1.dp, colors.input, RoundedCornerShape(RenoaShapes.Control))
-            .semantics { contentDescription = "Message $name" }
-            .clickable(role = Role.Button, onClick = onOpen)
-            .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("Message $name", Modifier.weight(1f).padding(vertical = 10.dp), style = RenoaType.Body, color = colors.mutedForeground)
-        Box(Modifier.size(40.dp).background(colors.primary, RoundedCornerShape(RenoaShapes.Control)), contentAlignment = Alignment.Center) {
-            PathIcon(Glyphs.SEND, colors.primaryForeground, size = 18.dp)
-        }
+    val clock = LocalMotionClock.current
+    val reduced = LocalReducedMotion.current
+    Canvas(modifier) {
+        val y = size.height / 2
+        drawLine(colors.input, Offset(0f, y), Offset(size.width, y), 1.dp.toPx())
+        val u = if (reduced) 0.5f else (clock.value % 1.2f) / 1.2f
+        val x = size.width * RenoaEasing.EaseInOut.transform(u)
+        drawLine(colors.foreground.copy(alpha = 0.5f), Offset((x - 8.dp.toPx()).coerceAtLeast(0f), y), Offset(x, y), 1.5.dp.toPx())
+        drawCircle(colors.foreground, 2.5.dp.toPx(), Offset(x, y))
     }
 }

@@ -46,6 +46,9 @@ object RenoaShapes {
 
     /** `radius-md`: buttons and inputs. */
     val Control = 6.dp
+
+    /** The message composer is softer than the system's inputs: the owner found 6px too sharp for a thing you type into all day. */
+    val Composer = 18.dp
 }
 
 @OptIn(ExperimentalTextApi::class)

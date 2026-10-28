@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -23,7 +24,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.FakeAgentRepository
-import live.renoa.app.badge.AgentLook
 import live.renoa.app.badge.Badge
 import live.renoa.app.chat.ChatScreen
 import live.renoa.app.chat.ChatViewModel
@@ -61,10 +61,10 @@ class ScreensTest : ScreenTest() {
         show(theme, seconds = 3.97f) {
             Column(Modifier.background(Renoa.colors.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AgentState.entries.forEach { Badge(AgentLook.forName("Tifa"), it, 66.dp, label = "Tifa ${it.name}") }
+                    AgentState.entries.forEach { Badge("Tifa", it, 66.dp, label = "Tifa ${it.name}") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AgentState.entries.forEach { Badge(AgentLook.forName("Kai'Sa"), it, 66.dp, mini = true, label = "Kai ${it.name}") }
+                    AgentState.entries.forEach { Badge("Renoa", it, 66.dp, primary = true, label = "Renoa ${it.name}") }
                 }
             }
         }
@@ -88,7 +88,7 @@ class ScreensTest : ScreenTest() {
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
         compose.onNodeWithText("Dal and a salad").assertIsDisplayed()
         compose.onNodeWithText("With Kai'Sa · Picking three posts worth your reply…").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Message Renoa").assertIsDisplayed()
+        assertEquals(2, compose.onAllNodesWithContentDescription("Renoa, working, your main agent").fetchSemanticsNodes().size, "her note and her row")
         snapshot("home")
     }
 
@@ -111,7 +111,7 @@ class ScreensTest : ScreenTest() {
         show { HomeScreen(model, onOpenChat = { opened += it }, onNewAgent = { made++ }, onChangeColours = {}) }
         compose.waitForIdle()
         compose.onNodeWithText("Optimus").performClick()
-        compose.onNodeWithContentDescription("Message Renoa").performClick()
+        compose.onNodeWithText("Evening, Yash. Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").performClick()
         compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasContentDescription("Meet someone new"))
         compose.onNodeWithContentDescription("Meet someone new").performClick()
         assertEquals(listOf("optimus", "renoa"), opened)

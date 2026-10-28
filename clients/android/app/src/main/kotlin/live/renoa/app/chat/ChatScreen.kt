@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Speaker
-import live.renoa.app.badge.AgentLook
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.Renoa
@@ -59,7 +58,6 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     val state by viewModel.state.collectAsState()
     val colors = Renoa.colors
     val agent = state.agent
-    val look = remember(agent?.name) { AgentLook.forName(agent?.name ?: "?") }
     // Messages already here when the chat first loads show whole; only later ones rise, and only once.
     val old = remember(state.loaded) { if (state.loaded) (state.messages.map { it.id } + listOfNotNull(state.streaming?.id)).toHashSet() else emptySet() }
     val risen = remember { mutableSetOf<String>() }
@@ -77,11 +75,11 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    if (agent != null) Badge(look, agent.state, 50.dp, label = agent.name)
+                    if (agent != null) Badge(agent.name, agent.state, 50.dp, primary = agent.primary, arriveAfterMillis = 0)
                     Text(agent?.name.orEmpty(), style = RenoaType.Heading, color = colors.foreground)
                 }
             }
-            Messages(state, old, risen, Modifier.weight(1f), look)
+            Messages(state, old, risen, Modifier.weight(1f))
             state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
             Composer(state, agent?.name.orEmpty(), viewModel)
         }
@@ -89,7 +87,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
 }
 
 @Composable
-private fun Messages(state: ChatUiState, old: Set<String>, risen: MutableSet<String>, modifier: Modifier, look: AgentLook) {
+private fun Messages(state: ChatUiState, old: Set<String>, risen: MutableSet<String>, modifier: Modifier) {
     val colors = Renoa.colors
     val agent = state.agent
     LazyColumn(
@@ -101,7 +99,7 @@ private fun Messages(state: ChatUiState, old: Set<String>, risen: MutableSet<Str
         if (agent != null && state.working && state.streaming == null) {
             item(key = "working") {
                 Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Badge(look, agent.state, 56.dp, label = agent.name)
+                    Badge(agent.name, agent.state, 56.dp, primary = agent.primary)
                     WorkingLine(colors.foreground, agent.glance.doing, colors.mutedForeground)
                 }
             }
@@ -156,8 +154,8 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(colors.card, RoundedCornerShape(RenoaShapes.Control))
-                .border(1.dp, colors.input, RoundedCornerShape(RenoaShapes.Control))
+                .background(colors.card, RoundedCornerShape(RenoaShapes.Composer))
+                .border(1.dp, colors.input, RoundedCornerShape(RenoaShapes.Composer))
                 .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -178,7 +176,7 @@ private fun Composer(state: ChatUiState, name: String, viewModel: ChatViewModel)
                 Modifier
                     .size(40.dp)
                     .alpha(if (enabled) 1f else 0.45f)
-                    .background(colors.primary, RoundedCornerShape(RenoaShapes.Control))
+                    .background(colors.primary, RoundedCornerShape(RenoaShapes.Composer - 6.dp))
                     .semantics { contentDescription = if (state.action == ComposerAction.Stop) "Stop" else "Send" }
                     .clickable(enabled = enabled, role = Role.Button) {
                         if (state.action == ComposerAction.Stop) viewModel.stop() else viewModel.send()

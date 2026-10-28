@@ -48,20 +48,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import live.renoa.app.agents.AbilityKind
 import live.renoa.app.agents.AgentState
-import live.renoa.app.badge.AgentLook
 import live.renoa.app.badge.Badge
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.Glyphs
-import live.renoa.app.ui.RenoaButton
 import live.renoa.app.ui.PathIcon
+import live.renoa.app.ui.RenoaButton
 
 /** Make an agent, or edit one. The two share one screen: a picture, a name, what it is for, and its switches. */
 @Composable
 fun AgentEditorScreen(viewModel: AgentEditorViewModel, onClose: () -> Unit, onFinished: (agentId: String) -> Unit) {
     val state by viewModel.state.collectAsState()
     val colors = Renoa.colors
-    val look = remember(state.name) { AgentLook.forName(state.name.ifBlank { "?" }) }
     val called = state.name.trim().ifEmpty { "this one" }
 
     LaunchedEffect(state.finishedAgentId) { state.finishedAgentId?.let(onFinished) }
@@ -78,14 +76,14 @@ fun AgentEditorScreen(viewModel: AgentEditorViewModel, onClose: () -> Unit, onFi
                 }
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                if (state.creating) CreateHeader(state, look, viewModel) else EditHeader(state, look, viewModel)
+                if (state.creating) CreateHeader(state, viewModel) else EditHeader(state, viewModel)
                 Purpose(state, called, viewModel)
                 Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 22.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
                     Text("What $called can do", style = RenoaType.Heading, color = colors.foreground)
                     Text("Tap to switch", style = RenoaType.Caption, color = colors.mutedForeground)
                 }
                 Box(Modifier.fillMaxWidth().padding(top = 4.dp), contentAlignment = Alignment.TopCenter) {
-                    AbilityGrid(state.abilities, state.creating, look.main, viewModel::toggle)
+                    AbilityGrid(state.abilities, state.creating, Renoa.colors.foreground, viewModel::toggle)
                 }
                 Legend(state, called)
                 state.notice?.let { Text(it, Modifier.padding(horizontal = 28.dp, vertical = 8.dp), style = RenoaType.Caption, color = colors.stateFailed) }
@@ -106,11 +104,10 @@ private fun Pill(text: String, enabled: Boolean, onClick: () -> Unit, wide: Bool
 }
 
 @Composable
-private fun CreateHeader(state: EditorUiState, look: AgentLook, viewModel: AgentEditorViewModel) {
+private fun CreateHeader(state: EditorUiState, viewModel: AgentEditorViewModel) {
     val colors = Renoa.colors
     Column(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Badge(look, AgentState.Resting, 164.dp, label = state.name.trim())
-        Swatches(look, Modifier.padding(top = 4.dp), 20.dp)
+        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 164.dp, label = state.name.trim())
         Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
             NameField(state, viewModel, TextAlign.Center)
         }
@@ -121,12 +118,11 @@ private fun CreateHeader(state: EditorUiState, look: AgentLook, viewModel: Agent
 }
 
 @Composable
-private fun EditHeader(state: EditorUiState, look: AgentLook, viewModel: AgentEditorViewModel) {
+private fun EditHeader(state: EditorUiState, viewModel: AgentEditorViewModel) {
     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Badge(look, AgentState.Resting, 104.dp, label = state.name.trim())
+        Badge(state.name.ifBlank { "?" }, AgentState.Resting, 104.dp, label = state.name.trim())
         Column(Modifier.weight(1f)) {
             NameField(state, viewModel, TextAlign.Start)
-            Swatches(look, Modifier.padding(top = 10.dp), 16.dp)
         }
     }
 }
@@ -152,13 +148,6 @@ private fun NameField(state: EditorUiState, viewModel: AgentEditorViewModel, ali
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Name" },
         )
-    }
-}
-
-@Composable
-private fun Swatches(look: AgentLook, modifier: Modifier, size: Dp) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(if (size > 16.dp) 8.dp else 5.dp)) {
-        look.tones.forEach { Canvas(Modifier.size(size)) { drawCircle(it) } }
     }
 }
 
