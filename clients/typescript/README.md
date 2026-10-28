@@ -73,9 +73,13 @@ await client.attach(
 Live frames carry no task sequence and are never replayed. A frame can be
 missed, and each message's `sequence` counts from zero so a surface can tell.
 The durable `assistant_message` event that completes the same text supersedes
-the draft: replace what was shown with it. Reasoning is never sent. Without the
-callback the coordinator sends no live frame, and one that arrives for an
-attachment that did not ask disconnects the client.
+the draft: replace what was shown with it. A frame the node published before an
+event arrives before that event; one published just after it may arrive first.
+Reasoning is never sent. The client does not wait for the callback and ignores
+what it throws or rejects with, so a failure drawing a draft ends neither the
+connection nor the delivery of task events. Without the callback the
+coordinator sends no live frame, and one that arrives for an attachment that did
+not ask disconnects the client.
 
 `stopCommand(taskId, commandId)` asks the task's node to stop one command and
 resolves `requested` once the coordinator has durably recorded the stop, or

@@ -17,6 +17,27 @@ describe("task projection", () => {
     ).toMatchObject({ state: "ready", detail: "Ready to continue" });
   });
 
+  test("shows the directory status for a task whose journal is not loaded", () => {
+    expect(projectTask({ ...TASK, status: "working" }, [])).toMatchObject({
+      state: "working",
+      detail: "Agent is working",
+    });
+    expect(projectTask({ ...TASK, status: "failed" }, []).state).toBe("failed");
+    expect(projectTask({ ...TASK, status: "idle" }, [])).toMatchObject({
+      state: "ready",
+      detail: "No activity recorded",
+    });
+  });
+
+  test("lets a loaded journal outrank a directory status that may be stale", () => {
+    expect(
+      projectTask({ ...TASK, status: "working" }, [
+        command(0),
+        execution(1, { type: "execution_terminated", terminal: { status: "completed" } }),
+      ]).state,
+    ).toBe("ready");
+  });
+
   test("uses a readable title without inventing task metadata", () => {
     expect(taskTitle("workspace:/home/anrahya/Code/personal/Renoa")).toBe("Renoa");
     expect(taskTitle("project:github-review-agent")).toBe("GitHub Review Agent");

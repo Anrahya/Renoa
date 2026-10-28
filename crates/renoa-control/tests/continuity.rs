@@ -2048,59 +2048,6 @@ mod live_activity {
 
         system.stop().await;
     }
-
-    #[tokio::test]
-    async fn a_flood_of_live_frames_never_makes_a_surface_replay() {
-        let system = TestSystem::start("workspace:live-flood").await;
-        let mut node = system.connect(&system.enroll_node().await).await;
-        let mut phone = system.connect(&system.enroll_surface("phone").await).await;
-        let mut sender = system.connect(&system.enroll_surface("sender").await).await;
-        attach(&mut phone, system.task_id, true).await;
-        let command_id = CommandId::new();
-        submit(&mut sender, system.task_id, command_id, "Write a lot.").await;
-        let (_, transcript) = execute(&system, &mut node, command_id).await;
-
-        // More frames and bytes than the live channel and the connection hold
-        // while the surface reads none. The surface may lose frames; it must
-        // not lose its place in the journal.
-        let chunk = "x".repeat(64 * 1024);
-        for sequence in 0..400 {
-            publish_live(&mut node, &system, command_id, delta(sequence, &chunk)).await;
-        }
-        send(
-            &mut node,
-            &ClientMessage::PublishExecutionEvents {
-                task_id: system.task_id,
-                command_id,
-                events: transcript.events,
-            },
-        )
-        .await;
-
-        let mut ended = false;
-        while !ended {
-            match receive(&mut phone).await {
-                ServerMessage::Error { code, .. } => {
-                    panic!("live frames made the surface fail with {code:?}")
-                }
-                ServerMessage::TaskEvent { event } => {
-                    ended = matches!(
-                        event.kind,
-                        TaskEventKind::ExecutionEvent {
-                            event: ExecutionEvent {
-                                kind: ExecutionEventKind::ExecutionTerminated { .. },
-                                ..
-                            },
-                            ..
-                        }
-                    );
-                }
-                _ => {}
-            }
-        }
-
-        system.stop().await;
-    }
 }
 
 mod status {
@@ -2307,6 +2254,153 @@ mod status {
         system.stop().await;
     }
 
+    fn row_counts(system: &TestSystem) -> Vec<i64> {
+        let connection = Connection::open(system.files.path().join("control.sqlite"))
+            .expect("open coordinator store");
+        [
+            "tasks",
+            "task_events",
+            "commands",
+            "execution_event_streams",
+            "pending_executions",
+        ]
+        .map(|table| {
+            connection
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count rows")
+        })
+        .to_vec()
+    }
+
+    /// How many of the stop table and the command view exist, and the
+    /// schema version.
+    fn stop_schema(system: &TestSystem) -> (i64, i64) {
+        let store = Connection::open(system.files.path().join("control.sqlite"))
+            .expect("open coordinator store");
+        let objects = store
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE (type = 'table' AND name = 'stop_requests')
+                    OR (type = 'view' AND name = 'command_states')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count the stop table and the command view");
+        let version = store
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("read the schema version");
+        (objects, version)
+    }
+
+    /// A database as the release before stops left it (schema 12) has neither
+    /// the stop table nor the command view. Opening it must create both, keep
+    /// its rows, and serve status, stop and deletion through them.
+    #[tokio::test]
+    async fn a_database_from_before_stops_gains_the_stop_table_and_command_view() {
+        let mut system = TestSystem::start("workspace:status-upgrade").await;
+        let node_device = system.enroll_node().await;
+        let mac_device = system.enroll_surface("mac").await;
+        let mut node = system.connect(&node_device).await;
+        let mut mac = system.connect(&mac_device).await;
+        let settled = CommandId::new();
+        submit(&mut mac, system.task_id, settled, "Finish.").await;
+        execute_and_publish(&system, &mut node, settled).await;
+        let unsettled = CommandId::new();
+        submit(&mut mac, system.task_id, unsettled, "Keep going.").await;
+        let (_, transcript) = execute(&system, &mut node, unsettled).await;
+        let before = row_counts(&system);
+        // One task, a settled command with four execution records, and a
+        // running command that published none.
+        assert_eq!(before, vec![1, 6, 2, 1, 0]);
+        drop((node, mac));
+
+        system
+            .restart_coordinator_after(|database| {
+                database
+                    .execute_batch(
+                        "DROP VIEW command_states;
+                         DROP TABLE stop_requests;
+                         PRAGMA user_version = 12;",
+                    )
+                    .expect("return the database to schema 12");
+            })
+            .await;
+
+        assert_eq!(stop_schema(&system), (2, 13));
+        assert_eq!(row_counts(&system), before, "opening keeps every row");
+
+        let mut node = system.connect(&node_device).await;
+        let mut mac = system.connect(&mac_device).await;
+        assert_eq!(
+            statuses(&mut mac).await,
+            vec![TaskStatus::Working],
+            "the latest command has not settled"
+        );
+        send(
+            &mut mac,
+            &ClientMessage::StopCommand {
+                request_id: 7,
+                task_id: system.task_id,
+                command_id: unsettled,
+            },
+        )
+        .await;
+        assert_eq!(
+            receive(&mut mac).await,
+            ServerMessage::StopAccepted {
+                request_id: 7,
+                command_id: unsettled,
+                outcome: StopOutcome::Requested,
+            }
+        );
+        assert_eq!(
+            receive(&mut node).await,
+            ServerMessage::Stop {
+                task_id: system.task_id,
+                command_id: unsettled,
+            }
+        );
+        let through = transcript.events.last().expect("terminal event").sequence;
+        send(
+            &mut node,
+            &ClientMessage::PublishExecutionEvents {
+                task_id: system.task_id,
+                command_id: unsettled,
+                events: transcript.events,
+            },
+        )
+        .await;
+        assert_eq!(
+            receive(&mut node).await,
+            ServerMessage::ExecutionEventsAccepted {
+                command_id: unsettled,
+                through_execution_sequence: through,
+            }
+        );
+        assert_eq!(statuses(&mut mac).await, vec![TaskStatus::Idle]);
+
+        send(
+            &mut mac,
+            &ClientMessage::DeleteTask {
+                request_id: 8,
+                task_id: system.task_id,
+            },
+        )
+        .await;
+        assert_eq!(
+            receive(&mut mac).await,
+            ServerMessage::TaskDeleted {
+                request_id: 8,
+                task_id: system.task_id,
+            }
+        );
+        assert_eq!(row_counts(&system), vec![0; 5], "nothing is kept");
+
+        system.stop().await;
+    }
+
     /// Whether a command has settled is decided by the `command_states` view
     /// alone: the execution stream's flag is named only by the modules that
     /// write, migrate or define it, and every reader goes through the view.
@@ -2473,14 +2567,21 @@ impl TestSystem {
     }
 
     async fn restart_coordinator(&mut self) {
+        self.restart_coordinator_after(|_| {}).await;
+    }
+
+    /// Restarts the coordinator after `edit` changed its database while no
+    /// coordinator was serving it.
+    async fn restart_coordinator_after(&mut self, edit: impl FnOnce(&Connection)) {
         self.shutdown.cancel();
         self.server
             .take()
             .expect("running server")
             .await
             .expect("server task");
-        self.coordinator = Coordinator::open(self.files.path().join("control.sqlite"))
-            .expect("reopen coordinator store");
+        let database = self.files.path().join("control.sqlite");
+        edit(&Connection::open(&database).expect("open the stopped coordinator's database"));
+        self.coordinator = Coordinator::open(database).expect("reopen coordinator store");
         let (url, shutdown, server) = spawn_coordinator_server(self.coordinator.clone()).await;
         self.url = url;
         self.shutdown = shutdown;

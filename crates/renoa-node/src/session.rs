@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
 use renoa_protocol::{CommandEnvelope, CommandId, TargetRef};
 use tokio::{
-    sync::{broadcast::error::RecvError, watch},
+    sync::{broadcast, broadcast::error::RecvError, watch},
     task::JoinSet,
 };
 use tokio_tungstenite::{
@@ -20,9 +20,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     bridge::{ExecutionTask, NodeError, NodeRuntime, finish_execution, schedule_pending},
+    live::LiveFrame,
     node_log,
 };
-use publication::{Publication, refresh_publications, send_pending};
+use publication::{Publication, refresh_publications, send_live, send_pending};
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -119,23 +120,18 @@ async fn serve_session_inner(
     let mut live = runtime.live.subscribe();
     let mut publications = HashMap::new();
     refresh_publications(&runtime, &mut publications).await?;
-    send_pending(&mut socket, &runtime, &mut publications).await?;
+    send_pending(&mut socket, &runtime.state, &mut live, &mut publications).await?;
 
     loop {
         tokio::select! {
-            // Live frames are polled before commits: a delta is queued before
-            // the durable record that supersedes it, and must reach the
-            // coordinator first.
+            // Polled in order, so a queued frame never waits behind a commit.
+            // The order of frames against records does not rest on this:
+            // `send_pending` sends the frames already queued before the
+            // records it has read.
             biased;
             () = shutdown.cancelled() => return Ok(SessionEnd::Shutdown),
             frame = live.recv() => match frame {
-                Ok(frame) => {
-                    send_client(&mut socket, &ClientMessage::PublishLiveActivity {
-                        task_id: frame.task_id,
-                        command_id: frame.command_id,
-                        activity: frame.activity,
-                    }).await?;
-                }
+                Ok(frame) => send_live(&mut socket, frame).await?,
                 // Dropped frames are the surface's gap to notice; nothing is replayed.
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => {
@@ -147,7 +143,7 @@ async fn serve_session_inner(
                     return Err(NodeError::Protocol("local commit signal closed".to_owned()));
                 }
                 refresh_publications(&runtime, &mut publications).await?;
-                send_pending(&mut socket, &runtime, &mut publications).await?;
+                send_pending(&mut socket, &runtime.state, &mut live, &mut publications).await?;
             }
             completed = tasks.join_next(), if !tasks.is_empty() => {
                 if let Some(completed) = completed {
@@ -164,6 +160,7 @@ async fn serve_session_inner(
                     tasks,
                     running,
                     &mut publications,
+                    &mut live,
                     message,
                 ).await?;
             }
@@ -221,13 +218,14 @@ async fn handle_server_message(
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
     publications: &mut HashMap<CommandId, Publication>,
+    live: &mut broadcast::Receiver<LiveFrame>,
     message: ServerMessage,
 ) -> Result<(), NodeError> {
     match message {
         ServerMessage::Execute { task_id, command } => {
             handle_execute(runtime, tasks, running, task_id, command).await?;
             refresh_publications(runtime, publications).await?;
-            send_pending(socket, runtime, publications).await?;
+            send_pending(socket, &runtime.state, live, publications).await?;
         }
         ServerMessage::ExecutionAcknowledged { command_id } => {
             let publication = publications.get_mut(&command_id).ok_or_else(|| {
@@ -272,7 +270,7 @@ async fn handle_server_message(
             publication.record.published_through = Some(through_execution_sequence);
             publication.event_in_flight = None;
             refresh_publications(runtime, publications).await?;
-            send_pending(socket, runtime, publications).await?;
+            send_pending(socket, &runtime.state, live, publications).await?;
         }
         ServerMessage::Stop {
             task_id,

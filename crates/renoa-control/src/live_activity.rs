@@ -2,16 +2,19 @@
 //! attached to the task, and nothing else.
 //!
 //! Live activity is never stored and never acknowledged. It travels on a
-//! channel apart from the journal's, so a slow surface drops frames here and
-//! never receives `replay_required` because of them. The durable
-//! `assistant_message` record supersedes whatever live text a surface showed.
+//! broadcast channel apart from the journal's. A surface that falls behind it
+//! skips ahead, and a connection whose outbound queue is full drops the frame
+//! instead of waiting for room, so no frame is ever queued behind a surface
+//! that stopped reading. Frames and journal records do share that queue. The
+//! durable `assistant_message` record supersedes whatever live text a surface
+//! showed.
 
 use renoa_protocol::{CommandId, LiveActivity};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
-use crate::{NodeId, TaskId, control_log, coordinator::CoordinatorState};
+use crate::{NodeId, ServerMessage, TaskId, control_log, coordinator::CoordinatorState};
 
-const LIVE_BROADCAST_CAPACITY: usize = 256;
+pub(crate) const LIVE_BROADCAST_CAPACITY: usize = 256;
 
 /// One task's live channel and the only node allowed to publish on it.
 pub(crate) struct LiveChannel {
@@ -72,4 +75,56 @@ pub(crate) async fn relay(
         command_id,
         activity,
     });
+}
+
+/// The next live frame, or never when the attachment did not ask for them.
+pub(crate) async fn next_frame(
+    frames: &mut Option<broadcast::Receiver<LiveFrame>>,
+) -> Result<LiveFrame, broadcast::error::RecvError> {
+    match frames {
+        Some(frames) => frames.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Hands a frame to a surface's connection without waiting for room: a full
+/// queue drops it.
+pub(crate) fn forward(outgoing: &mpsc::Sender<ServerMessage>, task_id: TaskId, frame: LiveFrame) {
+    let LiveFrame {
+        command_id,
+        activity,
+    } = frame;
+    let _ = outgoing.try_send(ServerMessage::LiveActivity {
+        task_id,
+        command_id,
+        activity,
+    });
+}
+
+/// Forwards the frames already waiting for an attachment. The surface loop
+/// calls it before it forwards a journal record: a node sends a frame before
+/// the records it precedes and the coordinator relays them in that order, so
+/// every frame published before the record is waiting by then. A frame
+/// published right after the record may go first as well.
+pub(crate) fn forward_waiting(
+    frames: &mut Option<broadcast::Receiver<LiveFrame>>,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    task_id: TaskId,
+) {
+    let Some(receiver) = frames.as_mut() else {
+        return;
+    };
+    // Bounded by what the channel holds (and the lag report that may precede
+    // it), so a node that keeps publishing cannot hold the record back.
+    for _ in 0..=LIVE_BROADCAST_CAPACITY {
+        match receiver.try_recv() {
+            Ok(frame) => forward(outgoing, task_id, frame),
+            Err(broadcast::error::TryRecvError::Lagged(_)) => {}
+            Err(broadcast::error::TryRecvError::Empty) => return,
+            Err(broadcast::error::TryRecvError::Closed) => {
+                *frames = None;
+                return;
+            }
+        }
+    }
 }

@@ -1,15 +1,18 @@
 //! The execution events a node still owes the coordinator: which pending
-//! records are in flight, and the batches that fit one WebSocket message.
+//! records are in flight, and the batches that fit one WebSocket message. The
+//! live frames that precede a record travel ahead of it.
 
 use std::collections::{HashMap, HashSet};
 
 use renoa_control::{ClientMessage, TaskId};
 use renoa_protocol::{CommandId, ExecutionEvent};
+use tokio::sync::broadcast::{self, error::TryRecvError};
 
 use super::{MAX_APPLICATION_MESSAGE_BYTES, Socket, send_client};
 use crate::{
-    bridge::{NodeError, NodeRuntime},
-    node_store::ExecutionRecord,
+    bridge::{LIVE_FRAME_CAPACITY, NodeError, NodeRuntime},
+    live::LiveFrame,
+    node_store::{ExecutionRecord, NodeStore},
 };
 
 pub(super) struct Publication {
@@ -41,9 +44,46 @@ pub(super) async fn refresh_publications(
     Ok(())
 }
 
+/// Sends one live frame to the coordinator.
+pub(super) async fn send_live(socket: &mut Socket, frame: LiveFrame) -> Result<(), NodeError> {
+    send_client(
+        socket,
+        &ClientMessage::PublishLiveActivity {
+            task_id: frame.task_id,
+            command_id: frame.command_id,
+            activity: frame.activity,
+        },
+    )
+    .await
+}
+
+/// Sends the live frames already queued. A frame is queued before the record
+/// that supersedes it is committed, so a record that was read from the ledger
+/// is never sent ahead of a frame that preceded it.
+async fn send_waiting_live(
+    socket: &mut Socket,
+    live: &mut broadcast::Receiver<LiveFrame>,
+) -> Result<(), NodeError> {
+    // Bounded by what the channel holds (and the lag report that may precede
+    // it): frames published while this runs follow the record.
+    for _ in 0..=LIVE_FRAME_CAPACITY {
+        match live.try_recv() {
+            Ok(frame) => send_live(socket, frame).await?,
+            // Dropped frames are the surface's gap to notice.
+            Err(TryRecvError::Lagged(_)) => {}
+            Err(TryRecvError::Empty) => return Ok(()),
+            Err(TryRecvError::Closed) => {
+                return Err(NodeError::Protocol("local live channel closed".to_owned()));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn send_pending(
     socket: &mut Socket,
-    runtime: &NodeRuntime,
+    state: &NodeStore,
+    live: &mut broadcast::Receiver<LiveFrame>,
     publications: &mut HashMap<CommandId, Publication>,
 ) -> Result<(), NodeError> {
     let mut ordered = publications
@@ -85,8 +125,7 @@ pub(super) async fn send_pending(
             blocked_tasks.insert(record.task_id);
             continue;
         }
-        let events = runtime
-            .state
+        let events = state
             .load_events_after(command_id, record.published_through)
             .await?;
         let events = publication_batch(record.task_id, command_id, events)?;
@@ -96,6 +135,9 @@ pub(super) async fn send_pending(
             }
             continue;
         };
+        // After the read above: every frame published before a record that
+        // was just read is queued by now.
+        send_waiting_live(socket, live).await?;
         send_client(
             socket,
             &ClientMessage::PublishExecutionEvents {

@@ -40,12 +40,29 @@ export type ApplyTaskEvent = (event: TaskEvent) => void | Promise<void>;
 /**
  * Receives the live activity of the task's running turns. Frames are advisory:
  * they may be missed, are never replayed, and are superseded by the durable
- * task events that carry the same text.
+ * task events that carry the same text. The client does not wait for what this
+ * returns and ignores a throw or a rejection, so a surface's trouble drawing a
+ * draft neither ends the connection nor delays task events. Because it is not
+ * awaited, an async callback that must keep frames in order has to queue them
+ * itself.
  */
 export type ApplyLiveActivity = (
   commandId: string,
   activity: LiveActivity,
 ) => void | Promise<void>;
+
+/** Hands one live frame to the surface's callback; see {@link ApplyLiveActivity}. */
+export function deliverLiveActivity(
+  live: ApplyLiveActivity,
+  commandId: string,
+  activity: LiveActivity,
+): void {
+  try {
+    Promise.resolve(live(commandId, activity)).catch(() => undefined);
+  } catch {
+    // The surface's drawing of a draft is its own concern.
+  }
+}
 
 export interface CommandSubmission {
   readonly commandId: string;

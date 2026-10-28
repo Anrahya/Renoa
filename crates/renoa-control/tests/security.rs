@@ -485,6 +485,20 @@ mod security_behaviors {
                     "kind": { "type": "execution_started" },
                 }],
             }),
+            serde_json::json!({
+                "type": "stop_command",
+                "request_id": unsafe_integer,
+                "task_id": TaskId::new(),
+                "command_id": CommandId::new(),
+            }),
+            // A surface may not publish live activity at all, so only the
+            // number check can make this InvalidMessage instead of InvalidRole.
+            serde_json::json!({
+                "type": "publish_live_activity",
+                "task_id": TaskId::new(),
+                "command_id": CommandId::new(),
+                "activity": { "type": "text_delta", "sequence": unsafe_integer, "text": "x" },
+            }),
         ];
         for message in messages {
             socket

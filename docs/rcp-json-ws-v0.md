@@ -332,7 +332,15 @@ surface showed for the message in progress:
 
 A live frame has no `request_id`, no task sequence, and no durable effect. The
 `assistant_message` record that completes the text supersedes the live text. A
-surface that is too slow to take a frame loses it and is not told to replay.
+surface that is too slow to take a frame loses it and is not told to replay
+because of it. Text that arrives within 50 milliseconds of the previous frame is
+sent with the message's next fragment of any kind once that time has passed, or
+not at all when the durable record comes first.
+
+A frame the node published before a record is delivered before that record, on
+the same connection and in the node's order, unless it was dropped; a dropped
+frame never arrives later, so a client never waits for a missing one. A frame
+published just after a record may be delivered before it too.
 
 ### Stop a command
 
@@ -639,7 +647,10 @@ round.
 - A node reconnect receives every still-pending `execute` delivery, then every
   stop it has not acknowledged.
 - `stop_accepted` is sent only after the stop is committed. `live_activity` is
-  sent without any commit and may be lost.
+  sent without any commit and may be lost. A node sends the `publish_live_activity`
+  frames it has queued before the `publish_execution_events` it has read, and the
+  coordinator sends the `live_activity` frames waiting for an attachment before
+  the `task_event` it forwards.
 - A surface reconnects with its last durably applied task sequence.
 - A slow attached surface receives `replay_required` and must reattach.
 - Clients must not infer task completion from a closed socket.

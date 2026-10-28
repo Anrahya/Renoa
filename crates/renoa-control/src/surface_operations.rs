@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ControlError, ErrorCode, ServerMessage, TaskId, TaskSpec, control_log,
     coordinator::CoordinatorState,
-    live_activity::LiveFrame,
+    live_activity,
     operations::SurfaceOperation,
     store::CommandAdmission,
     wire::{publish_task_event, send_control_error, send_error, task_sender},
@@ -202,7 +202,7 @@ pub(crate) async fn attach_surface(
     task_id: TaskId,
     after_sequence: Option<u64>,
     principal_id: PrincipalId,
-    live_activity: bool,
+    wants_live_activity: bool,
 ) -> Result<(), ControlError> {
     // Reject unknown tasks before allocating their long-lived broadcaster. The
     // suffix is read after subscription to preserve the replay-to-live boundary.
@@ -211,8 +211,8 @@ pub(crate) async fn attach_surface(
         .load_task_for_principal(task_id, principal_id)
         .await?;
     let mut live = task_sender(&state, task_id).await.subscribe();
-    let mut live_frames = if live_activity {
-        Some(crate::live_activity::subscribe(&state, task_id, task.node_id).await)
+    let mut live_frames = if wants_live_activity {
+        Some(live_activity::subscribe(&state, task_id, task.node_id).await)
     } else {
         None
     };
@@ -239,23 +239,19 @@ pub(crate) async fn attach_surface(
         loop {
             tokio::select! {
                 () = cancelled.cancelled() => return,
-                frame = next_live_frame(&mut live_frames) => match frame {
+                frame = live_activity::next_frame(&mut live_frames) => match frame {
                     // Live frames are best effort: a full queue drops a frame,
                     // and a receiver that fell behind skips ahead without
                     // asking the surface to replay. The surface sees the gap
                     // in the frames' sequence.
-                    Ok(LiveFrame { command_id, activity }) => {
-                        let _ = outgoing.try_send(ServerMessage::LiveActivity {
-                            task_id,
-                            command_id,
-                            activity,
-                        });
-                    }
+                    Ok(frame) => live_activity::forward(&outgoing, task_id, frame),
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => live_frames = None,
                 },
                 event = live.recv() => match event {
                     Ok(event) if through_sequence.is_none_or(|sequence| event.sequence > sequence) => {
+                        // Frames the node published before this record go first.
+                        live_activity::forward_waiting(&mut live_frames, &outgoing, task_id);
                         if outgoing.send(ServerMessage::TaskEvent { event }).await.is_err() {
                             return;
                         }
@@ -277,16 +273,6 @@ pub(crate) async fn attach_surface(
         }
     });
     Ok(())
-}
-
-/// The next live frame, or never when the attachment did not ask for them.
-async fn next_live_frame(
-    frames: &mut Option<broadcast::Receiver<LiveFrame>>,
-) -> Result<LiveFrame, broadcast::error::RecvError> {
-    match frames {
-        Some(frames) => frames.recv().await,
-        None => std::future::pending().await,
-    }
 }
 
 #[allow(

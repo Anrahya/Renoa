@@ -1,6 +1,7 @@
 import {
   RcpError,
   assertRcpConnectionOptions,
+  deliverLiveActivity,
   type ApplyLiveActivity,
   type ApplyTaskEvent,
   type CommandSubmission,
@@ -357,7 +358,7 @@ export class RcpSurfaceClientCore {
       if (attachment?.live === undefined) {
         throw new Error(`received live activity for task ${message.task_id}, which did not ask`);
       }
-      await attachment.live(message.command_id, message.activity);
+      deliverLiveActivity(attachment.live, message.command_id, message.activity);
       return;
     }
     if (message.type === "error") {

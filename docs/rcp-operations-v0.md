@@ -76,8 +76,11 @@ terminated, `idle` once it completed or was cancelled, and `failed` once it
 failed. A task with no command is `idle`. "Latest" is the order the
 coordinator admitted the commands in, so an older command whose execution never
 terminated does not keep a task `working` after a later command has run. The
-status is a function of the task journal: a surface holding the journal derives
-the same value. It does not say whether the node is online, whether the owner
+status is a function of the task journal: a surface holding the journal can
+compute the same value, and the directory is how a surface that holds none of it
+learns the value. A surface may show finer states of its own, such as a command
+that is admitted but not started; those are display states, not statuses. It
+does not say whether the node is online, whether the owner
 is being waited on, or when the task next wakes; nothing in RCP produces those
 facts yet.
 
@@ -155,7 +158,17 @@ and attaches from its last durably applied sequence.
 An attachment that asked for live activity also receives `LiveActivity` frames
 from the task's node. Frames are delivered on a buffer separate from the
 journal's. A surface too slow to take a frame loses that frame; it is never
-told to replay because of one.
+told to replay because the frame buffer overran. A frame never waits for room:
+frames and journal records share the connection's outbound queue, and a frame
+that finds it full is dropped, so a surface that stops reading holds at most one
+queue of frames and no record waits behind more of them. A surface that falls
+behind the journal's own buffer is still told to replay.
+
+Before the coordinator forwards a journal record to an attachment it forwards
+the frames already waiting for it, and a node sends the frames it has queued
+before the execution records it has read. A frame the node published before a
+record therefore reaches the surface before that record unless it was dropped.
+A frame published just after a record may also reach the surface before it.
 
 ### `LiveActivity`
 

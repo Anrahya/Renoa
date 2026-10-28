@@ -156,8 +156,13 @@ These decisions define RCP and are not ordinary implementation details:
     never stored, replayed, or counted in the journal, and a surface that
     misses it loses nothing, because the same text is a complete durable
     assistant message. Reasoning and tool-call arguments are never live
-    activity, and live frames travel apart from the journal's delivery so that
-    no number of them can make a surface replay.
+    activity. A frame never waits for room: it travels on a buffer apart from
+    the journal's, and a connection whose queue is full drops it, so a surface
+    that stops reading holds at most one queue of frames. Frames and journal
+    records do share that queue, and a surface too slow to take the journal's
+    own records is still told to replay. The order is fixed for the frames that
+    matter: a frame the node published before a record reaches the surface
+    before that record.
 
 ## Vocabulary
 
@@ -316,9 +321,12 @@ latest command, where latest is admission order: `working` until that command's
 execution terminates, then `failed` if it failed and `idle` if it completed or
 was cancelled. A task with no command is `idle`, and an older command that
 never terminated does not decide the status once a later command exists. The
-rule reads only the task journal, so any surface holding the journal derives
-the same value. A waiting-on-owner status and a next scheduled wake have no
-producer in RCP and stay open.
+rule reads only the task journal, so a surface holding the journal can compute
+the same value, and the directory is how a surface that holds none of it learns
+the value. A surface may show finer states of its own, such as a command that
+is admitted but not started; those are display states and not RCP statuses. A
+waiting-on-owner status and a next scheduled wake have no producer in RCP and
+stay open.
 
 ### Attachment and replay
 
@@ -380,16 +388,31 @@ A surface may ask, when it attaches, to receive live activity. While a turn
 runs, its node relays the visible assistant text as `text_delta` frames,
 numbered from zero for each message and coalesced to at most one frame per
 50 milliseconds, and a `text_reset` when a message the surface was shown is
-abandoned. Frames are not journal records. They carry no task sequence, are
-not replayed, and are dropped when no surface wants them, when a surface is too
-slow to take them, or when the node's link is down. The durable
-`assistant_message` that completes the same text supersedes them. Reasoning and
-tool-call arguments never leave the node.
+abandoned. The 50 milliseconds are a rate, not a delay bound: text that arrives
+inside the interval is sent with the message's next fragment of any kind once
+the interval has passed, and a model that stalls leaves that text unsent until
+its next fragment or the durable message. Frames are not journal records. They
+carry no task sequence, are not replayed, and are dropped when no surface wants
+them, when a surface is too slow to take them, or when the node's link is down.
+The durable `assistant_message` that completes the same text supersedes them.
+Reasoning and tool-call arguments never leave the node.
 
 The coordinator accepts a frame only from the task's own node and forwards it
 only to surfaces that attached with live activity requested. Frames use a
-buffer separate from the journal's, so a flood of frames can cost a slow surface
-frames but can never cost it its place in the journal.
+buffer separate from the journal's. A surface that falls behind that buffer
+skips frames and is not told to replay, and a connection whose queue is full
+drops a frame instead of waiting, so no frame is queued behind a surface that
+stopped reading. Frames share the connection's queue with journal records, so
+a long stall can fill it with frames; a surface that falls behind the journal's
+own buffer is told to replay as always.
+
+A node sends the live frames it has queued before it sends any execution
+records it has read, and the coordinator forwards the frames waiting for an
+attachment before it forwards a journal record. A frame the node published
+before a record therefore reaches the surface before that record unless it was
+dropped, and no frame arrives after a record that the node committed after
+publishing it. A frame published just after a record may reach the surface
+before the record too.
 
 ## Executor link
 
@@ -720,8 +743,9 @@ The current implementation demonstrates:
   while the node is offline, and ends a running or redriven Host turn
   `cancelled` while the task's next command runs unaffected;
 - ephemeral live text from a running Host turn to surfaces that asked for it,
-  from the task's own node only, never stored, with reasoning kept on the node
-  and no flood able to make a surface replay;
+  from the task's own node only, never stored, with reasoning kept on the node,
+  frames that never wait behind a surface that stopped reading, and a frame
+  reaching the surface before a record published after it;
 - a per-task status in the directory derived from the latest command;
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
@@ -896,9 +920,12 @@ RCP v0 is not proven until deterministic tests cover at least:
     task's next command still completes, and a stop recorded while the node is
     down cancels the turn the restarted node redrives.
 18. Live activity reaches only surfaces that attached asking for it, only from
-    the task's own node, is never stored, and never makes a flooded surface
-    replay; the reasoning of a streamed turn appears in neither a live frame
-    nor the journal.
+    the task's own node, and is never stored. Overrunning the live buffer
+    skips frames without asking the surface to replay, a surface that stops
+    reading holds at most one queue of frames so no record waits behind more
+    than that, and a frame published before a record reaches the surface before
+    it. The reasoning of a streamed turn appears in neither a live frame nor the
+    journal.
 19. The directory reports each task's status from its latest command exactly
     as the journal defines it, and reading the directory writes nothing.
 

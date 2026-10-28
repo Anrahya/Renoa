@@ -105,6 +105,52 @@ test("a surface that did not ask for live activity receives none", async () => {
   await surface.close();
 });
 
+test("a live callback that throws or rejects neither ends the connection nor loses task events", async () => {
+  const frames: LiveActivity["type"][] = [];
+  const delivered = Promise.withResolvers<void>();
+  const submitted = Promise.withResolvers<void>();
+  let commandId: string | undefined;
+  const surface = client("faulty");
+  await surface.connect();
+  const disconnected = surface.waitForDisconnect();
+  await surface.attach(
+    fixture.tasks[1].taskId,
+    (event) => {
+      if (
+        event.kind.type === "command_submitted" &&
+        event.kind.command.commandId === commandId
+      ) {
+        submitted.resolve();
+      }
+    },
+    (_commandId, activity) => {
+      frames.push(activity.type);
+      if (activity.type === "text_reset") {
+        delivered.resolve();
+        return undefined;
+      }
+      if (activity.sequence === 0) {
+        throw new Error("the draft failed to draw");
+      }
+      return Promise.reject(new Error("the draft failed to draw later"));
+    },
+  );
+
+  const submission = await surface.submitText(fixture.tasks[1].taskId, "write badly");
+  commandId = submission.commandId;
+  const outcome = await Promise.race([
+    Promise.all([submission.accepted, delivered.promise, submitted.promise]).then(
+      () => "delivered" as const,
+    ),
+    disconnected.then(() => "disconnected" as const),
+    new Promise<"timed out">((resolve) => setTimeout(() => resolve("timed out"), 5000)),
+  ]);
+
+  assert.equal(outcome, "delivered");
+  assert.deepEqual(frames, ["text_delta", "text_delta", "text_reset"]);
+  await surface.close();
+});
+
 test("stopping a command is idempotent and refuses a command the task never admitted", async () => {
   const surface = client("stop");
   await surface.connect();

@@ -29,7 +29,7 @@ use crate::{
 
 /// How many live frames wait for the session loop before the oldest is
 /// dropped. Live activity is never kept for later.
-const LIVE_FRAME_CAPACITY: usize = 1024;
+pub(crate) const LIVE_FRAME_CAPACITY: usize = 1024;
 
 #[derive(Debug, Error)]
 pub enum NodeError {

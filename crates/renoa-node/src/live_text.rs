@@ -2,10 +2,14 @@
 //!
 //! Only visible assistant text leaves the node: reasoning and tool-call
 //! fragments never do. Text is coalesced into at most one frame per
-//! [`FLUSH_INTERVAL`]; whatever is still pending when a message ends is
-//! dropped, because the turn's durable `assistant_message` supersedes the live
-//! text. A message's frames count from zero, so a surface can tell that it
-//! missed one.
+//! [`FLUSH_INTERVAL`]. Text that arrives inside the interval waits for the
+//! message's next fragment of any kind once the interval has passed (the
+//! fragment itself stays on the node), so a tool call that streams for seconds
+//! after a sentence does not hold the sentence's tail back. A model that
+//! stalls sends nothing until its next fragment. Whatever is still pending
+//! when a message ends is dropped, because the turn's durable
+//! `assistant_message` supersedes the live text. A message's frames count from
+//! zero, so a surface can tell that it missed one.
 
 use std::time::{Duration, Instant};
 
@@ -42,6 +46,9 @@ impl LiveText {
                 delta: AssistantDelta::Text { text },
                 ..
             } => self.push(text, now),
+            // Reasoning and tool-call fragments are not sent. They only show
+            // that the visible text before them is complete for now.
+            AgentEvent::MessageUpdate { .. } => self.push("", now),
             AgentEvent::MessageAbort => self.abort(),
             AgentEvent::ModelRequestEnd { .. } | AgentEvent::ModelRequestFailed { .. } => {
                 self.request_ended();
@@ -73,8 +80,9 @@ impl LiveText {
         self.last_sent = None;
     }
 
-    /// One visible text delta arrived at `now`. Returns the frame that is due,
-    /// carrying everything pending since the last one.
+    /// One visible text delta arrived at `now`, or a fragment that is not text
+    /// (empty `text`). Returns the frame that is due, carrying everything
+    /// pending since the last one.
     fn push(&mut self, text: &str, now: Instant) -> Option<LiveActivity> {
         if !self.streaming {
             return None;
@@ -239,6 +247,43 @@ mod tests {
         assert_eq!(
             live.observe(&update(text("Hello")), start),
             Some(delta(0, "Hello"))
+        );
+    }
+
+    #[test]
+    fn text_waiting_out_the_interval_is_sent_by_the_next_fragment_of_any_kind() {
+        let start = Instant::now();
+        let mut live = LiveText::default();
+        live.observe(&request(true), start);
+        assert_eq!(
+            live.observe(&update(text("Let me ")), start),
+            Some(delta(0, "Let me "))
+        );
+        assert_eq!(
+            live.observe(&update(text("write")), start + Duration::from_millis(10)),
+            None,
+            "inside the interval the text waits"
+        );
+        let call = |json_delta: &str| {
+            update(AssistantDelta::ToolCallArguments {
+                json_delta: json_delta.to_owned(),
+            })
+        };
+
+        assert_eq!(
+            live.observe(&call("{\"path\":"), start + Duration::from_millis(20)),
+            None,
+            "a fragment inside the interval sends nothing"
+        );
+        assert_eq!(
+            live.observe(&call("\"a.txt\"}"), start + FLUSH_INTERVAL),
+            Some(delta(1, "write")),
+            "the first fragment after the interval carries the waiting text, not its own"
+        );
+        assert_eq!(
+            live.observe(&call("more"), start + FLUSH_INTERVAL * 3),
+            None,
+            "nothing is left to send"
         );
     }
 
