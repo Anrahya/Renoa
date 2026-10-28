@@ -22,6 +22,8 @@ import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.FakeAgentRepository
 import live.renoa.app.nav.EntryStores
 import live.renoa.app.ui.ScreenTest
+import live.renoa.app.signin.SignInCode
+import live.renoa.rcp.SignInRefused
 import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -37,8 +39,7 @@ class RenoaAppTest : ScreenTest() {
     private fun start() {
         // The phone's animation scale is off, so no badge loops and the screen can settle.
         Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-        compose.setContent { RenoaApp(repository) }
-        compose.onNodeWithText("Continue with passkey").performClick()
+        compose.setContent { RenoaApp(repository, signedIn = true, signingIn = { _, _ -> }) }
         compose.waitForIdle()
     }
 
@@ -109,11 +110,34 @@ class RenoaAppTest : ScreenTest() {
     }
 
     @Test
+    fun signingInWithACodeOpensHomeAndAFailureSaysWhatToDo() {
+        Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        val codes = mutableListOf<SignInCode>()
+        var refuse = true
+        compose.setContent {
+            RenoaApp(repository, signedIn = false, signingIn = { code, _ ->
+                codes += code
+                if (refuse) throw SignInRefused(401, "authentication_failed", "authentication failed")
+            })
+        }
+        compose.onNodeWithText("Continue with passkey").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Sign-in code").performTextInput("ab12cd")
+        compose.onNodeWithText("Continue with passkey").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("That code didn't work. A setup code works once, for 30 minutes.").assertIsDisplayed()
+
+        refuse = false
+        compose.onNodeWithText("Continue with passkey").performClick()
+        compose.waitForIdle()
+        assertEquals(listOf<SignInCode>(SignInCode.Setup("ab12cd"), SignInCode.Setup("ab12cd")), codes)
+        onHome("Meet someone new").assertIsDisplayed()
+    }
+
+    @Test
     fun aRotationKeepsTheFormAndLeavingTheScreenDoesNot() {
         val restoration = StateRestorationTester(compose)
         Settings.Global.putFloat(compose.activity.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-        restoration.setContent { RenoaApp(repository) }
-        compose.onNodeWithText("Continue with passkey").performClick()
+        restoration.setContent { RenoaApp(repository, signedIn = true, signingIn = { _, _ -> }) }
         compose.waitForIdle()
         meetSomeoneNew()
         compose.waitForIdle()

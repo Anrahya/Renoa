@@ -33,6 +33,7 @@ import live.renoa.app.editor.EditorMode
 import live.renoa.app.home.HomeScreen
 import live.renoa.app.home.HomeViewModel
 import live.renoa.app.signin.SignInScreen
+import live.renoa.app.signin.SignInState
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.ThemeName
 import androidx.compose.runtime.getValue
@@ -228,13 +229,24 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun signInIsAPlaceholderThatGoesStraightIn() {
-        var entered = 0
-        show { SignInScreen(onContinue = { entered++ }) }
+    fun signInTakesACodeAndShowsWhyItStopped() {
+        var submitted = 0
+        var state: SignInState by mutableStateOf(SignInState.Ready)
+        var code by mutableStateOf("")
+        show { SignInScreen(state, code, { code = it }) { submitted++ } }
         compose.waitForIdle()
         compose.onNodeWithText("Your agents, in your pocket.").assertIsDisplayed()
+        compose.onNodeWithText("Continue with passkey").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Sign-in code").performTextInput("ab12cd")
         compose.onNodeWithText("Continue with passkey").performClick()
-        assertEquals(1, entered)
+        assertEquals(1, submitted)
+        assertEquals("ab12cd", code)
         snapshot("sign-in")
+
+        state = SignInState.Working
+        compose.onNodeWithText("Waiting for your passkey…").assertIsNotEnabled()
+        state = SignInState.Failed("That code didn't work. A setup code works once, for 30 minutes.")
+        compose.onNodeWithText("That code didn't work. A setup code works once, for 30 minutes.").assertIsDisplayed()
+        snapshot("sign-in-failed")
     }
 }

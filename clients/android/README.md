@@ -4,16 +4,20 @@ The Kotlin app shell. Two modules:
 
 - `:rcp` is a client for the RCP JSON/WebSocket binding (`docs/rcp-json-ws-v0.md`, version 14)
   behind the `RcpSurface` interface: discovery with task status and agent names, a task's
-  journal with optional live text, submitting and stopping a command, and the device-key proof.
+  journal with optional live text, submitting and stopping a command, and the device-key proof;
+  `PasskeySignIn` signs a device in over the coordinator's identity HTTP API (`docs/identity-v0.md`).
   The app passes the signing function; the key itself stays in the platform keystore. Listing
   and revoking signed-in devices are not offered yet. It has no Android dependency and is tested
   against a fake coordinator that speaks the raw wire. Tests cross-check the pinned version and
   every frame shape against the worked examples in that document.
 - `:app` is the screens: theme (Graphite and Paper), the agent badge and its five state
-  motions, Home, Chat, create/edit agent and a sign-in placeholder. It runs on
-  `FakeAgentRepository`; nothing in `:app` calls `:rcp` yet. The real repository arrives with the
-  sign-in, streaming-chat and agent-profile work in the Phase 5 issues, and it replaces the
-  fake behind `AgentRepository`.
+  motions, Home, Chat, create/edit agent, and sign-in. Sign-in is real: a setup code (or the
+  ID of a passkey the person already has), a passkey through Credential Manager, and a P-256
+  device key in the Android Keystore; the device credential is kept encrypted with a Keystore
+  key. The app signs in to `BuildConfig.RENOA_ORIGIN`, which must serve `assetlinks.json` for
+  this package and signing certificate (`deploy/README.md`). The screens still run on
+  `FakeAgentRepository`; the real repository over `:rcp` replaces it behind `AgentRepository`.
+  Passkeys need Android 9, so `minSdk` is 28.
 
 ## Build
 

@@ -1,14 +1,20 @@
 package live.renoa.app.signin
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import live.renoa.app.theme.RenoaShapes
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,7 +31,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -41,17 +46,16 @@ import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaType
 import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.RenoaButton
-import live.renoa.app.ui.PathIcon
 import kotlin.math.abs
 
 private val TILE_TONES = listOf(Color(0xFFFF8A4C), Color(0xFFE046B4), Color(0xFF2FD0E6), Color(0xFFC9485B), Color(0xFFF2B8C6), Color(0xFF4FB3FF))
 
 /**
- * The first screen. Signing in is not built yet: the button goes straight in, and a passkey
- * replaces it when the sign-in work lands.
+ * The first screen. The person enters the code from their Renoa, and the passkey prompt does the
+ * rest; [state] says whether that is under way or why it stopped.
  */
 @Composable
-fun SignInScreen(onContinue: () -> Unit) {
+internal fun SignInScreen(state: SignInState, code: String, onCodeChange: (String) -> Unit, onSubmit: () -> Unit) {
     val colors = Renoa.colors
     val reduced = LocalReducedMotion.current
     // Seven tiles drop into place one after the other: the core first, then the six around it.
@@ -91,12 +95,51 @@ fun SignInScreen(onContinue: () -> Unit) {
                 }
             }
         }
-        Column(Modifier.padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Renoa", style = RenoaType.Display.copy(fontSize = 44.sp), color = colors.foreground, textAlign = TextAlign.Center)
-            Text("Your agents, in your pocket.", Modifier.padding(top = 8.dp), style = RenoaType.Body.copy(fontSize = 17.sp), color = colors.mutedForeground, textAlign = TextAlign.Center)
-        }
-        Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 28.dp)) {
-            RenoaButton("Continue with passkey", onContinue, Modifier.fillMaxWidth(), icon = Glyphs.PASSKEY)
+        val working = state == SignInState.Working
+        val ready = !working && SignInCode.parse(code) != null
+        val shape = RoundedCornerShape(RenoaShapes.Control)
+        // One centred column, no wider than a phone, so a tablet keeps one left edge for every line.
+        Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp), contentAlignment = Alignment.TopCenter) {
+            Column(Modifier.widthIn(max = 440.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Renoa", style = RenoaType.Display.copy(fontSize = 44.sp), color = colors.foreground, textAlign = TextAlign.Center)
+                Text("Your agents, in your pocket.", Modifier.padding(top = 8.dp), style = RenoaType.Body.copy(fontSize = 17.sp), color = colors.mutedForeground, textAlign = TextAlign.Center)
+                Box(
+                    Modifier
+                        .padding(top = 32.dp)
+                        .fillMaxWidth()
+                        .background(colors.card, shape)
+                        .border(1.dp, colors.input, shape)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    if (code.isEmpty()) Text("Sign-in code", style = RenoaType.Body, color = colors.mutedForeground)
+                    BasicTextField(
+                        value = code,
+                        onValueChange = onCodeChange,
+                        enabled = !working,
+                        singleLine = true,
+                        textStyle = RenoaType.Body.copy(color = colors.foreground),
+                        cursorBrush = SolidColor(colors.ring),
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Go),
+                        keyboardActions = KeyboardActions(onGo = { if (ready) onSubmit() }),
+                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Sign-in code" },
+                    )
+                }
+                val failure = (state as? SignInState.Failed)?.message
+                Text(
+                    failure ?: "Enter the code from your Renoa. Your passkey does the rest.",
+                    Modifier.padding(top = 10.dp).fillMaxWidth(),
+                    style = RenoaType.Caption,
+                    color = if (failure != null) colors.stateFailed else colors.mutedForeground,
+                    textAlign = TextAlign.Center,
+                )
+                RenoaButton(
+                    if (working) "Waiting for your passkey…" else "Continue with passkey",
+                    onSubmit,
+                    Modifier.padding(top = 20.dp, bottom = 28.dp).fillMaxWidth(),
+                    enabled = ready,
+                    icon = Glyphs.PASSKEY,
+                )
+            }
         }
     }
 }
