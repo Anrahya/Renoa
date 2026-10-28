@@ -25,3 +25,18 @@ test("an authenticated surface discovers only its tasks", async () => {
   assert.deepEqual(await client.listTasks(), fixture.tasks);
   await client.close();
 });
+
+test("the directory reports each task's status", async () => {
+  const client = new RcpSurfaceClient({
+    endpoint: fixture.endpoint,
+    authentication: { type: "device", credentials: fixture.credentials },
+    statePath: `${fixture.statePath}.status`,
+  });
+
+  await client.connect();
+  assert.deepEqual(
+    (await client.listTasks()).map((task) => task.status),
+    ["working", "idle", "idle"],
+  );
+  await client.close();
+});

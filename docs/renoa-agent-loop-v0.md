@@ -228,7 +228,12 @@ compacting, it also keeps the exact summary request, durable cut,
 and bounded attempt counters so restart cannot silently re-plan work already in
 flight.
 
-Loop binding revision 13 adds prompt commands observed with attributed
+Loop binding revision 14 gives a context summary its own model effect binding,
+`renoa.agent.compaction`, beside `renoa.agent.model`; both run the same model at
+the same revision. Its adapter never reports an assistant message, so no
+observer can present a summary as a reply. A summary effect saved under
+revision 13 belongs to the old binding, so an operation unfinished at that
+revision needs its original runtime. Revision 13 adds prompt commands observed with attributed
 per-message context and the `renoa.agent.turn-context.v1` event; stored
 `turn_timing` commands still decode. Revision 12 adds Code Mode phases and a validated pending-call
 queue, and balances an already-recorded assistant call when a tool adapter
@@ -361,6 +366,9 @@ slice:
   fails before invoking the model and activates no partial checkpoint;
 - a typed provider context-window rejection triggers the same compaction path
   without repeating the known-oversized normal request;
+- a summary request reaches observers as a model request but never as an
+  assistant message, while the reply around it still does, and its usage stays
+  in the session total;
 - durable cancellation balances every outstanding tool call in source order,
   while preserving a settled current result and distinguishing work that never
   dispatched from work that may have run; and
@@ -433,8 +441,16 @@ a call-matched not-run error. The operation ends without making another model
 request, but the balanced history is visible to the next operation's model
 request. Internal adapter errors are never copied into these tool messages.
 
-Compaction uses the same model binding and recovery declaration as ordinary
-sampling, but its exact persisted request advertises no tools. Before dispatch
+Compaction uses the same model and recovery declaration as ordinary sampling,
+registered as its own effect binding (`renoa.agent.compaction`, at the model's
+revision), and its exact persisted request advertises no tools. The model
+events of a summary request (start, provider traffic, chunks, retries, end and
+failure) reach observers like any model request, but `MessageStart`,
+`MessageUpdate` and `MessageAbort` never do: they describe an assistant
+message, and a summary is not one. The adapter classifies every event kind in
+one exhaustive match, so a new kind must be placed before it compiles.
+`recorded_token_usage` totals both bindings, so a summary attempt stays in the
+session's usage. Before dispatch
 and again before settlement, the loop validates that its saved boundary is
 still a safe cut in the durable transcript. A valid response and its activated
 checkpoint event commit in one kernel transition. An unknown summary outcome

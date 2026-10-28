@@ -19,20 +19,24 @@ model API, system prompt, tool or permission system, context policy, user
 interface, or network transport.
 
 Enrollment and authentication establish a trusted session. They are not task
-operations. Issuing enrollment tokens, recording a node's owning principal, and
-revoking devices are trusted control-plane actions and are not remotely callable
-RCP operations. An operator may also create a task directly. The node's owner can
+operations. Issuing enrollment tokens and recording a node's owning principal
+are trusted control-plane actions and are not remotely callable RCP operations.
+The operator may revoke any device. An owner may also list and revoke their own
+signed-in apps with `ListDevices` and `RevokeDevice`, from a browser or a device
+that proved its key; devices are not tasks, and these operations grant no task
+authority. An operator may also create a task directly. The node's owner can
 open a task remotely with `OpenTask`, but only against a target its online node
 currently advertises, and delete one of its tasks with `DeleteTask`.
 
 After authentication, the session identity fixes the peer's role:
 
-- a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`, and
-  `DeleteTask`;
-- a node may `AdvertiseTargets`, `AcknowledgeExecution`, and
-  `PublishExecutionEvents`;
-- the coordinator may deliver `Execute` to a node and `TaskEvent` records to an
-  attached surface.
+- a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`,
+  `StopCommand`, and `DeleteTask`; a surface connected by a browser ticket or a
+  proven device key may also `ListDevices` and `RevokeDevice`;
+- a node may `AdvertiseTargets`, `AcknowledgeExecution`,
+  `PublishExecutionEvents`, `AcknowledgeStop`, and `PublishLiveActivity`;
+- the coordinator may deliver `Execute` and `Stop` to a node, and `TaskEvent`
+  records and `LiveActivity` frames to an attached surface.
 
 The transport may add correlation data around an operation. Correlation data is
 not durable identity and must not affect admission or deduplication.
@@ -54,6 +58,8 @@ Every implementation must preserve these rules:
 6. Delivery is at least once. Exact retries are harmless; reuse of an identity
    with different content is a conflict.
 7. A connection ending never terminates a task or proves an execution outcome.
+8. Live activity is advisory. It is not acknowledged, retried, stored, or
+   replayed, and nothing a surface needs after reconnection depends on it.
 
 ## Surface operations
 
@@ -66,11 +72,25 @@ more summaries authorized for that principal.
 Each current summary contains only:
 
 - `task_id`: the durable identity needed by later operations;
-- `target`: the existing target reference used to distinguish tasks.
+- `target`: the existing target reference used to distinguish tasks;
+- `status`: what the task is doing, derived from its latest command.
+
+The status is `working` while the latest command's execution has not
+terminated, `idle` once it completed or was cancelled, and `failed` once it
+failed. A task with no command is `idle`. "Latest" is the order the
+coordinator admitted the commands in, so an older command whose execution never
+terminated does not keep a task `working` after a later command has run. The
+status is a function of the task journal: a surface holding the journal can
+compute the same value, and the directory is how a surface that holds none of it
+learns the value. A surface may show finer states of its own, such as a command
+that is admitted but not started; those are display states, not statuses. It
+does not say whether the node is online, whether the owner
+is being waited on, or when the task next wakes; nothing in RCP produces those
+facts yet.
 
 Results are ordered by task identity so independent clients receive a
-deterministic snapshot. Node identity, harness configuration, presence, cursor
-state, and execution status are not exposed.
+deterministic snapshot. Node identity, harness configuration, presence, and
+cursor state are not exposed.
 
 The operation is read-only and not paginated. A retry returns the current
 authorized snapshot, which may include tasks created since the earlier request.
@@ -115,7 +135,10 @@ Inputs:
 
 - `task_id`: the durable task to observe;
 - `after_sequence`: the last contiguous task sequence already applied by the
-  surface, or no cursor for a full replay.
+  surface, or no cursor for a full replay;
+- `live`: whether the surface wants live activity (see `LiveActivity`) while
+  the task's turns run. A required flag, not a default: a surface that renders
+  only the journal sends false.
 
 Preconditions:
 
@@ -135,6 +158,37 @@ Behavior:
 This ordering closes the replay-to-live race. An exact retry is read-only. A
 surface that falls behind the live buffer receives `ReplayRequired`, reconnects,
 and attaches from its last durably applied sequence.
+
+An attachment that asked for live activity also receives `LiveActivity` frames
+from the task's node. Frames are delivered on a buffer separate from the
+journal's. A surface too slow to take a frame loses that frame; it is never
+told to replay because the frame buffer overran. A frame never waits for room:
+frames and journal records share the connection's outbound queue, and a frame
+that finds it full is dropped, so a surface that stops reading holds at most one
+queue of frames and no record waits behind more of them. A surface that falls
+behind the journal's own buffer is still told to replay.
+
+Before the coordinator forwards a journal record to an attachment it forwards
+the frames already waiting for it, and a node sends the frames it has queued
+before the execution records it has read. A frame the node published before a
+record therefore reaches the surface before that record unless it was dropped.
+A frame published just after a record may also reach the surface before it.
+
+### `LiveActivity`
+
+`LiveActivity` is a coordinator-to-surface delivery containing the task
+identity, the causing `command_id`, and one activity:
+
+- `text_delta`: a `sequence` and the visible assistant `text` produced since
+  the previous frame. Sequences count from zero for each message of the turn,
+  so a surface can tell that it missed a frame;
+- `text_reset`: a message the surface was shown part of was abandoned, so the
+  surface discards the text it showed for it.
+
+A frame has no task sequence and no acknowledgement, and a surface that
+reconnects is never sent the frames it missed. The durable `AssistantMessage`
+of the same text supersedes the live text: a surface replaces what it showed
+with the record. Reasoning and tool-call arguments are never live activity.
 
 ### `Submit`
 
@@ -167,6 +221,40 @@ the node is now offline. Current node availability cannot rewrite the result of
 past durable admission. Reusing the command identity with different content,
 task, surface identity, or target returns `Conflict`.
 
+### `StopCommand`
+
+Inputs:
+
+- `task_id`: a task the authenticated principal owns;
+- `command_id`: the command to stop. The command is the stable identity of the
+  stop.
+
+Preconditions:
+
+- the peer is a surface;
+- the task belongs to the surface's authenticated principal;
+- the command was admitted for that task. Otherwise the result is `NotFound`,
+  the same as an unknown or foreign task.
+
+Behavior:
+
+1. If a stop was already recorded for the command, the coordinator returns its
+   original answer, `requested`, even when the command has ended since.
+2. Otherwise, if the command's execution has terminated, it returns
+   `already_ended` and records nothing.
+3. Otherwise it commits a stop record, returns `StopAccepted` with `requested`,
+   and delivers `Stop` to the task's node if the node is online.
+
+A stop is accepted while the node is offline. `Submit` and `OpenTask` refuse
+an absent node because they add work for it; a stop adds none, and a Host turn
+can outlive its node's link to the coordinator. The stop waits for the node
+and follows its pending executions on reconnect.
+
+The stop has no outcome record of its own. The result is the command's terminal
+record in the journal: `cancelled` when the stop reached the execution first,
+otherwise whatever terminal the execution had already reached. A stop never
+reaches another command of the task.
+
 ### `DeleteTask`
 
 Inputs:
@@ -181,6 +269,30 @@ principal's task returns `NotFound`. Deleting a task that no longer exists
 returns `TaskDeleted`, so a retry after a lost reply converges; its identity may
 then be opened again. The node that executed the task deletes its own copy of
 the task separately.
+
+### `ListDevices`
+
+`ListDevices` has no semantic input. The coordinator derives the principal from
+the authenticated session and returns `DeviceList`: the principal's active
+signed-in apps, each with its identity, surface, label, creation time and
+whether it is the device that asked, oldest first. Only devices that registered a
+key are listed. The operation is read-only. A surface that authenticated with a
+bearer credential alone, such as a chat surface's service link, is refused with
+`InvalidRole`.
+
+### `RevokeDevice`
+
+Inputs:
+
+- `device_id`: a signed-in app of the authenticated principal.
+
+In one transaction the coordinator marks the device revoked. Only then does it
+return `DeviceRevoked` and end the device's open connections; a later
+authentication of its credential fails. Revoking a device the principal already
+revoked returns `DeviceRevoked` again, so a retry converges. Another
+principal's device, an unknown device and a device without a registered key
+return `NotFound`. A device may revoke itself; its acknowledgement is sent
+before its connection closes. The key of a revoked device cannot sign in again.
 
 ## Executor delivery and node operations
 
@@ -229,6 +341,50 @@ deletes the pending delivery, commits that deletion, and returns
 The operation is idempotent. If its response is lost, the node repeats the same
 task and command identities.
 
+### `Stop`
+
+`Stop` is a coordinator-to-node delivery containing a task identity and a
+command identity. The coordinator sends it when a stop is recorded and the node
+is online, and again on every node activation until the node acknowledges it,
+after the pending `Execute` deliveries of the same activation.
+
+The node records the stop in its own ledger first. It then cancels the command
+through its harness: a running turn is cancelled, and a command it has not
+started begins cancelled. A stop that arrives before its `Execute` is still
+honored when the command arrives. A stop for a command that already
+terminated is acknowledged and changes nothing. The node deduplicates stops by
+command identity.
+
+### `AcknowledgeStop`
+
+Inputs:
+
+- `task_id`;
+- `command_id`.
+
+The node sends this only after it durably recorded the stop. The coordinator
+verifies that the authenticated node owns the task, marks the stop delivered,
+and stops redelivering it. A node that does not own the task receives
+`InvalidMessage` and changes nothing. An acknowledgement for a task the
+coordinator no longer holds has nothing left to confirm and is accepted. There
+is no success response; the operation is idempotent, and a node whose
+acknowledgement was lost is delivered the stop again and repeats it.
+
+### `PublishLiveActivity`
+
+Inputs:
+
+- `task_id`;
+- `command_id`;
+- one `text_delta` or `text_reset`.
+
+The coordinator relays the frame as `LiveActivity` to the surfaces attached to
+the task that asked for live activity, and only when the authenticated node
+owns the task. It stores nothing and sends no response. A frame with no
+interested surface, or from a node that does not own the task, is dropped.
+The node sends frames only while a turn runs, in visible text order, and never
+sends reasoning.
+
 ### `PublishExecutionEvents`
 
 Inputs:
@@ -260,7 +416,8 @@ The current durable event kinds are `ExecutionStarted`, `TurnStarted`,
 `AssistantMessage`, `ToolStarted`, `ToolFinished`, and `ExecutionTerminated`.
 They are the intersection proven by Renoa's Rust engine and Pi. Token deltas,
 provider metadata, usage, reasoning blocks, and native harness messages are not
-durable RCP records.
+durable RCP records. Visible text deltas are relayed only as ephemeral
+`LiveActivity`.
 
 ## Durable task records
 
@@ -283,9 +440,13 @@ task sequence. A timestamp never determines order.
 | `TaskOpened` | The task and its principal, node, and target binding |
 | `Attached` | No mutation; authorization and a replay high-water mark were resolved |
 | `CommandAccepted` | Command, command record, and pending execution delivery |
+| `StopAccepted` (`requested`) | The command's stop record and its pending delivery to the node |
+| `StopAccepted` (`already_ended`) | No mutation; the command's execution had already terminated |
 | `ExecutionAcknowledged` | Removal of the pending coordinator delivery |
 | `ExecutionEventsAccepted` | New task records and the node's accepted source cursor |
 | `TaskDeleted` | Removal of the task and everything the coordinator held for it |
+| `DeviceList` | No mutation; the returned devices were selected by authenticated principal |
+| `DeviceRevoked` | The device's revocation |
 
 None of these outcomes means that an external side effect happened exactly
 once.
@@ -318,17 +479,21 @@ correlation value is a binding concern.
 | `AdvertiseTargets` | None; each advertisement replaces the connection's targets | The latest advertisement wins |
 | `Attach` | task ID plus last applied sequence | Reconstructs the same suffix, then resumes live delivery |
 | `Submit` | command ID plus identical content | Returns the existing admission without another task record |
+| `StopCommand` | task ID plus command ID | Returns the original answer without another stop record |
 | `DeleteTask` | task ID | Returns `TaskDeleted` whether or not the task still exists |
+| `ListDevices` | No durable identity; request correlation is transport-local | Returns the current signed-in apps |
+| `RevokeDevice` | device ID | Returns `DeviceRevoked` whether or not this call revoked it |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |
+| `Stop` delivery | command ID | Node records one stop and cancels the command once |
+| `AcknowledgeStop` | task ID plus command ID | Leaves the stop delivered |
 | `PublishExecutionEvents` | execution ID, event IDs, and source sequences | Accepts exact overlap and appends only the new contiguous suffix |
 
 ## Deliberately undefined
 
 Task-list pagination, live directory and target updates, user-facing task
-metadata,
-cancellation, steering, approvals, task rebinding, executor generations,
-snapshots, artifact transfer, and transient token streaming are not operations
-yet. Harness provisioning and permission policy stay outside RCP. A generic
+metadata, a waiting-on-owner task status, a next-wake time, steering,
+approvals, task rebinding, executor generations, snapshots, artifact transfer,
+and live activity beyond visible text are not operations yet. Harness provisioning and permission policy stay outside RCP. A generic
 durable interaction flow for approval or follow-up responses remains undefined
 until a harness and surface consume it.

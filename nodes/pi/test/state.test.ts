@@ -147,6 +147,85 @@ test("a database from a newer node version is rejected", () => {
   );
 });
 
+test("a stop is recorded once, even before its command is admitted", () => {
+  const state = new NodeState(join(directory, "stop-before.sqlite"));
+  const command = executeCommand("continue here");
+
+  assert.equal(state.recordStop(command.taskId, command.commandId), "recorded");
+  assert.equal(state.recordStop(command.taskId, command.commandId), "recorded");
+  const watch = state.watchStop(command.commandId);
+  assert.equal(watch.signal.aborted, true, "a command admitted after its stop starts stopped");
+  assert.equal(state.watchStop("00000000-0000-0000-0000-000000000009").signal.aborted, false);
+  state.close();
+});
+
+test("a stop reaches a running command and no other, until it is released", () => {
+  const state = new NodeState(join(directory, "stop-running.sqlite"));
+  const command = executeCommand("continue here");
+  state.admit(command);
+  state.claimNext();
+  const watch = state.watchStop(command.commandId);
+  const other = state.watchStop("00000000-0000-0000-0000-000000000009");
+  assert.equal(watch.signal.aborted, false);
+
+  state.recordStop(command.taskId, command.commandId);
+
+  assert.equal(watch.signal.aborted, true);
+  assert.equal(other.signal.aborted, false);
+  watch.release();
+  other.release();
+  state.close();
+});
+
+test("a released watch is no longer aborted by a stop", () => {
+  const state = new NodeState(join(directory, "stop-released.sqlite"));
+  const command = executeCommand("continue here");
+  state.admit(command);
+  const watch = state.watchStop(command.commandId);
+  watch.release();
+
+  state.recordStop(command.taskId, command.commandId);
+
+  assert.equal(watch.signal.aborted, false);
+  state.close();
+});
+
+test("a stop for an ended command records nothing and another task's stop is refused", () => {
+  const path = join(directory, "stop-ended.sqlite");
+  const state = new NodeState(path);
+  const command = executeCommand("continue here");
+  state.admit(command);
+  state.claimNext();
+  state.finish(command.commandId, { status: "completed" }, []);
+
+  assert.equal(state.recordStop(command.taskId, command.commandId), "ended");
+  assert.equal(state.watchStop(command.commandId).signal.aborted, false);
+  assert.throws(
+    () => state.recordStop("00000000-0000-0000-0000-000000000008", command.commandId),
+    /does not belong to task/,
+  );
+  state.close();
+  const database = new DatabaseSync(path, { readOnly: true });
+  const stops = database.prepare("SELECT count(*) AS count FROM stops").get() as {
+    readonly count: number;
+  };
+  database.close();
+  assert.equal(stops.count, 0);
+});
+
+test("a stop survives a restart", () => {
+  const path = join(directory, "stop-restart.sqlite");
+  const command = executeCommand("continue here");
+  const first = new NodeState(path);
+  first.recordStop(command.taskId, command.commandId);
+  first.close();
+
+  const reopened = new NodeState(path);
+
+  assert.equal(reopened.watchStop(command.commandId).signal.aborted, true);
+  reopened.close();
+});
+
 function executeCommand(text: string): ExecuteCommand {
   return {
     taskId: "00000000-0000-0000-0000-000000000001",

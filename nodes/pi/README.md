@@ -15,6 +15,11 @@ packaged read tool. `read_write` exposes its read, write, and edit tools. With
 no workspace configuration, Pi receives no tools. Bash, network tools, and
 interactive approvals are not implemented.
 
+A stop from a surface is recorded in the node's SQLite state before the node
+acknowledges it. It aborts the command's running Pi turn, and a command that has
+not started begins aborted, so the execution ends `cancelled`. Pi publishes no
+live text: surfaces see its answer only as the durable `assistant_message`.
+
 ## Authenticate with SuperGrok
 
 Renoa uses Pi's xAI device-code OAuth directly; Pi's TUI is not involved. Keep

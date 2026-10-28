@@ -1,5 +1,6 @@
 //! Cross-surface task continuity outside Renoa's execution kernel.
 
+mod android_apps;
 mod browser_identity;
 mod browser_identity_http;
 mod browser_identity_store;
@@ -8,6 +9,7 @@ mod browser_session_schema;
 mod browser_sessions;
 mod browser_sessions_http;
 mod browser_ticket_store;
+mod command_stop;
 mod connection;
 mod control_log;
 mod control_migrations;
@@ -16,6 +18,10 @@ mod control_schema;
 mod coordinator;
 mod credential_relay_http;
 mod credential_relay_store;
+mod device_admin;
+mod device_handshake;
+mod device_key;
+mod device_store;
 mod dispatch_store;
 mod event_store;
 mod host_calls;
@@ -24,17 +30,21 @@ mod identity;
 mod identity_store;
 mod ids;
 mod json_ws;
+mod live_activity;
 mod node_messages;
 mod node_ownership;
 mod oauth_relay_http;
 mod oauth_relay_store;
 mod operations;
+mod session_registry;
 mod store;
 mod surface_operations;
 mod task_deletion;
 mod task_opening;
+mod task_status;
 mod wire;
 
+pub use android_apps::AndroidApps;
 pub use browser_sessions::{BrowserSession, BrowserSessions};
 pub use coordinator::{ControlError, Coordinator, TaskSpec};
 pub use identity::{
@@ -44,5 +54,6 @@ pub use identity::{
 pub use ids::{DeviceId, NodeId, TaskEventId, TaskId};
 pub use json_ws::{ClientMessage, JSON_WS_VERSION, ServerMessage};
 pub use operations::{
-    ErrorCode, HostMethod, PeerIdentity, TargetSummary, TaskEvent, TaskEventKind, TaskSummary,
+    DeviceSummary, ErrorCode, HostMethod, PeerIdentity, StopOutcome, TargetSummary, TaskEvent,
+    TaskEventKind, TaskStatus, TaskSummary,
 };

@@ -1,7 +1,10 @@
 use renoa_agent::TokenUsage;
 use renoa_kernel::{EffectOutcome, SessionSnapshot};
 
-use crate::{configuration::MODEL_EFFECT_BINDING, format::ModelEffectOutput};
+use crate::{
+    configuration::{COMPACTION_EFFECT_BINDING, MODEL_EFFECT_BINDING},
+    format::ModelEffectOutput,
+};
 
 /// Totals recorded model responses, including summary attempts. Unknown outcomes,
 /// missing provider accounting or arithmetic overflow make the total unknown.
@@ -14,7 +17,9 @@ pub fn recorded_token_usage(snapshot: &SessionSnapshot) -> Option<TokenUsage> {
         .iter()
         .flat_map(|operation| &operation.effect_batches)
         .flat_map(|batch| &batch.effects)
-        .filter(|effect| effect.binding == MODEL_EFFECT_BINDING)
+        .filter(|effect| {
+            effect.binding == MODEL_EFFECT_BINDING || effect.binding == COMPACTION_EFFECT_BINDING
+        })
     {
         let Some(EffectOutcome::Success(value)) = &effect.outcome else {
             return None;

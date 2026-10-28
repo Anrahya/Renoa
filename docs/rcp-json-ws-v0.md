@@ -26,7 +26,9 @@ a real Pi OpenAI-compatible turn.
 The first application frame must be `enroll`, `authenticate`, or
 `authenticate_ticket`. Enrollment returns credentials and ends that connection.
 Either authentication frame returns `authenticated` and keeps the connection
-open for operations.
+open for operations, except that `authenticate` for a device that registered a
+key is answered with `device_challenge` and returns `authenticated` only after a
+valid `device_proof` (see Session establishment).
 
 The client must send that first application frame within 10 seconds after the
 WebSocket upgrade. The coordinator closes a connection that misses the
@@ -60,9 +62,16 @@ The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `14` supersedes version `13` by adding Host control relaying
-(`serve_host_control`, `host_call`, `complete_host_call`). A version `13` peer
-is rejected at authentication.
+Version `14` supersedes version `13` by adding three things. The device-key
+handshake (`device_challenge`, `device_proof`) and the owner's device operations
+(`list_devices`, `revoke_device`, with `device_list` and `device_revoked`). The
+chat essentials: a task summary carries a `status`, `attach` carries a required
+`live` flag, a surface can `stop_command`, answered by `stop_accepted`; the
+coordinator delivers `stop` to the node, which answers `acknowledge_stop`; and a
+node can `publish_live_activity`, which the coordinator relays to interested
+surfaces as `live_activity`. And Host control relaying (`serve_host_control`,
+`host_call`, `complete_host_call`). A version `13` peer is rejected at
+authentication.
 
 Version `13` superseded version `12` by adding an optional `author` to text
 command input, which marks text written by a guest rather than the
@@ -160,6 +169,41 @@ Successful authentication:
 The client never sends a principal, surface role, or node role during
 authentication. Those values come from the durable device enrollment.
 
+### Key-bound devices
+
+A device that signed in with a device key (see
+[identity-v0.md](identity-v0.md), "App sign-in and device keys") is answered
+with a challenge instead of `authenticated`:
+
+```json
+{
+  "type": "device_challenge",
+  "nonce": "<64 lowercase hex characters, fresh for this connection>"
+}
+```
+
+The client answers with its signature over
+`renoa device proof v1\n<deviceId>\n<nonce>`, as ASN.1 DER base64url without
+padding:
+
+```json
+{
+  "type": "device_proof",
+  "signature": "<signature>"
+}
+```
+
+A valid proof returns `authenticated`, unless the device was revoked, or signed
+in again so that the credential in `authenticate` was replaced, while the
+connection was proving its key; that session ends without `authenticated`. Any
+other next frame, and any proof that
+is malformed or does not verify against the registered key, returns
+`authentication_failed` and ends the session. `device_proof` is not an
+operation: before a challenge it is refused as a first frame
+(`invalid_message`), and after authentication it is `invalid_message`. The
+challenge and the 10-second authentication deadline cover the whole exchange. A
+device without a registered key never sees a challenge.
+
 ## Surface frames
 
 ### List tasks
@@ -181,14 +225,17 @@ by `taskId`:
   "tasks": [
     {
       "taskId": "00000000-0000-0000-0000-000000000010",
-      "target": "workspace:renoa"
+      "target": "workspace:renoa",
+      "status": "working"
     }
   ]
 }
 ```
 
-An authorized principal with no tasks receives an empty `tasks` array. Version
-`10` defines no pagination or live directory update frame.
+`status` is `working`, `idle`, or `failed`, derived from the task's latest
+command as the operation contract defines. An authorized principal with no
+tasks receives an empty `tasks` array. The binding defines no pagination or
+live directory update frame.
 
 ### List targets
 
@@ -265,6 +312,65 @@ Success, including a retry for a task already deleted, returns:
 A task with an execution in flight returns `conflict`; another principal's task
 returns `not_found`.
 
+### List devices
+
+```json
+{
+  "type": "list_devices",
+  "request_id": 44
+}
+```
+
+The response lists the principal's active signed-in apps, oldest first:
+
+```json
+{
+  "type": "device_list",
+  "request_id": 44,
+  "devices": [
+    {
+      "deviceId": "00000000-0000-0000-0000-000000000040",
+      "surface": "android",
+      "label": "Pixel 9",
+      "createdAtMs": 1790000000000,
+      "current": true
+    }
+  ]
+}
+```
+
+`current` is true for the device that sent the request and false for every
+device when a browser asks. Only devices that registered a key are listed; a
+node or a service link such as Discord is not. A connection that is neither a
+browser ticket nor a device that proved its key receives `invalid_role`.
+
+### Revoke a device
+
+```json
+{
+  "type": "revoke_device",
+  "request_id": 45,
+  "device_id": "00000000-0000-0000-0000-000000000040"
+}
+```
+
+Success, including a retry for a device the principal already revoked, returns:
+
+```json
+{
+  "type": "device_revoked",
+  "request_id": 45,
+  "device_id": "00000000-0000-0000-0000-000000000040"
+}
+```
+
+The acknowledgement is sent after the revocation is committed. The device's open
+connections then end, and its next `authenticate` returns
+`authentication_failed`. A device may revoke itself; its acknowledgement is
+sent before its connection closes. Another principal's device, an unknown
+device, and a device without a key return `not_found`; a connection that may not
+administer devices receives `invalid_role`.
+
 ### Attach
 
 ```json
@@ -272,11 +378,15 @@ returns `not_found`.
   "type": "attach",
   "request_id": 41,
   "task_id": "00000000-0000-0000-0000-000000000010",
-  "after_sequence": 12
+  "after_sequence": 12,
+  "live": true
 }
 ```
 
-Use `null` for `after_sequence` to request the full journal.
+Use `null` for `after_sequence` to request the full journal. `live` is
+required: `true` asks for `live_activity` frames while the task's turns run,
+and `false` receives only the journal. A frame without `live` is not a version
+`14` attach.
 
 The first successful response identifies the replay high-water mark:
 
@@ -292,6 +402,73 @@ The first successful response identifies the replay high-water mark:
 `through_sequence` is `null` for an empty task. Zero or more `task_event`
 frames follow for the durable suffix, then the same frame type carries live
 records.
+
+### Live activity
+
+An attachment that sent `"live": true` receives frames like this one while the
+task's node runs a turn:
+
+```json
+{
+  "type": "live_activity",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "activity": { "type": "text_delta", "sequence": 0, "text": "Hel" }
+}
+```
+
+`sequence` counts from zero for each message of the turn, and `text` is the
+visible assistant text since the previous frame. This frame abandons what the
+surface showed for the message in progress:
+
+```json
+{
+  "type": "live_activity",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "activity": { "type": "text_reset" }
+}
+```
+
+A live frame has no `request_id`, no task sequence, and no durable effect. The
+`assistant_message` record that completes the text supersedes the live text. A
+surface that is too slow to take a frame loses it and is not told to replay
+because of it. Text that arrives within 50 milliseconds of the previous frame is
+sent with the message's next fragment of any kind once that time has passed, or
+not at all when the durable record comes first.
+
+A frame the node published before a record is delivered before that record, on
+the same connection and in the node's order, unless it was dropped; a dropped
+frame never arrives later, so a client never waits for a missing one. A frame
+published just after a record may be delivered before it too.
+
+### Stop a command
+
+```json
+{
+  "type": "stop_command",
+  "request_id": 44,
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020"
+}
+```
+
+The coordinator answers after the stop is durable:
+
+```json
+{
+  "type": "stop_accepted",
+  "request_id": 44,
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "outcome": "requested"
+}
+```
+
+`outcome` is `requested` or `already_ended`. A command already ended with no
+earlier stop records nothing and answers `already_ended`; a retry of a recorded
+stop answers `requested` again. A task the principal does not own and a
+command the task never admitted return `not_found`. The command's terminal
+`execution_event` carries the result, `cancelled` when the stop won.
 
 ### Submit
 
@@ -331,6 +508,12 @@ Discord channel. It is omitted for the principal's own text; any other value,
 and carries the author as the surface asserts it; the executor decides what a
 guest's command may do. The Renoa Host runs it with no `USER.md`, no plugin
 context, and every tool call refused; the Pi node fails it without running.
+
+RCP reserves no words in text. The Renoa node reads the principal's text that is
+exactly `/compact` (surrounding whitespace ignored) as its compaction control
+and ends the command with one `assistant_message` notice and `completed`;
+`/compact` followed by more words ends `failed`, and a guest's is an ordinary
+message (see `rcp-v0.md`). The Pi node treats all of it as ordinary text.
 
 `request_id` correlates one connection attempt. `command_id` is the durable
 idempotency identity and must be reused with identical content, `context`
@@ -482,6 +665,44 @@ response reports the source cursor:
 }
 ```
 
+The coordinator delivers a recorded stop, after the pending `execute` frames on
+a node's activation and whenever a stop is recorded for an online node:
+
+```json
+{
+  "type": "stop",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020"
+}
+```
+
+After the node durably records the stop and cancels the command, it sends:
+
+```json
+{
+  "type": "acknowledge_stop",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020"
+}
+```
+
+There is no success response. A node that does not own the task receives
+`invalid_message`. Until the acknowledgement commits, the coordinator repeats
+the `stop`.
+
+While a turn runs, the node may publish live activity. The coordinator relays
+it as `live_activity` to the attached surfaces that asked, only when the node
+owns the task, and sends no response:
+
+```json
+{
+  "type": "publish_live_activity",
+  "task_id": "00000000-0000-0000-0000-000000000010",
+  "command_id": "00000000-0000-0000-0000-000000000020",
+  "activity": { "type": "text_delta", "sequence": 0, "text": "Hel" }
+}
+```
+
 Node frames use `command_id` for correlation because it is already the durable
 operation identity. They do not carry `request_id`.
 
@@ -563,8 +784,8 @@ Storage and serialization details are not exposed on the wire.
 
 ## Numbers
 
-`request_id`, task sequences, execution sequences, and millisecond timestamps are JSON
-integers. Cross-language clients must keep unsigned values between `0` and
+`request_id`, task sequences, execution sequences, live text sequences, and
+millisecond timestamps are JSON integers. Cross-language clients must keep unsigned values between `0` and
 `9,007,199,254,740,991`, and signed timestamps between
 `-9,007,199,254,740,991` and `9,007,199,254,740,991`. The coordinator rejects an
 incoming frame outside this range as `invalid_message`. It replaces an
@@ -578,15 +799,21 @@ round.
   durable.
 - `command_accepted`, `execution_acknowledged`, and `execution_events_accepted` are
   sent only after their documented commits.
-- A node reconnect receives every still-pending `execute` delivery.
+- A node reconnect receives every still-pending `execute` delivery, then every
+  stop it has not acknowledged.
+- `stop_accepted` is sent only after the stop is committed. `live_activity` is
+  sent without any commit and may be lost. A node sends the `publish_live_activity`
+  frames it has queued before the `publish_execution_events` it has read, and the
+  coordinator sends the `live_activity` frames waiting for an attachment before
+  the `task_event` it forwards.
 - A surface reconnects with its last durably applied task sequence.
 - A slow attached surface receives `replay_required` and must reattach.
 - Clients must not infer task completion from a closed socket.
 
 ## Binding exclusions
 
-Version `10` defines no task-list pagination, live directory or target updates,
-application heartbeat or presence, cancellation, steering, approval, artifact,
-binary-frame, compression, HTTP/SSE, webhook, or public TLS deployment
-contract. Adding any of those requires an operation contract first, then a
+The binding defines no task-list pagination, live directory or target updates,
+application heartbeat or presence, steering, approval, artifact, binary-frame,
+compression, HTTP/SSE, webhook, or public TLS deployment contract, and no live
+activity beyond visible text. Adding any of those requires an operation contract first, then a
 binding and tests. The transport `ping` above is not an application heartbeat.

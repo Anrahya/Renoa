@@ -8,6 +8,8 @@ use webauthn_rs::prelude::{Passkey, PasskeyAuthentication, PasskeyRegistration};
 use crate::{
     ControlError, PasskeyBootstrapToken,
     control_schema::open_connection,
+    device_key::DeviceRegistration,
+    device_store::{save_sign_in, take_sign_in},
     identity_store::timestamp_millis,
     store::{ControlStore, blocking, id_error, json_error, sqlite_error},
 };
@@ -23,12 +25,15 @@ pub(crate) struct RegistrationCeremony {
     pub(crate) principal_id: PrincipalId,
     pub(crate) surface: SurfaceRef,
     pub(crate) state: PasskeyRegistration,
+    /// The device key this ceremony signs in, when it was started for an app.
+    pub(crate) device: Option<DeviceRegistration>,
 }
 
 pub(crate) struct AuthenticationCeremony {
     pub(crate) principal_id: PrincipalId,
     pub(crate) surface: SurfaceRef,
     pub(crate) state: PasskeyAuthentication,
+    pub(crate) device: Option<DeviceRegistration>,
 }
 
 impl ControlStore {
@@ -104,6 +109,7 @@ impl ControlStore {
         surface: SurfaceRef,
         ceremony_id: Uuid,
         state: PasskeyRegistration,
+        device: Option<DeviceRegistration>,
         expires_at: SystemTime,
         now: SystemTime,
     ) -> Result<(), ControlError> {
@@ -158,6 +164,9 @@ impl ControlStore {
                     ],
                 )
                 .map_err(sqlite_error)?;
+            if let Some(device) = &device {
+                save_sign_in(&transaction, ceremony_id, device, expires_at_ms)?;
+            }
             transaction.commit().map_err(sqlite_error)
         })
         .await
@@ -199,11 +208,13 @@ impl ControlStore {
                     [ceremony_id.to_string()],
                 )
                 .map_err(sqlite_error)?;
+            let device = take_sign_in(&transaction, ceremony_id)?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(RegistrationCeremony {
                 principal_id: parse_principal(&record.0)?,
                 surface: SurfaceRef::new(record.1),
                 state: serde_json::from_str(&record.2).map_err(json_error)?,
+                device,
             })
         })
         .await
@@ -225,12 +236,17 @@ impl ControlStore {
         .await
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "these values are the complete one-time authentication ceremony record"
+    )]
     pub(crate) async fn save_authentication_ceremony(
         &self,
         principal_id: PrincipalId,
         surface: SurfaceRef,
         ceremony_id: Uuid,
         state: PasskeyAuthentication,
+        device: Option<DeviceRegistration>,
         expires_at: SystemTime,
         now: SystemTime,
     ) -> Result<(), ControlError> {
@@ -259,6 +275,9 @@ impl ControlStore {
                     ],
                 )
                 .map_err(sqlite_error)?;
+            if let Some(device) = &device {
+                save_sign_in(&transaction, ceremony_id, device, expires_at_ms)?;
+            }
             transaction.commit().map_err(sqlite_error)
         })
         .await
@@ -300,11 +319,13 @@ impl ControlStore {
                     [ceremony_id.to_string()],
                 )
                 .map_err(sqlite_error)?;
+            let device = take_sign_in(&transaction, ceremony_id)?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(AuthenticationCeremony {
                 principal_id: parse_principal(&record.0)?,
                 surface: SurfaceRef::new(record.1),
                 state: serde_json::from_str(&record.2).map_err(json_error)?,
+                device,
             })
         })
         .await
@@ -355,6 +376,7 @@ fn remove_expired_identity_records(
         "passkey_registration_ceremonies",
         "passkey_authentication_ceremonies",
         "browser_connection_tickets",
+        "device_sign_ins",
     ] {
         connection
             .execute(

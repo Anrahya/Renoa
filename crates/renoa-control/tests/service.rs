@@ -11,7 +11,7 @@ use std::{process::ExitStatus, thread, time::Instant};
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, JSON_WS_VERSION,
-    PasskeyBootstrapToken, ServerMessage, TaskId, TaskSummary,
+    PasskeyBootstrapToken, ServerMessage, TaskId, TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
@@ -193,6 +193,7 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
             tasks: vec![TaskSummary {
                 task_id: TaskId::from_uuid(Uuid::from_u128(3)),
                 target: TargetRef::new("workspace:service-test"),
+                status: TaskStatus::Idle,
             }],
         }
     );
