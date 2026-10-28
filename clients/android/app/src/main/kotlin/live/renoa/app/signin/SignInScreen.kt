@@ -135,7 +135,8 @@ internal fun SignInScreen(state: SignInState, code: String, onCodeChange: (Strin
                 RenoaButton(
                     if (working) "Waiting for your passkey…" else "Continue with passkey",
                     onSubmit,
-                    Modifier.padding(top = 20.dp, bottom = 28.dp).fillMaxWidth(),
+                    // The button keeps 4dp above and below for its 48dp tap area; these make 20 and 28.
+                    Modifier.padding(top = 16.dp, bottom = 24.dp).fillMaxWidth(),
                     enabled = ready,
                     icon = Glyphs.PASSKEY,
                 )

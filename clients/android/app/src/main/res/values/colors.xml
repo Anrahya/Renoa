@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0E1626</color>
-    <color name="window_background">#0E1626</color>
+    <!-- Graphite's background: the launcher icon is drawn on it in either theme. -->
+    <color name="ic_launcher_background">#111312</color>
+    <!-- Paper's background, shown before the first frame; values-night has Graphite's. -->
+    <color name="window_background">#F5F6F3</color>
 </resources>

@@ -26,7 +26,8 @@ import live.renoa.app.theme.RenoaType
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AskChoices(choices: List<String>, onAnswer: (String) -> Unit, modifier: Modifier = Modifier) {
-    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // A small button keeps 8dp above and below for its 48dp tap area, so wrapped rows need no gap of their own.
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         choices.forEachIndexed { index, choice ->
             RenoaButton(choice, onClick = { onAnswer(choice) }, kind = if (index == 0) ButtonKind.Primary else ButtonKind.Secondary, size = ButtonSize.Sm)
         }
@@ -43,8 +44,8 @@ fun AskCard(ask: Ask, onAnswer: (String) -> Unit, modifier: Modifier = Modifier)
             .fillMaxWidth()
             .background(colors.card, shape)
             .border(1.dp, colors.border, shape)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalAlignment = Alignment.Start,
     ) {
         Text(ask.question, style = RenoaType.Body, color = colors.foreground)

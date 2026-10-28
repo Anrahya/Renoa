@@ -1,6 +1,15 @@
 package live.renoa.app.theme
 
+import android.content.ContentResolver
+import android.database.ContentObserver
+import android.graphics.Color.TRANSPARENT
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.LocalActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -10,14 +19,20 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.drawable.toDrawable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
@@ -30,10 +45,9 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import live.renoa.app.R
 
-/** Easing curves from the design: `ease` for arrivals, `spring` for a tile landing. */
+/** Easing curves from the design: `ease` for arrivals. */
 object RenoaEasing {
     val Ease = CubicBezierEasing(.2f, .8f, .2f, 1f)
-    val Spring = CubicBezierEasing(.34f, 1.56f, .64f, 1f)
     val EaseInOut = CubicBezierEasing(.42f, 0f, .58f, 1f)
 }
 
@@ -128,11 +142,44 @@ fun RenoaTheme(
     }
 }
 
+/**
+ * Draws the window and its status and navigation bars for [theme] rather than for the phone's
+ * setting, which the owner may have overridden: its ground behind the first frame, icons that read
+ * on it, and the navigation bar over it. Before the app's first frame they follow the phone.
+ */
+@Composable
+fun SystemBars(theme: ThemeName) {
+    val activity = LocalActivity.current as? ComponentActivity ?: return
+    LaunchedEffect(activity, theme) {
+        activity.window.setBackgroundDrawable(theme.colors.background.toArgb().toDrawable())
+        val scrim = theme.colors.background.copy(alpha = 0.9f).toArgb()
+        if (theme.dark) {
+            activity.enableEdgeToEdge(SystemBarStyle.dark(TRANSPARENT), SystemBarStyle.dark(scrim))
+        } else {
+            activity.enableEdgeToEdge(SystemBarStyle.light(TRANSPARENT, TRANSPARENT), SystemBarStyle.light(scrim, scrim))
+        }
+    }
+}
+
+/** Follows the phone's animation setting for as long as the theme is composed, so turning animations off stops the loops at once. */
 @Composable
 private fun rememberReducedMotion(): Boolean {
     val resolver = LocalContext.current.contentResolver
-    return remember(resolver) { Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
+    var reduced by remember(resolver) { mutableStateOf(animationsOff(resolver)) }
+    DisposableEffect(resolver) {
+        val observer =
+            object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) {
+                    reduced = animationsOff(resolver)
+                }
+            }
+        resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, observer)
+        onDispose { resolver.unregisterContentObserver(observer) }
+    }
+    return reduced
 }
+
+private fun animationsOff(resolver: ContentResolver) = Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
 
 @Composable
 private fun rememberMotionClock(running: Boolean): State<Float> {
