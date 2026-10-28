@@ -81,8 +81,8 @@ class MomentsTest {
 
     @Test
     fun theSpeedResetsOnceTheRevealCatchesUp() {
-        val caught = Reveal.step(Reveal.Progress(299f, 1000f), 300, 1f / 60, complete = false)
-        assertEquals(Reveal.Progress(300f, 0f), Reveal.step(caught, 300, 1f / 60, complete = false))
+        assertEquals(Reveal.Progress(300f, 0f), Reveal.step(Reveal.Progress(299f, 1000f), 300, 1f / 60, complete = false), "the step that catches up resets")
+        assertEquals(Reveal.BASE_CHARS_PER_SECOND / 60, Reveal.step(Reveal.Progress(300f, 0f), 320, 1f / 60, complete = false).shown - 300f, 1e-3f, "so the next word goes at the base pace")
     }
 
     @Test

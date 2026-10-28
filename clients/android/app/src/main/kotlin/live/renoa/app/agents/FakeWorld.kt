@@ -9,7 +9,6 @@ class AgentSeed(
     val summary: AgentSummary,
     val abilities: List<AbilitySwitch>,
     val messages: List<ChatMessage> = emptyList(),
-    val streaming: StreamingReply? = null,
     val doing: String = "Thinking about what you said",
 )
 
@@ -51,9 +50,8 @@ object FakeWorld {
         glance: Glance = Glance(),
         doing: String = "Thinking about what you said",
         messages: List<ChatMessage> = emptyList(),
-        streaming: StreamingReply? = null,
         abilities: List<AbilitySwitch> = lit("calendar", "search", "notes"),
-    ) = AgentSeed(AgentSummary(idFor(name), name, purpose, state, glance), abilities, messages, streaming, doing)
+    ) = AgentSeed(AgentSummary(idFor(name), name, purpose, state, glance), abilities, messages, doing)
 
     fun idFor(name: String): String = name.lowercase().filter { it.isLetterOrDigit() }
 
@@ -61,7 +59,7 @@ object FakeWorld {
     const val LEAD = "renoa"
 
     fun briefing(): Briefing =
-        Briefing(LEAD, "Evening, Yash. Tifa wants your dinner plan, and Optimus found three repos worth a look tonight.")
+        Briefing(LEAD, "Evening, Yash. Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.")
 
     /** The owner's own day: food, posting, new projects, groceries and deals. No meetings, no flights. */
     fun demo(): List<AgentSeed> =
@@ -74,8 +72,8 @@ object FakeWorld {
                     listOf(
                         ChatMessage("renoa-1", Speaker.Owner, "Can you and Kai'Sa find me three posts I could reply to tonight?"),
                         ChatMessage("renoa-2", Speaker.Agent, "On it. Kai'Sa is looking now, and I'll pick the ones that sound like you."),
+                        ChatMessage("renoa-3", Speaker.Agent, "The first one is a thread about running AI on your own phone. Two more coming."),
                     ),
-                streaming = StreamingReply("renoa-3", "The first one is a thread about running AI on your own phone."),
             ),
             seed(
                 "Tifa", AgentState.Wants, "Tracks what you eat and keeps you training.",
@@ -100,8 +98,8 @@ object FakeWorld {
             ),
             seed(
                 "Optimus", AgentState.Resting, "Finds the most interesting new projects on GitHub.",
-                Glance(line = "Three repos are trending tonight. One runs a whole agent inside a browser tab.", time = "7:30 pm", unread = true),
-                doing = "Reading through today's trending repos",
+                Glance(line = "Three projects are trending tonight. One runs a whole assistant inside a browser tab.", time = "7:30 pm", unread = true),
+                doing = "Reading through today's trending projects",
             ),
             seed(
                 "Nagisa", AgentState.Resting, "Keeps the grocery list and watches for sales.",

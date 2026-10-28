@@ -39,6 +39,8 @@ data class ChatUiState(
     val streaming: StreamingReply? = null,
     val draft: String = "",
     val notice: String? = null,
+    /** False until the chat has been read once; a screen opening on it waits for this to tell old messages from new. */
+    val loaded: Boolean = false,
 ) {
     val working: Boolean get() = agent?.state == AgentState.Working
 
@@ -60,7 +62,7 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
 
     val state: StateFlow<ChatUiState> =
         combine(repository.agents, conversation(), draft, notice) { agents, conversation, draft, notice ->
-            ChatUiState(agents.firstOrNull { it.id == agentId }, conversation.messages, conversation.streaming, draft, notice)
+            ChatUiState(agents.firstOrNull { it.id == agentId }, conversation.messages, conversation.streaming, draft, notice, loaded = true)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
 
     /** An agent that is gone has an empty chat rather than a crash. */

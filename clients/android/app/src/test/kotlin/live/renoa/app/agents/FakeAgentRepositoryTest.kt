@@ -210,7 +210,7 @@ class FakeAgentRepositoryTest {
         settle()
         val ids = repo.chat("renoa").messages.map { it.id }
         assertEquals(ids.size, ids.toSet().size, "every message has its own id")
-        assertTrue(ids.drop(2).none { it in seeded }, "new messages never reuse a seeded id")
+        assertTrue(ids.drop(seeded.size).none { it in seeded }, "new messages never reuse a seeded id")
     }
 
     // --- asking and reading ---
@@ -265,6 +265,35 @@ class FakeAgentRepositoryTest {
         assertEquals("Checking this week's prices", repo.glance("nagisa").doing)
         settle()
         assertNull(repo.glance("nagisa").doing)
+    }
+
+    @Test
+    fun aQuestionLeftUnansweredStillWaitsAfterTheTurn() = runTest {
+        val repo = repository()
+        repo.send("tifa", "let me think about dinner")
+        settle()
+        assertEquals(AgentState.Wants, repo.state("tifa"), "the owner wrote instead of answering, so the question is still open")
+        assertNotNull(repo.glance("tifa").ask)
+    }
+
+    @Test
+    fun stoppingAnAgentEndsItsPartnersTieToIt() = runTest {
+        val repo = repository()
+        assertEquals("renoa", repo.glance("kaisa").with)
+        repo.stop("renoa")
+        assertNull(repo.glance("renoa").with)
+        assertNull(repo.glance("kaisa").with)
+    }
+
+    @Test
+    fun gettingStuckIsSaidInTheChatAndShowsAsUnread() = runTest {
+        val repo = repository(ReplyScript { _, _ -> Reply.Fails })
+        repo.send("nagisa", "hello")
+        settle()
+        val said = repo.chat("nagisa").messages.last()
+        assertEquals(Speaker.Agent, said.speaker)
+        assertEquals(said.text, repo.glance("nagisa").line)
+        assertTrue(repo.glance("nagisa").unread)
     }
 
     // --- creating ---

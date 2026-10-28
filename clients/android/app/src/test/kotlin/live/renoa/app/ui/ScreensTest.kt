@@ -35,6 +35,17 @@ import live.renoa.app.home.HomeViewModel
 import live.renoa.app.signin.SignInScreen
 import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.ThemeName
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.onNodeWithTag
+import live.renoa.app.chat.Reveal
+import live.renoa.app.chat.RevealText
+import live.renoa.app.chat.Revealed
+import live.renoa.app.theme.RenoaType
+import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -76,7 +87,7 @@ class ScreensTest : ScreenTest() {
         val model = HomeViewModel(repository)
         show(seconds = 3.97f) { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
         compose.waitForIdle()
-        compose.onNodeWithText("Evening, Yash. Tifa wants your dinner plan, and Optimus found three repos worth a look tonight.").assertIsDisplayed()
+        compose.onNodeWithText("Evening, Yash. Tifa wants your dinner plan, and Optimus found three projects worth a look tonight.").assertIsDisplayed()
         compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
         compose.onNodeWithText("Dal and a salad").assertIsDisplayed()
         compose.onNodeWithText("With Kai'Sa · Picking three posts worth your reply…").assertIsDisplayed()
@@ -120,25 +131,45 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun aReplyStillArrivingSitsInTheChatWithStop() {
+    fun aWorkingAgentSaysWhatItIsDoingAndCanBeStopped() {
         val model = ChatViewModel(repository, "renoa")
         show(seconds = 3f) { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
         compose.waitForIdle()
         compose.onNodeWithText("Can you and Kai'Sa find me three posts I could reply to tonight?").assertIsDisplayed()
-        compose.onNodeWithText("On it. Kai'Sa is looking now, and I'll pick the ones that sound like you.").assertIsDisplayed()
-        compose.onNodeWithText("The first one is a thread about running AI on your own phone.").assertExists()
-        compose.onNodeWithContentDescription("Message Renoa").assertIsDisplayed()
+        compose.onNodeWithText("The first one is a thread about running AI on your own phone. Two more coming.").assertIsDisplayed()
+        compose.onNodeWithText("Picking three posts worth your reply…").assertIsDisplayed()
         compose.onNodeWithContentDescription("Stop").assertIsEnabled()
-        snapshot("chat-streaming")
+        snapshot("chat-working")
     }
 
     @Test
-    fun aWorkingAgentSaysWhatItIsDoing() {
-        val model = ChatViewModel(repository, "kaisa")
-        show(seconds = 3f) { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
-        compose.waitForIdle()
-        compose.onNodeWithText("Finding posts worth replying to…").assertIsDisplayed()
-        snapshot("chat-working")
+    fun messagesAlreadyThereWhenAChatOpensShowWholeAtOnce() {
+        val model = ChatViewModel(repository, "tifa")
+        compose.mainClock.autoAdvance = false
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        repeat(3) {
+            compose.waitForIdle()
+            compose.mainClock.advanceTimeByFrame()
+        }
+        val old = "Nice one. That's about 620 kcal and 22 g of protein, but light on fibre. Some fruit or a salad later would balance it."
+        assertEquals(old.length, compose.onNodeWithText(old).fetchSemanticsNode().config[Revealed])
+    }
+
+    @Test
+    fun aReplyGrowingEveryFrameShowsEachCharacterWithinTheLagLimit() {
+        var text by mutableStateOf("")
+        compose.mainClock.autoAdvance = false
+        show { RevealText(text, complete = false, animate = true, style = RenoaType.Body, color = Color.White, modifier = Modifier.testTag("reply")) }
+        // Three characters a frame is 180 a second, twice the base pace, so only the catch-up keeps it close.
+        val lagFrames = (Reveal.MAX_LAG_SECONDS * 60).toInt() + 2
+        val arrived = mutableListOf<Int>()
+        repeat(90) { frame ->
+            compose.runOnUiThread { text = "a".repeat(3 * (frame + 1)) }
+            arrived += 3 * (frame + 1)
+            compose.mainClock.advanceTimeByFrame()
+            val shown = compose.onNodeWithTag("reply").fetchSemanticsNode().config[Revealed]
+            if (frame >= lagFrames) assertTrue(shown >= arrived[frame - lagFrames], "frame $frame: $shown shown, ${arrived[frame - lagFrames]} due")
+        }
     }
 
     @Test

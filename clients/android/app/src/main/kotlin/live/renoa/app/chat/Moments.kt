@@ -10,17 +10,23 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.first
 import live.renoa.app.theme.LocalMotionClock
 import live.renoa.app.theme.LocalReducedMotion
 import live.renoa.app.theme.RenoaType
@@ -73,9 +79,9 @@ fun WorkingLine(color: Color, doing: String?, doingColor: Color, modifier: Modif
 
 /**
  * How fast a reply is revealed. It runs at least at [BASE_CHARS_PER_SECOND]. When words arrive
- * faster, it speeds up so each character shows within [MAX_LAG_SECONDS] of arriving, and it never
- * slows down while behind, so that limit holds for every character. Once the reply is whole, the
- * rest shows within [FINISH_SECONDS]. A reply that is already done is never held back.
+ * faster, it speeds up so each character shows within [MAX_LAG_SECONDS] of arriving (plus one
+ * frame), and it never slows down while behind, so that limit holds for every character. Once the
+ * reply is whole, the rest shows within [FINISH_SECONDS]. A reply already done is never held back.
  */
 object Reveal {
     const val BASE_CHARS_PER_SECOND = 90f
@@ -91,7 +97,8 @@ object Reveal {
         if (backlog <= 0f) return Progress(arrived.toFloat(), 0f)
         var speed = maxOf(progress.speed, BASE_CHARS_PER_SECOND, backlog / MAX_LAG_SECONDS)
         if (complete) speed = max(speed, backlog / FINISH_SECONDS)
-        return Progress(min(arrived.toFloat(), progress.shown + speed * dt), speed)
+        val shown = min(arrived.toFloat(), progress.shown + speed * dt)
+        return Progress(shown, if (shown >= arrived) 0f else speed)
     }
 
     /** The edge is soft: the last [FADE_CHARS] shown characters ramp from clear to faint. */
@@ -115,17 +122,22 @@ object Reveal {
 fun RevealText(text: String, complete: Boolean, animate: Boolean, style: TextStyle, color: Color, modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
     val end = Reveal.end(text.length, complete)
-    var progress by remember { mutableStateOf(Reveal.Progress(if (animate && !reduced) 0f else end.toFloat())) }
-    LaunchedEffect(end, complete) {
-        if (reduced) progress = Reveal.Progress(end.toFloat())
-        var last = withFrameNanos { it }
-        while (progress.shown < end) {
-            val now = withFrameNanos { it }
-            progress = Reveal.step(progress, end, (now - last) / 1_000_000_000f, complete)
-            last = now
+    var progress by remember { mutableStateOf(Reveal.Progress(if (animate) 0f else end.toFloat())) }
+    val target by rememberUpdatedState(end)
+    val whole by rememberUpdatedState(complete)
+    // One loop for the life of the text. New words do not restart it, so none of them costs a frame.
+    LaunchedEffect(Unit) {
+        while (true) {
+            snapshotFlow { progress.shown < target }.first { it }
+            var last = withFrameNanos { it }
+            while (progress.shown < target) {
+                val now = withFrameNanos { it }
+                progress = Reveal.step(progress, target, (now - last) / 1_000_000_000f, whole)
+                last = now
+            }
         }
     }
-    val edge = progress.shown
+    val edge = if (reduced) end.toFloat() else progress.shown
     val annotated =
         buildAnnotatedString {
             val solid = max(0, (edge - Reveal.FADE_CHARS).toInt()).coerceAtMost(text.length)
@@ -134,5 +146,9 @@ fun RevealText(text: String, complete: Boolean, animate: Boolean, style: TextSty
             for (i in solid until hidden) withStyle(SpanStyle(color = color.copy(alpha = color.alpha * Reveal.alpha(i, edge)))) { append(text[i]) }
             withStyle(SpanStyle(color = Color.Transparent)) { append(text, hidden, text.length) }
         }
-    Text(annotated, style = style, modifier = modifier)
+    Text(annotated, style = style, modifier = modifier.semantics { revealed = min(edge, text.length.toFloat()).toInt() })
 }
+
+/** How many characters of a reply are showing, for tests: the whole text is always laid out. */
+val Revealed = SemanticsPropertyKey<Int>("Revealed")
+var SemanticsPropertyReceiver.revealed by Revealed

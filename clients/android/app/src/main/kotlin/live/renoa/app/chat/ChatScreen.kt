@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -60,8 +61,9 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     val colors = Renoa.colors
     val agent = state.agent
     val look = remember(agent?.name) { AgentLook.forName(agent?.name ?: "?") }
-    // Messages already here when the screen opens do not animate in; only new ones rise.
-    val seen = remember { mutableSetOf<String>().also { ids -> state.messages.mapTo(ids) { it.id } } }
+    // Messages already here when the chat first loads show whole; only later ones rise, and only once.
+    val old = remember(state.loaded) { if (state.loaded) state.messages.mapTo(HashSet()) { it.id } else emptySet() }
+    val risen = remember { mutableSetOf<String>() }
     // Whatever arrives while the chat is open has been read.
     LaunchedEffect(state.messages.size) { viewModel.seen() }
 
@@ -82,7 +84,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                     Text(agent?.name.orEmpty(), style = RenoaType.Heading, color = colors.foreground)
                 }
             }
-            Messages(state, seen, Modifier.weight(1f), look)
+            Messages(state, old, risen, Modifier.weight(1f), look)
             state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
             Composer(state, agent?.name.orEmpty(), viewModel)
         }
@@ -90,7 +92,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
 }
 
 @Composable
-private fun Messages(state: ChatUiState, seen: MutableSet<String>, modifier: Modifier, look: AgentLook) {
+private fun Messages(state: ChatUiState, old: Set<String>, risen: MutableSet<String>, modifier: Modifier, look: AgentLook) {
     val colors = Renoa.colors
     val agent = state.agent
     LazyColumn(
@@ -111,7 +113,8 @@ private fun Messages(state: ChatUiState, seen: MutableSet<String>, modifier: Mod
         val streaming = state.streaming?.let { ChatMessage(it.id, Speaker.Agent, it.text) }
         val shown = if (streaming != null) state.messages + streaming else state.messages
         items(shown.asReversed(), key = { it.id }) { message ->
-            val fresh = seen.add(message.id)
+            val fresh = message.id !in old && message.id !in risen
+            SideEffect { risen += message.id }
             Rise(fresh) { MessageRow(message, complete = message.id != state.streaming?.id, animate = fresh) }
         }
     }

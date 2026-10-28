@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
 class VocabularyTest {
     private val banned =
         Regex(
-            "\\b(rcp|mcp|https?|wss?|tools?|models?|prompts?|tokens?|json|websocket|api|endpoint|sockets?|context|bearer|credentials?|plugins?|extensions?)\\b|://",
+            "\\b(rcp|mcp|https?|wss?|tools?|models?|prompts?|tokens?|json|websocket|api|endpoint|sockets?|context|bearer|credentials?|plugins?|extensions?|repos?|repositor(?:y|ies))\\b|://",
             RegexOption.IGNORE_CASE,
         )
     private val literal = Regex("\"((?:[^\"\\\\\\n]|\\\\.)*)\"")

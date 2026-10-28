@@ -1,7 +1,8 @@
 package live.renoa.app.agents
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -65,14 +67,14 @@ class FakeAgentRepository(
         var turn: Job? = null
 
         // Numbering carries on after the seeded messages, so a new message never reuses one's id.
-        var nextMessage = conversation.value.messages.size + (if (conversation.value.streaming != null) 1 else 0) + 1
+        var nextMessage = conversation.value.messages.size + 1
     }
 
     private val lock = Any()
     private val roster = MutableStateFlow(seeds.map { it.summary })
     private val abilities = seeds.associate { it.summary.id to it.abilities }.toMutableMap()
     private val rooms =
-        seeds.associate { it.summary.id to Room(MutableStateFlow(Conversation(it.messages, it.streaming)), it.doing) }.toMutableMap()
+        seeds.associate { it.summary.id to Room(MutableStateFlow(Conversation(it.messages)), it.doing) }.toMutableMap()
     private val receipts = mutableMapOf<String, Pair<CreateAgent, String>>()
 
     override val agents: StateFlow<List<AgentSummary>> = roster.asStateFlow()
@@ -84,22 +86,29 @@ class FakeAgentRepository(
     override suspend fun send(agentId: String, text: String) {
         val room = room(agentId)
         if (text.isBlank()) throw RepositoryException(Problem.Invalid, "A message needs some words in it.")
-        synchronized(lock) {
-            room.conversation.update { it.copy(messages = it.messages + ChatMessage("$agentId-${room.nextMessage++}", Speaker.Owner, text.trim())) }
-            room.queue.addLast(text.trim())
-            if (room.turn?.isActive != true) {
-                room.turn = scope.launch { takeTurns(agentId, room) }
-            }
-        }
+        synchronized(lock) { keepLocked(agentId, room, text.trim()) }
     }
 
     override suspend fun answer(agentId: String, choice: String) {
+        val room = room(agentId)
         synchronized(lock) {
             val ask = summaryLocked(agentId).glance.ask ?: throw RepositoryException(Problem.Conflict, "There is no question waiting.")
             if (choice !in ask.choices) throw RepositoryException(Problem.Invalid, "\"$choice\" is not one of the answers offered.")
             glance(agentId) { it.copy(ask = null, unread = false) }
+            keepLocked(agentId, room, choice)
         }
-        send(agentId, choice)
+    }
+
+    /** Keeps the owner's words and starts a turn if none is running. Call under the lock. */
+    private fun keepLocked(agentId: String, room: Room, text: String) {
+        room.conversation.update { it.copy(messages = it.messages + ChatMessage("$agentId-${room.nextMessage++}", Speaker.Owner, text)) }
+        room.queue.addLast(text)
+        if (room.turn?.isActive != true) {
+            // The turn is recorded before it runs, so even an immediate dispatcher finds itself the room's turn.
+            val turn = scope.launch(start = CoroutineStart.LAZY) { takeTurns(agentId, room) }
+            room.turn = turn
+            turn.start()
+        }
     }
 
     override suspend fun markSeen(agentId: String) {
@@ -115,13 +124,13 @@ class FakeAgentRepository(
             synchronized(lock) {
                 room.queue.clear()
                 // A seeded agent can be working with no turn of ours running; stopping it still has to stop it.
-                // Resting is written here, with the queue, so a message sent right after cannot start a turn that this then overwrites.
-                setState(agentId, AgentState.Resting, onlyFrom = AgentState.Working)
-                glance(agentId) { it.copy(doing = null, with = null) }
+                // Everything is settled here, under the lock: a turn that has not seen its cancellation yet finds it is
+                // no longer the room's turn and changes nothing, and a message sent right after starts a fresh turn.
+                if (summaryLocked(agentId).state == AgentState.Working) endTurnLocked(agentId)
+                room.conversation.update { it.copy(streaming = null) }
                 room.turn.also { room.turn = null }
             }
         turn?.cancel()
-        room.conversation.update { it.copy(streaming = null) }
     }
 
     override suspend fun profile(agentId: String): AgentProfile =
@@ -180,56 +189,85 @@ class FakeAgentRepository(
         }
 
     private suspend fun takeTurns(agentId: String, room: Room) {
+        val me = currentCoroutineContext().job
+        // Every step that changes what the owner sees first checks this is still the room's turn: once stop or a
+        // failure has ended it, a turn that has not noticed its cancellation yet changes nothing.
+        fun mine() = room.turn === me
         synchronized(lock) {
+            if (!mine()) return
             setState(agentId, AgentState.Working)
             glance(agentId) { it.copy(doing = room.doing) }
         }
-        try {
-            while (true) {
-                // Finishing is decided under the lock, and so is the state it leaves the agent in, so a message sent
-                // right now starts a new turn instead of being stranded, and this turn's Resting cannot land on top of that one's Working.
-                val text =
-                    synchronized(lock) {
-                        room.queue.removeFirstOrNull().also {
-                            if (it == null) {
-                                room.turn = null
-                                setState(agentId, AgentState.Resting)
-                                glance(agentId) { g -> g.copy(doing = null, with = null) }
-                            }
-                        }
-                    } ?: break
-                val agent = roster.value.first { it.id == agentId }
-                delay(wordDelayMs * 6)
-                when (val reply = script.reply(agent, text)) {
-                    is Reply.Words -> speak(agentId, room, reply.text)
-                    Reply.Fails -> {
-                        synchronized(lock) {
-                            room.queue.clear()
+        while (true) {
+            // Finishing is decided under the lock, so a message sent right now starts a new turn instead of being stranded.
+            val text =
+                synchronized(lock) {
+                    if (!mine()) return
+                    room.queue.removeFirstOrNull().also {
+                        if (it == null) {
                             room.turn = null
-                            setState(agentId, AgentState.Stuck)
-                            glance(agentId) { it.copy(doing = null, with = null, line = "I got stuck on that one. Can you try again later?", time = "Just now") }
+                            endTurnLocked(agentId)
                         }
-                        return
                     }
+                } ?: return
+            val agent = roster.value.first { it.id == agentId }
+            delay(wordDelayMs * 6)
+            when (val reply = script.reply(agent, text)) {
+                is Reply.Words -> if (!speak(agentId, room, reply.text, ::mine)) return
+                Reply.Fails -> {
+                    synchronized(lock) {
+                        if (!mine()) return
+                        room.queue.clear()
+                        room.turn = null
+                        endTurnLocked(agentId, AgentState.Stuck)
+                        say(agentId, room, "$agentId-${room.nextMessage++}", "I got stuck on that one. Can you try again later?")
+                    }
+                    return
                 }
             }
-        } catch (cancelled: CancellationException) {
-            room.conversation.update { it.copy(streaming = null) }
-            throw cancelled
         }
     }
 
-    private suspend fun speak(agentId: String, room: Room, text: String) {
+    /** Streams [text] word by word, then keeps it. Returns false if the turn was ended on the way. */
+    private suspend fun speak(agentId: String, room: Room, text: String, mine: () -> Boolean): Boolean {
         // The reply's id is chosen before the first word, so the streamed text and the kept message are one item.
-        val id = synchronized(lock) { "$agentId-${room.nextMessage++}" }
+        val id = synchronized(lock) { if (!mine()) return false else "$agentId-${room.nextMessage++}" }
         val words = text.split(' ')
         for (count in 1..words.size) {
             delay(wordDelayMs)
-            room.conversation.update { it.copy(streaming = StreamingReply(id, words.take(count).joinToString(" "))) }
+            synchronized(lock) {
+                if (!mine()) return false
+                room.conversation.update { it.copy(streaming = StreamingReply(id, words.take(count).joinToString(" "))) }
+            }
         }
         synchronized(lock) {
-            room.conversation.update { it.copy(messages = it.messages + ChatMessage(id, Speaker.Agent, text), streaming = null) }
-            glance(agentId) { it.copy(line = text, time = "Just now", unread = true) }
+            if (!mine()) return false
+            say(agentId, room, id, text)
+        }
+        return true
+    }
+
+    /** Keeps an agent's message and shows it on Home as unread. Call under the lock. */
+    private fun say(agentId: String, room: Room, id: String, text: String) {
+        room.conversation.update { it.copy(messages = it.messages + ChatMessage(id, Speaker.Agent, text), streaming = null) }
+        glance(agentId) { it.copy(line = text, time = "Just now", unread = true) }
+    }
+
+    /**
+     * A turn is over. The agent waits on the owner if its question is still open, and rests otherwise, unless
+     * [state] says how it ended. Whoever it was working with is no longer working with it. Call under the lock.
+     */
+    private fun endTurnLocked(agentId: String, state: AgentState? = null) {
+        val waiting = summaryLocked(agentId).glance.ask != null
+        setState(agentId, state ?: if (waiting) AgentState.Wants else AgentState.Resting)
+        roster.update { list ->
+            list.map {
+                when {
+                    it.id == agentId -> it.copy(glance = it.glance.copy(doing = null, with = null))
+                    it.glance.with == agentId -> it.copy(glance = it.glance.copy(with = null))
+                    else -> it
+                }
+            }
         }
     }
 
@@ -237,10 +275,8 @@ class FakeAgentRepository(
         roster.update { list -> list.map { if (it.id == agentId) it.copy(glance = change(it.glance)) else it } }
     }
 
-    private fun setState(agentId: String, state: AgentState, onlyFrom: AgentState? = null) {
-        roster.update { list ->
-            list.map { if (it.id == agentId && (onlyFrom == null || it.state == onlyFrom)) it.copy(state = state) else it }
-        }
+    private fun setState(agentId: String, state: AgentState) {
+        roster.update { list -> list.map { if (it.id == agentId) it.copy(state = state) else it } }
     }
 
     private fun room(agentId: String): Room =
