@@ -1,9 +1,10 @@
 use renoa_control::{
     ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, JSON_WS_VERSION, NodeId,
-    ServerMessage, TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId, TaskSummary,
+    ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId,
+    TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
-    CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
+    CommandEnvelope, CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef,
 };
 use renoa_protocol::{ExecutionEvent, ExecutionEventId, ExecutionEventKind, ExecutionId};
 use serde_json::json;
@@ -213,6 +214,7 @@ fn json_websocket_v14_encodes_task_discovery() {
         tasks: vec![TaskSummary {
             task_id,
             target: TargetRef::new("workspace:renoa"),
+            status: TaskStatus::Working,
         }],
     };
     let response_json = json!({
@@ -220,7 +222,8 @@ fn json_websocket_v14_encodes_task_discovery() {
         "request_id": 11,
         "tasks": [{
             "taskId": "00000000-0000-0000-0000-000000000001",
-            "target": "workspace:renoa"
+            "target": "workspace:renoa",
+            "status": "working"
         }]
     });
     assert_eq!(
@@ -507,5 +510,147 @@ fn execute_delivery_contains_only_continuity_data() {
                 "input": { "type": "text", "text": "continue" }
             }
         })
+    );
+}
+
+#[test]
+fn json_websocket_v14_attach_says_whether_it_wants_live_activity() {
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let attach = ClientMessage::Attach {
+        request_id: 3,
+        task_id,
+        after_sequence: Some(12),
+        live: true,
+    };
+    let attach_json = json!({
+        "type": "attach",
+        "request_id": 3,
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "after_sequence": 12,
+        "live": true
+    });
+    assert_eq!(
+        serde_json::to_value(&attach).expect("serialize attach"),
+        attach_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(attach_json).expect("deserialize attach"),
+        attach
+    );
+    assert!(
+        serde_json::from_value::<ClientMessage>(json!({
+            "type": "attach",
+            "request_id": 3,
+            "task_id": "00000000-0000-0000-0000-000000000001",
+            "after_sequence": null
+        }))
+        .is_err(),
+        "a version 13 attach without `live` is not a version 14 attach"
+    );
+}
+
+#[test]
+fn json_websocket_v14_encodes_stopping_a_command() {
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let command_id = CommandId::from_uuid(Uuid::from_u128(2));
+    let ids = json!({
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002"
+    });
+    let cases = [
+        (
+            serde_json::to_value(ClientMessage::StopCommand {
+                request_id: 5,
+                task_id,
+                command_id,
+            }),
+            json!({"type": "stop_command", "request_id": 5, "task_id": ids["task_id"], "command_id": ids["command_id"]}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::StopAccepted {
+                request_id: 5,
+                command_id,
+                outcome: StopOutcome::Requested,
+            }),
+            json!({"type": "stop_accepted", "request_id": 5, "command_id": ids["command_id"], "outcome": "requested"}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::StopAccepted {
+                request_id: 6,
+                command_id,
+                outcome: StopOutcome::AlreadyEnded,
+            }),
+            json!({"type": "stop_accepted", "request_id": 6, "command_id": ids["command_id"], "outcome": "already_ended"}),
+        ),
+        (
+            serde_json::to_value(ServerMessage::Stop {
+                task_id,
+                command_id,
+            }),
+            json!({"type": "stop", "task_id": ids["task_id"], "command_id": ids["command_id"]}),
+        ),
+        (
+            serde_json::to_value(ClientMessage::AcknowledgeStop {
+                task_id,
+                command_id,
+            }),
+            json!({"type": "acknowledge_stop", "task_id": ids["task_id"], "command_id": ids["command_id"]}),
+        ),
+    ];
+    for (encoded, expected) in cases {
+        assert_eq!(encoded.expect("serialize frame"), expected);
+        let decoded = serde_json::from_value::<ServerMessage>(expected.clone())
+            .map(|_| ())
+            .or_else(|_| serde_json::from_value::<ClientMessage>(expected).map(|_| ()));
+        decoded.expect("the frame decodes as the message it encodes");
+    }
+}
+
+#[test]
+fn json_websocket_v14_encodes_live_activity() {
+    let task_id = TaskId::from_uuid(Uuid::from_u128(1));
+    let command_id = CommandId::from_uuid(Uuid::from_u128(2));
+    let published = ClientMessage::PublishLiveActivity {
+        task_id,
+        command_id,
+        activity: LiveActivity::TextDelta {
+            sequence: 3,
+            text: "Hel".to_owned(),
+        },
+    };
+    let published_json = json!({
+        "type": "publish_live_activity",
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002",
+        "activity": {"type": "text_delta", "sequence": 3, "text": "Hel"}
+    });
+    assert_eq!(
+        serde_json::to_value(&published).expect("serialize published activity"),
+        published_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ClientMessage>(published_json)
+            .expect("deserialize published activity"),
+        published
+    );
+    let relayed = ServerMessage::LiveActivity {
+        task_id,
+        command_id,
+        activity: LiveActivity::TextReset,
+    };
+    let relayed_json = json!({
+        "type": "live_activity",
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "command_id": "00000000-0000-0000-0000-000000000002",
+        "activity": {"type": "text_reset"}
+    });
+    assert_eq!(
+        serde_json::to_value(&relayed).expect("serialize relayed activity"),
+        relayed_json
+    );
+    assert_eq!(
+        serde_json::from_value::<ServerMessage>(relayed_json)
+            .expect("deserialize relayed activity"),
+        relayed
     );
 }

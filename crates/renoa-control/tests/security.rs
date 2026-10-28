@@ -8,7 +8,7 @@ use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, ErrorCode, JSON_WS_VERSION, NodeId,
     PeerIdentity, ServerMessage, TaskId, TaskSpec,
 };
-use renoa_protocol::{CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef};
+use renoa_protocol::{CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef};
 use rusqlite::Connection;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -125,7 +125,17 @@ mod security_behaviors {
                 |row| row.get::<_, bool>(0),
             )
             .expect("inspect credential relay table");
+        let stop_objects = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE (type = 'table' AND name = 'stop_requests')
+                    OR (type = 'view' AND name = 'command_states')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("inspect stop request table and command state view");
         assert_eq!(version, 13);
+        assert_eq!(stop_objects, 2);
         assert!(pending_table_exists);
         assert!(stream_table_exists);
         assert_eq!(browser_identity_tables, 5);
@@ -461,6 +471,7 @@ mod security_behaviors {
                 "request_id": 1,
                 "task_id": TaskId::new(),
                 "after_sequence": unsafe_integer,
+                "live": false,
             }),
             serde_json::json!({
                 "type": "publish_execution_events",
@@ -473,6 +484,20 @@ mod security_behaviors {
                     "recordedAtMs": unsafe_integer,
                     "kind": { "type": "execution_started" },
                 }],
+            }),
+            serde_json::json!({
+                "type": "stop_command",
+                "request_id": unsafe_integer,
+                "task_id": TaskId::new(),
+                "command_id": CommandId::new(),
+            }),
+            // A surface may not publish live activity at all, so only the
+            // number check can make this InvalidMessage instead of InvalidRole.
+            serde_json::json!({
+                "type": "publish_live_activity",
+                "task_id": TaskId::new(),
+                "command_id": CommandId::new(),
+                "activity": { "type": "text_delta", "sequence": unsafe_integer, "text": "x" },
             }),
         ];
         for message in messages {
@@ -539,6 +564,7 @@ mod security_behaviors {
                 request_id: 1,
                 task_id,
                 after_sequence: None,
+                live: false,
             },
         )
         .await;
@@ -642,6 +668,30 @@ mod security_behaviors {
                 ..
             }
         ));
+        // A surface that could publish live activity could put words in the
+        // agent's mouth on another surface, and one that could acknowledge a
+        // stop could end its redelivery.
+        for forbidden in [
+            ClientMessage::AcknowledgeStop {
+                task_id,
+                command_id,
+            },
+            ClientMessage::PublishLiveActivity {
+                task_id,
+                command_id,
+                activity: LiveActivity::TextReset,
+            },
+        ] {
+            send(&mut surface, &forbidden).await;
+            assert!(matches!(
+                receive(&mut surface).await,
+                ServerMessage::Error {
+                    request_id: None,
+                    code: ErrorCode::InvalidRole,
+                    ..
+                }
+            ));
+        }
 
         let mut node = authenticate(&server.url, &node_credentials).await;
         send(
@@ -650,6 +700,7 @@ mod security_behaviors {
                 request_id: 17,
                 task_id,
                 after_sequence: None,
+                live: false,
             },
         )
         .await;
@@ -657,6 +708,23 @@ mod security_behaviors {
             receive(&mut node).await,
             ServerMessage::Error {
                 request_id: Some(17),
+                code: ErrorCode::InvalidRole,
+                ..
+            }
+        ));
+        send(
+            &mut node,
+            &ClientMessage::StopCommand {
+                request_id: 18,
+                task_id,
+                command_id,
+            },
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut node).await,
+            ServerMessage::Error {
+                request_id: Some(18),
                 code: ErrorCode::InvalidRole,
                 ..
             }
@@ -698,6 +766,7 @@ mod security_behaviors {
                 request_id: 7,
                 task_id,
                 after_sequence: None,
+                live: false,
             },
         )
         .await;
@@ -932,6 +1001,7 @@ mod security_behaviors {
                 request_id: 91,
                 task_id,
                 after_sequence: None,
+                live: false,
             },
         )
         .await;

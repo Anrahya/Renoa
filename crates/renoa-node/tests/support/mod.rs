@@ -8,16 +8,17 @@ use std::{
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
     ClientMessage, Coordinator, DeviceCredentials, EnrollmentToken, ErrorCode, JSON_WS_VERSION,
-    NodeId, PeerIdentity, ServerMessage, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSpec,
+    NodeId, PeerIdentity, ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventKind,
+    TaskId, TaskSpec,
 };
-use renoa_kernel::{AgentId, Kernel, SessionId};
+use renoa_kernel::{AgentId, EventCursor, Kernel, OperationStatus, SessionId};
 use renoa_local::{
     AgentCreateRequest, AgentCreationOrigin, AgentCreator, AgentDocuments, AgentPresetId,
     LocalHost, LocalHostAdapters, LocalModelConfiguration, ModelProvider,
 };
 use renoa_protocol::{
-    Author, CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, PrincipalId, SurfaceRef,
-    TargetRef,
+    Author, CommandId, CommandInput, ExecutionEvent, ExecutionEventKind, LiveActivity, PrincipalId,
+    SurfaceRef, TargetRef,
 };
 use tempfile::TempDir;
 use tokio::{
@@ -298,6 +299,14 @@ impl HostFixture {
         self.workspace.join("model-started")
     }
 
+    /// The process id the "Hold through reconnect." model wrote when it started.
+    pub(crate) fn model_pid(&self) -> u32 {
+        fs::read_to_string(self.workspace.join("model-pid"))
+            .expect("read the model process id")
+            .parse()
+            .expect("parse the model process id")
+    }
+
     pub(crate) fn release(&self) {
         fs::write(self.workspace.join("model-release"), "release").expect("release model");
     }
@@ -308,6 +317,42 @@ impl HostFixture {
 
     pub(crate) fn operation_count(&self) -> usize {
         self.operation_count_for(self.task_id)
+    }
+
+    /// How many times the fixture model was asked for a context summary.
+    pub(crate) fn summary_attempts(&self) -> usize {
+        fs::read_to_string(self.workspace.join("summary-attempts")).map_or(0, |attempts| {
+            attempts.parse().expect("summary attempt count")
+        })
+    }
+
+    /// The last summary request the fixture model received.
+    pub(crate) fn summary_request(&self) -> String {
+        fs::read_to_string(self.workspace.join("summary-request.json"))
+            .expect("read the summary request")
+    }
+
+    /// The last request of any kind the fixture model received, if any.
+    pub(crate) fn last_request(&self) -> Option<String> {
+        fs::read_to_string(self.workspace.join("last-request.json")).ok()
+    }
+
+    /// How many semantic events of `kind` the task's Host session holds.
+    pub(crate) fn session_event_count(&self, task_id: TaskId, kind: &str) -> usize {
+        let session_id = self.session_for(task_id);
+        Kernel::open(
+            self.data
+                .join("sessions")
+                .join(session_id.to_string())
+                .join("kernel.sqlite3"),
+        )
+        .expect("open Host kernel")
+        .events_after(SessionId::from_uuid(session_id), EventCursor::START)
+        .expect("read Host session events")
+        .events
+        .iter()
+        .filter(|event| event.kind == kind)
+        .count()
     }
 
     /// The Host session the node ledger recorded for the task's first command.
@@ -323,6 +368,18 @@ impl HostFixture {
         session_id.parse().expect("stored session id")
     }
 
+    /// Records a stop in the node ledger for a command the node has not seen,
+    /// as a stop delivered ahead of its command would.
+    pub(crate) fn record_stop_in_ledger(&self, task_id: TaskId, command_id: CommandId) {
+        rusqlite::Connection::open(&self.ledger)
+            .expect("open node ledger")
+            .execute(
+                "INSERT INTO host_node_stops (command_id, task_id) VALUES (?1, ?2)",
+                [command_id.to_string(), task_id.to_string()],
+            )
+            .expect("record the stop");
+    }
+
     /// Whether the node ledger still records `task_id`.
     pub(crate) fn ledger_has_task(&self, task_id: TaskId) -> bool {
         rusqlite::Connection::open(&self.ledger)
@@ -333,6 +390,24 @@ impl HostFixture {
                 |row| row.get(0),
             )
             .expect("read the node ledger")
+    }
+
+    /// How each kernel operation of the task's Host session ended, in order.
+    pub(crate) fn operation_statuses_for(&self, task_id: TaskId) -> Vec<OperationStatus> {
+        let session_id = self.session_for(task_id);
+        Kernel::open(
+            self.data
+                .join("sessions")
+                .join(session_id.to_string())
+                .join("kernel.sqlite3"),
+        )
+        .expect("open Host kernel")
+        .inspect(SessionId::from_uuid(session_id))
+        .expect("inspect Host session")
+        .operations
+        .iter()
+        .map(|operation| operation.status)
+        .collect()
     }
 
     pub(crate) fn operation_count_for(&self, task_id: TaskId) -> usize {
@@ -498,6 +573,7 @@ pub(crate) async fn attach_after(
             request_id: 1,
             task_id,
             after_sequence,
+            live: false,
         },
     )
     .await;
@@ -513,6 +589,81 @@ pub(crate) async fn attach_after(
     through_sequence
 }
 
+/// Attaches to `task_id` asking for the live activity of its running turns.
+pub(crate) async fn attach_live(socket: &mut Socket, task_id: TaskId) {
+    send(
+        socket,
+        &ClientMessage::Attach {
+            request_id: 1,
+            task_id,
+            after_sequence: None,
+            live: true,
+        },
+    )
+    .await;
+    assert!(matches!(
+        receive(socket).await,
+        ServerMessage::Attached { request_id: 1, .. }
+    ));
+}
+
+/// Asks to stop `command_id` from a fresh socket, so the answer never
+/// interleaves with the events of an attached one.
+pub(crate) async fn stop_command(
+    system: &TestSystem,
+    task_id: TaskId,
+    command_id: CommandId,
+) -> StopOutcome {
+    let mut socket = system.connect_surface().await;
+    send(
+        &mut socket,
+        &ClientMessage::StopCommand {
+            request_id: 3,
+            task_id,
+            command_id,
+        },
+    )
+    .await;
+    let ServerMessage::StopAccepted {
+        request_id: 3,
+        command_id: stopped,
+        outcome,
+    } = receive(&mut socket).await
+    else {
+        panic!("the stop should be accepted");
+    };
+    assert_eq!(stopped, command_id);
+    outcome
+}
+
+/// Reads a live-attached surface until the text it was shown reaches `text`,
+/// returning the frames and the journal events that arrived meanwhile.
+pub(crate) async fn collect_live_until_text(
+    socket: &mut Socket,
+    text: &str,
+) -> (Vec<LiveActivity>, Vec<TaskEvent>) {
+    let mut frames = Vec::new();
+    let mut events = Vec::new();
+    let mut shown = String::new();
+    while shown != text {
+        match receive(socket).await {
+            ServerMessage::LiveActivity { activity, .. } => {
+                if let LiveActivity::TextDelta { text: delta, .. } = &activity {
+                    shown.push_str(delta);
+                }
+                assert!(
+                    text.starts_with(&shown),
+                    "the surface was shown {shown:?}, which is not a prefix of {text:?}"
+                );
+                frames.push(activity);
+            }
+            ServerMessage::TaskEvent { event } => events.push(event),
+            other => panic!("unexpected message {other:?}"),
+        }
+    }
+    (frames, events)
+}
+
 /// Whether the coordinator still holds `task_id`, asked on a fresh socket so
 /// an attachment never interleaves with the caller's.
 pub(crate) async fn coordinator_has_task(system: &TestSystem, task_id: TaskId) -> bool {
@@ -523,6 +674,7 @@ pub(crate) async fn coordinator_has_task(system: &TestSystem, task_id: TaskId) -
             request_id: 1,
             task_id,
             after_sequence: None,
+            live: false,
         },
     )
     .await;
@@ -682,7 +834,7 @@ async fn send(socket: &mut Socket, message: &ClientMessage) {
         .expect("send client message");
 }
 
-async fn receive(socket: &mut Socket) -> ServerMessage {
+pub(crate) async fn receive(socket: &mut Socket) -> ServerMessage {
     let message = socket
         .next()
         .await

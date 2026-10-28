@@ -28,8 +28,11 @@ export function Workspace({ control, preview = false }: { readonly control: Cont
   const [composerOpen, setComposerOpen] = useState(false);
   const [text, setText] = useState("");
   const taskViews = useMemo(
-    () => control.tasks.map((task) => projectTask(task, control.events[task.taskId] ?? [])),
-    [control.events, control.tasks],
+    () =>
+      control.tasks.map((task) =>
+        projectTask(task, control.events[task.taskId] ?? [], control.attachedTaskIds.has(task.taskId)),
+      ),
+    [control.attachedTaskIds, control.events, control.tasks],
   );
   const selected = taskViews.find((task) => task.taskId === control.selectedTaskId);
   const selectedEvents = selected === undefined ? [] : (control.events[selected.taskId] ?? []);

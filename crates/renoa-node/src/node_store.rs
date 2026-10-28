@@ -14,9 +14,11 @@ mod forgetting;
 mod progress;
 mod records;
 mod schema;
+mod stops;
 
 pub(crate) use delivery::CommandOutcome;
 pub(crate) use progress::LiveLedger;
+pub(crate) use stops::StopRecord;
 
 use records::{
     decode_record, ensure_task_binding, insert_event, load_event, load_record, next_event_sequence,

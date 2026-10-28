@@ -363,7 +363,8 @@ keeps passkeys and hashed remembered sessions there. Schema 12 records each
 node's owning principal: the upgrade adopts the owner of a node whose existing
 tasks all belong to one principal, and a node shared by several principals keeps
 serving its tasks without an owner. Schema 13 adds the device keys of signed-in
-apps and leaves every existing device as it was. A pre-upgrade binary cannot
+apps and the record of stopped commands, and leaves every existing device as it
+was. A pre-upgrade binary cannot
 open schema 13; any owner-requested recovery requires the matching identity
 snapshot and binary from that same backup. Install `renoa-management.service`, then reload systemd, restart the
 coordinator and enable the management service. The example runs as the existing
@@ -421,7 +422,8 @@ An app signs in with a passkey and a key generated on the device (see
 binding version 14 and the coordinator database to schema 13, so the
 coordinator, node, Pi node, and every surface must be upgraded together. Back
 up the coordinator database with SQLite's backup API first: schema 13 adds the
-`device_keys` and `device_sign_ins` tables, existing devices keep working
+`device_keys` and `device_sign_ins` tables (and the stop records described
+below), existing devices keep working
 unchanged as bearer-only devices, and a pre-upgrade binary cannot open schema 13.
 
 Android asks the relying party before it offers an app a passkey, and an
@@ -737,6 +739,13 @@ Verify both layers independently:
 systemctl status renoa-coordinator.service
 tailscale serve status
 ```
+
+Coordinator schema 13 also adds the table of recorded stops and a view that
+decides whether a command has settled. Opening an older database creates both and
+leaves its rows alone. RCP binding version 14 adds the status in the task
+directory, stopping a command, and live text from a running turn, so the
+coordinator, node, Pi node, and every surface must be upgraded together; a
+peer still on version 13 is refused at authentication.
 
 ### Public RCP route
 

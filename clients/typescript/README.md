@@ -6,13 +6,17 @@ stable public SDK and not an agent harness.
 
 It currently owns the surface-side continuity mechanics:
 
-- version 14 device or one-use browser-ticket authentication and task discovery;
+- version 14 device or one-use browser-ticket authentication and task discovery,
+  with each task's status;
 - replay followed by live task events;
 - a caller-owned durable cursor committed only after the surface callback succeeds;
 - a caller-owned durable command outbox written before transmission;
 - exact command retry after an uncertain acknowledgement;
 - fully decoded baseline task activity with stable command-to-execution
   causation;
+- optional live activity: the visible text a running turn is producing, which
+  is advisory and never stored or replayed;
+- stopping one command, safe to repeat after an uncertain reply;
 - typed RCP errors and observable disconnect reasons;
 - reattachment of completed in-memory subscriptions after a host-triggered
   reconnect.
@@ -46,6 +50,50 @@ await submission.accepted;
 A browser surface uses `authentication: { type: "ticket", getTicket }`.
 `getTicket` must complete the passkey HTTP flow and return a new ticket for
 each connection attempt; a consumed ticket cannot reconnect.
+
+`attach` takes an optional third argument. Passing it asks the coordinator for
+the live activity of the task's running turns:
+
+```ts
+await client.attach(
+  taskId,
+  async (event) => {
+    await projection.apply(event);
+  },
+  (commandId, activity) => {
+    if (activity.type === "text_delta") {
+      draft.append(commandId, activity.sequence, activity.text);
+    } else {
+      draft.discard(commandId);
+    }
+  },
+);
+```
+
+Live frames carry no task sequence and are never replayed. A frame can be
+missed, and each message's `sequence` counts from zero so a surface can tell.
+The durable `assistant_message` event that completes the same text supersedes
+the draft: replace what was shown with it. The client calls the callback for a
+frame the node published before an event before it applies that event; a frame
+published just after it may come first. A `text_delta` with `sequence` 0 starts
+the next message, so one that comes before the previous message's
+`assistant_message` begins a new draft that the record must not replace.
+Reasoning is never sent. The client does not wait for the callback and ignores
+what it throws or rejects with, so a failure drawing a draft ends neither the
+connection nor the delivery of task events. An async surface that must keep
+drafts and task events in order queues both callbacks' work on one queue of its
+own. Without the callback the
+coordinator sends no live frame, and one that arrives for an attachment that did
+not ask disconnects the client.
+
+`stopCommand(taskId, commandId)` asks the task's node to stop one command and
+resolves `requested` once the coordinator has durably recorded the stop, or
+`already_ended` when the command had finished and nothing was recorded. It is
+accepted while the node is offline. Repeating it after an uncertain reply is
+safe and answers `requested` again. The result is the command's terminal task
+event, `cancelled` when the stop reached the execution first; the client keeps
+no state for it. Each `TaskSummary` from `listTasks()` carries a `status`
+(`working`, `idle`, or `failed`) derived from the task's latest command.
 
 `submission.commandId` exists after the local outbox commit.
 `submission.accepted` resolves only after coordinator admission. If it rejects

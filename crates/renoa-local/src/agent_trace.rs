@@ -20,6 +20,7 @@ pub(crate) async fn finish_trace(
         ),
         Ok(LocalTurnOutcome::Compacted {
             estimated_input_tokens,
+            ..
         }) => (
             "completed",
             None,

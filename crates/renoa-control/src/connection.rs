@@ -371,8 +371,11 @@ async fn read_peer(
         | ClientMessage::AdvertiseTargets { .. }
         | ClientMessage::Attach { .. }
         | ClientMessage::Submit { .. }
+        | ClientMessage::StopCommand { .. }
         | ClientMessage::DeleteTask { .. }
         | ClientMessage::AcknowledgeExecution { .. }
+        | ClientMessage::AcknowledgeStop { .. }
+        | ClientMessage::PublishLiveActivity { .. }
         | ClientMessage::PublishExecutionEvents { .. } => {
             send_error(
                 outgoing,

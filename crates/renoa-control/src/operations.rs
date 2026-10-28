@@ -1,5 +1,6 @@
 use renoa_protocol::{
-    CommandEnvelope, CommandId, CommandInput, ExecutionEvent, PrincipalId, SurfaceRef, TargetRef,
+    CommandEnvelope, CommandId, CommandInput, ExecutionEvent, LiveActivity, PrincipalId,
+    SurfaceRef, TargetRef,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,30 @@ pub enum ErrorCode {
 pub struct TaskSummary {
     pub task_id: TaskId,
     pub target: TargetRef,
+    pub status: TaskStatus,
+}
+
+/// What a task is doing, from its latest command. See `task_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    /// The latest command has not reached its terminal record.
+    Working,
+    /// There is no command, or the latest one completed or was cancelled.
+    Idle,
+    /// The latest command's execution failed.
+    Failed,
+}
+
+/// What a stop request found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopOutcome {
+    /// The stop is durably recorded for the command, whether this request
+    /// recorded it or an earlier one did.
+    Requested,
+    /// The command's execution had already ended; nothing was recorded.
+    AlreadyEnded,
 }
 
 /// One signed-in app of the requesting principal.
@@ -96,11 +121,16 @@ pub(crate) enum SurfaceOperation {
     Attach {
         task_id: TaskId,
         after_sequence: Option<u64>,
+        live: bool,
     },
     Submit {
         task_id: TaskId,
         command_id: CommandId,
         input: CommandInput,
+    },
+    StopCommand {
+        task_id: TaskId,
+        command_id: CommandId,
     },
     DeleteTask {
         task_id: TaskId,
@@ -124,5 +154,14 @@ pub(crate) enum NodeOperation {
         task_id: TaskId,
         command_id: CommandId,
         events: Vec<ExecutionEvent>,
+    },
+    AcknowledgeStop {
+        task_id: TaskId,
+        command_id: CommandId,
+    },
+    PublishLiveActivity {
+        task_id: TaskId,
+        command_id: CommandId,
+        activity: LiveActivity,
     },
 }

@@ -115,6 +115,7 @@ pub(crate) struct CoordinatorState {
     pub(crate) nodes: Mutex<HashMap<NodeId, NodeConnection>>,
     pub(crate) sessions: Mutex<HashMap<DeviceId, HashMap<Uuid, CancellationToken>>>,
     pub(crate) task_senders: Mutex<HashMap<TaskId, broadcast::Sender<TaskEvent>>>,
+    pub(crate) live_channels: Mutex<HashMap<TaskId, crate::live_activity::LiveChannel>>,
 }
 
 #[derive(Clone)]
@@ -195,6 +196,7 @@ impl Coordinator {
                 nodes: Mutex::new(HashMap::new()),
                 sessions: Mutex::new(HashMap::new()),
                 task_senders: Mutex::new(HashMap::new()),
+                live_channels: Mutex::new(HashMap::new()),
             }),
         })
     }

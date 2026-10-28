@@ -88,6 +88,24 @@ target, the planner keeps the smallest safe tail and still respects the real
 provider limit. This stored policy follows the agent across surfaces and does
 not change Alpha's context policy.
 
+A conversation has no length limit. Every Host runtime installs the compacting
+strategy, so an agent with no stored policy compacts when its projected input
+reaches the model's dispatch limit (the window less the output and safety
+reserve), and a typed provider rejection of the context starts the same path.
+The summary replaces older turns in the model's view only: every message stays
+in the session journal and in the RCP task journal. Automatic compaction keeps
+the newest turns verbatim within its target, and never splits a tool call from
+its result. An on-demand `/compact` summarizes the whole idle conversation and
+keeps no tail. A summary is a model request that surfaces never see as an
+assistant message. `/compact` is honoured on ACP, Slack (`!compact`), Telegram
+and, through the RCP node, on every surface that sends the owner's text: Discord,
+the Control Room and apps. The node treats a command from the principal that is
+exactly `/compact` as that control, ends it with one notice as its only
+assistant message (one wording when it wrote a new summary, another when there
+was nothing new to summarize), and ends `/compact` followed by more words as failed before
+it opens a session. A guest's `/compact` is an ordinary message. What a long
+conversation costs to read is tracked in #125.
+
 The Arcee preset also stores the OpenCode Go provider restriction in the
 agent's own definition. This is agent policy, not Telegram policy: every
 surface that opens a session for that agent sees the same provider boundary.

@@ -165,6 +165,7 @@ impl Server {
             return match outcome {
                 LocalTurnOutcome::Compacted {
                     estimated_input_tokens,
+                    ..
                 } => {
                     events::send_context_usage(
                         connection,

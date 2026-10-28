@@ -54,6 +54,7 @@ export interface ExecutionEvent {
 export type ServerMessage =
   | { readonly type: "authenticated"; readonly version: number }
   | { readonly type: "execute"; readonly command: ExecuteCommand }
+  | { readonly type: "stop"; readonly taskId: string; readonly commandId: string }
   | { readonly type: "execution_acknowledged"; readonly commandId: string }
   | {
       readonly type: "execution_events_accepted";
@@ -79,6 +80,12 @@ export function parseServerMessage(json: string): ServerMessage {
       };
     case "execute":
       return { type, command: parseExecute(message) };
+    case "stop":
+      return {
+        type,
+        taskId: uuid(message.task_id, "task_id"),
+        commandId: uuid(message.command_id, "command_id"),
+      };
     case "execution_acknowledged":
       return {
         type,

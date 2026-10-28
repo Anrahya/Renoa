@@ -68,17 +68,21 @@ pub(crate) async fn activate_device(
         .await;
         return false;
     }
-    let pending = if let PeerIdentity::Node { node_id } = *peer {
+    let (pending, pending_stops) = if let PeerIdentity::Node { node_id } = *peer {
         state.nodes.lock().await.remove(&node_id);
-        match state.store.load_pending_executions(node_id).await {
-            Ok(pending) => pending,
+        let snapshot = tokio::try_join!(
+            state.store.load_pending_executions(node_id),
+            state.store.load_pending_stops(node_id),
+        );
+        match snapshot {
+            Ok(snapshot) => snapshot,
             Err(error) => {
                 send_control_error(outgoing, None, &error).await;
                 return false;
             }
         }
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     register_session(state, device_id, connection_id, cancelled.clone()).await;
     if outgoing
@@ -97,6 +101,21 @@ pub(crate) async fn activate_device(
             .send(ServerMessage::Execute {
                 task_id: execution.task_id,
                 command: execution.command,
+            })
+            .await
+            .is_err()
+        {
+            cleanup_session(state, device_id, connection_id).await;
+            return false;
+        }
+    }
+    // After the executions, so the node has admitted a command before it is
+    // told to stop it.
+    for stop in pending_stops {
+        if outgoing
+            .send(ServerMessage::Stop {
+                task_id: stop.task_id,
+                command_id: stop.command_id,
             })
             .await
             .is_err()

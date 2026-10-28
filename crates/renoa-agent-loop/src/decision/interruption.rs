@@ -6,7 +6,8 @@ use renoa_kernel::{
 
 use super::effect_input::require_effect_request_identity;
 use super::{
-    AgentLoop, LoopPhase, MODEL_EFFECT_BINDING, checkpoint, decode, encode, unavailable_result,
+    AgentLoop, COMPACTION_EFFECT_BINDING, LoopPhase, MODEL_EFFECT_BINDING, checkpoint, decode,
+    encode, unavailable_result,
 };
 use crate::format::{decode_checkpoint, message_events};
 use crate::pending_tools::PendingToolCalls;
@@ -155,7 +156,7 @@ impl AgentLoop {
     ) -> Result<UnknownEffectAbandonment, LoopError> {
         require_unknown_effect_identity(
             &input.effect_batch,
-            MODEL_EFFECT_BINDING,
+            COMPACTION_EFFECT_BINDING,
             &encode("compaction request", plan.summary_request())?,
         )?;
         Ok(UnknownEffectAbandonment {
@@ -214,7 +215,7 @@ impl AgentLoop {
         })?;
         require_cancellation_effect_identity(
             effect_batch,
-            MODEL_EFFECT_BINDING,
+            COMPACTION_EFFECT_BINDING,
             &encode("compaction request", plan.summary_request())?,
         )?;
         cancelled(Vec::new())

@@ -12,6 +12,7 @@ const TASKS: readonly TaskSummary[] = [
   task(15, "service:vps-operator"),
   task(16, "service:news-digest"),
 ];
+const ATTACHED: ReadonlySet<string> = new Set(TASKS.map((task) => task.taskId));
 
 const INITIAL_EVENTS: Readonly<Record<string, readonly TaskEvent[]>> = {
   [TASKS[0]!.taskId]: [command(0, TASKS[0]!, "Refine the Control Room"), started(1, TASKS[0]!), tool(2, TASKS[0]!)],
@@ -39,6 +40,8 @@ export function usePreviewControlRoom(): ControlRoomController {
     tasks: TASKS,
     events,
     selectedTaskId,
+    // The preview's journals are the whole truth, so every task counts as attached.
+    attachedTaskIds: ATTACHED,
     pendingCount: 0,
     busy: false,
     savedPrincipalId: "00000000-0000-0000-0000-000000000001",
@@ -54,7 +57,8 @@ export function usePreviewControlRoom(): ControlRoomController {
 }
 
 function task(suffix: number, target: string): TaskSummary {
-  return { taskId: id(suffix), target };
+  // The first task's journal ends mid-run; every other task has finished.
+  return { taskId: id(suffix), target, status: suffix === 10 ? "working" : "idle" };
 }
 
 function command(sequence: number, taskSummary: TaskSummary, text: string): TaskEvent {
