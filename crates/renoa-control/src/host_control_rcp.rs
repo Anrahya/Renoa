@@ -1,12 +1,12 @@
-//! `call_host`: a signed-in app or browser calls its Host over RCP, as a
-//! browser does under `/v1/host` (`host_control_http`). The relay is the same
-//! (`host_calls`); here the person proved themselves on the connection, and
-//! the answer travels back as a `host_answer` frame.
+//! `call_host`: a signed-in app calls its owner's Host over RCP, as a browser
+//! does under `/v1/host` (`host_control_http`). The relay is the same
+//! (`host_calls`); here the app proved its key on the connection, and the
+//! answer travels back as a `host_answer` frame.
 
 use std::sync::Arc;
 
 use renoa_protocol::PrincipalId;
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -31,9 +31,11 @@ pub(crate) fn call_slots() -> Arc<Semaphore> {
     Arc::new(Semaphore::new(MAX_CALLS_PER_CONNECTION))
 }
 
-/// Checks the call and sends it on. The answer arrives later, so a call never
-/// holds up the rest of the connection; it ends with the connection.
-pub(crate) fn call_host(
+/// Checks the call and sends it on. A refusal is answered here, before the
+/// connection reads its next message, so a peer that does not read its answers
+/// is slowed like any other. An admitted call waits on the Host beside the
+/// connection's other requests and ends with the connection.
+pub(crate) async fn call_host(
     state: Arc<CoordinatorState>,
     outgoing: mpsc::Sender<ServerMessage>,
     cancelled: CancellationToken,
@@ -41,52 +43,68 @@ pub(crate) fn call_host(
     request_id: u64,
     request: HostRequest,
 ) {
+    let admitted = admit(session, &request);
+    let permit = match admitted {
+        Ok(permit) => permit,
+        Err((code, message)) => {
+            send_error(&outgoing, Some(request_id), code, message).await;
+            return;
+        }
+    };
     let principal_id = session.principal_id;
-    let refusal = if session.authority.is_person_bound() {
-        check(&request)
-            .err()
-            .map(|message| (ErrorCode::InvalidMessage, message))
-    } else {
-        Some((
-            ErrorCode::InvalidRole,
-            "The Host is controlled from a signed-in app or a browser; this connection is neither.",
-        ))
-    };
-    let permit = match refusal {
-        Some(refusal) => Err(refusal),
-        None => Arc::clone(&session.host_calls)
-            .try_acquire_owned()
-            .map_err(|_| {
-                (
-                    ErrorCode::Conflict,
-                    "Too many Host calls from this connection are waiting. Wait for one to answer.",
-                )
-            }),
-    };
     tokio::spawn(async move {
-        let _permit = match permit {
-            Ok(permit) => permit,
-            Err((code, message)) => {
-                send_error(&outgoing, Some(request_id), code, message).await;
-                return;
-            }
-        };
+        let _permit = permit;
         let outcome = tokio::select! {
+            biased;
             () = cancelled.cancelled() => return,
             outcome = call(&state, principal_id, request) => outcome,
         };
-        answer(&outgoing, request_id, principal_id, outcome).await;
+        // A connection ended meanwhile, as by its device's revocation, hears nothing more.
+        if !cancelled.is_cancelled() {
+            answer(&outgoing, request_id, principal_id, outcome).await;
+        }
     });
 }
 
-/// What the relay forwards: a path under `/v1/host` with no query, and a body
-/// only with a change, no larger than the Host accepts.
+fn admit(
+    session: &SurfaceSession,
+    request: &HostRequest,
+) -> Result<OwnedSemaphorePermit, (ErrorCode, &'static str)> {
+    if !session.authority.may_call_host() {
+        return Err((
+            ErrorCode::InvalidRole,
+            "The Host is controlled from a signed-in app here, or from a browser at its Host address.",
+        ));
+    }
+    check(request).map_err(|message| (ErrorCode::InvalidMessage, message))?;
+    Arc::clone(&session.host_calls)
+        .try_acquire_owned()
+        .map_err(|_| {
+            (
+                ErrorCode::Conflict,
+                "Too many Host calls from this connection are waiting. Wait for one to answer.",
+            )
+        })
+}
+
+/// What the relay forwards: a path under `/v1/host` of visible ASCII, with no
+/// query and no empty or dot segment, and a body only with a change, no larger
+/// than the Host accepts.
 fn check(request: &HostRequest) -> Result<(), &'static str> {
     let path = &request.path;
-    let under_host = path == "/v1/host" || path.starts_with("/v1/host/");
-    if !under_host || path.len() > MAX_PATH_BYTES || path.contains(['?', '#']) {
+    let segments_fit = path
+        .strip_prefix("/v1/host")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        && path
+            .split('/')
+            .skip(1)
+            .all(|segment| !matches!(segment, "" | "." | ".."));
+    let characters_fit = path
+        .bytes()
+        .all(|byte| byte.is_ascii_graphic() && byte != b'?' && byte != b'#');
+    if !segments_fit || !characters_fit || path.len() > MAX_PATH_BYTES {
         return Err(
-            "A Host path is /v1/host or a path under it, such as /v1/host/agents, with no query.",
+            "A Host path is /v1/host or a path under it, such as /v1/host/agents, in visible ASCII with no query.",
         );
     }
     match (&request.body, request.method) {
@@ -115,6 +133,8 @@ async fn answer(
                 .await;
             return;
         }
+        // The Host may have acted before its answer went wrong, so the outcome is
+        // unknown, as for a dropped call; `internal` is never a refusal.
         Ok(reply) => {
             control_log::event(
                 "warn",

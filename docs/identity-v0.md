@@ -271,9 +271,11 @@ surface cannot cut off the owner's apps. Revocation commits before it is
 acknowledged and then ends the device's sessions; a device may revoke itself, and
 its acknowledgement is sent before its socket closes. A retry succeeds again.
 
-The same connections, and no others, may call the owner's Host over RCP
-(`call_host`). That is how an app controls the Host: its credential opens no
-`/v1/host` route, which takes only a browser's session cookie.
+A connection by a proven device key, and no other, may call the owner's Host
+over RCP (`call_host`). That is how an app controls the Host: its credential
+opens no `/v1/host` route, which takes only a browser's session cookie. A
+browser's ticket connection may not, because it outlives the session that
+issued it; revoking a device ends its connections.
 
 ### Android apps
 

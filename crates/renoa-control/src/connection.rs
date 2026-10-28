@@ -133,7 +133,9 @@ async fn serve_messages(
 ) {
     let host_calls = crate::host_control_rcp::call_slots();
     loop {
+        // A cancelled connection, as of a revoked device, takes no further message.
         let message = tokio::select! {
+            biased;
             () = cancelled.cancelled() => break,
             message = receiver.next() => message,
         };

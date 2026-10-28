@@ -41,7 +41,8 @@ pub(crate) async fn handle_surface_operation(
                 &session,
                 request_id,
                 HostRequest { method, path, body },
-            );
+            )
+            .await;
         }
         SurfaceOperation::ListTasks => {
             let result = state

@@ -70,8 +70,8 @@ chat essentials: a task summary carries a `status`, `attach` carries a required
 coordinator delivers `stop` to the node, which answers `acknowledge_stop`; and a
 node can `publish_live_activity`, which the coordinator relays to interested
 surfaces as `live_activity`. And Host control relaying (`serve_host_control`,
-`host_call`, `complete_host_call`, and for a signed-in app or browser `call_host`
-answered by `host_answer`). And agent messages: a node advertises named
+`host_call`, `complete_host_call`, and for a signed-in app `call_host` answered
+by `host_answer`). And agent messages: a node advertises named
 targets (`advertise_targets` carries `{target, name}` cards instead of bare
 strings), `target_list` summaries gain `name`, `list_targets` is open to nodes
 as well as surfaces, a node sends `send_agent_message`, and a command may carry
@@ -380,8 +380,8 @@ administer devices receives `invalid_role`.
 
 ### Call the Host
 
-A browser ticket or a device that proved its key may call the owner's Host, as
-a browser does under `/v1/host` ([Host control](#host-control)):
+A device that proved its key may call the owner's Host, as a browser does under
+`/v1/host` ([Host control](#host-control)):
 
 ```json
 {
@@ -394,8 +394,9 @@ a browser does under `/v1/host` ([Host control](#host-control)):
 ```
 
 `method` is `GET`, `POST` or `PUT`. `path` is `/v1/host` or a path under it,
-at most 1,024 bytes, with no query or fragment. `body` is the request's JSON
-text, at most 64 KiB, or `null`; a `GET` carries `null`. The Host's answer,
+at most 1,024 bytes of visible ASCII, with no query or fragment and no empty,
+`.` or `..` segment. `body` is the request's JSON text, at most 64 KiB, or
+`null`; a `GET` carries `null`. The Host's answer,
 a result or its own refusal, returns as its HTTP status and JSON text:
 
 ```json
@@ -408,16 +409,18 @@ a result or its own refusal, returns as its HTTP status and JSON text:
 ```
 
 The call waits on the Host without holding up the connection's other requests,
-and ends with the connection. One connection has at most eight calls waiting;
-another is refused with `conflict`. A service link such as Discord, or another
-connection that is neither a browser ticket nor a device that proved its key,
-receives `invalid_role`, as does a principal that owns no node. A malformed
+and ends with the connection: a device revoked meanwhile hears no answer. A
+`request_id` must not be reused while its call waits. One connection has at
+most eight calls waiting; another is refused with `conflict`. A browser ticket
+connection, a service link such as Discord, and a principal that owns no node
+receive `invalid_role`. A ticket connection outlives the browser session that
+issued it, so a browser calls `/v1/host`, which checks its session each time. A malformed
 call receives `invalid_message` and never reaches the Host. When no node of the
 owner serves the Host, when two do, or when the call's node disconnects or does
 not answer within sixty seconds, the call receives `node_offline`: whether a
 change took effect is then unknown, so the caller repeats the same request under
 the same `operation_id`. An answer the coordinator cannot relay receives
-`internal`.
+`internal`; that outcome is unknown too.
 
 ### Attach
 
@@ -813,8 +816,8 @@ connection, after it authenticates:
 The coordinator remembers it for that connection only; a reconnecting node says
 it again. The frame has no acknowledgement, and only a node connection may send
 it. The coordinator relays an authenticated owner's call, from a browser under
-`/v1/host` or from a [`call_host`](#call-the-host), to the one connected node of
-that owner that has said so:
+`/v1/host` or from an app's [`call_host`](#call-the-host), to the one connected
+node of that owner that has said so:
 
 ```json
 {

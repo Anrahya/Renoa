@@ -956,9 +956,9 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    The owner's Host control is relayed by the coordinator to the node that serves
    the Host (`serve_host_control`, `host_call`, `complete_host_call`): observation,
    agent creation, the owner's profile, Discord setup, and automation pause and
-   resume. A browser calls it under `/v1/host`; a signed-in app, or a browser
-   ticket connection, calls it over RCP with `call_host`, and a service link
-   such as Discord cannot. It is not RCP node provisioning, and the task journal
+   resume. A browser calls it under `/v1/host`; a signed-in app calls it over
+   its key-proven RCP connection with `call_host`, and a service link such as
+   Discord cannot. It is not RCP node provisioning, and the task journal
    records none of it.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only

@@ -1061,214 +1061,24 @@ async fn refusal(socket: &mut Socket, request_id: u64) -> (ErrorCode, String) {
 }
 
 #[tokio::test]
-async fn a_signed_in_connection_calls_its_host_and_keeps_working_while_it_waits() {
+async fn only_a_signed_in_app_calls_the_host_over_rcp_never_a_browser_ticket_or_a_chat_link() {
     let f = Fixture::start().await;
     let mut node = f.serving_node().await;
+    // A ticket connection outlives the browser session that issued it, so it
+    // would keep Host control after a logout; the browser uses /v1/host.
     let mut browser = f.browser_connection(&f.caller).await;
-    let body = r#"{"operation_id":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","name":"Tifa"}"#;
-    send(
-        &mut browser,
-        &call_host(1, HostMethod::Post, "/v1/host/agents", Some(body)),
-    )
-    .await;
-    let (call_id, principal, method, path, sent) = next_call(&mut node).await;
-    assert_eq!(
-        (principal, method, path.as_str(), sent.as_deref()),
-        (f.owner, HostMethod::Post, "/v1/host/agents", Some(body)),
-        "the node hears the call as the owner made it"
-    );
-
-    // The call waits on the Host; the connection does not.
-    send(&mut browser, &ClientMessage::ListTasks { request_id: 2 }).await;
-    assert!(matches!(
-        receive(&mut browser).await,
-        ServerMessage::TaskList { request_id: 2, .. }
-    ));
-    send(&mut node, &complete(call_id, 201, r#"{"record":{}}"#)).await;
-    assert_eq!(
-        receive(&mut browser).await,
-        ServerMessage::HostAnswer {
-            request_id: 1,
-            status: 201,
-            body: r#"{"record":{}}"#.to_owned(),
-        }
-    );
-
-    // A refusal by the Host is an answer too, passed on as it was given.
-    send(
-        &mut browser,
-        &call_host(3, HostMethod::Get, "/v1/host/agents/x", None),
-    )
-    .await;
-    let (call_id, ..) = next_call(&mut node).await;
-    send(
-        &mut node,
-        &complete(call_id, 400, r#"{"code":"invalid_request"}"#),
-    )
-    .await;
-    assert!(matches!(
-        receive(&mut browser).await,
-        ServerMessage::HostAnswer {
-            request_id: 3,
-            status: 400,
-            ..
-        }
-    ));
-    f.stop().await;
-}
-
-#[tokio::test]
-async fn a_chat_surface_or_a_stranger_never_reaches_the_host() {
-    let f = Fixture::start().await;
-    let mut node = f.serving_node().await;
-
     let mut link = f.chat_link().await;
-    send(&mut link, &call_host(1, HostMethod::Get, "/v1/host", None)).await;
-    let (code, message) = refusal(&mut link, 1).await;
-    assert_eq!(code, ErrorCode::InvalidRole);
-    assert!(message.contains("signed-in app or a browser"), "{message}");
-
-    let stranger = f.stranger().await;
-    let mut theirs = f.browser_connection(&stranger).await;
-    send(
-        &mut theirs,
-        &call_host(1, HostMethod::Get, "/v1/host", None),
-    )
-    .await;
-    let (code, message) = refusal(&mut theirs, 1).await;
-    assert_eq!(code, ErrorCode::InvalidRole);
-    assert_eq!(message, "This login does not own a Host.");
-    assert!(hears_nothing(&mut node).await);
-    f.stop().await;
-}
-
-#[tokio::test]
-async fn a_call_outside_the_host_or_with_a_wrong_body_never_leaves_the_coordinator() {
-    let f = Fixture::start().await;
-    let mut node = f.serving_node().await;
-    let mut browser = f.browser_connection(&f.caller).await;
-    let large = format!("\"{}\"", "a".repeat(64 * 1024));
-    let calls = [
-        (HostMethod::Get, "/v1/identity/session".to_owned(), None),
-        (HostMethod::Get, "/v1/hostile".to_owned(), None),
-        (HostMethod::Get, "v1/host".to_owned(), None),
-        (HostMethod::Get, "/v1/host/agents?all=1".to_owned(), None),
-        (HostMethod::Get, "/v1/host/agents#top".to_owned(), None),
-        (
-            HostMethod::Get,
-            format!("/v1/host/{}", "a".repeat(1024)),
-            None,
-        ),
-        (HostMethod::Get, "/v1/host".to_owned(), Some("{}")),
-        (
-            HostMethod::Post,
-            "/v1/host/agents".to_owned(),
-            Some(large.as_str()),
-        ),
-    ];
-    for (request_id, (method, path, body)) in (1..).zip(calls) {
-        send(&mut browser, &call_host(request_id, method, &path, body)).await;
-        let (code, _) = refusal(&mut browser, request_id).await;
-        assert_eq!(code, ErrorCode::InvalidMessage, "{method:?} {path}");
+    for socket in [&mut browser, &mut link] {
+        send(socket, &call_host(1, HostMethod::Get, "/v1/host", None)).await;
+        let (code, message) = refusal(socket, 1).await;
+        assert_eq!(code, ErrorCode::InvalidRole);
+        assert!(message.contains("signed-in app"), "{message}");
     }
     assert!(hears_nothing(&mut node).await);
-
-    // The largest body the Host accepts still goes.
-    let fits = format!("\"{}\"", "a".repeat(64 * 1024 - 2));
-    send(
-        &mut browser,
-        &call_host(20, HostMethod::Post, "/v1/host/agents", Some(&fits)),
-    )
-    .await;
-    let (_, _, _, path, body) = next_call(&mut node).await;
-    assert_eq!(
-        (path.as_str(), body.map(|body| body.len())),
-        ("/v1/host/agents", Some(64 * 1024))
-    );
-    f.stop().await;
-}
-
-#[tokio::test]
-async fn a_host_that_is_away_or_drops_the_call_leaves_the_outcome_open() {
-    let f = Fixture::start().await;
-    // The owner's node is enrolled but not connected.
-    let _away = f.enroll_node().await;
-    let mut browser = f.browser_connection(&f.caller).await;
-    send(
-        &mut browser,
-        &call_host(1, HostMethod::Get, "/v1/host", None),
-    )
-    .await;
-    let (code, message) = refusal(&mut browser, 1).await;
-    assert_eq!(code, ErrorCode::NodeOffline, "{message}");
-
-    let mut node = f.serving_node().await;
-    send(
-        &mut browser,
-        &call_host(2, HostMethod::Post, "/v1/host/agents", Some("{}")),
-    )
-    .await;
-    let _ = next_call(&mut node).await;
-    node.close(None).await.expect("close the node");
-    drop(node);
-    let (code, message) = refusal(&mut browser, 2).await;
-    assert_eq!(code, ErrorCode::NodeOffline);
-    assert!(message.contains("retry the same request"), "{message}");
-
-    let mut node = f.serving_node().await;
-    send(
-        &mut browser,
-        &call_host(3, HostMethod::Get, "/v1/host", None),
-    )
-    .await;
+    // The same browser still reaches its Host through its session.
+    let read = spawn_answer(f.caller.get("/v1/host"));
     let (call_id, ..) = next_call(&mut node).await;
-    send(&mut node, &complete(call_id, 302, "{}")).await;
-    let (code, _) = refusal(&mut browser, 3).await;
-    assert_eq!(
-        code,
-        ErrorCode::Internal,
-        "an answer that cannot be passed on"
-    );
-    f.stop().await;
-}
-
-#[tokio::test]
-async fn a_connection_has_at_most_eight_calls_waiting_on_its_host() {
-    let f = Fixture::start().await;
-    let mut node = f.serving_node().await;
-    let mut browser = f.browser_connection(&f.caller).await;
-    let mut waiting = Vec::new();
-    for request_id in 1..=8 {
-        send(
-            &mut browser,
-            &call_host(request_id, HostMethod::Get, "/v1/host", None),
-        )
-        .await;
-        waiting.push(next_call(&mut node).await.0);
-    }
-    send(
-        &mut browser,
-        &call_host(9, HostMethod::Get, "/v1/host", None),
-    )
-    .await;
-    let (code, _) = refusal(&mut browser, 9).await;
-    assert_eq!(code, ErrorCode::Conflict);
-    assert!(hears_nothing(&mut node).await);
-
-    // Another connection has its own slots, and an answer frees one here.
-    let mut other = f.browser_connection(&f.caller).await;
-    send(&mut other, &call_host(1, HostMethod::Get, "/v1/host", None)).await;
-    let _ = next_call(&mut node).await;
-    send(&mut node, &complete(waiting[0], 200, "{}")).await;
-    assert!(matches!(
-        receive(&mut browser).await,
-        ServerMessage::HostAnswer { request_id: 1, .. }
-    ));
-    send(
-        &mut browser,
-        &call_host(10, HostMethod::Get, "/v1/host", None),
-    )
-    .await;
-    let _ = next_call(&mut node).await;
+    send(&mut node, &complete(call_id, 200, "{}")).await;
+    assert_eq!(read.await.expect("read task").status, StatusCode::OK);
     f.stop().await;
 }

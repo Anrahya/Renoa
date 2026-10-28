@@ -9,7 +9,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{
     AndroidApps, ClientMessage, Coordinator, DeviceCredentials, DeviceId, DeviceSummary, ErrorCode,
-    JSON_WS_VERSION, PeerIdentity, ServerMessage,
+    HostMethod, JSON_WS_VERSION, PeerIdentity, ServerMessage,
 };
 use renoa_protocol::{PrincipalId, SurfaceRef};
 use reqwest::{StatusCode, header};
@@ -1524,54 +1524,121 @@ async fn serving_node(server: &Running, owner: PrincipalId) -> Socket {
     node
 }
 
+fn call_host(request_id: u64, method: HostMethod, path: &str, body: Option<&str>) -> ClientMessage {
+    ClientMessage::CallHost {
+        request_id,
+        method,
+        path: path.to_owned(),
+        body: body.map(str::to_owned),
+    }
+}
+
+/// The error a request was answered with, and its message.
+async fn refusal(socket: &mut Socket, request_id: u64) -> (ErrorCode, String) {
+    match receive(socket).await {
+        ServerMessage::Error {
+            request_id: Some(answered),
+            code,
+            message,
+        } if answered == request_id => (code, message),
+        other => panic!("expected request {request_id} to be refused, received {other:?}"),
+    }
+}
+
+/// The next call the node is sent: its id, principal, method, path and body.
+async fn next_call(node: &mut Socket) -> (Uuid, PrincipalId, HostMethod, String, Option<String>) {
+    let ServerMessage::HostCall {
+        call_id,
+        principal_id,
+        method,
+        path,
+        body,
+    } = receive(node).await
+    else {
+        panic!("the node is sent a Host call");
+    };
+    (call_id, principal_id, method, path, body)
+}
+
+fn complete(call_id: Uuid, status: u16, body: &str) -> ClientMessage {
+    ClientMessage::CompleteHostCall {
+        call_id,
+        status,
+        body: body.to_owned(),
+    }
+}
+
+async fn hears_nothing(socket: &mut Socket) -> bool {
+    timeout(Duration::from_millis(150), socket.next())
+        .await
+        .is_err()
+}
+
 #[tokio::test]
-async fn an_app_that_proved_its_key_controls_its_owners_host_and_a_chat_link_cannot() {
+async fn an_app_calls_its_owners_host_and_keeps_working_while_it_waits() {
     let files = tempfile::tempdir().expect("temporary directory");
     let server = Running::start(&files.path().join("control.sqlite")).await;
     let (owner, phone, _tablet) = owner_with_two_apps(&server).await;
     let mut node = serving_node(&server, owner.principal).await;
     let mut app = phone.connect(&server).await;
 
+    let body = r#"{"operation_id":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","name":"Tifa"}"#;
     send(
         &mut app,
-        &ClientMessage::CallHost {
-            request_id: 7,
-            method: renoa_control::HostMethod::Get,
-            path: "/v1/host/agents/options".to_owned(),
-            body: None,
-        },
+        &call_host(7, HostMethod::Post, "/v1/host/agents", Some(body)),
     )
     .await;
-    let ServerMessage::HostCall {
-        call_id,
-        principal_id,
-        path,
-        ..
-    } = receive(&mut node).await
-    else {
-        panic!("the node is sent the app's call");
-    };
+    let (call_id, principal, method, path, sent) = next_call(&mut node).await;
     assert_eq!(
-        (principal_id, path.as_str()),
-        (owner.principal, "/v1/host/agents/options")
+        (principal, method, path.as_str(), sent.as_deref()),
+        (
+            owner.principal,
+            HostMethod::Post,
+            "/v1/host/agents",
+            Some(body)
+        ),
+        "the node hears the call as the owner made it"
     );
-    send(
-        &mut node,
-        &ClientMessage::CompleteHostCall {
-            call_id,
-            status: 200,
-            body: r#"{"models":[]}"#.to_owned(),
-        },
-    )
-    .await;
+    // The call waits on the Host; the connection does not.
+    assert_eq!(list_devices(&mut app, 8).await.len(), 2);
+    send(&mut node, &complete(call_id, 201, r#"{"record":{}}"#)).await;
     assert_eq!(
         receive(&mut app).await,
         ServerMessage::HostAnswer {
             request_id: 7,
-            status: 200,
-            body: r#"{"models":[]}"#.to_owned()
+            status: 201,
+            body: r#"{"record":{}}"#.to_owned(),
         }
     );
+    // A refusal by the Host is an answer too, passed on as it was given.
+    send(
+        &mut app,
+        &call_host(9, HostMethod::Get, "/v1/host/agents/x", None),
+    )
+    .await;
+    let (call_id, ..) = next_call(&mut node).await;
+    send(
+        &mut node,
+        &complete(call_id, 400, r#"{"code":"invalid_request"}"#),
+    )
+    .await;
+    assert!(matches!(
+        receive(&mut app).await,
+        ServerMessage::HostAnswer {
+            request_id: 9,
+            status: 400,
+            ..
+        }
+    ));
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_chat_link_or_another_persons_app_never_reaches_the_owners_host() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (owner, _phone, _tablet) = owner_with_two_apps(&server).await;
+    let mut node = serving_node(&server, owner.principal).await;
 
     let link = enroll_link(&server, 1, "discord").await;
     let mut chat = connect(&server).await;
@@ -1580,22 +1647,190 @@ async fn an_app_that_proved_its_key_controls_its_owners_host_and_a_chat_link_can
         receive(&mut chat).await,
         ServerMessage::Authenticated { .. }
     ));
+    send(&mut chat, &call_host(1, HostMethod::Get, "/v1/host", None)).await;
+    assert_eq!(refusal(&mut chat, 1).await.0, ErrorCode::InvalidRole);
+
+    let mut theirs = strangers_app(&server).await.connect(&server).await;
     send(
-        &mut chat,
-        &ClientMessage::CallHost {
-            request_id: 1,
-            method: renoa_control::HostMethod::Get,
-            path: "/v1/host".to_owned(),
-            body: None,
+        &mut theirs,
+        &call_host(1, HostMethod::Get, "/v1/host", None),
+    )
+    .await;
+    let (code, message) = refusal(&mut theirs, 1).await;
+    assert_eq!(code, ErrorCode::InvalidRole);
+    assert_eq!(message, "This login does not own a Host.");
+    assert!(hears_nothing(&mut node).await);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_call_outside_the_host_or_with_a_wrong_body_never_leaves_the_coordinator() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (owner, phone, _tablet) = owner_with_two_apps(&server).await;
+    let mut node = serving_node(&server, owner.principal).await;
+    let mut app = phone.connect(&server).await;
+    let large = format!("\"{}\"", "a".repeat(64 * 1024));
+    let calls = [
+        (HostMethod::Get, "/v1/identity/session".to_owned(), None),
+        (HostMethod::Get, "/v1/hostile".to_owned(), None),
+        (HostMethod::Get, "v1/host".to_owned(), None),
+        (HostMethod::Get, "/v1/host/agents?all=1".to_owned(), None),
+        (HostMethod::Get, "/v1/host/agents#top".to_owned(), None),
+        (HostMethod::Get, "/v1/host/agents/".to_owned(), None),
+        (HostMethod::Get, "/v1/host//agents".to_owned(), None),
+        (HostMethod::Get, "/v1/host/./agents".to_owned(), None),
+        (HostMethod::Get, "/v1/host/../identity".to_owned(), None),
+        (HostMethod::Get, "/v1/host/a b".to_owned(), None),
+        (HostMethod::Get, "/v1/host/agents\n".to_owned(), None),
+        (HostMethod::Get, "/v1/host/agents/é".to_owned(), None),
+        (
+            HostMethod::Get,
+            format!("/v1/host/{}", "a".repeat(1024)),
+            None,
+        ),
+        (HostMethod::Get, "/v1/host".to_owned(), Some("{}")),
+        (
+            HostMethod::Post,
+            "/v1/host/agents".to_owned(),
+            Some(large.as_str()),
+        ),
+    ];
+    for (request_id, (method, path, body)) in (1..).zip(calls) {
+        send(&mut app, &call_host(request_id, method, &path, body)).await;
+        let (code, _) = refusal(&mut app, request_id).await;
+        assert_eq!(code, ErrorCode::InvalidMessage, "{method:?} {path:?}");
+    }
+    assert!(hears_nothing(&mut node).await);
+
+    // The largest body the Host accepts, and the bare Host path, still go.
+    let fits = format!("\"{}\"", "a".repeat(64 * 1024 - 2));
+    send(
+        &mut app,
+        &call_host(20, HostMethod::Post, "/v1/host/agents", Some(&fits)),
+    )
+    .await;
+    let (_, _, _, path, body) = next_call(&mut node).await;
+    assert_eq!(
+        (path.as_str(), body.map(|body| body.len())),
+        ("/v1/host/agents", Some(64 * 1024))
+    );
+    send(&mut app, &call_host(21, HostMethod::Get, "/v1/host", None)).await;
+    assert_eq!(next_call(&mut node).await.3, "/v1/host");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_host_that_is_away_or_drops_the_call_leaves_the_outcome_open() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (owner, phone, _tablet) = owner_with_two_apps(&server).await;
+    let mut app = phone.connect(&server).await;
+    // The owner has a node, but it is gone.
+    let mut gone = serving_node(&server, owner.principal).await;
+    gone.close(None).await.expect("close the node");
+    drop(gone);
+    send(&mut app, &call_host(1, HostMethod::Get, "/v1/host", None)).await;
+    let (code, message) = refusal(&mut app, 1).await;
+    assert_eq!(code, ErrorCode::NodeOffline, "{message}");
+
+    let mut node = serving_node(&server, owner.principal).await;
+    send(
+        &mut app,
+        &call_host(2, HostMethod::Post, "/v1/host/agents", Some("{}")),
+    )
+    .await;
+    let _ = next_call(&mut node).await;
+    node.close(None).await.expect("close the node");
+    drop(node);
+    let (code, message) = refusal(&mut app, 2).await;
+    assert_eq!(code, ErrorCode::NodeOffline);
+    assert!(message.contains("retry the same request"), "{message}");
+
+    let mut node = serving_node(&server, owner.principal).await;
+    send(&mut app, &call_host(3, HostMethod::Get, "/v1/host", None)).await;
+    let (call_id, ..) = next_call(&mut node).await;
+    send(&mut node, &complete(call_id, 302, "{}")).await;
+    let (code, _) = refusal(&mut app, 3).await;
+    assert_eq!(
+        code,
+        ErrorCode::Internal,
+        "an answer that cannot be passed on"
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn an_app_has_at_most_eight_calls_waiting_on_its_host() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (owner, phone, tablet) = owner_with_two_apps(&server).await;
+    let mut node = serving_node(&server, owner.principal).await;
+    let mut app = phone.connect(&server).await;
+    let mut waiting = Vec::new();
+    for request_id in 1..=8 {
+        send(
+            &mut app,
+            &call_host(request_id, HostMethod::Get, "/v1/host", None),
+        )
+        .await;
+        waiting.push(next_call(&mut node).await.0);
+    }
+    send(&mut app, &call_host(9, HostMethod::Get, "/v1/host", None)).await;
+    assert_eq!(refusal(&mut app, 9).await.0, ErrorCode::Conflict);
+    assert!(hears_nothing(&mut node).await);
+
+    // Another connection has its own slots, and an answer frees one here.
+    let mut other = tablet.connect(&server).await;
+    send(&mut other, &call_host(1, HostMethod::Get, "/v1/host", None)).await;
+    let _ = next_call(&mut node).await;
+    send(&mut node, &complete(waiting[0], 200, "{}")).await;
+    assert!(matches!(
+        receive(&mut app).await,
+        ServerMessage::HostAnswer { request_id: 1, .. }
+    ));
+    send(&mut app, &call_host(10, HostMethod::Get, "/v1/host", None)).await;
+    let _ = next_call(&mut node).await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_revoked_app_hears_nothing_more_from_its_host() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (owner, phone, tablet) = owner_with_two_apps(&server).await;
+    let mut node = serving_node(&server, owner.principal).await;
+    let mut app = phone.connect(&server).await;
+    send(
+        &mut app,
+        &call_host(1, HostMethod::Post, "/v1/host/agents", Some("{}")),
+    )
+    .await;
+    let (call_id, ..) = next_call(&mut node).await;
+
+    let mut other = tablet.connect(&server).await;
+    send(
+        &mut other,
+        &ClientMessage::RevokeDevice {
+            request_id: 2,
+            device_id: phone.credentials.device_id,
         },
     )
     .await;
-    expect_error(&mut chat, ErrorCode::InvalidRole).await;
-    assert!(
-        timeout(Duration::from_millis(150), node.next())
-            .await
-            .is_err(),
-        "nothing from the chat link reaches the Host"
-    );
+    assert!(matches!(
+        receive(&mut other).await,
+        ServerMessage::DeviceRevoked { .. }
+    ));
+    // The call ends with the revoked app's connection, which closes without an answer.
+    expect_closed(&mut app).await;
+    // The node's late answer goes nowhere, and the Host keeps serving the owner's other app.
+    send(&mut node, &complete(call_id, 201, "{}")).await;
+    send(&mut other, &call_host(3, HostMethod::Get, "/v1/host", None)).await;
+    let (next, ..) = next_call(&mut node).await;
+    send(&mut node, &complete(next, 200, "{}")).await;
+    assert!(matches!(
+        receive(&mut other).await,
+        ServerMessage::HostAnswer { request_id: 3, .. }
+    ));
     server.stop().await;
 }
