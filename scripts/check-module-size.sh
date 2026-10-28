@@ -20,7 +20,7 @@ while IFS= read -r file; do
     status=1
   fi
 done < <(
-  git ls-files '*.rs' '*.ts' '*.tsx' '*.mjs' '*.js' |
+  git ls-files '*.rs' '*.ts' '*.tsx' '*.mjs' '*.js' '*.kt' |
     grep -vE '(^|/)tests?(/|\.rs$)|_tests?\.rs$|\.test\.(ts|tsx|mjs|js)$|/benches/|/examples/|/dist/|\.d\.ts$|(^|/)test[_-]|/fixtures?/'
 )
 

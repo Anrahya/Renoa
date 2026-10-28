@@ -1,4 +1,8 @@
-use std::{str::FromStr as _, sync::Arc, time::Duration};
+use std::{
+    str::FromStr as _,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use axum::{
     Router,
@@ -11,8 +15,9 @@ use axum::{
 use renoa_credential_relay_protocol::{
     AcknowledgeCredentialRelayRequest, AcknowledgeCredentialRelayResponse,
     CREDENTIAL_RELAY_VERSION, CREDENTIAL_RELAYS_PATH, CREDENTIAL_SETUP_SCRIPT_PATH,
-    CreateCredentialRelayRequest, CreateCredentialRelayResponse, CredentialRelayErrorResponse,
-    CredentialRelayId, SubmitCredentialRelayRequest, SubmitCredentialRelayResponse,
+    CREDENTIAL_SETUP_STYLE_PATH, CreateCredentialRelayRequest, CreateCredentialRelayResponse,
+    CredentialRelayErrorResponse, CredentialRelayId, SubmitCredentialRelayRequest,
+    SubmitCredentialRelayResponse,
 };
 
 use crate::{
@@ -24,6 +29,19 @@ use crate::{
 const RELAY_LIFETIME: Duration = Duration::from_mins(15);
 const MAX_RELAY_BODY_BYTES: usize = 160 * 1024;
 const SETUP_SCRIPT: &str = include_str!("credential_setup.js");
+const SETUP_LAYOUT: &str = include_str!("credential_setup.css");
+const SETUP_PAGE: &str = include_str!("credential_setup.html");
+const MARK_PLACEHOLDER: &str = "<!--renoa-mark-->";
+
+// The design system owns these; the page serves them as they are rather than keeping copies.
+const DESIGN_TOKENS: &str = include_str!("../../../design/system/tokens.css");
+const DESIGN_COMPONENTS: &str = include_str!("../../../design/system/components/bundle.css");
+const DESIGN_MARK: &str = include_str!("../../../design/system/assets/Logos/renoa-mark-ink.svg");
+
+static SETUP_STYLE: LazyLock<String> =
+    LazyLock::new(|| format!("{DESIGN_TOKENS}\n{DESIGN_COMPONENTS}\n{SETUP_LAYOUT}"));
+static SETUP_HTML: LazyLock<String> =
+    LazyLock::new(|| SETUP_PAGE.replace(MARK_PLACEHOLDER, DESIGN_MARK));
 
 pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
     Router::new()
@@ -49,6 +67,7 @@ pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
             post(acknowledge_relay),
         )
         .route(CREDENTIAL_SETUP_SCRIPT_PATH, get(setup_script))
+        .route(CREDENTIAL_SETUP_STYLE_PATH, get(setup_style))
         .layer(DefaultBodyLimit::max(MAX_RELAY_BODY_BYTES))
 }
 
@@ -199,18 +218,24 @@ async fn setup_page(Path(relay_id): Path<String>) -> Response {
     if CredentialRelayId::from_str(&relay_id).is_err() {
         return invalid_request();
     }
-    let body = "<!doctype html><html lang=en><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Connect to Renoa</title><style>body{font:16px system-ui;max-width:34rem;margin:4rem auto;padding:0 1.5rem;color:#171717}form{display:grid;gap:1rem}label{display:grid;gap:.4rem}input,button{font:inherit;padding:.75rem;border:1px solid #bbb;border-radius:.5rem}button{background:#111;color:#fff;cursor:pointer}small{color:#666}</style><main><h1>Connect a credential</h1><p id=status>Loading secure setup…</p><form id=form hidden></form></main><script src=/v1/credential-setup.js defer></script></html>";
-    let mut response = (StatusCode::OK, Html(body)).into_response();
+    let mut response = (StatusCode::OK, Html(SETUP_HTML.as_str())).into_response();
     page_headers(response.headers_mut());
     response
 }
 
 async fn setup_script() -> Response {
-    let mut response = Response::new(Body::from(SETUP_SCRIPT));
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/javascript; charset=utf-8"),
-    );
+    asset(SETUP_SCRIPT, "text/javascript; charset=utf-8")
+}
+
+async fn setup_style() -> Response {
+    asset(SETUP_STYLE.as_str(), "text/css; charset=utf-8")
+}
+
+fn asset(body: &'static str, content_type: &'static str) -> Response {
+    let mut response = Response::new(Body::from(body));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     secure_headers(response.headers_mut());
     response
 }
@@ -278,7 +303,7 @@ fn page_headers(headers: &mut HeaderMap) {
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
-            "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
         ),
     );
 }

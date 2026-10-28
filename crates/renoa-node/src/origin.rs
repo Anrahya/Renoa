@@ -4,7 +4,7 @@
 //! the turn context admits a description of where a message came from. The
 //! depth of the chain is not shown: it belongs to the coordinator.
 
-use renoa_local::Speaker;
+use renoa_local::{Speaker, TurnObservation};
 use renoa_protocol::{AgentMessageKind, AgentOrigin, Author, CommandEnvelope};
 
 /// The longest sender name shown; the context entry holds 256 bytes in all.
@@ -21,8 +21,18 @@ pub(crate) fn speaker(command: &CommandEnvelope) -> Speaker {
     }
 }
 
+/// `observation` with the `surface` context entry of `command`: the surface's
+/// own, or, for another agent's message, who sent it.
+pub(crate) fn observed(command: &CommandEnvelope, observation: TurnObservation) -> TurnObservation {
+    match (&command.origin, command.input.context()) {
+        (Some(origin), _) => observation.with_surface_context(surface_context(origin)),
+        (None, Some(context)) => observation.with_surface_context(context),
+        (None, None) => observation,
+    }
+}
+
 /// The `surface` context entry for a command with `origin`.
-pub(crate) fn surface_context(origin: &AgentOrigin) -> String {
+fn surface_context(origin: &AgentOrigin) -> String {
     let name = shown(&origin.name);
     match origin.kind {
         AgentMessageKind::Request => format!(
@@ -66,7 +76,7 @@ mod tests {
         SurfaceRef, TargetRef,
     };
 
-    use renoa_local::Speaker;
+    use renoa_local::{Speaker, TurnObservation};
     use renoa_protocol::Author;
 
     use super::{prompt_text, speaker, surface_context};

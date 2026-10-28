@@ -398,15 +398,9 @@ async fn run_request(
     let command = &record.command;
     Ok(match request {
         Request::Turn => {
-            let mut observation =
+            let observation =
                 TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
-            if let Some(context) = command.input.context() {
-                observation = observation.with_surface_context(context);
-            }
-            // Another agent's message says who sent it.
-            if let Some(origin) = &command.origin {
-                observation = observation.with_surface_context(origin::surface_context(origin));
-            }
+            let observation = origin::observed(command, observation);
             session
                 .execute_turn_observed_with_cancellation(
                     command.command_id.as_uuid(),
