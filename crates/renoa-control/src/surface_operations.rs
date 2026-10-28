@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ControlError, ErrorCode, ServerMessage, TaskId, TaskSpec, control_log,
     coordinator::CoordinatorState,
+    device_admin::{self, SurfaceSession},
     operations::SurfaceOperation,
     store::CommandAdmission,
     wire::{publish_task_event, send_control_error, send_error, task_sender},
@@ -18,12 +19,30 @@ pub(crate) async fn handle_surface_operation(
     state: Arc<CoordinatorState>,
     outgoing: &mpsc::Sender<ServerMessage>,
     connection_cancelled: &CancellationToken,
-    principal_id: PrincipalId,
-    surface: SurfaceRef,
+    session: SurfaceSession,
     request_id: u64,
     operation: SurfaceOperation,
 ) {
+    let SurfaceSession {
+        principal_id,
+        surface,
+        authority,
+    } = session;
     match operation {
+        SurfaceOperation::ListDevices => {
+            device_admin::list_devices(&state, outgoing, request_id, principal_id, authority).await;
+        }
+        SurfaceOperation::RevokeDevice { device_id } => {
+            device_admin::revoke_device(
+                &state,
+                outgoing,
+                request_id,
+                principal_id,
+                authority,
+                device_id,
+            )
+            .await;
+        }
         SurfaceOperation::ListTasks => match state.store.list_tasks(principal_id).await {
             Ok(tasks) => {
                 let _ = outgoing

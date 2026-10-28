@@ -3,7 +3,7 @@ use renoa_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{NodeId, TaskEventId, TaskId};
+use crate::{DeviceId, NodeId, TaskEventId, TaskId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
@@ -36,6 +36,19 @@ pub enum ErrorCode {
 pub struct TaskSummary {
     pub task_id: TaskId,
     pub target: TargetRef,
+}
+
+/// One signed-in app of the requesting principal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSummary {
+    pub device_id: DeviceId,
+    pub surface: SurfaceRef,
+    /// The name the app gave when it signed in, such as "Pixel 9".
+    pub label: String,
+    pub created_at_ms: u64,
+    /// Whether the connection that asked is this device.
+    pub current: bool,
 }
 
 /// One agent an online node owned by the requesting principal can execute.
@@ -91,6 +104,10 @@ pub(crate) enum SurfaceOperation {
     },
     DeleteTask {
         task_id: TaskId,
+    },
+    ListDevices,
+    RevokeDevice {
+        device_id: DeviceId,
     },
 }
 

@@ -262,6 +262,9 @@ async fn handle_server_message(
             return Err(NodeError::Rejected { code, message });
         }
         ServerMessage::Authenticated { .. }
+        | ServerMessage::DeviceChallenge { .. }
+        | ServerMessage::DeviceList { .. }
+        | ServerMessage::DeviceRevoked { .. }
         | ServerMessage::Enrolled { .. }
         | ServerMessage::TaskList { .. }
         | ServerMessage::TargetList { .. }

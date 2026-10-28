@@ -364,9 +364,12 @@ async fn dispatch(
         | ServerMessage::TargetList { request_id, .. }
         | ServerMessage::TaskOpened { request_id, .. }
         | ServerMessage::TaskDeleted { request_id, .. }
+        | ServerMessage::DeviceList { request_id, .. }
+        | ServerMessage::DeviceRevoked { request_id, .. }
         | ServerMessage::Attached { request_id, .. }
         | ServerMessage::CommandAccepted { request_id, .. } => *request_id,
         ServerMessage::Enrolled { .. }
+        | ServerMessage::DeviceChallenge { .. }
         | ServerMessage::Authenticated { .. }
         | ServerMessage::ExecutionEventsAccepted { .. }
         | ServerMessage::ExecutionAcknowledged { .. }

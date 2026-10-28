@@ -19,16 +19,20 @@ model API, system prompt, tool or permission system, context policy, user
 interface, or network transport.
 
 Enrollment and authentication establish a trusted session. They are not task
-operations. Issuing enrollment tokens, recording a node's owning principal, and
-revoking devices are trusted control-plane actions and are not remotely callable
-RCP operations. An operator may also create a task directly. The node's owner can
+operations. Issuing enrollment tokens and recording a node's owning principal
+are trusted control-plane actions and are not remotely callable RCP operations.
+The operator may revoke any device. An owner may also list and revoke their own
+signed-in apps with `ListDevices` and `RevokeDevice`, from a browser or a device
+that proved its key; devices are not tasks, and these operations grant no task
+authority. An operator may also create a task directly. The node's owner can
 open a task remotely with `OpenTask`, but only against a target its online node
 currently advertises, and delete one of its tasks with `DeleteTask`.
 
 After authentication, the session identity fixes the peer's role:
 
 - a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`, and
-  `DeleteTask`;
+  `DeleteTask`; a surface connected by a browser ticket or a proven device key
+  may also `ListDevices` and `RevokeDevice`;
 - a node may `AdvertiseTargets`, `AcknowledgeExecution`, and
   `PublishExecutionEvents`;
 - the coordinator may deliver `Execute` to a node and `TaskEvent` records to an
@@ -182,6 +186,30 @@ returns `TaskDeleted`, so a retry after a lost reply converges; its identity may
 then be opened again. The node that executed the task deletes its own copy of
 the task separately.
 
+### `ListDevices`
+
+`ListDevices` has no semantic input. The coordinator derives the principal from
+the authenticated session and returns `DeviceList`: the principal's active
+signed-in apps, each with its identity, surface, label, creation time and
+whether it is the device that asked, oldest first. Only devices that registered a
+key are listed. The operation is read-only. A surface that authenticated with a
+bearer credential alone, such as a chat surface's service link, is refused with
+`InvalidRole`.
+
+### `RevokeDevice`
+
+Inputs:
+
+- `device_id`: a signed-in app of the authenticated principal.
+
+In one transaction the coordinator marks the device revoked. Only then does it
+return `DeviceRevoked` and end the device's open connections; a later
+authentication of its credential fails. Revoking a device the principal already
+revoked returns `DeviceRevoked` again, so a retry converges. Another
+principal's device, an unknown device and a device without a registered key
+return `NotFound`. A device may revoke itself; its acknowledgement is sent
+before its connection closes. The key of a revoked device cannot sign in again.
+
 ## Executor delivery and node operations
 
 ### `Execute`
@@ -286,6 +314,8 @@ task sequence. A timestamp never determines order.
 | `ExecutionAcknowledged` | Removal of the pending coordinator delivery |
 | `ExecutionEventsAccepted` | New task records and the node's accepted source cursor |
 | `TaskDeleted` | Removal of the task and everything the coordinator held for it |
+| `DeviceList` | No mutation; the returned devices were selected by authenticated principal |
+| `DeviceRevoked` | The device's revocation |
 
 None of these outcomes means that an external side effect happened exactly
 once.
@@ -319,6 +349,8 @@ correlation value is a binding concern.
 | `Attach` | task ID plus last applied sequence | Reconstructs the same suffix, then resumes live delivery |
 | `Submit` | command ID plus identical content | Returns the existing admission without another task record |
 | `DeleteTask` | task ID | Returns `TaskDeleted` whether or not the task still exists |
+| `ListDevices` | No durable identity; request correlation is transport-local | Returns the current signed-in apps |
+| `RevokeDevice` | device ID | Returns `DeviceRevoked` whether or not this call revoked it |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |
 | `PublishExecutionEvents` | execution ID, event IDs, and source sequences | Accepts exact overlap and appends only the new contiguous suffix |

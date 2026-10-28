@@ -10,8 +10,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn json_websocket_v13_operation_envelopes_have_expected_shapes() {
-    assert_eq!(JSON_WS_VERSION, 13);
+fn json_websocket_v14_operation_envelopes_have_expected_shapes() {
+    assert_eq!(JSON_WS_VERSION, 14);
     let ticket: ConnectionTicket = serde_json::from_value(json!(
         "0000000000000000000000000000000000000000000000000000000000000000"
     ))
@@ -24,7 +24,7 @@ fn json_websocket_v13_operation_envelopes_have_expected_shapes() {
         .expect("serialize ticket authentication"),
         json!({
             "type": "authenticate_ticket",
-            "version": 13,
+            "version": 14,
             "ticket": "0000000000000000000000000000000000000000000000000000000000000000"
         })
     );
@@ -91,7 +91,7 @@ fn json_websocket_v13_operation_envelopes_have_expected_shapes() {
 }
 
 #[test]
-fn json_websocket_v13_text_input_carries_context_and_a_guest_author_only_when_present() {
+fn json_websocket_v14_text_input_carries_context_and_a_guest_author_only_when_present() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let submit = ClientMessage::Submit {
@@ -192,7 +192,7 @@ fn json_websocket_v13_text_input_carries_context_and_a_guest_author_only_when_pr
 }
 
 #[test]
-fn json_websocket_v13_encodes_task_discovery() {
+fn json_websocket_v14_encodes_task_discovery() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let request = ClientMessage::ListTasks { request_id: 11 };
     let request_json = json!({
@@ -234,7 +234,7 @@ fn json_websocket_v13_encodes_task_discovery() {
 }
 
 #[test]
-fn json_websocket_v13_encodes_target_discovery_and_task_opening() {
+fn json_websocket_v14_encodes_target_discovery_and_task_opening() {
     let node_id = NodeId::from_uuid(Uuid::from_u128(3));
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let cases = [
@@ -298,7 +298,7 @@ fn json_websocket_v13_encodes_target_discovery_and_task_opening() {
 }
 
 #[test]
-fn json_websocket_v13_encodes_harness_neutral_execution_events() {
+fn json_websocket_v14_encodes_harness_neutral_execution_events() {
     let task_id = TaskId::from_uuid(Uuid::from_u128(1));
     let command_id = CommandId::from_uuid(Uuid::from_u128(2));
     let message = ClientMessage::PublishExecutionEvents {

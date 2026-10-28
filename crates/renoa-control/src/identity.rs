@@ -77,6 +77,12 @@ pub struct DeviceCredentials {
     pub credential: DeviceCredential,
 }
 
+/// A fresh 256-bit challenge as lowercase hex. The peer it is sent to may read
+/// it; only its freshness matters.
+pub(crate) fn random_nonce() -> Result<String, ControlError> {
+    random_secret()
+}
+
 fn random_secret() -> Result<String, ControlError> {
     let mut bytes = [0_u8; SECRET_BYTES];
     getrandom::fill(&mut bytes).map_err(|error| {

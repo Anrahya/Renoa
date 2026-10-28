@@ -4,13 +4,17 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use crate::{
     ControlError, DeviceCredential, DeviceCredentials, DeviceId, EnrollmentToken, PeerIdentity,
+    device_key::DevicePublicKey,
     store::{ControlStore, blocking, json_error, sqlite_error},
 };
 
+/// A device whose bearer credential checked out. When it registered a key, the
+/// connection must still prove it holds that key before it is authenticated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuthenticatedDevice {
     pub(crate) device_id: DeviceId,
     pub(crate) peer: PeerIdentity,
+    pub(crate) key: Option<DevicePublicKey>,
 }
 
 impl ControlStore {
@@ -96,19 +100,27 @@ impl ControlStore {
         let path = Arc::clone(&self.path);
         blocking(move || {
             let connection = crate::control_schema::open_connection(&path)?;
-            let peer_json = connection
+            let (peer_json, public_key) = connection
                 .query_row(
-                    "SELECT peer_json FROM devices
-                     WHERE device_id = ?1 AND credential_hash = ?2 AND revoked = 0",
+                    "SELECT d.peer_json, k.public_key
+                     FROM devices d LEFT JOIN device_keys k ON k.device_id = d.device_id
+                     WHERE d.device_id = ?1 AND d.credential_hash = ?2 AND d.revoked = 0",
                     params![device_id.to_string(), credential_hash.as_slice()],
-                    |row| row.get::<_, String>(0),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
                 )
                 .optional()
                 .map_err(sqlite_error)?
                 .ok_or_else(ControlError::authentication_failed)?;
+            let key = public_key
+                .map(|bytes| {
+                    DevicePublicKey::from_bytes(&bytes)
+                        .ok_or_else(|| ControlError::store("a stored device key is invalid"))
+                })
+                .transpose()?;
             Ok(AuthenticatedDevice {
                 device_id,
                 peer: serde_json::from_str(&peer_json).map_err(json_error)?,
+                key,
             })
         })
         .await

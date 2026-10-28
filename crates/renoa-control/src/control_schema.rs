@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError> {
     let version = connection
@@ -35,6 +35,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
         add_execution_command_causation(connection)?;
     }
     create_continuity_schema(connection)?;
+    crate::device_store::create_schema(connection)?;
     crate::node_ownership::create_schema(connection)?;
     if (1..=11).contains(&version) {
         crate::node_ownership::adopt_task_owners(connection)?;
@@ -44,7 +45,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
     create_oauth_relay_schema(connection)?;
     create_credential_relay_schema(connection)?;
     connection
-        .execute_batch("PRAGMA user_version = 12;")
+        .execute_batch("PRAGMA user_version = 13;")
         .map_err(sqlite_error)
 }
 

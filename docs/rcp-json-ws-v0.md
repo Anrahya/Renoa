@@ -3,7 +3,7 @@
 ## Status
 
 This document maps the [RCP operation contract](rcp-operations-v0.md) onto the
-first implemented transport binding. The current binding version is `13`.
+first implemented transport binding. The current binding version is `14`.
 
 The binding is a candidate contract, not a stable public release. The current
 version is implemented by `renoa-control`, `renoa-node`, the TypeScript headless and
@@ -26,7 +26,9 @@ a real Pi OpenAI-compatible turn.
 The first application frame must be `enroll`, `authenticate`, or
 `authenticate_ticket`. Enrollment returns credentials and ends that connection.
 Either authentication frame returns `authenticated` and keeps the connection
-open for operations.
+open for operations, except that `authenticate` for a device that registered a
+key is answered with `device_challenge` and returns `authenticated` only after a
+valid `device_proof` (see Session establishment).
 
 The client must send that first application frame within 10 seconds after the
 WebSocket upgrade. The coordinator closes a connection that misses the
@@ -53,14 +55,19 @@ binding.
 ## Binding version
 
 The client sends `version` only while enrolling or authenticating. The server
-rejects any value other than `13` with `version_mismatch` and ends the session.
+rejects any value other than `14` with `version_mismatch` and ends the session.
 Once authenticated, later operation frames do not repeat the version.
 
 The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `13` supersedes version `12` by adding an optional `author` to text
+Version `14` supersedes version `13` by adding the device-key handshake
+(`device_challenge`, `device_proof`) and the owner's device operations
+(`list_devices`, `revoke_device`, with `device_list` and `device_revoked`). A
+version `13` peer is rejected at authentication.
+
+Version `13` superseded version `12` by adding an optional `author` to text
 command input, which marks text written by a guest rather than the
 authenticated principal. A version `12` peer is rejected at authentication.
 
@@ -97,7 +104,7 @@ Enrollment request:
 ```json
 {
   "type": "enroll",
-  "version": 13,
+  "version": 14,
   "token": "<single-use enrollment secret>"
 }
 ```
@@ -107,7 +114,7 @@ Enrollment response:
 ```json
 {
   "type": "enrolled",
-  "version": 13,
+  "version": 14,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -120,7 +127,7 @@ Authentication request:
 ```json
 {
   "type": "authenticate",
-  "version": 13,
+  "version": 14,
   "credentials": {
     "deviceId": "00000000-0000-0000-0000-000000000001",
     "credential": "<device secret>"
@@ -133,7 +140,7 @@ Browser ticket authentication request:
 ```json
 {
   "type": "authenticate_ticket",
-  "version": 13,
+  "version": 14,
   "ticket": "<60-second single-use connection secret>"
 }
 ```
@@ -149,12 +156,44 @@ Successful authentication:
 ```json
 {
   "type": "authenticated",
-  "version": 13
+  "version": 14
 }
 ```
 
 The client never sends a principal, surface role, or node role during
 authentication. Those values come from the durable device enrollment.
+
+### Key-bound devices
+
+A device that signed in with a device key (see
+[identity-v0.md](identity-v0.md), "App sign-in and device keys") is answered
+with a challenge instead of `authenticated`:
+
+```json
+{
+  "type": "device_challenge",
+  "nonce": "<64 lowercase hex characters, fresh for this connection>"
+}
+```
+
+The client answers with its signature over
+`renoa device proof v1\n<deviceId>\n<nonce>`, as ASN.1 DER base64url without
+padding:
+
+```json
+{
+  "type": "device_proof",
+  "signature": "<signature>"
+}
+```
+
+A valid proof returns `authenticated`. Any other next frame, and any proof that
+is malformed or does not verify against the registered key, returns
+`authentication_failed` and ends the session. `device_proof` is not an
+operation: before a challenge it is refused as a first frame
+(`invalid_message`), and after authentication it is `invalid_message`. The
+challenge and the 10-second authentication deadline cover the whole exchange. A
+device without a registered key never sees a challenge.
 
 ## Surface frames
 
@@ -260,6 +299,65 @@ Success, including a retry for a task already deleted, returns:
 
 A task with an execution in flight returns `conflict`; another principal's task
 returns `not_found`.
+
+### List devices
+
+```json
+{
+  "type": "list_devices",
+  "request_id": 44
+}
+```
+
+The response lists the principal's active signed-in apps, oldest first:
+
+```json
+{
+  "type": "device_list",
+  "request_id": 44,
+  "devices": [
+    {
+      "deviceId": "00000000-0000-0000-0000-000000000040",
+      "surface": "android",
+      "label": "Pixel 9",
+      "createdAtMs": 1790000000000,
+      "current": true
+    }
+  ]
+}
+```
+
+`current` is true for the device that sent the request and false for every
+device when a browser asks. Only devices that registered a key are listed; a
+node or a service link such as Discord is not. A connection that is neither a
+browser ticket nor a device that proved its key receives `invalid_role`.
+
+### Revoke a device
+
+```json
+{
+  "type": "revoke_device",
+  "request_id": 45,
+  "device_id": "00000000-0000-0000-0000-000000000040"
+}
+```
+
+Success, including a retry for a device the principal already revoked, returns:
+
+```json
+{
+  "type": "device_revoked",
+  "request_id": 45,
+  "device_id": "00000000-0000-0000-0000-000000000040"
+}
+```
+
+The acknowledgement is sent after the revocation is committed. The device's open
+connections then end, and its next `authenticate` returns
+`authentication_failed`. A device may revoke itself; its acknowledgement is
+sent before its connection closes. Another principal's device, an unknown
+device, and a device without a key return `not_found`; a connection that may not
+administer devices receives `invalid_role`.
 
 ### Attach
 

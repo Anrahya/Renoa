@@ -11,7 +11,12 @@ use webauthn_rs::{
     },
 };
 
-use crate::{ConnectionTicket, ControlError, PasskeyBootstrapToken, store::ControlStore};
+use crate::{
+    ConnectionTicket, ControlError, PasskeyBootstrapToken, control_log,
+    device_key::{DeviceRegistration, check_registration_proof},
+    device_store::SignedInDevice,
+    store::ControlStore,
+};
 use crate::{browser_sessions::SESSION_LIFETIME, identity::BrowserSessionToken};
 
 const CEREMONY_LIFETIME: Duration = Duration::from_mins(5);
@@ -37,14 +42,32 @@ pub(crate) struct TicketGrant {
     pub(crate) session_expires_at: SystemTime,
 }
 
+/// What a finished ceremony grants: a browser's ticket and remembered login,
+/// or the credential of the device an app signed in.
+pub(crate) enum SignIn {
+    Browser(TicketGrant),
+    Device(SignedInDevice),
+}
+
 impl BrowserIdentity {
-    pub(crate) fn new(rp_id: &str, rp_origin: &str) -> Result<Self, ControlError> {
+    /// `app_origins` are extra origins whose assertions are accepted, each
+    /// compared by exact equality, such as an Android app's
+    /// `android:apk-key-hash:` origin.
+    pub(crate) fn new(
+        rp_id: &str,
+        rp_origin: &str,
+        app_origins: &[Url],
+    ) -> Result<Self, ControlError> {
         let origin = Url::parse(rp_origin)
             .map_err(|error| ControlError::invalid(format!("invalid passkey origin: {error}")))?;
         validate_origin(&origin)?;
-        let webauthn = WebauthnBuilder::new(rp_id, &origin)
+        let mut builder = WebauthnBuilder::new(rp_id, &origin)
             .map_err(|_| ControlError::invalid("passkey RP ID does not match its origin"))?
-            .rp_name("Renoa")
+            .rp_name("Renoa");
+        for app_origin in app_origins {
+            builder = builder.append_allowed_origin(app_origin);
+        }
+        let webauthn = builder
             .build()
             .map_err(|_| ControlError::invalid("invalid passkey configuration"))?;
         Ok(Self {
@@ -62,11 +85,18 @@ impl BrowserIdentity {
         store: &ControlStore,
         bootstrap_token: PasskeyBootstrapToken,
         surface: SurfaceRef,
+        device: Option<DeviceRegistration>,
     ) -> Result<CeremonyOptions<CreationChallengeResponse>, ControlError> {
         let now = SystemTime::now();
         let bootstrap = store
             .load_registration_bootstrap(bootstrap_token.clone(), now)
             .await?;
+        if let Some(device) = &device {
+            // Refuse before the one-use bootstrap is spent.
+            store
+                .check_device_registration(bootstrap.principal_id, surface.clone(), device.clone())
+                .await?;
+        }
         let excluded = bootstrap
             .passkeys
             .iter()
@@ -92,6 +122,7 @@ impl BrowserIdentity {
                 surface,
                 ceremony_id,
                 state,
+                device,
                 expiry(now, CEREMONY_LIFETIME)?,
                 now,
             )
@@ -107,13 +138,28 @@ impl BrowserIdentity {
         store: &ControlStore,
         ceremony_id: Uuid,
         credential: RegisterPublicKeyCredential,
-    ) -> Result<TicketGrant, ControlError> {
+        device_proof: Option<&str>,
+    ) -> Result<SignIn, ControlError> {
         let now = SystemTime::now();
         let ceremony = store.claim_registration_ceremony(ceremony_id, now).await?;
+        check_registration_proof(ceremony_id, ceremony.device.as_ref(), device_proof)?;
         let passkey = self
             .webauthn
             .finish_passkey_registration(&credential, &ceremony.state)
             .map_err(|_| ControlError::authentication_failed())?;
+        if let Some(registration) = ceremony.device {
+            let signed_in = store
+                .store_registration_and_device(
+                    ceremony.principal_id,
+                    ceremony.surface,
+                    passkey,
+                    registration,
+                    now,
+                )
+                .await?;
+            log_device_sign_in(ceremony.principal_id, &signed_in);
+            return Ok(SignIn::Device(signed_in));
+        }
         let grant = new_ticket(now)?;
         store
             .store_registration_and_ticket(
@@ -124,7 +170,7 @@ impl BrowserIdentity {
                 now,
             )
             .await?;
-        Ok(grant)
+        Ok(SignIn::Browser(grant))
     }
 
     pub(crate) async fn start_authentication(
@@ -132,8 +178,14 @@ impl BrowserIdentity {
         store: &ControlStore,
         principal_id: PrincipalId,
         surface: SurfaceRef,
+        device: Option<DeviceRegistration>,
     ) -> Result<CeremonyOptions<RequestChallengeResponse>, ControlError> {
         let passkeys = store.load_passkeys_for_authentication(principal_id).await?;
+        if let Some(device) = &device {
+            store
+                .check_device_registration(principal_id, surface.clone(), device.clone())
+                .await?;
+        }
         let (options, state) = self
             .webauthn
             .start_passkey_authentication(&passkeys)
@@ -148,6 +200,7 @@ impl BrowserIdentity {
                 surface,
                 ceremony_id,
                 state,
+                device,
                 expiry(now, CEREMONY_LIFETIME)?,
                 now,
             )
@@ -163,15 +216,30 @@ impl BrowserIdentity {
         store: &ControlStore,
         ceremony_id: Uuid,
         credential: PublicKeyCredential,
-    ) -> Result<TicketGrant, ControlError> {
+        device_proof: Option<&str>,
+    ) -> Result<SignIn, ControlError> {
         let now = SystemTime::now();
         let ceremony = store
             .claim_authentication_ceremony(ceremony_id, now)
             .await?;
+        check_registration_proof(ceremony_id, ceremony.device.as_ref(), device_proof)?;
         let authentication = self
             .webauthn
             .finish_passkey_authentication(&credential, &ceremony.state)
             .map_err(|_| ControlError::authentication_failed())?;
+        if let Some(registration) = ceremony.device {
+            let signed_in = store
+                .update_passkey_and_store_device(
+                    ceremony.principal_id,
+                    ceremony.surface,
+                    authentication,
+                    registration,
+                    now,
+                )
+                .await?;
+            log_device_sign_in(ceremony.principal_id, &signed_in);
+            return Ok(SignIn::Device(signed_in));
+        }
         let grant = new_ticket(now)?;
         store
             .update_passkey_and_store_ticket(
@@ -182,8 +250,20 @@ impl BrowserIdentity {
                 now,
             )
             .await?;
-        Ok(grant)
+        Ok(SignIn::Browser(grant))
     }
+}
+
+fn log_device_sign_in(principal_id: PrincipalId, signed_in: &SignedInDevice) {
+    control_log::event(
+        "info",
+        "device_signed_in",
+        &serde_json::json!({
+            "device_id": signed_in.credentials.device_id,
+            "principal_id": principal_id,
+            "adopted": signed_in.adopted,
+        }),
+    );
 }
 
 pub(crate) fn parse_surface(value: String) -> Result<SurfaceRef, ControlError> {
