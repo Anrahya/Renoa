@@ -263,7 +263,10 @@ class FakeCoordinator : AutoCloseable {
             val text = "renoa device proof v1\n${credentials.deviceId}\n$nonce"
             val valid =
                 runCatching {
-                    val signature = Base64.getUrlDecoder().decode(frame.getValue("signature").jsonPrimitive.content)
+                    val encoded = frame.getValue("signature").jsonPrimitive.content
+                    // The coordinator decodes base64url without padding and refuses padding.
+                    require('=' !in encoded)
+                    val signature = Base64.getUrlDecoder().decode(encoded)
                     Signature.getInstance("SHA256withECDSA").run {
                         initVerify(deviceKey)
                         update(text.toByteArray(Charsets.UTF_8))

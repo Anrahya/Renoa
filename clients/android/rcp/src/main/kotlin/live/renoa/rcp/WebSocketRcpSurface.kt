@@ -22,6 +22,13 @@ private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 private val TICKET_PATTERN = Regex("^[0-9a-fA-F]{64}$")
 private val NONCE_PATTERN = Regex("^[0-9a-f]{64}$")
 
+/** The text a device signs to prove its key on one connection, as `docs/identity-v0.md` defines it. */
+internal fun deviceProofText(deviceId: Uuid, nonce: String): ByteArray =
+    "renoa device proof v1\n$deviceId\n$nonce".toByteArray(Charsets.UTF_8)
+
+/** A DER signature as the binding carries it: base64url without padding, which the coordinator requires. */
+internal fun encodeSignature(der: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(der)
+
 /** Replay of one attachment: complete once the event at [through] has been applied. */
 private class Replay {
     val done = CompletableDeferred<Unit>()
@@ -351,8 +358,7 @@ class WebSocketRcpSurface(
         val sign =
             device.sign
                 ?: throw DeviceKeyRequired("this device registered a key at sign-in, and the client was given none; sign in again")
-        val proof = "renoa device proof v1\n${device.credentials.deviceId}\n$nonce".toByteArray(Charsets.UTF_8)
-        val signature = Base64.getUrlEncoder().withoutPadding().encodeToString(sign(proof))
+        val signature = encodeSignature(sign(deviceProofText(device.credentials.deviceId, nonce)))
         send(connection, encodeClientMessage(ClientMessage.DeviceProof(signature)))
     }
 

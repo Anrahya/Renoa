@@ -139,4 +139,18 @@ class WireTest {
             {"commandId":"$id","principalId":"$id","surface":"d","target":"t","input":{"type":"text","text":"x","author":"principal"}}}}}"""
         assertFailsWith<ProtocolViolation> { decodeServerMessage(principal) }
     }
+
+    @Test
+    fun anUnknownStatusOutcomeOrActivityAndAMissingVersion14FieldAreRejected() {
+        val task = "00000000-0000-0000-0000-000000000010"
+        val frames =
+            listOf(
+                """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a","status":"sleeping"}]}""",
+                """{"type":"task_list","request_id":1,"tasks":[{"taskId":"$task","target":"agent:a"}]}""",
+                """{"type":"target_list","request_id":1,"targets":[{"nodeId":"$task","target":"agent:a"}]}""",
+                """{"type":"stop_accepted","request_id":1,"command_id":"$task","outcome":"stopped"}""",
+                """{"type":"live_activity","task_id":"$task","command_id":"$task","activity":{"type":"reasoning_delta","text":"x"}}""",
+            )
+        for (frame in frames) assertFailsWith<ProtocolViolation>(frame) { decodeServerMessage(frame) }
+    }
 }

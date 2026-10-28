@@ -8,7 +8,9 @@ sealed interface Authentication {
     /**
      * A signed-in device. One that registered a key at sign-in also proves the key on every
      * connection: [sign] returns an ECDSA P-256 SHA-256 signature, ASN.1 DER, over the bytes it is
-     * given, made with the key that never leaves the device.
+     * given, made with the key that never leaves the device. It runs before the client reads any
+     * other frame, and the coordinator ends a connection not authenticated within 10 seconds, so
+     * it must not wait for the user.
      */
     class Device(val credentials: DeviceCredentials, val sign: (suspend (ByteArray) -> ByteArray)? = null) : Authentication
 
@@ -41,9 +43,11 @@ interface RcpState {
 class CommandSubmission(val commandId: Uuid, val accepted: Deferred<Unit>)
 
 /**
- * Receives one live frame of a task's running turn, in order with the task's events. Frames are
- * advisory: one may be missed and none is replayed, and the command's `assistant_message` record
- * supersedes the text. The client ignores a throw, so drawing a draft never ends the connection.
+ * Receives one live frame of a task's running turn, called in arrival order with the task's
+ * events: a frame the node published before a record arrives before it, and one published just
+ * after may too. Frames are advisory: one may be missed and none is replayed, and the command's
+ * `assistant_message` record supersedes the text. The client ignores an exception the callback
+ * throws, so drawing a draft never ends the connection.
  */
 typealias ApplyLiveActivity = (commandId: Uuid, activity: LiveActivity) -> Unit
 
