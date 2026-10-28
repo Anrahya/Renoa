@@ -1308,6 +1308,7 @@ async fn attach_all(surface: &mut Socket, task_id: TaskId) -> Vec<TaskEvent> {
             request_id: 11,
             task_id,
             after_sequence: None,
+            live: false,
         },
     )
     .await;

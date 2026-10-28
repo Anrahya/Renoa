@@ -7,7 +7,7 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
-use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent, TargetCard};
+use renoa_protocol::{CommandEnvelope, CommandId, TargetCard};
 use tokio::{
     sync::{broadcast, broadcast::error::RecvError, watch},
     task::JoinSet,
@@ -264,20 +264,7 @@ async fn handle_server_message(
             send_pending(socket, &runtime.state, live, publications).await?;
         }
         ServerMessage::ExecutionAcknowledged { command_id } => {
-            let publication = publications.get_mut(&command_id).ok_or_else(|| {
-                NodeError::Protocol(format!(
-                    "received admission acknowledgement for unknown command {command_id}"
-                ))
-            })?;
-            if !publication.admission_in_flight {
-                return Err(NodeError::Protocol(format!(
-                    "received unsolicited admission acknowledgement for command {command_id}"
-                )));
-            }
-            runtime.state.acknowledge_admission(command_id).await?;
-            publication.record.admission_acked = true;
-            publication.admission_in_flight = false;
-            refresh_publications(runtime, publications).await?;
+            acknowledge_admission(runtime, publications, command_id).await?;
         }
         ServerMessage::ExecutionEventsAccepted {
             command_id,
@@ -354,7 +341,6 @@ async fn handle_server_message(
         | ServerMessage::TaskOpened { .. }
         | ServerMessage::TaskDeleted { .. }
         | ServerMessage::Attached { .. }
-        | ServerMessage::CommandAccepted { .. }
         | ServerMessage::StopAccepted { .. }
         | ServerMessage::LiveActivity { .. }
         | ServerMessage::TaskEvent { .. } => {
@@ -363,6 +349,28 @@ async fn handle_server_message(
             ));
         }
     }
+    Ok(())
+}
+
+async fn acknowledge_admission(
+    runtime: &Arc<NodeRuntime>,
+    publications: &mut HashMap<CommandId, Publication>,
+    command_id: CommandId,
+) -> Result<(), NodeError> {
+    let publication = publications.get_mut(&command_id).ok_or_else(|| {
+        NodeError::Protocol(format!(
+            "received admission acknowledgement for unknown command {command_id}"
+        ))
+    })?;
+    if !publication.admission_in_flight {
+        return Err(NodeError::Protocol(format!(
+            "received unsolicited admission acknowledgement for command {command_id}"
+        )));
+    }
+    runtime.state.acknowledge_admission(command_id).await?;
+    publication.record.admission_acked = true;
+    publication.admission_in_flight = false;
+    refresh_publications(runtime, publications).await?;
     Ok(())
 }
 

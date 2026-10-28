@@ -95,20 +95,7 @@ pub(crate) async fn handle_node_operation(
         NodeOperation::AcknowledgeExecution {
             task_id,
             command_id,
-        } => {
-            let result = state
-                .store
-                .acknowledge_execution(node_id, task_id, command_id)
-                .await;
-            match result {
-                Ok(()) => {
-                    let _ = outgoing
-                        .send(ServerMessage::ExecutionAcknowledged { command_id })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, None, &error).await,
-            }
-        }
+        } => acknowledge_execution(state, outgoing, node_id, task_id, command_id).await,
         NodeOperation::AcknowledgeStop {
             task_id,
             command_id,
@@ -154,6 +141,27 @@ pub(crate) async fn handle_node_operation(
             )
             .await;
         }
+    }
+}
+
+async fn acknowledge_execution(
+    state: &CoordinatorState,
+    outgoing: &mpsc::Sender<ServerMessage>,
+    node_id: NodeId,
+    task_id: TaskId,
+    command_id: CommandId,
+) {
+    match state
+        .store
+        .acknowledge_execution(node_id, task_id, command_id)
+        .await
+    {
+        Ok(()) => {
+            let _ = outgoing
+                .send(ServerMessage::ExecutionAcknowledged { command_id })
+                .await;
+        }
+        Err(error) => send_control_error(outgoing, None, &error).await,
     }
 }
 

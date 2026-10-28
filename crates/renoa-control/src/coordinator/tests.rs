@@ -589,6 +589,7 @@ fn write_command(principal_id: PrincipalId, target: TargetRef) -> CommandEnvelop
             context: None,
             author: renoa_protocol::Author::Principal,
         },
+        origin: None,
     }
 }
 
