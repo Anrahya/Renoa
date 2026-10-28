@@ -46,7 +46,7 @@ import live.renoa.app.theme.ThemeName
 
 /** The app. It opens on Home once [signedIn], and on sign-in, which runs [signingIn], until then. */
 @Composable
-internal fun RenoaApp(repository: AgentRepository, signedIn: Boolean, signingIn: suspend (SignInCode, Passkeys) -> Unit) {
+internal fun RenoaApp(repository: () -> AgentRepository, signedIn: Boolean, signingIn: suspend (SignInCode, Passkeys) -> Unit) {
     // The phone's light or dark setting decides, until the owner taps the mark to pick the other theme.
     var picked by rememberSaveable { mutableStateOf<ThemeName?>(null) }
     val theme = picked ?: if (isSystemInDarkTheme()) ThemeName.Graphite else ThemeName.Paper
@@ -75,7 +75,7 @@ internal fun RenoaApp(repository: AgentRepository, signedIn: Boolean, signingIn:
                         SignInScreen(model.state, model.code, { model.code = it }) { model.submit(Passkeys.of(activity)) }
                     }
                     Route.Home -> {
-                        val model: HomeViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { HomeViewModel(repository) } })
+                        val model: HomeViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { HomeViewModel(repository()) } })
                         HomeScreen(
                             model,
                             onOpenChat = { navigator.push(Route.Chat(it)) },
@@ -84,17 +84,17 @@ internal fun RenoaApp(repository: AgentRepository, signedIn: Boolean, signingIn:
                         )
                     }
                     is Route.Chat -> {
-                        val model: ChatViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { ChatViewModel(repository, route.agentId) } })
+                        val model: ChatViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { ChatViewModel(repository(), route.agentId) } })
                         ChatScreen(model, onBack = { navigator.pop() }, onOpenProfile = { navigator.push(Route.Edit(it)) })
                     }
                     is Route.Edit -> {
                         val model: AgentEditorViewModel =
-                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository, EditorMode.Editing(route.agentId)) } })
+                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Editing(route.agentId)) } })
                         AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.pop() })
                     }
                     Route.Create -> {
                         val model: AgentEditorViewModel =
-                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository, EditorMode.Creating) } })
+                            viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { AgentEditorViewModel(repository(), EditorMode.Creating) } })
                         AgentEditorScreen(model, onClose = { navigator.pop() }, onFinished = { navigator.replaceTop(Route.Chat(it)) })
                     }
                 }
