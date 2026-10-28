@@ -411,7 +411,7 @@ context, and every tool call refused; the Pi node fails it without running.
 
 RCP reserves no words in text. The Renoa node reads the principal's text that is
 exactly `/compact` (surrounding whitespace ignored) as its compaction control
-and ends the command with one fixed `assistant_message` and `completed`;
+and ends the command with one `assistant_message` notice and `completed`;
 `/compact` followed by more words ends `failed`, and a guest's is an ordinary
 message (see `rcp-v0.md`). The Pi node treats all of it as ordinary text.
 

@@ -48,18 +48,27 @@ pub(crate) fn project_tool_result(result: ToolResult) -> Result<ExecutionEventKi
     })
 }
 
-/// What a surface shows after the owner's `/compact`: the agent says nothing
-/// for a summary, so the node reports the one fact the owner asked for.
+/// What a surface shows after the owner's `/compact` wrote a summary: the
+/// agent says nothing for a summary, so the node reports the one fact the owner
+/// asked for.
 pub(crate) const COMPACTED_NOTICE: &str =
     "Earlier messages are summarized now. This conversation continues from that summary.";
 
+/// What a surface shows after a `/compact` that found nothing new to summarize.
+pub(crate) const UP_TO_DATE_NOTICE: &str = "There was nothing new to summarize.";
+
 /// The records that close a command: the compaction notice when the command
-/// summarized the conversation, then its terminal record.
+/// was a compaction, then its terminal record.
 pub(crate) fn closing_events(outcome: LocalTurnOutcome) -> Vec<ExecutionEventKind> {
     let mut events = Vec::new();
-    if matches!(outcome, LocalTurnOutcome::Compacted { .. }) {
+    if let LocalTurnOutcome::Compacted { summarized, .. } = outcome {
         events.push(ExecutionEventKind::AssistantMessage {
-            text: COMPACTED_NOTICE.to_owned(),
+            text: if summarized {
+                COMPACTED_NOTICE
+            } else {
+                UP_TO_DATE_NOTICE
+            }
+            .to_owned(),
         });
     }
     events.push(terminal_event(outcome));

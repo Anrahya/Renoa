@@ -35,6 +35,9 @@ pub enum LocalTurnOutcome {
     },
     Compacted {
         estimated_input_tokens: u64,
+        /// Whether this compaction wrote a new summary. False when everything
+        /// before the command was already summarized.
+        summarized: bool,
     },
     Cancelled,
     Failed {

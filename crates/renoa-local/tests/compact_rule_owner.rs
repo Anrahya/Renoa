@@ -1,6 +1,10 @@
 //! `renoa-local` owns the rule that decides which text is the `/compact`
 //! control. The crates that carry plain text to a Host session call it, so a
 //! second spelling of the rule in them would let two surfaces disagree.
+//!
+//! This is a tripwire, not a parser: it catches a copy that spells the command
+//! as the literal `"/compact"`, the way the rule itself does. A copy spelled
+//! some other way (a trailing space, `concat!`) passes it.
 
 use std::{fs, path::Path};
 
@@ -29,8 +33,11 @@ fn only_the_host_spells_the_compact_rule() {
         assert!(!files.is_empty(), "{name} has no sources to check");
         for file in files {
             let source = fs::read_to_string(&file).expect("read source file");
-            // Unit tests may spell the command they exercise.
-            let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+            // A trailing unit-test module may spell the command it exercises;
+            // anything before it is production code.
+            let production = source
+                .rfind("#[cfg(test)]\nmod tests")
+                .map_or(source.as_str(), |start| &source[..start]);
             if production.contains("\"/compact\"") {
                 offenders.push(file.display().to_string());
             }

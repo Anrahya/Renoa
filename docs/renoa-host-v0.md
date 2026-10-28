@@ -100,8 +100,9 @@ keeps no tail. A summary is a model request that surfaces never see as an
 assistant message. `/compact` is honoured on ACP, Slack (`!compact`), Telegram
 and, through the RCP node, on every surface that sends the owner's text: Discord,
 the Control Room and apps. The node treats a command from the principal that is
-exactly `/compact` as that control, ends it with one fixed notice as its only
-assistant message, and ends `/compact` followed by more words as failed before
+exactly `/compact` as that control, ends it with one notice as its only
+assistant message (one wording when it wrote a new summary, another when there
+was nothing new to summarize), and ends `/compact` followed by more words as failed before
 it opens a session. A guest's `/compact` is an ordinary message. What a long
 conversation costs to read is tracked in #125.
 

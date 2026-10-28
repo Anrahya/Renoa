@@ -13,14 +13,16 @@ mod support;
 
 use std::time::Duration;
 
-use renoa_control::{DeviceCredentials, TaskEvent, TaskEventKind, TaskId};
+use renoa_control::{DeviceCredentials, ServerMessage, TaskEvent, TaskEventKind, TaskId};
 use renoa_node::{NodeError, RenoaNode};
-use renoa_protocol::{Author, CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal};
+use renoa_protocol::{
+    Author, CommandId, CommandInput, ExecutionEventKind, ExecutionTerminal, LiveActivity,
+};
 use tokio::{task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 
 use support::{
-    HostFixture, Socket, TestSystem, attach, collect_through_terminal,
+    HostFixture, Socket, TestSystem, attach, attach_live, collect_through_terminal,
     collect_through_turn_started, submit_input_when_node_is_online, submit_when_node_is_online,
     wait_for_path,
 };
@@ -83,6 +85,34 @@ async fn say(
     submit_when_node_is_online(surface, task_id, command_id, text).await;
     let events = collect_through_terminal(surface).await;
     (command_id, recorded(&events, command_id))
+}
+
+/// Reads a live-attached surface through a command's terminal record,
+/// returning all the text its live frames showed and the journal events.
+async fn collect_live_through_terminal(surface: &mut Socket) -> (String, Vec<TaskEvent>) {
+    let mut shown = String::new();
+    let mut events = Vec::new();
+    loop {
+        match support::receive(surface).await {
+            ServerMessage::LiveActivity {
+                activity: LiveActivity::TextDelta { text, .. },
+                ..
+            } => shown.push_str(&text),
+            ServerMessage::LiveActivity { .. } => {}
+            ServerMessage::TaskEvent { event } => {
+                let terminal = matches!(
+                    &event.kind,
+                    TaskEventKind::ExecutionEvent { event, .. }
+                        if matches!(event.kind, ExecutionEventKind::ExecutionTerminated { .. })
+                );
+                events.push(event);
+                if terminal {
+                    return (shown, events);
+                }
+            }
+            other => panic!("unexpected message {other:?}"),
+        }
+    }
 }
 
 fn completed() -> ExecutionEventKind {
@@ -184,7 +214,18 @@ async fn compacting_an_empty_chat_asks_no_model() {
 
         let (_, compact) = say(&mut surface, system.task_id, "  /compact\n").await;
 
-        assert_eq!(compact.last(), Some(&completed()));
+        assert_eq!(
+            compact,
+            vec![
+                ExecutionEventKind::ExecutionStarted,
+                ExecutionEventKind::TurnStarted,
+                ExecutionEventKind::AssistantMessage {
+                    text: "There was nothing new to summarize.".to_owned()
+                },
+                completed(),
+            ],
+            "nothing was summarized, so the notice does not claim it was"
+        );
         assert_eq!(fixture.summary_attempts(), 0);
         assert!(fixture.last_request().is_none(), "no model was called");
         assert_eq!(fixture.session_event_count(system.task_id, CHECKPOINT), 0);
@@ -273,6 +314,51 @@ async fn compact_with_extra_words_fails_before_any_model_or_session_work() {
 }
 
 #[tokio::test]
+async fn a_stop_recorded_before_a_refused_compact_ends_it_cancelled() {
+    timeout(Duration::from_secs(20), async {
+        let mut system = TestSystem::start().await;
+        let fixture = HostFixture::install(&mut system).await;
+        let shutdown = CancellationToken::new();
+        let node = RenoaNode::open(
+            system.url.clone(),
+            system.enroll_node().await,
+            fixture.host(),
+        )
+        .expect("open execution node");
+        // The stop reached the node before the command did.
+        let command_id = CommandId::new();
+        fixture.record_stop_in_ledger(system.task_id, command_id);
+        let node = Running {
+            task: tokio::spawn(node.run(shutdown.clone())),
+            shutdown,
+        };
+        let mut surface = system.connect_surface().await;
+        attach(&mut surface, system.task_id).await;
+
+        submit_when_node_is_online(&mut surface, system.task_id, command_id, "/compact now").await;
+        let events = collect_through_terminal(&mut surface).await;
+
+        assert_eq!(
+            recorded(&events, command_id),
+            vec![
+                ExecutionEventKind::ExecutionStarted,
+                ExecutionEventKind::ExecutionTerminated {
+                    terminal: ExecutionTerminal::Cancelled {
+                        reason: "agent turn was cancelled".to_owned()
+                    },
+                },
+            ],
+            "a command stopped before it started begins cancelled, refused or not"
+        );
+
+        node.stop().await;
+        system.stop().await;
+    })
+    .await
+    .expect("stopped refusal test timed out");
+}
+
+#[tokio::test]
 async fn an_invalid_summary_fails_the_command_and_leaves_the_chat_usable() {
     timeout(Duration::from_secs(20), async {
         let mut system = TestSystem::start().await;
@@ -355,7 +441,7 @@ async fn automatic_compaction_inside_a_turn_never_shows_its_summary_to_a_surface
         let fixture = HostFixture::install(&mut system).await;
         let node = start_node(&system, system.enroll_node().await, &fixture);
         let mut surface = system.connect_surface().await;
-        attach(&mut surface, system.task_id).await;
+        attach_live(&mut surface, system.task_id).await;
         // Each message is about half of the fixture model's input budget, so
         // the second turn cannot be sent without summarizing the first.
         let filler = "x".repeat(150_000);
@@ -367,12 +453,21 @@ async fn automatic_compaction_inside_a_turn_never_shows_its_summary_to_a_surface
         .await;
         assert_eq!(fixture.summary_attempts(), 0);
 
-        let (_, second) = say(
+        let command_id = CommandId::new();
+        submit_when_node_is_online(
             &mut surface,
             system.task_id,
+            command_id,
             &format!("Long message two. {filler}"),
         )
         .await;
+        let (shown, events) = collect_live_through_terminal(&mut surface).await;
+        let second = recorded(&events, command_id);
+
+        assert_eq!(
+            shown, "Long answer two.",
+            "the surface was shown the reply as it streamed, and not the summary"
+        );
 
         assert_eq!(
             second,

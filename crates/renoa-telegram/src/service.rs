@@ -355,6 +355,7 @@ fn format_outcome(outcome: LocalTurnOutcome) -> String {
         LocalTurnOutcome::Completed { output, .. } => output,
         LocalTurnOutcome::Compacted {
             estimated_input_tokens,
+            ..
         } => format!("Context compacted. Estimated context: {estimated_input_tokens} tokens."),
         LocalTurnOutcome::Cancelled => "Stopped.".to_owned(),
         LocalTurnOutcome::Failed { reason } => {

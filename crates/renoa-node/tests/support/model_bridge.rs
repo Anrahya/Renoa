@@ -117,6 +117,10 @@ const SUMMARY_TURN: &str = r###"if (summarizing) {
     writeFileSync(join(workspace, "model-started"), "started");
     while (true) await new Promise(resolve => setTimeout(resolve, 10));
   } else {
+    // Streamed as a reply would be, so a surface would see it if a summary's
+    // message events reached the node.
+    process.stdout.write(JSON.stringify({ event: "content_delta", content_index: 0,
+      delta: { type: "text", text: "## Goal and user intent" } }) + "\n");
     content = [{ type: "text", text: [
       "## Goal and user intent\nTalk with the owner.",
       "## Hard constraints and preferences\nNone yet.",
@@ -139,6 +143,8 @@ const COMPACTION_TURNS: &str = r#"} else if (prompt === "Break the summary." || 
 } else if (prompt.startsWith("Long message one.")) {
   content = [{ type: "text", text: "Long answer one." }];
 } else if (prompt.startsWith("Long message two.")) {
+  process.stdout.write(JSON.stringify({ event: "content_delta", content_index: 0,
+    delta: { type: "text", text: "Long answer two." } }) + "\n");
   content = [{ type: "text", text: "Long answer two." }];
 "#;
 

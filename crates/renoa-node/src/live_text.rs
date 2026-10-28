@@ -21,7 +21,7 @@ pub(crate) const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Default)]
 pub(crate) struct LiveText {
-    /// Whether the model request in flight may stream its text.
+    /// Whether a model request is in flight, so its text may stream.
     streaming: bool,
     next_sequence: u64,
     pending: String,
@@ -29,13 +29,14 @@ pub(crate) struct LiveText {
 }
 
 impl LiveText {
-    /// The live frame one agent event completes, if any. Only visible text of
-    /// a model request that offers tools leaves the node: reasoning and
-    /// tool-call fragments never do.
+    /// The live frame one agent event completes, if any. Only visible text
+    /// leaves the node: reasoning and tool-call fragments never do. A context
+    /// summary emits no message events at all (the loop's
+    /// `renoa.agent.compaction` binding drops them), so it never streams.
     pub(crate) fn observe(&mut self, event: &AgentEvent, now: Instant) -> Option<LiveActivity> {
         match event {
-            AgentEvent::ModelRequestStart { request, .. } => {
-                self.request_started(!request.tools.is_empty());
+            AgentEvent::ModelRequestStart { .. } => {
+                self.request_started();
                 None
             }
             AgentEvent::MessageStart { .. } => {
@@ -58,12 +59,9 @@ impl LiveText {
         }
     }
 
-    /// A model request starts. A request that offers no tools is a context
-    /// compaction summary, which is internal and never streamed: the loop
-    /// refuses a summary request that advertises tools
-    /// (`renoa-agent-loop`, `CompactionPlan::new`).
-    fn request_started(&mut self, offers_tools: bool) {
-        self.streaming = offers_tools;
+    /// A model request starts.
+    fn request_started(&mut self) {
+        self.streaming = true;
         self.message_started();
     }
 
@@ -119,7 +117,7 @@ impl LiveText {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use renoa_agent::{AgentEvent, AssistantDelta, MessageRole, ModelRequest, ToolSpec};
+    use renoa_agent::{AgentEvent, AssistantDelta, ModelRequest, ToolSpec};
     use renoa_protocol::LiveActivity;
 
     use super::{FLUSH_INTERVAL, LiveText};
@@ -165,7 +163,7 @@ mod tests {
 
     fn streaming() -> LiveText {
         let mut text = LiveText::default();
-        text.request_started(true);
+        text.request_started();
         text
     }
 
@@ -210,43 +208,27 @@ mod tests {
     }
 
     #[test]
-    fn a_request_that_offers_no_tools_streams_nothing() {
+    fn text_streams_only_while_a_request_is_in_flight() {
         let start = Instant::now();
         let mut text = LiveText::default();
-        text.request_started(false);
+        assert_eq!(text.push("early", start), None, "no request has started");
 
-        assert_eq!(text.push("## Goal and user intent", start), None);
-
-        text.request_started(true);
+        text.request_started();
         assert_eq!(text.push("Hello", start), Some(delta(0, "Hello")));
         text.request_ended();
         assert_eq!(text.push("late", start + FLUSH_INTERVAL), None);
     }
 
     #[test]
-    fn a_summary_request_that_offers_no_tools_never_streams_through_the_event_mapping() {
+    fn a_request_that_offers_no_tools_streams_its_text() {
         let start = Instant::now();
         let mut live = LiveText::default();
 
         assert_eq!(live.observe(&request(false), start), None);
         assert_eq!(
-            live.observe(
-                &AgentEvent::MessageStart {
-                    role: MessageRole::Assistant
-                },
-                start
-            ),
-            None
-        );
-        assert_eq!(
-            live.observe(&update(text("## Goal and user intent")), start),
-            None
-        );
-
-        assert_eq!(live.observe(&request(true), start), None);
-        assert_eq!(
             live.observe(&update(text("Hello")), start),
-            Some(delta(0, "Hello"))
+            Some(delta(0, "Hello")),
+            "only the summary binding keeps a summary off the wire"
         );
     }
 

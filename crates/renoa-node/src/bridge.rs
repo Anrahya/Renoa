@@ -248,13 +248,6 @@ impl NodeRuntime {
 
     async fn execute(self: Arc<Self>, record: ExecutionRecord) -> Result<(), NodeError> {
         let command_id = record.command.command_id;
-        let request = match control::request(&record.command.input) {
-            Ok(request) => request,
-            Err(Refusal(reason)) => {
-                self.finish_failed(command_id, reason.to_owned()).await?;
-                return Ok(());
-            }
-        };
         let agent_id = AgentId::from_uuid(record.binding.agent_id);
         // Registered before the ledger is read, so a stop recorded from now on
         // cancels this token and an earlier one is read below.
@@ -263,6 +256,20 @@ impl NodeRuntime {
         if self.state.stop_requested(command_id).await? {
             cancellation.cancel();
         }
+        let request = match control::request(&record.command.input) {
+            Ok(request) => request,
+            // A command stopped before it started begins cancelled, refused
+            // or not.
+            Err(Refusal(_)) if cancellation.is_cancelled() => {
+                self.finish_unstarted(command_id, closing_events(LocalTurnOutcome::Cancelled))
+                    .await?;
+                return Ok(());
+            }
+            Err(Refusal(reason)) => {
+                self.finish_failed(command_id, reason.to_owned()).await?;
+                return Ok(());
+            }
+        };
         node_log::event(
             "info",
             "execution_started",
@@ -349,14 +356,22 @@ impl NodeRuntime {
     /// Ends a command as failed before any turn ran, so its journal holds only
     /// the terminal record.
     async fn finish_failed(&self, command_id: CommandId, error: String) -> Result<(), NodeError> {
-        self.state
-            .finish(
-                command_id,
-                vec![ExecutionEventKind::ExecutionTerminated {
-                    terminal: ExecutionTerminal::Failed { error },
-                }],
-            )
-            .await?;
+        self.finish_unstarted(
+            command_id,
+            vec![ExecutionEventKind::ExecutionTerminated {
+                terminal: ExecutionTerminal::Failed { error },
+            }],
+        )
+        .await
+    }
+
+    /// Ends a command with `events` before any turn ran.
+    async fn finish_unstarted(
+        &self,
+        command_id: CommandId,
+        events: Vec<ExecutionEventKind>,
+    ) -> Result<(), NodeError> {
+        self.state.finish(command_id, events).await?;
         self.signal_commit();
         Ok(())
     }

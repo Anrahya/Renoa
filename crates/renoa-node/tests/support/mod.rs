@@ -834,7 +834,7 @@ async fn send(socket: &mut Socket, message: &ClientMessage) {
         .expect("send client message");
 }
 
-async fn receive(socket: &mut Socket) -> ServerMessage {
+pub(crate) async fn receive(socket: &mut Socket) -> ServerMessage {
     let message = socket
         .next()
         .await

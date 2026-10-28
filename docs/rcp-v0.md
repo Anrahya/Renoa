@@ -454,10 +454,12 @@ stable identity.
 RCP carries a command as opaque text, so what text means is the harness's
 decision. The reference node treats a command from the principal that is exactly
 `/compact` as the Host's compaction control: it summarizes the session's model
-context, records no agent reply, and ends the command with one fixed notice and
-`completed`. The task journal is unchanged by compaction and keeps every record.
+context, records no agent reply, and ends the command with `completed` and one
+notice that says whether a new summary was written or there was nothing new to
+summarize. The task journal is unchanged by compaction and keeps every record.
 A guest's `/compact` is an ordinary message, `/compact` followed by more words
-ends as `failed` without opening a session, and an interrupted compaction is
+ends as `failed` without opening a session (or `cancelled`, like any command,
+when a stop was recorded before it started), and an interrupted compaction is
 driven again under the same command identity and activates one summary.
 
 Socket ownership stays outside the Host. Durable node-ledger commits wake the
@@ -539,9 +541,9 @@ is refused, and an acknowledgement for a task the coordinator no longer holds
 has nothing left to confirm.
 
 A node publishes live frames with `PublishLiveActivity` and receives no answer.
-The Rust node streams only model requests that offer tools: a request with none
-is a context-compaction summary, which is internal and must not reach a
-surface, so an agent without tools does not stream.
+The Rust node streams the visible text of every reply. A context-compaction
+summary is internal and never reaches a surface: the loop runs it through its
+own `renoa.agent.compaction` binding, which reports no assistant message.
 
 ### Authority changes
 
@@ -849,9 +851,8 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    plaintext rather than operating-system credential storage.
 4. The shared activity profile carries complete durable events. Visible text
    is relayed only as ephemeral live activity: there is no live reasoning or
-   tool-argument stream and no general streaming UI protocol, and the Rust
-   node streams only requests that offer tools, and the Pi node publishes no
-   live activity.
+   tool-argument stream and no general streaming UI protocol, and the Pi node
+   publishes no live activity.
 5. Trusted-device approval for remote native enrollment, recovery, passkey and
    device administration, and credential rotation are designed boundaries but
    are not implemented. First-device passkey bootstrap is local and explicit.
