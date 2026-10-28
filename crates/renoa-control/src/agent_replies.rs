@@ -26,6 +26,8 @@ use crate::{
 #[derive(Debug)]
 pub(crate) struct AgentReply {
     pub(crate) task_id: TaskId,
+    /// The thread task whose execution ended, and so produced the answer.
+    pub(crate) from_task: TaskId,
     /// The node that executes the asker's task.
     pub(crate) node_id: NodeId,
     pub(crate) command: CommandEnvelope,
@@ -61,6 +63,7 @@ pub(crate) async fn dispatch(
         &serde_json::json!({
             "reply_id": reply.command.command_id,
             "task_id": reply.task_id,
+            "from_task_id": reply.from_task,
             "node_id": reply.node_id,
             "origin": reply.command.origin,
             "dispatched": node.is_some(),
@@ -121,6 +124,7 @@ pub(crate) fn admit_reply(
             "agent_reply_dropped",
             &serde_json::json!({
                 "command_id": command_id,
+                "task_id": task_id,
                 "from_command": origin.from_command,
                 "reason": "the asking command no longer exists",
             }),
@@ -167,6 +171,7 @@ pub(crate) fn admit_reply(
     let event = insert_command(transaction, asker_task, &reply, &reply_json)?;
     Ok(Some(AgentReply {
         task_id: asker_task,
+        from_task: task_id,
         node_id: asker.node_id,
         command: reply,
         event,

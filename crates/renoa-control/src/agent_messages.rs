@@ -57,17 +57,23 @@ pub(crate) struct OutgoingMessage {
 pub(crate) enum MessageAdmission {
     Admitted {
         task_id: TaskId,
+        /// The task of the sending agent's command.
+        from_task: TaskId,
         command: CommandEnvelope,
         event: Box<TaskEvent>,
     },
     Existing {
         task_id: TaskId,
+        from_task: TaskId,
         command: CommandEnvelope,
         pending: bool,
     },
 }
 
-/// Derives a stable identity from a domain-separated value.
+/// Derives a stable identity from a domain-separated value. The Host derives
+/// its operation identities the same way (`renoa_local::stable_id`); the two
+/// crates share no dependency to hold one copy, so a test in each pins the same
+/// vector and fails if either changes.
 pub(crate) fn derived_id(value: &str) -> Uuid {
     let digest = Sha256::digest(value);
     let mut bytes = [0; 16];
@@ -142,17 +148,19 @@ pub(crate) async fn send_agent_message(
             return;
         }
     };
-    let (task_id, command, event, pending) = match admission {
+    let (task_id, from_task, command, event, pending) = match admission {
         MessageAdmission::Admitted {
             task_id,
+            from_task,
             command,
             event,
-        } => (task_id, command, Some(*event), true),
+        } => (task_id, from_task, command, Some(*event), true),
         MessageAdmission::Existing {
             task_id,
+            from_task,
             command,
             pending,
-        } => (task_id, command, None, pending),
+        } => (task_id, from_task, command, None, pending),
     };
     control_log::event(
         "info",
@@ -168,6 +176,7 @@ pub(crate) async fn send_agent_message(
             "to_node": message.to_node,
             "to_target": message.to_target.as_str(),
             "task_id": task_id,
+            "from_task_id": from_task,
             "depth": command.origin.as_ref().map(|origin| origin.depth),
             "dispatched": pending && destination.is_some(),
         }),
@@ -229,17 +238,22 @@ fn admit_in(
     message: &OutgoingMessage,
 ) -> Result<MessageAdmission, ControlError> {
     let principal_id = node_owner(transaction, node_id)?.ok_or_else(|| {
-        ControlError::role("this node has no owner, so its agents cannot message other agents")
+        ControlError::role(
+            "This machine has no owner, so its agents cannot message other agents. Tell the person you are working with.",
+        )
     })?;
-    let (source, source_command) = load_source(transaction, node_id, principal_id, message)?;
+    let (from_task, source, source_command) =
+        load_source(transaction, node_id, principal_id, message)?;
     let depth = message_depth(&source_command, message)?;
     if node_owner(transaction, message.to_node)? != Some(principal_id) {
         return Err(ControlError::not_found(
-            "that agent is not one of your owner's agents",
+            "That agent is not one of your owner's agents. Look up the agents again and choose a name from the list.",
         ));
     }
     if (node_id, &source.target) == (message.to_node, &message.to_target) {
-        return Err(ControlError::invalid("an agent cannot message itself"));
+        return Err(ControlError::invalid(
+            "An agent cannot message itself. Choose a different agent.",
+        ));
     }
     let task_id = thread_task_id(
         principal_id,
@@ -269,13 +283,13 @@ fn admit_in(
             .map(|origin| origin.name.clone())
             .unwrap_or_default();
         if stored != command_with(stored_name) || stored_task != task_id.to_string() {
-            return Err(ControlError::conflict(format!(
-                "message id {} was already used with different content",
-                message.message_id
-            )));
+            return Err(ControlError::conflict(
+                "That message was already sent with different content. Send the new content as a new message.",
+            ));
         }
         return Ok(MessageAdmission::Existing {
             task_id,
+            from_task,
             command: stored,
             pending,
         });
@@ -285,19 +299,21 @@ fn admit_in(
         .find(|card| card.target == source.target)
         .map(|card| card.name.clone())
         .ok_or_else(|| {
-            ControlError::invalid("the sending agent is not advertised by its node, so the message cannot say who it is from")
+            ControlError::invalid(
+                "Renoa does not yet know this agent's name, so the message cannot say who it is from. Wait a moment and try again.",
+            )
         })?;
     let command = command_with(name);
     let command_json = serde_json::to_string(&command).map_err(json_error)?;
     match destination {
         None => {
             return Err(ControlError::node_offline_with(
-                "that agent's machine is offline right now",
+                "That agent's machine is not connected right now.",
             ));
         }
         Some(cards) if !cards.iter().any(|card| card.target == message.to_target) => {
             return Err(ControlError::not_found(
-                "that agent is no longer available on its machine",
+                "That agent is no longer available on its machine. Look up the agents again and choose a name from the list.",
             ));
         }
         Some(_) => {}
@@ -314,6 +330,7 @@ fn admit_in(
     let event = insert_command(transaction, task_id, &command, &command_json)?;
     Ok(MessageAdmission::Admitted {
         task_id,
+        from_task,
         command,
         event: Box::new(event),
     })
@@ -326,11 +343,13 @@ fn message_depth(
     message: &OutgoingMessage,
 ) -> Result<u32, ControlError> {
     if message.text.trim().is_empty() {
-        return Err(ControlError::invalid("the message text is empty"));
+        return Err(ControlError::invalid(
+            "The message text is empty. Write what you want the other agent to know or do.",
+        ));
     }
     if message.text.len() > MAX_MESSAGE_BYTES {
         return Err(ControlError::invalid(format!(
-            "the message text is {} bytes and the limit is {MAX_MESSAGE_BYTES}; shorten it",
+            "The message text is {} bytes and the limit is {MAX_MESSAGE_BYTES}. Shorten it and send it again.",
             message.text.len()
         )));
     }
@@ -341,8 +360,8 @@ fn message_depth(
         .saturating_add(1);
     if depth > MAX_CHAIN_DEPTH {
         return Err(ControlError::invalid(
-            "this exchange between agents has gone on too long and was stopped; do not message \
-             another agent for it, and tell the owner what you were trying to do",
+            "This exchange between agents has gone on too long and was stopped. Do not message \
+             another agent about it; tell your owner what you were trying to do.",
         ));
     }
     Ok(depth)
@@ -379,20 +398,19 @@ fn stored_message(
     .transpose()
 }
 
-/// The task and command `message.from_command` names, which must belong to
-/// `principal_id` and be bound to `node_id`: a node speaks only for the
-/// agents it executes.
+/// The task, its binding and the command `message.from_command` names, which
+/// must belong to `principal_id` and be bound to `node_id`: a node speaks only
+/// for the agents it executes.
 fn load_source(
     transaction: &Transaction<'_>,
     node_id: NodeId,
     principal_id: PrincipalId,
     message: &OutgoingMessage,
-) -> Result<(crate::store::StoredTask, CommandEnvelope), ControlError> {
+) -> Result<(TaskId, crate::store::StoredTask, CommandEnvelope), ControlError> {
     let not_found = || {
-        ControlError::not_found(format!(
-            "command {} is not one this node is executing",
-            message.from_command
-        ))
+        ControlError::not_found(
+            "Renoa cannot tell which conversation this message is sent from. If it keeps failing, tell your owner.",
+        )
     };
     let row = transaction
         .query_row(
@@ -403,15 +421,13 @@ fn load_source(
         .optional()
         .map_err(sqlite_error)?
         .ok_or_else(not_found)?;
-    let task = load_task(
-        transaction,
-        TaskId::from_uuid(row.0.parse().map_err(id_error)?),
-    )?;
+    let task_id = TaskId::from_uuid(row.0.parse().map_err(id_error)?);
+    let task = load_task(transaction, task_id)?;
     if task.node_id != node_id || task.principal_id != principal_id {
         return Err(not_found());
     }
     let command = serde_json::from_str(&row.1).map_err(json_error)?;
-    Ok((task, command))
+    Ok((task_id, task, command))
 }
 
 /// Opens the thread task, or checks that an earlier opening has the binding
@@ -443,9 +459,11 @@ fn open_thread(transaction: &Transaction<'_>, task: &TaskSpec) -> Result<(), Con
         {
             Ok(())
         }
-        Some(_) => Err(ControlError::conflict(format!(
-            "task id {} is already used by a different task",
-            task.task_id
-        ))),
+        Some(_) => Err(ControlError::conflict(
+            "The conversation with that agent could not be opened, because its identity is already in use. Tell your owner.",
+        )),
     }
 }
+
+#[cfg(test)]
+mod tests;

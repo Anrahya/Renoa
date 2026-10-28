@@ -390,17 +390,6 @@ impl LocalHost {
             }),
         })
     }
-
-    /// Lets this Host's agents message the owner's other agents through
-    /// `peers`, replacing any earlier attachment. A node attaches itself when
-    /// it opens on the Host; until then no agent is offered a messaging tool.
-    pub fn attach_agent_peers(&self, peers: Arc<dyn AgentPeers>) {
-        *self
-            .config
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(peers);
-    }
 }
 
 /// Creates or adopts `<data root>/sessions` and returns its canonical path.

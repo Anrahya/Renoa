@@ -3,9 +3,10 @@
 //!
 //! A request travels over the node's own coordinator session, so the
 //! coordinator knows which node speaks. Nothing queues across a reconnect: a
-//! request made while the session is down fails at once, and one in flight
-//! when the session ends reports that its outcome is unknown. Every wait ends
-//! after [`REQUEST_TIMEOUT`].
+//! request made while the session is down fails at once. A message in flight
+//! when the session ends reports that its outcome is unknown; a roster lookup
+//! changes nothing, so it only reports that it failed. Every wait ends after
+//! [`REQUEST_TIMEOUT`].
 
 use std::{
     collections::HashMap,
@@ -74,6 +75,7 @@ impl AgentLink {
     }
 
     async fn call(&self, call: Call) -> Result<Answer, PeerError> {
+        let delivers = matches!(call, Call::Send { .. });
         let sender = self
             .session
             .lock()
@@ -81,29 +83,40 @@ impl AgentLink {
             .clone()
             .ok_or_else(|| {
                 PeerError::Unavailable(
-                    "Renoa cannot reach the other agents right now because this machine has lost its connection. Try again shortly."
+                    "Renoa cannot reach the other agents right now because this machine has lost its connection."
                         .to_owned(),
                 )
             })?;
         let (answer, waiting) = oneshot::channel();
         sender.send(Request { call, answer }).await.map_err(|_| {
             PeerError::Unavailable(
-                "The connection was lost before anything was sent, so nothing was delivered. Try again shortly."
+                "The connection was lost before anything was sent, so nothing was delivered."
                     .to_owned(),
             )
         })?;
         match timeout(REQUEST_TIMEOUT, waiting).await {
             Ok(Ok(answer)) => Ok(answer),
-            Ok(Err(_)) => Err(unconfirmed("the connection was lost while it was waiting")),
-            Err(_) => Err(unconfirmed("no answer came in time")),
+            Ok(Err(_)) => Err(no_answer(
+                delivers,
+                "the connection was lost while it was waiting",
+            )),
+            Err(_) => Err(no_answer(delivers, "no answer came in time")),
         }
     }
 }
 
-fn unconfirmed(reason: &str) -> PeerError {
-    PeerError::Unconfirmed(format!(
-        "It is not known whether the message was delivered, because {reason}. Sending it again may show the other agent the message twice."
-    ))
+/// A request whose answer never came. A message may have been admitted, so
+/// its outcome is unknown. A roster lookup changes nothing, so it only failed.
+fn no_answer(delivers: bool, reason: &str) -> PeerError {
+    if delivers {
+        PeerError::Unconfirmed(format!(
+            "It is not known whether the message was delivered, because {reason}. Sending it again may show the other agent the message twice."
+        ))
+    } else {
+        PeerError::Unavailable(format!(
+            "The list of agents could not be fetched, because {reason}."
+        ))
+    }
 }
 
 /// One coordinator session's side of the link.
@@ -208,7 +221,7 @@ impl AgentPeers for Peers {
                     Ok(roster)
                 }
                 Answer::Accepted => Err(PeerError::Unavailable(
-                    "the coordinator answered with something other than a list".to_owned(),
+                    "Renoa gave an answer that was not the list of agents.".to_owned(),
                 )),
                 Answer::Refused { message, .. } => Err(PeerError::Refused(message)),
             }
@@ -217,12 +230,16 @@ impl AgentPeers for Peers {
 
     fn send(&self, message: PeerMessage) -> BoxFuture<'_, Result<(), PeerError>> {
         Box::pin(async move {
-            let (node, target) = message.to.route.split_once('/').ok_or_else(|| {
-                PeerError::Refused("that agent's address is not one this node issued".to_owned())
-            })?;
-            let node_id = Uuid::parse_str(node).map(NodeId::from_uuid).map_err(|_| {
-                PeerError::Refused("that agent's address is not one this node issued".to_owned())
-            })?;
+            let unknown = || {
+                PeerError::Refused(
+                    "Renoa does not recognise that agent. Look up the agents again and choose a name from the list."
+                        .to_owned(),
+                )
+            };
+            let (node, target) = message.to.route.split_once('/').ok_or_else(unknown)?;
+            let node_id = Uuid::parse_str(node)
+                .map(NodeId::from_uuid)
+                .map_err(|_| unknown())?;
             let answer = self
                 .0
                 .call(Call::Send {
@@ -238,12 +255,13 @@ impl AgentPeers for Peers {
                 Answer::Refused { code, message } => Err(match code {
                     ErrorCode::NodeOffline => PeerError::Unavailable(message),
                     ErrorCode::Internal => PeerError::Unavailable(
-                        "Renoa had a problem delivering the message. Try again shortly.".to_owned(),
+                        "Renoa had a problem delivering the message.".to_owned(),
                     ),
                     _ => PeerError::Refused(message),
                 }),
                 Answer::Targets(_) => Err(PeerError::Unavailable(
-                    "the coordinator answered with something other than an acceptance".to_owned(),
+                    "Renoa gave an answer that did not say whether the message was accepted."
+                        .to_owned(),
                 )),
             }
         })

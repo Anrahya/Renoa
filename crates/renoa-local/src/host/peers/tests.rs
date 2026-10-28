@@ -325,12 +325,25 @@ async fn a_failed_delivery_says_whether_to_resend() {
     assert!(
         error
             .to_string()
-            .contains("Could not message Desk: that message is too long")
+            .contains("Could not message Desk: that message is too long.")
+    );
+    // The agent reads that nothing was sent and that repeating the call as it
+    // is will not help.
+    assert!(error.to_string().contains("Nothing was sent."), "{error}");
+    assert!(
+        error.to_string().contains("would be refused again"),
+        "{error}"
     );
 
-    for failure in [
-        PeerError::Unavailable("the connection is down".to_owned()),
-        PeerError::Unconfirmed("it may have arrived".to_owned()),
+    for (failure, advised) in [
+        (
+            PeerError::Unavailable("the connection is down".to_owned()),
+            true,
+        ),
+        (
+            PeerError::Unconfirmed("it may have arrived".to_owned()),
+            false,
+        ),
     ] {
         let reason = match &failure {
             PeerError::Unavailable(reason) | PeerError::Unconfirmed(reason) => reason.clone(),
@@ -354,6 +367,68 @@ async fn a_failed_delivery_says_whether_to_resend() {
         assert_eq!(error.code(), ToolErrorCode::Unavailable);
         assert!(!error.outcome_is_unknown());
         assert!(error.to_string().contains(&reason));
+        // An unavailable delivery says to try later; an unconfirmed one leaves
+        // its own text to say what resending does.
+        assert_eq!(
+            error.to_string().contains("Trying again in a little while"),
+            advised,
+            "{error}"
+        );
+    }
+}
+
+/// A roster that cannot be fetched and a port that must never be asked to send.
+struct NoRoster(PeerError);
+
+impl AgentPeers for NoRoster {
+    fn roster(&self, _: AgentId) -> BoxFuture<'_, Result<Vec<PeerAgent>, PeerError>> {
+        Box::pin(async move { Err(self.0.clone()) })
+    }
+
+    fn send(&self, _: PeerMessage) -> BoxFuture<'_, Result<(), PeerError>> {
+        Box::pin(async move { panic!("a failed lookup must not lead to a send") })
+    }
+}
+
+#[tokio::test]
+async fn a_failed_lookup_says_nothing_was_sent_and_whether_to_retry() {
+    let command = CommandId::new();
+    for (failure, retry) in [
+        (
+            PeerError::Unavailable("the list of agents could not be fetched".to_owned()),
+            true,
+        ),
+        (
+            PeerError::Refused("this machine has no owner".to_owned()),
+            false,
+        ),
+    ] {
+        let peers: Arc<dyn AgentPeers> = Arc::new(NoRoster(failure));
+        let tool = Message {
+            peers: Arc::clone(&peers),
+            actor: AgentId::new(),
+            command: Some(command),
+            spec: bindings(Arc::clone(&peers), AgentId::new(), Some(command))[1]
+                .tool()
+                .spec()
+                .clone(),
+        };
+        let error = tool
+            .run(
+                call("call", json!({"to": "Desk", "text": "Hi."})),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("the lookup failed");
+        let text = error.to_string();
+        assert!(text.contains("so nothing was sent"), "{text}");
+        assert!(!text.contains("delivered"), "{text}");
+        assert_eq!(
+            text.contains("Trying again in a little while may work."),
+            retry,
+            "{text}"
+        );
+        assert_eq!(text.contains("would be refused again"), !retry, "{text}");
     }
 }
 

@@ -9,7 +9,7 @@ use renoa_control::{
     PeerIdentity, ServerMessage, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSpec,
 };
 use renoa_protocol::{
-    AgentMessageKind, CommandEnvelope, CommandId, CommandInput, ExecutionEvent, ExecutionEventId,
+    AgentMessageKind, CommandId, CommandInput, ExecutionEvent, ExecutionEventId,
     ExecutionEventKind, ExecutionId, ExecutionTerminal, PrincipalId, SurfaceRef, TargetCard,
     TargetRef,
 };
@@ -21,6 +21,7 @@ use tokio::{
 };
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -342,12 +343,13 @@ async fn an_exact_retry_admits_once_and_a_changed_retry_conflicts() {
         assert_eq!(command.command_id, id);
     }
 
-    let ServerMessage::Error { code, .. } =
+    let ServerMessage::Error { code, message, .. } =
         world.message_research(world.asked, id, "Ask twice.").await
     else {
         panic!("a changed retry is refused");
     };
     assert_eq!(code, ErrorCode::Conflict);
+    assert_worded_for_an_agent("a changed retry", &message);
 
     // Today's availability does not rewrite what was admitted.
     disconnect(&mut world.research).await;
@@ -378,6 +380,103 @@ async fn an_exact_retry_admits_once_and_a_changed_retry_conflicts() {
     world.system.stop().await;
 }
 
+/// One refusal the coordinator owes an agent.
+struct Refusal<'a> {
+    label: &'a str,
+    from: CommandId,
+    node: NodeId,
+    target: &'a str,
+    text: &'a str,
+    code: ErrorCode,
+    /// What the agent reads in the refusal that it can act on.
+    says: &'a str,
+}
+
+/// The refusals of a desk agent's message, given a node that is offline, one
+/// of another owner and a text over the limit.
+fn refusals<'a>(
+    world: &World,
+    offline_node: NodeId,
+    stranger_node: NodeId,
+    long: &'a str,
+) -> [Refusal<'a>; 7] {
+    let (asked, research) = (world.asked, world.research_node);
+    let case = |label, from, node, target, text, code, says| Refusal {
+        label,
+        from,
+        node,
+        target,
+        text,
+        code,
+        says,
+    };
+    [
+        case(
+            "unknown command",
+            CommandId::new(),
+            research,
+            RESEARCH,
+            "Hi.",
+            ErrorCode::NotFound,
+            "cannot tell which conversation",
+        ),
+        case(
+            "offline agent",
+            asked,
+            offline_node,
+            RESEARCH,
+            "Hi.",
+            ErrorCode::NodeOffline,
+            "not connected right now",
+        ),
+        case(
+            "unadvertised agent",
+            asked,
+            research,
+            "agent:ghost",
+            "Hi.",
+            ErrorCode::NotFound,
+            "choose a name from the list",
+        ),
+        case(
+            "another owner's agent",
+            asked,
+            stranger_node,
+            RESEARCH,
+            "Hi.",
+            ErrorCode::NotFound,
+            "choose a name from the list",
+        ),
+        case(
+            "itself",
+            asked,
+            world.desk_node,
+            DESK,
+            "Hi.",
+            ErrorCode::InvalidMessage,
+            "Choose a different agent",
+        ),
+        case(
+            "empty text",
+            asked,
+            research,
+            RESEARCH,
+            "  ",
+            ErrorCode::InvalidMessage,
+            "Write what you want",
+        ),
+        case(
+            "overlong text",
+            asked,
+            research,
+            RESEARCH,
+            long,
+            ErrorCode::InvalidMessage,
+            "Shorten it",
+        ),
+    ]
+}
+
 #[tokio::test]
 async fn a_refused_message_leaves_no_task_command_or_record() {
     let mut world = World::start().await;
@@ -397,83 +496,42 @@ async fn a_refused_message_leaves_no_task_command_or_record() {
     sleep(Duration::from_millis(200)).await;
     let before = world.system.footprint();
 
-    let (asked, research, desk) = (world.asked, world.research_node, world.desk_node);
     let long = "x".repeat(64 * 1024 + 1);
-    let cases: [(&str, CommandId, NodeId, &str, &str, ErrorCode); 7] = [
-        (
-            "unknown command",
+    for case in refusals(&world, offline_node, stranger_node, &long) {
+        let reply = send_message(
+            &mut world.desk,
+            case.from,
             CommandId::new(),
-            research,
-            RESEARCH,
-            "Hi.",
-            ErrorCode::NotFound,
-        ),
-        (
-            "offline agent",
-            asked,
-            offline_node,
-            RESEARCH,
-            "Hi.",
-            ErrorCode::NodeOffline,
-        ),
-        (
-            "unadvertised agent",
-            asked,
-            research,
-            "agent:ghost",
-            "Hi.",
-            ErrorCode::NotFound,
-        ),
-        (
-            "another owner's agent",
-            asked,
-            stranger_node,
-            RESEARCH,
-            "Hi.",
-            ErrorCode::NotFound,
-        ),
-        (
-            "itself",
-            asked,
-            desk,
-            DESK,
-            "Hi.",
-            ErrorCode::InvalidMessage,
-        ),
-        (
-            "empty text",
-            asked,
-            research,
-            RESEARCH,
-            "  ",
-            ErrorCode::InvalidMessage,
-        ),
-        (
-            "overlong text",
-            asked,
-            research,
-            RESEARCH,
-            &long,
-            ErrorCode::InvalidMessage,
-        ),
-    ];
-    for (label, from, node, target, text, expected) in cases {
-        let reply = send_message(&mut world.desk, from, CommandId::new(), node, target, text).await;
-        assert_refused(label, reply, expected);
-        assert_eq!(world.system.footprint(), before, "{label} left residue");
+            case.node,
+            case.target,
+            case.text,
+        )
+        .await;
+        assert_refused(case.label, reply, case.code, case.says);
+        assert_eq!(
+            world.system.footprint(),
+            before,
+            "{} left residue",
+            case.label
+        );
     }
 
     // Research's node may not speak for a command the desk node executes.
     let reply = send_message(
         &mut world.research,
-        asked,
+        world.asked,
         CommandId::new(),
-        desk,
+        world.desk_node,
         DESK,
         "Hi.",
     )
     .await;
-    assert_refused("another node's command", reply, ErrorCode::NotFound);
+    assert_refused(
+        "another node's command",
+        reply,
+        ErrorCode::NotFound,
+        "cannot tell which conversation",
+    );
     assert_eq!(
         world.system.footprint(),
         before,
@@ -482,7 +540,36 @@ async fn a_refused_message_leaves_no_task_command_or_record() {
     world.system.stop().await;
 }
 
-fn assert_refused(label: &str, reply: ServerMessage, expected: ErrorCode) {
+#[tokio::test]
+async fn a_sender_that_has_not_advertised_yet_is_refused_without_residue() {
+    let world = World::start().await;
+    let before = world.system.footprint();
+    // A desk node that reconnected has not advertised yet, so its agent has no
+    // name to send under.
+    let mut reconnected = world.system.connect(&world.desk_credentials).await;
+    let reply = send_message(
+        &mut reconnected,
+        world.asked,
+        CommandId::new(),
+        world.research_node,
+        RESEARCH,
+        "Hi.",
+    )
+    .await;
+    assert_refused(
+        "an unadvertised sender",
+        reply,
+        ErrorCode::InvalidMessage,
+        "does not yet know this agent's name",
+    );
+    assert_eq!(world.system.footprint(), before, "the refusal left residue");
+    world.system.stop().await;
+}
+
+/// A refusal is worded for the agent that reads it: whole sentences that say
+/// what to do, with none of the identities or internal terms of the
+/// coordinator.
+fn assert_refused(label: &str, reply: ServerMessage, expected: ErrorCode, says: &str) {
     let ServerMessage::Error {
         request_id,
         code,
@@ -496,7 +583,107 @@ fn assert_refused(label: &str, reply: ServerMessage, expected: ErrorCode) {
         (Some(7), expected),
         "{label}: {message}"
     );
-    assert!(!message.is_empty(), "{label}");
+    assert!(message.contains(says), "{label}: {message}");
+    assert_worded_for_an_agent(label, &message);
+}
+
+/// Whole sentences with none of the identities or internal terms of the
+/// coordinator.
+fn assert_worded_for_an_agent(label: &str, message: &str) {
+    assert!(message.ends_with('.'), "{label}: {message}");
+    for word in ["node", "command", "task", "uuid"] {
+        assert!(
+            !message.to_lowercase().contains(word),
+            "{label} says `{word}`: {message}"
+        );
+    }
+    assert!(
+        !message
+            .split_whitespace()
+            .any(|word| Uuid::parse_str(word.trim_matches(|c: char| c == '.' || c == ',')).is_ok()),
+        "{label} shows an identity: {message}"
+    );
+}
+
+#[tokio::test]
+async fn a_replaced_node_connection_is_refused_with_the_id_of_its_request() {
+    let mut world = World::start().await;
+    let asked = world.asked;
+    let before = world.system.footprint();
+    // The desk node reconnects, so its earlier connection is replaced.
+    let _newer = world.system.connect(&world.desk_credentials).await;
+
+    let reply = world.message_research(asked, CommandId::new(), "Hi.").await;
+    assert!(
+        matches!(
+            reply,
+            ServerMessage::Error {
+                request_id: Some(7),
+                code: ErrorCode::InvalidRole,
+                ..
+            }
+        ),
+        "{reply:?}"
+    );
+    send(
+        &mut world.desk,
+        &ClientMessage::ListTargets { request_id: 9 },
+    )
+    .await;
+    let reply = response(&mut world.desk).await;
+    assert!(
+        matches!(
+            reply,
+            ServerMessage::Error {
+                request_id: Some(9),
+                code: ErrorCode::InvalidRole,
+                ..
+            }
+        ),
+        "{reply:?}"
+    );
+    assert_eq!(world.system.footprint(), before);
+    world.system.stop().await;
+}
+
+#[tokio::test]
+async fn a_node_advertises_the_names_its_constructor_cleaned() {
+    let system = System::start().await;
+    let credentials = system.enroll_node(NodeId::new(), system.owner).await;
+    let mut node = system.connect(&credentials).await;
+    let mut surface = system.surface(system.owner).await;
+
+    // One unclean card would make the coordinator reject the whole
+    // advertisement, and the roster would stay empty.
+    let long = "é".repeat(300);
+    let dirty = ["two\nlines", "", long.as_str(), "  padded  "];
+    let cards = dirty
+        .iter()
+        .enumerate()
+        .map(|(index, name)| TargetCard::new(TargetRef::new(format!("agent:{index}")), name))
+        .collect::<Vec<_>>();
+    send(
+        &mut node,
+        &ClientMessage::AdvertiseTargets { targets: cards },
+    )
+    .await;
+    wait_for_targets(&mut surface, dirty.len()).await;
+
+    let names = list_targets(&mut surface)
+        .await
+        .into_iter()
+        .map(|summary| summary.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "two lines".to_owned(),
+            "agent:1".to_owned(),
+            "é".repeat(128),
+            "padded".to_owned(),
+        ]
+    );
+    system.stop().await;
 }
 
 #[tokio::test]
@@ -507,14 +694,15 @@ async fn a_node_without_an_owner_neither_lists_nor_messages() {
     let mut node = system.connect(&credentials).await;
 
     send(&mut node, &ClientMessage::ListTargets { request_id: 4 }).await;
-    assert!(matches!(
-        receive(&mut node).await,
-        ServerMessage::Error {
-            request_id: Some(4),
-            code: ErrorCode::InvalidRole,
-            ..
-        }
-    ));
+    let ServerMessage::Error {
+        request_id: Some(4),
+        code: ErrorCode::InvalidRole,
+        message,
+    } = receive(&mut node).await
+    else {
+        panic!("a node without an owner has no roster");
+    };
+    assert_worded_for_an_agent("an ownerless roster", &message);
     let reply = send_message(
         &mut node,
         CommandId::new(),
@@ -524,14 +712,15 @@ async fn a_node_without_an_owner_neither_lists_nor_messages() {
         "Hi.",
     )
     .await;
-    assert!(matches!(
-        reply,
-        ServerMessage::Error {
-            request_id: Some(7),
-            code: ErrorCode::InvalidRole,
-            ..
-        }
-    ));
+    let ServerMessage::Error {
+        request_id: Some(7),
+        code: ErrorCode::InvalidRole,
+        message,
+    } = reply
+    else {
+        panic!("a node without an owner sends no message");
+    };
+    assert_worded_for_an_agent("an ownerless message", &message);
     system.stop().await;
 }
 
@@ -906,6 +1095,7 @@ async fn a_chain_is_stopped_at_the_backstop_and_the_last_answer_still_returns() 
         !message.contains("100"),
         "the limit is not shown: {message}"
     );
+    assert_worded_for_an_agent("the chain backstop", &message);
     assert_eq!(system.footprint(), before, "the refusal left residue");
 
     // The answer to the deepest request starts nothing, so it is not refused.
@@ -1177,9 +1367,3 @@ async fn receive(socket: &mut Socket) -> ServerMessage {
         }
     }
 }
-
-#[allow(
-    dead_code,
-    reason = "documents what a command envelope looks like to a node"
-)]
-fn _envelope(_: CommandEnvelope) {}

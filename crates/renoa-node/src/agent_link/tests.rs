@@ -99,7 +99,7 @@ async fn the_roster_leaves_out_the_asking_agent_and_is_ordered_by_name() {
 #[tokio::test]
 async fn a_send_carries_its_identities_and_each_refusal_is_told_to_the_agent_as_it_is() {
     let cases = [
-        (ErrorCode::NodeOffline, true, "machine is offline"),
+        (ErrorCode::NodeOffline, true, "machine is not connected"),
         (ErrorCode::Internal, true, "problem delivering"),
         (ErrorCode::NotFound, false, "no such agent"),
         (ErrorCode::InvalidMessage, false, "no such agent"),
@@ -129,7 +129,7 @@ async fn a_send_carries_its_identities_and_each_refusal_is_told_to_the_agent_as_
         assert_eq!(target, TargetRef::new("agent:research"));
         assert_eq!(sent, "Summarise.");
         let reason = match code {
-            ErrorCode::NodeOffline => "that agent's machine is offline right now",
+            ErrorCode::NodeOffline => "That agent's machine is not connected right now.",
             ErrorCode::Internal => "SQLITE_BUSY at /var/lib/renoa/control.sqlite",
             _ => "no such agent",
         };
@@ -195,6 +195,47 @@ async fn a_session_that_ends_while_a_send_waits_leaves_its_outcome_unknown() {
         .await
         .expect_err("closed");
     assert!(matches!(error, PeerError::Unavailable(_)), "{error:?}");
+}
+
+#[tokio::test]
+async fn a_session_that_ends_while_a_roster_waits_only_fails_the_lookup() {
+    let link = Arc::new(AgentLink::default());
+    let mut session = link.open();
+    let asking = tokio::spawn(async move { Peers(link).roster(AgentId::new()).await });
+    let ClientMessage::ListTargets { .. } = session.next_message().await else {
+        panic!("expected a roster request");
+    };
+    drop(session);
+    // Nothing was sent, so the agent must not be told a message may have been
+    // delivered.
+    let error = asking.await.expect("task").expect_err("the session ended");
+    assert!(
+        matches!(&error, PeerError::Unavailable(reason) if reason.contains("could not be fetched")),
+        "{error:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_answer_that_never_comes_leaves_a_message_unknown_and_a_roster_failed() {
+    let link = Arc::new(AgentLink::default());
+    // The session is open and accepts requests but nobody answers them.
+    let _session = link.open();
+    let error = Peers(Arc::clone(&link))
+        .roster(AgentId::new())
+        .await
+        .expect_err("no answer");
+    assert!(
+        matches!(&error, PeerError::Unavailable(reason) if reason.contains("no answer came in time")),
+        "{error:?}"
+    );
+    let error = Peers(link)
+        .send(message(&research_route()))
+        .await
+        .expect_err("no answer");
+    assert!(
+        matches!(&error, PeerError::Unconfirmed(reason) if reason.contains("no answer came in time")),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

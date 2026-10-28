@@ -1,11 +1,12 @@
 //! Messaging between agents: the tools an agent calls and the port a node
 //! implements.
 //!
-//! The Host knows nothing of how a message travels. A node that can reach the
-//! coordinator attaches an [`AgentPeers`] to its Host; until then the Host
-//! offers neither tool, so an agent never sees one it cannot use. Both tools
-//! belong to `renoa.agents`, so the owner's switch for that plugin governs
-//! them like any other ability.
+//! The Host knows nothing of how a message travels. A node attaches an
+//! [`AgentPeers`] to its Host when it opens; until then the Host offers
+//! neither tool. Once attached, the tools stay offered and fail with an error
+//! that says to try again while the node's coordinator link is down. Both
+//! tools belong to `renoa.agents`, so the owner's switch for that plugin
+//! governs them like any other ability.
 
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{capabilities, stable_id::stable_id};
+use crate::{LocalHost, capabilities, stable_id::stable_id};
 
 const BINDING_REVISION: &str = "renoa-agent-messages-v1";
 const MESSAGE_DOMAIN: &str = "renoa.agent.message.v1";
@@ -63,11 +64,25 @@ pub enum PeerError {
 
 /// How a node reaches the owner's other agents.
 pub trait AgentPeers: Send + Sync {
-    /// The agents `agent` can message right now, without itself.
+    /// The agents `agent` can message right now, without itself. A lookup
+    /// sends nothing, so it never fails as [`PeerError::Unconfirmed`].
     fn roster(&self, agent: AgentId) -> BoxFuture<'_, Result<Vec<PeerAgent>, PeerError>>;
 
     /// Delivers `message`. `Ok` means the receiving side holds it durably.
     fn send(&self, message: PeerMessage) -> BoxFuture<'_, Result<(), PeerError>>;
+}
+
+impl LocalHost {
+    /// Lets this Host's agents message the owner's other agents through
+    /// `peers`, replacing any earlier attachment. A node attaches itself when
+    /// it opens on the Host; until then no agent is offered a messaging tool.
+    pub fn attach_agent_peers(&self, peers: Arc<dyn AgentPeers>) {
+        *self
+            .config
+            .peers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(peers);
+    }
 }
 
 pub(crate) fn bindings(
@@ -162,7 +177,7 @@ impl Roster {
             () = cancellation.cancelled() => return Err(cancelled("listing agents")),
             roster = self.peers.roster(self.actor) => roster,
         }
-        .map_err(|error| tool_error("Could not list the agents", error))?;
+        .map_err(|error| tool_error("Could not list the agents", error, false))?;
         let agents: Vec<Value> = roster
             .iter()
             .map(|agent| json!({ "name": agent.name }))
@@ -222,7 +237,13 @@ impl Message {
             () = cancellation.cancelled() => return Err(cancelled("messaging")),
             roster = self.peers.roster(self.actor) => roster,
         }
-        .map_err(|error| tool_error("Could not look up the agents", error))?;
+        .map_err(|error| {
+            tool_error(
+                "Could not look up the agents, so nothing was sent",
+                error,
+                false,
+            )
+        })?;
         let target = resolve(&roster, to)?;
         let message = PeerMessage {
             from_command,
@@ -237,7 +258,7 @@ impl Message {
             )),
             sent = self.peers.send(message) => sent,
         }
-        .map_err(|error| tool_error(&format!("Could not message {}", target.name), error))?;
+        .map_err(|error| tool_error(&format!("Could not message {}", target.name), error, true))?;
         Ok(text(format!(
             "Sent to {}. Its answer will arrive later as a new message in this conversation; you do not need to wait or look for it.",
             target.name
@@ -337,12 +358,33 @@ fn echoed(value: &str) -> String {
     format!("{}...", &value[..end])
 }
 
-fn tool_error(what: &str, error: PeerError) -> ToolError {
+/// The error for a failed port call, which says whether repeating the call
+/// could help. `sending` is true for a message, whose refusal or failure also
+/// says that nothing was sent; an unconfirmed message says its own outcome.
+fn tool_error(what: &str, error: PeerError, sending: bool) -> ToolError {
+    let not_sent = if sending { " Nothing was sent." } else { "" };
     match error {
-        PeerError::Refused(reason) => ToolError::invalid_input(format!("{what}: {reason}")),
-        PeerError::Unavailable(reason) | PeerError::Unconfirmed(reason) => {
-            ToolError::unavailable(format!("{what}: {reason}"))
+        PeerError::Refused(reason) => ToolError::invalid_input(format!(
+            "{what}: {}{not_sent} Repeating the same call straight away would be refused again.",
+            sentence(&reason)
+        )),
+        PeerError::Unavailable(reason) => ToolError::unavailable(format!(
+            "{what}: {}{not_sent} Trying again in a little while may work.",
+            sentence(&reason)
+        )),
+        PeerError::Unconfirmed(reason) => {
+            ToolError::unavailable(format!("{what}: {}", sentence(&reason)))
         }
+    }
+}
+
+/// `reason` as a whole sentence, so the advice after it reads on.
+fn sentence(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.ends_with(['.', '!', '?']) {
+        reason.to_owned()
+    } else {
+        format!("{reason}.")
     }
 }
 

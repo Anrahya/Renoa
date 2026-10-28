@@ -226,6 +226,13 @@ server or default agent, stop `renoa-discord.path` and `renoa-discord.service`,
 then remove `credentials/discord.json` and `state/surfaces/discord`; the latter
 pins the previous identity and holds its bindings and task cursors.
 
+Agents can message other agents of the same owner through RCP: a node advertises each
+agent's name, may list its owner's agents, and sends a message that arrives as a
+command with an `origin` in a thread task of the receiving agent. This release
+moves RCP to binding version 14, so the coordinator, node, Pi node, and every
+surface must be upgraded together. No coordinator, node ledger, Host or kernel
+schema changes.
+
 Discord store schema 7 records whether each queued message is the operator's
 or a guest's, so a guest's message is submitted as a guest's. Upgrading from
 schema 6 marks queued messages from anyone but the operator as a guest's.
@@ -777,7 +784,7 @@ administration protocol.
 
 The dated paragraphs below are deployment receipts, not declarations of the wire
 version compiled by the current checkout. Current code requires RCP JSON/WebSocket
-binding version 13; the recorded version-8 proof establishes only the deployment
+binding version 14; the recorded version-8 proof establishes only the deployment
 state observed on 2026-09-01.
 
 On 2026-09-01, `renoa.live` resolved through public recursive DNS and served a

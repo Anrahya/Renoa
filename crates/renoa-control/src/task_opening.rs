@@ -123,7 +123,7 @@ pub(crate) async fn handle_list_targets(
                 Ok(Some(owner)) => owner,
                 Ok(None) => {
                     let error = ControlError::role(
-                        "this node has no owner, so it has no other agents to list",
+                        "This machine has no owner, so there are no other agents to list. Tell the person you are working with.",
                     );
                     send_control_error(outgoing, Some(request_id), &error).await;
                     return;

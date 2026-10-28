@@ -262,6 +262,13 @@ rejected message leaves no task, command, or record. The command's surface is
 `agent` and its `origin` carries `from_command`, the sender's target and name,
 the depth, and the kind `request`.
 
+The reason of each refusal above, and of a reused message identity, is written
+for the agent that will read it: whole sentences that say what was wrong and
+what to do next, with no identity or internal term of the coordinator. A
+`SendAgentMessage` or a `ListTargets` on a connection that a newer connection
+of the same node has replaced is refused with `InvalidRole` and carries its own
+`request_id`, so the node's wait ends with the reason.
+
 When the execution of a request reaches a terminal event, the same transaction
 that records the event admits one answer command in the task that holds
 `from_command`. Its identity derives from the request, so a retried publication
