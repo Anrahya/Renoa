@@ -4,12 +4,13 @@ import live.renoa.app.agents.AbilityKind.Everyday
 import live.renoa.app.agents.AbilityKind.Machine
 import live.renoa.app.agents.AbilityKind.Soon
 
-/** What a fake agent starts with. */
+/** What a fake agent starts with. [doing] is what it says it is doing while it works on a reply. */
 class AgentSeed(
     val summary: AgentSummary,
     val abilities: List<AbilitySwitch>,
     val messages: List<ChatMessage> = emptyList(),
-    val streaming: String? = null,
+    val streaming: StreamingReply? = null,
+    val doing: String = "Thinking about what you said",
 )
 
 /** The scripted roster the app shows until the real repository exists. */
@@ -43,43 +44,81 @@ object FakeWorld {
             it.copy(lit = on, addedByAgent = it.id in byAgent)
         }
 
-    private fun seed(name: String, state: AgentState, purpose: String, abilities: List<AbilitySwitch> = lit("calendar", "search", "notes")) =
-        AgentSeed(AgentSummary(idFor(name), name, purpose, state), abilities)
+    private fun seed(
+        name: String,
+        state: AgentState,
+        purpose: String,
+        glance: Glance = Glance(),
+        doing: String = "Thinking about what you said",
+        messages: List<ChatMessage> = emptyList(),
+        streaming: StreamingReply? = null,
+        abilities: List<AbilitySwitch> = lit("calendar", "search", "notes"),
+    ) = AgentSeed(AgentSummary(idFor(name), name, purpose, state, glance), abilities, messages, streaming, doing)
 
     fun idFor(name: String): String = name.lowercase().filter { it.isLetterOrDigit() }
 
-    fun demo(): List<AgentSeed> {
-        val renoa = seed("Renoa", AgentState.Working, "Runs the day. Knows what the others are up to.")
-        return listOf(
-            AgentSeed(
-                renoa.summary,
-                renoa.abilities,
+    /** The agent whose note opens Home. */
+    const val LEAD = "renoa"
+
+    fun briefing(): Briefing =
+        Briefing(LEAD, "Evening, Yash. Tifa wants your dinner plan, and Optimus found three repos worth a look tonight.")
+
+    /** The owner's own day: food, posting, new projects, groceries and deals. No meetings, no flights. */
+    fun demo(): List<AgentSeed> =
+        listOf(
+            seed(
+                "Renoa", AgentState.Working, "Keeps an eye on everything and tells you what matters.",
+                Glance(doing = "Picking three posts worth your reply", with = "kaisa"),
+                doing = "Reading through tonight's posts",
                 messages =
                     listOf(
-                        ChatMessage("renoa-1", Speaker.Owner, "What's WebMCP, and should we support it? What would it cost to run?"),
-                        ChatMessage("renoa-2", Speaker.Agent, "On it. I'll read up, and Kai'Sa can hunt down the costs."),
+                        ChatMessage("renoa-1", Speaker.Owner, "Can you and Kai'Sa find me three posts I could reply to tonight?"),
+                        ChatMessage("renoa-2", Speaker.Agent, "On it. Kai'Sa is looking now, and I'll pick the ones that sound like you."),
                     ),
-                streaming = "It lets a website offer its own abilities to an agent.",
+                streaming = StreamingReply("renoa-3", "The first one is a thread about running AI on your own phone."),
             ),
-            seed("Kai'Sa", AgentState.Working, "Hunts down prices and compares them."),
-            seed("Optimus", AgentState.Wants, "Keeps the servers honest."),
-            seed("Tifa", AgentState.Resting, "Your training partner. Pushes hard, cheers louder.", lit("calendar", "music", "search", "notes", byAgent = setOf("health"))),
-            seed("Nagisa", AgentState.Resting, "Keeps the house running. Groceries, bills, reminders, the plants."),
-            seed("Mochi", AgentState.Working, "Sorts the photos and the paperwork."),
-            seed("Sensei", AgentState.Resting, "Teaches one new thing a day."),
-            seed("Atlas", AgentState.Resting, "Plans trips."),
-            seed("Ledger", AgentState.Resting, "Keeps the books."),
-            seed("Bard", AgentState.Resting, "Writes things down so you do not have to."),
-            seed("Juno", AgentState.Resting, "Watches the calendar."),
-            seed("Rook", AgentState.Resting, "Plays chess back."),
-            seed("Echo", AgentState.Resting, "Remembers what you said."),
-            seed("Saga", AgentState.Resting, "Reads bedtime stories."),
-            seed("Nova", AgentState.Asleep, "Looks at the stars."),
-            seed("Miso", AgentState.Asleep, "Plans dinner."),
-            seed("Pixel", AgentState.Asleep, "Tidies the photo library."),
-            seed("Orbit", AgentState.Asleep, "Tracks the packages."),
-            seed("Chef", AgentState.Asleep, "Knows the recipes."),
-            seed("Vex", AgentState.Asleep, "Argues the other side."),
+            seed(
+                "Tifa", AgentState.Wants, "Tracks what you eat and keeps you training.",
+                Glance(
+                    line = "What's the plan for dinner? You were light on fibre at lunch.",
+                    time = "7:58 pm",
+                    unread = true,
+                    ask = Ask("What's the plan for dinner? You were light on fibre at lunch.", listOf("Dal and a salad", "Not sure yet")),
+                ),
+                doing = "Looking up calorie counts",
+                messages =
+                    listOf(
+                        ChatMessage("tifa-1", Speaker.Owner, "Lunch: rajma chawal, one bowl, and some curd."),
+                        ChatMessage("tifa-2", Speaker.Agent, "Nice one. That's about 620 kcal and 22 g of protein, but light on fibre. Some fruit or a salad later would balance it."),
+                    ),
+                abilities = lit("calendar", "music", "search", "notes", byAgent = setOf("health")),
+            ),
+            seed(
+                "Kai'Sa", AgentState.Working, "Helps you post on Twitter, and nudges you when you go quiet.",
+                Glance(doing = "Finding posts worth replying to", with = LEAD),
+                doing = "Finding posts worth replying to",
+            ),
+            seed(
+                "Optimus", AgentState.Resting, "Finds the most interesting new projects on GitHub.",
+                Glance(line = "Three repos are trending tonight. One runs a whole agent inside a browser tab.", time = "7:30 pm", unread = true),
+                doing = "Reading through today's trending repos",
+            ),
+            seed(
+                "Nagisa", AgentState.Resting, "Keeps the grocery list and watches for sales.",
+                Glance(line = "Atta and toor dal are on sale this week. Your list is updated.", time = "6:40 pm"),
+                doing = "Checking this week's prices",
+            ),
+            seed(
+                "Sensei", AgentState.Resting, "Teaches you one new thing a day.",
+                Glance(line = "Today's one thing: how a chatbot decides which words in your question matter most.", time = "Yesterday"),
+                doing = "Finding a good example",
+            ),
+            seed(
+                "Ledger", AgentState.Stuck, "Keeps track of what you spend.",
+                Glance(line = "I couldn't open last month's statement. Can you send it again?", time = "Yesterday"),
+                doing = "Adding up last month",
+            ),
+            seed("Mochi", AgentState.Asleep, "Reads you something calm before bed.", Glance(line = "Wakes at 9:30 pm")),
+            seed("Echo", AgentState.Asleep, "Checks in with you every morning.", Glance(line = "Wakes tomorrow at 7:00 am")),
         )
-    }
 }

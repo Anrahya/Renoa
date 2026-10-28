@@ -2,23 +2,23 @@ package live.renoa.app.home
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -26,34 +26,42 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
 import live.renoa.app.badge.AgentLook
 import live.renoa.app.badge.Badge
-import live.renoa.app.badge.HexSpiral
 import live.renoa.app.badge.hexPath
 import live.renoa.app.theme.Renoa
+import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
+import live.renoa.app.ui.AskChoices
 import live.renoa.app.ui.Aura
 import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
 import live.renoa.app.ui.RenoaMark
 
-/** The design is drawn 390 wide; everything on Home scales from that. */
-private const val DESIGN_WIDTH = 390f
-private const val HIVE_TILE = 64f
-private const val HIVE_RADIUS = 29.5f
+private val RowLine = RenoaType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp)
 
+/**
+ * Home is the owner's people, alive: a note from the lead agent about what matters now, then
+ * everyone with what they last said, what they are doing, or what they need.
+ */
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
@@ -61,16 +69,15 @@ fun HomeScreen(
     onNewAgent: () -> Unit,
     onChangeColours: () -> Unit,
 ) {
-    val layout by viewModel.layout.collectAsState()
+    val state by viewModel.state.collectAsState()
     val colors = Renoa.colors
-    BoxWithConstraints(Modifier.fillMaxSize().background(colors.background)) {
-        val unit = maxWidth / DESIGN_WIDTH
-        val tones = layout.stage.map { remember(it.name) { AgentLook.forName(it.name).main } }
-        Aura(tones.getOrNull(0) ?: colors.signature, Modifier.offset(unit * -60, unit * 120).size(unit * 260, unit * 220), alpha = 0.28f)
-        Aura(tones.getOrNull(1) ?: colors.signature, Modifier.offset(unit * 190, unit * 90).size(unit * 240, unit * 200), alpha = 0.22f, offsetSeconds = 8f)
+    val lead = state.lead
+    val leadLook = remember(lead?.name) { lead?.let { AgentLook.forName(it.name) } }
 
-        Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())) {
-            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Box(Modifier.fillMaxSize().background(colors.background)) {
+        Aura(leadLook?.main ?: colors.signature, Modifier.size(320.dp, 260.dp).graphicsLayer { translationX = -90.dp.toPx(); translationY = -60.dp.toPx() }, alpha = 0.3f)
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
                         .size(44.dp)
@@ -79,101 +86,148 @@ fun HomeScreen(
                     contentAlignment = Alignment.CenterStart,
                 ) { RenoaMark(colors.foreground, 26.dp) }
             }
-            Stage(layout.stage, unit, onOpenChat)
-            Hive(layout, unit, onOpenChat, onNewAgent, viewModel::toggleAsleep)
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                val briefing = state.briefing
+                if (briefing != null && lead != null && leadLook != null) {
+                    item(key = "briefing") { BriefingCard(lead, leadLook, briefing.text, state.people) { onOpenChat(lead.id) } }
+                }
+                items(state.people, key = { it.id }) { agent ->
+                    PersonRow(agent, state.agent(agent.glance.with), onOpen = { onOpenChat(agent.id) }, onAnswer = { viewModel.answer(agent.id, it) })
+                }
+                item(key = "new") { MeetSomeoneNew(onNewAgent) }
+            }
+            state.notice?.let { Text(it, Modifier.padding(start = 24.dp, bottom = 6.dp), style = RenoaType.Caption, color = colors.stateFailed) }
+            if (lead != null) MessageBar(lead.name) { onOpenChat(lead.id) }
         }
     }
 }
 
+/** Each name in the note wears its agent's colour, so the owner sees who it is about at a glance. */
+private fun nameColoured(text: String, people: List<AgentSummary>, base: SpanStyle): AnnotatedString =
+    buildAnnotatedString {
+        append(text)
+        addStyle(base, 0, text.length)
+        for (agent in people) {
+            var at = text.indexOf(agent.name)
+            while (at >= 0) {
+                addStyle(SpanStyle(color = AgentLook.forName(agent.name).tones[0], fontWeight = FontWeight.SemiBold), at, at + agent.name.length)
+                at = text.indexOf(agent.name, at + agent.name.length)
+            }
+        }
+    }
+
 @Composable
-private fun Stage(agents: List<AgentSummary>, unit: Dp, onOpenChat: (String) -> Unit) {
-    val slots = HomeLayout.slots(agents.size)
-    Box(Modifier.fillMaxWidth().height(unit * HomeLayout.stageHeight(agents.size)).semantics { contentDescription = "Busy now" }) {
-        agents.zip(slots).forEachIndexed { index, (agent, slot) ->
-            val look = remember(agent.name) { AgentLook.forName(agent.name) }
-            Column(
-                Modifier
-                    .offset(unit * slot.left, unit * slot.top)
-                    .width(unit * slot.size)
-                    .clickable(onClickLabel = "Open ${agent.name}") { onOpenChat(agent.id) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Badge(look, agent.state, unit * slot.size, label = agent.name)
+private fun BriefingCard(lead: AgentSummary, look: AgentLook, text: String, people: List<AgentSummary>, onOpen: () -> Unit) {
+    val colors = Renoa.colors
+    val shape = RoundedCornerShape(RenoaShapes.Card)
+    Row(
+        Modifier
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .fillMaxWidth()
+            .background(colors.card.copy(alpha = 0.85f), shape)
+            .border(1.dp, colors.border, shape)
+            .clickable(onClickLabel = "Open ${lead.name}", onClick = onOpen)
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Badge(look, lead.state, 48.dp, mini = true, label = lead.name)
+        Text(nameColoured(text, people, SpanStyle(color = colors.foreground)), Modifier.weight(1f).padding(top = 2.dp), style = RenoaType.Body)
+    }
+}
+
+@Composable
+private fun PersonRow(agent: AgentSummary, partner: AgentSummary?, onOpen: () -> Unit, onAnswer: (String) -> Unit) {
+    val colors = Renoa.colors
+    val look = remember(agent.name) { AgentLook.forName(agent.name) }
+    val glance = agent.glance
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .alpha(if (agent.state == AgentState.Asleep) 0.55f else 1f)
+            .clickable(onClickLabel = "Open ${agent.name}", onClick = onOpen)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(Modifier.size(54.dp)) {
+            Badge(look, agent.state, 54.dp, mini = true, label = agent.name)
+            if (partner != null) {
+                val partnerLook = remember(partner.name) { AgentLook.forName(partner.name) }
+                Badge(partnerLook, partner.state, 26.dp, Modifier.align(Alignment.BottomEnd).offset(6.dp, 6.dp), mini = true)
+            }
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(agent.name, Modifier.weight(1f), style = RenoaType.Label, color = colors.foreground)
+                glance.time?.let { Text(it, style = RenoaType.Caption, color = colors.mutedForeground) }
+                if (glance.unread) Box(Modifier.size(8.dp).background(colors.signature, CircleShape).semantics { contentDescription = "New" })
+            }
+            val line =
+                when {
+                    agent.state == AgentState.Working ->
+                        listOfNotNull(partner?.let { "With ${it.name}" }, glance.doing?.let { "$it…" }).joinToString(" · ").ifEmpty { "Working on it…" }
+                    else -> glance.line
+                }
+            if (line != null) {
                 Text(
-                    agent.name,
-                    style = if (index == 0) RenoaType.Label.copy(fontSize = 16.sp) else RenoaType.Label,
-                    color = Renoa.colors.foreground,
-                    textAlign = TextAlign.Center,
+                    line,
+                    style = RowLine,
+                    color = if (glance.unread || agent.state == AgentState.Stuck) colors.foreground else colors.foregroundSoft,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+            glance.ask?.let { AskChoices(it.choices, onAnswer, Modifier.padding(top = 8.dp)) }
         }
     }
 }
 
 @Composable
-private fun Hive(layout: HomeLayout, unit: Dp, onOpenChat: (String) -> Unit, onNewAgent: () -> Unit, onToggleAsleep: () -> Unit) {
+private fun MeetSomeoneNew(onNewAgent: () -> Unit) {
     val colors = Renoa.colors
-    val seats = remember(layout.hive.size) {
-        (0..layout.hive.size).map { HexSpiral.centre(HexSpiral.seat(it), HIVE_RADIUS) }
-    }
-    val minX = seats.minOf { it.x } - HIVE_TILE / 2
-    val minY = seats.minOf { it.y } - HIVE_TILE / 2
-    val width = seats.maxOf { it.x } + HIVE_TILE / 2 - minX
-    val height = seats.maxOf { it.y } + HIVE_TILE / 2 - minY
-
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (layout.asleepCount > 0) {
-            Row(
-                Modifier
-                    .align(Alignment.End)
-                    .padding(end = 16.dp)
-                    .height(32.dp)
-                    .background(colors.secondary, RoundedCornerShape(16.dp))
-                    .clickable(role = Role.Button, onClick = onToggleAsleep)
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                PathIcon(Glyphs.MOON, colors.foregroundSoft, size = 14.dp, strokeWidth = 1.8f)
-                Text(
-                    if (layout.asleepHidden) "Show ${layout.asleepCount} asleep" else "${layout.asleepCount} asleep · tidy up",
-                    style = RenoaType.Caption,
-                    color = colors.foregroundSoft,
-                )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Meet someone new" }
+            .clickable(role = Role.Button, onClick = onNewAgent)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Canvas(Modifier.size(54.dp)) {
+            val s = size.minDimension / 84f
+            withTransform({ translate(size.width / 2, size.height / 2); scale(s, s, Offset.Zero) }) {
+                drawPath(hexPath(0f, 0f, 36f, 4f), colors.input, style = Stroke(1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))))
+                drawLine(colors.mutedForeground, Offset(0f, -10f), Offset(0f, 10f), 2f)
+                drawLine(colors.mutedForeground, Offset(-10f, 0f), Offset(10f, 0f), 2f)
             }
         }
-        Box(Modifier.width(unit * width).height(unit * height).padding(top = 8.dp)) {
-            layout.hive.forEachIndexed { i, agent ->
-                val look = remember(agent.name) { AgentLook.forName(agent.name) }
-                Box(
-                    Modifier
-                        .offset(unit * (seats[i].x - minX - HIVE_TILE / 2), unit * (seats[i].y - minY - HIVE_TILE / 2))
-                        .clickable(onClickLabel = "Open ${agent.name}") { onOpenChat(agent.id) },
-                ) { Badge(look, agent.state, unit * HIVE_TILE, mini = true, label = agent.name) }
-            }
-            val last = seats.last()
-            Box(
-                Modifier
-                    .offset(unit * (last.x - minX - HIVE_TILE / 2), unit * (last.y - minY - HIVE_TILE / 2))
-                    .size(unit * HIVE_TILE)
-                    .semantics { contentDescription = "Make a new agent" }
-                    .clickable(role = Role.Button, onClick = onNewAgent),
-                contentAlignment = Alignment.Center,
-            ) { NewSeat() }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Meet someone new", style = RenoaType.Label, color = colors.foreground)
+            Text("Give them a name and something to help with", style = RenoaType.Caption, color = colors.mutedForeground)
         }
     }
 }
 
+/** Looks like the chat composer, and opens the lead agent's chat. */
 @Composable
-private fun NewSeat() {
+private fun MessageBar(name: String, onOpen: () -> Unit) {
     val colors = Renoa.colors
-    Canvas(Modifier.fillMaxSize()) {
-        val s = size.minDimension / 84f
-        withTransform({ translate(size.width / 2, size.height / 2); scale(s, s, Offset.Zero) }) {
-            drawPath(hexPath(0f, 0f, 36f, 4f), colors.input, style = Stroke(1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f))))
-            drawLine(colors.mutedForeground, Offset(0f, -10f), Offset(0f, 10f), 2f)
-            drawLine(colors.mutedForeground, Offset(-10f, 0f), Offset(10f, 0f), 2f)
+    Row(
+        Modifier
+            .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)
+            .fillMaxWidth()
+            .background(colors.card, RoundedCornerShape(26.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(26.dp))
+            .semantics { contentDescription = "Message $name" }
+            .clickable(role = Role.Button, onClick = onOpen)
+            .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Message $name", Modifier.weight(1f).padding(vertical = 10.dp), style = RenoaType.Body, color = colors.mutedForeground)
+        Box(Modifier.size(44.dp).background(colors.primary, CircleShape), contentAlignment = Alignment.Center) {
+            PathIcon(Glyphs.SEND, colors.primaryForeground, size = 20.dp, strokeWidth = 1.9f)
         }
     }
 }

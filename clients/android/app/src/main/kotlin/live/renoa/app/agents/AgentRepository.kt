@@ -53,6 +53,9 @@ enum class Problem {
 /** A refusal, or a failure to reach the other side. */
 class RepositoryException(val problem: Problem, message: String) : Exception(message)
 
+/** Not reaching Renoa has its own words; any other refusal gets the one that fits the screen asking. */
+fun RepositoryException.wordsOr(fallback: String): String = if (problem == Problem.Unavailable) problem.ownerWords else fallback
+
 /**
  * Everything the screens need from Renoa. The app runs on a fake until the backend tracks
  * land (agent profiles, streaming chat, stop); a real implementation replaces it behind this
@@ -61,10 +64,19 @@ class RepositoryException(val problem: Problem, message: String) : Exception(mes
 interface AgentRepository {
     val agents: StateFlow<List<AgentSummary>>
 
+    /** The note at the top of Home, or null when there is nothing to say. */
+    val briefing: StateFlow<Briefing?>
+
     fun conversation(agentId: String): Flow<Conversation>
 
     /** Returns once the message is kept. The reply arrives later through [conversation]. */
     suspend fun send(agentId: String, text: String)
+
+    /** Answers the agent's question with one of its choices. The answer is kept as the owner's message. */
+    suspend fun answer(agentId: String, choice: String)
+
+    /** The owner has read what the agent said. */
+    suspend fun markSeen(agentId: String)
 
     /** Stops what the agent is doing now. It stays stopped. */
     suspend fun stop(agentId: String)

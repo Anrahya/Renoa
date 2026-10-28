@@ -50,12 +50,12 @@ object RenoaType {
     val Caption = TextStyle(fontFamily = family, fontSize = 13.sp, lineHeight = 18.sp)
 }
 
-val LocalRenoaColors = staticCompositionLocalOf { ThemeName.Midnight.colors }
+val LocalRenoaColors = staticCompositionLocalOf { ThemeName.Crimson.colors }
 
 /** True when the person turned animations off in system settings; looping motion must stop. */
 val LocalReducedMotion = compositionLocalOf { false }
 
-/** One clock, in seconds, shared by every badge on screen so a hive of them costs one frame loop. */
+/** One clock, in seconds, shared by every badge on screen so a screenful of them costs one frame loop. */
 val LocalMotionClock = staticCompositionLocalOf<State<Float>> { mutableFloatStateOf(0f) }
 
 object Renoa {

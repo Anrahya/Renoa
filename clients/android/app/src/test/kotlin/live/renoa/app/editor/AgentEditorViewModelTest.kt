@@ -170,7 +170,7 @@ class AgentEditorViewModelTest {
         val vm = editing(repo())
         runCurrent()
         assertEquals("Tifa", vm.state.value.name)
-        assertEquals("Your training partner. Pushes hard, cheers louder.", vm.state.value.purpose)
+        assertEquals("Tracks what you eat and keeps you training.", vm.state.value.purpose)
         assertTrue(vm.state.value.canSave)
         vm.setName("")
         assertTrue(!vm.state.value.canSave)
@@ -234,7 +234,7 @@ class AgentEditorViewModelTest {
         vm.save()
         runCurrent()
         assertEquals(
-            listOf(EditProfile("Tifa", "Tifa Lockhart", "Your training partner. Pushes hard, cheers louder.", "Your training partner. Pushes hard, cheers louder.")),
+            listOf(EditProfile("Tifa", "Tifa Lockhart", "Tracks what you eat and keeps you training.", "Tracks what you eat and keeps you training.")),
             repo.edits,
         )
         assertEquals("tifa", vm.state.value.finishedAgentId)
@@ -257,7 +257,8 @@ class AgentEditorViewModelTest {
         val vm = editing(repo)
         runCurrent()
         // Another app renames the agent while this screen is open.
-        repo.edit("tifa", EditProfile("Tifa", "Teef", "Your training partner. Pushes hard, cheers louder.", "Your training partner. Pushes hard, cheers louder."))
+        val tifa = repo.profile("tifa")
+        repo.edit("tifa", EditProfile(tifa.name, "Teef", tifa.purpose, tifa.purpose))
         vm.setPurpose("Something new")
         vm.save()
         runCurrent()

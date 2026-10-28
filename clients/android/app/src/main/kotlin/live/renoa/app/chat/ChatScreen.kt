@@ -49,6 +49,7 @@ import live.renoa.app.theme.Renoa
 import live.renoa.app.theme.RenoaEasing
 import live.renoa.app.theme.RenoaShapes
 import live.renoa.app.theme.RenoaType
+import live.renoa.app.ui.AskCard
 import live.renoa.app.ui.Aura
 import live.renoa.app.ui.Glyphs
 import live.renoa.app.ui.PathIcon
@@ -61,6 +62,8 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
     val look = remember(agent?.name) { AgentLook.forName(agent?.name ?: "?") }
     // Messages already here when the screen opens do not animate in; only new ones rise.
     val seen = remember { mutableSetOf<String>().also { ids -> state.messages.mapTo(ids) { it.id } } }
+    // Whatever arrives while the chat is open has been read.
+    LaunchedEffect(state.messages.size) { viewModel.seen() }
 
     Box(Modifier.fillMaxSize().background(colors.background)) {
         Aura(look.main, Modifier.size(300.dp, 260.dp).graphicsLayer { translationX = -80.dp.toPx(); translationY = -90.dp.toPx() }, alpha = 0.4f)
@@ -80,6 +83,7 @@ fun ChatScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenProfile: (Str
                 }
             }
             Messages(state, seen, Modifier.weight(1f), look)
+            state.ask?.let { AskCard(it, onAnswer = viewModel::answer, Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
             Composer(state, agent?.name.orEmpty(), viewModel)
         }
     }
@@ -95,22 +99,20 @@ private fun Messages(state: ChatUiState, seen: MutableSet<String>, modifier: Mod
         verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.Top),
     ) {
         // Reversed layout: the first item sits at the bottom, nearest the composer.
-        if (agent != null && (state.working || state.streaming != null)) {
+        if (agent != null && state.working && state.streaming == null) {
             item(key = "working") {
-                Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Badge(look, agent.state, 60.dp, label = agent.name)
-                    Column(Modifier.padding(start = 6.dp)) {
-                        if (state.working) WorkingLine(color = colors.foreground)
-                        state.streaming?.let {
-                            StreamingText(it, RenoaType.Body.copy(lineHeight = 22.sp), colors.mutedForeground, Modifier.padding(top = 4.dp))
-                        }
-                    }
+                Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Badge(look, agent.state, 56.dp, label = agent.name)
+                    WorkingLine(colors.foreground, agent.glance.doing, colors.mutedForeground)
                 }
             }
         }
-        items(state.messages.asReversed(), key = { it.id }) { message ->
+        // A reply still arriving is the same item as the message it becomes, so nothing jumps when it is whole.
+        val streaming = state.streaming?.let { ChatMessage(it.id, Speaker.Agent, it.text) }
+        val shown = if (streaming != null) state.messages + streaming else state.messages
+        items(shown.asReversed(), key = { it.id }) { message ->
             val fresh = seen.add(message.id)
-            Rise(fresh) { MessageRow(message) }
+            Rise(fresh) { MessageRow(message, complete = message.id != state.streaming?.id, animate = fresh) }
         }
     }
 }
@@ -124,7 +126,7 @@ private fun Rise(animate: Boolean, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun MessageRow(message: ChatMessage) {
+private fun MessageRow(message: ChatMessage, complete: Boolean, animate: Boolean) {
     val colors = Renoa.colors
     when (message.speaker) {
         Speaker.Owner ->
@@ -140,7 +142,7 @@ private fun MessageRow(message: ChatMessage) {
                 )
             }
         Speaker.Agent ->
-            Text(message.text, Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f), style = RenoaType.Body, color = colors.foregroundSoft)
+            RevealText(message.text, complete, animate, RenoaType.Body, colors.foregroundSoft, Modifier.padding(horizontal = 20.dp).fillMaxWidth(0.94f))
     }
 }
 

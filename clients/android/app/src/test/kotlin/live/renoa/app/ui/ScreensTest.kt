@@ -10,10 +10,12 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
@@ -70,41 +72,41 @@ class ScreensTest : ScreenTest() {
     fun theFiveBadgeStatesSideBySideInCrimson() = badgesIn(ThemeName.Crimson)
 
     @Test
-    fun homeShowsTheBusyStageAndTheHive() {
+    fun homeOpensWithTheLeadsNoteThenEveryoneAndWhatTheyNeed() {
         val model = HomeViewModel(repository)
         show(seconds = 3.97f) { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
         compose.waitForIdle()
-        compose.onNodeWithText("Optimus").assertIsDisplayed()
-        compose.onNodeWithText("Renoa").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Tifa, resting").assertIsDisplayed()
-        compose.onNodeWithText("6 asleep · tidy up").assertIsDisplayed()
+        compose.onNodeWithText("Evening, Yash. Tifa wants your dinner plan, and Optimus found three repos worth a look tonight.").assertIsDisplayed()
+        compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
+        compose.onNodeWithText("Dal and a salad").assertIsDisplayed()
+        compose.onNodeWithText("With Kai'Sa · Picking three posts worth your reply…").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Message Renoa").assertIsDisplayed()
         snapshot("home")
     }
 
     @Test
-    fun tidyingUpHidesTheSleepingAgentsAndOffersToBringThemBack() {
+    fun answeringFromHomePutsTheQuestionAway() {
         val model = HomeViewModel(repository)
         show { HomeScreen(model, onOpenChat = {}, onNewAgent = {}, onChangeColours = {}) }
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Nova, asleep").assertExists()
-        compose.onNodeWithText("6 asleep · tidy up").performClick()
+        compose.onNodeWithText("Dal and a salad").performClick()
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Nova, asleep").assertDoesNotExist()
-        compose.onNodeWithText("Show 6 asleep").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithContentDescription("Nova, asleep").assertExists()
+        compose.onNodeWithText("Dal and a salad").assertDoesNotExist()
+        compose.onNodeWithText("Not sure yet").assertDoesNotExist()
     }
 
     @Test
-    fun tappingAnAgentOpensItsChatAndTheNewSeatMakesAnAgent() {
+    fun tappingSomeoneOpensTheirChatAndTheLastRowMakesSomeoneNew() {
         val opened = mutableListOf<String>()
         var made = 0
         val model = HomeViewModel(repository)
         show { HomeScreen(model, onOpenChat = { opened += it }, onNewAgent = { made++ }, onChangeColours = {}) }
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Tifa, resting").performClick()
-        compose.onNodeWithContentDescription("Make a new agent").performClick()
-        assertEquals(listOf("tifa"), opened)
+        compose.onNodeWithText("Optimus").performClick()
+        compose.onNodeWithContentDescription("Message Renoa").performClick()
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasContentDescription("Meet someone new"))
+        compose.onNodeWithContentDescription("Meet someone new").performClick()
+        assertEquals(listOf("optimus", "renoa"), opened)
         assertEquals(1, made)
     }
 
@@ -118,16 +120,38 @@ class ScreensTest : ScreenTest() {
     }
 
     @Test
-    fun chatShowsTheConversationTheWorkingStateAndStop() {
+    fun aReplyStillArrivingSitsInTheChatWithStop() {
         val model = ChatViewModel(repository, "renoa")
         show(seconds = 3f) { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
         compose.waitForIdle()
-        compose.onNodeWithText("What's WebMCP, and should we support it? What would it cost to run?").assertIsDisplayed()
-        compose.onNodeWithText("On it. I'll read up, and Kai'Sa can hunt down the costs.").assertIsDisplayed()
-        compose.onNodeWithText("Connecting the dots").assertIsDisplayed()
+        compose.onNodeWithText("Can you and Kai'Sa find me three posts I could reply to tonight?").assertIsDisplayed()
+        compose.onNodeWithText("On it. Kai'Sa is looking now, and I'll pick the ones that sound like you.").assertIsDisplayed()
+        compose.onNodeWithText("The first one is a thread about running AI on your own phone.").assertExists()
         compose.onNodeWithContentDescription("Message Renoa").assertIsDisplayed()
         compose.onNodeWithContentDescription("Stop").assertIsEnabled()
+        snapshot("chat-streaming")
+    }
+
+    @Test
+    fun aWorkingAgentSaysWhatItIsDoing() {
+        val model = ChatViewModel(repository, "kaisa")
+        show(seconds = 3f) { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithText("Finding posts worth replying to…").assertIsDisplayed()
         snapshot("chat-working")
+    }
+
+    @Test
+    fun aQuestionWaitsAboveTheComposerAndAnsweringPutsItAway() {
+        val model = ChatViewModel(repository, "tifa")
+        show { ChatScreen(model, onBack = {}, onOpenProfile = {}) }
+        compose.waitForIdle()
+        compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertIsDisplayed()
+        snapshot("chat-ask")
+        compose.onNodeWithText("Not sure yet").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("What's the plan for dinner? You were light on fibre at lunch.").assertDoesNotExist()
+        compose.onNodeWithText("Not sure yet").assertIsDisplayed()
     }
 
     @Test
@@ -147,7 +171,7 @@ class ScreensTest : ScreenTest() {
         show(seconds = 2f) { AgentEditorScreen(model, onClose = {}, onFinished = {}) }
         compose.waitForIdle()
         compose.onNodeWithText("Tifa").assertIsDisplayed()
-        compose.onNodeWithText("Your training partner. Pushes hard, cheers louder.").assertIsDisplayed()
+        compose.onNodeWithText("Tracks what you eat and keeps you training.").assertIsDisplayed()
         compose.onNodeWithText("What Tifa can do").assertIsDisplayed()
         compose.onNode(hasText("Calendar")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Name")).assertExists()

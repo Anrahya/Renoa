@@ -45,7 +45,7 @@ class ChatViewModelTest {
         }
     }
 
-    private fun TestScope.model(agentId: String = "tifa", flaky: Boolean = false): Pair<ChatViewModel, Flaky> {
+    private fun TestScope.model(agentId: String = "nagisa", flaky: Boolean = false): Pair<ChatViewModel, Flaky> {
         val repo = Flaky(FakeAgentRepository(backgroundScope, FakeWorld.demo(), wordDelayMs = 100, script = oneTwoThree))
         val vm = ChatViewModel(repo, agentId)
         backgroundScope.launch { vm.state.collect {} }
@@ -140,7 +140,7 @@ class ChatViewModelTest {
         assertEquals(ComposerAction.Stop, vm.state.value.action)
 
         advanceTimeBy(750)
-        assertEquals("one", vm.state.value.streaming)
+        assertEquals("one", vm.state.value.streaming?.text)
 
         settle()
         val state = vm.state.value

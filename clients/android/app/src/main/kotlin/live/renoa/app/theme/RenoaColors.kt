@@ -29,7 +29,7 @@ data class RenoaColors(
     val stateFailed: Color,
 )
 
-/** The bold grounds. All three are dark; an agent keeps its own picture colours on top. */
+/** The bold grounds. All three are dark; Crimson is the default. An agent keeps its own picture colours on top. */
 enum class ThemeName(val colors: RenoaColors) {
     Midnight(
         RenoaColors(

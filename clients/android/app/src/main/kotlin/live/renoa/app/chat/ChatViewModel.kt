@@ -14,10 +14,12 @@ import kotlinx.coroutines.launch
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.AgentState
 import live.renoa.app.agents.AgentSummary
+import live.renoa.app.agents.Ask
 import live.renoa.app.agents.ChatMessage
 import live.renoa.app.agents.Conversation
-import live.renoa.app.agents.Problem
 import live.renoa.app.agents.RepositoryException
+import live.renoa.app.agents.StreamingReply
+import live.renoa.app.agents.wordsOr
 
 /** What the composer's round button does right now. */
 enum class ComposerAction {
@@ -33,12 +35,15 @@ enum class ComposerAction {
 data class ChatUiState(
     val agent: AgentSummary? = null,
     val messages: List<ChatMessage> = emptyList(),
-    /** Words still arriving. Never stored, and gone when the reply is whole. */
-    val streaming: String? = null,
+    /** A reply still arriving. Never stored; its whole message takes the same id. */
+    val streaming: StreamingReply? = null,
     val draft: String = "",
     val notice: String? = null,
 ) {
     val working: Boolean get() = agent?.state == AgentState.Working
+
+    /** A question waiting for the owner, if the agent asked one. */
+    val ask: Ask? get() = agent?.glance?.ask
 
     val action: ComposerAction
         get() =
@@ -65,6 +70,22 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         } catch (gone: RepositoryException) {
             flowOf(Conversation())
         }
+
+    /** The owner is looking at the chat, so whatever the agent said has been read. */
+    fun seen() {
+        viewModelScope.launch { runCatching { repository.markSeen(agentId) } }
+    }
+
+    fun answer(choice: String) {
+        notice.value = null
+        viewModelScope.launch {
+            try {
+                repository.answer(agentId, choice)
+            } catch (refused: RepositoryException) {
+                notice.value = refused.wordsOr("That answer did not go through. Try again.")
+            }
+        }
+    }
 
     fun onDraft(text: String) {
         draft.value = text
@@ -97,6 +118,3 @@ class ChatViewModel(private val repository: AgentRepository, private val agentId
         }
     }
 }
-
-/** Not reaching Renoa has its own words; any other refusal gets the one that fits this screen. */
-private fun RepositoryException.wordsOr(fallback: String): String = if (problem == Problem.Unavailable) problem.ownerWords else fallback

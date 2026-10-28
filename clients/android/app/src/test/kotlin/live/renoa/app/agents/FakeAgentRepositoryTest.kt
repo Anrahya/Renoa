@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -29,62 +30,62 @@ class FakeAgentRepositoryTest {
     @Test
     fun aMessageIsKeptAtOnceThenTheAgentWorksStreamsAndSettles() = runTest {
         val repo = repository()
-        repo.send("tifa", "hello")
-        assertEquals(listOf("hello"), repo.chat("tifa").messages.map { it.text }, "the message is kept before any reply")
+        repo.send("nagisa", "hello")
+        assertEquals(listOf("hello"), repo.chat("nagisa").messages.map { it.text }, "the message is kept before any reply")
         runCurrent()
-        assertEquals(AgentState.Working, repo.state("tifa"))
-        assertNull(repo.chat("tifa").streaming, "it thinks before it speaks")
+        assertEquals(AgentState.Working, repo.state("nagisa"))
+        assertNull(repo.chat("nagisa").streaming, "it thinks before it speaks")
 
         advanceTimeBy(750)
-        assertEquals("one", repo.chat("tifa").streaming)
+        assertEquals("one", repo.chat("nagisa").streaming?.text)
         advanceTimeBy(100)
-        assertEquals("one two", repo.chat("tifa").streaming)
+        assertEquals("one two", repo.chat("nagisa").streaming?.text)
 
         settle()
-        val done = repo.chat("tifa")
+        val done = repo.chat("nagisa")
         assertEquals(listOf(Speaker.Owner to "hello", Speaker.Agent to "one two three"), done.messages.map { it.speaker to it.text })
         assertNull(done.streaming, "streamed words are never kept; the whole message replaces them")
-        assertEquals(AgentState.Resting, repo.state("tifa"))
+        assertEquals(AgentState.Resting, repo.state("nagisa"))
     }
 
     @Test
     fun stopIsFinalTheReplyNeverArrivesAndTheAgentRests() = runTest {
         val repo = repository()
-        repo.send("tifa", "hello")
+        repo.send("nagisa", "hello")
         advanceTimeBy(750)
-        assertEquals("one", repo.chat("tifa").streaming)
+        assertEquals("one", repo.chat("nagisa").streaming?.text)
 
-        repo.stop("tifa")
+        repo.stop("nagisa")
         runCurrent()
-        assertEquals(AgentState.Resting, repo.state("tifa"))
-        assertNull(repo.chat("tifa").streaming)
+        assertEquals(AgentState.Resting, repo.state("nagisa"))
+        assertNull(repo.chat("nagisa").streaming)
 
         advanceTimeBy(60_000)
-        assertEquals(listOf("hello"), repo.chat("tifa").messages.map { it.text }, "a stopped agent must not finish its reply later")
-        assertEquals(AgentState.Resting, repo.state("tifa"))
+        assertEquals(listOf("hello"), repo.chat("nagisa").messages.map { it.text }, "a stopped agent must not finish its reply later")
+        assertEquals(AgentState.Resting, repo.state("nagisa"))
     }
 
     @Test
     fun stopAlsoDropsMessagesWaitingBehindTheOneBeingAnswered() = runTest {
         val repo = repository()
-        repo.send("tifa", "first")
-        repo.send("tifa", "second")
+        repo.send("nagisa", "first")
+        repo.send("nagisa", "second")
         advanceTimeBy(750)
-        repo.stop("tifa")
+        repo.stop("nagisa")
         advanceTimeBy(60_000)
-        assertEquals(listOf("first", "second"), repo.chat("tifa").messages.map { it.text }, "both owner messages are kept, and neither is answered")
+        assertEquals(listOf("first", "second"), repo.chat("nagisa").messages.map { it.text }, "both owner messages are kept, and neither is answered")
     }
 
     @Test
     fun aMessageDroppedByStopIsNotAnsweredLaterWhenTheOwnerWritesAgain() = runTest {
         val repo = repository()
-        repo.send("tifa", "first")
-        repo.send("tifa", "second")
+        repo.send("nagisa", "first")
+        repo.send("nagisa", "second")
         advanceTimeBy(750)
-        repo.stop("tifa")
-        repo.send("tifa", "third")
+        repo.stop("nagisa")
+        repo.send("nagisa", "third")
         settle()
-        val chat = repo.chat("tifa").messages
+        val chat = repo.chat("nagisa").messages
         assertEquals(listOf("first", "second", "third"), chat.filter { it.speaker == Speaker.Owner }.map { it.text })
         assertEquals(1, chat.count { it.speaker == Speaker.Agent }, "only the message sent after the stop is answered")
     }
@@ -101,7 +102,7 @@ class FakeAgentRepositoryTest {
     @Test
     fun stoppingAnAgentThatWantsYouOrIsAsleepChangesNothing() = runTest {
         val repo = repository()
-        for (id in listOf("optimus", "nova")) {
+        for (id in listOf("tifa", "mochi")) {
             val before = repo.state(id)
             repo.stop(id)
             assertEquals(before, repo.state(id))
@@ -111,23 +112,23 @@ class FakeAgentRepositoryTest {
     @Test
     fun aSecondMessageWhileWorkingIsAnsweredAfterTheFirstInOrder() = runTest {
         val repo = repository()
-        repo.send("tifa", "first")
+        repo.send("nagisa", "first")
         runCurrent()
-        repo.send("tifa", "second")
+        repo.send("nagisa", "second")
         settle()
-        val speakers = repo.chat("tifa").messages.map { it.speaker }
+        val speakers = repo.chat("nagisa").messages.map { it.speaker }
         assertEquals(listOf(Speaker.Owner, Speaker.Owner, Speaker.Agent, Speaker.Agent), speakers)
-        assertEquals(AgentState.Resting, repo.state("tifa"))
+        assertEquals(AgentState.Resting, repo.state("nagisa"))
     }
 
     @Test
     fun aMessageSentAfterATurnEndedStartsANewTurn() = runTest {
         val repo = repository()
-        repo.send("tifa", "first")
+        repo.send("nagisa", "first")
         settle()
-        repo.send("tifa", "second")
+        repo.send("nagisa", "second")
         settle()
-        assertEquals(4, repo.chat("tifa").messages.size)
+        assertEquals(4, repo.chat("nagisa").messages.size)
     }
 
     @Test
@@ -136,7 +137,7 @@ class FakeAgentRepositoryTest {
         val failsOnce = ReplyScript { _, _ -> if (attempts++ == 0) Reply.Fails else Reply.Words("ok") }
         val repo = repository(failsOnce)
         // Resting, Wants and Asleep each go to Working when the owner writes.
-        for (id in listOf("sensei", "optimus", "nova")) {
+        for (id in listOf("sensei", "tifa", "mochi")) {
             val before = repo.state(id)
             assertTrue(before != AgentState.Working, "$id starts as $before")
         }
@@ -151,35 +152,35 @@ class FakeAgentRepositoryTest {
         assertEquals(AgentState.Working, repo.state("sensei"), "from stuck")
         settle()
 
-        repo.send("optimus", "here is my answer")
+        repo.send("tifa", "here is my answer")
         runCurrent()
-        assertEquals(AgentState.Working, repo.state("optimus"), "from wants")
+        assertEquals(AgentState.Working, repo.state("tifa"), "from wants")
         settle()
 
-        repo.send("nova", "wake up")
+        repo.send("mochi", "wake up")
         runCurrent()
-        assertEquals(AgentState.Working, repo.state("nova"), "from asleep")
+        assertEquals(AgentState.Working, repo.state("mochi"), "from asleep")
         settle()
-        assertEquals(AgentState.Resting, repo.state("nova"))
+        assertEquals(AgentState.Resting, repo.state("mochi"))
     }
 
     @Test
     fun theDemoScriptGetsLedgerStuckAndNobodyElse() = runTest {
         val repo = FakeAgentRepository(backgroundScope, FakeWorld.demo(), wordDelayMs = 10, newId = { ids.next() })
         repo.send("ledger", "hello")
-        repo.send("tifa", "hello")
+        repo.send("nagisa", "hello")
         settle()
         assertEquals(AgentState.Stuck, repo.state("ledger"))
-        assertEquals(AgentState.Resting, repo.state("tifa"))
+        assertEquals(AgentState.Resting, repo.state("nagisa"))
     }
 
     @Test
     fun blankWordsAreRefusedAndKeepNothing() = runTest {
         val repo = repository()
-        val before = repo.chat("tifa").messages
-        assertEquals(Problem.Invalid, assertFailsWith<RepositoryException> { repo.send("tifa", "   ") }.problem)
-        assertEquals(before, repo.chat("tifa").messages)
-        assertEquals(AgentState.Resting, repo.state("tifa"))
+        val before = repo.chat("nagisa").messages
+        assertEquals(Problem.Invalid, assertFailsWith<RepositoryException> { repo.send("nagisa", "   ") }.problem)
+        assertEquals(before, repo.chat("nagisa").messages)
+        assertEquals(AgentState.Resting, repo.state("nagisa"))
     }
 
     @Test
@@ -189,6 +190,81 @@ class FakeAgentRepositoryTest {
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.stop("nobody") }.problem)
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.profile("nobody") }.problem)
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.conversation("nobody") }.problem)
+    }
+
+    @Test
+    fun aStreamedReplyKeepsOneIdFromTheFirstWordToTheWholeMessage() = runTest {
+        val repo = repository()
+        repo.send("nagisa", "hello")
+        advanceTimeBy(750)
+        val streamingId = repo.chat("nagisa").streaming!!.id
+        settle()
+        assertEquals(streamingId, repo.chat("nagisa").messages.last().id)
+    }
+
+    @Test
+    fun aSeededChatGoesOnWithFreshIds() = runTest {
+        val repo = repository()
+        val seeded = repo.chat("renoa").let { chat -> chat.messages.map { it.id } + listOfNotNull(chat.streaming?.id) }
+        repo.send("renoa", "and the other two?")
+        settle()
+        val ids = repo.chat("renoa").messages.map { it.id }
+        assertEquals(ids.size, ids.toSet().size, "every message has its own id")
+        assertTrue(ids.drop(2).none { it in seeded }, "new messages never reuse a seeded id")
+    }
+
+    // --- asking and reading ---
+
+    private fun FakeAgentRepository.glance(id: String) = agents.value.first { it.id == id }.glance
+
+    @Test
+    fun answeringKeepsTheAnswerAsTheOwnersMessageClearsTheQuestionAndTheAgentWorks() = runTest {
+        val repo = repository()
+        val ask = assertNotNull(repo.glance("tifa").ask)
+        val before = repo.chat("tifa").messages.size
+        repo.answer("tifa", ask.choices.first())
+        assertNull(repo.glance("tifa").ask)
+        assertTrue(!repo.glance("tifa").unread)
+        val kept = repo.chat("tifa").messages
+        assertEquals(before + 1, kept.size)
+        assertEquals(Speaker.Owner to ask.choices.first(), kept.last().let { it.speaker to it.text })
+        runCurrent()
+        assertEquals(AgentState.Working, repo.state("tifa"))
+    }
+
+    @Test
+    fun anAnswerThatWasNotOfferedOrHasNoQuestionIsRefusedAndChangesNothing() = runTest {
+        val repo = repository()
+        val glance = repo.glance("tifa")
+        val chat = repo.chat("tifa").messages
+        assertEquals(Problem.Invalid, assertFailsWith<RepositoryException> { repo.answer("tifa", "Pizza") }.problem)
+        assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.answer("nagisa", "Yes") }.problem)
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.answer("nobody", "Yes") }.problem)
+        assertEquals(glance, repo.glance("tifa"))
+        assertEquals(chat, repo.chat("tifa").messages)
+        assertEquals(AgentState.Wants, repo.state("tifa"))
+    }
+
+    @Test
+    fun aReplyIsUnreadUntilTheOwnerSeesIt() = runTest {
+        val repo = repository()
+        repo.send("nagisa", "hello")
+        settle()
+        assertTrue(repo.glance("nagisa").unread)
+        assertEquals("one two three", repo.glance("nagisa").line)
+        repo.markSeen("nagisa")
+        assertTrue(!repo.glance("nagisa").unread)
+        assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.markSeen("nobody") }.problem)
+    }
+
+    @Test
+    fun whileWorkingTheAgentSaysWhatItIsDoingAndStopsSayingItAfter() = runTest {
+        val repo = repository()
+        repo.send("nagisa", "hello")
+        runCurrent()
+        assertEquals("Checking this week's prices", repo.glance("nagisa").doing)
+        settle()
+        assertNull(repo.glance("nagisa").doing)
     }
 
     // --- creating ---

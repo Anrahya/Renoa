@@ -7,16 +7,48 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import live.renoa.app.agents.AgentRepository
+import live.renoa.app.agents.AgentState
+import live.renoa.app.agents.AgentSummary
+import live.renoa.app.agents.Briefing
+import live.renoa.app.agents.RepositoryException
+import live.renoa.app.agents.wordsOr
 
-class HomeViewModel(repository: AgentRepository) : ViewModel() {
-    private val hideAsleep = MutableStateFlow(false)
+/**
+ * Everyone, in the order Home lists them: whoever needs the owner first ([AgentState.homeRank]),
+ * unread before read, then as the roster has them.
+ */
+fun homeOrder(agents: List<AgentSummary>): List<AgentSummary> =
+    agents.sortedWith(compareBy<AgentSummary> { it.state.homeRank }.thenBy { !it.glance.unread })
 
-    val layout: StateFlow<HomeLayout> =
-        combine(repository.agents, hideAsleep) { agents, hide -> HomeLayout.of(agents, hide) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeLayout.of(repository.agents.value, false))
+data class HomeUiState(
+    val briefing: Briefing? = null,
+    val people: List<AgentSummary> = emptyList(),
+    val notice: String? = null,
+) {
+    fun agent(id: String?): AgentSummary? = people.firstOrNull { it.id == id }
 
-    /** Tidy up: put the sleeping agents away, or bring them back. */
-    fun toggleAsleep() = hideAsleep.update { !it }
+    /** Who the briefing is from, and who "Message …" at the bottom reaches. */
+    val lead: AgentSummary? get() = agent(briefing?.agentId)
+}
+
+class HomeViewModel(private val repository: AgentRepository) : ViewModel() {
+    private val notice = MutableStateFlow<String?>(null)
+
+    val state: StateFlow<HomeUiState> =
+        combine(repository.agents, repository.briefing, notice) { agents, briefing, notice -> HomeUiState(briefing, homeOrder(agents), notice) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState(repository.briefing.value, homeOrder(repository.agents.value)))
+
+    /** Answers an agent's question right from Home; the agent picks it up from there. */
+    fun answer(agentId: String, choice: String) {
+        notice.value = null
+        viewModelScope.launch {
+            try {
+                repository.answer(agentId, choice)
+            } catch (refused: RepositoryException) {
+                notice.value = refused.wordsOr("That answer did not go through. Try again.")
+            }
+        }
+    }
 }

@@ -39,7 +39,7 @@ import live.renoa.app.theme.ThemeName
 
 @Composable
 fun RenoaApp(repository: AgentRepository) {
-    var theme by rememberSaveable { mutableStateOf(ThemeName.Midnight) }
+    var theme by rememberSaveable { mutableStateOf(ThemeName.Crimson) }
     val navigator = rememberNavigator(Route.SignIn)
     val stores: EntryStores = viewModel()
 

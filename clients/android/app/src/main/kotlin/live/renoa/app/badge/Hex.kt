@@ -43,7 +43,7 @@ fun hexPath(cx: Float, cy: Float, r: Float, corner: Float): Path =
 /** Axial hex coordinates: [q] runs along the row, [r] down the slanted column. */
 data class Seat(val q: Int, val r: Int)
 
-/** Seats spiral out from the centre, ring by ring, the way the hive fills. */
+/** Seats spiral out from the centre, ring by ring, the way the sign-in tiles fill. */
 object HexSpiral {
     private val directions = listOf(Seat(1, 0), Seat(1, -1), Seat(0, -1), Seat(-1, 0), Seat(-1, 1), Seat(0, 1))
 

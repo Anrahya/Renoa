@@ -25,14 +25,24 @@ fun interface ReplyScript {
     companion object {
         private val lines =
             listOf(
-                "Got it. I'll look into that and come back to you.",
-                "Good question. Give me a moment and I'll have something for you.",
-                "On it. I'll let you know as soon as there is news.",
+                "Got it. Let me look into that properly, and I'll come back with something short and useful.",
+                "Good question. I'm checking a couple of things first so I don't guess, then I'll tell you what I found.",
+                "On it. I'll keep it simple and let you know as soon as there's something worth your time.",
             )
 
-        /** Ledger always gets stuck, so the stuck badge can be seen. */
+        private val dinner =
+            mapOf(
+                "Dal and a salad" to "Good pick. Dal and a salad covers the fibre you missed, and it lands around 480 kcal. I'll check in tomorrow morning.",
+                "Not sure yet" to "No worries. Something with lentils or greens would balance the day. I'll ask again around nine.",
+            )
+
+        /** Ledger always gets stuck, so the stuck badge can be seen. Tifa answers her dinner question. */
         val Demo = ReplyScript { agent, text ->
-            if (agent.name == "Ledger") Reply.Fails else Reply.Words(lines[(agent.name.length + text.length) % lines.size])
+            when {
+                agent.name == "Ledger" -> Reply.Fails
+                agent.name == "Tifa" && text in dinner -> Reply.Words(dinner.getValue(text))
+                else -> Reply.Words(lines[(agent.name.length + text.length) % lines.size])
+            }
         }
     }
 }
@@ -45,24 +55,29 @@ fun interface ReplyScript {
 class FakeAgentRepository(
     private val scope: CoroutineScope,
     seeds: List<AgentSeed> = FakeWorld.demo(),
-    private val wordDelayMs: Long = 90,
+    private val wordDelayMs: Long = 60,
     private val script: ReplyScript = ReplyScript.Demo,
     private val newId: () -> String = { UUID.randomUUID().toString() },
+    briefing: Briefing? = FakeWorld.briefing(),
 ) : AgentRepository {
-    private class Room(val conversation: MutableStateFlow<Conversation>) {
+    private class Room(val conversation: MutableStateFlow<Conversation>, val doing: String) {
         val queue = ArrayDeque<String>()
         var turn: Job? = null
-        var nextMessage = 1
+
+        // Numbering carries on after the seeded messages, so a new message never reuses one's id.
+        var nextMessage = conversation.value.messages.size + (if (conversation.value.streaming != null) 1 else 0) + 1
     }
 
     private val lock = Any()
     private val roster = MutableStateFlow(seeds.map { it.summary })
     private val abilities = seeds.associate { it.summary.id to it.abilities }.toMutableMap()
     private val rooms =
-        seeds.associate { it.summary.id to Room(MutableStateFlow(Conversation(it.messages, it.streaming))) }.toMutableMap()
+        seeds.associate { it.summary.id to Room(MutableStateFlow(Conversation(it.messages, it.streaming)), it.doing) }.toMutableMap()
     private val receipts = mutableMapOf<String, Pair<CreateAgent, String>>()
 
     override val agents: StateFlow<List<AgentSummary>> = roster.asStateFlow()
+
+    override val briefing: StateFlow<Briefing?> = MutableStateFlow(briefing).asStateFlow()
 
     override fun conversation(agentId: String): Flow<Conversation> = room(agentId).conversation
 
@@ -78,6 +93,22 @@ class FakeAgentRepository(
         }
     }
 
+    override suspend fun answer(agentId: String, choice: String) {
+        synchronized(lock) {
+            val ask = summaryLocked(agentId).glance.ask ?: throw RepositoryException(Problem.Conflict, "There is no question waiting.")
+            if (choice !in ask.choices) throw RepositoryException(Problem.Invalid, "\"$choice\" is not one of the answers offered.")
+            glance(agentId) { it.copy(ask = null, unread = false) }
+        }
+        send(agentId, choice)
+    }
+
+    override suspend fun markSeen(agentId: String) {
+        synchronized(lock) {
+            summaryLocked(agentId)
+            glance(agentId) { it.copy(unread = false) }
+        }
+    }
+
     override suspend fun stop(agentId: String) {
         val room = room(agentId)
         val turn =
@@ -86,6 +117,7 @@ class FakeAgentRepository(
                 // A seeded agent can be working with no turn of ours running; stopping it still has to stop it.
                 // Resting is written here, with the queue, so a message sent right after cannot start a turn that this then overwrites.
                 setState(agentId, AgentState.Resting, onlyFrom = AgentState.Working)
+                glance(agentId) { it.copy(doing = null, with = null) }
                 room.turn.also { room.turn = null }
             }
         turn?.cancel()
@@ -115,7 +147,7 @@ class FakeAgentRepository(
             val id = newId()
             roster.update { it + AgentSummary(id, request.name.trim(), request.purpose.trim(), AgentState.Resting) }
             abilities[id] = starter.map { it.copy(lit = it.id in request.litAbilities) }
-            rooms[id] = Room(MutableStateFlow(Conversation()))
+            rooms[id] = Room(MutableStateFlow(Conversation()), "Thinking about what you said")
             receipts[request.operationId] = request to id
             profileLocked(id)
         }
@@ -148,7 +180,10 @@ class FakeAgentRepository(
         }
 
     private suspend fun takeTurns(agentId: String, room: Room) {
-        setState(agentId, AgentState.Working)
+        synchronized(lock) {
+            setState(agentId, AgentState.Working)
+            glance(agentId) { it.copy(doing = room.doing) }
+        }
         try {
             while (true) {
                 // Finishing is decided under the lock, and so is the state it leaves the agent in, so a message sent
@@ -159,6 +194,7 @@ class FakeAgentRepository(
                             if (it == null) {
                                 room.turn = null
                                 setState(agentId, AgentState.Resting)
+                                glance(agentId) { g -> g.copy(doing = null, with = null) }
                             }
                         }
                     } ?: break
@@ -171,6 +207,7 @@ class FakeAgentRepository(
                             room.queue.clear()
                             room.turn = null
                             setState(agentId, AgentState.Stuck)
+                            glance(agentId) { it.copy(doing = null, with = null, line = "I got stuck on that one. Can you try again later?", time = "Just now") }
                         }
                         return
                     }
@@ -183,16 +220,21 @@ class FakeAgentRepository(
     }
 
     private suspend fun speak(agentId: String, room: Room, text: String) {
+        // The reply's id is chosen before the first word, so the streamed text and the kept message are one item.
+        val id = synchronized(lock) { "$agentId-${room.nextMessage++}" }
         val words = text.split(' ')
         for (count in 1..words.size) {
             delay(wordDelayMs)
-            room.conversation.update { it.copy(streaming = words.take(count).joinToString(" ")) }
+            room.conversation.update { it.copy(streaming = StreamingReply(id, words.take(count).joinToString(" "))) }
         }
         synchronized(lock) {
-            room.conversation.update {
-                it.copy(messages = it.messages + ChatMessage("$agentId-${room.nextMessage++}", Speaker.Agent, text), streaming = null)
-            }
+            room.conversation.update { it.copy(messages = it.messages + ChatMessage(id, Speaker.Agent, text), streaming = null) }
+            glance(agentId) { it.copy(line = text, time = "Just now", unread = true) }
         }
+    }
+
+    private fun glance(agentId: String, change: (Glance) -> Glance) {
+        roster.update { list -> list.map { if (it.id == agentId) it.copy(glance = change(it.glance)) else it } }
     }
 
     private fun setState(agentId: String, state: AgentState, onlyFrom: AgentState? = null) {

@@ -4,9 +4,13 @@ import android.provider.Settings
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -43,8 +47,18 @@ class RenoaAppTest : ScreenTest() {
         compose.waitForIdle()
     }
 
+    /** Home is a list, so whoever is asked for may first need scrolling to. */
+    private fun onHome(description: String): SemanticsNodeInteraction {
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasContentDescription(description))
+        return compose.onNodeWithContentDescription(description)
+    }
+
+    private fun meetSomeoneNew() {
+        onHome("Meet someone new").performClick()
+    }
+
     private fun makeAnAgent(name: String) {
-        compose.onNodeWithContentDescription("Make a new agent").performClick()
+        meetSomeoneNew()
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Name").performTextInput(name)
         compose.onNodeWithText("Bring $name to life").performClick()
@@ -57,9 +71,9 @@ class RenoaAppTest : ScreenTest() {
         start()
         makeAnAgent("Mira")
         back()
-        compose.onNodeWithContentDescription("Mira, resting").assertIsDisplayed()
+        onHome("Mira, resting").assertIsDisplayed()
 
-        compose.onNodeWithContentDescription("Make a new agent").performClick()
+        meetSomeoneNew()
         compose.waitForIdle()
         compose.onNodeWithText("Bring them to life").assertIsNotEnabled()
         compose.onNodeWithContentDescription("Name").performTextInput("Kira")
@@ -68,14 +82,14 @@ class RenoaAppTest : ScreenTest() {
 
         compose.onNodeWithContentDescription("Message Kira").assertIsDisplayed()
         back()
-        compose.onNodeWithContentDescription("Mira, resting").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Kira, resting").assertIsDisplayed()
+        onHome("Mira, resting").assertIsDisplayed()
+        onHome("Kira, resting").assertIsDisplayed()
     }
 
     @Test
     fun aProfileCanBeOpenedAndKeptMoreThanOnce() {
         start()
-        compose.onNodeWithContentDescription("Tifa, resting").performClick()
+        onHome("Tifa, wants you").performClick()
         compose.waitForIdle()
 
         compose.onNodeWithText("Tifa").performClick()
@@ -101,7 +115,7 @@ class RenoaAppTest : ScreenTest() {
         restoration.setContent { RenoaApp(repository) }
         compose.onNodeWithText("Continue with passkey").performClick()
         compose.waitForIdle()
-        compose.onNodeWithContentDescription("Make a new agent").performClick()
+        meetSomeoneNew()
         compose.waitForIdle()
         compose.onNodeWithContentDescription("Name").performTextInput("Mira")
 
@@ -110,7 +124,7 @@ class RenoaAppTest : ScreenTest() {
         compose.onNodeWithText("Bring Mira to life").assertIsEnabled()
 
         back()
-        compose.onNodeWithContentDescription("Make a new agent").performClick()
+        meetSomeoneNew()
         compose.waitForIdle()
         compose.onNodeWithText("Bring them to life").assertIsNotEnabled()
     }

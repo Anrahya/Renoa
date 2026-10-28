@@ -24,7 +24,7 @@ class VocabularyTest {
     fun theScanFindsTheAppsWords() {
         val literals = sources().flatMap { file -> literal.findAll(file.readText()).map { it.groupValues[1] }.toList() }
         assertTrue(sources().size > 20, "expected to find the app's sources, found ${sources().size}")
-        assertTrue("Continue with passkey" in literals && "Busy now" in literals, "the scan is not reading string literals")
+        assertTrue("Continue with passkey" in literals && "Meet someone new" in literals, "the scan is not reading string literals")
     }
 
     @Test

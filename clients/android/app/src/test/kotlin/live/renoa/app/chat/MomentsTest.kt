@@ -39,13 +39,64 @@ class MomentsTest {
         assertFailsWith<IllegalArgumentException> { WorkingWords.frame(0, 0f, false) }
     }
 
+    /** Runs the reveal at 60 frames a second; [arrivals] says how many characters have arrived by each frame. */
+    private fun reveal(frames: Int, complete: (Int) -> Boolean = { false }, arrivals: (Int) -> Int): List<Float> {
+        var progress = Reveal.Progress()
+        return (0 until frames).map { frame ->
+            progress = Reveal.step(progress, arrivals(frame), 1f / 60, complete(frame))
+            progress.shown
+        }
+    }
+
     @Test
-    fun aNewWordSharpensIntoPlaceOverAboutHalfASecondAndAnOldOneIsFullyThere() {
-        val arrivals = listOf(0f, 1f)
-        assertEquals(1f, wordAlpha(arrivals, 0, 5f))
-        assertEquals(0f, wordAlpha(arrivals, 1, 1f))
-        assertTrue(wordAlpha(arrivals, 1, 1.2f) in 0.1f..0.9f)
-        assertEquals(1f, wordAlpha(arrivals, 1, 1.5f))
-        assertEquals(0f, wordAlpha(arrivals, 1, 0.5f), "a word cannot be visible before it arrives")
+    fun aBurstIsShownWithinTheLagLimitNotAtTheBasePace() {
+        val shown = reveal(120) { 300 }
+        val frames = shown.indexOfFirst { it >= 300f } + 1
+        assertTrue(frames / 60f <= Reveal.MAX_LAG_SECONDS + 1f / 60, "300 characters took ${frames / 60f} s")
+    }
+
+    @Test
+    fun everyCharacterShowsWithinTheLagLimitOfArrivingEvenWhenWordsKeepComing() {
+        // A burst, then a word every 60 ms: the later small words must not slow the reveal of the burst.
+        val arrivals = { frame: Int -> 200 + 6 * (frame / 4) }
+        val shown = reveal(240, arrivals = arrivals)
+        val lagFrames = (Reveal.MAX_LAG_SECONDS * 60).toInt() + 1
+        for (frame in lagFrames until shown.size) {
+            assertTrue(shown[frame] >= arrivals(frame - lagFrames), "at frame $frame, ${shown[frame]} shown of ${arrivals(frame - lagFrames)} due")
+        }
+    }
+
+    @Test
+    fun aTrickleIsShownAtTheBasePaceAndNeverPastWhatHasArrived() {
+        assertEquals(Reveal.BASE_CHARS_PER_SECOND / 60, Reveal.step(Reveal.Progress(), 20, 1f / 60, complete = false).shown, 1e-4f)
+        assertEquals(5f, Reveal.step(Reveal.Progress(4.9f), 5, 1f, complete = false).shown)
+    }
+
+    @Test
+    fun aWholeReplyFinishesItsRevealQuickly() {
+        val shown = reveal(120, complete = { true }) { 600 }
+        val frames = shown.indexOfFirst { it >= 600f } + 1
+        assertTrue(frames / 60f <= Reveal.FINISH_SECONDS + 1f / 60, "a finished reply took ${frames / 60f} s to show")
+    }
+
+    @Test
+    fun theSpeedResetsOnceTheRevealCatchesUp() {
+        val caught = Reveal.step(Reveal.Progress(299f, 1000f), 300, 1f / 60, complete = false)
+        assertEquals(Reveal.Progress(300f, 0f), Reveal.step(caught, 300, 1f / 60, complete = false))
+    }
+
+    @Test
+    fun aWholeReplyEndsWithEveryCharacterFullyClearButOneStillArrivingKeepsASoftEdge() {
+        val length = 50
+        assertTrue((0 until length).all { Reveal.alpha(it, Reveal.end(length, complete = true).toFloat()) == 1f })
+        assertTrue(Reveal.alpha(length - 1, Reveal.end(length, complete = false).toFloat()) < 1f)
+    }
+
+    @Test
+    fun eachCharacterFadesInBehindTheEdge() {
+        assertEquals(1f, Reveal.alpha(0, 40f))
+        assertEquals(0f, Reveal.alpha(40, 40f), "the edge itself is not shown yet")
+        assertTrue(Reveal.alpha(33, 40f) in 0.1f..0.9f)
+        assertEquals(0f, Reveal.alpha(50, 40f), "nothing past the edge shows")
     }
 }
