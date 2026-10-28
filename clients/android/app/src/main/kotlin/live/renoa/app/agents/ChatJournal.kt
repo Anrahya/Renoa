@@ -34,7 +34,8 @@ internal class ChatJournal {
     private var draft: Draft? = null
     private var seen: String? = null
 
-    private class Draft(val commandId: Uuid, val index: Int, val text: String)
+    /** The live text of one message; [next] is the sequence its next frame must carry. */
+    private class Draft(val commandId: Uuid, val index: Int, val text: String, val next: Long)
 
     /** Applies one journal record. A record applied before is ignored, so a replay is harmless. */
     fun apply(event: TaskEvent) {
@@ -66,7 +67,9 @@ internal class ChatJournal {
 
     /**
      * Applies one live frame. `sequence` 0 opens a message, so a 0 that arrives while the previous
-     * message's draft has text opens the next one, even before that message's record arrives.
+     * message's draft has text opens the next one, even before that message's record arrives; a 0
+     * after a reset starts the same message over. A frame out of sequence means one was missed, so
+     * the draft is dropped until the next message opens.
      */
     fun live(commandId: Uuid, activity: LiveActivity) {
         if (commandId in terminals) return
@@ -74,14 +77,24 @@ internal class ChatJournal {
         val first = recorded[commandId] ?: 0
         draft =
             when (activity) {
-                is LiveActivity.TextReset -> current?.let { Draft(commandId, it.index, "") }
-                is LiveActivity.TextDelta ->
+                is LiveActivity.TextReset -> current?.let { Draft(commandId, it.index, "", next = 0) }
+                is LiveActivity.TextDelta -> {
+                    val sequence = activity.sequence
                     when {
-                        current == null -> Draft(commandId, first, activity.text)
-                        activity.sequence == 0L && current.text.isNotEmpty() -> Draft(commandId, maxOf(current.index + 1, first), activity.text)
-                        else -> Draft(commandId, maxOf(current.index, first), current.text + activity.text)
+                        sequence == 0L && current != null && current.text.isNotEmpty() ->
+                            Draft(commandId, maxOf(current.index + 1, first), activity.text, next = 1)
+                        sequence == 0L -> Draft(commandId, maxOf(current?.index ?: first, first), activity.text, next = 1)
+                        current != null && sequence == current.next ->
+                            Draft(commandId, maxOf(current.index, first), current.text + activity.text, next = sequence + 1)
+                        else -> null
                     }
+                }
             }
+    }
+
+    /** The connection dropped: live frames sent meanwhile are gone, so the draft cannot be trusted. */
+    fun connectionLost() {
+        draft = null
     }
 
     /** Shows a message the owner sent until its record arrives; it keeps the record's id, so nothing jumps. */

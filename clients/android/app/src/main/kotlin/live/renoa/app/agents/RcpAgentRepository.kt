@@ -26,8 +26,9 @@ import kotlin.uuid.Uuid
  * The screens' Renoa over RCP. The agents are the targets the owner's nodes advertise; each has
  * one chat task ([chatTaskId]), followed with its live text while the app runs.
  *
- * [state] is the outbox [surface] writes to. A message whose answer was lost stays there and is
- * sent again, with the same identity, after the next connect; a refused one is dropped.
+ * [state] is the outbox [surface] writes to. A message the coordinator refused is dropped; any other
+ * failure leaves it there, and it is sent again with the same identity after the next connect and
+ * on every roster check.
  *
  * Making and editing agents is Host control, which this connection does not carry yet, so those
  * calls are refused as unavailable.
@@ -42,6 +43,9 @@ class RcpAgentRepository(
     private class Room(val target: TargetSummary, val taskId: Uuid) {
         val journal = ChatJournal()
         val conversation = MutableStateFlow(Conversation())
+
+        /** Set once [RcpSurface.attach] returned; from then on [RcpSurface.connect] re-attaches it. */
+        var attached = false
     }
 
     private val lock = Any()
@@ -52,19 +56,27 @@ class RcpAgentRepository(
 
     override val briefing: StateFlow<Briefing?> = MutableStateFlow<Briefing?>(null).asStateFlow()
 
-    /** Connects, follows every agent's chat, and reconnects after a drop, until [scope] ends. */
+    /** Connects, follows every agent's chat, and reconnects after a drop, until [scope] is cancelled. */
     fun start() {
         scope.launch {
             var attempt = 0
             while (true) {
                 try {
                     surface.connect()
-                    attempt = 0
                     sendUnsent()
                     follow(surface.listTargets())
+                    // Only a connection that got this far resets the wait, so one that fails at once backs off.
+                    attempt = 0
                     coroutineScope {
-                        // An agent made elsewhere joins the roster without waiting for a reconnect.
-                        val roll = launch { while (true) { delay(rosterEvery); follow(surface.listTargets()) } }
+                        // An agent made elsewhere joins, and a message the node could not take yet goes, without a reconnect.
+                        val roll =
+                            launch {
+                                while (true) {
+                                    delay(rosterEvery)
+                                    sendUnsent()
+                                    follow(surface.listTargets())
+                                }
+                            }
                         surface.awaitDisconnect()
                         roll.cancel()
                     }
@@ -74,18 +86,24 @@ class RcpAgentRepository(
                     // A connection that failed partway is closed before the next attempt.
                     runCatching { surface.disconnect() }
                 }
+                // Live text is not replayed, so a draft cut by the drop would be glued to text from after it.
+                synchronized(lock) { rooms.values.toList() }.forEach { update(it) { connectionLost() } }
                 delay(retryAfter(attempt++))
             }
         }
     }
 
-    /** Sends what the outbox still holds. The client sends in order, so a refusal is for the first one left. */
+    /**
+     * Sends what the outbox still holds. The client sends in order, so a refusal is for the first one
+     * left; anything else stops here and leaves the rest for the next try.
+     */
     private suspend fun sendUnsent() {
         while (true) {
             try {
                 surface.retryPendingCommands()
                 return
-            } catch (refused: RcpException) {
+            } catch (failure: RcpException) {
+                if (!failure.refusesTheRequest) return
                 val first = state.pendingCommands().firstOrNull() ?: return
                 state.removeCommand(first.commandId)
                 synchronized(lock) { rooms.values.firstOrNull { it.taskId == first.taskId } }?.let { room -> update(room) { refused(first.commandId) } }
@@ -93,18 +111,25 @@ class RcpAgentRepository(
         }
     }
 
-    /** Opens and attaches the chat of each agent not followed yet; [RcpSurface.connect] re-attaches the rest. */
+    /**
+     * Opens and attaches the chat of each agent not attached yet; [RcpSurface.connect] re-attaches the
+     * rest. A room outlives a failed attach, because the client keeps the cursor of what it applied
+     * and replays only what follows. One agent that cannot be opened does not hold up the others.
+     */
     private suspend fun follow(targets: List<TargetSummary>) {
         for (target in targets) {
-            val id = agentId(target)
-            if (synchronized(lock) { id in rooms }) continue
-            val room = Room(target, chatTaskId(target.nodeId, target.target))
-            surface.openTask(room.taskId, target.nodeId, target.target)
-            // The room is kept only once attached, so an attach that failed is tried again with a fresh journal.
-            surface.attach(room.taskId, live = { commandId, activity -> update(room) { live(commandId, activity) } }) { event ->
-                update(room) { apply(event) }
+            val room = synchronized(lock) { rooms.getOrPut(agentId(target)) { Room(target, chatTaskId(target.nodeId, target.target)) } }
+            if (room.attached) continue
+            try {
+                surface.openTask(room.taskId, target.nodeId, target.target)
+                surface.attach(room.taskId, live = { commandId, activity -> update(room) { live(commandId, activity) } }) { event ->
+                    update(room) { apply(event) }
+                }
+            } catch (refused: RcpException) {
+                if (refused.requestId == null) throw refused
+                continue
             }
-            synchronized(lock) { rooms[id] = room }
+            synchronized(lock) { room.attached = true }
             publish()
         }
     }
@@ -117,13 +142,14 @@ class RcpAgentRepository(
         publish()
     }
 
+    /** Lists the attached agents. It writes under the lock, so an older roster never overwrites a newer one. */
     private fun publish() {
-        roster.value =
-            synchronized(lock) {
-                rooms.map { (id, room) ->
+        synchronized(lock) {
+            roster.value =
+                rooms.filterValues { it.attached }.map { (id, room) ->
                     AgentSummary(id, room.target.name, purpose = "", state = room.journal.state, glance = room.journal.glance)
                 }
-            }
+        }
     }
 
     private fun room(agentId: String): Room =
@@ -138,7 +164,7 @@ class RcpAgentRepository(
 
     /**
      * Returns once the message is in the outbox and shown. A refusal takes it back out and throws;
-     * a lost answer leaves it to be sent again after the next connect.
+     * any other failure leaves it to be sent again.
      */
     override suspend fun send(agentId: String, text: String) {
         val room = room(agentId)
@@ -146,6 +172,8 @@ class RcpAgentRepository(
         val submission =
             try {
                 surface.submitText(room.taskId, text.trim())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (offline: IllegalStateException) {
                 // Nothing reached the outbox: the client refuses a message while it is not connected.
                 throw RepositoryException(Problem.Unavailable, offline.message.orEmpty())
@@ -155,14 +183,13 @@ class RcpAgentRepository(
         update(room) { sending(submission.commandId, text.trim()) }
         try {
             submission.accepted.await()
-        } catch (refused: RcpException) {
-            state.removeCommand(submission.commandId)
-            update(room) { refused(submission.commandId) }
-            throw refused.asProblem()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (lost: Exception) {
-            // Kept in the outbox and on screen; the next connect sends it again with the same identity.
+        } catch (failure: Exception) {
+            if (failure !is RcpException || !failure.refusesTheRequest) return
+            state.removeCommand(submission.commandId)
+            update(room) { refused(submission.commandId) }
+            throw failure.asProblem()
         }
     }
 
@@ -199,6 +226,20 @@ class RcpAgentRepository(
     override suspend fun setAbility(agentId: String, abilityId: String, lit: Boolean): AbilitySwitch = notYet()
 
     private fun notYet(): Nothing = throw RepositoryException(Problem.Unavailable, "Host control does not reach the app yet")
+
+    /**
+     * Whether the coordinator answered this request with a refusal that a retry cannot change. An
+     * error with no request ends the connection, and one like `node_offline` or `internal` may pass.
+     */
+    private val RcpException.refusesTheRequest: Boolean
+        get() =
+            requestId != null &&
+                when (code) {
+                    RcpErrorCode.InvalidMessage, RcpErrorCode.InvalidRole, RcpErrorCode.NotFound, RcpErrorCode.Conflict -> true
+                    RcpErrorCode.AuthenticationFailed, RcpErrorCode.NodeOffline, RcpErrorCode.Internal,
+                    RcpErrorCode.ReplayRequired, RcpErrorCode.VersionMismatch,
+                    -> false
+                }
 
     private fun RcpException.asProblem(): RepositoryException {
         val problem =

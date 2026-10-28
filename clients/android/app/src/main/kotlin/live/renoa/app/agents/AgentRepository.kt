@@ -57,9 +57,8 @@ class RepositoryException(val problem: Problem, message: String) : Exception(mes
 fun RepositoryException.wordsOr(fallback: String): String = if (problem == Problem.Unavailable) problem.ownerWords else fallback
 
 /**
- * Everything the screens need from Renoa. The app runs on a fake until the backend tracks
- * land (agent profiles, streaming chat, stop); a real implementation replaces it behind this
- * interface without touching a screen.
+ * Everything the screens need from Renoa: [RcpAgentRepository] in the app, [FakeAgentRepository]
+ * in tests.
  */
 interface AgentRepository {
     val agents: StateFlow<List<AgentSummary>>

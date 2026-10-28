@@ -35,7 +35,7 @@ import kotlin.uuid.Uuid
 private sealed interface Answer {
     data object Admit : Answer
 
-    data class Refuse(val code: RcpErrorCode) : Answer
+    data class Refuse(val code: RcpErrorCode, val requestId: Long? = 1) : Answer
 
     /** The connection drops before the answer arrives. */
     data object Lose : Answer
@@ -55,6 +55,12 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     var connects = 0
     var refuseConnects = 0
 
+    /** Targets whose open is refused, as for an agent whose node is offline. */
+    val unopenable = mutableSetOf<String>()
+
+    /** When set, the next attach drops the connection after applying this many events. */
+    var dropAttachAfter: Int? = null
+
     /** The answers to the next submissions, in order; a submission past them is admitted. */
     val answers = ArrayDeque<Answer>()
     private val attached = LinkedHashMap<Uuid, Pair<ApplyLiveActivity?, suspend (TaskEvent) -> Unit>>()
@@ -64,7 +70,11 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     fun journal(target: String) = journals.getOrPut(chatTaskId(node, target)) { Journal(chatTaskId(node, target)) }
 
     /** Records [event] and delivers it, as the coordinator does for an attached task. */
-    suspend fun record(event: TaskEvent) = attached[event.taskId]?.second?.invoke(event)
+    suspend fun record(event: TaskEvent) {
+        val apply = attached[event.taskId]?.second ?: return
+        apply(event)
+        state.advanceCursor(event.taskId, event.sequence)
+    }
 
     fun live(taskId: Uuid, commandId: Uuid, activity: LiveActivity) = attached[taskId]?.first?.invoke(commandId, activity)
 
@@ -78,7 +88,16 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         if (refuseConnects-- > 0) throw Disconnected("refused")
         ended = CompletableDeferred()
         online = true
-        for ((taskId, attachment) in attached) journals[taskId]?.events?.forEach { attachment.second(it) }
+        for ((taskId, attachment) in attached) replay(taskId, attachment.second)
+    }
+
+    /** Applies what follows the stored cursor and advances it after each event, as the client does. */
+    private suspend fun replay(taskId: Uuid, apply: suspend (TaskEvent) -> Unit, limit: Int = Int.MAX_VALUE) {
+        val after = state.cursor(taskId) ?: 0
+        journals.getValue(taskId).events.filter { it.sequence > after }.take(limit).forEach {
+            apply(it)
+            state.advanceCursor(taskId, it.sequence)
+        }
     }
 
     override suspend fun disconnect() = drop()
@@ -91,6 +110,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
 
     override suspend fun openTask(taskId: Uuid, nodeId: Uuid, target: String) {
         check(online)
+        if (target in unopenable) throw RcpException(RcpErrorCode.NodeOffline, "offline", 1)
         opened += taskId
         journals.getOrPut(taskId) { Journal(taskId) }
     }
@@ -100,8 +120,14 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     override suspend fun attach(taskId: Uuid, live: ApplyLiveActivity?, apply: suspend (TaskEvent) -> Unit) {
         check(online)
         checkNotNull(live) { "the app always asks for live text" }
+        dropAttachAfter?.let { limit ->
+            dropAttachAfter = null
+            replay(taskId, apply, limit)
+            drop()
+            throw Disconnected("dropped during replay")
+        }
         attached[taskId] = live to apply
-        journals.getValue(taskId).events.forEach { apply(it) }
+        replay(taskId, apply)
     }
 
     private suspend fun deliver(command: PendingTextCommand) {
@@ -111,7 +137,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
                 state.removeCommand(command.commandId)
                 record(journals.getValue(command.taskId).submitted(command.commandId, command.text))
             }
-            is Answer.Refuse -> throw RcpException(answer.code, "refused", 1)
+            is Answer.Refuse -> throw RcpException(answer.code, "refused", answer.requestId)
             Answer.Lose -> {
                 drop()
                 throw Disconnected("lost")
@@ -207,9 +233,49 @@ class RcpAgentRepositoryTest {
         assertEquals(Problem.NotFound, refused.problem)
         assertTrue(repo.chat(nagisa).messages.isEmpty())
         assertTrue(state.pendingCommands().isEmpty(), "a refused message never goes again")
+    }
 
-        surface.answers += Answer.Refuse(RcpErrorCode.NodeOffline)
-        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.send(nagisa, "hello") }.problem)
+    @Test
+    fun aMessageTheNodeCouldNotTakeYetIsKeptAndGoesOnTheNextCheck() = runTest {
+        val repo = started()
+        surface.answers += listOf(Answer.Refuse(RcpErrorCode.NodeOffline), Answer.Refuse(RcpErrorCode.NotFound, requestId = null))
+        repo.send(nagisa, "hello")
+        assertEquals(listOf("hello"), repo.chat(nagisa).messages.map { it.text }, "shown while it waits")
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(1, state.pendingCommands().size, "an error for no request ends the connection; it refuses nothing")
+        advanceTimeBy(1.minutes + 5.seconds)
+        runCurrent()
+        assertTrue(state.pendingCommands().isEmpty())
+        assertEquals(listOf("hello"), surface.admitted.map { it.text })
+        assertEquals(listOf("hello"), repo.chat(nagisa).messages.map { it.text })
+    }
+
+    @Test
+    fun anAttachCutShortKeepsWhatItAppliedAndTheRestFollows() = runTest {
+        val command = Uuid.random()
+        chat.submitted(command, "hello")
+        chat.said(command, "hi")
+        surface.dropAttachAfter = 1
+        val repo = started()
+        assertTrue(repo.agents.value.isEmpty(), "not listed until attached")
+        advanceTimeBy(5.seconds)
+        runCurrent()
+        assertEquals(listOf("hello", "hi"), repo.chat(nagisa).messages.map { it.text })
+        assertEquals(AgentState.Working, repo.agents.value.single().state)
+    }
+
+    @Test
+    fun anAgentThatCannotBeOpenedHoldsNoOneElseUpAndIsTriedAgain() = runTest {
+        surface.targets = listOf(TargetSummary(surface.node, "kaede", "Kaede")) + surface.targets
+        surface.unopenable += "kaede"
+        val repo = started()
+        assertEquals(listOf("Nagisa"), repo.agents.value.map { it.name })
+        assertEquals(1, surface.connects, "the connection stays up")
+        surface.unopenable.clear()
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(setOf("Nagisa", "Kaede"), repo.agents.value.map { it.name }.toSet())
     }
 
     @Test
@@ -259,10 +325,13 @@ class RcpAgentRepositoryTest {
         chat.submitted(command, "hello")
         chat.said(command, "hi")
         val repo = started()
+        surface.live(chat.taskId, command, LiveActivity.TextDelta(0, "And "))
         surface.drop()
         advanceTimeBy(5.seconds)
         runCurrent()
         assertEquals(2, surface.connects)
+        surface.live(chat.taskId, command, LiveActivity.TextDelta(1, "then"))
+        assertNull(repo.chat(nagisa).streaming, "a draft cut by the drop is not glued to what came after it")
         assertEquals(listOf("hello", "hi"), repo.chat(nagisa).messages.map { it.text })
 
         surface.targets += TargetSummary(surface.node, "kaede", "Kaede")

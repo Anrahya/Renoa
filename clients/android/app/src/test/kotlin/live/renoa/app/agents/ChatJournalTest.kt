@@ -131,6 +131,23 @@ class ChatJournalTest {
     }
 
     @Test
+    fun aMissedFrameOrADropDiscardsTheDraftUntilTheNextMessageOpens() {
+        record(journal.submitted(command, "hello"))
+        delta(0, "one ")
+        delta(2, "three")
+        assertNull(chat.conversation.streaming, "frame 1 was missed")
+        delta(3, "four")
+        assertNull(chat.conversation.streaming)
+        delta(0, "next")
+        assertEquals(StreamingReply("$command-0", "next"), chat.conversation.streaming)
+
+        chat.connectionLost()
+        assertNull(chat.conversation.streaming)
+        delta(1, " after")
+        assertNull(chat.conversation.streaming, "text sent during the drop is gone, so the rest cannot be shown")
+    }
+
+    @Test
     fun whatTheAgentSaidIsUnreadUntilSeen() {
         record(journal.submitted(command, "hello"))
         assertFalse(chat.glance.unread, "the owner's own words are not unread")
