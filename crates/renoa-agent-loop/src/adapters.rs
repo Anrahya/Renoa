@@ -36,8 +36,9 @@ impl ModelAdapter {
 }
 
 /// Forwards a summary request's events except the ones that describe an
-/// assistant message. The match is exhaustive so a new event kind must be
-/// classified here before it compiles.
+/// assistant message, and its end without the response's content, so an
+/// observer reading a response never takes a summary for a reply. The match is
+/// exhaustive so a new event kind must be classified here before it compiles.
 struct SummaryEvents(Arc<dyn AgentEventSink>);
 
 impl AgentEventSink for SummaryEvents {
@@ -46,11 +47,20 @@ impl AgentEventSink for SummaryEvents {
             AgentEvent::MessageStart { .. }
             | AgentEvent::MessageUpdate { .. }
             | AgentEvent::MessageAbort => Box::pin(std::future::ready(())),
+            AgentEvent::ModelRequestEnd {
+                invocation_id,
+                mut response,
+            } => {
+                response.content.clear();
+                self.0.emit(AgentEvent::ModelRequestEnd {
+                    invocation_id,
+                    response,
+                })
+            }
             event @ (AgentEvent::ModelRequestStart { .. }
             | AgentEvent::ModelProviderRequest { .. }
             | AgentEvent::ModelProviderResponse { .. }
             | AgentEvent::ModelRequestChunk { .. }
-            | AgentEvent::ModelRequestEnd { .. }
             | AgentEvent::ModelRequestFailed { .. }
             | AgentEvent::ModelRetryAttempt { .. }
             | AgentEvent::ToolExecutionStart { .. }

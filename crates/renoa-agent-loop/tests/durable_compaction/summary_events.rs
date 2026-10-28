@@ -77,12 +77,14 @@ fn with_usage(mut response: ModelResponse, input: u64) -> ModelResponse {
     response
 }
 
-/// What one model request emitted: whether it was the summary request, and how
-/// many request-level and assistant-message events it produced.
+/// What one model request emitted: whether it was the summary request, how
+/// many request-level and assistant-message events it produced, and how many
+/// content blocks its end reported.
 struct Invocation {
     is_summary: bool,
     request_chunks: usize,
     message_events: usize,
+    response_blocks: usize,
 }
 
 fn invocations(events: &[AgentEvent]) -> Vec<Invocation> {
@@ -95,6 +97,7 @@ fn invocations(events: &[AgentEvent]) -> Vec<Invocation> {
                     .starts_with("You create durable context checkpoints"),
                 request_chunks: 0,
                 message_events: 0,
+                response_blocks: 0,
             }),
             AgentEvent::ModelRequestChunk { .. } => {
                 found
@@ -109,6 +112,12 @@ fn invocations(events: &[AgentEvent]) -> Vec<Invocation> {
                     .last_mut()
                     .expect("message after a request")
                     .message_events += 1;
+            }
+            AgentEvent::ModelRequestEnd { response, .. } => {
+                found
+                    .last_mut()
+                    .expect("end after a request")
+                    .response_blocks += response.content.len();
             }
             _ => {}
         }
@@ -155,6 +164,14 @@ async fn a_summary_never_emits_assistant_message_events_and_a_reply_still_does()
     assert_eq!(
         found[1].message_events, 0,
         "a summary is not an assistant message"
+    );
+    assert_eq!(
+        found[1].response_blocks, 0,
+        "a summary's end carries no content an observer could show"
+    );
+    assert!(
+        found[0].response_blocks > 0 && found[2].response_blocks > 0,
+        "a reply's end still carries its content"
     );
     assert!(
         found[0].message_events >= 2 && found[2].message_events >= 2,
