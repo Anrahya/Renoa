@@ -40,6 +40,16 @@ one durable, provider-neutral `AgentDefinition`: identity and creation provenanc
 an optional creation preset id, the complete core operational document, the exact
 tool selection, and the exact selected Host connection ids. Creation snapshots
 the preset into that definition; runtime resolution never consults a preset again.
+[`schemas/agent-definition.schema.json`](schemas/agent-definition.schema.json)
+publishes the definition's JSON shape for every surface that reads it. It is
+generated from the Rust type, and a test fails when the two differ.
+
+The operational document may carry a `purpose`: what the agent is for, in the
+words of whoever made it, the owner or a parent agent. It is 1 to 1,024 bytes, not blank, with no control
+character but newline. The agent's system prompt shows it right after the
+instructions, in a `<purpose>` block; an app shows it where a browser shows the
+instructions. An agent without one has no `purpose` key, so its stored creation
+request replays unchanged.
 
 An Arcee agent's stable system rules are part of its stored definition. When
 that definition enables the Soul, the Host publishes an owner-editable `SOUL.md`
@@ -309,6 +319,13 @@ owner; the body cannot supply them. Creation validates before writing and replay
 its stable operation receipt after restart without another provider lookup.
 `GET /v1/host/agents/{id}` returns the owner's saved definition. The browser keeps
 uncertain requests in tab storage and retries their exact operation ID and fields.
+The Android app makes the same calls over its RCP connection
+([`call_host`](rcp-json-ws-v0.md#call-the-host)). It creates from
+`renoa.general.v1` with a name and, when the owner wrote one, a purpose. It then
+waits up to thirty seconds for a node to advertise the `agent:<id>` target, and
+succeeds once that agent's chat is open. Otherwise the owner reads that Renoa could
+not be reached, although the agent may exist; saving the same fields again repeats
+the operation ID and returns that agent, while changed fields under it conflict.
 Native grants start empty; plugin discovery, management, and invocation are universal.
 
 `documents.user` decides whether the new agent reads the `USER.md` of whoever talks
@@ -1225,7 +1242,7 @@ modification.
 ### Persistent agents
 
 The `renoa.agents` plugin exposes the canonical agent creation operation. The
-primary schema accepts a name, standing instructions, exact machine tools,
+primary schema accepts a name, standing instructions, a purpose, exact machine tools,
 provider/model/reasoning defaults, behavior, documents, and existing connections.
 The preset id is optional. Caller values override template defaults; an explicit
 empty tool selection removes every template machine grant. Fresh sessions consume

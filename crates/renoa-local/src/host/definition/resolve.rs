@@ -86,15 +86,22 @@ impl ResolvedAgentDefinition {
         } else {
             None
         };
-        if documents.is_none() && project.is_none() {
+        let purpose = self.definition.operational.purpose.as_deref();
+        if purpose.is_none() && documents.is_none() && project.is_none() {
             return Ok(base.trim_end().to_owned());
         }
         let capacity = base.len()
+            + purpose.map_or(0, str::len)
             + documents.as_ref().map_or(0, String::len)
             + project.as_ref().map_or(0, String::len)
             + 192;
         let mut prompt = String::with_capacity(capacity);
         prompt.push_str(base.trim_end());
+        if let Some(purpose) = purpose {
+            prompt.push_str("\n\n<purpose>\nWhat you were made for:\n");
+            prompt.push_str(purpose.trim());
+            prompt.push_str("\n</purpose>");
+        }
         if let Some(documents) = documents {
             prompt.push_str("\n\n");
             prompt.push_str(&documents);

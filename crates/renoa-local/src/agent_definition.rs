@@ -10,6 +10,7 @@ use crate::ModelProvider;
 const MAX_PRESET_ID_BYTES: usize = 128;
 pub(crate) const MAX_NAME_BYTES: usize = 512;
 pub(crate) const MAX_INSTRUCTIONS_BYTES: usize = 32 * 1024;
+pub(crate) const MAX_PURPOSE_BYTES: usize = 1024;
 pub(crate) const MAX_CONNECTIONS: usize = 64;
 pub(crate) const MAX_CONNECTION_ID_BYTES: usize = 256;
 const MAX_ACTOR_ID_BYTES: usize = 256;
@@ -77,13 +78,20 @@ impl<'de> Deserialize<'de> for AgentPresetId {
 }
 
 /// The trusted, immutable record of who created one agent.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentCreator {
     /// Another agent created this agent through an agent-facing tool.
-    Agent { agent_id: AgentId },
+    Agent {
+        #[schemars(with = "String")]
+        agent_id: AgentId,
+    },
     /// An authenticated management principal created this agent.
-    Principal { host_id: Uuid, principal_id: String },
+    Principal {
+        #[schemars(with = "String")]
+        host_id: Uuid,
+        principal_id: String,
+    },
     /// Trusted local provisioning created this agent.
     System { component: String },
 }
@@ -99,7 +107,7 @@ impl AgentCreator {
 }
 
 /// How the create call reached the Host. Record data only, never authority.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentCreationOrigin {
     AgentTool,
@@ -173,10 +181,14 @@ impl AgentDocuments {
 }
 
 /// The core operational document. Every agent row stores exactly one.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentOperationalDefinition {
     pub instructions: String,
+    /// What the agent is for, in the words of whoever made it. The agent reads
+    /// it in its prompt; an app shows it instead of `instructions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
     pub behavior: AgentBehavior,
     pub documents: Option<AgentDocuments>,
     pub provider_restriction: Option<ModelProvider>,
@@ -212,12 +224,29 @@ impl AgentOperationalDefinition {
         if self.documents.is_some_and(|documents| !documents.any()) {
             return Err(AgentDefinitionError::EmptyDocumentSet);
         }
+        if let Some(purpose) = &self.purpose {
+            check_purpose(purpose)?;
+        }
         Ok(())
     }
 }
 
+/// A purpose is plain text: not blank, at most [`MAX_PURPOSE_BYTES`], and no
+/// control character other than a newline.
+fn check_purpose(purpose: &str) -> Result<(), AgentDefinitionError> {
+    let invalid = purpose.trim().is_empty()
+        || purpose.len() > MAX_PURPOSE_BYTES
+        || purpose.chars().any(|c| c.is_control() && c != '\n');
+    if invalid {
+        return Err(AgentDefinitionError::InvalidPurpose {
+            bytes: purpose.len(),
+        });
+    }
+    Ok(())
+}
+
 /// The exact, revisioned capability names one agent may invoke.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentToolSelection {
     pub revision: i64,
@@ -225,14 +254,18 @@ pub struct AgentToolSelection {
 }
 
 /// The canonical Host-owned definition of one durable agent.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+// Its JSON Schema, generated from this type, is published at
+// `docs/schemas/agent-definition.schema.json` (see `agent_definition_schema`).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
+    #[schemars(with = "String")]
     pub id: AgentId,
     pub name: String,
     pub created_at_ms: i64,
     pub creator: AgentCreator,
     pub created_via: AgentCreationOrigin,
+    #[schemars(with = "Option<String>")]
     pub preset_id: Option<AgentPresetId>,
     pub operational: AgentOperationalDefinition,
     pub tool_selection: AgentToolSelection,
@@ -296,6 +329,10 @@ pub enum AgentDefinitionError {
     EmptyInstructions,
     #[error("agent instructions exceed {MAX_INSTRUCTIONS_BYTES} bytes: {bytes}")]
     InstructionsTooLarge { bytes: usize },
+    #[error(
+        "agent purpose must be 1-{MAX_PURPOSE_BYTES} bytes of text that is not blank, with no control character but newline; received {bytes} bytes. Send it as a short plain sentence, or leave it out"
+    )]
+    InvalidPurpose { bytes: usize },
     #[error("agent creator must carry a non-empty actor identifier")]
     InvalidActor,
     #[error("agent model must contain 1-512 bytes without control characters")]
@@ -367,4 +404,48 @@ pub enum AgentDefinitionError {
         #[source]
         source: std::string::FromUtf8Error,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::AgentDefinition;
+
+    /// The published schema is generated from the type, never edited by hand.
+    /// `RENOA_WRITE_SCHEMAS=1 cargo test -p renoa-local agent_definition_schema`
+    /// rewrites it after a change to the definition.
+    #[test]
+    fn agent_definition_schema() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/schemas/agent-definition.schema.json");
+        let schema = serde_json::to_value(schemars::schema_for!(AgentDefinition)).expect("schema");
+        let generated = serde_json::to_string_pretty(&sorted(schema)).expect("schema JSON") + "\n";
+        if std::env::var_os("RENOA_WRITE_SCHEMAS").is_some() {
+            std::fs::write(&path, &generated).expect("write the schema");
+        }
+        let published = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            published == generated,
+            "{} is not the schema of AgentDefinition; run RENOA_WRITE_SCHEMAS=1 cargo test -p renoa-local agent_definition_schema",
+            path.display()
+        );
+    }
+
+    /// Sorts every object's keys, so the file is the same whichever `serde_json`
+    /// features a build unifies: `preserve_order` keeps the generator's order.
+    fn sorted(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut entries: Vec<_> = map.into_iter().collect();
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (key, sorted(value)))
+                    .collect()
+            }
+            serde_json::Value::Array(items) => items.into_iter().map(sorted).collect(),
+            other => other,
+        }
+    }
 }

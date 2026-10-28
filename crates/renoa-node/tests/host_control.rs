@@ -222,6 +222,7 @@ fn creation() -> Value {
         "operation_id": Uuid::new_v4(),
         "name": "Desk",
         "instructions": "Carry out the owner creation proof.",
+        "purpose": "Keep my desk in order.",
         "tools": ["read_file"],
         "connections": [],
         "preset_id": null,
@@ -262,6 +263,7 @@ async fn owner_creation_is_usable_and_identical_retry_survives_a_lost_reply_and_
             definition["operational"]["instructions"],
             body["instructions"]
         );
+        assert_eq!(definition["operational"]["purpose"], body["purpose"]);
 
         // The reply may be lost with the node's connection; the same request
         // finds the same receipt, and nothing is created twice.
@@ -416,6 +418,7 @@ async fn unauthorized_and_invalid_creation_leave_no_agents_or_documents() {
                 json!({"provider": "xai", "model": "absent", "reasoning": "high"}),
             ),
             ("instructions", json!(" ")),
+            ("purpose", json!(" ")),
             ("creator", json!({"kind": "system", "component": "forged"})),
         ] {
             let mut invalid = body.clone();

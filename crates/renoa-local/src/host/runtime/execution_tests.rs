@@ -169,7 +169,7 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
             "find"
         ])
     );
-    let args = json!({"reference":reference,"arguments":{"action":"create","name":"Child","instructions":"Review the repository.","tools":["read_file"]}});
+    let args = json!({"reference":reference,"arguments":{"action":"create","name":"Child","instructions":"Review the repository.","purpose":"Review my pull requests.","tools":["read_file"]}});
     let child = invoke(&bindings, "tool_execute", "create-once", args.clone())
         .await
         .expect("create via plugin");
@@ -194,6 +194,16 @@ async fn discovered_host_plugins_create_children_without_changing_the_callers_ma
     );
     let child_id = renoa_kernel::AgentId::from_uuid(
         Uuid::parse_str(value(&child)["id"].as_str().unwrap()).unwrap(),
+    );
+    assert_eq!(
+        host.agent_definition(child_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .operational
+            .purpose
+            .as_deref(),
+        Some("Review my pull requests.")
     );
     let child_definition = host.resolve_definition(child_id).await.unwrap();
     assert_eq!(

@@ -53,6 +53,10 @@ pub struct AgentCreateRequest {
     pub name: String,
     /// Standing instructions; omission uses the optional template default.
     pub instructions: Option<String>,
+    /// What the agent is for, in the owner's words. Left out of the stored
+    /// request when absent, so earlier requests replay byte for byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
     /// Exact caller-selected capability names.
     pub tools: Option<BTreeSet<String>>,
     /// Exact caller-selected existing Host connection ids.
@@ -77,6 +81,7 @@ impl AgentCreateRequest {
             preset_id: None,
             name: name.into(),
             instructions: Some(instructions.into()),
+            purpose: None,
             tools: None,
             connections: BTreeSet::new(),
             automation: None,
@@ -97,6 +102,7 @@ impl AgentCreateRequest {
             preset_id: Some(preset_id),
             name: name.into(),
             instructions: None,
+            purpose: None,
             tools: None,
             connections: BTreeSet::new(),
             automation: None,

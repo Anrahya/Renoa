@@ -152,6 +152,7 @@ fn operational_definition(
                 presets::AgentPreset::behavior,
             )
         }),
+        purpose: request.purpose.clone(),
         documents,
         provider_restriction: if request.model.is_some() {
             None

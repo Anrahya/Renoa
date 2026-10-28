@@ -25,7 +25,7 @@ use crate::{
 };
 
 const TOOL_NAME: &str = capabilities::AGENT_MANAGE;
-const BINDING_REVISION: &str = "renoa-agent-manage-v2";
+const BINDING_REVISION: &str = "renoa-agent-manage-v3";
 const CREATE_OPERATION_DOMAIN: &str = "renoa.agent.create.operation.v1";
 const RENAME_OPERATION_DOMAIN: &str = "renoa.agent.rename.operation.v1";
 
@@ -73,6 +73,8 @@ enum Input {
         preset_id: Option<AgentPresetId>,
         name: String,
         instructions: Option<String>,
+        /// What the new agent is for, in one or two plain sentences its owner can read.
+        purpose: Option<String>,
         #[serde(default)]
         tools: Option<BTreeSet<String>>,
         model: Option<crate::AgentModelSelection>,
@@ -148,6 +150,7 @@ impl Tool for Manage {
                     preset_id,
                     name,
                     instructions,
+                    purpose,
                     tools,
                     model,
                     behavior,
@@ -160,6 +163,7 @@ impl Tool for Manage {
                         preset_id,
                         name,
                         instructions,
+                        purpose,
                         tools,
                         connections,
                         model,
@@ -245,7 +249,7 @@ fn tool_error(error: crate::LocalHostError) -> ToolError {
 
 fn description() -> String {
     let mut description = String::from(
-        "Create, list, or rename durable agents on this Host. Create only when the user asks. Supply name and instructions directly; optionally select a preset for defaults:\n",
+        "Create, list, or rename durable agents on this Host. Create only when the user asks. Supply name and instructions directly, and a short plain purpose the owner will read; optionally select a preset for defaults:\n",
     );
     for preset in presets::catalog() {
         writeln!(description, "- {}: {}", preset.id(), preset.description())
@@ -269,4 +273,28 @@ fn input_schema() -> serde_json::Value {
     schema["properties"]["tools"] = json!({"type":"array", "uniqueItems":true, "items":{"enum":capabilities::selectable_names()},
         "description":"For create: replace the template's machine grants exactly. [] grants no machine tools. Every agent still receives plugin management, discovery, and invocation."});
     schema
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Input, input_schema};
+
+    #[test]
+    fn an_agent_can_give_a_new_agent_its_purpose() {
+        let input: Input = serde_json::from_value(serde_json::json!({
+            "action": "create",
+            "name": "Kcal",
+            "instructions": "Count calories.",
+            "purpose": "Count my calories from photos."
+        }))
+        .expect("create with a purpose");
+        let Input::Create { purpose, .. } = input else {
+            panic!("a create");
+        };
+        assert_eq!(purpose.as_deref(), Some("Count my calories from photos."));
+        assert!(
+            input_schema().to_string().contains("\"purpose\""),
+            "the tool tells the model it can set one"
+        );
+    }
 }
