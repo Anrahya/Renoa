@@ -140,6 +140,11 @@ pub(crate) enum SurfaceOperation {
     RevokeDevice {
         device_id: DeviceId,
     },
+    CallHost {
+        method: HostMethod,
+        path: String,
+        body: Option<String>,
+    },
 }
 
 /// The methods of an owner's Host control call. The relay forwards no other.

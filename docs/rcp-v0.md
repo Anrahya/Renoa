@@ -956,7 +956,10 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    The owner's Host control is relayed by the coordinator to the node that serves
    the Host (`serve_host_control`, `host_call`, `complete_host_call`): observation,
    agent creation, the owner's profile, Discord setup, and automation pause and
-   resume. It is not RCP node provisioning, and the task journal records none of it.
+   resume. A browser calls it under `/v1/host`; a signed-in app, or a browser
+   ticket connection, calls it over RCP with `call_host`, and a service link
+   such as Discord cannot. It is not RCP node provisioning, and the task journal
+   records none of it.
    The Pi adapter still has one process-local harness configuration and an
    optional workspace binding. Its model credential database is owner-only
    plaintext rather than operating-system credential storage.
@@ -1100,7 +1103,9 @@ is implemented outside RCP through `HostObserver`; it is read by the node that
 executes for that Host and relayed by the coordinator under `/v1/host`. The
 coordinator checks the browser's remembered session cookie and, for a change,
 exactly one `Origin` equal to its configured origin, then sends the call to the
-owner's one connected node that serves Host control. Two such nodes of one owner
+owner's one connected node that serves Host control. An app's call takes the
+same relay over its key-proven RCP connection (`call_host`), so locked decision
+26 stands: no auxiliary HTTP route accepts an app's credential. Two such nodes of one owner
 are refused as ambiguous; none online is unavailable. Remembered browser
 sessions can mint fresh one-use transport tickets without another passkey
 ceremony; the remembered cookie is not an RCP wire credential. This follows

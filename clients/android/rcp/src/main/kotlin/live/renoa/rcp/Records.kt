@@ -45,6 +45,22 @@ data class TaskSummary(val taskId: Uuid, val target: String, val status: TaskSta
 @Serializable
 data class TargetSummary(val nodeId: Uuid, val target: String, val name: String)
 
+/** The methods of a call to the owner's Host. */
+@Serializable
+enum class HostMethod {
+    @SerialName("GET")
+    Get,
+
+    @SerialName("POST")
+    Post,
+
+    @SerialName("PUT")
+    Put,
+}
+
+/** The Host's answer to a call: its HTTP status and JSON text, a result or its own refusal. */
+data class HostAnswer(val status: Int, val body: String)
+
 @Serializable
 enum class StopOutcome {
     /** The stop is recorded; the command's terminal event tells whether it won. */

@@ -10,7 +10,8 @@ use crate::{
     ControlError, ErrorCode, ServerMessage, TaskId, TaskSpec, control_log,
     coordinator::CoordinatorState,
     device_admin::{self, SurfaceSession},
-    live_activity,
+    host_calls::HostRequest,
+    host_control_rcp, live_activity,
     operations::SurfaceOperation,
     store::CommandAdmission,
     wire::{publish_task_event, send_control_error, send_error, send_reply, task_sender},
@@ -31,6 +32,16 @@ pub(crate) async fn handle_surface_operation(
         }
         SurfaceOperation::RevokeDevice { device_id } => {
             device_admin::revoke_device(&state, outgoing, request_id, &session, device_id).await;
+        }
+        SurfaceOperation::CallHost { method, path, body } => {
+            host_control_rcp::call_host(
+                state,
+                outgoing.clone(),
+                connection_cancelled.child_token(),
+                &session,
+                request_id,
+                HostRequest { method, path, body },
+            );
         }
         SurfaceOperation::ListTasks => {
             let result = state

@@ -24,7 +24,9 @@ are trusted control-plane actions and are not remotely callable RCP operations.
 The operator may revoke any device. An owner may also list and revoke their own
 signed-in apps with `ListDevices` and `RevokeDevice`, from a browser or a device
 that proved its key; devices are not tasks, and these operations grant no task
-authority. An operator may also create a task directly. The node's owner can
+authority. From the same connections an owner may call their Host with
+`CallHost`, which the coordinator relays to the node that serves it; a Host
+call is not a task and enters no journal. An operator may also create a task directly. The node's owner can
 open a task remotely with `OpenTask`, but only against a target its online node
 currently advertises, and delete one of its tasks with `DeleteTask`.
 
@@ -32,7 +34,7 @@ After authentication, the session identity fixes the peer's role:
 
 - a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`,
   `StopCommand`, and `DeleteTask`; a surface connected by a browser ticket or a
-  proven device key may also `ListDevices` and `RevokeDevice`;
+  proven device key may also `ListDevices`, `RevokeDevice`, and `CallHost`;
 - a node may `AdvertiseTargets`, `ListTargets`, `SendAgentMessage`,
   `AcknowledgeExecution`, `PublishExecutionEvents`, `AcknowledgeStop`,
   `PublishLiveActivity`, `ServeHostControl`, and `CompleteHostCall`;
@@ -298,6 +300,23 @@ principal's device, an unknown device and a device without a registered key
 return `NotFound`. A device may revoke itself; its acknowledgement is sent
 before its connection closes. The key of a revoked device cannot sign in again.
 
+### `CallHost`
+
+Inputs:
+
+- `method`: `GET`, `POST` or `PUT`;
+- `path`: `/v1/host` or a path under it, with no query;
+- `body`: the request's JSON text, or none for a `GET`.
+
+The coordinator sends the call, with the authenticated principal, to the one
+connected node of that principal that serves Host control, and returns the
+node's answer as `HostAnswer`: an HTTP status and JSON text, the Host's result or
+its own refusal. It interprets neither the path nor the body and stores neither
+the call nor the answer. A surface that authenticated with a bearer credential
+alone, or a principal that owns no node, is refused with `InvalidRole`. When no
+node or two nodes serve the Host, or the node does not answer, the call
+returns `NodeOffline` and its outcome is unknown.
+
 ## Executor delivery and node operations
 
 ### `Execute`
@@ -552,6 +571,7 @@ correlation value is a binding concern.
 | `DeleteTask` | task ID | Returns `TaskDeleted` whether or not the task still exists |
 | `ListDevices` | No durable identity; request correlation is transport-local | Returns the current signed-in apps |
 | `RevokeDevice` | device ID | Returns `DeviceRevoked` whether or not this call revoked it |
+| `CallHost` | The Host operation's own `operation_id`, for a change | The Host answers a repeated change from its receipt; the coordinator never retries |
 | `Execute` delivery | command ID | Node harness admits one local execution identity |
 | `AcknowledgeExecution` | task ID plus command ID | Leaves no pending delivery and confirms again |
 | `Stop` delivery | command ID | Node records one stop and cancels the command once |

@@ -20,13 +20,12 @@ use crate::{
     browser_identity_http::{same_origin, secure_json},
     control_log,
     coordinator::CoordinatorState,
-    host_calls::{HostCallError, HostReply, HostRequest, call},
+    host_calls::{
+        HOST_UNREACHABLE, HostCallError, HostReply, HostRequest, INVALID_REPLY, MAX_BODY_BYTES,
+        call, relayable,
+    },
     oauth_relay_http::secure_headers,
 };
-
-/// The largest body any Host operation accepts; the node applies each
-/// operation's own, smaller limit.
-const MAX_BODY_BYTES: usize = 64 * 1024;
 
 pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
     Router::new()
@@ -174,22 +173,16 @@ async fn read_body(
 }
 
 fn reply_response(reply: HostReply) -> Response {
-    // A change is answered with a result or a refusal; an informational or
-    // redirect status would send the browser somewhere the Host never named.
     let status = StatusCode::from_u16(reply.status)
         .ok()
-        .filter(|status| matches!(status.as_u16(), 200..=299 | 400..=599));
+        .filter(|status| relayable(status.as_u16()));
     let Some(status) = status else {
         control_log::event(
             "warn",
             "host_call_invalid_status",
             &serde_json::json!({ "status": reply.status }),
         );
-        return failure(
-            StatusCode::BAD_GATEWAY,
-            "host_invalid_reply",
-            "Your Host sent an answer that could not be passed on. Retry in a moment.",
-        );
+        return failure(StatusCode::BAD_GATEWAY, "host_invalid_reply", INVALID_REPLY);
     };
     let mut response = Response::new(Body::from(reply.body));
     *response.status_mut() = status;
@@ -202,34 +195,15 @@ fn reply_response(reply: HostReply) -> Response {
 }
 
 fn call_failure(error: &HostCallError) -> Response {
-    match error {
-        HostCallError::NotAnOwner => failure(
-            StatusCode::FORBIDDEN,
-            "wrong_owner",
-            "This login does not own a Host.",
-        ),
-        HostCallError::Offline => failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "host_offline",
-            "Your Host is not connected. Retry when it returns.",
-        ),
-        HostCallError::Ambiguous => failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "host_ambiguous",
-            "More than one Host of yours is connected. Disconnect all but one.",
-        ),
-        HostCallError::Disconnected => failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "host_disconnected",
-            "Your Host disconnected before it answered. If this was a change, retry the same request to recover its outcome.",
-        ),
-        HostCallError::TimedOut => failure(
-            StatusCode::GATEWAY_TIMEOUT,
-            "host_timeout",
-            "Your Host did not answer in time. If this was a change, retry the same request to recover its outcome.",
-        ),
-        HostCallError::Store(error) => store_failure(error),
-    }
+    let (status, code) = match error {
+        HostCallError::NotAnOwner => (StatusCode::FORBIDDEN, "wrong_owner"),
+        HostCallError::Offline => (StatusCode::SERVICE_UNAVAILABLE, "host_offline"),
+        HostCallError::Ambiguous => (StatusCode::SERVICE_UNAVAILABLE, "host_ambiguous"),
+        HostCallError::Disconnected => (StatusCode::SERVICE_UNAVAILABLE, "host_disconnected"),
+        HostCallError::TimedOut => (StatusCode::GATEWAY_TIMEOUT, "host_timeout"),
+        HostCallError::Store(error) => return store_failure(error),
+    };
+    failure(status, code, error.message())
 }
 
 fn store_failure(error: &crate::ControlError) -> Response {
@@ -241,6 +215,6 @@ fn store_failure(error: &crate::ControlError) -> Response {
     failure(
         StatusCode::SERVICE_UNAVAILABLE,
         "host_unavailable",
-        "Your Host could not be reached. Retry in a moment.",
+        HOST_UNREACHABLE,
     )
 }

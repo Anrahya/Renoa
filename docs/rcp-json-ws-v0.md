@@ -70,7 +70,8 @@ chat essentials: a task summary carries a `status`, `attach` carries a required
 coordinator delivers `stop` to the node, which answers `acknowledge_stop`; and a
 node can `publish_live_activity`, which the coordinator relays to interested
 surfaces as `live_activity`. And Host control relaying (`serve_host_control`,
-`host_call`, `complete_host_call`). And agent messages: a node advertises named
+`host_call`, `complete_host_call`, and for a signed-in app or browser `call_host`
+answered by `host_answer`). And agent messages: a node advertises named
 targets (`advertise_targets` carries `{target, name}` cards instead of bare
 strings), `target_list` summaries gain `name`, `list_targets` is open to nodes
 as well as surfaces, a node sends `send_agent_message`, and a command may carry
@@ -376,6 +377,47 @@ connections then end, and its next `authenticate` returns
 sent before its connection closes. Another principal's device, an unknown
 device, and a device without a key return `not_found`; a connection that may not
 administer devices receives `invalid_role`.
+
+### Call the Host
+
+A browser ticket or a device that proved its key may call the owner's Host, as
+a browser does under `/v1/host` ([Host control](#host-control)):
+
+```json
+{
+  "type": "call_host",
+  "request_id": 46,
+  "method": "POST",
+  "path": "/v1/host/agents",
+  "body": "{\"operation_id\":\"00000000-0000-0000-0000-000000000091\",\"name\":\"Scout\"}"
+}
+```
+
+`method` is `GET`, `POST` or `PUT`. `path` is `/v1/host` or a path under it,
+at most 1,024 bytes, with no query or fragment. `body` is the request's JSON
+text, at most 64 KiB, or `null`; a `GET` carries `null`. The Host's answer,
+a result or its own refusal, returns as its HTTP status and JSON text:
+
+```json
+{
+  "type": "host_answer",
+  "request_id": 46,
+  "status": 200,
+  "body": "{\"operation_id\":\"00000000-0000-0000-0000-000000000091\",\"record\":{}}"
+}
+```
+
+The call waits on the Host without holding up the connection's other requests,
+and ends with the connection. One connection has at most eight calls waiting;
+another is refused with `conflict`. A service link such as Discord, or another
+connection that is neither a browser ticket nor a device that proved its key,
+receives `invalid_role`, as does a principal that owns no node. A malformed
+call receives `invalid_message` and never reaches the Host. When no node of the
+owner serves the Host, when two do, or when the call's node disconnects or does
+not answer within sixty seconds, the call receives `node_offline`: whether a
+change took effect is then unknown, so the caller repeats the same request under
+the same `operation_id`. An answer the coordinator cannot relay receives
+`internal`.
 
 ### Attach
 
@@ -770,8 +812,9 @@ connection, after it authenticates:
 
 The coordinator remembers it for that connection only; a reconnecting node says
 it again. The frame has no acknowledgement, and only a node connection may send
-it. The coordinator relays an authenticated owner's browser call to the one
-connected node of that owner that has said so:
+it. The coordinator relays an authenticated owner's call, from a browser under
+`/v1/host` or from a [`call_host`](#call-the-host), to the one connected node of
+that owner that has said so:
 
 ```json
 {
@@ -785,8 +828,8 @@ connected node of that owner that has said so:
 ```
 
 `method` is `GET`, `POST` or `PUT`. `principal_id` is the owner the
-coordinator authenticated from the browser's session; nothing in `body` can name
-another. `body` is the request's JSON text, or `null` for a read. The node
+coordinator authenticated from the browser's session or the surface's
+connection; nothing in `body` can name another. `body` is the request's JSON text, or `null` for a read. The node
 decides which paths exist and what each does; the coordinator interprets
 neither. The node answers on the same connection:
 
@@ -799,14 +842,14 @@ neither. The node answers on the same connection:
 }
 ```
 
-The coordinator delivers an answer to the browser only from the connection the
+The coordinator delivers an answer to the caller only from the connection the
 call was sent on, and only once; any other answer is dropped. A `status` the
 coordinator cannot relay (anything outside 200-299 and 400-599) becomes a
-`502`. A call ends without an answer when its connection ends or after sixty
-seconds. The coordinator never retries a call and writes neither the request
-body nor the answer to its files. A change survives a lost answer because the browser repeats the same
-request under the same `operation_id` and the Host answers from the receipt it
-recorded.
+`502` for a browser and `internal` for a `call_host`. A call ends without an
+answer when its connection ends or after sixty seconds. The coordinator never
+retries a call and writes neither the request body nor the answer to its files.
+A change survives a lost answer because the caller repeats the same request
+under the same `operation_id` and the Host answers from the receipt it recorded.
 
 ## Errors
 

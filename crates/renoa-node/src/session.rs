@@ -342,6 +342,7 @@ async fn handle_server_message(
         | ServerMessage::TaskDeleted { .. }
         | ServerMessage::Attached { .. }
         | ServerMessage::StopAccepted { .. }
+        | ServerMessage::HostAnswer { .. }
         | ServerMessage::LiveActivity { .. }
         | ServerMessage::TaskEvent { .. } => {
             return Err(NodeError::Protocol(

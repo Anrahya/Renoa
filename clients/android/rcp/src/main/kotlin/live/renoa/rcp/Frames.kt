@@ -106,6 +106,16 @@ sealed interface ClientMessage {
         @SerialName("request_id") val requestId: Long,
         @SerialName("task_id") val taskId: Uuid,
     ) : ClientMessage
+
+    /** `body` has no default so a read sends `null`, as the binding shows. */
+    @Serializable
+    @SerialName("call_host")
+    data class CallHost(
+        @SerialName("request_id") val requestId: Long,
+        val method: HostMethod,
+        val path: String,
+        val body: String?,
+    ) : ClientMessage
 }
 
 /** Frames a surface can receive. Frames only a node receives are deliberately absent. */
@@ -178,6 +188,14 @@ sealed interface ServerMessage {
     data class TaskDeleted(
         @SerialName("request_id") val requestId: Long,
         @SerialName("task_id") val taskId: Uuid,
+    ) : ServerMessage
+
+    @Serializable
+    @SerialName("host_answer")
+    data class HostAnswer(
+        @SerialName("request_id") val requestId: Long,
+        val status: Int,
+        val body: String,
     ) : ServerMessage
 
     @Serializable

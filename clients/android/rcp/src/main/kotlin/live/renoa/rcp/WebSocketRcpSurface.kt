@@ -171,6 +171,10 @@ class WebSocketRcpSurface(
             if (it.commandId != commandId) throw ProtocolViolation("stop answer changed the command identity")
         }.outcome
 
+    override suspend fun callHost(method: HostMethod, path: String, body: String?): HostAnswer =
+        request(ServerMessage.HostAnswer::class, { ClientMessage.CallHost(it, method, path, body) })
+            .let { HostAnswer(it.status, it.body) }
+
     override suspend fun retryPendingCommands(): List<Uuid> {
         connected()
         val admitted = mutableListOf<Uuid>()
@@ -340,6 +344,7 @@ class WebSocketRcpSurface(
             is ServerMessage.CommandAccepted -> complete(connection, message.requestId, message)
             is ServerMessage.StopAccepted -> complete(connection, message.requestId, message)
             is ServerMessage.TaskDeleted -> complete(connection, message.requestId, message)
+            is ServerMessage.HostAnswer -> complete(connection, message.requestId, message)
         }
     }
 

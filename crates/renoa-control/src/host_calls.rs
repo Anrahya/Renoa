@@ -1,6 +1,8 @@
 //! Owner calls to the Host, relayed to the node that serves it.
 //!
-//! A call is an HTTP-shaped request and reply under `/v1/host`. It is not a
+//! A call is an HTTP-shaped request and reply under `/v1/host`, from a
+//! browser over HTTP (`host_control_http`) or from a signed-in app or browser
+//! over RCP (`host_control_rcp`). Both share this relay. It is not a
 //! task: it enters no journal and the coordinator writes neither its request
 //! body nor its answer to disk. It is held in memory only while pending, ends
 //! when the node's connection does, and is never retried here. A change is
@@ -22,6 +24,24 @@ use crate::{
 };
 
 pub(crate) const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The largest body any Host operation accepts; the node applies each
+/// operation's own, smaller limit.
+pub(crate) const MAX_BODY_BYTES: usize = 64 * 1024;
+
+/// What the owner reads when the Host's answer cannot be passed on.
+pub(crate) const INVALID_REPLY: &str =
+    "Your Host sent an answer that could not be passed on. Retry in a moment.";
+
+/// What the owner reads when the coordinator's own records fail them.
+pub(crate) const HOST_UNREACHABLE: &str = "Your Host could not be reached. Retry in a moment.";
+
+/// Whether an answer may be passed on: a result or a refusal. An
+/// informational or redirect status would send the caller somewhere the Host
+/// never named.
+pub(crate) const fn relayable(status: u16) -> bool {
+    matches!(status, 200..=299 | 400..=599)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct HostReply {
@@ -46,6 +66,25 @@ pub(crate) enum HostCallError {
     Disconnected,
     TimedOut,
     Store(ControlError),
+}
+
+impl HostCallError {
+    /// What the owner reads, whichever way the call came. It names none of
+    /// the machinery behind the Host.
+    pub(crate) const fn message(&self) -> &'static str {
+        match self {
+            Self::NotAnOwner => "This login does not own a Host.",
+            Self::Offline => "Your Host is not connected. Retry when it returns.",
+            Self::Ambiguous => "More than one Host of yours is connected. Disconnect all but one.",
+            Self::Disconnected => {
+                "Your Host disconnected before it answered. If this was a change, retry the same request to recover its outcome."
+            }
+            Self::TimedOut => {
+                "Your Host did not answer in time. If this was a change, retry the same request to recover its outcome."
+            }
+            Self::Store(_) => HOST_UNREACHABLE,
+        }
+    }
 }
 
 #[derive(Default)]

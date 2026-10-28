@@ -1487,3 +1487,115 @@ async fn a_key_bound_credential_is_refused_on_the_node_only_relay_routes() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     server.stop().await;
 }
+
+/// A node of `owner` that serves the owner's Host control, played by hand.
+async fn serving_node(server: &Running, owner: PrincipalId) -> Socket {
+    let token = server
+        .coordinator
+        .create_node_enrollment(
+            renoa_control::NodeId::new(),
+            owner,
+            std::time::SystemTime::now() + WAIT,
+        )
+        .await
+        .expect("node enrollment");
+    let mut socket = connect(server).await;
+    send(
+        &mut socket,
+        &ClientMessage::Enroll {
+            version: JSON_WS_VERSION,
+            token,
+        },
+    )
+    .await;
+    let ServerMessage::Enrolled { credentials, .. } = receive(&mut socket).await else {
+        panic!("enrollment returns credentials");
+    };
+    let mut node = connect(server).await;
+    authenticate(&mut node, &credentials).await;
+    assert!(matches!(
+        receive(&mut node).await,
+        ServerMessage::Authenticated { .. }
+    ));
+    send(&mut node, &ClientMessage::ServeHostControl).await;
+    // A node handles its messages in order, so this refusal means the advertisement took.
+    send(&mut node, &ClientMessage::ListTasks { request_id: 1 }).await;
+    expect_error(&mut node, ErrorCode::InvalidRole).await;
+    node
+}
+
+#[tokio::test]
+async fn an_app_that_proved_its_key_controls_its_owners_host_and_a_chat_link_cannot() {
+    let files = tempfile::tempdir().expect("temporary directory");
+    let server = Running::start(&files.path().join("control.sqlite")).await;
+    let (owner, phone, _tablet) = owner_with_two_apps(&server).await;
+    let mut node = serving_node(&server, owner.principal).await;
+    let mut app = phone.connect(&server).await;
+
+    send(
+        &mut app,
+        &ClientMessage::CallHost {
+            request_id: 7,
+            method: renoa_control::HostMethod::Get,
+            path: "/v1/host/agents/options".to_owned(),
+            body: None,
+        },
+    )
+    .await;
+    let ServerMessage::HostCall {
+        call_id,
+        principal_id,
+        path,
+        ..
+    } = receive(&mut node).await
+    else {
+        panic!("the node is sent the app's call");
+    };
+    assert_eq!(
+        (principal_id, path.as_str()),
+        (owner.principal, "/v1/host/agents/options")
+    );
+    send(
+        &mut node,
+        &ClientMessage::CompleteHostCall {
+            call_id,
+            status: 200,
+            body: r#"{"models":[]}"#.to_owned(),
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut app).await,
+        ServerMessage::HostAnswer {
+            request_id: 7,
+            status: 200,
+            body: r#"{"models":[]}"#.to_owned()
+        }
+    );
+
+    let link = enroll_link(&server, 1, "discord").await;
+    let mut chat = connect(&server).await;
+    authenticate(&mut chat, &link).await;
+    assert!(matches!(
+        receive(&mut chat).await,
+        ServerMessage::Authenticated { .. }
+    ));
+    send(
+        &mut chat,
+        &ClientMessage::CallHost {
+            request_id: 1,
+            method: renoa_control::HostMethod::Get,
+            path: "/v1/host".to_owned(),
+            body: None,
+        },
+    )
+    .await;
+    expect_error(&mut chat, ErrorCode::InvalidRole).await;
+    assert!(
+        timeout(Duration::from_millis(150), node.next())
+            .await
+            .is_err(),
+        "nothing from the chat link reaches the Host"
+    );
+    server.stop().await;
+}

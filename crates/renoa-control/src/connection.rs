@@ -131,6 +131,7 @@ async fn serve_messages(
     authority: Authority,
     connection_id: Uuid,
 ) {
+    let host_calls = crate::host_control_rcp::call_slots();
     loop {
         let message = tokio::select! {
             () = cancelled.cancelled() => break,
@@ -193,6 +194,7 @@ async fn serve_messages(
                         principal_id: *principal_id,
                         surface: surface.clone(),
                         authority,
+                        host_calls: Arc::clone(&host_calls),
                     },
                     request_id,
                     operation,
@@ -370,6 +372,7 @@ async fn read_peer(
         | ClientMessage::Submit { .. }
         | ClientMessage::StopCommand { .. }
         | ClientMessage::DeleteTask { .. }
+        | ClientMessage::CallHost { .. }
         | ClientMessage::AcknowledgeExecution { .. }
         | ClientMessage::AcknowledgeStop { .. }
         | ClientMessage::PublishLiveActivity { .. }
