@@ -176,9 +176,9 @@ These decisions define RCP and are not ordinary implementation details:
     device and replaces its credential instead of creating a second device. This
     constrains apps only: nodes and service links stay bearer-only. Auxiliary
     HTTP routes accept only node identities, which are never key-bound, so an
-    app's credential opens none of them. The mechanism is
-    generic. It names no operating system, and an Android origin is only an
-    additional allowed passkey origin in deployment configuration.
+    app's credential opens none of them. The mechanism is generic. It names no
+    operating system, and an Android origin is only an additional allowed
+    passkey origin in deployment configuration.
 
 ## Vocabulary
 
@@ -894,8 +894,9 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    administration, and credential rotation are designed boundaries but are not
    implemented. First-device passkey bootstrap is local and explicit. Listing
    and revocation by the owner cover signed-in apps only; the operator still
-   revokes every other device. The Rust and TypeScript clients do not yet sign the device challenge, so
-   only an app that implements the proof can connect with a key-bound device.
+   revokes every other device. The Rust and TypeScript clients do not yet sign
+   the device challenge, so only an app that implements the proof can connect
+   with a key-bound device.
 6. Public resource limits cover total connections, authentication time, and
    message size. Per-source throttling, health monitoring, backup restoration,
    and operational alerting remain deployment work.
