@@ -9,7 +9,8 @@ use std::{
 };
 
 use renoa_control::{
-    Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity, TaskId, TaskSpec,
+    AndroidApps, Coordinator, EnrollmentToken, NodeId, PasskeyBootstrapToken, PeerIdentity, TaskId,
+    TaskSpec,
 };
 use renoa_protocol::{PrincipalId, SurfaceRef, TargetRef};
 use serde::Serialize;
@@ -25,6 +26,10 @@ const USAGE: &str = "usage:
   renoa-coordinator enroll-surface <renoa-home> <principal-id> <surface>
   renoa-coordinator enroll-node <renoa-home> <node-id> <owner-principal-id>
   renoa-coordinator create-task <renoa-home> <task-id> <principal-id> <node-id> <target>";
+/// Optional JSON file naming the Android apps whose passkey assertions the
+/// coordinator accepts and whose asset links it serves.
+const ANDROID_APPS_FILE_VARIABLE: &str = "RENOA_ANDROID_APPS_FILE";
+const MAX_ANDROID_APPS_FILE_BYTES: u64 = 16 * 1024;
 const ENROLLMENT_LIFETIME: Duration = Duration::from_mins(5);
 const BROWSER_SETUP_LIFETIME: Duration = Duration::from_mins(30);
 
@@ -317,8 +322,10 @@ async fn serve(
     passkey_rp_id: &str,
     passkey_origin: &str,
 ) -> Result<(), String> {
-    let coordinator = Coordinator::open_with_passkeys(database, passkey_rp_id, passkey_origin)
-        .map_err(|error| error.to_string())?;
+    let android_apps = load_android_apps()?;
+    let coordinator =
+        Coordinator::open_with_android_apps(database, passkey_rp_id, passkey_origin, android_apps)
+            .map_err(|error| error.to_string())?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
         .await
         .map_err(|error| format!("failed to bind loopback port {port}: {error}"))?;
@@ -343,6 +350,27 @@ async fn serve(
             server.await.map_err(|error| error.to_string())
         }
     }
+}
+
+/// Unset means no Android app is trusted. A set but unusable file stops
+/// `serve` at startup rather than at the first sign-in.
+fn load_android_apps() -> Result<AndroidApps, String> {
+    let Some(path) = env::var_os(ANDROID_APPS_FILE_VARIABLE) else {
+        return Ok(AndroidApps::default());
+    };
+    let path = PathBuf::from(path);
+    let shown = path.display();
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("{ANDROID_APPS_FILE_VARIABLE} {shown}: {error}"))?;
+    if !metadata.is_file() || metadata.len() > MAX_ANDROID_APPS_FILE_BYTES {
+        return Err(format!(
+            "{ANDROID_APPS_FILE_VARIABLE} {shown} must be a regular file of at most \
+             {MAX_ANDROID_APPS_FILE_BYTES} bytes"
+        ));
+    }
+    let json = std::fs::read_to_string(&path)
+        .map_err(|error| format!("{ANDROID_APPS_FILE_VARIABLE} {shown}: {error}"))?;
+    AndroidApps::from_json(&json).map_err(|error| format!("{shown}: {error}"))
 }
 
 async fn create_passkey_bootstrap(

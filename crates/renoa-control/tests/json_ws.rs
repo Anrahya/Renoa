@@ -1,7 +1,7 @@
 use renoa_control::{
-    ClientMessage, ConnectionTicket, ErrorCode, JSON_WS_VERSION, NodeId, ServerMessage,
-    StopOutcome, TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId, TaskStatus,
-    TaskSummary,
+    ClientMessage, ConnectionTicket, DeviceId, DeviceSummary, ErrorCode, JSON_WS_VERSION, NodeId,
+    ServerMessage, StopOutcome, TargetSummary, TaskEvent, TaskEventId, TaskEventKind, TaskId,
+    TaskStatus, TaskSummary,
 };
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, LiveActivity, PrincipalId, SurfaceRef, TargetRef,
@@ -234,6 +234,101 @@ fn json_websocket_v14_encodes_task_discovery() {
         serde_json::from_value::<ServerMessage>(response_json).expect("deserialize task list"),
         response
     );
+}
+
+/// The frames exactly as `docs/rcp-json-ws-v0.md` shows them, in both
+/// directions, so a client written from the document sends and reads these
+/// bytes.
+#[test]
+fn json_websocket_v14_encodes_the_device_key_handshake_and_device_administration() {
+    let device_id = DeviceId::from_uuid(Uuid::from_u128(0x40));
+    let nonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let client_frames = [
+        (
+            ClientMessage::DeviceProof {
+                signature: "MEUCIQ".to_owned(),
+            },
+            json!({"type": "device_proof", "signature": "MEUCIQ"}),
+        ),
+        (
+            ClientMessage::ListDevices { request_id: 44 },
+            json!({"type": "list_devices", "request_id": 44}),
+        ),
+        (
+            ClientMessage::RevokeDevice {
+                request_id: 45,
+                device_id,
+            },
+            json!({
+                "type": "revoke_device",
+                "request_id": 45,
+                "device_id": "00000000-0000-0000-0000-000000000040"
+            }),
+        ),
+    ];
+    for (message, expected) in client_frames {
+        assert_eq!(
+            serde_json::to_value(&message).expect("serialize client frame"),
+            expected
+        );
+        assert_eq!(
+            serde_json::from_value::<ClientMessage>(expected).expect("deserialize client frame"),
+            message
+        );
+    }
+
+    let server_frames = [
+        (
+            ServerMessage::DeviceChallenge {
+                nonce: nonce.to_owned(),
+            },
+            json!({"type": "device_challenge", "nonce": nonce}),
+        ),
+        (
+            ServerMessage::DeviceList {
+                request_id: 44,
+                devices: vec![DeviceSummary {
+                    device_id,
+                    surface: SurfaceRef::new("android"),
+                    label: "Pixel 9".to_owned(),
+                    created_at_ms: 1_790_000_000_000,
+                    current: true,
+                }],
+            },
+            json!({
+                "type": "device_list",
+                "request_id": 44,
+                "devices": [{
+                    "deviceId": "00000000-0000-0000-0000-000000000040",
+                    "surface": "android",
+                    "label": "Pixel 9",
+                    "createdAtMs": 1_790_000_000_000_u64,
+                    "current": true
+                }]
+            }),
+        ),
+        (
+            ServerMessage::DeviceRevoked {
+                request_id: 45,
+                device_id,
+            },
+            json!({
+                "type": "device_revoked",
+                "request_id": 45,
+                "device_id": "00000000-0000-0000-0000-000000000040"
+            }),
+        ),
+    ];
+    for (message, expected) in server_frames {
+        assert_eq!(
+            serde_json::to_value(&message).expect("serialize server frame"),
+            expected
+        );
+        assert_eq!(
+            serde_json::from_value::<ServerMessage>(expected).expect("deserialize server frame"),
+            message
+        );
+    }
 }
 
 #[test]

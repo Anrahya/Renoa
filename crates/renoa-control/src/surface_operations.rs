@@ -9,27 +9,45 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ControlError, ErrorCode, ServerMessage, TaskId, TaskSpec, control_log,
     coordinator::CoordinatorState,
+    device_admin::{self, SurfaceSession},
     live_activity,
     operations::SurfaceOperation,
     store::CommandAdmission,
-    wire::{publish_task_event, send_control_error, send_error, task_sender},
+    wire::{publish_task_event, send_control_error, send_error, send_reply, task_sender},
 };
 
 pub(crate) async fn handle_surface_operation(
     state: Arc<CoordinatorState>,
     outgoing: &mpsc::Sender<ServerMessage>,
     connection_cancelled: &CancellationToken,
-    principal_id: PrincipalId,
-    surface: SurfaceRef,
+    session: SurfaceSession,
     request_id: u64,
     operation: SurfaceOperation,
 ) {
+    let principal_id = session.principal_id;
     match operation {
+        SurfaceOperation::ListDevices => {
+            device_admin::list_devices(&state, outgoing, request_id, &session).await;
+        }
+        SurfaceOperation::RevokeDevice { device_id } => {
+            device_admin::revoke_device(&state, outgoing, request_id, &session, device_id).await;
+        }
         SurfaceOperation::ListTasks => {
-            serve_list_tasks(&state, outgoing, principal_id, request_id).await;
+            let result = state
+                .store
+                .list_tasks(principal_id)
+                .await
+                .map(|tasks| ServerMessage::TaskList { request_id, tasks });
+            send_reply(outgoing, request_id, result).await;
         }
         SurfaceOperation::ListTargets => {
-            serve_list_targets(&state, outgoing, principal_id, request_id).await;
+            let result = crate::task_opening::list_targets(&state, principal_id)
+                .await
+                .map(|targets| ServerMessage::TargetList {
+                    request_id,
+                    targets,
+                });
+            send_reply(outgoing, request_id, result).await;
         }
         SurfaceOperation::OpenTask {
             task_id,
@@ -42,14 +60,19 @@ pub(crate) async fn handle_surface_operation(
                 node_id,
                 target,
             };
-            serve_open_task(&state, outgoing, request_id, task).await;
+            send_reply(
+                outgoing,
+                request_id,
+                open_task(&state, request_id, task).await,
+            )
+            .await;
         }
         SurfaceOperation::Attach {
             task_id,
             after_sequence,
             live,
         } => {
-            let attached = attach_surface(
+            if let Err(error) = attach_surface(
                 state,
                 outgoing.clone(),
                 connection_cancelled.child_token(),
@@ -59,8 +82,10 @@ pub(crate) async fn handle_surface_operation(
                 principal_id,
                 live,
             )
-            .await;
-            report(outgoing, request_id, attached).await;
+            .await
+            {
+                send_control_error(outgoing, Some(request_id), &error).await;
+            }
         }
         SurfaceOperation::Submit {
             task_id,
@@ -75,118 +100,24 @@ pub(crate) async fn handle_surface_operation(
                 command_id,
                 input,
                 principal_id,
-                surface,
+                session.surface,
             )
             .await;
-            report(outgoing, request_id, result).await;
+            if let Err(error) = result {
+                send_control_error(outgoing, Some(request_id), &error).await;
+            }
         }
         SurfaceOperation::StopCommand {
             task_id,
             command_id,
         } => {
-            let stopped =
-                crate::command_stop::stop_command(&state, principal_id, task_id, command_id).await;
-            answer(outgoing, request_id, stopped, |outcome| {
-                ServerMessage::StopAccepted {
-                    request_id,
-                    command_id,
-                    outcome,
-                }
-            })
-            .await;
+            let result = stop_command(&state, principal_id, request_id, task_id, command_id).await;
+            send_reply(outgoing, request_id, result).await;
         }
         SurfaceOperation::DeleteTask { task_id } => {
-            serve_delete_task(&state, outgoing, principal_id, request_id, task_id).await;
+            let result = delete_task(&state, principal_id, request_id, task_id).await;
+            send_reply(outgoing, request_id, result).await;
         }
-    }
-}
-
-async fn serve_list_tasks(
-    state: &CoordinatorState,
-    outgoing: &mpsc::Sender<ServerMessage>,
-    principal_id: PrincipalId,
-    request_id: u64,
-) {
-    let tasks = state.store.list_tasks(principal_id).await;
-    answer(outgoing, request_id, tasks, |tasks| {
-        ServerMessage::TaskList { request_id, tasks }
-    })
-    .await;
-}
-
-async fn serve_list_targets(
-    state: &CoordinatorState,
-    outgoing: &mpsc::Sender<ServerMessage>,
-    principal_id: PrincipalId,
-    request_id: u64,
-) {
-    let targets = crate::task_opening::list_targets(state, principal_id).await;
-    answer(outgoing, request_id, targets, |targets| {
-        ServerMessage::TargetList {
-            request_id,
-            targets,
-        }
-    })
-    .await;
-}
-
-async fn serve_open_task(
-    state: &CoordinatorState,
-    outgoing: &mpsc::Sender<ServerMessage>,
-    request_id: u64,
-    task: TaskSpec,
-) {
-    let task_id = task.task_id;
-    let opened = crate::task_opening::open_task(state, task).await;
-    answer(outgoing, request_id, opened, |()| {
-        ServerMessage::TaskOpened {
-            request_id,
-            task_id,
-        }
-    })
-    .await;
-}
-
-async fn serve_delete_task(
-    state: &CoordinatorState,
-    outgoing: &mpsc::Sender<ServerMessage>,
-    principal_id: PrincipalId,
-    request_id: u64,
-    task_id: TaskId,
-) {
-    let deleted = crate::task_deletion::delete_task(state, principal_id, task_id).await;
-    answer(outgoing, request_id, deleted, |()| {
-        ServerMessage::TaskDeleted {
-            request_id,
-            task_id,
-        }
-    })
-    .await;
-}
-
-/// Sends the error that ended a request whose success answers for itself.
-async fn report(
-    outgoing: &mpsc::Sender<ServerMessage>,
-    request_id: u64,
-    result: Result<(), ControlError>,
-) {
-    if let Err(error) = result {
-        send_control_error(outgoing, Some(request_id), &error).await;
-    }
-}
-
-/// Sends a request's reply, or the error that ended it.
-async fn answer<T>(
-    outgoing: &mpsc::Sender<ServerMessage>,
-    request_id: u64,
-    result: Result<T, ControlError>,
-    reply: impl FnOnce(T) -> ServerMessage,
-) {
-    match result {
-        Ok(value) => {
-            let _ = outgoing.send(reply(value)).await;
-        }
-        Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
     }
 }
 
@@ -277,6 +208,50 @@ pub(crate) async fn attach_surface(
         }
     });
     Ok(())
+}
+
+async fn open_task(
+    state: &CoordinatorState,
+    request_id: u64,
+    task: TaskSpec,
+) -> Result<ServerMessage, ControlError> {
+    let task_id = task.task_id;
+    crate::task_opening::open_task(state, task)
+        .await
+        .map(|()| ServerMessage::TaskOpened {
+            request_id,
+            task_id,
+        })
+}
+
+async fn delete_task(
+    state: &CoordinatorState,
+    principal_id: PrincipalId,
+    request_id: u64,
+    task_id: TaskId,
+) -> Result<ServerMessage, ControlError> {
+    crate::task_deletion::delete_task(state, principal_id, task_id)
+        .await
+        .map(|()| ServerMessage::TaskDeleted {
+            request_id,
+            task_id,
+        })
+}
+
+async fn stop_command(
+    state: &CoordinatorState,
+    principal_id: PrincipalId,
+    request_id: u64,
+    task_id: TaskId,
+    command_id: CommandId,
+) -> Result<ServerMessage, ControlError> {
+    crate::command_stop::stop_command(state, principal_id, task_id, command_id)
+        .await
+        .map(|outcome| ServerMessage::StopAccepted {
+            request_id,
+            command_id,
+            outcome,
+        })
 }
 
 #[allow(

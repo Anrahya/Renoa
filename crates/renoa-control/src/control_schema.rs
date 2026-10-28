@@ -35,6 +35,7 @@ pub(crate) fn initialize(connection: &mut Connection) -> Result<(), ControlError
         add_execution_command_causation(connection)?;
     }
     create_continuity_schema(connection)?;
+    crate::device_store::create_schema(connection)?;
     crate::node_ownership::create_schema(connection)?;
     if (1..=11).contains(&version) {
         crate::node_ownership::adopt_task_owners(connection)?;

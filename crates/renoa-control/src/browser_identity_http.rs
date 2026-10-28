@@ -13,9 +13,10 @@ use uuid::Uuid;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 
 use crate::{
-    ConnectionTicket, ControlError, PasskeyBootstrapToken,
-    browser_identity::{CeremonyOptions, TicketGrant, parse_surface},
+    ConnectionTicket, ControlError, DeviceCredentials, PasskeyBootstrapToken,
+    browser_identity::{CeremonyOptions, SignIn, TicketGrant, parse_surface},
     coordinator::{ControlErrorKind, CoordinatorState},
+    device_key::DeviceRegistration,
     identity_store::timestamp_millis,
 };
 
@@ -42,11 +43,28 @@ pub(crate) fn routes() -> Router<Arc<CoordinatorState>> {
         .layer(DefaultBodyLimit::max(MAX_IDENTITY_BODY_BYTES))
 }
 
+/// The key an app asks to sign in with, fixed on the server for the ceremony.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DeviceRequest {
+    public_key: String,
+    label: String,
+}
+
+impl DeviceRequest {
+    fn parse(request: Option<Self>) -> Result<Option<DeviceRegistration>, ControlError> {
+        request
+            .map(|device| DeviceRegistration::parse(&device.public_key, &device.label))
+            .transpose()
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegistrationOptionsRequest {
     bootstrap_token: PasskeyBootstrapToken,
     surface: String,
+    device: Option<DeviceRequest>,
 }
 
 #[derive(Deserialize)]
@@ -54,6 +72,7 @@ struct RegistrationOptionsRequest {
 struct AuthenticationOptionsRequest {
     principal_id: PrincipalId,
     surface: String,
+    device: Option<DeviceRequest>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +80,13 @@ struct AuthenticationOptionsRequest {
 struct VerifyRequest<T> {
     ceremony_id: Uuid,
     credential: T,
+    device_proof: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceResponse {
+    credentials: DeviceCredentials,
 }
 
 #[derive(Serialize)]
@@ -96,11 +122,15 @@ async fn registration_options(
         Ok(surface) => surface,
         Err(error) => return error_response(&error),
     };
+    let device = match DeviceRequest::parse(request.device) {
+        Ok(device) => device,
+        Err(error) => return error_response(&error),
+    };
     let Some(identity) = &state.browser_identity else {
         return unavailable_response();
     };
     match identity
-        .start_registration(&state.store, request.bootstrap_token, surface)
+        .start_registration(&state.store, request.bootstrap_token, surface, device)
         .await
     {
         Ok(options) => options_response(options),
@@ -121,10 +151,15 @@ async fn registration_verify(
         return unavailable_response();
     };
     match identity
-        .finish_registration(&state.store, request.ceremony_id, request.credential)
+        .finish_registration(
+            &state.store,
+            request.ceremony_id,
+            request.credential,
+            request.device_proof.as_deref(),
+        )
         .await
     {
-        Ok(grant) => ticket_response(grant),
+        Ok(sign_in) => sign_in_response(&state, sign_in).await,
         Err(error) => error_response(&error),
     }
 }
@@ -141,11 +176,15 @@ async fn authentication_options(
         Ok(surface) => surface,
         Err(error) => return error_response(&error),
     };
+    let device = match DeviceRequest::parse(request.device) {
+        Ok(device) => device,
+        Err(error) => return error_response(&error),
+    };
     let Some(identity) = &state.browser_identity else {
         return unavailable_response();
     };
     match identity
-        .start_authentication(&state.store, request.principal_id, surface)
+        .start_authentication(&state.store, request.principal_id, surface, device)
         .await
     {
         Ok(options) => options_response(options),
@@ -165,10 +204,15 @@ async fn authentication_verify(
         return unavailable_response();
     };
     match identity
-        .finish_authentication(&state.store, request.ceremony_id, request.credential)
+        .finish_authentication(
+            &state.store,
+            request.ceremony_id,
+            request.credential,
+            request.device_proof.as_deref(),
+        )
         .await
     {
-        Ok(grant) => ticket_response(grant),
+        Ok(sign_in) => sign_in_response(&state, sign_in).await,
         Err(error) => error_response(&error),
     }
 }
@@ -203,6 +247,28 @@ fn options_response<T: Serialize>(options: CeremonyOptions<T>) -> Response {
             options: options.options,
         },
     )
+}
+
+/// A browser ceremony ends in a ticket and a remembered login; an app's ends
+/// in its device credential, with no cookie and no ticket. A device signed in
+/// again has its old credential replaced, so its live connections end before
+/// the new credential is returned.
+async fn sign_in_response(state: &CoordinatorState, sign_in: SignIn) -> Response {
+    match sign_in {
+        SignIn::Browser(grant) => ticket_response(grant),
+        SignIn::Device(signed_in) => {
+            if signed_in.adopted {
+                crate::device_admin::end_device_sessions(state, signed_in.credentials.device_id)
+                    .await;
+            }
+            secure_json(
+                StatusCode::OK,
+                &DeviceResponse {
+                    credentials: signed_in.credentials,
+                },
+            )
+        }
+    }
 }
 
 fn ticket_response(grant: TicketGrant) -> Response {

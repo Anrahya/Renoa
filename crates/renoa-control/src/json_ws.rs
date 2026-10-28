@@ -4,8 +4,8 @@ use renoa_protocol::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ConnectionTicket, DeviceCredentials, EnrollmentToken, ErrorCode, NodeId, StopOutcome,
-    TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
+    ConnectionTicket, DeviceCredentials, DeviceId, DeviceSummary, EnrollmentToken, ErrorCode,
+    NodeId, StopOutcome, TargetSummary, TaskEvent, TaskEventKind, TaskId, TaskSummary,
     operations::{NodeOperation, SurfaceOperation},
 };
 
@@ -28,11 +28,22 @@ pub enum ClientMessage {
         version: u32,
         ticket: ConnectionTicket,
     },
+    /// The signature a key-bound device answers its `device_challenge` with.
+    DeviceProof {
+        signature: String,
+    },
     ListTasks {
         request_id: u64,
     },
     ListTargets {
         request_id: u64,
+    },
+    ListDevices {
+        request_id: u64,
+    },
+    RevokeDevice {
+        request_id: u64,
+        device_id: DeviceId,
     },
     OpenTask {
         request_id: u64,
@@ -91,11 +102,14 @@ impl ClientMessage {
             Self::Enroll { .. }
             | Self::Authenticate { .. }
             | Self::AuthenticateTicket { .. }
+            | Self::DeviceProof { .. }
             | Self::AdvertiseTargets { .. }
             | Self::AcknowledgeExecution { .. }
             | Self::AcknowledgeStop { .. } => true,
             Self::ListTasks { request_id }
             | Self::ListTargets { request_id }
+            | Self::ListDevices { request_id }
+            | Self::RevokeDevice { request_id, .. }
             | Self::OpenTask { request_id, .. }
             | Self::Submit { request_id, .. }
             | Self::StopCommand { request_id, .. }
@@ -149,11 +163,14 @@ impl ClientMessage {
                 command_id,
                 activity,
             },
-            Self::Enroll { .. } | Self::Authenticate { .. } | Self::AuthenticateTicket { .. } => {
-                return None;
-            }
+            Self::Enroll { .. }
+            | Self::Authenticate { .. }
+            | Self::AuthenticateTicket { .. }
+            | Self::DeviceProof { .. } => return None,
             Self::ListTasks { .. }
             | Self::ListTargets { .. }
+            | Self::ListDevices { .. }
+            | Self::RevokeDevice { .. }
             | Self::OpenTask { .. }
             | Self::Attach { .. }
             | Self::Submit { .. }
@@ -221,9 +238,15 @@ impl ClientMessage {
                 request_id,
                 task_id,
             } => (request_id, SurfaceOperation::DeleteTask { task_id }),
+            Self::ListDevices { request_id } => (request_id, SurfaceOperation::ListDevices),
+            Self::RevokeDevice {
+                request_id,
+                device_id,
+            } => (request_id, SurfaceOperation::RevokeDevice { device_id }),
             Self::Enroll { .. }
             | Self::Authenticate { .. }
             | Self::AuthenticateTicket { .. }
+            | Self::DeviceProof { .. }
             | Self::AdvertiseTargets { .. }
             | Self::AcknowledgeExecution { .. }
             | Self::PublishExecutionEvents { .. }
@@ -256,6 +279,10 @@ pub enum ServerMessage {
     Authenticated {
         version: u32,
     },
+    /// Sent instead of `authenticated` to a device that registered a key.
+    DeviceChallenge {
+        nonce: String,
+    },
     TaskList {
         request_id: u64,
         tasks: Vec<TaskSummary>,
@@ -263,6 +290,14 @@ pub enum ServerMessage {
     TargetList {
         request_id: u64,
         targets: Vec<TargetSummary>,
+    },
+    DeviceList {
+        request_id: u64,
+        devices: Vec<DeviceSummary>,
+    },
+    DeviceRevoked {
+        request_id: u64,
+        device_id: DeviceId,
     },
     TaskOpened {
         request_id: u64,
@@ -321,15 +356,26 @@ impl ServerMessage {
         match self {
             Self::Enrolled { .. }
             | Self::Authenticated { .. }
+            | Self::DeviceChallenge { .. }
             | Self::ExecutionAcknowledged { .. }
             | Self::Execute { .. }
             | Self::Stop { .. } => true,
             Self::TaskList { request_id, .. }
             | Self::TargetList { request_id, .. }
+            | Self::DeviceRevoked { request_id, .. }
             | Self::TaskOpened { request_id, .. }
             | Self::CommandAccepted { request_id, .. }
             | Self::StopAccepted { request_id, .. }
             | Self::TaskDeleted { request_id, .. } => interoperable(*request_id),
+            Self::DeviceList {
+                request_id,
+                devices,
+            } => {
+                interoperable(*request_id)
+                    && devices
+                        .iter()
+                        .all(|device| interoperable(device.created_at_ms))
+            }
             Self::Attached {
                 request_id,
                 through_sequence,

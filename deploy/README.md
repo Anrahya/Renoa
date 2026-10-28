@@ -358,13 +358,15 @@ are the single backup at `/opt/renoa/previous` described above. Browser login
 storage is separate and does not need to be reset for this Host cutover.
 
 Back up the coordinator SQLite database with SQLite's backup API before installing
-the new coordinator binary. It upgrades the identity database to schema 12 and
+the new coordinator binary. It upgrades the identity database to schema 13 and
 keeps passkeys and hashed remembered sessions there. Schema 12 records each
 node's owning principal: the upgrade adopts the owner of a node whose existing
 tasks all belong to one principal, and a node shared by several principals keeps
-serving its tasks without an owner. A pre-upgrade binary cannot open schema 12;
-any owner-requested recovery requires the matching identity
-snapshot and binary from that same backup. Install `renoa-management.service`, then reload systemd, restart the
+serving its tasks without an owner. Schema 13 adds the device keys of signed-in
+apps and the record of stopped commands, and leaves every existing device as it
+was. A pre-upgrade binary cannot open schema 13; any owner-requested recovery
+requires the matching identity snapshot and binary from that same backup.
+Install `renoa-management.service`, then reload systemd, restart the
 coordinator and enable the management service. The example runs as the existing
 Host OS user, `renoa-arcee`; use the actual Host owner on another machine.
 
@@ -412,6 +414,51 @@ real Host UUID/counts. Network/storage failures must show a stale view and retry
 not become a successful empty inventory or an invalid-password screen. Replacing
 the machine requires restoring both Host state/credentials and identity state,
 and retaining the passkey origin; a DNS name alone does not preserve the system.
+
+## Signed-in apps
+
+An app signs in with a passkey and a key generated on the device (see
+`docs/identity-v0.md`, "App sign-in and device keys"). This release moves RCP to
+binding version 14 and the coordinator database to schema 13, so the
+coordinator, node, Pi node, and every surface must be upgraded together. Back
+up the coordinator database with SQLite's backup API first: schema 13 adds the
+`device_keys` and `device_sign_ins` tables (and the stop records described
+below), existing devices keep working
+unchanged as bearer-only devices, and a pre-upgrade binary cannot open schema 13.
+
+Android asks the relying party before it offers an app a passkey, and an
+assertion made by an app carries its own origin. To trust an app, copy
+`renoa-android-apps.example.json` to
+`/home/renoa/.renoa/config/android-apps.json`, owned by `renoa-arcee` (the
+account the coordinator runs as, which cannot read the root-only `/etc/renoa`)
+with mode `0600`. Replace the package name and list the SHA-256 fingerprint of
+every certificate the app is signed with (`keytool -list -v -keystore
+<keystore>`; a debug and a release build differ), then point the coordinator at
+it with a drop-in so the packaged unit stays unchanged:
+
+```sh
+install -m 0600 -o renoa-arcee -g renoa-arcee \
+  renoa-android-apps.example.json /home/renoa/.renoa/config/android-apps.json
+# edit the package name and fingerprints in that file, then:
+systemctl edit renoa-coordinator.service
+# [Service]
+# Environment=RENOA_ANDROID_APPS_FILE=/home/renoa/.renoa/config/android-apps.json
+systemctl restart renoa-coordinator.service
+```
+
+The file holds public data. An invalid or unreadable file stops the coordinator
+at startup with the entry or error that is wrong; unset trusts no app. The tunnel's catch-all rule
+already sends `/.well-known/assetlinks.json` to the coordinator. Check it after
+the restart with
+`curl -s https://renoa.live/.well-known/assetlinks.json`: it must list the
+package and every fingerprint. An owner without a passkey that reaches the phone
+creates one with `renoa-coordinator bootstrap-passkey` and enters the token in
+the app's first sign-in; the token is single-use and 30 minutes long.
+
+An owner revokes a signed-in app from another app or the Control Room
+(`revoke_device`). The operator can still revoke any device through
+`Coordinator::revoke_device`; revocation ends the device's open connections and
+rejects its next one.
 
 ## RCP execution node
 
@@ -693,10 +740,11 @@ systemctl status renoa-coordinator.service
 tailscale serve status
 ```
 
-Coordinator schema 13 adds the table of recorded stops and a view that decides
-whether a command has settled. Opening an older database creates both and
+Coordinator schema 13 also adds the table of recorded stops and a view that
+decides whether a command has settled. Opening an older database creates both and
 leaves its rows alone. RCP binding version 14 adds the status in the task
-directory, stopping a command, and live text from a running turn, so the
+directory, stopping a command, and live text from a running turn, besides the
+device-key sign-in and device operations described above, so the
 coordinator, node, Pi node, and every surface must be upgraded together; a
 peer still on version 13 is refused at authentication.
 

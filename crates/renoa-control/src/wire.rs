@@ -1,4 +1,5 @@
-use axum::extract::ws::Message;
+use axum::extract::ws::{Message, WebSocket};
+use futures_util::{StreamExt as _, stream::SplitStream};
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
@@ -59,6 +60,50 @@ pub(crate) fn classify_message(message: Message) -> InboundMessage {
         Message::Ping(_) | Message::Pong(_) => InboundMessage::Control,
         Message::Close(_) => InboundMessage::Closed,
         Message::Binary(_) => InboundMessage::Invalid,
+    }
+}
+
+/// Reads the next JSON frame of a peer that has not finished authenticating,
+/// skipping transport control frames. A malformed frame is answered as an
+/// authentication failure. `None` means the connection ended or was refused.
+pub(crate) async fn next_application_message(
+    receiver: &mut SplitStream<WebSocket>,
+    outgoing: &mpsc::Sender<ServerMessage>,
+) -> Option<ClientMessage> {
+    loop {
+        match receiver.next().await {
+            Some(Ok(message)) => match classify_message(message) {
+                InboundMessage::Application(message) => return Some(message),
+                InboundMessage::Control => {}
+                InboundMessage::Closed => return None,
+                InboundMessage::Invalid => {
+                    send_error(
+                        outgoing,
+                        None,
+                        ErrorCode::AuthenticationFailed,
+                        "authentication failed",
+                    )
+                    .await;
+                    return None;
+                }
+            },
+            Some(Err(_)) | None => return None,
+        }
+    }
+}
+
+/// Sends the answer to one request: its response, or its error under the
+/// request's id.
+pub(crate) async fn send_reply(
+    outgoing: &mpsc::Sender<ServerMessage>,
+    request_id: u64,
+    result: Result<ServerMessage, ControlError>,
+) {
+    match result {
+        Ok(message) => {
+            let _ = outgoing.send(message).await;
+        }
+        Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
     }
 }
 

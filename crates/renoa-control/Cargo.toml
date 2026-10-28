@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 renoa-home = { path = "../renoa-home", version = "0.1.0" }
 axum = { workspace = true, features = ["http1", "json", "ws"] }
+base64.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 renoa-credential-relay-protocol = { path = "../renoa-credential-relay-protocol", version = "0.1.0" }

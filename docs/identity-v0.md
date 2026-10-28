@@ -12,6 +12,11 @@ proves the person with a passkey. Both establish a remembered browser login that
 can issue a short-lived ticket bound to one principal and surface.
 Both paths establish the same `PeerIdentity` before any RCP operation runs.
 
+A signed-in app is a third path: a passkey proves the person once, and a key
+generated on the device, whose private half never leaves it, proves the
+installation on every connection. A copied bearer credential alone is not a
+device.
+
 A valid identity still cannot access a task owned by another principal. Device
 authentication, person authentication, and task authorization are separate
 checks.
@@ -20,6 +25,11 @@ checks.
 
 - A **principal** owns tasks.
 - A **device** is one native installation or node with one revocable credential.
+- A **device key** is a P-256 key pair an app generates on its device. The
+  coordinator stores only the public key. A device that has registered one is
+  **key-bound**: its bearer credential is not enough to connect.
+- A **sign-in** is a passkey ceremony that also registers a device key and ends
+  in a device credential instead of a browser ticket.
 - A **peer identity** binds a connection to either a principal and surface or an
   execution node.
 - An **enrollment** is a one-use authority to create a native device.
@@ -159,6 +169,117 @@ can issue new codes afterward for recovery. Existing WebSockets/native device
 credentials and registered passkeys are separate.
 Storage outages remain errors rather than being classified as invalid credentials.
 
+## App sign-in and device keys
+
+A signed-in app proves the person with a passkey and the installation with a
+device key. Nothing here is specific to one platform: an app names its own
+`surface`, and the contract is the same for Android, Mac, Windows or Linux.
+
+### The key
+
+The app generates a P-256 key pair on the device (on Android, in the Keystore)
+and registers the public key as the 65-byte uncompressed point (`0x04`, X, Y),
+base64url without padding. A signature is ECDSA P-256 over SHA-256 in ASN.1 DER
+form, base64url without padding, which is what Android's `SHA256withECDSA`
+and Apple's `ecdsaSignatureMessageX962SHA256` produce. The coordinator uses the
+key to verify signatures only. Whether the same key also receives sealed data is
+for the work that seals to it (#104), not assumed here. A reconnect from the
+background has no person to unlock the phone, so the app must create the key
+without a per-use authentication requirement.
+
+Two messages are signed, both UTF-8 text with `\n` separators and lowercase
+hyphenated UUIDs:
+
+```text
+renoa device registration v1\n<ceremonyId>
+renoa device proof v1\n<deviceId>\n<nonce>
+```
+
+A checked-in vector lets a client prove it builds the same messages and
+signatures (`crates/renoa-control/src/device_key/tests.rs`). The public key is
+`BEFC5QCFE_LZheDMR2lWsqSFcKXGmLzushLPtXThJVeqASyH5pnjQFelgVnW4rcU5iGrCF77DrbWES30UVNgswU`.
+The proof for device `00000000-0000-0000-0000-0000000000d1` and nonce
+`0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef` is
+`MEUCIAnitA2CIfhmPWOB6eOIiJM_Z74hBIIyaP9nxLfrHoibAiEAlm4ly-JV0fkETPZSIdyS8Q0Xk9NkXWmvGYLnnjViCeA`.
+The registration proof for ceremony `00000000-0000-0000-0000-0000000000c1` is
+`MEUCIGTBknvC6AVKrU-9KczMBrhfuFPvQsETvh3tXWR-Jm5_AiEAw054Y_wN-AB-Iw5JllHACXM-4__CGQLWZn6FoU6ccj0`.
+ECDSA signatures are randomized, so a client checks a signature by verifying it,
+not by comparing bytes.
+
+### Signing in
+
+Sign-in uses the four passkey endpoints above. The options request of either
+ceremony takes an optional `device`:
+
+```json
+{ "principalId": "...", "surface": "android",
+  "device": { "publicKey": "<point>", "label": "Pixel 9" } }
+```
+
+A registration request carries `bootstrapToken` instead of `principalId`, for a
+person whose passkey is not synced to the phone. `label` is the name the owner
+will recognize, 1 to 64 printable characters. The coordinator stores the key
+with the ceremony, so the assertion is bound to a key chosen before it was made.
+The verify request adds `deviceProof`, the key's signature over the registration
+message. It is required for a ceremony that carries a device and refused for one
+that does not. The response of such a ceremony is
+`{ "credentials": { "deviceId", "credential" } }`, with no ticket and no
+cookie. One transaction records the passkey change and the device, and the
+credential's digest, before the response is sent.
+
+The key is the stable identity the app owns before it first sends. A sign-in
+with the same principal, surface and key adopts the existing device, replaces its
+credential and updates its label, and ends the device's live connections before
+the response returns the new credential, so a lost response or a lost credential
+never duplicates a device. The replaced credential is not accepted again: a
+connection that authenticated with it and was still proving its key when the new
+credential committed is refused when it would become active, because activation
+checks, under the connection lifecycle lock, that the device is not revoked and
+still holds the credential the connection presented. A key that is revoked, or
+registered to another principal or surface, is a `conflict`: revocation is never
+undone by replaying a sign-in. A principal may hold 32 active key-bound devices.
+The transaction enforces these rules for both ceremonies. A registration
+request, which already holds the bootstrap token, also checks them at the options
+request and says why, so a refused sign-in leaves the one-use token unspent. An
+authentication options request carries no secret, so it answers the same for
+every key: the refusal waits for the passkey assertion at verify, names its
+cause then, and writes nothing, so the passkey keeps its counter and the app
+signs in again with a new key. A ceremony claimed and then refused is not
+replayed.
+
+### Connecting
+
+`authenticate` for a key-bound device is answered with `device_challenge`
+carrying a fresh 256-bit nonce, kept only in that connection's memory. The
+client answers `device_proof` with its signature over the proof message and
+receives `authenticated`. A missing, malformed, foreign or recorded proof ends
+the connection with `authentication_failed` and reaches no operation. Devices
+without a key, which are nodes and service links, authenticate as before.
+
+### Administering devices
+
+A connection established by a browser ticket or by a proven device key may list
+and revoke the principal's key-bound devices (`list_devices`, `revoke_device`).
+A service link that presented only its bearer credential may not, so a chat
+surface cannot cut off the owner's apps. Revocation commits before it is
+acknowledged and then ends the device's sessions; a device may revoke itself, and
+its acknowledgement is sent before its socket closes. A retry succeeds again.
+
+### Android apps
+
+Android shows a passkey to an app only when the relying party lists the app, and
+an assertion made by an app carries the origin
+`android:apk-key-hash:<base64url SHA-256 of the signing certificate>`. The
+coordinator reads `RENOA_ANDROID_APPS_FILE`, a JSON file of
+`{"apps": [{"packageName": "...", "sha256CertFingerprints": ["14:6D:..."]}]}`
+with fingerprints as `keytool` prints them (one per build signature, such as a
+debug and a release certificate). Each fingerprint becomes an allowed origin
+matched by exact equality, and `/.well-known/assetlinks.json` is served with
+`delegate_permission/common.get_login_creds` for the same package and
+fingerprints. Unset means neither: no app origin is trusted and no file is
+served. An invalid file stops `serve` at startup. This is relying-party
+configuration; no RCP frame names a platform.
+
 ## Durable state and failure rules
 
 WebAuthn challenge state is stored in SQLite and never returned to the browser.
@@ -211,15 +332,27 @@ or SQLite details.
     authorization.
 11. Reusing device authentication on an auxiliary HTTP route preserves the
     enrolled server-side role and grants no implicit RCP task authority.
+12. A key-bound device reaches no operation on its bearer credential alone: its
+    connection must sign a fresh, per-connection challenge with the registered
+    key. The coordinator holds no private key.
+13. A sign-in records the passkey change and creates or adopts the device in one
+    transaction, and a key that was revoked is never revived by a later sign-in.
+14. Only a browser ticket or a proven device key may list or revoke devices. A
+    bearer-only link may not.
+15. Auxiliary HTTP routes accept only node identities, which are never key-bound,
+    so a key-bound device's bearer credential opens none of them.
 
 ## Remaining work
 
 The browser Control Room implements pairing, passkey registration and
 authentication, and remembered logins. It requests a fresh ticket for every
-connection attempt and keeps that ticket in memory only. Trusted-device approval for
-headless enrollment, device and passkey administration, recovery, per-source
-throttling, monitoring, and backup restoration remain outside this foundation
-slice.
+connection attempt and keeps that ticket in memory only. Signed-in apps have
+sender-constrained device credentials and owner-side device listing and
+revocation. Nodes and service links such as Discord remain bearer-only, with
+credentials in owner-only files. Trusted-device approval for headless
+enrollment, passkey administration, recovery, credential rotation other than
+a repeat sign-in, per-source throttling, monitoring, and backup restoration
+remain outside this foundation slice.
 
 Renoa uses [`webauthn-rs` 0.5.5](https://github.com/kanidm/webauthn-rs/releases/tag/v0.5.5)
 under MPL-2.0 for WebAuthn validation and its test authenticator. Renoa enables

@@ -163,6 +163,18 @@ These decisions define RCP and are not ordinary implementation details:
     own records is still told to replay. The order is fixed for the frames that
     matter: a frame the node published before a record reaches the surface
     before that record.
+26. A signed-in app proves possession of a private key that never leaves the
+    device, in addition to presenting its bearer credential. The app generates a
+    P-256 key in the platform keystore, sends only the public key at passkey
+    sign-in, and signs a coordinator-issued nonce on every connection. A bearer
+    credential alone never authenticates a device that has a key. The public key
+    is the device's stable identity, so a repeated sign-in adopts the existing
+    device and replaces its credential instead of creating a second device. This
+    constrains apps only: nodes and service links stay bearer-only. Auxiliary
+    HTTP routes accept only node identities, which are never key-bound, so an
+    app's credential opens none of them. The mechanism is generic. It names no
+    operating system, and an Android origin is only an additional allowed
+    passkey origin in deployment configuration.
 
 ## Vocabulary
 
@@ -603,12 +615,15 @@ RCP v0 uses the enrollment and per-device credential design in
 
 Production transport requires TLS. Credentials are never placed in URLs.
 Bearer device credentials are sufficient for the personal-runtime proof but
-must be stored in operating-system credential storage.
+must be stored in operating-system credential storage. A device enrolled through
+app sign-in is also sender-constrained (locked decision 26): its connection
+completes only after a signature over a fresh server nonce verifies against the
+public key recorded at sign-in. Nodes, service links, and keyless surfaces
+remain bearer-only.
 
-Sender-constrained credentials, account recovery, credential rotation,
-end-to-end encrypted task payloads, and multi-user collaboration require their
-own threat models. RCP will reuse established security standards rather than
-invent cryptography.
+Account recovery, credential rotation, end-to-end encrypted task payloads, and
+multi-user collaboration require their own threat models. RCP will reuse
+established security standards rather than invent cryptography.
 
 The coordinator may see plaintext task content in the initial architecture.
 End-to-end encryption remains possible because routing fundamentally needs task,
@@ -626,6 +641,8 @@ secret store:
   keystore; a headless service uses its service manager's credential facility,
   with an owner-only file as an explicit fallback. Losing a device is handled
   by revoking it and enrolling a replacement, not by copying its credential.
+  A signed-in app additionally holds a private device key that never leaves its
+  keystore; the credential alone cannot connect it.
 - A browser surface must not put a long-lived device credential in JavaScript
   storage. The production browser binding will authenticate the person at the
   coordinator's HTTPS origin and exchange that authenticated session for a
@@ -833,6 +850,20 @@ The current implementation demonstrates:
   automation's own. Attached surfaces see the run and its result through the
   journal with no automation-specific code, and a node restart during a run
   resubmits the same command, which the coordinator keeps once.
+- app sign-in that registers a device key with a passkey ceremony, creates the
+  device in the same transaction as the credential, and connects only after an
+  ECDSA P-256 signature over a fresh nonce verifies; a repeated sign-in with the
+  same key adopts the device, rotates its credential and ends its old
+  connections, including one still proving its key, a registration the store
+  already knows it would refuse is refused before the bootstrap is spent while
+  an authentication is refused only after its passkey assertion, and a
+  malformed key or bad proof leaves no device;
+- owner-only listing and revocation of signed-in apps, where a revoked app
+  receives its acknowledgement before its socket closes and an administering
+  session must itself be a ticket or a key-bound device;
+- an optional deployment file of Android apps that adds exact
+  `android:apk-key-hash:` passkey origins and serves
+  `/.well-known/assetlinks.json`, with neither present when the file is absent.
 
 The proof deliberately does not yet satisfy the full RCP architecture:
 
@@ -853,9 +884,13 @@ The proof deliberately does not yet satisfy the full RCP architecture:
    is relayed only as ephemeral live activity: there is no live reasoning or
    tool-argument stream and no general streaming UI protocol, and the Pi node
    publishes no live activity.
-5. Trusted-device approval for remote native enrollment, recovery, passkey and
-   device administration, and credential rotation are designed boundaries but
-   are not implemented. First-device passkey bootstrap is local and explicit.
+5. Trusted-device approval for remote native enrollment, recovery, passkey
+   administration, and credential rotation are designed boundaries but are not
+   implemented. First-device passkey bootstrap is local and explicit. Listing
+   and revocation by the owner cover signed-in apps only; the operator still
+   revokes every other device. The Rust and TypeScript clients do not yet sign
+   the device challenge, so only an app that implements the proof can connect
+   with a key-bound device.
 6. Public resource limits cover total connections, authentication time, and
    message size. Per-source throttling, health monitoring, backup restoration,
    and operational alerting remain deployment work.
@@ -871,9 +906,10 @@ multi-task, or public-network consumer.
 
 Work proceeds in this order unless evidence changes the dependency:
 
-1. Add device and passkey administration, trusted-device approval for headless
+1. Add passkey administration, trusted-device approval for headless
    enrollment, per-source throttling, health monitoring, and a
-   tested backup-and-restore procedure.
+   tested backup-and-restore procedure. Owner listing and revocation of
+   signed-in apps are done.
 2. Add a durable harness-initiated interaction flow when a real approval or
    follow-up consumer exists; RCP transports the interaction while the harness
    retains permission policy.
@@ -938,6 +974,17 @@ RCP v0 is not proven until deterministic tests cover at least:
     journal.
 19. The directory reports each task's status from its latest command exactly
     as the journal defines it, and reading the directory writes nothing.
+20. An app signs in with a passkey and a device key, and connects only with both
+    its credential and a valid signature over a fresh nonce; a credential alone,
+    a wrong key, and a replayed or stale signature do not connect. Signing in
+    again with the same key converges on one device and ends its old
+    connections, including one still proving its key. A registration the
+    options request can refuse spends no bootstrap; an authentication options
+    request answers the same for every key, and a conflicting key is refused
+    after the passkey assertion without changing the passkey. A malformed key or
+    bad proof leaves no device (a bad proof does spend its one-use ceremony). An
+    owner lists and revokes only their own apps, and a revoked app is
+    disconnected.
 
 The test harness should deliberately cut connections at persistence and
 acknowledgement boundaries. Happy-path socket tests are insufficient evidence
@@ -985,7 +1032,8 @@ assumption after context compaction:
   owner deleting one of its tasks is defined: `DeleteTask` in
   [RCP operations](rcp-operations-v0.md).
 - HTTP/SSE and webhook transport bindings
-- Sender-constrained device authentication
+- Sender-constrained authentication for nodes and service links, and key
+  purposes beyond signing
 - Trusted-device enrollment approval, identity recovery, passkey revocation,
   and active browser-session termination
 - End-to-end encryption and key distribution

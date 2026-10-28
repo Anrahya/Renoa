@@ -26,7 +26,9 @@ a real Pi OpenAI-compatible turn.
 The first application frame must be `enroll`, `authenticate`, or
 `authenticate_ticket`. Enrollment returns credentials and ends that connection.
 Either authentication frame returns `authenticated` and keeps the connection
-open for operations.
+open for operations, except that `authenticate` for a device that registered a
+key is answered with `device_challenge` and returns `authenticated` only after a
+valid `device_proof` (see Session establishment).
 
 The client must send that first application frame within 10 seconds after the
 WebSocket upgrade. The coordinator closes a connection that misses the
@@ -60,12 +62,15 @@ The binding version covers framing, JSON shape, and error vocabulary. A change
 to operation semantics, field meaning, or serialized shape requires a new
 binding version unless it is explicitly defined as compatible.
 
-Version `14` supersedes version `13` by adding the chat essentials. A task
-summary carries a `status`. `attach` carries a required `live` flag. A surface
-can `stop_command`, answered by `stop_accepted`; the coordinator delivers `stop`
-to the node, which answers `acknowledge_stop`. A node can
-`publish_live_activity`, which the coordinator relays to interested surfaces as
-`live_activity`. A version `13` peer is rejected at authentication.
+Version `14` supersedes version `13` by adding two things. The device-key
+handshake (`device_challenge`, `device_proof`) and the owner's device operations
+(`list_devices`, `revoke_device`, with `device_list` and `device_revoked`). And
+the chat essentials: a task summary carries a `status`, `attach` carries a
+required `live` flag, a surface can `stop_command`, answered by
+`stop_accepted`; the coordinator delivers `stop` to the node, which answers
+`acknowledge_stop`; and a node can `publish_live_activity`, which the
+coordinator relays to interested surfaces as `live_activity`. A version `13`
+peer is rejected at authentication.
 
 Version `13` superseded version `12` by adding an optional `author` to text
 command input, which marks text written by a guest rather than the
@@ -162,6 +167,41 @@ Successful authentication:
 
 The client never sends a principal, surface role, or node role during
 authentication. Those values come from the durable device enrollment.
+
+### Key-bound devices
+
+A device that signed in with a device key (see
+[identity-v0.md](identity-v0.md), "App sign-in and device keys") is answered
+with a challenge instead of `authenticated`:
+
+```json
+{
+  "type": "device_challenge",
+  "nonce": "<64 lowercase hex characters, fresh for this connection>"
+}
+```
+
+The client answers with its signature over
+`renoa device proof v1\n<deviceId>\n<nonce>`, as ASN.1 DER base64url without
+padding:
+
+```json
+{
+  "type": "device_proof",
+  "signature": "<signature>"
+}
+```
+
+A valid proof returns `authenticated`, unless the device was revoked, or signed
+in again so that the credential in `authenticate` was replaced, while the
+connection was proving its key; that session ends without `authenticated`. Any
+other next frame, and any proof that
+is malformed or does not verify against the registered key, returns
+`authentication_failed` and ends the session. `device_proof` is not an
+operation: before a challenge it is refused as a first frame
+(`invalid_message`), and after authentication it is `invalid_message`. The
+challenge and the 10-second authentication deadline cover the whole exchange. A
+device without a registered key never sees a challenge.
 
 ## Surface frames
 
@@ -270,6 +310,65 @@ Success, including a retry for a task already deleted, returns:
 
 A task with an execution in flight returns `conflict`; another principal's task
 returns `not_found`.
+
+### List devices
+
+```json
+{
+  "type": "list_devices",
+  "request_id": 44
+}
+```
+
+The response lists the principal's active signed-in apps, oldest first:
+
+```json
+{
+  "type": "device_list",
+  "request_id": 44,
+  "devices": [
+    {
+      "deviceId": "00000000-0000-0000-0000-000000000040",
+      "surface": "android",
+      "label": "Pixel 9",
+      "createdAtMs": 1790000000000,
+      "current": true
+    }
+  ]
+}
+```
+
+`current` is true for the device that sent the request and false for every
+device when a browser asks. Only devices that registered a key are listed; a
+node or a service link such as Discord is not. A connection that is neither a
+browser ticket nor a device that proved its key receives `invalid_role`.
+
+### Revoke a device
+
+```json
+{
+  "type": "revoke_device",
+  "request_id": 45,
+  "device_id": "00000000-0000-0000-0000-000000000040"
+}
+```
+
+Success, including a retry for a device the principal already revoked, returns:
+
+```json
+{
+  "type": "device_revoked",
+  "request_id": 45,
+  "device_id": "00000000-0000-0000-0000-000000000040"
+}
+```
+
+The acknowledgement is sent after the revocation is committed. The device's open
+connections then end, and its next `authenticate` returns
+`authentication_failed`. A device may revoke itself; its acknowledgement is
+sent before its connection closes. Another principal's device, an unknown
+device, and a device without a key return `not_found`; a connection that may not
+administer devices receives `invalid_role`.
 
 ### Attach
 
