@@ -98,7 +98,7 @@ impl ResolvedAgentDefinition {
         let mut prompt = String::with_capacity(capacity);
         prompt.push_str(base.trim_end());
         if let Some(purpose) = purpose {
-            prompt.push_str("\n\n<purpose>\nWhat your owner made you for, in their words:\n");
+            prompt.push_str("\n\n<purpose>\nWhat you were made for:\n");
             prompt.push_str(purpose.trim());
             prompt.push_str("\n</purpose>");
         }

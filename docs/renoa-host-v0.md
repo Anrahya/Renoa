@@ -44,8 +44,8 @@ the preset into that definition; runtime resolution never consults a preset agai
 publishes the definition's JSON shape for every surface that reads it. It is
 generated from the Rust type, and a test fails when the two differ.
 
-The operational document may carry a `purpose`: what the owner made the agent
-for, in their own words. It is 1 to 1,024 bytes, not blank, with no control
+The operational document may carry a `purpose`: what the agent is for, in the
+words of whoever made it, the owner or a parent agent. It is 1 to 1,024 bytes, not blank, with no control
 character but newline. The agent's system prompt shows it right after the
 instructions, in a `<purpose>` block; an app shows it where a browser shows the
 instructions. An agent without one has no `purpose` key, so its stored creation
@@ -321,10 +321,11 @@ its stable operation receipt after restart without another provider lookup.
 uncertain requests in tab storage and retries their exact operation ID and fields.
 The Android app makes the same calls over its RCP connection
 ([`call_host`](rcp-json-ws-v0.md#call-the-host)). It creates from
-`renoa.general.v1` with a name and, when the owner wrote one, a purpose, then
-waits up to thirty seconds for a node to advertise the `agent:<id>` target and
-opens its chat. If none does, it says so, and the owner's retry repeats the same
-operation ID.
+`renoa.general.v1` with a name and, when the owner wrote one, a purpose. It then
+waits up to thirty seconds for a node to advertise the `agent:<id>` target, and
+succeeds once that agent's chat is open. Otherwise the owner reads that Renoa could
+not be reached, although the agent may exist; saving the same fields again repeats
+the operation ID and returns that agent, while changed fields under it conflict.
 Native grants start empty; plugin discovery, management, and invocation are universal.
 
 `documents.user` decides whether the new agent reads the `USER.md` of whoever talks

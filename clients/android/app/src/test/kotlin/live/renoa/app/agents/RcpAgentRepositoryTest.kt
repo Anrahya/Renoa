@@ -69,8 +69,12 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
     /** When set, every open waits for it, as a slow node does. */
     var openGate: CompletableDeferred<Unit>? = null
 
-    /** The Host's agents by id; the fake makes each one with the id of the operation that asked. */
+    /** The Host's agents by id, and the agent each operation made, under an id of its own as on the Host. */
     val hostAgents = LinkedHashMap<String, JsonObject>()
+    val made = LinkedHashMap<String, String>()
+
+    /** When set, the next open fails with it, as when the connection drops mid-open. */
+    var openFailure: Exception? = null
     val hostCalls = mutableListOf<Triple<HostMethod, String, String?>>()
 
     /** When set, the next Host call ends with it instead of reaching the Host. */
@@ -133,6 +137,10 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         check(online)
         if (target in unopenable) throw RcpException(RcpErrorCode.NodeOffline, "offline", 1)
         openGate?.await()
+        openFailure?.let {
+            openFailure = null
+            throw it
+        }
         opened += taskId
         journals.getOrPut(taskId) { Journal(taskId) }
     }
@@ -182,8 +190,9 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         return StopOutcome.Requested
     }
 
-    /** The node advertises a Host agent as `agent:<id>`, as it does once it next polls the Host. */
-    fun advertise(agentId: String) {
+    /** The node advertises the agent [operation] made as `agent:<id>`, as it does once it next polls the Host. */
+    fun advertise(operation: String) {
+        val agentId = made.getValue(operation)
         targets += TargetSummary(node, "agent:$agentId", hostAgents.getValue(agentId).getValue("name").jsonPrimitive.content)
     }
 
@@ -200,7 +209,8 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
         }
         if (method == HostMethod.Post && path == "/v1/host/agents") {
             val request = Json.parseToJsonElement(checkNotNull(body)).jsonObject
-            val id = request.getValue("operation_id").jsonPrimitive.content
+            val operation = request.getValue("operation_id").jsonPrimitive.content
+            val id = made.getOrPut(operation) { Uuid.random().toString() }
             val record =
                 hostAgents.getOrPut(id) {
                     buildJsonObject {
@@ -218,7 +228,7 @@ private class FakeSurface(val state: InMemoryRcpState) : RcpSurface {
                 }
             val created =
                 buildJsonObject {
-                    put("operation_id", id)
+                    put("operation_id", operation)
                     put("record", record)
                 }
             return HostAnswer(201, created.toString())
@@ -434,7 +444,8 @@ class RcpAgentRepositoryTest {
     }
 
     private val kcal = Uuid.random().toString()
-    private val kcalId get() = "${surface.node}/agent:$kcal"
+    private val agent get() = surface.made.getValue(kcal)
+    private val kcalId get() = "${surface.node}/agent:$agent"
 
     private fun TestScope.making(repo: RcpAgentRepository, purpose: String = "Count my calories.") =
         backgroundScope.async { repo.create(CreateAgent(kcal, "Kcal", purpose, emptySet())) }
@@ -459,7 +470,7 @@ class RcpAgentRepositoryTest {
         runCurrent()
         assertEquals(AgentProfile(kcalId, "Kcal", "Count my calories.", emptyList()), made.await())
         assertEquals(listOf("Nagisa", "Kcal"), repo.agents.value.map { it.name })
-        assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$kcal") })
+        assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$agent") })
     }
 
     @Test
@@ -479,7 +490,7 @@ class RcpAgentRepositoryTest {
         val request = CreateAgent(kcal, "Kcal", "Count my calories.", emptySet())
         val waited = testScheduler.currentTime
         assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.create(request) }.problem)
-        assertEquals(29_000, testScheduler.currentTime - waited, "it gives the node 30 checks a second apart")
+        assertEquals(30_000, testScheduler.currentTime - waited, "it gives the node thirty seconds")
 
         surface.advertise(kcal)
         assertEquals(kcalId, making(repo).await().id)
@@ -501,7 +512,7 @@ class RcpAgentRepositoryTest {
         surface.openGate!!.complete(Unit)
         runCurrent()
         assertEquals(kcalId, made.await().id)
-        assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$kcal") })
+        assertEquals(1, surface.opened.count { it == chatTaskId(surface.node, "agent:$agent") })
     }
 
     @Test
@@ -524,10 +535,10 @@ class RcpAgentRepositoryTest {
         surface.hostCalls.clear()
 
         assertEquals(AgentProfile(kcalId, "Kcal", "Count my calories.", emptyList()), repo.profile(kcalId))
-        assertEquals(HostMethod.Get to "/v1/host/agents/$kcal", surface.hostCalls.single().let { it.first to it.second })
+        assertEquals(HostMethod.Get to "/v1/host/agents/$agent", surface.hostCalls.single().let { it.first to it.second })
         assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.profile("${surface.node}/agent:${Uuid.random()}") }.problem)
         surface.hostCalls.clear()
-        for (notHost in listOf(nagisa, "${surface.node}/agent:nope", "${surface.node}/$kcal", "agent:$kcal")) {
+        for (notHost in listOf(nagisa, "${surface.node}/agent:nope", "${surface.node}/$agent", "agent:$agent")) {
             assertEquals(Problem.NotFound, assertFailsWith<RepositoryException> { repo.profile(notHost) }.problem, notHost)
         }
         assertTrue(surface.hostCalls.isEmpty(), "an id that names no Host agent is not asked about")
@@ -536,6 +547,7 @@ class RcpAgentRepositoryTest {
     @Test
     fun theHostsRefusalsReachTheScreenAsProblems() = runTest {
         val repo = started()
+        val stranger = "${surface.node}/agent:${Uuid.random()}"
         val answers =
             listOf(
                 HostAnswer(409, "{}") to Problem.Conflict,
@@ -548,7 +560,7 @@ class RcpAgentRepositoryTest {
             )
         for ((answer, problem) in answers) {
             surface.hostAnswer = answer
-            assertEquals(problem, assertFailsWith<RepositoryException> { repo.profile(kcalId) }.problem, answer.toString())
+            assertEquals(problem, assertFailsWith<RepositoryException> { repo.profile(stranger) }.problem, answer.toString())
         }
         val failures =
             listOf(
@@ -558,7 +570,38 @@ class RcpAgentRepositoryTest {
             )
         for ((failure, problem) in failures) {
             surface.hostFailure = failure
-            assertEquals(problem, assertFailsWith<RepositoryException> { repo.profile(kcalId) }.problem, failure.toString())
+            assertEquals(problem, assertFailsWith<RepositoryException> { repo.profile(stranger) }.problem, failure.toString())
         }
+    }
+
+    @Test
+    fun aNewAgentWhoseChatCannotBeOpenedIsUnavailableAndTheAppKeepsRunning() = runTest {
+        val repo = started()
+        val request = CreateAgent(kcal, "Kcal", "", emptySet())
+        val made = backgroundScope.async { runCatching { repo.create(request) } }
+        runCurrent()
+        surface.advertise(kcal)
+        surface.unopenable += "agent:$agent"
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        val refused = made.await().exceptionOrNull()
+        assertTrue(refused is RepositoryException && refused.problem == Problem.Unavailable, "a refused open is not a success: $refused")
+
+        surface.openFailure = Disconnected("dropped mid-open")
+        surface.unopenable.clear()
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.create(request) }.problem, "a lost connection is a problem, not a crash")
+
+        assertEquals(kcalId, repo.create(request).id, "the same request finds the same agent")
+        assertEquals(1, surface.hostAgents.size)
+    }
+
+    @Test
+    fun theHostRefusingACreateIsAProblemForTheScreen() = runTest {
+        val repo = started()
+        surface.hostAnswer = HostAnswer(409, "{\"error\":\"operation_conflict\"}")
+        assertEquals(Problem.Conflict, assertFailsWith<RepositoryException> { repo.create(CreateAgent(kcal, "Kcal", "", emptySet())) }.problem)
+        surface.hostFailure = RcpException(RcpErrorCode.NodeOffline, "Host offline", 1)
+        assertEquals(Problem.Unavailable, assertFailsWith<RepositoryException> { repo.create(CreateAgent(kcal, "Kcal", "", emptySet())) }.problem)
+        assertTrue(surface.hostAgents.isEmpty())
     }
 }

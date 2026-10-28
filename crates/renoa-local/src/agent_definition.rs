@@ -185,7 +185,7 @@ impl AgentDocuments {
 #[serde(deny_unknown_fields)]
 pub struct AgentOperationalDefinition {
     pub instructions: String,
-    /// What the owner made the agent for, in their own words. The agent reads
+    /// What the agent is for, in the words of whoever made it. The agent reads
     /// it in its prompt; an app shows it instead of `instructions`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,

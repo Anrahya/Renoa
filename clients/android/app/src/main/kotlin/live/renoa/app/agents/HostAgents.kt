@@ -7,7 +7,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import live.renoa.rcp.Disconnected
 import live.renoa.rcp.HostAnswer
 import live.renoa.rcp.HostMethod
 import live.renoa.rcp.RcpException
@@ -58,9 +57,8 @@ internal class HostAgents(private val surface: RcpSurface) {
             throw cancelled
         } catch (refused: RcpException) {
             throw refused.asProblem()
-        } catch (offline: IllegalStateException) {
-            throw RepositoryException(Problem.Unavailable, offline.message.orEmpty())
-        } catch (lost: Disconnected) {
+        } catch (lost: Exception) {
+            // Not connected, the connection lost, or a protocol failure that ended it.
             throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
         }
 

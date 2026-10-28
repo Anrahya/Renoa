@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import live.renoa.rcp.RcpErrorCode
 import live.renoa.rcp.RcpException
 import live.renoa.rcp.RcpState
@@ -232,29 +233,37 @@ class RcpAgentRepository(
     override suspend fun starterAbilities(): List<AbilitySwitch> = emptyList()
 
     /**
-     * Makes the agent on the Host, then waits for its node to advertise it and follows its chat. A
-     * retry with the same [CreateAgent.operationId] returns the same agent, so a timeout is safe to
-     * repeat.
+     * Makes the agent on the Host, waits up to [JOIN_WITHIN] for a node to advertise it, and returns
+     * once its chat is followed. Any failure after the Host call leaves an agent that exists; the
+     * same request under the same [CreateAgent.operationId] returns it again.
      */
     override suspend fun create(request: CreateAgent): AgentProfile {
         if (request.litAbilities.isNotEmpty()) throw RepositoryException(Problem.Invalid, "the Host cannot switch abilities yet")
         val record = host.create(request.operationId, request.name, request.purpose.trim().ifEmpty { null })
         val target = "$AGENT_TARGET${record.id}"
-        repeat(JOIN_CHECKS) { check ->
-            if (check > 0) delay(JOIN_EVERY)
-            val targets =
-                try {
-                    surface.listTargets()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (lost: Exception) {
-                    throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
-                }
-            val joined = targets.firstOrNull { it.target == target } ?: return@repeat
-            follow(listOf(joined))
-            return record.profile(agentId(joined))
+        val joined =
+            try {
+                withTimeoutOrNull(JOIN_WITHIN) { advertised(target) }?.also { follow(listOf(it)) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (refused: RcpException) {
+                throw refused.asProblem()
+            } catch (lost: Exception) {
+                throw RepositoryException(Problem.Unavailable, lost.message.orEmpty())
+            } ?: throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but no node has offered it yet")
+        // follow passes over a chat it could not open, as when the node dropped after advertising it.
+        if (synchronized(lock) { rooms[agentId(joined)]?.attached } != true) {
+            throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but its chat could not be opened")
         }
-        throw RepositoryException(Problem.Unavailable, "agent ${record.id} was made, but its node has not offered it yet")
+        return record.profile(agentId(joined))
+    }
+
+    /** Checks the targets every [JOIN_EVERY] until one is [target]. */
+    private suspend fun advertised(target: String): TargetSummary {
+        while (true) {
+            surface.listTargets().firstOrNull { it.target == target }?.let { return it }
+            delay(JOIN_EVERY)
+        }
     }
 
     override suspend fun edit(agentId: String, edit: EditProfile): AgentProfile = notYet()
@@ -282,7 +291,7 @@ class RcpAgentRepository(
     private companion object {
         /** How a node names the target of a Host agent. */
         const val AGENT_TARGET = "agent:"
-        const val JOIN_CHECKS = 30
+        val JOIN_WITHIN = 30.seconds
         val JOIN_EVERY = 1.seconds
 
         /** The Host's id for the agent behind [agentId], or null when it names no Host agent. */

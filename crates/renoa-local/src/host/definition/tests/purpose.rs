@@ -43,7 +43,7 @@ async fn a_purpose_is_kept_in_the_definition_and_read_by_the_agent() {
         resolved
             .system_prompt(&directory.path().join("workspace"))
             .expect("prompt"),
-        "Do the assigned job.\n\n<purpose>\nWhat your owner made you for, in their words:\nCount my calories from photos.\nNudge me after lunch.\n</purpose>"
+        "Do the assigned job.\n\n<purpose>\nWhat you were made for:\nCount my calories from photos.\nNudge me after lunch.\n</purpose>"
     );
 }
 

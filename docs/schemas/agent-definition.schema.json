@@ -182,7 +182,7 @@
           ]
         },
         "purpose": {
-          "description": "What the owner made the agent for, in their own words. The agent reads\nit in its prompt; an app shows it instead of `instructions`.",
+          "description": "What the agent is for, in the words of whoever made it. The agent reads\nit in its prompt; an app shows it instead of `instructions`.",
           "type": [
             "string",
             "null"
