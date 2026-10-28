@@ -51,7 +51,7 @@ interface RcpSurface {
     /** Safe to repeat with the same [taskId]: the coordinator converges on one task. */
     suspend fun openTask(taskId: Uuid, nodeId: Uuid, target: String)
 
-    /** Also stops following the task: a later [connect] does not attach it again. */
+    /** Also stops following the task, so a later [connect] does not attach it again, and drops its unsent commands. */
     suspend fun deleteTask(taskId: Uuid)
 
     /**

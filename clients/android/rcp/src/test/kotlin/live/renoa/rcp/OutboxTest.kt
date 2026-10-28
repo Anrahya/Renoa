@@ -81,6 +81,23 @@ class OutboxTest : CoordinatorTest() {
     }
 
     @Test
+    fun deletingATaskDropsItsUnsentCommandsSoTheyCannotBlockTheOthers() = eventually {
+        val gone = coordinator.seedTask()
+        val kept = coordinator.seedTask()
+        val unsentToGone = PendingTextCommand(Uuid.random(), gone, "never acknowledged before the task was deleted")
+        val unsentToKept = PendingTextCommand(Uuid.random(), kept, "still wanted")
+        state.enqueueCommand(unsentToGone)
+        state.enqueueCommand(unsentToKept)
+        val surface = client()
+        surface.connect()
+
+        surface.deleteTask(gone)
+
+        assertEquals(listOf(unsentToKept), state.pendingCommands())
+        assertEquals(listOf(unsentToKept.commandId), surface.retryPendingCommands())
+    }
+
+    @Test
     fun reusingACommandIdentityWithOtherContentIsAConflictNotANewCommand() = eventually {
         val taskId = coordinator.seedTask()
         val commandId = Uuid.random()

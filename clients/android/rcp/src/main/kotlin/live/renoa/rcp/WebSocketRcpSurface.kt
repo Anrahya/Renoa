@@ -130,6 +130,8 @@ class WebSocketRcpSurface(
             if (it.taskId != taskId) throw ProtocolViolation("delete_task response changed the task identity")
         }
         synchronized(attachments) { attachments.remove(taskId) }
+        // Its unsent commands can never be admitted now, and the first of them would block every retry behind it.
+        for (command in state.pendingCommands()) if (command.taskId == taskId) state.removeCommand(command.commandId)
     }
 
     override suspend fun attach(taskId: Uuid, apply: suspend (TaskEvent) -> Unit) {
