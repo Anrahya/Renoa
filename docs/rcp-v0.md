@@ -732,9 +732,10 @@ The current implementation demonstrates:
   device in the same transaction as the credential, and connects only after an
   ECDSA P-256 signature over a fresh nonce verifies; a repeated sign-in with the
   same key adopts the device, rotates its credential and ends its old
-  connections, a sign-in the store already knows it would refuse is refused
-  before the ceremony or bootstrap is spent, and a malformed key or bad proof
-  leaves no device;
+  connections, including one still proving its key, a registration the store
+  already knows it would refuse is refused before the bootstrap is spent while
+  an authentication is refused only after its passkey assertion, and a
+  malformed key or bad proof leaves no device;
 - owner-only listing and revocation of signed-in apps, where a revoked app
   receives its acknowledgement before its socket closes and an administering
   session must itself be a ticket or a key-bound device;
@@ -835,9 +836,12 @@ RCP v0 is not proven until deterministic tests cover at least:
     its credential and a valid signature over a fresh nonce; a credential alone,
     a wrong key, and a replayed or stale signature do not connect. Signing in
     again with the same key converges on one device and ends its old
-    connections. A sign-in the options request can refuse spends no ceremony or
-    bootstrap, and one carrying a malformed key or bad proof leaves no device
-    (a bad proof does spend its one-use ceremony). An owner lists and revokes only their own apps, and a revoked app is
+    connections, including one still proving its key. A registration the
+    options request can refuse spends no bootstrap; an authentication options
+    request answers the same for every key, and a conflicting key is refused
+    after the passkey assertion without changing the passkey. A malformed key or
+    bad proof leaves no device (a bad proof does spend its one-use ceremony). An
+    owner lists and revokes only their own apps, and a revoked app is
     disconnected.
 
 The test harness should deliberately cut connections at persistence and

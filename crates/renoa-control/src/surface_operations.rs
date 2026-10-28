@@ -12,7 +12,7 @@ use crate::{
     device_admin::{self, SurfaceSession},
     operations::SurfaceOperation,
     store::CommandAdmission,
-    wire::{publish_task_event, send_control_error, send_error, task_sender},
+    wire::{publish_task_event, send_control_error, send_error, send_reply, task_sender},
 };
 
 pub(crate) async fn handle_surface_operation(
@@ -23,46 +23,30 @@ pub(crate) async fn handle_surface_operation(
     request_id: u64,
     operation: SurfaceOperation,
 ) {
-    let SurfaceSession {
-        principal_id,
-        surface,
-        authority,
-    } = session;
+    let principal_id = session.principal_id;
     match operation {
         SurfaceOperation::ListDevices => {
-            device_admin::list_devices(&state, outgoing, request_id, principal_id, authority).await;
+            device_admin::list_devices(&state, outgoing, request_id, &session).await;
         }
         SurfaceOperation::RevokeDevice { device_id } => {
-            device_admin::revoke_device(
-                &state,
-                outgoing,
-                request_id,
-                principal_id,
-                authority,
-                device_id,
-            )
-            .await;
+            device_admin::revoke_device(&state, outgoing, request_id, &session, device_id).await;
         }
-        SurfaceOperation::ListTasks => match state.store.list_tasks(principal_id).await {
-            Ok(tasks) => {
-                let _ = outgoing
-                    .send(ServerMessage::TaskList { request_id, tasks })
-                    .await;
-            }
-            Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-        },
+        SurfaceOperation::ListTasks => {
+            let result = state
+                .store
+                .list_tasks(principal_id)
+                .await
+                .map(|tasks| ServerMessage::TaskList { request_id, tasks });
+            send_reply(outgoing, request_id, result).await;
+        }
         SurfaceOperation::ListTargets => {
-            match crate::task_opening::list_targets(&state, principal_id).await {
-                Ok(targets) => {
-                    let _ = outgoing
-                        .send(ServerMessage::TargetList {
-                            request_id,
-                            targets,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-            }
+            let result = crate::task_opening::list_targets(&state, principal_id)
+                .await
+                .map(|targets| ServerMessage::TargetList {
+                    request_id,
+                    targets,
+                });
+            send_reply(outgoing, request_id, result).await;
         }
         SurfaceOperation::OpenTask {
             task_id,
@@ -75,17 +59,13 @@ pub(crate) async fn handle_surface_operation(
                 node_id,
                 target,
             };
-            match crate::task_opening::open_task(&state, task).await {
-                Ok(()) => {
-                    let _ = outgoing
-                        .send(ServerMessage::TaskOpened {
-                            request_id,
-                            task_id,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-            }
+            let result = crate::task_opening::open_task(&state, task)
+                .await
+                .map(|()| ServerMessage::TaskOpened {
+                    request_id,
+                    task_id,
+                });
+            send_reply(outgoing, request_id, result).await;
         }
         SurfaceOperation::Attach {
             task_id,
@@ -118,7 +98,7 @@ pub(crate) async fn handle_surface_operation(
                 command_id,
                 input,
                 principal_id,
-                surface,
+                session.surface,
             )
             .await;
             if let Err(error) = result {
@@ -126,17 +106,13 @@ pub(crate) async fn handle_surface_operation(
             }
         }
         SurfaceOperation::DeleteTask { task_id } => {
-            match crate::task_deletion::delete_task(&state, principal_id, task_id).await {
-                Ok(()) => {
-                    let _ = outgoing
-                        .send(ServerMessage::TaskDeleted {
-                            request_id,
-                            task_id,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-            }
+            let result = crate::task_deletion::delete_task(&state, principal_id, task_id)
+                .await
+                .map(|()| ServerMessage::TaskDeleted {
+                    request_id,
+                    task_id,
+                });
+            send_reply(outgoing, request_id, result).await;
         }
     }
 }

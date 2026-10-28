@@ -92,6 +92,21 @@ pub(crate) async fn next_application_message(
     }
 }
 
+/// Sends the answer to one request: its response, or its error under the
+/// request's id.
+pub(crate) async fn send_reply(
+    outgoing: &mpsc::Sender<ServerMessage>,
+    request_id: u64,
+    result: Result<ServerMessage, ControlError>,
+) {
+    match result {
+        Ok(message) => {
+            let _ = outgoing.send(message).await;
+        }
+        Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
+    }
+}
+
 pub(crate) async fn send_control_error(
     outgoing: &mpsc::Sender<ServerMessage>,
     request_id: Option<u64>,

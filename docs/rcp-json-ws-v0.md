@@ -187,7 +187,10 @@ padding:
 }
 ```
 
-A valid proof returns `authenticated`. Any other next frame, and any proof that
+A valid proof returns `authenticated`, unless the device was revoked, or signed
+in again so that the credential in `authenticate` was replaced, while the
+connection was proving its key; that session ends without `authenticated`. Any
+other next frame, and any proof that
 is malformed or does not verify against the registered key, returns
 `authentication_failed` and ends the session. `device_proof` is not an
 operation: before a challenge it is refused as a first frame

@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use crate::{
     DeviceId, ErrorCode, ServerMessage, control_log,
     coordinator::CoordinatorState,
-    wire::{send_control_error, send_error},
+    wire::{send_control_error, send_error, send_reply},
 };
 
 /// How a surface connection proved itself. It decides whether the connection
@@ -53,43 +53,35 @@ pub(crate) async fn list_devices(
     state: &CoordinatorState,
     outgoing: &mpsc::Sender<ServerMessage>,
     request_id: u64,
-    principal_id: PrincipalId,
-    authority: Authority,
+    session: &SurfaceSession,
 ) {
-    if !allowed(outgoing, request_id, authority).await {
+    if !allowed(outgoing, request_id, session.authority).await {
         return;
     }
-    match state
+    let result = state
         .store
-        .list_devices(principal_id, authority.device_id())
+        .list_devices(session.principal_id, session.authority.device_id())
         .await
-    {
-        Ok(devices) => {
-            let _ = outgoing
-                .send(ServerMessage::DeviceList {
-                    request_id,
-                    devices,
-                })
-                .await;
-        }
-        Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-    }
+        .map(|devices| ServerMessage::DeviceList {
+            request_id,
+            devices,
+        });
+    send_reply(outgoing, request_id, result).await;
 }
 
 pub(crate) async fn revoke_device(
     state: &CoordinatorState,
     outgoing: &mpsc::Sender<ServerMessage>,
     request_id: u64,
-    principal_id: PrincipalId,
-    authority: Authority,
+    session: &SurfaceSession,
     device_id: DeviceId,
 ) {
-    if !allowed(outgoing, request_id, authority).await {
+    if !allowed(outgoing, request_id, session.authority).await {
         return;
     }
     match state
         .store
-        .revoke_owned_device(principal_id, device_id)
+        .revoke_owned_device(session.principal_id, device_id)
         .await
     {
         Ok(newly_revoked) => {
@@ -99,8 +91,8 @@ pub(crate) async fn revoke_device(
                     "device_revoked",
                     &serde_json::json!({
                         "device_id": device_id,
-                        "principal_id": principal_id,
-                        "by_device_id": authority.device_id(),
+                        "principal_id": session.principal_id,
+                        "by_device_id": session.authority.device_id(),
                     }),
                 );
             }

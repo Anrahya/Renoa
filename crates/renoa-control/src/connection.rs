@@ -20,7 +20,7 @@ use crate::{
     device_handshake::prove_possession,
     json_ws::JsonOperation,
     node_messages::handle_node_operation,
-    session_registry::{activate_device, activate_ticket_peer, cleanup_session},
+    session_registry::{DeviceLogin, activate_device, activate_ticket_peer, cleanup_session},
     surface_operations::handle_surface_operation,
     wire::{
         InboundMessage, classify_message, cleanup_connection, next_application_message,
@@ -29,8 +29,9 @@ use crate::{
 };
 
 const OUTBOUND_CAPACITY: usize = 128;
-/// How long a cancelled connection may spend sending what was already queued,
-/// so a stalled peer cannot hold its slot.
+/// How long a cancelled connection may spend sending what was already queued.
+/// It bounds only that final flush: a write already blocked on a peer that is
+/// not reading is not interrupted by it.
 const CLOSE_FLUSH_DEADLINE: Duration = Duration::from_secs(2);
 const AUTHENTICATION_DEADLINE: Duration = Duration::from_secs(10);
 const TRANSPORT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
@@ -39,6 +40,8 @@ const MAX_APPLICATION_MESSAGE_BYTES: usize = 1024 * 1024;
 struct AuthenticatedPeer {
     authority: Authority,
     peer: PeerIdentity,
+    /// Set for a device login: what activation re-checks under the lifecycle lock.
+    device: Option<DeviceLogin>,
 }
 
 pub(crate) async fn upgrade_connection(
@@ -74,14 +77,16 @@ async fn serve_connection(state: Arc<CoordinatorState>, socket: axum::extract::w
         connection_cancelled.cancel();
         return;
     };
-    let authority = authenticated.authority;
-    let device_id = authority.device_id();
-    let peer = authenticated.peer;
-    let activated = match device_id {
-        Some(device_id) => {
+    let AuthenticatedPeer {
+        authority,
+        peer,
+        device,
+    } = authenticated;
+    let activated = match &device {
+        Some(login) => {
             activate_device(
                 &state,
-                device_id,
+                login,
                 &peer,
                 connection_id,
                 &outgoing,
@@ -109,8 +114,8 @@ async fn serve_connection(state: Arc<CoordinatorState>, socket: axum::extract::w
     .await;
 
     cleanup_connection(&state, &peer, connection_id).await;
-    if let Some(device_id) = device_id {
-        cleanup_session(&state, device_id, connection_id).await;
+    if let Some(login) = &device {
+        cleanup_session(&state, login.device_id, connection_id).await;
     }
     connection_cancelled.cancel();
     drop(outgoing);
@@ -325,6 +330,10 @@ async fn read_peer(
                     AuthenticatedPeer {
                         authority,
                         peer: device.peer,
+                        device: Some(DeviceLogin {
+                            device_id: device.device_id,
+                            credential_hash: device.credential_hash,
+                        }),
                     }
                 }
                 Err(error) => {
@@ -345,6 +354,7 @@ async fn read_peer(
                 Ok(peer) => AuthenticatedPeer {
                     authority: Authority::Ticket,
                     peer,
+                    device: None,
                 },
                 Err(error) => {
                     send_control_error(outgoing, None, &error).await;

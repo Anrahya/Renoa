@@ -180,12 +180,13 @@ impl BrowserIdentity {
         surface: SurfaceRef,
         device: Option<DeviceRegistration>,
     ) -> Result<CeremonyOptions<RequestChallengeResponse>, ControlError> {
+        // No device pre-check here, unlike `start_registration`: this request
+        // carries no secret, so an answer about the key (registered to another
+        // sign-in, signed out) or the account (at its device limit) would
+        // reach anyone who can name the principal. The transaction in
+        // `finish_authentication` refuses a conflicting sign-in after the
+        // passkey assertion has proved the person, and writes nothing.
         let passkeys = store.load_passkeys_for_authentication(principal_id).await?;
-        if let Some(device) = &device {
-            store
-                .check_device_registration(principal_id, surface.clone(), device.clone())
-                .await?;
-        }
         let (options, state) = self
             .webauthn
             .start_passkey_authentication(&passkeys)

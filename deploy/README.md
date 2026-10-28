@@ -426,21 +426,26 @@ unchanged as bearer-only devices, and a pre-upgrade binary cannot open schema 13
 
 Android asks the relying party before it offers an app a passkey, and an
 assertion made by an app carries its own origin. To trust an app, copy
-`renoa-android-apps.example.json` to `/etc/renoa/android-apps.json`, replace the
-package name and list the SHA-256 fingerprint of every certificate the app is
-signed with (`keytool -list -v -keystore <keystore>`; a debug and a release
-build differ), then point the coordinator at it with a drop-in so the packaged
-unit stays unchanged:
+`renoa-android-apps.example.json` to
+`/home/renoa/.renoa/config/android-apps.json`, owned by `renoa-arcee` (the
+account the coordinator runs as, which cannot read the root-only `/etc/renoa`)
+with mode `0600`. Replace the package name and list the SHA-256 fingerprint of
+every certificate the app is signed with (`keytool -list -v -keystore
+<keystore>`; a debug and a release build differ), then point the coordinator at
+it with a drop-in so the packaged unit stays unchanged:
 
 ```sh
+install -m 0600 -o renoa-arcee -g renoa-arcee \
+  renoa-android-apps.example.json /home/renoa/.renoa/config/android-apps.json
+# edit the package name and fingerprints in that file, then:
 systemctl edit renoa-coordinator.service
 # [Service]
-# Environment=RENOA_ANDROID_APPS_FILE=/etc/renoa/android-apps.json
+# Environment=RENOA_ANDROID_APPS_FILE=/home/renoa/.renoa/config/android-apps.json
 systemctl restart renoa-coordinator.service
 ```
 
-The file holds public data. An invalid file stops the coordinator at startup
-with the entry that is wrong; unset trusts no app. The tunnel's catch-all rule
+The file holds public data. An invalid or unreadable file stops the coordinator
+at startup with the entry or error that is wrong; unset trusts no app. The tunnel's catch-all rule
 already sends `/.well-known/assetlinks.json` to the coordinator. Check it after
 the restart with
 `curl -s https://renoa.live/.well-known/assetlinks.json`: it must list the

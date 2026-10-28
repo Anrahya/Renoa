@@ -115,6 +115,50 @@ async fn signing_in_again_with_the_same_key_adopts_the_device_and_replaces_its_c
 }
 
 #[tokio::test]
+async fn a_device_accepts_only_the_credential_it_holds_until_it_is_revoked() {
+    let fixture = Fixture::new();
+    let key = registration(1);
+    let first = fixture
+        .sign_in(principal(1), "android", &key)
+        .expect("first");
+    let device_id = first.credentials.device_id;
+    let first_credential = first.credentials.credential.digest().expect("digest");
+    let second = fixture
+        .sign_in(principal(1), "android", &key)
+        .expect("a repeat sign-in replaces the credential");
+    let second_credential = second.credentials.credential.digest().expect("digest");
+
+    assert!(
+        !fixture
+            .store
+            .device_accepts(device_id, first_credential)
+            .await
+            .expect("accepts"),
+        "a connection authenticated with the replaced credential is not activated"
+    );
+    assert!(
+        fixture
+            .store
+            .device_accepts(device_id, second_credential)
+            .await
+            .expect("accepts")
+    );
+    fixture
+        .store
+        .revoke_owned_device(principal(1), device_id)
+        .await
+        .expect("revoke");
+    assert!(
+        !fixture
+            .store
+            .device_accepts(device_id, second_credential)
+            .await
+            .expect("accepts"),
+        "a revoked device accepts no credential"
+    );
+}
+
+#[tokio::test]
 async fn a_revoked_key_and_a_key_of_another_sign_in_are_conflicts_that_write_nothing() {
     let fixture = Fixture::new();
     let key = registration(1);
@@ -198,11 +242,15 @@ async fn devices_are_listed_and_revoked_only_by_their_own_principal() {
         .expect("mine")
         .credentials
         .device_id;
-    let other = fixture
+    let other_sign_in = fixture
         .sign_in(principal(2), "android", &registration(2))
-        .expect("other")
+        .expect("other");
+    let other = other_sign_in.credentials.device_id;
+    let other_credential = other_sign_in
         .credentials
-        .device_id;
+        .credential
+        .digest()
+        .expect("digest");
 
     let listed = fixture
         .store
@@ -232,7 +280,13 @@ async fn devices_are_listed_and_revoked_only_by_their_own_principal() {
         .await
         .expect_err("an unknown device is not found");
     assert_eq!(unknown.kind(), ControlErrorKind::NotFound);
-    assert!(fixture.store.device_is_active(other).await.expect("active"));
+    assert!(
+        fixture
+            .store
+            .device_accepts(other, other_credential)
+            .await
+            .expect("accepts")
+    );
 
     assert!(
         fixture

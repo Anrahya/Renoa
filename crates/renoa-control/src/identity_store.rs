@@ -15,6 +15,10 @@ pub(crate) struct AuthenticatedDevice {
     pub(crate) device_id: DeviceId,
     pub(crate) peer: PeerIdentity,
     pub(crate) key: Option<DevicePublicKey>,
+    /// The digest of the credential that was presented. Activating the
+    /// connection checks it is still the device's credential, so a sign-in
+    /// that replaced it in between ends this connection too.
+    pub(crate) credential_hash: [u8; 32],
 }
 
 impl ControlStore {
@@ -121,6 +125,7 @@ impl ControlStore {
                 device_id,
                 peer: serde_json::from_str(&peer_json).map_err(json_error)?,
                 key,
+                credential_hash,
             })
         })
         .await
@@ -146,16 +151,23 @@ impl ControlStore {
         .await
     }
 
-    pub(crate) async fn device_is_active(&self, device_id: DeviceId) -> Result<bool, ControlError> {
+    /// Whether the device is not revoked and still holds the credential with
+    /// this digest.
+    pub(crate) async fn device_accepts(
+        &self,
+        device_id: DeviceId,
+        credential_hash: [u8; 32],
+    ) -> Result<bool, ControlError> {
         let path = Arc::clone(&self.path);
         blocking(move || {
             let connection = crate::control_schema::open_connection(&path)?;
             connection
                 .query_row(
                     "SELECT EXISTS(
-                        SELECT 1 FROM devices WHERE device_id = ?1 AND revoked = 0
+                        SELECT 1 FROM devices
+                        WHERE device_id = ?1 AND credential_hash = ?2 AND revoked = 0
                      )",
-                    [device_id.to_string()],
+                    params![device_id.to_string(), credential_hash.as_slice()],
                     |row| row.get::<_, bool>(0),
                 )
                 .map_err(sqlite_error)

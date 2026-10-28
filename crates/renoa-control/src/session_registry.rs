@@ -6,9 +6,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    DeviceId, JSON_WS_VERSION, PeerIdentity, ServerMessage,
+    DeviceId, ErrorCode, JSON_WS_VERSION, PeerIdentity, ServerMessage,
     coordinator::{CoordinatorState, NodeConnection},
-    wire::{cleanup_connection, send_control_error},
+    wire::{cleanup_connection, send_control_error, send_error},
 };
 
 pub(crate) async fn activate_ticket_peer(
@@ -26,16 +26,32 @@ pub(crate) async fn activate_ticket_peer(
         .is_ok()
 }
 
+/// A device that authenticated, and the credential it did so with.
+pub(crate) struct DeviceLogin {
+    pub(crate) device_id: DeviceId,
+    pub(crate) credential_hash: [u8; 32],
+}
+
+/// Registers the connection of a device that authenticated. Under the
+/// lifecycle lock it checks that the device is not revoked and that the
+/// credential it connected with is still the device's: a revocation or a
+/// repeat sign-in that committed while the connection was proving its key
+/// would otherwise end only the sessions registered by then.
 pub(crate) async fn activate_device(
     state: &CoordinatorState,
-    device_id: DeviceId,
+    login: &DeviceLogin,
     peer: &PeerIdentity,
     connection_id: Uuid,
     outgoing: &mpsc::Sender<ServerMessage>,
     cancelled: &CancellationToken,
 ) -> bool {
+    let device_id = login.device_id;
     let lifecycle = state.connection_lifecycle.lock().await;
-    let active = match state.store.device_is_active(device_id).await {
+    let active = match state
+        .store
+        .device_accepts(device_id, login.credential_hash)
+        .await
+    {
         Ok(active) => active,
         Err(error) => {
             send_control_error(outgoing, None, &error).await;
@@ -43,6 +59,13 @@ pub(crate) async fn activate_device(
         }
     };
     if !active {
+        send_error(
+            outgoing,
+            None,
+            ErrorCode::AuthenticationFailed,
+            "authentication failed",
+        )
+        .await;
         return false;
     }
     let pending = if let PeerIdentity::Node { node_id } = *peer {

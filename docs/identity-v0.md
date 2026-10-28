@@ -231,12 +231,21 @@ The key is the stable identity the app owns before it first sends. A sign-in
 with the same principal, surface and key adopts the existing device, replaces its
 credential and updates its label, and ends the device's live connections before
 the response returns the new credential, so a lost response or a lost credential
-never duplicates a device or leaves the old credential connected. A key that is revoked, or registered to another principal or
-surface, is a `conflict`: revocation is never undone by replaying a sign-in. A
-principal may hold 32 active key-bound devices. These checks run at the options
-request, before the ceremony and a bootstrap token are spent, and again inside
-the transaction. A ceremony claimed and then refused is not replayed; the app
-signs in again.
+never duplicates a device. The replaced credential is not accepted again: a
+connection that authenticated with it and was still proving its key when the new
+credential committed is refused when it would become active, because activation
+checks, under the connection lifecycle lock, that the device is not revoked and
+still holds the credential the connection presented. A key that is revoked, or
+registered to another principal or surface, is a `conflict`: revocation is never
+undone by replaying a sign-in. A principal may hold 32 active key-bound devices.
+The transaction enforces these rules for both ceremonies. A registration
+request, which already holds the bootstrap token, also checks them at the options
+request and says why, so a refused sign-in leaves the one-use token unspent. An
+authentication options request carries no secret, so it answers the same for
+every key: the refusal waits for the passkey assertion at verify, names its
+cause then, and writes nothing, so the passkey keeps its counter and the app
+signs in again with a new key. A ceremony claimed and then refused is not
+replayed.
 
 ### Connecting
 
