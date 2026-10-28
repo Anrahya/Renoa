@@ -34,9 +34,10 @@ After authentication, the session identity fixes the peer's role:
   `StopCommand`, and `DeleteTask`; a surface connected by a browser ticket or a
   proven device key may also `ListDevices` and `RevokeDevice`;
 - a node may `AdvertiseTargets`, `AcknowledgeExecution`,
-  `PublishExecutionEvents`, `AcknowledgeStop`, and `PublishLiveActivity`;
-- the coordinator may deliver `Execute` and `Stop` to a node, and `TaskEvent`
-  records and `LiveActivity` frames to an attached surface.
+  `PublishExecutionEvents`, `AcknowledgeStop`, `PublishLiveActivity`,
+  `ServeHostControl`, and `CompleteHostCall`;
+- the coordinator may deliver `Execute`, `Stop`, and `HostCall` to a node, and
+  `TaskEvent` records and `LiveActivity` frames to an attached surface.
 
 The transport may add correlation data around an operation. Correlation data is
 not durable identity and must not affect admission or deduplication.

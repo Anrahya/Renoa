@@ -214,7 +214,7 @@ fn call_failure(error: &HostCallError) -> Response {
             "Your Host is not connected. Retry when it returns.",
         ),
         HostCallError::Ambiguous => failure(
-            StatusCode::CONFLICT,
+            StatusCode::SERVICE_UNAVAILABLE,
             "host_ambiguous",
             "More than one Host of yours is connected. Disconnect all but one.",
         ),

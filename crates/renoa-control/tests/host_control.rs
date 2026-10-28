@@ -521,7 +521,7 @@ async fn two_serving_nodes_of_one_owner_are_ambiguous_until_one_leaves() {
     let mut first = f.serving_node().await;
     let second = f.serving_node().await;
     let ambiguous = answer_of(f.caller.get("/v1/host")).await;
-    assert_eq!(ambiguous.status, StatusCode::CONFLICT);
+    assert_eq!(ambiguous.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(ambiguous.code(), "host_ambiguous");
     assert_plain(&ambiguous);
     assert!(hears_nothing(&mut first).await);
