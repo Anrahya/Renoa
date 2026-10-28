@@ -28,6 +28,7 @@ fn command(id: u128) -> CommandEnvelope {
             context: Some("channel #desk (202)".to_owned()),
             author: renoa_protocol::Author::Principal,
         },
+        origin: None,
     }
 }
 

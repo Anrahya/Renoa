@@ -7,7 +7,7 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use renoa_control::{ClientMessage, DeviceCredentials, JSON_WS_VERSION, ServerMessage, TaskId};
-use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent, TargetRef};
+use renoa_protocol::{CommandEnvelope, CommandId, ExecutionEvent, TargetCard};
 use tokio::{sync::watch, task::JoinSet};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async_with_config,
@@ -16,6 +16,7 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    agent_link::{Answer, LinkSession},
     bridge::{ExecutionTask, NodeError, NodeRuntime, finish_execution, schedule_pending},
     node_log,
     node_store::ExecutionRecord,
@@ -122,10 +123,12 @@ async fn serve_session_inner(
     let mut publications = HashMap::new();
     refresh_publications(&runtime, &mut publications).await?;
     send_pending(&mut socket, &runtime, &mut publications).await?;
+    let mut link = runtime.link.open();
 
     loop {
         tokio::select! {
             () = shutdown.cancelled() => return Ok(SessionEnd::Shutdown),
+            request = link.next_message() => send_client(&mut socket, &request).await?,
             changed = commits.changed() => {
                 if changed.is_err() {
                     return Err(NodeError::Protocol("local commit signal closed".to_owned()));
@@ -148,6 +151,7 @@ async fn serve_session_inner(
                     tasks,
                     running,
                     &mut publications,
+                    &mut link,
                     message,
                 ).await?;
             }
@@ -160,7 +164,7 @@ async fn serve_session_inner(
 async fn advertise(
     socket: &mut Socket,
     runtime: &NodeRuntime,
-    advertised: &mut Option<Vec<TargetRef>>,
+    advertised: &mut Option<Vec<TargetCard>>,
 ) -> Result<(), NodeError> {
     let targets = match runtime.advertised_targets().await {
         Ok(targets) => targets,
@@ -188,7 +192,7 @@ async fn advertise(
         "info",
         "targets_advertised",
         &serde_json::json!({
-            "targets": targets.iter().map(TargetRef::as_str).collect::<Vec<_>>(),
+            "targets": targets.iter().map(|card| card.target.as_str()).collect::<Vec<_>>(),
         }),
     );
     *advertised = Some(targets);
@@ -205,6 +209,7 @@ async fn handle_server_message(
     tasks: &mut JoinSet<ExecutionTask>,
     running: &mut HashSet<TaskId>,
     publications: &mut HashMap<CommandId, Publication>,
+    link: &mut LinkSession,
     message: ServerMessage,
 ) -> Result<(), NodeError> {
     match message {
@@ -258,17 +263,29 @@ async fn handle_server_message(
             refresh_publications(runtime, publications).await?;
             send_pending(socket, runtime, publications).await?;
         }
+        ServerMessage::TargetList {
+            request_id,
+            targets,
+        } => link.answer(request_id, Answer::Targets(targets))?,
+        ServerMessage::CommandAccepted { request_id, .. } => {
+            link.answer(request_id, Answer::Accepted)?;
+        }
+        // An error that names a request is that request's refusal; any other
+        // ends the session.
+        ServerMessage::Error {
+            request_id: Some(request_id),
+            code,
+            message,
+        } => link.answer(request_id, Answer::Refused { code, message })?,
         ServerMessage::Error { code, message, .. } => {
             return Err(NodeError::Rejected { code, message });
         }
         ServerMessage::Authenticated { .. }
         | ServerMessage::Enrolled { .. }
         | ServerMessage::TaskList { .. }
-        | ServerMessage::TargetList { .. }
         | ServerMessage::TaskOpened { .. }
         | ServerMessage::TaskDeleted { .. }
         | ServerMessage::Attached { .. }
-        | ServerMessage::CommandAccepted { .. }
         | ServerMessage::TaskEvent { .. } => {
             return Err(NodeError::Protocol(
                 "coordinator sent a surface-only message to a node".to_owned(),

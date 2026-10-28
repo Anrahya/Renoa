@@ -42,6 +42,8 @@ define_built_in_capabilities! {
 
 pub(crate) const PLUGIN_MANAGE: &str = "plugin_manage";
 pub(crate) const AGENT_MANAGE: &str = "agent_manage";
+pub(crate) const AGENT_ROSTER: &str = "agent_roster";
+pub(crate) const MESSAGE_AGENT: &str = "message_agent";
 pub(crate) const AUTOMATION_MANAGE: &str = "automation_manage";
 pub(crate) const AUTOMATION_RESULTS: &str = "automation_results";
 pub(crate) const PLUGIN_SEARCH: &str = "plugin_search";

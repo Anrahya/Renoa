@@ -536,7 +536,7 @@ lookup as external MCP tools; `renoa.time` contributes context to each message:
 
 | Plugin | Capabilities |
 | --- | --- |
-| `renoa.agents` | Create, list, rename agents |
+| `renoa.agents` | Create, list, rename agents; list and message the owner's other agents |
 | `renoa.automations` | Manage schedules and read retained results |
 | `renoa.documents` | Edit this agent's SOUL and the speaking person's USER file |
 | `renoa.skills` | Discover skills and activate exact instruction revisions |
@@ -1232,6 +1232,30 @@ Replay returns the original rename result; replaying a creation operation
 returns the definition that operation committed, and later edits (rename,
 capability changes) are not reflected. Agent identity, sessions, workspace,
 tools, and connections remain intact.
+
+### Messaging other agents
+
+`agent_roster` and `message_agent` belong to `renoa.agents`, so the owner's
+switch for that plugin governs them. The Host offers them only while a node has
+attached an `AgentPeers` port (`LocalHost::attach_agent_peers`); a Host with no
+port, such as one run without a coordinator, never shows an agent a tool it
+cannot use. The port has two methods: the agents this agent can message now,
+without itself, and delivery of one message. The Host knows nothing of how a
+message travels, and an agent sees names, never routes.
+
+`agent_roster` takes no fields and returns `{"agents": [{"name": ...}]}`.
+`message_agent` takes `to`, an agent's name as the roster lists it (matched
+without regard to case), and `text`. It sends and returns; the answer arrives
+later as a new message in the same conversation, so the text should say what to
+send back. Delivery needs the executing command, so the tool refuses outside a
+turn that is answering a message. The message identity derives from the command
+and the tool call, so replaying the call re-sends the same message. A failed
+call reports whether sending again could help, and a cancelled send says the
+message may have been delivered.
+
+Both tools answer a malformed call in the shape the agent-facing tools share:
+the field, what it received, what it expected, and a correct call.
+Neither tool states or knows a limit on the length of an exchange.
 Names should be short job labels, such as X Desk, News, or Research. Slack
 projects display-name changes onto the existing channel by its retained ID.
 Slack projects the Host agent inventory into dedicated private channels and

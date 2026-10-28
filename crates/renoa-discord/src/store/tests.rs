@@ -54,6 +54,7 @@ fn command(command_id: Uuid, surface: &str, text: &str) -> CommandEnvelope {
             context: None,
             author: renoa_protocol::Author::Principal,
         },
+        origin: None,
     }
 }
 

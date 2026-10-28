@@ -384,7 +384,7 @@ fn relay_error(error: &crate::ControlError) -> Response {
             "not_found",
             "OAuth relay was not found",
         ),
-        ControlErrorKind::NodeOffline | ControlErrorKind::Store => (
+        ControlErrorKind::NodeOffline | ControlErrorKind::Role | ControlErrorKind::Store => (
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "OAuth relay service failed",

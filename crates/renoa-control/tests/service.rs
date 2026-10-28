@@ -230,6 +230,7 @@ async fn coordinator_executable_provisions_and_serves_the_existing_protocol() {
                 surface: SurfaceRef::new("service_test"),
                 target: TargetRef::new("workspace:service-test"),
                 input,
+                origin: None,
             },
         }
     );

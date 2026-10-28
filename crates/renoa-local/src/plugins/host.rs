@@ -49,7 +49,9 @@ impl HostPluginId {
     }
     pub(crate) const fn description(self) -> &'static str {
         match self {
-            Self::Agents => "Create, list, and rename Host agents.",
+            Self::Agents => {
+                "Create, list, and rename Host agents, and message the owner's other agents."
+            }
             Self::Automations => "Schedule agents and read automation results.",
             Self::Documents => {
                 "Edit this agent's SOUL document and the USER document of the person it talks to."
@@ -63,7 +65,7 @@ impl HostPluginId {
     }
     pub(crate) fn owner(tool: &str) -> Option<Self> {
         match tool {
-            "agent_manage" => Some(Self::Agents),
+            "agent_manage" | "agent_roster" | "message_agent" => Some(Self::Agents),
             "automation_manage" | "automation_results" => Some(Self::Automations),
             "agent_documents" => Some(Self::Documents),
             "skill_search" | "skill_load" => Some(Self::Skills),

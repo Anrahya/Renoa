@@ -6,7 +6,7 @@ use std::{
 use renoa_protocol::{
     CommandEnvelope, CommandId, CommandInput, PrincipalId, SurfaceRef, TargetRef,
 };
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
 use crate::{
     ControlError, NodeId, TaskEvent, TaskEventKind, TaskId, TaskSpec, TaskSummary,
@@ -131,6 +131,7 @@ impl ControlStore {
                 surface,
                 target: task.target.clone(),
                 input,
+                origin: None,
             };
             let command_json = serde_json::to_string(&command).map_err(json_error)?;
             let existing = transaction
@@ -159,28 +160,7 @@ impl ControlStore {
                 return Ok(CommandAdmission::NotAdmitted);
             }
 
-            transaction
-                .execute(
-                    "INSERT INTO commands (command_id, task_id, command_json)
-                     VALUES (?1, ?2, ?3)",
-                    params![command_id.to_string(), task_id.to_string(), command_json,],
-                )
-                .map_err(sqlite_error)?;
-            let event = append_event(
-                &transaction,
-                task_id,
-                &format!("command:{command_id}"),
-                &TaskEventKind::CommandSubmitted {
-                    command: command.clone(),
-                },
-            )?;
-            transaction
-                .execute(
-                    "INSERT INTO pending_executions (command_id, task_sequence)
-                     VALUES (?1, ?2)",
-                    params![command_id.to_string(), to_sql_integer(event.sequence)?],
-                )
-                .map_err(sqlite_error)?;
+            let event = insert_command(&transaction, task_id, &command, &command_json)?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(CommandAdmission::Admitted {
                 command,
@@ -189,6 +169,41 @@ impl ControlStore {
         })
         .await
     }
+}
+
+/// Admits a new command: its row, its `CommandSubmitted` record, and the
+/// pending delivery that stays until its node acknowledges it. The caller owns
+/// the transaction and has already checked that the command is new.
+pub(crate) fn insert_command(
+    transaction: &Transaction<'_>,
+    task_id: TaskId,
+    command: &CommandEnvelope,
+    command_json: &str,
+) -> Result<TaskEvent, ControlError> {
+    let command_id = command.command_id;
+    transaction
+        .execute(
+            "INSERT INTO commands (command_id, task_id, command_json)
+             VALUES (?1, ?2, ?3)",
+            params![command_id.to_string(), task_id.to_string(), command_json],
+        )
+        .map_err(sqlite_error)?;
+    let event = append_event(
+        transaction,
+        task_id,
+        &format!("command:{command_id}"),
+        &TaskEventKind::CommandSubmitted {
+            command: command.clone(),
+        },
+    )?;
+    transaction
+        .execute(
+            "INSERT INTO pending_executions (command_id, task_sequence)
+             VALUES (?1, ?2)",
+            params![command_id.to_string(), to_sql_integer(event.sequence)?],
+        )
+        .map_err(sqlite_error)?;
+    Ok(event)
 }
 
 pub(crate) fn insert_task(connection: &Connection, task: &TaskSpec) -> Result<(), ControlError> {
@@ -209,7 +224,10 @@ pub(crate) fn insert_task(connection: &Connection, task: &TaskSpec) -> Result<()
     Ok(())
 }
 
-fn load_task(connection: &Connection, task_id: TaskId) -> Result<StoredTask, ControlError> {
+pub(crate) fn load_task(
+    connection: &Connection,
+    task_id: TaskId,
+) -> Result<StoredTask, ControlError> {
     let row = connection
         .query_row(
             "SELECT principal_id, node_id, target_json

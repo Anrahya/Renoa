@@ -20,7 +20,7 @@ The related documents have narrower authority:
 - `identity-v0.md` describes device and browser trust mechanisms.
 - `kernel-v0.md` describes one optional executor implementation.
 - `rcp-operations-v0.md` defines the proven transport-independent operations.
-- `rcp-json-ws-v0.md` defines the candidate version 13 JSON/WebSocket binding.
+- `rcp-json-ws-v0.md` defines the candidate version 14 JSON/WebSocket binding.
 
 If one of those implementation documents conflicts with this architecture, this
 document owns the intended RCP direction and the conflict must be resolved
@@ -139,9 +139,20 @@ These decisions define RCP and are not ordinary implementation details:
 23. Every node may have one owning principal, recorded by the trusted
     control plane at enrollment. Only the owner may open new tasks on the node,
     and only against a target the node currently advertises. Advertisements are
-    connection presence, not durable state; the targets stay opaque and carry
-    no harness configuration. A node without an owner serves only tasks the
-    operator created for it.
+    connection presence, not durable state; each target stays opaque beside a
+    display name and carries no harness configuration. A node without an owner
+    serves only tasks the operator created for it.
+24. An agent may message another agent of the same owner through RCP. The
+    sending node names the command its agent is executing; the coordinator
+    derives who is speaking from that command, never from the request, and
+    only for a command bound to the requesting node. The message becomes an
+    ordinary command, carrying its origin, on a thread task of the receiving
+    agent that the coordinator opens in the same transaction. The answer is
+    admitted in the asker's task by the transaction that records the end of the
+    message's execution, so a retried batch cannot answer twice and a lost
+    connection cannot lose it. Only a message continues an exchange; an answer
+    starts nothing. The coordinator refuses a request more than 100 messages
+    deep in one chain. That backstop is never shown to an agent.
 
 ## Vocabulary
 
@@ -170,9 +181,9 @@ addressable after an individual execution reaches a terminal state.
 
 ### Command
 
-A durable intent submitted by a surface. Its producer assigns a stable identity
-before transmission so an uncertain delivery can be retried without creating a
-second intent.
+A durable intent submitted by a surface, or sent by an agent as a message. Its
+producer assigns a stable identity before transmission so an uncertain delivery
+can be retried without creating a second intent.
 
 ### Execution
 
@@ -442,6 +453,62 @@ generation 7 cannot publish, even if an old connection wakes up.
 The exact lease and generation messages are deferred until task rebinding has a
 real execution path and test.
 
+## Agent messages
+
+Agents are peers of the owner's other agents. A message from one agent to
+another travels as an RCP command, so the receiver gets the same durable
+admission, ordering, replay, and owner visibility as any task. The operations
+are defined in [RCP operations](rcp-operations-v0.md) and the frames in
+[the JSON/WebSocket binding](rcp-json-ws-v0.md); this section records the
+decisions.
+
+- **Roster.** A node advertises one card per agent: the opaque target and the
+  name the owner and other agents call it. A node may call `ListTargets` and
+  receives the cards of the online nodes its owner owns, which is how an agent
+  learns whom it may message. A node without an owner has no roster and no
+  messages.
+- **Sender identity.** The request names `from_command`, the command the
+  sending agent is executing. The coordinator accepts it only when that command
+  belongs to a task bound to the requesting node and the node's owner, then
+  takes the sending agent from that task's target and its name from the node's
+  current advertisement. A node can therefore speak only for agents it executes,
+  and an agent cannot name another sender.
+- **Thread.** The destination task is derived from the owner and both agents,
+  so the first and every later message from one agent to another reach one
+  conversation. The coordinator opens it in the transaction that admits the
+  command. Every refusal runs before the first write and leaves no task,
+  command, or record. The thread is an ordinary task of the owner: it appears
+  in `ListTasks`, any surface may attach to it, and the owner may delete it.
+- **Origin.** The command's surface is `agent`. Its `origin` names the sending
+  command, the sending agent and its name, the chain depth, and whether the
+  command is a request, a reply, or a failure. Only the coordinator sets it: a
+  surface's `Submit` cannot carry one. The receiving node tells its agent the
+  sender's name and, for a request, that its answer returns automatically. The
+  chain depth stays out of the agent's view.
+- **Answer.** When the execution of a request ends, the coordinator admits one
+  command in the task that holds the asking command, in the same transaction
+  that records the ending. Its identity derives from the request, so a retried
+  batch answers once and a crash cannot lose the answer. A completed execution
+  answers with its last assistant message; a failed or cancelled one answers
+  with the reason, marked as a failure. The answer is delivered like any
+  command, including to an asker whose node is offline when the answer is
+  admitted. If the asking command no longer exists because its task was
+  deleted, the answer is dropped and logged, and the ending is still recorded.
+- **Chain.** A message sent while executing a command that has an origin is one
+  deeper than that command, and a message from any other command is depth 1.
+  A request deeper than 100 is refused with `invalid_message` and leaves no
+  residue. The refusal says the exchange has gone on too long and does not
+  state a number. An answer is exempt from the limit and starts no answer of its
+  own: only an explicit message continues a chain. There is no per-turn,
+  per-pair, or rate limit, because agents are peers and a conversation between
+  them is not misuse.
+- **Retries.** A message identity is stable for one tool call. An exact retry
+  returns the original admission even when the destination has since gone
+  offline, or the sender has since been renamed or has not advertised again.
+  Reusing the identity with different content is a conflict.
+
+Automation runs still use their own surface link, not this path.
+
 ## Offline behavior
 
 RCP defines delivery facts; product policy decides whether a new command should
@@ -634,7 +701,7 @@ The current implementation demonstrates:
   blocking independent Host sessions;
 - transport-independent authenticated operation dispatch beneath the first
   JSON/WebSocket binding;
-- a documented version 13 JSON/WebSocket shape with binding-level conformance
+- a documented version 14 JSON/WebSocket shape with binding-level conformance
   assertions;
 - passkey registration and authentication with server-side durable ceremony
   state, explicit local first-device bootstrap, and 60-second one-use browser
@@ -704,6 +771,12 @@ The current implementation demonstrates:
   reopened the same Host session: a fresh surface replayed the first turn and
   continued it, while the original surface later received only the missing
   suffix.
+- agent-to-agent messages: a node advertises named agents and lists its owner's,
+  the Host offers `agent_roster` and `message_agent` to an agent through that
+  node's coordinator link, the coordinator derives the sender from the command
+  the agent is executing, opens a thread task for the receiving agent, and
+  admits the answer in the asker's task in the transaction that records the
+  receiver's ending, with a chain-depth backstop of 100 the agent never sees;
 - a Rust node that runs its Host's automation schedule through a second,
   surface-enrolled link named `automations`. Each due run is a command under
   the run's identity, carrying that surface's principal, on the task of the
@@ -797,6 +870,13 @@ RCP v0 is not proven until deterministic tests cover at least:
     registration, authentication, and browser tickets are one-use; concurrent
     ticket claims produce one winner; and ticket authentication creates no
     durable device.
+16. An agent message reaches a thread of the receiving agent under the sender
+    the coordinator derived; every refusal leaves no task, command, or record;
+    an exact retry converges even after the destination or the sender's
+    advertisement changed. The answer returns to the asker's task once,
+    including a failure or cancellation and an asker whose node is offline, and
+    starts no answer of its own. A request beyond the chain backstop is refused.
+    A surface cannot give a command an origin.
 
 The test harness should deliberately cut connections at persistence and
 acknowledgement boundaries. Happy-path socket tests are insufficient evidence

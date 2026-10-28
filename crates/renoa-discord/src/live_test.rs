@@ -366,7 +366,10 @@ impl CoordinatorFixture {
             &ClientMessage::AdvertiseTargets {
                 targets: [ARCEE, DESK]
                     .iter()
-                    .map(|agent| TargetRef::new(format!("agent:{agent}")))
+                    .map(|agent| renoa_protocol::TargetCard {
+                        target: TargetRef::new(format!("agent:{agent}")),
+                        name: (*agent).to_owned(),
+                    })
                     .collect(),
             },
         )

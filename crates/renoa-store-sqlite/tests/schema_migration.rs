@@ -66,6 +66,7 @@ fn command() -> CommandEnvelope {
         surface: SurfaceRef::new("legacy-test"),
         target: TargetRef::new("local:legacy-test"),
         input: CommandInput::from_text("original"),
+        origin: None,
     }
 }
 

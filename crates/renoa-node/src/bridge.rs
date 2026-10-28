@@ -3,8 +3,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalHostError, Speaker, TurnObservation};
-use renoa_protocol::{Author, CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
+use renoa_local::{AgentSession, LocalHost, LocalHostError, TurnObservation};
+use renoa_protocol::{CommandId, ExecutionEventKind, ExecutionTerminal, TargetCard, TargetRef};
 use thiserror::Error;
 use tokio::{
     sync::watch,
@@ -15,13 +15,14 @@ use tokio_tungstenite::tungstenite::{Error as WebSocketError, client::IntoClient
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    agent_link::{AgentLink, Peers},
     agent_targets,
     automations::{self, AutomationLink},
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
     live::LiveEvents,
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
-    operator,
+    operator, origin,
     projection::{project_history, terminal_event},
     session::{SessionEnd, serve_session},
 };
@@ -81,6 +82,8 @@ impl RenoaNode {
         let state = NodeStore::open(host.home().node_database())?;
         state.validate_configured_targets(|binding| agent_targets::serves(host.home(), binding))?;
         let (commits, _) = watch::channel(0_u64);
+        let link = Arc::new(AgentLink::default());
+        host.attach_agent_peers(Arc::new(Peers(Arc::clone(&link))));
         Ok(Self {
             endpoint,
             credentials,
@@ -88,6 +91,7 @@ impl RenoaNode {
                 host,
                 state,
                 commits,
+                link,
             }),
             automations: None,
         })
@@ -209,11 +213,13 @@ pub(crate) struct NodeRuntime {
     pub(crate) host: Arc<LocalHost>,
     pub(crate) state: NodeStore,
     pub(crate) commits: watch::Sender<u64>,
+    /// How this node's agents reach the coordinator for other agents.
+    pub(crate) link: Arc<AgentLink>,
 }
 
 impl NodeRuntime {
     /// The Host agents this node offers for new tasks.
-    pub(crate) async fn advertised_targets(&self) -> Result<Vec<TargetRef>, NodeError> {
+    pub(crate) async fn advertised_targets(&self) -> Result<Vec<TargetCard>, NodeError> {
         agent_targets::advertised(&self.host).await
     }
 
@@ -274,17 +280,18 @@ impl NodeRuntime {
         if let Some(context) = record.command.input.context() {
             observation = observation.with_surface_context(context);
         }
+        // Another agent's message says who sent it.
+        if let Some(origin) = &record.command.origin {
+            observation = observation.with_surface_context(origin::surface_context(origin));
+        }
         let result = session
             .execute_turn_observed_with_cancellation(
                 command_id.as_uuid(),
-                vec![ContentBlock::text(record.command.input.text())],
+                vec![ContentBlock::text(origin::prompt_text(&record.command))],
                 observation,
                 events,
                 cancellation,
-                match record.command.input.author() {
-                    Author::Principal => Speaker::Principal(record.command.principal_id.as_uuid()),
-                    Author::Guest => Speaker::Guest,
-                },
+                origin::speaker(&record.command),
             )
             .await;
         // A setup link that could not be delivered stopped the turn; its

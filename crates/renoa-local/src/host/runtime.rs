@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use renoa_agent::AgentEventSink;
 use renoa_agent_loop::{AgentToolBinding, CodeModeBinding};
-use renoa_kernel::{CommandId, EffectAdapter, SessionId};
+use renoa_kernel::{AgentId, CommandId, EffectAdapter, SessionId};
 
 use super::definition::{ResolvedAgentDefinition, agent_manage_binding};
 use super::{HostConfig, LocalHostError};
@@ -142,6 +142,23 @@ fn offered_tool_bindings(
     )
 }
 
+/// The tools for messaging other agents, offered only while a node has
+/// attached the way to reach them.
+fn peer_bindings(
+    host: &HostConfig,
+    agent: AgentId,
+    command_id: Option<CommandId>,
+) -> Vec<AgentToolBinding> {
+    let peers = host
+        .peers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    peers.map_or_else(Vec::new, |peers| {
+        super::peers::bindings(peers, agent, command_id).into()
+    })
+}
+
 pub(crate) fn protocol_bindings(
     host: &Arc<HostConfig>,
     definition: &ResolvedAgentDefinition,
@@ -171,6 +188,7 @@ pub(crate) fn protocol_bindings(
         session_id,
         command_id,
     ));
+    controls.extend(peer_bindings(host, agent, command_id));
     controls.extend(agent_skill_bindings(
         agent,
         host.skill_store.clone(),
@@ -295,5 +313,108 @@ mod tests {
             hidden.expect("hidden MCP executor").tool_name(),
             "tool_execute"
         );
+    }
+
+    struct NoOneElse;
+
+    impl crate::AgentPeers for NoOneElse {
+        fn roster(
+            &self,
+            _: renoa_kernel::AgentId,
+        ) -> renoa_agent::BoxFuture<'_, Result<Vec<crate::PeerAgent>, crate::PeerError>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn send(
+            &self,
+            _: crate::PeerMessage,
+        ) -> renoa_agent::BoxFuture<'_, Result<(), crate::PeerError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn messaging_tools_are_offered_only_once_a_node_attaches_peers_and_follow_the_switch() {
+        let directory = tempfile::tempdir().expect("fixture");
+        let root = directory.path();
+        fs::write(root.join("model.mjs"), "// fixture\n").expect("model");
+        fs::write(root.join("auth.sqlite"), "").expect("auth boundary");
+        let host = LocalHost::assemble(HostInitialization {
+            data_directory: root.join("data"),
+            bridge: root.join("model.mjs"),
+            providers: vec![ModelProvider::OpenCodeGo],
+            initial_provider: ModelProvider::OpenCodeGo,
+            initial_model: "fixture".to_owned(),
+            initial_reasoning: None,
+            credential_store: root.join("auth.sqlite"),
+            mcp_adapter: None,
+            mcp_registry_adapter: None,
+            shared_plugin_registry: None,
+            global_skill_source: None,
+            oauth_relay: None,
+            code_mode: None,
+        })
+        .expect("Host");
+        let agent = host
+            .create_agent(
+                AgentCreator::System {
+                    component: "peers-test".to_owned(),
+                },
+                AgentCreationOrigin::Provisioning,
+                AgentCreateRequest::from_preset(
+                    Uuid::new_v4(),
+                    AgentPresetId::new(ARCEE_PRESET_ID).expect("preset id"),
+                    "Messenger",
+                ),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("agent")
+            .id;
+        let offered = |host: &LocalHost| {
+            super::peer_bindings(&host.config, agent, None)
+                .iter()
+                .map(|binding| binding.tool_name().to_owned())
+                .collect::<Vec<_>>()
+        };
+
+        assert!(
+            offered(&host).is_empty(),
+            "a Host with no node offers no messaging tool"
+        );
+        host.attach_agent_peers(std::sync::Arc::new(NoOneElse));
+        assert_eq!(offered(&host), ["agent_roster", "message_agent"]);
+        host.attach_agent_peers(std::sync::Arc::new(NoOneElse));
+        assert_eq!(
+            offered(&host).len(),
+            2,
+            "a later node replaces the attachment instead of adding to it"
+        );
+
+        // The owner's switch for `renoa.agents` governs both tools.
+        let plugins = crate::plugins::host::HostPlugins::new(
+            host.config.database.clone(),
+            agent,
+            super::peer_bindings(&host.config, agent, None),
+        )
+        .expect("Host plugins");
+        let found = |plugins: &crate::plugins::host::HostPlugins| {
+            plugins
+                .matches(None, "agent", false)
+                .expect("search")
+                .into_iter()
+                .map(|tool| tool.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found(&plugins), ["agent_roster", "message_agent"]);
+        crate::plugins::host::state::change(
+            &host.config.database,
+            agent,
+            crate::plugins::host::HostPluginId::Agents,
+            false,
+            "switch-off",
+        )
+        .expect("turn the Agents plugin off");
+        assert!(found(&plugins).is_empty());
     }
 }

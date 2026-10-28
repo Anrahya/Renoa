@@ -32,19 +32,6 @@ pub(crate) async fn handle_surface_operation(
             }
             Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
         },
-        SurfaceOperation::ListTargets => {
-            match crate::task_opening::list_targets(&state, principal_id).await {
-                Ok(targets) => {
-                    let _ = outgoing
-                        .send(ServerMessage::TargetList {
-                            request_id,
-                            targets,
-                        })
-                        .await;
-                }
-                Err(error) => send_control_error(outgoing, Some(request_id), &error).await,
-            }
-        }
         SurfaceOperation::OpenTask {
             task_id,
             node_id,

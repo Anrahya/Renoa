@@ -16,6 +16,7 @@ mod lease;
 mod mcp;
 mod models;
 pub(crate) mod observation;
+pub(crate) mod peers;
 pub(crate) mod profiles;
 mod reset;
 mod runtime;
@@ -41,6 +42,7 @@ use crate::{
 pub(crate) use models::{
     discover_models_for, initial_reasoning, require_model, selected_model_by_selection_id,
 };
+pub use peers::{AgentPeers, PeerAgent, PeerError, PeerMessage};
 pub use reset::{HostResetReport, reset_host_data_root};
 pub(crate) use runtime::{RuntimeRequest, resolve_runtime};
 
@@ -121,6 +123,9 @@ pub(crate) struct HostConfig {
     pub(crate) skill_store: SkillStore,
     pub(crate) plugins: PluginManager,
     pub(crate) code_mode: Option<Arc<MontyEvaluator>>,
+    /// How this Host's agents reach other agents; set by the node serving this
+    /// Host, and replaced by the next node that opens on it.
+    pub(crate) peers: std::sync::Mutex<Option<Arc<dyn AgentPeers>>>,
 }
 
 struct HostInitialization {
@@ -381,8 +386,20 @@ impl LocalHost {
                 skill_store,
                 plugins,
                 code_mode,
+                peers: std::sync::Mutex::new(None),
             }),
         })
+    }
+
+    /// Lets this Host's agents message the owner's other agents through
+    /// `peers`, replacing any earlier attachment. A node attaches itself when
+    /// it opens on the Host; until then no agent is offered a messaging tool.
+    pub fn attach_agent_peers(&self, peers: Arc<dyn AgentPeers>) {
+        *self
+            .config
+            .peers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(peers);
     }
 }
 

@@ -59,6 +59,14 @@ pub(crate) fn node_owner(
 }
 
 impl ControlStore {
+    pub(crate) async fn node_owner(
+        &self,
+        node_id: NodeId,
+    ) -> Result<Option<PrincipalId>, ControlError> {
+        let path = Arc::clone(&self.path);
+        blocking(move || node_owner(&open_connection(&path)?, node_id)).await
+    }
+
     /// Records the node's owner and its single-use enrollment together, so a
     /// refused owner leaves no enrollment and a failed enrollment no owner.
     pub(crate) async fn create_node_enrollment(

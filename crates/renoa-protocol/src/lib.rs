@@ -4,6 +4,9 @@ mod command;
 mod execution;
 mod ids;
 
-pub use command::{Author, CommandEnvelope, CommandInput, SurfaceRef, TargetRef};
+pub use command::{
+    AgentMessageKind, AgentOrigin, Author, CommandEnvelope, CommandInput, SurfaceRef, TargetCard,
+    TargetRef,
+};
 pub use execution::{ExecutionEvent, ExecutionEventKind, ExecutionTerminal};
 pub use ids::{CommandId, ExecutionEventId, ExecutionId, PrincipalId};

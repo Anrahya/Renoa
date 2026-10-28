@@ -227,6 +227,7 @@ pub fn test_command() -> CommandEnvelope {
         input: CommandInput::from_text(
             "Read hello.txt, add a second line, verify it, and report back.",
         ),
+        origin: None,
     }
 }
 

@@ -29,8 +29,8 @@ After authentication, the session identity fixes the peer's role:
 
 - a surface may `ListTasks`, `ListTargets`, `OpenTask`, `Attach`, `Submit`, and
   `DeleteTask`;
-- a node may `AdvertiseTargets`, `AcknowledgeExecution`, and
-  `PublishExecutionEvents`;
+- a node may `AdvertiseTargets`, `ListTargets`, `SendAgentMessage`,
+  `AcknowledgeExecution`, and `PublishExecutionEvents`;
 - the coordinator may deliver `Execute` to a node and `TaskEvent` records to an
   attached surface.
 
@@ -79,9 +79,11 @@ It is not a live directory subscription.
 ### `ListTargets`
 
 `ListTargets` has no semantic input. The coordinator returns `TargetList`: every
-target currently advertised by an online node that the surface's principal owns.
-Each summary contains the node identity and the opaque target reference, ordered
-by node and target.
+target currently advertised by an online node that the caller's principal owns.
+A surface's principal is its own; a node's is its owner, so an agent learns
+which other agents it may message. A node without an owner is refused with
+`InvalidRole`. Each summary contains the node identity, the opaque target
+reference, and the target's display name, ordered by node and target.
 
 The result reflects live connections. A node's targets disappear when its
 connection ends and return when it reconnects and advertises again. The
@@ -146,7 +148,8 @@ Inputs:
   with an optional `context`: the surface's own description of where the text
   was written, and an optional guest `author` for text the surface received
   from someone other than its principal. RCP carries both with the command and
-  gives them no other meaning.
+  gives them no other meaning. A surface cannot supply an `origin`; only the
+  coordinator sets one, on an agent message.
 
 The coordinator derives principal and surface identity from the authenticated
 session and target and execution node from durable task state. A surface cannot
@@ -194,6 +197,10 @@ The node must deduplicate the command in its harness ledger before model calls
 or side effects. Receiving `Execute` is authority to attempt the command; it is
 not evidence that the command started or completed.
 
+A command that another agent caused carries an `origin` (see
+`SendAgentMessage`). The adapter decides how its agent is told who the message
+is from; RCP gives the origin no other meaning.
+
 The receiving adapter resolves the task's harness configuration locally. RCP
 does not carry or interpret an agent identifier, instructions, model selection,
 tools, or capability policy. The Rust and Pi adapters consume this same
@@ -203,16 +210,69 @@ delivery despite using different local agent configuration and execution code.
 
 Inputs:
 
-- `targets`: the opaque targets the node can execute for newly opened tasks.
+- `targets`: the cards the node can execute for newly opened tasks. A card is
+  an opaque `target` and the `name` the owner and other agents call it.
 
 The coordinator replaces the targets of the node's current connection. A node
 that never advertises offers no targets, but still executes the tasks already
-bound to it. Each target must be 1 to 256 bytes without control characters,
-targets must be unique, and a node may advertise at most 256. An invalid
-advertisement is rejected with `InvalidMessage` and changes nothing.
+bound to it. Each target and each name must be 1 to 256 bytes without control
+characters, targets must be unique, and a node may advertise at most 256. A
+node shortens and cleans a longer or unclean name before advertising it, so its
+own agent is never left out. An invalid advertisement is rejected with
+`InvalidMessage` and changes nothing.
 
 There is no acknowledgement. Advertisements are presence, not durable state:
 the coordinator keeps them only for the life of the connection.
+
+### `SendAgentMessage`
+
+Inputs:
+
+- `from_command`: the command the sending agent is executing;
+- `message_id`: a stable identity generated before the first send;
+- `node_id` and `target`: the receiving agent, as `ListTargets` shows it;
+- `text`: what to tell it, 1 byte to 64 KiB and not blank.
+
+The coordinator derives the sender: `from_command` must belong to a task bound
+to the authenticated node, whose owner is the principal. In one transaction it
+checks, in order:
+
+1. The node has an owner (`InvalidRole`).
+2. `from_command` is one this node is executing (`NotFound`).
+3. The text is not blank and fits the limit (`InvalidMessage`).
+4. The message would not be deeper than 100 in its chain (`InvalidMessage`).
+   A message sent while executing a command that has an origin is one deeper
+   than that origin; any other is depth 1. The refusal does not state the limit.
+5. The receiving node belongs to the same principal (`NotFound`) and the
+   receiving agent is not the sender (`InvalidMessage`).
+6. If `message_id` already exists with identical content, the admission is an
+   exact retry and returns `CommandAccepted`, even if the receiving node is now
+   offline or the sender's name has changed. Any other existing content returns
+   `Conflict`.
+7. The sending agent is advertised by its node, which supplies its name
+   (`InvalidMessage`).
+8. The receiving node is online (`NodeOffline`) and advertises the target
+   (`NotFound`).
+
+Only then does it commit the thread task if it does not yet exist, the command
+with its `CommandSubmitted` record, and its pending execution delivery, and
+return `CommandAccepted`. The thread's identity derives from the principal and
+both agents, so every message from one agent to another lands in one task. A
+rejected message leaves no task, command, or record. The command's surface is
+`agent` and its `origin` carries `from_command`, the sender's target and name,
+the depth, and the kind `request`.
+
+When the execution of a request reaches a terminal event, the same transaction
+that records the event admits one answer command in the task that holds
+`from_command`. Its identity derives from the request, so a retried publication
+admits no second answer. The answer's kind is `reply` for a completed execution,
+carrying its last assistant message, and `failure` for a failed or cancelled
+one, carrying the reason. An answer's text is cut to the 64 KiB a request may
+carry. Its origin names the answering agent and is one
+deeper than the request. It is delivered like any command, and waits as a
+pending delivery while the asker's node is offline. An answer is not itself
+answered and is not refused for depth. If the asking command no longer exists,
+no answer is admitted.
 
 ### `AcknowledgeExecution`
 
@@ -282,7 +342,7 @@ task sequence. A timestamp never determines order.
 | `TargetList` | No mutation; the returned targets belong to online nodes the principal owns |
 | `TaskOpened` | The task and its principal, node, and target binding |
 | `Attached` | No mutation; authorization and a replay high-water mark were resolved |
-| `CommandAccepted` | Command, command record, and pending execution delivery |
+| `CommandAccepted` | Command, command record, and pending execution delivery; for `SendAgentMessage` also the thread task |
 | `ExecutionAcknowledged` | Removal of the pending coordinator delivery |
 | `ExecutionEventsAccepted` | New task records and the node's accepted source cursor |
 | `TaskDeleted` | Removal of the task and everything the coordinator held for it |
@@ -316,6 +376,7 @@ correlation value is a binding concern.
 | `ListTargets` | No durable identity; request correlation is transport-local | Returns the current advertised snapshot |
 | `OpenTask` | task ID plus identical node and target | Returns the existing opening without another task |
 | `AdvertiseTargets` | None; each advertisement replaces the connection's targets | The latest advertisement wins |
+| `SendAgentMessage` | message ID plus identical content | Returns the existing admission without another task or record |
 | `Attach` | task ID plus last applied sequence | Reconstructs the same suffix, then resumes live delivery |
 | `Submit` | command ID plus identical content | Returns the existing admission without another task record |
 | `DeleteTask` | task ID | Returns `TaskDeleted` whether or not the task still exists |

@@ -69,8 +69,9 @@ pub use host::observation::{
     ObservedSkill,
 };
 pub use host::{
-    HostResetReport, LocalHost, LocalHostAdapters, LocalHostError, LocalModelConfiguration,
-    profiles::ProfileEditError, reset_host_data_root,
+    AgentPeers, HostResetReport, LocalHost, LocalHostAdapters, LocalHostError,
+    LocalModelConfiguration, PeerAgent, PeerError, PeerMessage, profiles::ProfileEditError,
+    reset_host_data_root,
 };
 pub use mcp::{
     McpAdapterError, McpCatalogSnapshot, McpCatalogTool, McpConnectionStatus, McpCredentialError,
