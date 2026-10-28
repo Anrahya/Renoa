@@ -3,4 +3,4 @@
 # else is listed only until it is split.
 crates/renoa-kernel/src/schema.rs                 # SQL schema text, not logic
 crates/renoa-local/src/host/catalog/migrations.rs # SQL migration text, not logic
-crates/renoa-local/src/host.rs                    # over the limit; split pending
+crates/renoa-local/src/host.rs                    # 512 lines; split pending

@@ -484,10 +484,11 @@ decision. The reference node treats a command from the principal that is exactly
 context, records no agent reply, and ends the command with `completed` and one
 notice that says whether a new summary was written or there was nothing new to
 summarize. The task journal is unchanged by compaction and keeps every record.
-A guest's `/compact` is an ordinary message, `/compact` followed by more words
-ends as `failed` without opening a session (or `cancelled`, like any command,
-when a stop was recorded before it started), and an interrupted compaction is
-driven again under the same command identity and activates one summary.
+A guest's or another agent's `/compact` is an ordinary message, `/compact`
+followed by more words ends as `failed` without opening a session (or
+`cancelled`, like any command, when a stop was recorded before it started), and
+an interrupted compaction is driven again under the same command identity and
+activates one summary.
 
 Socket ownership stays outside the Host. Durable node-ledger commits wake the
 publisher, but the wakeup is not data: publication always rereads persisted
