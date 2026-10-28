@@ -451,6 +451,15 @@ acknowledging execution. The RCP command UUID is reused as the kernel command
 UUID, so recovery crosses the protocol, Host, and kernel boundaries under one
 stable identity.
 
+RCP carries a command as opaque text, so what text means is the harness's
+decision. The reference node treats a command from the principal that is exactly
+`/compact` as the Host's compaction control: it summarizes the session's model
+context, records no agent reply, and ends the command with one fixed notice and
+`completed`. The task journal is unchanged by compaction and keeps every record.
+A guest's `/compact` is an ordinary message, `/compact` followed by more words
+ends as `failed` without opening a session, and an interrupted compaction is
+driven again under the same command identity and activates one summary.
+
 Socket ownership stays outside the Host. Durable node-ledger commits wake the
 publisher, but the wakeup is not data: publication always rereads persisted
 events after its last coordinator-acknowledged source cursor. Coordinator-link

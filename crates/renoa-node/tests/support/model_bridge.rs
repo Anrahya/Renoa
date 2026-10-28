@@ -102,6 +102,61 @@ const SPEAKER_TURNS: &str = r#"} else if (prompt === "Read the proof for me." &&
   content = [{ type: "text", text: seen.join(",") }];
 "#;
 
+/// What the fixture model answers when asked for a context summary: a valid
+/// checkpoint, an invalid one, or nothing until its process is replaced.
+const SUMMARY_TURN: &str = r###"if (summarizing) {
+  const attemptsPath = join(workspace, "summary-attempts");
+  const attempts = existsSync(attemptsPath)
+    ? Number.parseInt(readFileSync(attemptsPath, "utf8"), 10)
+    : 0;
+  writeFileSync(attemptsPath, String(attempts + 1));
+  writeFileSync(join(workspace, "summary-request.json"), input);
+  if (input.includes("Break the summary.")) {
+    content = [{ type: "text", text: "This is not a checkpoint." }];
+  } else if (input.includes("Hold the summary.") && attempts === 0) {
+    writeFileSync(join(workspace, "model-started"), "started");
+    while (true) await new Promise(resolve => setTimeout(resolve, 10));
+  } else {
+    content = [{ type: "text", text: [
+      "## Goal and user intent\nTalk with the owner.",
+      "## Hard constraints and preferences\nNone yet.",
+      "## Completed work\nAnswered earlier questions.",
+      "## Current state and blockers\nNo blocker.",
+      "## Decisions and rationale\nSummarize durably.",
+      "## Exact working facts\nThe proof file holds durable proof.",
+      "## Next action and unresolved questions\nAwait the next message.",
+    ].join("\n") }];
+  }
+}"###;
+
+/// Conversations the owner's `/compact` summarizes, a guest's `/compact`, which
+/// reaches the model as ordinary text, and two long messages that together
+/// overflow the fixture model's window.
+const COMPACTION_TURNS: &str = r#"} else if (prompt === "Break the summary." || prompt === "Hold the summary.") {
+  content = [{ type: "text", text: "Noted." }];
+} else if (prompt === "/compact") {
+  content = [{ type: "text", text: "A guest asked: /compact" }];
+} else if (prompt.startsWith("Long message one.")) {
+  content = [{ type: "text", text: "Long answer one." }];
+} else if (prompt.startsWith("Long message two.")) {
+  content = [{ type: "text", text: "Long answer two." }];
+"#;
+
+/// Refuses a request a provider would reject: a tool result without its call,
+/// or a call left without its result before the next message.
+const PAIRING_CHECK: &str = r#"const pending = new Set();
+for (const message of request.messages) {
+  if (message.role === "assistant") {
+    if (pending.size > 0) throw Error("an assistant message came before every tool result");
+    for (const block of message.content) if (block.type === "tool_call") pending.add(block.id);
+  } else if (message.role === "tool") {
+    if (!pending.delete(message.result.call_id)) throw Error(`tool result ${message.result.call_id} has no call`);
+  } else if (pending.size > 0) {
+    throw Error("a user message came before every tool result");
+  }
+}
+if (pending.size > 0) throw Error("tool calls were left without results");"#;
+
 pub(super) fn bridge_script(workspace: &Path) -> String {
     let workspace = serde_json::to_string(&workspace.to_string_lossy()).expect("encode workspace");
     format!(
@@ -136,6 +191,9 @@ if (action === "describe") {{
 }}
 if (action !== "stream") process.exit(2);
 const request = JSON.parse(input);
+writeFileSync(join(workspace, "last-request.json"), input);
+{PAIRING_CHECK}
+const summarizing = request.system_prompt.startsWith("You create durable context checkpoints");
 const user = request.messages.findLast(message => message.role === "user");
 // An automation run's task follows its one context line.
 const prompt = (user?.content.find(block => block.type === "text")?.text ?? "")
@@ -143,7 +201,7 @@ const prompt = (user?.content.find(block => block.type === "text")?.text ?? "")
 const toolResults = request.messages.filter(message => message.role === "tool");
 let content;
 let stopReason = "stop";
-if (prompt === "Read proof." && toolResults.length === 0) {{
+{SUMMARY_TURN} else if (prompt === "Read proof." && toolResults.length === 0) {{
   content = [{{
     type: "tool_call", id: "read-proof", name: "read_file",
     arguments: {{ path: "proof.txt" }}
@@ -176,7 +234,7 @@ if (prompt === "Read proof." && toolResults.length === 0) {{
     await new Promise(resolve => setTimeout(resolve, 10));
   }}
   content = [{{ type: "text", text: `Finished parallel ${{suffix}}.` }}];
-{SPEAKER_TURNS}{AUTOMATION_TURNS}}} else if (prompt === "First.") {{
+{SPEAKER_TURNS}{COMPACTION_TURNS}{AUTOMATION_TURNS}}} else if (prompt === "First.") {{
   content = [{{ type: "text", text: "First response." }}];
 }} else if (prompt === "Second.") {{
   content = [{{ type: "text", text: "Second response." }}];

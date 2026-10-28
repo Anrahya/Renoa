@@ -3,7 +3,9 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use renoa_agent::ContentBlock;
 use renoa_control::{DeviceCredentials, ErrorCode, TaskId};
 use renoa_kernel::AgentId;
-use renoa_local::{AgentSession, LocalHost, LocalHostError, Speaker, TurnObservation};
+use renoa_local::{
+    AgentSession, LocalHost, LocalHostError, LocalTurnOutcome, Speaker, TurnObservation,
+};
 use renoa_protocol::{Author, CommandId, ExecutionEventKind, ExecutionTerminal, TargetRef};
 use thiserror::Error;
 use tokio::{
@@ -18,11 +20,12 @@ use crate::{
     agent_targets,
     automations::{self, AutomationLink},
     backoff::{ReconnectBackoff, STABLE_CONNECTION},
+    control::{self, Refusal, Request},
     live::{LiveEvents, LiveFrame},
     node_log,
     node_store::{ExecutionRecord, NodeStore, NodeStoreError, TargetBinding},
     operator,
-    projection::{project_history, terminal_event},
+    projection::{closing_events, project_history},
     session::{SessionEnd, serve_session},
     stop::RunningTurns,
 };
@@ -245,6 +248,13 @@ impl NodeRuntime {
 
     async fn execute(self: Arc<Self>, record: ExecutionRecord) -> Result<(), NodeError> {
         let command_id = record.command.command_id;
+        let request = match control::request(&record.command.input) {
+            Ok(request) => request,
+            Err(Refusal(reason)) => {
+                self.finish_failed(command_id, reason.to_owned()).await?;
+                return Ok(());
+            }
+        };
         let agent_id = AgentId::from_uuid(record.binding.agent_id);
         // Registered before the ledger is read, so a stop recorded from now on
         // cancels this token and an earlier one is read below.
@@ -281,7 +291,7 @@ impl NodeRuntime {
         let session = match session {
             Ok(session) => session,
             Err(error) => {
-                self.finish_host_error(command_id, &error).await?;
+                self.finish_failed(command_id, error.to_string()).await?;
                 return Ok(());
             }
         };
@@ -292,24 +302,7 @@ impl NodeRuntime {
         let events = Arc::new(
             LiveEvents::start(Arc::clone(&self), record.task_id, command_id, setup_events).await?,
         );
-        let mut observation =
-            TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
-        if let Some(context) = record.command.input.context() {
-            observation = observation.with_surface_context(context);
-        }
-        let result = session
-            .execute_turn_observed_with_cancellation(
-                command_id.as_uuid(),
-                vec![ContentBlock::text(record.command.input.text())],
-                observation,
-                events,
-                cancellation,
-                match record.command.input.author() {
-                    Author::Principal => Speaker::Principal(record.command.principal_id.as_uuid()),
-                    Author::Guest => Speaker::Guest,
-                },
-            )
-            .await;
+        let result = run_request(request, &record, &session, events, cancellation).await?;
         // A setup link that could not be delivered stopped the turn; its
         // reason is the command's outcome.
         let setup_failure = match &setup {
@@ -325,12 +318,12 @@ impl NodeRuntime {
             }
         };
         let mut events = session_events(&session, command_id)?;
-        events.push(match setup_failure {
-            Some(error) => ExecutionEventKind::ExecutionTerminated {
+        match setup_failure {
+            Some(error) => events.push(ExecutionEventKind::ExecutionTerminated {
                 terminal: ExecutionTerminal::Failed { error },
-            },
-            None => terminal_event(outcome),
-        });
+            }),
+            None => events.extend(closing_events(outcome)),
+        }
         self.state.finish(command_id, events).await?;
         self.signal_commit();
         Ok(())
@@ -353,24 +346,64 @@ impl NodeRuntime {
         Ok(())
     }
 
-    async fn finish_host_error(
-        &self,
-        command_id: CommandId,
-        error: &LocalHostError,
-    ) -> Result<(), NodeError> {
+    /// Ends a command as failed before any turn ran, so its journal holds only
+    /// the terminal record.
+    async fn finish_failed(&self, command_id: CommandId, error: String) -> Result<(), NodeError> {
         self.state
             .finish(
                 command_id,
                 vec![ExecutionEventKind::ExecutionTerminated {
-                    terminal: ExecutionTerminal::Failed {
-                        error: error.to_string(),
-                    },
+                    terminal: ExecutionTerminal::Failed { error },
                 }],
             )
             .await?;
         self.signal_commit();
         Ok(())
     }
+}
+
+/// Runs one admitted command on its session. A turn observes when its text was
+/// received; a compaction needs only the command's identity. The inner result
+/// is the Host's outcome, the outer one a failure of the node itself.
+async fn run_request(
+    request: Request,
+    record: &ExecutionRecord,
+    session: &AgentSession,
+    events: Arc<LiveEvents>,
+    cancellation: CancellationToken,
+) -> Result<Result<LocalTurnOutcome, LocalHostError>, NodeError> {
+    let command = &record.command;
+    Ok(match request {
+        Request::Turn => {
+            let mut observation =
+                TurnObservation::now().map_err(|error| NodeError::Task(error.to_string()))?;
+            if let Some(context) = command.input.context() {
+                observation = observation.with_surface_context(context);
+            }
+            session
+                .execute_turn_observed_with_cancellation(
+                    command.command_id.as_uuid(),
+                    vec![ContentBlock::text(command.input.text())],
+                    observation,
+                    events,
+                    cancellation,
+                    match command.input.author() {
+                        Author::Principal => Speaker::Principal(command.principal_id.as_uuid()),
+                        Author::Guest => Speaker::Guest,
+                    },
+                )
+                .await
+        }
+        Request::Compact => {
+            session
+                .execute_compaction_with_cancellation(
+                    command.command_id.as_uuid(),
+                    events,
+                    cancellation,
+                )
+                .await
+        }
+    })
 }
 
 fn session_events(

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use renoa_agent::{
-    AgentEvent, AgentEventSink, InferenceOutcome, Model, ModelErrorKind, ModelRequest,
+    AgentEvent, AgentEventSink, BoxFuture, InferenceOutcome, Model, ModelErrorKind, ModelRequest,
     SamplingError, Tool, ToolCall, invoke_tool, sample_model,
 };
 use renoa_kernel::{
@@ -16,11 +16,48 @@ pub(crate) struct ModelAdapter {
 }
 
 impl ModelAdapter {
-    pub(crate) const fn new(
+    /// The adapter of a conversational model request.
+    pub(crate) const fn reply(
         model: Arc<dyn Model>,
         events: Option<Arc<dyn AgentEventSink>>,
     ) -> Self {
         Self { model, events }
+    }
+
+    /// The adapter of a context-summary request. Observers see the request,
+    /// its retries, failure and usage, but never an assistant message, because
+    /// a summary is not a reply.
+    pub(crate) fn summary(model: Arc<dyn Model>, events: Option<Arc<dyn AgentEventSink>>) -> Self {
+        Self {
+            model,
+            events: events.map(|inner| Arc::new(SummaryEvents(inner)) as Arc<dyn AgentEventSink>),
+        }
+    }
+}
+
+/// Forwards a summary request's events except the ones that describe an
+/// assistant message. The match is exhaustive so a new event kind must be
+/// classified here before it compiles.
+struct SummaryEvents(Arc<dyn AgentEventSink>);
+
+impl AgentEventSink for SummaryEvents {
+    fn emit(&self, event: AgentEvent) -> BoxFuture<'_, ()> {
+        match event {
+            AgentEvent::MessageStart { .. }
+            | AgentEvent::MessageUpdate { .. }
+            | AgentEvent::MessageAbort => Box::pin(std::future::ready(())),
+            event @ (AgentEvent::ModelRequestStart { .. }
+            | AgentEvent::ModelProviderRequest { .. }
+            | AgentEvent::ModelProviderResponse { .. }
+            | AgentEvent::ModelRequestChunk { .. }
+            | AgentEvent::ModelRequestEnd { .. }
+            | AgentEvent::ModelRequestFailed { .. }
+            | AgentEvent::ModelRetryAttempt { .. }
+            | AgentEvent::ToolExecutionStart { .. }
+            | AgentEvent::ToolExecutionUpdate { .. }
+            | AgentEvent::ToolExecutionEnd { .. }
+            | AgentEvent::ToolExecutionOutcomeUnknown { .. }) => self.0.emit(event),
+        }
     }
 }
 

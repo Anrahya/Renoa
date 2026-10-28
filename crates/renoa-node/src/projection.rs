@@ -48,7 +48,25 @@ pub(crate) fn project_tool_result(result: ToolResult) -> Result<ExecutionEventKi
     })
 }
 
-pub(crate) fn terminal_event(outcome: LocalTurnOutcome) -> ExecutionEventKind {
+/// What a surface shows after the owner's `/compact`: the agent says nothing
+/// for a summary, so the node reports the one fact the owner asked for.
+pub(crate) const COMPACTED_NOTICE: &str =
+    "Earlier messages are summarized now. This conversation continues from that summary.";
+
+/// The records that close a command: the compaction notice when the command
+/// summarized the conversation, then its terminal record.
+pub(crate) fn closing_events(outcome: LocalTurnOutcome) -> Vec<ExecutionEventKind> {
+    let mut events = Vec::new();
+    if matches!(outcome, LocalTurnOutcome::Compacted { .. }) {
+        events.push(ExecutionEventKind::AssistantMessage {
+            text: COMPACTED_NOTICE.to_owned(),
+        });
+    }
+    events.push(terminal_event(outcome));
+    events
+}
+
+fn terminal_event(outcome: LocalTurnOutcome) -> ExecutionEventKind {
     let terminal = match outcome {
         LocalTurnOutcome::Completed { .. }
         | LocalTurnOutcome::Compacted { .. }

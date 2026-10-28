@@ -15,8 +15,11 @@ use crate::{
 
 pub(crate) const CHECKPOINT_SCHEMA_VERSION: u32 = 4;
 pub(crate) const LOOP_BINDING: &str = "renoa.agent.model-tool-loop";
-pub(crate) const LOOP_REVISION: &str = "13";
+pub(crate) const LOOP_REVISION: &str = "14";
 pub(crate) const MODEL_EFFECT_BINDING: &str = "renoa.agent.model";
+/// The model effect that writes a context summary. It runs the same model as
+/// [`MODEL_EFFECT_BINDING`] but its adapter never reports an assistant message.
+pub(crate) const COMPACTION_EFFECT_BINDING: &str = "renoa.agent.compaction";
 const FULL_HISTORY_CONTEXT_REVISION: &str = "renoa.context.full-history.v1";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
@@ -307,11 +310,19 @@ fn build_runtime_inner(
             nested_recovery: prepared.nested_recovery,
         }),
     ));
-    let mut effects = Vec::with_capacity(tool_adapters.len() + 3);
+    let mut effects = Vec::with_capacity(tool_adapters.len() + 4);
     effects.push(EffectBinding::new(
         MODEL_EFFECT_BINDING,
+        model.revision.clone(),
+        Arc::new(ModelAdapter::reply(
+            Arc::clone(&model.model),
+            events.clone(),
+        )),
+    ));
+    effects.push(EffectBinding::new(
+        COMPACTION_EFFECT_BINDING,
         model.revision,
-        Arc::new(ModelAdapter::new(model.model, events)),
+        Arc::new(ModelAdapter::summary(model.model, events)),
     ));
     effects.extend(tool_adapters);
     if let Some(prepared) = code_mode {
