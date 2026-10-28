@@ -72,7 +72,7 @@ internal fun RenoaApp(repository: AgentRepository, signedIn: Boolean, signingIn:
                         val model: SignInViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { SignInViewModel(signingIn) } })
                         val activity = checkNotNull(LocalActivity.current) { "sign-in needs its activity" }
                         LaunchedEffect(model.state) { if (model.state == SignInState.SignedIn) navigator.resetTo(Route.Home) }
-                        SignInScreen(model.state) { model.submit(it, Passkeys.of(activity)) }
+                        SignInScreen(model.state, model.code, { model.code = it }) { model.submit(Passkeys.of(activity)) }
                     }
                     Route.Home -> {
                         val model: HomeViewModel = viewModel(viewModelStoreOwner = owner, factory = viewModelFactory { initializer { HomeViewModel(repository) } })

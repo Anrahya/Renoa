@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import live.renoa.app.agents.AgentRepository
 import live.renoa.app.agents.FakeAgentRepository
+import live.renoa.app.signin.RENOA_ORIGIN
 import live.renoa.app.signin.SignInStore
 import live.renoa.app.signin.SignInViewModel
 
@@ -24,7 +25,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val repository = (application as RenoaApplication).repository
         val store = SignInStore(applicationContext)
-        val signedIn = store.load() != null
+        // A credential from another Renoa, as after a build that signs in elsewhere, does not count.
+        val signedIn = store.load()?.origin == RENOA_ORIGIN
         setContent { RenoaApp(repository, signedIn, SignInViewModel.signingIn(applicationContext, store)) }
     }
 }

@@ -41,6 +41,18 @@ class SignInTest {
     /** When set, the options request is refused with this status and error code. */
     @Volatile private var refuse: Pair<Int, String>? = null
 
+    /** When set, every request is answered with this instead. */
+    @Volatile private var answerWith: MockResponse? = null
+
+    /** The fields each request must carry, exactly, as the coordinator's request structs read them. */
+    private val expectedFields =
+        mapOf(
+            "/v1/identity/passkeys/registration/options" to setOf("bootstrapToken", "surface", "device"),
+            "/v1/identity/passkeys/authentication/options" to setOf("principalId", "surface", "device"),
+            "/v1/identity/passkeys/registration/verify" to setOf("ceremonyId", "credential", "deviceProof"),
+            "/v1/identity/passkeys/authentication/verify" to setOf("ceremonyId", "credential", "deviceProof"),
+        )
+
     private val server =
         MockWebServer().apply {
             dispatcher =
@@ -48,6 +60,13 @@ class SignInTest {
                     override fun dispatch(request: RecordedRequest): MockResponse {
                         val body = Json.parseToJsonElement(request.body!!.utf8()).jsonObject
                         requests += request to body
+                        answerWith?.let { return it }
+                        val path = request.url.encodedPath
+                        if (body.keys != expectedFields[path] ||
+                            (path.endsWith("/options") && body.getValue("device").jsonObject.keys != setOf("publicKey", "label"))
+                        ) {
+                            return MockResponse.Builder().code(400).body("""{"code":"invalid_request","message":"unexpected fields"}""").build()
+                        }
                         refuse?.let { (status, code) ->
                             return MockResponse.Builder().code(status).body("""{"code":"$code","message":"refused: $code"}""").build()
                         }
@@ -153,6 +172,45 @@ class SignInTest {
         assertEquals(409, refused.status)
         assertEquals("conflict", refused.code)
         assertEquals(false, prompted)
+    }
+
+    @Test
+    fun aCancelledPromptIsAskedAgainForTheSameCeremonyWithoutSpendingTheCode() = eventually {
+        val key = deviceKey(p256())
+        val client = signIn()
+        assertFailsWith<IllegalStateException> { client.register("ab".repeat(32), key) { error("closed the prompt") } }
+        val credentials = client.register("ab".repeat(32), key) { """{"id":"cred","type":"public-key","response":{}}""" }
+
+        assertEquals(issued, credentials)
+        assertEquals(1, requests.count { it.first.url.encodedPath.endsWith("/registration/options") }, "the code was spent once")
+        assertEquals(ceremonyId.toString(), requests.last().second.getValue("ceremonyId").jsonPrimitive.content)
+
+        // The ceremony is bound to the key it named, so a new key is a new ceremony.
+        assertFailsWith<IllegalStateException> { client.register("cd".repeat(32), key) { error("closed the prompt") } }
+        client.register("cd".repeat(32), deviceKey(p256())) { "{}" }
+        assertEquals(3, requests.count { it.first.url.encodedPath.endsWith("/registration/options") })
+    }
+
+    @Test
+    fun aLostAnswerToTheLastStepIsUncertainAndTheCeremonyIsNotReused() = eventually {
+        val key = deviceKey(p256())
+        val client = signIn()
+        val prompt: suspend (String) -> String = { options ->
+            answerWith = MockResponse.Builder().body("not json").build()
+            options.length.toString()
+        }
+        assertFailsWith<SignInUncertain> { client.register("ab".repeat(32), key, prompt) }
+        answerWith = null
+        client.register("ab".repeat(32), key) { "{}" }
+        assertEquals(2, requests.count { it.first.url.encodedPath.endsWith("/registration/options") }, "a claimed ceremony is never replayed")
+    }
+
+    @Test
+    fun aRedirectIsNeverFollowedWithTheCode() = eventually {
+        answerWith = MockResponse.Builder().code(307).addHeader("Location", "http://127.0.0.1:${server.port}/elsewhere").build()
+        val refused = assertFailsWith<SignInRefused> { signIn().register("ab".repeat(32), deviceKey(p256())) { "{}" } }
+        assertEquals(307, refused.status)
+        assertEquals(1, requests.size)
     }
 
     @Test

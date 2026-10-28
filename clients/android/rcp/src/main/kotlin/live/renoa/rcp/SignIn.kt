@@ -47,12 +47,26 @@ internal fun deviceRegistrationText(ceremonyId: Uuid): ByteArray =
 class SignInRefused(val status: Int, val code: String, message: String) : Exception(message)
 
 /**
+ * The answer to a ceremony's last step was lost. The coordinator claims a ceremony when that step
+ * arrives, so it may have signed the device in, and the same setup code cannot be tried again.
+ */
+class SignInUncertain(cause: Throwable) : Exception("the sign-in's last answer was lost", cause)
+
+/** A registration whose options were fetched, which spent its setup code, and whose prompt has not finished. */
+private class PendingRegistration(val bootstrapToken: String, val publicKey: ByteArray, val ceremonyId: Uuid, val options: String)
+
+/**
  * Signs an app in with a passkey and a device key over the coordinator's identity HTTP API.
  *
  * The passkey prompt belongs to the platform, so the caller supplies it: it receives the WebAuthn
  * options as JSON (`PublicKeyCredentialCreationOptionsJSON` or `…RequestOptionsJSON`) and returns
  * the credential the platform made, as the WebAuthn JSON a browser's `toJSON()` produces. A
  * successful sign-in returns the device's credentials for [WebSocketRcpSurface].
+ *
+ * Fetching registration options spends the setup code, so a registration whose prompt was cancelled
+ * or failed is kept and the next [register] with the same code and key prompts again for it,
+ * within the coordinator's five-minute ceremony. One instance serves one sign-in screen; its calls
+ * must not overlap.
  */
 class PasskeySignIn(
     origin: String,
@@ -64,6 +78,7 @@ class PasskeySignIn(
     // carry them to a host the caller never named.
     private val http = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
     private val base = origin.trimEnd('/')
+    private var pending: PendingRegistration? = null
 
     init {
         requireSecureEndpoint(base)
@@ -73,19 +88,29 @@ class PasskeySignIn(
     }
 
     /** A new passkey, authorized by a one-use bootstrap token from the Renoa operator. */
-    suspend fun register(bootstrapToken: String, key: DeviceKey, create: suspend (String) -> String): DeviceCredentials =
-        ceremony("registration", key, create) { put("bootstrapToken", bootstrapToken) }
+    suspend fun register(bootstrapToken: String, key: DeviceKey, create: suspend (String) -> String): DeviceCredentials {
+        val ceremony =
+            pending?.takeIf { it.bootstrapToken == bootstrapToken && it.publicKey.contentEquals(key.publicKey) }
+                ?: options("registration", key) { put("bootstrapToken", bootstrapToken) }
+                    .let { (id, options) -> PendingRegistration(bootstrapToken, key.publicKey, id, options) }
+        pending = ceremony
+        val body = verifyBody(ceremony.ceremonyId, key, create(ceremony.options))
+        // The coordinator claims the ceremony as the verify request arrives, so it is never sent twice.
+        pending = null
+        return verify("registration", body)
+    }
 
     /** A passkey the person already has, for the principal it belongs to. */
-    suspend fun authenticate(principalId: Uuid, key: DeviceKey, get: suspend (String) -> String): DeviceCredentials =
-        ceremony("authentication", key, get) { put("principalId", principalId.toString()) }
+    suspend fun authenticate(principalId: Uuid, key: DeviceKey, get: suspend (String) -> String): DeviceCredentials {
+        val (ceremonyId, options) = options("authentication", key) { put("principalId", principalId.toString()) }
+        return verify("authentication", verifyBody(ceremonyId, key, get(options)))
+    }
 
-    private suspend fun ceremony(
+    private suspend fun options(
         kind: String,
         key: DeviceKey,
-        prompt: suspend (String) -> String,
         authority: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit,
-    ): DeviceCredentials {
+    ): Pair<Uuid, String> {
         val options =
             post(
                 "/v1/identity/passkeys/$kind/options",
@@ -103,21 +128,29 @@ class PasskeySignIn(
         val publicKey =
             (options["options"] as? JsonObject)?.get("publicKey") as? JsonObject
                 ?: throw IOException("the coordinator's passkey options have no publicKey")
-        val credential = wireJson.parseToJsonElement(prompt(publicKey.toString()))
-        val proof = base64Url(key.sign(deviceRegistrationText(ceremonyId)))
-        val verified =
-            post(
-                "/v1/identity/passkeys/$kind/verify",
-                buildJsonObject {
-                    put("ceremonyId", ceremonyId.toString())
-                    put("credential", credential)
-                    put("deviceProof", proof)
-                },
-            )
-        val credentials =
-            verified["credentials"] ?: throw IOException("the coordinator's sign-in answer has no credentials")
-        return wireJson.decodeFromJsonElement(DeviceCredentials.serializer(), credentials)
+        return ceremonyId to publicKey.toString()
     }
+
+    private suspend fun verifyBody(ceremonyId: Uuid, key: DeviceKey, credential: String): JsonObject {
+        val parsed = wireJson.parseToJsonElement(credential)
+        val proof = base64Url(key.sign(deviceRegistrationText(ceremonyId)))
+        return buildJsonObject {
+            put("ceremonyId", ceremonyId.toString())
+            put("credential", parsed)
+            put("deviceProof", proof)
+        }
+    }
+
+    private suspend fun verify(kind: String, body: JsonObject): DeviceCredentials =
+        try {
+            val verified = post("/v1/identity/passkeys/$kind/verify", body)
+            val credentials = verified["credentials"] ?: throw IOException("the coordinator's sign-in answer has no credentials")
+            wireJson.decodeFromJsonElement(DeviceCredentials.serializer(), credentials)
+        } catch (lost: IOException) {
+            throw SignInUncertain(lost)
+        } catch (malformed: IllegalArgumentException) {
+            throw SignInUncertain(malformed)
+        }
 
     private suspend fun post(path: String, body: JsonObject): JsonObject =
         withContext(Dispatchers.IO) {

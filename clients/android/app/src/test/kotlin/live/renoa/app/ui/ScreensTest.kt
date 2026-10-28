@@ -230,15 +230,17 @@ class ScreensTest : ScreenTest() {
 
     @Test
     fun signInTakesACodeAndShowsWhyItStopped() {
-        val submitted = mutableListOf<String>()
+        var submitted = 0
         var state: SignInState by mutableStateOf(SignInState.Ready)
-        show { SignInScreen(state) { submitted += it } }
+        var code by mutableStateOf("")
+        show { SignInScreen(state, code, { code = it }) { submitted++ } }
         compose.waitForIdle()
         compose.onNodeWithText("Your agents, in your pocket.").assertIsDisplayed()
         compose.onNodeWithText("Continue with passkey").assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Sign-in code").performTextInput("  ab12cd ")
+        compose.onNodeWithContentDescription("Sign-in code").performTextInput("ab12cd")
         compose.onNodeWithText("Continue with passkey").performClick()
-        assertEquals(listOf("  ab12cd "), submitted)
+        assertEquals(1, submitted)
+        assertEquals("ab12cd", code)
         snapshot("sign-in")
 
         state = SignInState.Working

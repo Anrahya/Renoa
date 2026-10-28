@@ -6,10 +6,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -59,7 +55,7 @@ private val TILE_TONES = listOf(Color(0xFFFF8A4C), Color(0xFFE046B4), Color(0xFF
  * rest; [state] says whether that is under way or why it stopped.
  */
 @Composable
-internal fun SignInScreen(state: SignInState, onSubmit: (String) -> Unit) {
+internal fun SignInScreen(state: SignInState, code: String, onCodeChange: (String) -> Unit, onSubmit: () -> Unit) {
     val colors = Renoa.colors
     val reduced = LocalReducedMotion.current
     // Seven tiles drop into place one after the other: the core first, then the six around it.
@@ -99,7 +95,6 @@ internal fun SignInScreen(state: SignInState, onSubmit: (String) -> Unit) {
                 }
             }
         }
-        var code by rememberSaveable { mutableStateOf("") }
         val working = state == SignInState.Working
         val ready = !working && SignInCode.parse(code) != null
         val shape = RoundedCornerShape(RenoaShapes.Control)
@@ -119,13 +114,13 @@ internal fun SignInScreen(state: SignInState, onSubmit: (String) -> Unit) {
                     if (code.isEmpty()) Text("Sign-in code", style = RenoaType.Body, color = colors.mutedForeground)
                     BasicTextField(
                         value = code,
-                        onValueChange = { code = it },
+                        onValueChange = onCodeChange,
                         enabled = !working,
                         singleLine = true,
                         textStyle = RenoaType.Body.copy(color = colors.foreground),
                         cursorBrush = SolidColor(colors.ring),
                         keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = { if (ready) onSubmit(code) }),
+                        keyboardActions = KeyboardActions(onGo = { if (ready) onSubmit() }),
                         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Sign-in code" },
                     )
                 }
@@ -139,7 +134,7 @@ internal fun SignInScreen(state: SignInState, onSubmit: (String) -> Unit) {
                 )
                 RenoaButton(
                     if (working) "Waiting for your passkey…" else "Continue with passkey",
-                    { onSubmit(code) },
+                    onSubmit,
                     Modifier.padding(top = 20.dp, bottom = 28.dp).fillMaxWidth(),
                     enabled = ready,
                     icon = Glyphs.PASSKEY,
